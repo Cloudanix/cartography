@@ -1,0 +1,252 @@
+import json
+import logging
+from typing import Dict
+from typing import List
+
+import neo4j
+from googleapiclient.discovery import HttpError
+from googleapiclient.discovery import Resource
+
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
+
+logger = logging.getLogger(__name__)
+
+@timeit
+def get_sql_instances(sql: Resource,project_id: str) -> List[Dict]:
+    """
+        Returns a list of sql instances for a given project.
+        
+        :type sql: Resource
+        :param sql: The sql resource created by googleapiclient.discovery.build()
+
+        :type project_id: str
+        :param project_id: Current Google Project Id
+
+        :rtype: list
+        :return: List of Sql Instances
+    """
+    try:
+        sql_instances = []
+        request = sql.instances().list(project=project_id)
+        while request is not None:
+            response = request.execute()
+            for item in response['items']:
+                item['id'] = f"project/{project_id}/instances/{item['name']}"
+                sql_instances.append(item)
+            request = sql.instances().list_next(previous_request=request, previous_response=response)
+        return sql_instances
+    except HttpError as e:
+        err = json.loads(e.content.decode('utf-8'))['error']
+        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            logger.warning(
+                (
+                    "Could not retrieve Sql Instances on project %s due to permissions issues. Code: %s, Message: %s"
+                ), project_id, err['code'], err['message'],
+            )
+            return []
+        else:
+            raise
+
+@timeit
+def get_sql_users(sql: Resource,project_id: str) -> List[Dict]:
+    """
+        Returns a list of sql instance users for a given project.
+        
+        :type sql: Resource
+        :param sql: The sql resource created by googleapiclient.discovery.build()
+
+        :type project_id: str
+        :param project_id: Current Google Project Id
+
+        :rtype: list
+        :return: List of Sql Instance Users
+    """
+    sql_instances = get_sql_instances(sql,project_id)
+    for inst in sql_instances:
+        try:
+            sql_users = []
+            request = sql.users().list(project=project_id,instance=inst['name'])
+            while request is not None:
+                response = request.execute()
+                for item in response['items']:
+                    item['id'] = f"project/{project_id}/instances/{inst['name']}/users/{item['name']}"
+                    sql_users.append(item)
+                while 'nextPageToken' in response:
+                    request = sql.users().list(project=project_id,instance=inst['name'],pageToken=response['nextPAgeToken'])
+                    while request is not None:
+                        response = request.execute()
+                        for item in response['items']:
+                            item['id'] = f"project/{project_id}/instances/{inst['name']}/users/{item['name']}"
+                            sql_users.append(item)
+            return sql_users
+        except HttpError as e:
+            err = json.loads(e.content.decode('utf-8'))['error']
+            if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+                logger.warning(
+                    (
+                        "Could not retrieve Sql Instance Users on project %s due to permissions issues. Code: %s, Message: %s"
+                    ), project_id, err['code'], err['message'],
+            )
+                return []
+            else:
+                raise
+
+@timeit
+def load_sql_instances(neo4j_session: neo4j.Session,instances: List[Resource],project_id: str,gcp_update_tag: int) -> None:
+    """
+        :type neo4j_session: Neo4j session object
+        :param neo4j session: The Neo4j session object
+
+        :type instances_resp: List
+        :param instances_resp: A list of SQL Instances
+
+        :type project_id: str
+        :param project_id: Current Google Project Id
+
+        :type gcp_update_tag: timestamp
+        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    """
+    ingest_sql_instances = """
+    UNWIND {instances} as instance
+    MERGE(i:GCPSQLInstance{id:instance.id})
+    ON CREATE SET
+        i.firstseen = timestamp()
+    SET
+        i.state = instance.state,
+        i.databaseVersion = instance.databaseVersion,
+        i.masterInstanceName = instance.MasterInstanceName,
+        i.maxDiskSize = instance.maxDiskSize,
+        i.currentDiskSize = instance.currentDiskSize,
+        i.instanceType = instance.instanceType,
+        i.connectionName = instance.connectionName,
+        i.name = instance.name,
+        i.region = instance.region,
+        i.gceZone = instance.gceZone,
+        i.secondaryGceZone = instance.secondaryGceZone,
+        i.satisfiesPzs = instance.satisfiesPzs, 
+        i.createTime = instance.createTime
+    WITH instance, i
+    MATCH (owner:GCPProject{id:{ProjectId}})
+    MERGE (owner)-[r:RESOURCE]->(i)
+    ON CREATE SET
+        r.firstseen = timestamp(),
+        r.lastupdated = {gcp_update_tag}
+    """
+    neo4j_session.run(
+        ingest_sql_instances,
+        instances = instances,
+        ProjectId=project_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+@timeit
+def load_sql_users(neo4j_session: neo4j.Session,sql_users: List[Resource],project_id: str,gcp_update_tag: int) -> None:
+    """
+        :type neo4j_session: Neo4j session object
+        :param neo4j session: The Neo4j session object
+
+        :type instances_resp: List
+        :param instances_resp: A list of SQL Users
+
+        :type project_id: str
+        :param project_id: Current Google Project Id
+
+        :type gcp_update_tag: timestamp
+        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    """
+    ingest_sql_users = """
+    UNWIND {sql_users} as user
+    MERGE(u:GCPSQLUser{id:user.id})
+    ON CREATE SET
+        u.firstseen = timestamp()
+    SET
+        u.name = user.name,
+        u.host = user.host,
+        u.instance = user.instance,
+        u.project = user.project,
+        u.type = user.type
+    WITH user, u
+    MATCH (owner:GCPProject{id:{ProjectId}})-[r1:Resource]->(i:GCPSQLInstance{id:instance.id})
+    MERGE (owner)-[r1:RESOURCE]->(i)-[r2:uses]<-(u)
+    ON CREATE SET
+        r1.firstseen = timestamp,
+        r2.firstseen = timestamp,
+        r1.lastupdated = {gcp_update_tag},
+        r2.lastupdated = {gcp_update_tag}
+    """
+    neo4j_session.run(
+        ingest_sql_users,
+        sql_users = sql_users,
+        ProjectId=project_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+@timeit
+def cleanup_sql_instances(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    Delete out-of-date GCP SQL Instances and relationships
+
+    :type neo4j_session: The Neo4j session object
+    :param neo4j_session: The Neo4j session
+
+    :type common_job_parameters: dict
+    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+
+    :rtype: NoneType
+    :return: Nothing
+    """
+    run_cleanup_job('gcp_sql_instance_cleanup.json', neo4j_session, common_job_parameters)
+
+@timeit
+def cleanup_sql_users(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    Delete out-of-date GCP SQL Instance Users and relationships
+
+    :type neo4j_session: The Neo4j session object
+    :param neo4j_session: The Neo4j session
+
+    :type common_job_parameters: dict
+    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+
+    :rtype: NoneType
+    :return: Nothing
+    """
+    run_cleanup_job('gcp_sql_instance_users_cleanup.json', neo4j_session, common_job_parameters)
+
+@timeit
+def sync(
+    neo4j_session: neo4j.Session, sql: Resource, project_id: str, gcp_update_tag: int,
+    common_job_parameters: Dict
+) -> None:
+    """
+    Get GCP Cloud SQL Instances and Users using the Cloud Function resource object, ingest to Neo4j, and clean up old data.
+
+    :type neo4j_session: The Neo4j session object
+    :param neo4j_session: The Neo4j session
+
+    :type sql: The GCP Cloud SQL resource object created by googleapiclient.discovery.build()
+    :param sql: The GCP Cloud SQL resource object
+
+    :type project_id: str
+    :param project_id: The project ID of the corresponding project
+
+    :type gcp_update_tag: timestamp
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+
+    :type common_job_parameters: dict
+    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+
+    :rtype: NoneType
+    :return: Nothing
+    """
+    logger.info("Syncing GCP Cloud SQL for project %s.", project_id)
+    #INSTANCES
+    instances =  get_sql_instances(sql,project_id)
+    load_sql_instances(instances,project_id,gcp_update_tag)
+    #SQL USERS
+    users = get_sql_users(sql,project_id)
+    load_sql_users(users,project_id,gcp_update_tag)
+    # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
+    cleanup_sql_instances(neo4j_session, common_job_parameters)
+    cleanup_sql_users(neo4j_session, common_job_parameters)
