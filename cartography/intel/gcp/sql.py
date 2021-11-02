@@ -196,23 +196,7 @@ def cleanup_sql_instances(neo4j_session: neo4j.Session, common_job_parameters: D
     :rtype: NoneType
     :return: Nothing
     """
-    run_cleanup_job('gcp_sql_instance_cleanup.json', neo4j_session, common_job_parameters)
-
-@timeit
-def cleanup_sql_users(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    """
-    Delete out-of-date GCP SQL Instance Users and relationships
-
-    :type neo4j_session: The Neo4j session object
-    :param neo4j_session: The Neo4j session
-
-    :type common_job_parameters: dict
-    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
-
-    :rtype: NoneType
-    :return: Nothing
-    """
-    run_cleanup_job('gcp_sql_instance_users_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job('gcp_sql_cleanup.json', neo4j_session, common_job_parameters)
 
 @timeit
 def sync(

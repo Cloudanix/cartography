@@ -25,5 +25,5 @@
         "__comment__": "Remove GCP GCPSQLUser-to-Instance relationships that are out of date."
       }
     ],
-    "name": "Cleanup GCP Cloud Fuctions."
+    "name": "Cleanup GCP Cloud SQL."
 }
