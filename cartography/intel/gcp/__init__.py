@@ -23,11 +23,11 @@ from cartography.util import run_analysis_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-Resources = namedtuple('Resources', 'compute container crm_v1 crm_v2 dns storage serviceusage cloudfunction, cloudsql')
+Resources = namedtuple('Resources', 'compute container crm_v1 crm_v2 dns storage serviceusage cloudfunction cloudsql')
 
 # Mapping of service short names to their full names as in docs. See https://developers.google.com/apis-explorer,
 # and https://cloud.google.com/service-usage/docs/reference/rest/v1/services#ServiceConfig
-Services = namedtuple('Services', 'compute storage gke dns cloudfunction, cloudsql')
+Services = namedtuple('Services', 'compute storage gke dns cloudfunction cloudsql')
 service_names = Services(
     compute='compute.googleapis.com',
     storage='storage.googleapis.com',

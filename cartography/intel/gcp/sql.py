@@ -28,13 +28,14 @@ def get_sql_instances(sql: Resource,project_id: str) -> List[Dict]:
     """
     try:
         sql_instances = []
-        request = sql.instances().list(project=project_id)
+        request = sql.instances().list(project=f"projects/{project_id}")
         while request is not None:
             response = request.execute()
-            for item in response['items']:
-                item['id'] = f"project/{project_id}/instances/{item['name']}"
-                sql_instances.append(item)
-            request = sql.instances().list_next(previous_request=request, previous_response=response)
+            if response.get('items',[]):
+                for item in response['items']:
+                    item['id'] = f"project/{project_id}/instances/{item['name']}"
+                    sql_instances.append(item)
+                request = sql.instances().list_next(previous_request=request, previous_response=response)
         return sql_instances
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -66,19 +67,21 @@ def get_sql_users(sql: Resource,project_id: str) -> List[Dict]:
     for inst in sql_instances:
         try:
             sql_users = []
-            request = sql.users().list(project=project_id,instance=inst['name'])
+            request = sql.users().list(project=f"projects/{project_id}",instance=inst['name'])
             while request is not None:
                 response = request.execute()
-                for item in response['items']:
-                    item['id'] = f"project/{project_id}/instances/{inst['name']}/users/{item['name']}"
-                    sql_users.append(item)
-                while 'nextPageToken' in response:
-                    request = sql.users().list(project=project_id,instance=inst['name'],pageToken=response['nextPAgeToken'])
-                    while request is not None:
-                        response = request.execute()
-                        for item in response['items']:
-                            item['id'] = f"project/{project_id}/instances/{inst['name']}/users/{item['name']}"
-                            sql_users.append(item)
+                if response.get('items',[]):
+                    for item in response['items']:
+                        item['id'] = f"project/{project_id}/instances/{inst['name']}/users/{item['name']}"
+                        sql_users.append(item)
+                    while 'nextPageToken' in response:
+                        request = sql.users().list(project=project_id,instance=inst['name'],pageToken=response['nextPAgeToken'])
+                        while request is not None:
+                            response = request.execute()
+                            if response.get('items',[]):
+                                for item in response['items']:
+                                    item['id'] = f"project/{project_id}/instances/{inst['name']}/users/{item['name']}"
+                                    sql_users.append(item)
             return sql_users
         except HttpError as e:
             err = json.loads(e.content.decode('utf-8'))['error']
@@ -93,7 +96,7 @@ def get_sql_users(sql: Resource,project_id: str) -> List[Dict]:
                 raise
 
 @timeit
-def load_sql_instances(neo4j_session: neo4j.Session,instances: List[Resource],project_id: str,gcp_update_tag: int) -> None:
+def load_sql_instances(neo4j_session: neo4j.Session,instances: List[Dict],project_id: str,gcp_update_tag: int) -> None:
     """
         :type neo4j_session: Neo4j session object
         :param neo4j session: The Neo4j session object
@@ -141,7 +144,7 @@ def load_sql_instances(neo4j_session: neo4j.Session,instances: List[Resource],pr
     )
 
 @timeit
-def load_sql_users(neo4j_session: neo4j.Session,sql_users: List[Resource],project_id: str,gcp_update_tag: int) -> None:
+def load_sql_users(neo4j_session: neo4j.Session,sql_users: List[Dict],project_id: str,gcp_update_tag: int) -> None:
     """
         :type neo4j_session: Neo4j session object
         :param neo4j session: The Neo4j session object
@@ -183,7 +186,7 @@ def load_sql_users(neo4j_session: neo4j.Session,sql_users: List[Resource],projec
     )
 
 @timeit
-def cleanup_sql_instances(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+def cleanup_sql(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """
     Delete out-of-date GCP SQL Instances and relationships
 
@@ -227,10 +230,9 @@ def sync(
     logger.info("Syncing GCP Cloud SQL for project %s.", project_id)
     #INSTANCES
     instances =  get_sql_instances(sql,project_id)
-    load_sql_instances(instances,project_id,gcp_update_tag)
+    load_sql_instances(neo4j_session,instances,project_id,gcp_update_tag)
     #SQL USERS
     users = get_sql_users(sql,project_id)
-    load_sql_users(users,project_id,gcp_update_tag)
+    load_sql_users(neo4j_session,users,project_id,gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
-    cleanup_sql_instances(neo4j_session, common_job_parameters)
-    cleanup_sql_users(neo4j_session, common_job_parameters)
+    cleanup_sql(neo4j_session, common_job_parameters)
