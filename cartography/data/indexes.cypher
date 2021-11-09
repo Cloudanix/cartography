@@ -94,6 +94,8 @@ CREATE INDEX ON :GSuiteUser(id);
 CREATE INDEX ON :GCPFunction(id);
 CREATE INDEX ON :GCPSQLInstance(id);
 CREATE INDEX ON :GCPSQLUser(id);
+CREATE INDEX ON :GCPBigtable(id);
+CREATE INDEX ON :GCPFirestore(id);
 CREATE INDEX ON :Ip(id);
 CREATE INDEX ON :Ip(ip);
 CREATE INDEX ON :IpPermissionInbound(ruleid);
