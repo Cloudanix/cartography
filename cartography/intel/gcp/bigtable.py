@@ -309,7 +309,7 @@ def _load_bigtable_cluster_backups_tx(tx: neo4j.Transaction, bigtable_cluster_ba
         b.state = backup.state
     WITH backup, b
     MATCH (c:GCPBigtableCluster{id:{backup.cluster_id}})
-    MERGE (c)-[r:Resource]->(b)
+    MERGE (c)-[r:RESOURCE]->(b)
     ON CREATE SET
         r.firstseen = timestamp,
         r.lastupdated = {gcp_update_tag}
@@ -354,7 +354,7 @@ def _load_bigtable_tables_tx(tx: neo4j.Transaction, bigtable_tables: List[Dict],
         t.sourceType = table.restoreInfo.sourceType
     WITH table, t
     MATCH (i:GCPBigtableInstance{id:{table.instance_id}})
-    MERGE (i)-[r:Resource]->(t)
+    MERGE (i)-[r:RESOURCE]->(t)
     ON CREATE SET
         r.firstseen = timestamp,
         r.lastupdated = {gcp_update_tag}
@@ -370,16 +370,16 @@ def _load_bigtable_tables_tx(tx: neo4j.Transaction, bigtable_tables: List[Dict],
 @timeit
 def cleanup_bigtable(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """
-    Delete out-of-date GCP Bigtable Instances and relationships
+        Delete out-of-date GCP Bigtable Instances,Clusters,Cluster Backups and Tables and relationships
 
-    :type neo4j_session: The Neo4j session object
-    :param neo4j_session: The Neo4j session
+        :type neo4j_session: The Neo4j session object
+        :param neo4j_session: The Neo4j session
 
-    :type common_job_parameters: dict
-    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+        :type common_job_parameters: dict
+        :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
 
-    :rtype: NoneType
-    :return: Nothing
+        :rtype: NoneType
+        :return: Nothing
     """
     run_cleanup_job('gcp_bigtable_cleanup.json', neo4j_session, common_job_parameters)
 
@@ -390,25 +390,25 @@ def sync_bigtable(
     common_job_parameters: Dict
 ) -> None:
     """
-    Get GCP Cloud SQL Instances and Users using the Cloud Function resource object, ingest to Neo4j, and clean up old data.
+        Get GCP Cloud Bigtable Entities using the Cloud Bigtable resource object, ingest to Neo4j, and clean up old data.
 
-    :type neo4j_session: The Neo4j session object
-    :param neo4j_session: The Neo4j session
+        :type neo4j_session: The Neo4j session object
+        :param neo4j_session: The Neo4j session
 
-    :type bigtable: The GCP Bigtable resource object created by googleapiclient.discovery.build()
-    :param sql: The GCP Bigtable resource object
+        :type bigtable: The GCP Bigtable resource object created by googleapiclient.discovery.build()
+        :param sql: The GCP Bigtable resource object
 
-    :type project_id: str
-    :param project_id: The project ID of the corresponding project
+        :type project_id: str
+        :param project_id: The project ID of the corresponding project
 
-    :type gcp_update_tag: timestamp
-    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+        :type gcp_update_tag: timestamp
+        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
 
-    :type common_job_parameters: dict
-    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+        :type common_job_parameters: dict
+        :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
 
-    :rtype: NoneType
-    :return: Nothing
+        :rtype: NoneType
+        :return: Nothing
     """
     logger.info("Syncing GCP Cloud Bigtable for project %s.", project_id)
     # BIGTABLE INSTANCES

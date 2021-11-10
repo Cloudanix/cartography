@@ -219,7 +219,7 @@ def sync_sql(
     common_job_parameters: Dict
 ) -> None:
     """
-        Get GCP Cloud SQL Instances and Users using the Cloud Function resource object, ingest to Neo4j, and clean up old data.
+        Get GCP Cloud SQL Instances and Users using the Cloud SQL resource object, ingest to Neo4j, and clean up old data.
 
         :type neo4j_session: The Neo4j session object
         :param neo4j_session: The Neo4j session
