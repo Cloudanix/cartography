@@ -185,7 +185,7 @@ def _load_firestore_indexes_tx(tx: neo4j.Transaction, firestore_indexes: List[Di
 @timeit
 def cleanup_firestore(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """
-        Delete out-of-date GCP Firestore Instances, Indexes and relationships
+        Delete out-of-date GCP Firestore Databases, Indexes and relationships
 
         :type neo4j_session: The Neo4j session object
         :param neo4j_session: The Neo4j session
