@@ -2,7 +2,6 @@ import json
 import logging
 from typing import Dict
 from typing import List
-from typing import Optional
 
 import neo4j
 from googleapiclient.discovery import HttpError
@@ -140,15 +139,15 @@ def get_bigtable_cluster_backups(bigtable: Resource, bigtable_clusters: List[Dic
 
 
 @timeit
-def get_get_bigtable_tables(bigtable: Resource, bigtableinstances: List[Dict], project_id: str) -> List[Dict]:
+def get_get_bigtable_tables(bigtable: Resource, bigtable_instances: List[Dict], project_id: str) -> List[Dict]:
     """
         Returns a list of bigtable tables for a given project.
 
         :type bigtable: Resource
         :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
 
-        :type bigtableinstances: List
-        :param bigtableinstances: List of bigtable instances
+        :type bigtable_instances: List
+        :param bigtable_instances: List of bigtable instances
 
         :type project_id: str
         :param project_id: Current Google Project Id
@@ -156,7 +155,7 @@ def get_get_bigtable_tables(bigtable: Resource, bigtableinstances: List[Dict], p
         :rtype: list
         :return: List of Bigtable Tables
     """
-    for instance in bigtableinstances:
+    for instance in bigtable_instances:
         try:
             bigtable_tables = []
             request = bigtable.projects().instances().tables().list(parent=f"projects/{project_id}/instances/{instance['name']}")
@@ -183,7 +182,7 @@ def get_get_bigtable_tables(bigtable: Resource, bigtableinstances: List[Dict], p
 
 
 @timeit
-def load_bigtable_instances(session: neo4j.Session, data_list: List[Dict[str, Optional[str]]], project_id: str, update_tag: int) -> None:
+def load_bigtable_instances(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_bigtable_instances_tx, data_list, project_id, update_tag)
 
 
@@ -229,7 +228,7 @@ def _load_bigtable_instances_tx(tx: neo4j.Transaction, bigtable_instances: List[
 
 
 @timeit
-def load_bigtable_clusters(session: neo4j.Session, data_list: List[Dict[str, Optional[str]]], project_id: str, update_tag: int) -> None:
+def load_bigtable_clusters(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_bigtable_clusters_tx, data_list, project_id, update_tag)
 
 
@@ -275,7 +274,7 @@ def _load_bigtable_clusters_tx(tx: neo4j.Transaction, bigtable_clusters: List[Di
 
 
 @timeit
-def load_bigtable_cluster_backups(session: neo4j.Session, data_list: List[Dict[str, Optional[str]]], project_id: str, update_tag: int) -> None:
+def load_bigtable_cluster_backups(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_bigtable_cluster_backups_tx, data_list, project_id, update_tag)
 
 
@@ -323,7 +322,7 @@ def _load_bigtable_cluster_backups_tx(tx: neo4j.Transaction, bigtable_cluster_ba
 
 
 @timeit
-def load_bigtable_tables(session: neo4j.Session, data_list: List[Dict[str, Optional[str]]], project_id: str, update_tag: int) -> None:
+def load_bigtable_tables(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_bigtable_tables_tx, data_list, project_id, update_tag)
 
 
@@ -412,16 +411,16 @@ def sync_bigtable(
     """
     logger.info("Syncing GCP Cloud Bigtable for project %s.", project_id)
     # BIGTABLE INSTANCES
-    bigtableinstances = get_bigtable_instances(bigtable, project_id)
-    load_bigtable_instances(neo4j_session, bigtableinstances, project_id, gcp_update_tag)
+    bigtable_instances = get_bigtable_instances(bigtable, project_id)
+    load_bigtable_instances(neo4j_session, bigtable_instances, project_id, gcp_update_tag)
     # BIGTABLE CLUSTERS
-    bigtableclusters = get_bigtable_clusters(bigtable, bigtableinstances, project_id)
-    load_bigtable_clusters(neo4j_session, bigtableclusters, project_id, gcp_update_tag)
+    bigtable_clusters = get_bigtable_clusters(bigtable, bigtable_instances, project_id)
+    load_bigtable_clusters(neo4j_session, bigtable_clusters, project_id, gcp_update_tag)
     # BIGTABLE CLUSTER BACKUPS
-    clusterbackups = get_bigtable_cluster_backups(bigtable, bigtableclusters, project_id)
-    load_bigtable_cluster_backups(neo4j_session, clusterbackups, project_id, gcp_update_tag)
+    cluster_backups = get_bigtable_cluster_backups(bigtable, bigtable_clusters, project_id)
+    load_bigtable_cluster_backups(neo4j_session, cluster_backups, project_id, gcp_update_tag)
     # BIGTABLE TABLES
-    bigtabletables = get_get_bigtable_tables(bigtable, bigtableinstances, project_id)
-    load_bigtable_tables(neo4j_session, bigtabletables, project_id, gcp_update_tag)
+    bigtable_tables = get_get_bigtable_tables(bigtable, bigtable_instances, project_id)
+    load_bigtable_tables(neo4j_session, bigtable_tables, project_id, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_bigtable(neo4j_session, common_job_parameters)

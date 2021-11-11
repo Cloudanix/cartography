@@ -2,7 +2,6 @@ import json
 import logging
 from typing import Dict
 from typing import List
-from typing import Optional
 
 import neo4j
 from googleapiclient.discovery import HttpError
@@ -95,7 +94,7 @@ def get_firestore_indexes(firestore: Resource, firestore_databases: List[Dict], 
 
 
 @timeit
-def load_firestore_databases(session: neo4j.Session, data_list: List[Dict[str, Optional[str]]], project_id: str, update_tag: int) -> None:
+def load_firestore_databases(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_firestore_databases_tx, data_list, project_id, update_tag)
 
 
@@ -140,7 +139,7 @@ def _load_firestore_databases_tx(tx: neo4j.Transaction, firestore_databases: Lis
 
 
 @timeit
-def load_firestore_indexes(session: neo4j.Session, data_list: List[Dict[str, Optional[str]]], project_id: str, update_tag: int) -> None:
+def load_firestore_indexes(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_firestore_indexes_tx, data_list, project_id, update_tag)
 
 
@@ -227,10 +226,10 @@ def sync_firestore(
     """
     logger.info("Syncing GCP Cloud Firestore for project %s.", project_id)
     # FIRESTORE DATABASES
-    firestoredatabases = get_firestore_databases(firestore, project_id)
-    load_firestore_databases(neo4j_session, firestoredatabases, project_id, gcp_update_tag)
+    firestore_databases = get_firestore_databases(firestore, project_id)
+    load_firestore_databases(neo4j_session, firestore_databases, project_id, gcp_update_tag)
     # FIRESTORE INDEXES
-    firestoreindexes = get_firestore_indexes(firestore, firestoredatabases, project_id)
-    load_firestore_indexes(neo4j_session, firestoreindexes, project_id, gcp_update_tag)
+    firestore_indexes = get_firestore_indexes(firestore, firestore_databases, project_id)
+    load_firestore_indexes(neo4j_session, firestore_indexes, project_id, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_firestore(neo4j_session, common_job_parameters)
