@@ -2,7 +2,6 @@ import json
 import logging
 from typing import Dict
 from typing import List
-from typing import Optional
 
 import neo4j
 from googleapiclient.discovery import HttpError
@@ -97,7 +96,7 @@ def get_sql_users(sql: Resource, sql_instances: List[Dict], project_id: str) -> 
 
 
 @timeit
-def load_sql_instances(session: neo4j.Session, data_list: List[Dict[str, Optional[str]]], project_id: str, update_tag: int) -> None:
+def load_sql_instances(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_sql_instances_tx, data_list, project_id, update_tag)
 
 
@@ -151,7 +150,7 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
 
 
 @timeit
-def load_sql_users(session: neo4j.Session, data_list: List[Dict[str, Optional[str]]], project_id: str, update_tag: int) -> None:
+def load_sql_users(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_sql_users_tx, data_list, project_id, update_tag)
 
 
@@ -246,5 +245,4 @@ def sync_sql(
     # SQL USERS
     users = get_sql_users(sql, project_id, sqlinstances)
     load_sql_users(neo4j_session, users, project_id, gcp_update_tag)
-    # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_sql(neo4j_session, common_job_parameters)

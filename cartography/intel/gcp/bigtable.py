@@ -422,5 +422,4 @@ def sync_bigtable(
     # BIGTABLE TABLES
     bigtable_tables = get_get_bigtable_tables(bigtable, bigtable_instances, project_id)
     load_bigtable_tables(neo4j_session, bigtable_tables, project_id, gcp_update_tag)
-    # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_bigtable(neo4j_session, common_job_parameters)

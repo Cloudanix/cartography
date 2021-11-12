@@ -231,5 +231,4 @@ def sync_firestore(
     # FIRESTORE INDEXES
     firestore_indexes = get_firestore_indexes(firestore, firestore_databases, project_id)
     load_firestore_indexes(neo4j_session, firestore_indexes, project_id, gcp_update_tag)
-    # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_firestore(neo4j_session, common_job_parameters)
