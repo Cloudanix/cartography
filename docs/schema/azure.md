@@ -100,7 +100,7 @@
   - [Relationships](#relationships-46)
 - [AzurePublicIPAddress](#azurepublicipaddress)
   - [Relationships](#relationships-47)
-- [AzureNetworkUsege](#azurenetworkusege)
+- [AzureNetworkUsage](#azurenetworkusage)
   - [Relationships](#relationships-48)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -1437,9 +1437,9 @@ Representation of an [AzurePublicIPAddress](https://docs.microsoft.com/en-us/res
         (AzureSubscription)-[RESOURCE]->(AzurePublicIPAddress)
         ```
 
-## AzureNetworkUsege
+## AzureNetworkUsage
 
-Representation of an [AzureNetworkUsege](https://docs.microsoft.com/en-us/rest/api/virtualnetwork/virtual-networks/list-usage).
+Representation of an [AzureNetworkUsage](https://docs.microsoft.com/en-us/rest/api/virtualnetwork/virtual-networks/list-usage).
 
 | Field | Description |
 |-------|-------------|
@@ -1451,8 +1451,8 @@ Representation of an [AzureNetworkUsege](https://docs.microsoft.com/en-us/rest/a
 
 ### Relationships
 
-- Azure Network contains one or more Useges.
+- Azure Network contains one or more Usages.
 
         ```
-        (AzureNetwork)-[CONTAIN]->(AzureNetworkUsege)
+        (AzureNetwork)-[CONTAIN]->(AzureNetworkUsage)
         ```

@@ -439,7 +439,7 @@ def test_load_network_usages(neo4j_session):
 
     nodes = neo4j_session.run(
         """
-        MATCH (r:AzureNetworkUsege) RETURN r.id;
+        MATCH (r:AzureNetworkUsage) RETURN r.id;
         """, )
     actual_nodes = {n['r.id'] for n in nodes}
 
@@ -473,7 +473,7 @@ def test_load_network_usage_relationships(neo4j_session):
 
     result = neo4j_session.run(
         """
-        MATCH (n1:AzureNetwork)-[:CONTAIN]->(n2:AzureNetworkUsege) RETURN n1.id, n2.id;
+        MATCH (n1:AzureNetwork)-[:CONTAIN]->(n2:AzureNetworkUsage) RETURN n1.id, n2.id;
         """, )
 
     actual = {(r['n1.id'], r['n2.id']) for r in result}
