@@ -38,6 +38,9 @@
 - [GCPSql](#gcpsql)
   - [Relationships](#relationships-16)
   - [Relationships](#relationships-17)
+- [GCPFirestore](#gcpfirestore)
+  - [Relationships](#relationships-18)
+  - [Relationships](#relationships-19)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -682,6 +685,8 @@ Representation of an IP range or subnet.
 
 ## GCPSQL
 
+## GCP SQL Instances
+
 Representation of [GCP Cloud SQL Instances](https://cloud.google.com/sql/docs/mysql/admin-api/rest/v1/instances)
 
 | Field                           | Description                                                                                             |
@@ -727,3 +732,39 @@ Representation of GCP SQL [Users](https://cloud.google.com/sql/docs/mysql/admin-
     ```
     (GCPSQLInstance)-[USED_BY]<-(GCPSQLUser)
     ```
+
+## GCP Firestore
+
+## GCP Firestore Databases
+
+Representation of [GCP Firestore Databases](https://cloud.google.com/firestore/docs/reference/rest/v1/projects.databases)
+
+| Field                | Description                                                                            |
+|----------------------|----------------------------------------------------------------------------------------|
+| name                 | The resource name of the Database. Format: projects/{project}/databases/{database}     |
+| locationId           | The location of the database.                                                          |
+| type                 | The type of the database.                                                              |
+| concurrencyMode      | The concurrency control mode to use for this database.                                 |
+
+### Relationships
+
+- GCP Firestore Databases are part of GCP Projects
+    ```
+    (GCPProjects)-[Resource]->(GCPFirestoreDatabase)
+    ```
+
+## GCP Firestore Indexes
+
+Representation of [GCP Firestore Indexes](https://cloud.google.com/firestore/docs/reference/rest/v1/projects.databases.collectionGroups.indexes)
+
+| Field              | Description                                                                                                                                                                                      |
+|--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| name               | Output only. A server defined name for this index.                                                                                                                                               |
+| queryScope         | Indexes with a collection query scope specified allow queries against a collection that is the child of a specific document, specified at query time, and that has the same collection id.       |
+| state              | Output only. The serving state of the index.                                                                                                                                                     |
+
+### Relationships
+
+- GCP Firestore Indexes are part of Firestore Databases
+    ```
+    (GCPFirestoreDatabase)-[Resource]->(GCPFirestoreIndex)
