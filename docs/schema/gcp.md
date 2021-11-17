@@ -35,6 +35,9 @@
 - [IpRule::IpPermissionInbound::GCPIpRule](#ipruleippermissioninboundgcpiprule)
   - [Relationships](#relationships-14)
 - [IpRange](#iprange)
+- [GCPSql](#gcpsql)
+  - [Relationships](#relationships-16)
+  - [Relationships](#relationships-17)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -675,3 +678,52 @@ Representation of an IP range or subnet.
 	```
 	(GCPIpRule, IpRule, IpPermissionInbound)<-[MEMBER_OF_IP_RULE)-(:IpRange)
 	```
+
+
+## GCPSQL
+
+Representation of [GCP Cloud SQL Instances](https://cloud.google.com/sql/docs/mysql/admin-api/rest/v1/instances)
+
+| Field                           | Description                                                                                             |
+|---------------------------------|---------------------------------------------------------------------------------------------------------|
+| state                           | The current serving state of the Cloud SQL instance.                                                    |
+| databaseVersion                 | The database engine type and version.                                                                   |
+| masterInstanceName              | The name of the instance which will act as primary in the replication setup.                            |
+| maxDiskSize                     | The maximum disk size of the instance in bytes.                                                         |
+| currentDiskSize                 | The current disk usage of the instance in bytes.                                                        |
+| instanceType                    | The instance type.                                                                                      |
+| connectionName                  | Connection name of the Cloud SQL instance used in connection strings.                                   |
+| name                            | Name of the Cloud SQL instance. This does not include the project ID.                                   |
+| region                          | The geographical region.                                                                                |
+| gceZone                         | The Compute Engine zone that the instance is currently serving from.                                    |
+| secondaryGceZone                | The Compute Engine zone that the failover instance is currently serving from for a regional instance.   |
+| satisfiesPzs                    | The status indicating if instance satisfiesPzs. Reserved for future use.                                |
+| createTime                      | The time when the instance was created in RFC 3339 format.                                              |
+
+### Relationships
+
+- GCP SQL Instances are part of GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPSQLInstances)
+    ```
+
+## GCPSQL Users
+
+Representation of GCP SQL [Users](https://cloud.google.com/sql/docs/mysql/admin-api/rest/v1/users)
+
+| Field                   | Description                                                          |
+|-------------------------|----------------------------------------------------------------------|
+| name                    | The name of the user in the Cloud SQL instance.                      |
+| host                    | The host name from which the user can connect.                       |
+| instance                | The name of the Cloud SQL instance.                                  |
+| project                 | The project ID of the project containing the Cloud SQL database.     |
+| type                    | The user type.                                                       |
+
+### Relationships
+
+- GCP SQL Users use SQL Instances
+
+    ```
+    (GCPSQLInstance)-[USED_BY]<-(GCPSQLUser)
+    ```

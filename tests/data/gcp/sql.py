@@ -1,0 +1,49 @@
+CLOUD_SQL_INSTANCES = [
+    {
+        'state': 'RUNNABLE',
+        'databaseVersion': 'MYSQL_5_7',
+        'masterInstanceName': 'instance123',
+        'maxDiskSize': '256GB',
+        'currentDiskSize': '128GB',
+        'instanceType': 'CLOUD_SQL_INSTANCE',
+        'connectionName': 'instance123',
+        'name': 'sqlinstance123',
+        'region': 'us-west',
+        'gceZone': 'us-west-1a',
+        'secondaryGceZone': 'us-west-1b',
+        'satisfiesPzs': True,
+        'createTime': '2021-10-15T16:19:00.094Z'
+    },
+    {
+        'state': 'RUNNABLE',
+        'databaseVersion': 'MYSQL_5_7',
+        'masterInstanceName': 'instance456',
+        'maxDiskSize': '256GB',
+        'currentDiskSize': '128GB',
+        'instanceType': 'CLOUD_SQL_INSTANCE',
+        'connectionName': 'instance456',
+        'name': 'sqlinstance456',
+        'region': 'us-east',
+        'gceZone': 'us-east-1a',
+        'secondaryGceZone': 'us-east-1b',
+        'satisfiesPzs': True,
+        'createTime': '2021-9-9T16:19:00.094Z'
+    },
+]
+
+CLOUD_SQL_USERS = [
+    {
+        'name': 'user123',
+        'host': 'sqlserver123',
+        'instance': 'instance123',
+        'project': 'abcdefg4567',
+        'type': 'databasereader'
+    },
+    {
+        'name': 'user456',
+        'host': 'sqlserver456',
+        'instance': 'instance456',
+        'project': 'abcdefg4567',
+        'type': 'databasewriter'
+    },
+]
