@@ -41,6 +41,11 @@
 - [GCPFirestore](#gcpfirestore)
   - [Relationships](#relationships-18)
   - [Relationships](#relationships-19)
+- [GCPBigtable](#gcpbigtable)
+  - [Relationships](#relationships-20)
+  - [Relationships](#relationships-21)
+  - [Relationships](#relationships-22)
+  - [Relationships](#relationships-23)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -750,7 +755,7 @@ Representation of [GCP Firestore Databases](https://cloud.google.com/firestore/d
 
 - GCP Firestore Databases are part of GCP Projects
     ```
-    (GCPProjects)-[Resource]->(GCPFirestoreDatabase)
+    (GCPProjects)-[RESOURCE]->(GCPFirestoreDatabase)
     ```
 
 ## GCP Firestore Indexes
@@ -767,4 +772,87 @@ Representation of [GCP Firestore Indexes](https://cloud.google.com/firestore/doc
 
 - GCP Firestore Indexes are part of Firestore Databases
     ```
-    (GCPFirestoreDatabase)-[Resource]->(GCPFirestoreIndex)
+    (GCPFirestoreDatabase)-[RESOURCE]->(GCPFirestoreIndex)
+    ```
+
+
+## GCPBigtable
+
+## GCPBigtable Instance
+
+Representation of [GCP Bigtable Instances](https://cloud.google.com/bigtable/docs/reference/admin/rest/v2/projects.instances)
+
+| Field                   | Description                                                                        |
+|-------------------------|------------------------------------------------------------------------------------|
+| name                    | The unique name of the instance.                                                   |
+| displayName             | The descriptive name for this instance as it appears in UIs.                       |
+| state                   | The current state of the instance.                                                 |
+| type                    | The type of the instance. Defaults to PRODUCTION.                                  |
+| createTime 	          | A server-assigned timestamp representing when this Instance was created.           |
+
+### Relationships
+
+- GCP Bigtable Instances are part of GCP Projects
+    ```
+    (GCPProject)-[RESOURCE]->(GCPBigtableInstance)
+    ```
+
+## GCPBigtable Cluster
+
+Representation of [GCP Bigtable Cluster](https://cloud.google.com/bigtable/docs/reference/admin/rest/v2/projects.instances.clusters)
+
+| Field                       | Description                                                                       |
+|-----------------------------|-----------------------------------------------------------------------------------|
+| name                        | The unique name of the cluster.                                                   |
+| location                    | Immutable. The location where this cluster's nodes and storage reside.            |
+| state                       | The current state of the cluster.                                                 |
+| serveNodes                  | The number of nodes allocated to this cluster.                                    |
+| defaultStorageType          | The type of storage used by this cluster to serve its parent instance's tables.   |
+
+### Relationships
+
+- GCP Bigtable Clusters are part of GCP Bigtable Instances
+    ```
+    (GCPBigtableInstance)-[RESOURCE]->(GCPBigtableCluster)
+    ```
+
+## GCPBigtable Cluster Backup
+
+Representation of [GCP Bigtable Cluster Backup](https://cloud.google.com/bigtable/docs/reference/admin/rest/v2/projects.instances.clusters.backups)
+
+| Field                     | Description                                                                         |
+|---------------------------|-------------------------------------------------------------------------------------|
+| name                      | A globally unique identifier for the backup which cannot be changed.                |
+| sourceTable               | Name of the table from which this backup was created.                               |
+| expireTime                | The expiration time of the backup, with microseconds granularity.                   |
+| startTime                 | startTime is the time that the backup was started.                                  |
+| endTime                   | endTime is the time that the backup was finished.                                   |
+| sizeBytes                 | Size of the backup in bytes.                                                        |
+| state                     | The current state of the backup.                                                    |
+
+### Relationships
+
+-GCP Bigtable Cluster Backups are part of Bigtable Cluster
+
+    ```
+    (GCPBigtableCluster)-[RESOURCE]->(GCPBigtableClusterBackup)
+    ```
+
+## GCPBigtable Tables
+
+Representation of [GCP Bigtable Tables](https://cloud.google.com/bigtable/docs/reference/admin/rest/v2/projects.instances.tables)
+
+| Field                      | Description                                                                         |
+|----------------------------|-------------------------------------------------------------------------------------|
+| name                       | The unique name of the table.                                                       |
+| replicationState           | The state of replication for the table in this cluster.                             |
+| granularity                | The granularity (i.e. MILLIS) at which timestamps are stored in this table.         |
+| sourceType                 | The type of the restore source.                                                     |
+
+### Relationships
+
+- GCP Bigtable Tables are part of GCP Bigtable Instances
+    
+    ```
+    (GCPBigtableInstance)-[RESOURCE]->(GCPBigtableTable)
+    ```
