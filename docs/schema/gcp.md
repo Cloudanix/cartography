@@ -35,6 +35,7 @@
 - [IpRule::IpPermissionInbound::GCPIpRule](#ipruleippermissioninboundgcpiprule)
   - [Relationships](#relationships-14)
 - [IpRange](#iprange)
+   - [Relationships](#relationships-15)
 - [GCPSql](#gcpsql)
   - [Relationships](#relationships-16)
   - [Relationships](#relationships-17)
@@ -672,6 +673,8 @@ Representation of an IP range or subnet.
 | firstseen   | Timestamp of when a sync job first discovered this node                  |
 | lastupdated | Timestamp of the last time the node was updated                          |
 | id          | CIDR notation for the IP range. E.g. "0.0.0.0/0" for the whole internet. |
+
+### Relationships
 
 - GCP Firewall rules are defined on IpRange objects.
 
