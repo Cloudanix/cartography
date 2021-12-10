@@ -35,25 +35,68 @@
 - [IpRule::IpPermissionInbound::GCPIpRule](#ipruleippermissioninboundgcpiprule)
   - [Relationships](#relationships-14)
 - [IpRange](#iprange)
+  - [Relationships](#relationships-15)
 - [GCPSQL](#gcpsql)
 - [GCP SQL Instances](#gcp-sql-instances)
-  - [Relationships](#relationships-15)
-- [GCPSQL Users](#gcpsql-users)
   - [Relationships](#relationships-16)
+- [GCPSQL Users](#gcpsql-users)
+  - [Relationships](#relationships-17)
 - [GCP Firestore](#gcp-firestore)
 - [GCP Firestore Databases](#gcp-firestore-databases)
-  - [Relationships](#relationships-17)
-- [GCP Firestore Indexes](#gcp-firestore-indexes)
   - [Relationships](#relationships-18)
+- [GCP Firestore Indexes](#gcp-firestore-indexes)
+  - [Relationships](#relationships-19)
 - [GCPBigtable](#gcpbigtable)
 - [GCPBigtable Instance](#gcpbigtable-instance)
-  - [Relationships](#relationships-19)
-- [GCPBigtable Cluster](#gcpbigtable-cluster)
   - [Relationships](#relationships-20)
-- [GCPBigtable Cluster Backup](#gcpbigtable-cluster-backup)
+- [GCPBigtable Cluster](#gcpbigtable-cluster)
   - [Relationships](#relationships-21)
-- [GCPBigtable Tables](#gcpbigtable-tables)
+- [GCPBigtable Cluster Backup](#gcpbigtable-cluster-backup)
   - [Relationships](#relationships-22)
+- [GCPBigtable Tables](#gcpbigtable-tables)
+  - [Relationships](#relationships-23)
+- [GCP Key Management](#gcp-key-management)
+  - [GCP KMS Locations](#gcp-kms-locations)
+    - [Relationships](#relationships-24)
+  - [GCP KMS Keyrings](#gcp-kms-keyrings)
+    - [Relationships](#relationships-25)
+  - [GCP KMS Crypto Keys](#gcp-kms-crypto-keys)
+    - [Relationships](#relationships-26)
+- [GCP Cloudrun](#gcp-cloudrun)
+  - [GCP Cloudrun Authorized Domains](#gcp-cloudrun-authorized-domains)
+    - [Relationships](#relationships-27)
+  - [GCP Cloudrun Configurations](#gcp-cloudrun-configurations)
+    - [Relationships](#relationships-28)
+  - [GCP Cloudrun Domain Mappings](#gcp-cloudrun-domain-mappings)
+    - [Relationships](#relationships-29)
+  - [GCP Cloudrun Revisions](#gcp-cloudrun-revisions)
+    - [Relationships](#relationships-30)
+  - [GCP Cloudrun Routes](#gcp-cloudrun-routes)
+    - [Relationships](#relationships-31)
+  - [GCP Cloudrun Services](#gcp-cloudrun-services)
+    - [Relationships](#relationships-32)
+- [GCP IAM](#gcp-iam)
+  - [GCP IAM Roles](#gcp-iam-roles)
+    - [Relationships](#relationships-33)
+  - [GCP IAM Service Accounts](#gcp-iam-service-accounts)
+    - [Relationships](#relationships-34)
+  - [GCP IAM Service Account Keys](#gcp-iam-service-account-keys)
+    - [Relationships](#relationships-35)
+  - [GCP Users](#gcp-users)
+    - [Relationships](#relationships-36)
+  - [GCP Groups](#gcp-groups)
+    - [Representation](#representation)
+  - [GCP Domins](#gcp-domins)
+    - [Relationships](#relationships-37)
+- [GCP API Gateway](#gcp-api-gateway)
+  - [GCP API Gateway Locations](#gcp-api-gateway-locations)
+    - [Relationships](#relationships-38)
+  - [GCP APIGATEWAY APIs](#gcp-apigateway-apis)
+    - [Relationships](#relationships-39)
+  - [GCP APIGATEWAY CONFIGS](#gcp-apigateway-configs)
+    - [Relationships](#relationships-40)
+  - [GCP APIGATEWAY GATEWAYS](#gcp-apigateway-gateways)
+    - [Relationships](#relationships-41)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -689,6 +732,9 @@ Representation of an IP range or subnet.
 | lastupdated | Timestamp of the last time the node was updated                          |
 | id          | CIDR notation for the IP range. E.g. "0.0.0.0/0" for the whole internet. |
 
+
+### Relationships
+
 - GCP Firewall rules are defined on IpRange objects.
 
 	```
@@ -863,4 +909,427 @@ Representation of [GCP Bigtable Tables](https://cloud.google.com/bigtable/docs/r
 
     ```
     (GCPBigtableInstance)-[RESOURCE]->(GCPBigtableTable)
+    ```
+
+
+## GCP Key Management
+
+### GCP KMS Locations
+
+Representation of [GCP KMS Locations](https://cloud.google.com/kms/docs/reference/rest/v1/Location)
+
+| Field                 | Description                                                                 |
+|-----------------------|-----------------------------------------------------------------------------|
+| name                  | Resource name for the location, which may vary between implementations.     |
+| locationId            | The canonical id for this location.                                         |
+| displayName           | The friendly name for this location, typically a nearby city name.          |
+
+#### Relationships
+
+- GCP KMS Locations are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPKMSLocation)
+    ```
+
+### GCP KMS Keyrings
+
+Representation of [GCP KMS Keyrings](https://cloud.google.com/kms/docs/reference/rest/v1/projects.locations.keyRings)
+
+| Field                    | Description                                                              |
+|--------------------------|--------------------------------------------------------------------------|
+| name                     | The resource name for the KeyRing.                                       |
+| createTime               | The time at which this KeyRing was created.                              |
+
+#### Relationships
+
+- GCP KMS Keyrings are defined in GCP KMS Locations
+
+    ```
+    (GCPKMSLocation)-[RESOURCE->(GCPKMSKeyring)
+    ```
+
+### GCP KMS Crypto Keys
+
+Representation of [GCP KMS Crypto Keys](https://cloud.google.com/kms/docs/reference/rest/v1/projects.locations.keyRings.cryptoKeys)
+
+| Field                        | Description                                                                                     |
+|------------------------------|-------------------------------------------------------------------------------------------------|
+| name                         | The resource name for this CryptoKey.                                                           |
+| purpose                      | The immutable purpose of this CryptoKey.                                                        |
+| createTime                   | The time at which this CryptoKey was created.                                                   |
+| nextRotationTime             | At nextRotationTime, the Key Management Service will automatically:                             |
+|                              | 1.Create a new version of this CryptoKey.                                                       |
+|                              | 2.Mark the new version as primary.                                                              |
+| rotationPeriod               | nextRotationTime will be advanced by this period when the service automatically rotates a key.  |
+
+#### Relationships
+
+- GCP Crypto Keys are defined in GCP Keyrings
+
+    ```
+    (GCPKMSKeyring)-[RESOURCE]->(GCPKMSCryptokey)
+    ```
+
+
+## GCP Cloudrun
+
+### GCP Cloudrun Authorized Domains
+
+Representation of [GCP Cloudrun Authorized Domains](https://cloud.google.com/run/docs/reference/rest/v1/namespaces.authorizeddomains/list)
+
+| Field                | Description                                        |
+|----------------------|----------------------------------------------------|
+| id                   | Relative name of the domain authorized for use.    |
+
+#### Relationships
+
+- GCP Cloudrun Authorized Domains are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPCloudRunAuthorizedDomains)
+    ```
+
+### GCP Cloudrun Configurations
+
+Representation of [GCP Cloudrun Configurations](https://cloud.google.com/run/docs/reference/rest/v1/namespaces.configurations)
+
+| Field                     | Description                                                                                                                                             |
+|---------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| name                      | Name must be unique within a namespace, within a Cloud Run region.                                                                                      |
+| namspace                  | Namespace defines the space within each name must be unique, within a Cloud Run region.                                                                 |
+| selfLink                  | SelfLink is a URL representing this object.                                                                                                             |
+| uid                       | UID is the unique in time and space value for this object.                                                                                              |
+| resourceVersion           | An opaque value that represents the internal version of this object.                                                                                    |
+| creationTimestamp         | CreationTimestamp is a timestamp representing the server time when this object was created.                                                             |
+| deletionTimestamp         | DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted.                                                                     |
+| clusterName               | The name of the cluster which the object belongs to.                                                                                                    |
+| observedGeneration        | ObservedGeneration is the 'Generation' of the Configuration that was last processed by the controller.                                                  |
+| latestCreatedRevisionName | LatestCreatedRevisionName is the last revision that was created from this Configuration.                                                                |
+| latestReadyRevisionName   | LatestReadyRevisionName holds the name of the latest Revision stamped out from this Configuration that has had its "Ready" condition become "True".     |
+
+#### Relationships
+
+- GCP Cloudrun Configurations are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPCloudRunConfigurations)
+    ```
+
+### GCP Cloudrun Domain Mappings
+
+Representation of [GCP Cloudrun Domain Mappings](https://cloud.google.com/run/docs/reference/rest/v1/namespaces.domainmappings)
+
+| Field                        | Description                                                                                                                                          |
+|------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| name                         | Name must be unique within a namespace, within a Cloud Run region.                                                                                   |
+| namespace                    | Namespace defines the space within each name must be unique, within a Cloud Run region.                                                              |
+| selfLink                     | SelfLink is a URL representing this object.                                                                                                          |
+| uid                          | UID is the unique in time and space value for this object.                                                                                           |
+| resourceVersion              | An opaque value that represents the internal version of this object.                                                                                 |
+| creationTimestamp            | CreationTimestamp is a timestamp representing the server time when this object was created.                                                          |
+| deletionTimestamp            | DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted.                                                                  |
+| routeName                    | The name of the Knative Route that this DomainMapping applies to. The route must exist.                                                              |
+| certificateMode              | The mode of the certificate.                                                                                                                         |
+| forceOverride                | If set, the mapping will override any mapping set before this spec was set.                                                                          |
+
+#### Relationships
+
+- GCP Cloudrun Domain Mappings are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPCloudRunDomainMappings)
+    ```
+
+### GCP Cloudrun Revisions
+
+Representation of [GCP Cloudrun Revisions](https://cloud.google.com/run/docs/reference/rest/v1/namespaces.revisions)
+
+| Field                         | Description                                                                                                                     |
+|-------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| name                          | Name must be unique within a namespace, within a Cloud Run region.                                                              |
+| namespace                     | Namespace defines the space within each name must be unique, within a Cloud Run region.                                         |
+| selfLink                      | SelfLink is a URL representing this object.                                                                                     |
+| uid                           | UID is the unique in time and space value for this object.                                                                      |
+| resourceVersion               | An opaque value that represents the internal version of this object.                                                            |
+| creationTimestamp             | CreationTimestamp is a timestamp representing the server time when this object was created.                                     |
+| deletionTimestamp             | DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted.                                             |
+| containerConcurrency          | ContainerConcurrency specifies the maximum allowed in-flight (concurrent) requests per container instance of the Revision.      |
+| timeoutSeconds                | TimeoutSeconds holds the max duration the instance is allowed for responding to a request.                                      |
+
+#### Relationships
+
+- GCP Cloudrun Revisions are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPCloudRunRevisions)
+    ```
+
+### GCP Cloudrun Routes
+
+Representation of [GCP Cloudrun Routes](https://cloud.google.com/run/docs/reference/rest/v1/namespaces.routes)
+
+| Field                           | Description                                                                                                                   |
+|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| name                            | Name must be unique within a namespace, within a Cloud Run region.                                                            |
+| namespace                       | Namespace defines the space within each name must be unique, within a Cloud Run region.                                       |
+| selfLink                        | SelfLink is a URL representing this object.                                                                                   |
+| uid                             | UID is the unique in time and space value for this object.                                                                    |
+| resourceVersion                 | An opaque value that represents the internal version of this object.                                                          |
+| creationTimestamp               | CreationTimestamp is a timestamp representing the server time when this object was created.                                   |
+| deletionTimestamp               | DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted.                                           |
+| observedGeneration              | ObservedGeneration is the 'Generation' of the Route that was last processed by the controller.                                |
+| url                             | URL holds the url that will distribute traffic over the provided traffic targets.                                             |
+
+#### Relationships
+
+- GCP Cloudrun Routes are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPCloudRunRoutes)
+    ```
+
+### GCP Cloudrun Services
+
+Representaion of [GCP Cloudrun Services](https://cloud.google.com/run/docs/reference/rest/v1/namespaces.services)
+
+| Field                             | Description                                                                                                                                                                                 |
+|-----------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| name                              | Name must be unique within a namespace, within a Cloud Run region.                                                                                                                          |
+| namespace                         | Namespace defines the space within each name must be unique, within a Cloud Run region.                                                                                                     |
+| selfLink                          | SelfLink is a URL representing this object.                                                                                                                                                 |
+| uid                               | UID is the unique in time and space value for this object.                                                                                                                                  |
+| resourceVersion                   | An opaque value that represents the internal version of this object.                                                                                                                        |
+| creationTimestamp                 | CreationTimestamp is a timestamp representing the server time when this object was created.                                                                                                 |
+| deletionTimestamp                 | DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted.                                                                                                         |
+| observedGeneration                | ObservedGeneration is the 'Generation' of the Route that was last processed by the controller.                                                                                              |
+| latestReadyRevisionName           | From ConfigurationStatus. LatestReadyRevisionName holds the name of the latest Revision stamped out from this Service's Configuration that has had its "Ready" condition become "True".     |
+| latestCreatedRevisionName         | From ConfigurationStatus. LatestCreatedRevisionName is the last revision that was created from this Service's Configuration.                                                                |
+
+#### Relationships
+
+- GCP Cloudrun Services are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPCloudRunServices)
+
+## GCP IAM
+
+### GCP IAM Roles
+
+Representation of [GCP IAM Roles](https://cloud.google.com/iam/docs/reference/rest/v1/roles)
+
+| Field                 | Description                                                                |
+|-----------------------|----------------------------------------------------------------------------|
+| name                  | The name of the role.                                                      |
+| title                 | A human-readable title for the role.                                       |
+| description           | A human-readable description for the role.                                 |
+| deleted               | The current deleted state of the role.                                     |
+| includedPermissions   | The names of the permissions this role grants when bound in an IAM policy. |
+
+#### Relationships
+
+- GCP IAM roles are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPIAMRoles)
+    ```
+
+### GCP IAM Service Accounts
+
+Representation of [GCP IAM Service Accounts](https://cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts)
+
+| Field                 | Description                                                           |
+|-----------------------|-----------------------------------------------------------------------|
+| name                  | The resource name of the service account.                             |
+| projectId             | The ID of the project that owns the service account.                  |
+| uniqueId              | The unique, stable numeric ID for the service account.                |
+| displayName           | A user-specified, human-readable name for the service account.        |
+| disabled              | Whether the service account is disabled.                              |
+
+#### Relationships
+
+- GCP IAM Service Accounts are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPIAMServiceAccounts)
+    ```
+
+### GCP IAM Service Account Keys
+
+Representation of [GCP IAM Service Account Keys](https://cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts.keys)
+
+| Field                   | Description                                                           |
+|-------------------------|-----------------------------------------------------------------------|
+| name                    | The resource name of the service account key                          |
+| keyType                 | The key type.                                                         |
+| keyOrigin               | The key origin.                                                       |
+| keyAlgorithm            | Specifies the algorithm (and possibly key size) for the key.          |
+| validBeforeTime         | The key can be used before this timestamp.                            |
+| validAfterTime          | The key can be used after this timestamp.                             |
+
+#### Relationships
+
+GCP IAM Service Account keys are defined in Service Accounts
+
+    ```
+    (GCPServiceAccounts)-[HAS_KEY]->(GCPServiceAccountKeys)
+    ```
+
+### GCP Users
+
+Representation of [GCP Users](https://developers.google.com/admin-sdk/directory/reference/rest/v1/users)
+
+| Field                     | Description                                                                                                       |
+|---------------------------|-------------------------------------------------------------------------------------------------------------------|
+| id                        | The unique ID for the user.                                                                                       |
+| primaryEmail              | The user's primary email address.                                                                                 |
+| isAdmin                   | Indicates a user with super admininistrator privileges.                                                           |
+| isDelegatedAdmin          | Indicates if the user is a delegated administrator.                                                               |
+| agreedToTerms             | This property is true if the user has completed an initial login and accepted the Terms of Service agreement.     |
+| suspended                 | Indicates if user is suspended.                                                                                   |
+| changePasswordAtNextLogin | Indicates if the user is forced to change their password at next login                                            |
+| ipWhitelisted             | If true, the user's IP address is whitelisted.                                                                    |
+| name                      | Holds the given and family names of the user, and the read-only fullName value                                    |
+| isMailboxSetup            | Indicates if the user's Google mailbox is created.                                                                |
+| customerId                | The customer ID to retrieve all account users.                                                                    |
+| addresses                 | A list of the user's addresses.                                                                                   |
+| organizations             | A list of organizations the user belongs to.                                                                      |
+| lastLoginTim              | The last time the user logged into the user's account.                                                            |
+| suspensionReason          | Has the reason a user account is suspended either by the administrator or by Google at the time of suspension.    |
+| creationTime              | The time the user's account was created.                                                                          |
+| deletionTime              | The time the user's account was deleted.                                                                          |
+| gender                    | A nested object containing the user's gender.                                                                     |
+
+
+#### Relationships
+
+GCP Users are defined for Customers
+
+    ```
+    (GCPCustomer)-[HAS_USER]->(GCPUSer)
+    ```
+
+
+### GCP Groups
+
+Representation of [GCP Groups](https://developers.google.com/admin-sdk/directory/reference/rest/v1/groups)
+
+| Field                 | Description                                                     |
+|-----------------------|-----------------------------------------------------------------|
+| id                    | The unique ID of a group.                                       |
+| groupEmail            | The group's email address.                                      |
+| adminCreated          | Value is true if this group was created by an administrator.    |
+| directMembersCount    | The number of users that are direct members of the group.       |
+
+#### Representation
+
+GCP Groups are defined for GCP Customers
+
+    ```
+    (GCPCusteomers)-[HAS_GROUPS]->(GCPGroups)
+    ```
+
+### GCP Domins
+
+Representation of [GCP Domains](https://developers.google.com/admin-sdk/directory/reference/rest/v1/domains)
+
+| Field             | Description                                                         |
+|-------------------|---------------------------------------------------------------------|
+| parentDomainName  | The parent domain name that the domain alias is associated with.    |
+| domainAliasName   | The domain alias name.                                              |
+| verified          | Indicates the verification state of a domain.                       |
+| isPrimary         | Indicates if the domain is a primary domain.                        |
+| domainName        | The domain name of the customer.                                    |
+
+#### Relationships
+
+GCP Domains are defined in GCP Customers
+
+    ```
+    (GCPCustomers)-[HAS_DOMAIN]->(GCPDomains)
+    ```
+
+## GCP API Gateway
+
+### GCP API Gateway Locations
+
+Representation of [GCP API Gateway Locations](https://cloud.google.com/api-gateway/docs/reference/rest/v1/projects.locations.apis)
+
+| Field                   | Description                                                     |
+|-------------------------|-----------------------------------------------------------------|
+| name                    | Resource name for the location.                                 |
+| locationId              | The canonical id for this location.                             |
+| displayName             | The friendly name for this location.                            |
+
+#### Relationships
+
+GCP APIGateway Locations are specified in GCP Projects
+
+    ```
+    (GCPProjects)-[RESOURCE]->(GCPLocations)
+    ```
+
+### GCP APIGATEWAY APIs
+
+Representation of [GCP APIGateway APIs](https://cloud.google.com/api-gateway/docs/reference/rest/v1/projects.locations.apis)
+
+| Field                  | Description                                                          |
+|------------------------|----------------------------------------------------------------------|
+| name                   | Resource name of the API.                                            |
+| createTime             | Created time.                                                        |
+| updateTime             | Updated time.                                                        |
+| displayName            | Display name.                                                        |
+| managedService         | The name of a Google Managed Service                                 |
+
+#### Relationships
+
+GCP APIGateway APIs are defined in GCP Projects
+
+    ```
+    (GCPProjects)-[HAS_API_ENABLED]->(GCPAPI)
+    ```
+
+### GCP APIGATEWAY CONFIGS
+
+Representation of [GCP API Gateway Configs](https://cloud.google.com/api-gateway/docs/reference/rest/v1/projects.locations.apis.configs)
+
+| Field                      | Description                                                      |
+|----------------------------|------------------------------------------------------------------|
+| name                       | Resource name of the API Config.                                 |
+| createTime                 | Created time.                                                    |
+| updateTime                 | Updated time.                                                    |
+| displayName                | Display name.                                                    |
+| gatewayServiceAccount      | The Google Cloud IAM Service Account.                            |
+| serviceConfigId            | The ID of the associated Service Config.                         |
+| state                      | State of the API Config.                                         |
+
+#### Relationships
+
+GCP API Configs are defined in GCP APIs
+
+    ```
+    (GCPAPIs)-[HAS_CONFIG]->(GCPAPIConfigs)
+    ```
+
+### GCP APIGATEWAY GATEWAYS
+
+Representation of [GCP APIGateway Gateways](https://cloud.google.com/api-gateway/docs/reference/rest/v1/projects.locations.gateways)
+
+| Field                     | Description                                                          |
+|---------------------------|----------------------------------------------------------------------|
+| name                      | Resource name of the Gateway.                                        |
+| createTime                | Created time.                                                        |
+| updateTime                | Updated time.                                                        |
+| displayName               | Display name.                                                        |
+| apiConfig                 | Resource name of the API Config for this Gateway.                    |
+| state                     | The current state of the Gateway.                                    |
+| defaultHostname           | The default API Gateway host name .                                  |
+
+#### Relationships
+
+GCP APIGateway gateways are defined in GCP APIGateways API Configs
+
+    ```
+    (GCPAPIConfigs)-[HAS_GATEWAY]->(GCPAPIGateway)
     ```
