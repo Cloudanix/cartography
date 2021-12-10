@@ -35,17 +35,25 @@
 - [IpRule::IpPermissionInbound::GCPIpRule](#ipruleippermissioninboundgcpiprule)
   - [Relationships](#relationships-14)
 - [IpRange](#iprange)
-- [GCPSql](#gcpsql)
+- [GCPSQL](#gcpsql)
+- [GCP SQL Instances](#gcp-sql-instances)
+  - [Relationships](#relationships-15)
+- [GCPSQL Users](#gcpsql-users)
   - [Relationships](#relationships-16)
+- [GCP Firestore](#gcp-firestore)
+- [GCP Firestore Databases](#gcp-firestore-databases)
   - [Relationships](#relationships-17)
-- [GCPFirestore](#gcpfirestore)
+- [GCP Firestore Indexes](#gcp-firestore-indexes)
   - [Relationships](#relationships-18)
-  - [Relationships](#relationships-19)
 - [GCPBigtable](#gcpbigtable)
+- [GCPBigtable Instance](#gcpbigtable-instance)
+  - [Relationships](#relationships-19)
+- [GCPBigtable Cluster](#gcpbigtable-cluster)
   - [Relationships](#relationships-20)
+- [GCPBigtable Cluster Backup](#gcpbigtable-cluster-backup)
   - [Relationships](#relationships-21)
+- [GCPBigtable Tables](#gcpbigtable-tables)
   - [Relationships](#relationships-22)
-  - [Relationships](#relationships-23)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -852,7 +860,7 @@ Representation of [GCP Bigtable Tables](https://cloud.google.com/bigtable/docs/r
 ### Relationships
 
 - GCP Bigtable Tables are part of GCP Bigtable Instances
-    
+
     ```
     (GCPBigtableInstance)-[RESOURCE]->(GCPBigtableTable)
     ```

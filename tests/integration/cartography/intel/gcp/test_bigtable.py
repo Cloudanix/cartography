@@ -128,7 +128,7 @@ def test_bigtable_instance_relationship(neo4j_session):
 
     expected = {
         (TEST_PROJECT_NUMBER, 'instance123'),
-        (TEST_PROJECT_NUMBER, 'instance456')
+        (TEST_PROJECT_NUMBER, 'instance456'),
     }
 
     # Fetch relationships
@@ -166,13 +166,13 @@ def test_bigtable_cluster_relationship(neo4j_session):
 
     expected = {
         ('instance123', 'cluster123'),
-        ('instance456', 'cluster456')
+        ('instance456', 'cluster456'),
     }
 
     # Fetch relationships
     result = neo4j_session.run(
         """
-        MATCH (n1:GCPBigtableInstance)-[:RESOURCE]->(n2:GCPBigtableCluster) RETURN n1.id, n2.id;
+        MATCH (n1:GCPBigtableInstance)-[:HAS_CLUSTER]->(n2:GCPBigtableCluster) RETURN n1.id, n2.id;
         """,
     )
 
@@ -204,13 +204,13 @@ def test_bigtable_cluster_backup_relationship(neo4j_session):
 
     expected = {
         ('cluster123', 'clusterbackup123'),
-        ('cluster456', 'clusterbackup456')
+        ('cluster456', 'clusterbackup456'),
     }
 
     # Fetch relationships
     result = neo4j_session.run(
         """
-        MATCH (n1:GCPBigtableCluster)-[:RESOURCE]->(n2:GCPBigtableClusterBackup) RETURN n1.id, n2.id;
+        MATCH (n1:GCPBigtableCluster)-[:HAS_BACKUP]->(n2:GCPBigtableClusterBackup) RETURN n1.id, n2.id;
         """,
     )
 
@@ -242,13 +242,13 @@ def test_bigtable_table_relationship(neo4j_session):
 
     expected = {
         ('instance123', 'table123'),
-        ('instance456', 'table456')
+        ('instance456', 'table456'),
     }
 
     # Fetch relationships
     result = neo4j_session.run(
         """
-        MATCH (n1:GCPBigtableInstance)-[:RESOURCE]->(n2:GCPBigtableTable) RETURN n1.id, n2.id;
+        MATCH (n1:GCPBigtableInstance)-[:HAS_TABLE]->(n2:GCPBigtableTable) RETURN n1.id, n2.id;
         """,
     )
 

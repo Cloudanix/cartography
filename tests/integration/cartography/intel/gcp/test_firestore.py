@@ -42,7 +42,7 @@ def test_load_firestore_indexes(neo4j_session):
 
     expected_nodes = {
         'index123',
-        'index456'
+        'index456',
     }
 
     nodes = neo4j_session.run(
@@ -79,7 +79,7 @@ def test_firestore_database_relationship(neo4j_session):
 
     expected = {
         (TEST_PROJECT_NUMBER, 'firestoredatabase123'),
-        (TEST_PROJECT_NUMBER, 'firestoredatabase456')
+        (TEST_PROJECT_NUMBER, 'firestoredatabase456'),
     }
 
     # Fetch relationships
@@ -117,13 +117,13 @@ def test_firestore_indexes_relationship(neo4j_session):
 
     expected = {
         ('firestoredatabase123', 'index123'),
-        ('firestoredatabase456', 'index456')
+        ('firestoredatabase456', 'index456'),
     }
 
     # Fetch relationships
     result = neo4j_session.run(
         """
-        MATCH (n1:GCPFirestoreDatabase)-[:USED_BY]->(n2:GCPFirestoreIndex) RETURN n1.id, n2.id;
+        MATCH (n1:GCPFirestoreDatabase)-[:HAS_INDEX]->(n2:GCPFirestoreIndex) RETURN n1.id, n2.id;
         """,
     )
 

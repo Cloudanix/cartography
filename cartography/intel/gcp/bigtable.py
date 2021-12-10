@@ -43,7 +43,8 @@ def get_bigtable_instances(bigtable: Resource, project_id: str) -> List[Dict]:
         if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
             logger.warning(
                 (
-                    "Could not retrieve Bigtable Instances on project %s due to permissions issues. Code: %s, Message: %s"
+                    "Could not retrieve Bigtable Instances on project %s due to permissions issues.\
+                         Code: %s, Message: %s"
                 ), project_id, err['code'], err['message'],
             )
             return []
@@ -71,7 +72,9 @@ def get_bigtable_clusters(bigtable: Resource, bigtable_instances: List[Dict], pr
     for instance in bigtable_instances:
         try:
             bigtable_clusters = []
-            request = bigtable.projects().instances().clusters().list(parent=f"projects/{project_id}/instances/{instance['name']}")
+            request = bigtable.projects().instances().clusters().list(
+                parent=f"projects/{project_id}/instances/{instance['name']}",
+            )
             while request is not None:
                 response = request.execute()
                 if response.get('clusters', []):
@@ -80,19 +83,22 @@ def get_bigtable_clusters(bigtable: Resource, bigtable_instances: List[Dict], pr
                         cluster['instance_name'] = instance.get('name')
                         cluster['id'] = cluster['name']
                         bigtable_clusters.append(cluster)
-                request = bigtable.projects().instances().clusters().list_next(previous_request=request, previous_response=response)
-            return bigtable_clusters
+                request = bigtable.projects().instances().clusters().list_next(
+                    previous_request=request, previous_response=response,
+                )
         except HttpError as e:
             err = json.loads(e.content.decode('utf-8'))['error']
             if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
                 logger.warning(
                     (
-                        "Could not retrieve Bigtable Instance Clusters on project %s due to permissions issues. Code: %s, Message: %s"
+                        "Could not retrieve Bigtable Instance Clusters on project %s due to permissions issues.\
+                            Code: %s, Message: %s"
                     ), project_id, err['code'], err['message'],
                 )
                 return []
             else:
                 raise
+    return bigtable_clusters
 
 
 @timeit
@@ -115,7 +121,9 @@ def get_bigtable_cluster_backups(bigtable: Resource, bigtable_clusters: List[Dic
     for cluster in bigtable_clusters:
         try:
             cluster_backups = []
-            request = bigtable.projects().instances().clusters().backup().list(parent=f"projects/{project_id}/instances/{cluster['instance_name']}/clusters/{cluster['name']}")
+            request = bigtable.projects().instances().clusters().backup().list(
+                parent=f"projects/{project_id}/instances/{cluster['instance_name']}/clusters/{cluster['name']}",
+            )
             while request is not None:
                 response = request.execute()
                 if response.get('backups', []):
@@ -123,19 +131,22 @@ def get_bigtable_cluster_backups(bigtable: Resource, bigtable_clusters: List[Dic
                         backup['cluster_id'] = cluster['id']
                         backup['id'] = backup['name']
                         cluster_backups.append(backup)
-                request = bigtable.projects().instances().clusters().backup().list_next(previous_request=request, previous_response=response)
-            return cluster_backups
+                request = bigtable.projects().instances().clusters().backup().list_next(
+                    previous_request=request, previous_response=response,
+                )
         except HttpError as e:
             err = json.loads(e.content.decode('utf-8'))['error']
             if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
                 logger.warning(
                     (
-                        "Could not retrieve Bigtable Instance Clusters Backups on project %s due to permissions issues. Code: %s, Message: %s"
+                        "Could not retrieve Bigtable Instance Clusters Backups on project %s due to permissions issues.\
+                             Code: %s, Message: %s"
                     ), project_id, err['code'], err['message'],
                 )
                 return []
             else:
                 raise
+    return cluster_backups
 
 
 @timeit
@@ -158,7 +169,9 @@ def get_get_bigtable_tables(bigtable: Resource, bigtable_instances: List[Dict], 
     for instance in bigtable_instances:
         try:
             bigtable_tables = []
-            request = bigtable.projects().instances().tables().list(parent=f"projects/{project_id}/instances/{instance['name']}")
+            request = bigtable.projects().instances().tables().list(
+                parent=f"projects/{project_id}/instances/{instance['name']}",
+            )
             while request is not None:
                 response = request.execute()
                 if response.get('tables', []):
@@ -166,19 +179,22 @@ def get_get_bigtable_tables(bigtable: Resource, bigtable_instances: List[Dict], 
                         table['instance_id'] = instance['id']
                         table['id'] = table['name']
                         bigtable_tables.append(table)
-                request = bigtable.projects().instances().tables().list_next(previous_request=request, previous_response=response)
-            return bigtable_tables
+                request = bigtable.projects().instances().tables().list_next(
+                    previous_request=request, previous_response=response,
+                )
         except HttpError as e:
             err = json.loads(e.content.decode('utf-8'))['error']
             if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
                 logger.warning(
                     (
-                        "Could not retrieve Bigtable Instance Tables on project %s due to permissions issues. Code: %s, Message: %s"
+                        "Could not retrieve Bigtable Instance Tables on project %s due to permissions issues.\
+                             Code: %s, Message: %s"
                     ), project_id, err['code'], err['message'],
                 )
                 return []
             else:
                 raise
+    return bigtable_tables
 
 
 @timeit
@@ -187,7 +203,10 @@ def load_bigtable_instances(session: neo4j.Session, data_list: List[Dict], proje
 
 
 @timeit
-def _load_bigtable_instances_tx(tx: neo4j.Transaction, bigtable_instances: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def _load_bigtable_instances_tx(
+    tx: neo4j.Transaction, bigtable_instances: List[Dict],
+    project_id: str, gcp_update_tag: int,
+) -> None:
     """
         :type neo4j_transaction: Neo4j transaction object
         :param neo4j transaction: The Neo4j transaction object
@@ -203,7 +222,7 @@ def _load_bigtable_instances_tx(tx: neo4j.Transaction, bigtable_instances: List[
     """
     ingest_bigtable_instances = """
     UNWIND {bigtable_instances} as instance
-    MERGE (i:GCPBigtableInstance{id:{instance.id}})
+    MERGE (i:GCPBigtableInstance{id:instance.id})
     ON CREATE SET
         i.firstseen = timestamp()
     SET
@@ -233,7 +252,10 @@ def load_bigtable_clusters(session: neo4j.Session, data_list: List[Dict], projec
 
 
 @timeit
-def _load_bigtable_clusters_tx(tx: neo4j.Transaction, bigtable_clusters: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def _load_bigtable_clusters_tx(
+    tx: neo4j.Transaction, bigtable_clusters: List[Dict],
+    project_id: str, gcp_update_tag: int,
+) -> None:
     """
         :type neo4j_transaction: Neo4j transaction object
         :param neo4j transaction: The Neo4j transaction object
@@ -249,7 +271,7 @@ def _load_bigtable_clusters_tx(tx: neo4j.Transaction, bigtable_clusters: List[Di
     """
     ingest_bigtable_clusters = """
     UNWIND {bigtable_clusters} as cluster
-    MERGE (c:GCPBigtableCluster{id:{cluster.id}})
+    MERGE (c:GCPBigtableCluster{id:cluster.id})
     ON CREATE SET
         c.firstseen = timestamp()
     SET
@@ -258,9 +280,9 @@ def _load_bigtable_clusters_tx(tx: neo4j.Transaction, bigtable_clusters: List[Di
         c.state = cluster.state,
         c.serveNodes = cluster.serveNodes,
         c.defaultStorageType = cluster.defaultStorageType
-    WITH cluster,c
-    MATCH (i:GCPBigtableInstance{id:{cluster.instance_id}})
-    MERGE (i)-[r:RESOURCE]->(c)
+    WITH c,cluster
+    MATCH (i:GCPBigtableInstance{id:cluster.instance_id})
+    MERGE (i)-[r:HAS_CLUSTER]->(c)
     ON CREATE SET
         r.firstseen = timestamp,
         r.lastupdated = {gcp_update_tag}
@@ -274,12 +296,18 @@ def _load_bigtable_clusters_tx(tx: neo4j.Transaction, bigtable_clusters: List[Di
 
 
 @timeit
-def load_bigtable_cluster_backups(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+def load_bigtable_cluster_backups(
+    session: neo4j.Session, data_list: List[Dict],
+    project_id: str, update_tag: int,
+) -> None:
     session.write_transaction(_load_bigtable_cluster_backups_tx, data_list, project_id, update_tag)
 
 
 @timeit
-def _load_bigtable_cluster_backups_tx(tx: neo4j.Transaction, bigtable_cluster_backups: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def _load_bigtable_cluster_backups_tx(
+    tx: neo4j.Transaction, bigtable_cluster_backups: List[Dict],
+    project_id: str, gcp_update_tag: int,
+) -> None:
     """
         :type neo4j_transaction: Neo4j transaction object
         :param neo4j transaction: The Neo4j transaction object
@@ -295,7 +323,7 @@ def _load_bigtable_cluster_backups_tx(tx: neo4j.Transaction, bigtable_cluster_ba
     """
     ingest_bigtable_cluster_backups = """
     UNWIND {bigtable_cluster_backups} as backup
-    MERGE (b:GCPBigtableClusterBackup{id:{backup.id}})
+    MERGE (b:GCPBigtableClusterBackup{id:backup.id})
     ON CREATE SET
         b.firstseen = timestamp()
     SET
@@ -306,9 +334,9 @@ def _load_bigtable_cluster_backups_tx(tx: neo4j.Transaction, bigtable_cluster_ba
         b.endTime = backup.endTime,
         b.sizeBytes = backup.sizeBytes,
         b.state = backup.state
-    WITH backup, b
-    MATCH (c:GCPBigtableCluster{id:{backup.cluster_id}})
-    MERGE (c)-[r:RESOURCE]->(b)
+    WITH b,backup
+    MATCH (c:GCPBigtableCluster{id:backup.cluster_id})
+    MERGE (c)-[r:HAS_BACKUP]->(b)
     ON CREATE SET
         r.firstseen = timestamp,
         r.lastupdated = {gcp_update_tag}
@@ -327,7 +355,10 @@ def load_bigtable_tables(session: neo4j.Session, data_list: List[Dict], project_
 
 
 @timeit
-def _load_bigtable_tables_tx(tx: neo4j.Transaction, bigtable_tables: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def _load_bigtable_tables_tx(
+    tx: neo4j.Transaction, bigtable_tables: List[Dict],
+    project_id: str, gcp_update_tag: int,
+) -> None:
     """
         :type neo4j_transaction: Neo4j transaction object
         :param neo4j transaction: The Neo4j transaction object
@@ -343,7 +374,7 @@ def _load_bigtable_tables_tx(tx: neo4j.Transaction, bigtable_tables: List[Dict],
     """
     ingest_bigtable_tables = """
     UNWIND {bigtable_tables} as table
-    MERGE (t:GCPBigtableTable{id:{table.id}})
+    MERGE (t:GCPBigtableTable{id:table.id})
     ON CREATE SET
         t.firstseen = timestamp()
     SET
@@ -352,8 +383,8 @@ def _load_bigtable_tables_tx(tx: neo4j.Transaction, bigtable_tables: List[Dict],
         t.granularity = table.granularity,
         t.sourceType = table.restoreInfo.sourceType
     WITH table, t
-    MATCH (i:GCPBigtableInstance{id:{table.instance_id}})
-    MERGE (i)-[r:RESOURCE]->(t)
+    MATCH (i:GCPBigtableInstance{id:table.instance_id})
+    MERGE (i)-[r:HAS_TABLE]->(t)
     ON CREATE SET
         r.firstseen = timestamp,
         r.lastupdated = {gcp_update_tag}
@@ -386,10 +417,11 @@ def cleanup_bigtable(neo4j_session: neo4j.Session, common_job_parameters: Dict) 
 @timeit
 def sync_bigtable(
     neo4j_session: neo4j.Session, bigtable: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: Dict
+    common_job_parameters: Dict,
 ) -> None:
     """
-        Get GCP Cloud Bigtable Entities using the Cloud Bigtable resource object, ingest to Neo4j, and clean up old data.
+        Get GCP Cloud Bigtable Entities using the Cloud Bigtable resource object,
+        ingest to Neo4j, and clean up old data.
 
         :type neo4j_session: The Neo4j session object
         :param neo4j_session: The Neo4j session

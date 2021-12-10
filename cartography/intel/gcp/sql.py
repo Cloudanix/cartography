@@ -80,19 +80,23 @@ def get_sql_users(sql: Resource, sql_instances: List[Dict], project_id: str) -> 
                         item['id'] = f"project/{project_id}/instances/{inst['name']}/users/{item['name']}"
                         sql_users.append(item)
                     while 'nextPageToken' in response:
-                        response = sql.users().list(project=f"projects/{project_id}", instance=f"{inst['name']}", pageToken=response['nextPageToken'])
-            return sql_users
+                        response = sql.users().list(
+                            project=f"projects/{project_id}",
+                            instance=f"{inst['name']}", pageToken=response['nextPageToken'],
+                        )
         except HttpError as e:
             err = json.loads(e.content.decode('utf-8'))['error']
             if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
                 logger.warning(
                     (
-                        "Could not retrieve Sql Instance Users on project %s due to permissions issues. Code: %s, Message: %s"
+                        "Could not retrieve Sql Instance Users on project %s due to permissions issues.\
+                             Code: %s, Message: %s"
                     ), project_id, err['code'], err['message'],
                 )
                 return []
             else:
                 raise
+    return sql_users
 
 
 @timeit
@@ -117,7 +121,7 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
     """
     ingest_sql_instances = """
     UNWIND {instances} as instance
-    MERGE(i:GCPSQLInstance{id:{instance.id}})
+    MERGE(i:GCPSQLInstance{id:instance.id})
     ON CREATE SET
         i.firstseen = timestamp()
     SET
@@ -134,7 +138,7 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
         i.secondaryGceZone = instance.secondaryGceZone,
         i.satisfiesPzs = instance.satisfiesPzs,
         i.createTime = instance.createTime
-    WITH instance, i
+    WITH i
     MATCH (owner:GCPProject{id:{ProjectId}})
     MERGE (owner)-[r:RESOURCE]->(i)
     ON CREATE SET
@@ -171,7 +175,7 @@ def _load_sql_users_tx(tx: neo4j.Transaction, sql_users: List[Dict], project_id:
     """
     ingest_sql_users = """
     UNWIND {sql_users} as user
-    MERGE(u:GCPSQLUser{id:{user.id}})
+    MERGE(u:GCPSQLUser{id:user.id})
     ON CREATE SET
         u.firstseen = timestamp()
     SET
@@ -180,8 +184,8 @@ def _load_sql_users_tx(tx: neo4j.Transaction, sql_users: List[Dict], project_id:
         u.instance = user.instance,
         u.project = user.project,
         u.type = user.type
-    WITH user, u
-    MATCH (i:GCPSQLInstance{id:{user.instance_id}})
+    WITH u,user
+    MATCH (i:GCPSQLInstance{id:user.instance_id})
     MERGE (i)-[r:USED_BY]<-(u)
     ON CREATE SET
         r.firstseen = timestamp,
@@ -215,10 +219,11 @@ def cleanup_sql(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> No
 @timeit
 def sync_sql(
     neo4j_session: neo4j.Session, sql: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: Dict
+    common_job_parameters: Dict,
 ) -> None:
     """
-        Get GCP Cloud SQL Instances and Users using the Cloud SQL resource object, ingest to Neo4j, and clean up old data.
+        Get GCP Cloud SQL Instances and Users using the Cloud SQL resource object,
+        ingest to Neo4j, and clean up old data.
 
         :type neo4j_session: The Neo4j session object
         :param neo4j_session: The Neo4j session

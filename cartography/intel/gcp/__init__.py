@@ -12,33 +12,36 @@ from oauth2client.client import ApplicationDefaultCredentialsError
 from oauth2client.client import GoogleCredentials
 
 from cartography.config import Config
+from cartography.intel.gcp import bigtable
 from cartography.intel.gcp import compute
 from cartography.intel.gcp import crm
 from cartography.intel.gcp import dns
-from cartography.intel.gcp import gke
-from cartography.intel.gcp import storage
-from cartography.intel.gcp import cloudfunction
-from cartography.intel.gcp import sql
-from cartography.intel.gcp import bigtable
 from cartography.intel.gcp import firestore
+from cartography.intel.gcp import gke
+from cartography.intel.gcp import sql
+from cartography.intel.gcp import storage
 from cartography.util import run_analysis_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-Resources = namedtuple('Resources', 'compute container crm_v1 crm_v2 dns storage serviceusage cloudfunction cloudsql clouddbigtable firestore')
+Resources = namedtuple(
+    'Resources', 'compute container crm_v1 crm_v2 dns storage serviceusage \
+     cloudsql cloudbigtable firestore',
+)
 
 # Mapping of service short names to their full names as in docs. See https://developers.google.com/apis-explorer,
 # and https://cloud.google.com/service-usage/docs/reference/rest/v1/services#ServiceConfig
-Services = namedtuple('Services', 'compute storage gke dns cloudfunction cloudsql cloudbigtable firestore')
+Services = namedtuple('Services', 'compute storage gke dns crm_v1 crm_v2 cloudsql cloudbigtable firestore')
 service_names = Services(
     compute='compute.googleapis.com',
     storage='storage.googleapis.com',
     gke='container.googleapis.com',
     dns='dns.googleapis.com',
-    cloudfunction='cloudfunctions.googleapis.com',
+    crm_v1='cloudresourcemanager.googleapis.com',
+    crm_v2='cloudresourcemanager.googleapis.com',
     cloudsql='sqladmin.googleapis.com',
     cloudbigtable='bigtableadmin.googleapis.com',
-    firestore='firestore.googleapis.com'
+    firestore='firestore.googleapis.com',
 )
 
 
@@ -119,17 +122,6 @@ def _get_serviceusage_resource(credentials: GoogleCredentials) -> Resource:
     return googleapiclient.discovery.build('serviceusage', 'v1', credentials=credentials, cache_discovery=False)
 
 
-def _get_cloudfunction_resource(credentials: GoogleCredentials) -> Resource:
-    """
-    Instantiates a cloud function resource object.
-    See: https://cloud.google.com/functions/docs/reference/rest
-
-    :param credentials: The GoogleCredentials object
-    :return: A serviceusage resource object
-    """
-    return googleapiclient.discovery.build('cloudfunctions', 'v1', credentials=credentials, cache_discovery=False)
-
-
 def _get_cloudsql_resource(credentials: GoogleCredentials) -> Resource:
     """
     Instantiates a cloud sql resource object.
@@ -176,7 +168,6 @@ def _initialize_resources(credentials: GoogleCredentials) -> Resource:
         container=_get_container_resource(credentials),
         serviceusage=_get_serviceusage_resource(credentials),
         dns=_get_dns_resource(credentials),
-        cloudfunction=_get_cloudfunction_resource(credentials),
         cloudsql=_get_cloudsql_resource(credentials),
         cloudbigtable=_get_cloudbigtable_resource(credentials),
         firestore=_get_firestore_resource(credentials),
@@ -236,12 +227,13 @@ def _sync_single_project(
         gke.sync_gke_clusters(neo4j_session, resources.container, project_id, gcp_update_tag, common_job_parameters)
     if service_names.dns in enabled_services:
         dns.sync(neo4j_session, resources.dns, project_id, gcp_update_tag, common_job_parameters)
-    if service_names.cloudfunction in enabled_services:
-        cloudfunction.sync(neo4j_session, resources.cloudfunction, project_id, gcp_update_tag, common_job_parameters)
     if service_names.cloudsql in enabled_services:
         sql.sync_sql(neo4j_session, resources.cloudsql, project_id, gcp_update_tag, common_job_parameters)
     if service_names.cloudbigtable in enabled_services:
-        bigtable.sync_bigtable(neo4j_session, resources.cloudbigtable, project_id, gcp_update_tag, common_job_parameters)
+        bigtable.sync_bigtable(
+            neo4j_session, resources.cloudbigtable, project_id, gcp_update_tag,
+            common_job_parameters,
+        )
     if service_names.firestore in enabled_services:
         firestore.sync_firestore(neo4j_session, resources.firestore, project_id, gcp_update_tag, common_job_parameters)
 

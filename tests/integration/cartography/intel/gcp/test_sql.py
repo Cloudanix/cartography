@@ -15,8 +15,8 @@ def test_load_sql_instances(neo4j_session):
     )
 
     expected_nodes = {
-        "project/000000000000/instances/instance123",
-        "project/000000000000/instances/instance456",
+        "instance123",
+        "instance456",
     }
 
     nodes = neo4j_session.run(
@@ -40,8 +40,8 @@ def test_load_sql_users(neo4j_session):
     )
 
     expected_nodes = {
-        "project/000000000000/instances/instance123/users/user123",
-        "project/000000000000/instances/instance456/users/user456",
+        "user123",
+        "user456",
     }
 
     nodes = neo4j_session.run(
@@ -77,8 +77,8 @@ def test_sql_instance_relationships(neo4j_session):
     )
 
     expected = {
-        (TEST_PROJECT_NUMBER, "project/000000000000/instances/instance123"),
-        (TEST_PROJECT_NUMBER, "project/000000000000/instances/instance456"),
+        (TEST_PROJECT_NUMBER, "instance123"),
+        (TEST_PROJECT_NUMBER, "instance456"),
     }
 
     # Fetch relationships
@@ -115,8 +115,8 @@ def test_sql_user_relationship(neo4j_session):
     )
 
     expected = {
-        'project/000000000000/instances/instance123', 'project/000000000000/instances/instance123/users/user123'
-        'project/000000000000/instances/instance456', 'project/000000000000/instances/instance123/users/user456'
+        'instance123', 'user123',
+        'instance456', 'user456',
     }
 
     # Fetch relationships

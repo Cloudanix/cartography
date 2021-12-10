@@ -42,7 +42,8 @@ def get_firestore_databases(firestore: Resource, project_id: str) -> List[Dict]:
         if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
             logger.warning(
                 (
-                    "Could not retrieve Firestore Databases on project %s due to permissions issues. Code: %s, Message: %s"
+                    "Could not retrieve Firestore Databases on project %s due to permissions issues.\
+                         Code: %s, Message: %s"
                 ), project_id, err['code'], err['message'],
             )
             return []
@@ -70,7 +71,9 @@ def get_firestore_indexes(firestore: Resource, firestore_databases: List[Dict], 
     for database in firestore_databases:
         try:
             firestore_indexes = []
-            request = firestore.projects().databases().collectionGroups().indexes().list(parent=f"{database['name']}/collectionGroups/*")
+            request = firestore.projects().databases().collectionGroups().indexes().list(
+                parent=f"{database['name']}/collectionGroups/*",
+            )
             while request is not None:
                 response = request.execute()
                 if response.get('indexes', []):
@@ -78,28 +81,37 @@ def get_firestore_indexes(firestore: Resource, firestore_databases: List[Dict], 
                         index['database_id'] = database['id']
                         index['id'] = index['name']
                         firestore_indexes.append(index)
-                request = firestore.projects().databases().collectionGroups().indexes().list_next(previous_request=request, previous_response=response)
-            return firestore_indexes
+                request = firestore.projects().databases().collectionGroups().indexes().list_next(
+                    previous_request=request, previous_response=response,
+                )
         except HttpError as e:
             err = json.loads(e.content.decode('utf-8'))['error']
             if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
                 logger.warning(
                     (
-                        "Could not retrieve Firestore Indexes on project %s due to permissions issues. Code: %s, Message: %s"
+                        "Could not retrieve Firestore Indexes on project %s due to permissions issues.\
+                             Code: %s, Message: %s"
                     ), project_id, err['code'], err['message'],
                 )
                 return []
             else:
                 raise
+    return firestore_indexes
 
 
 @timeit
-def load_firestore_databases(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+def load_firestore_databases(
+    session: neo4j.Session, data_list: List[Dict],
+    project_id: str, update_tag: int,
+) -> None:
     session.write_transaction(_load_firestore_databases_tx, data_list, project_id, update_tag)
 
 
 @timeit
-def _load_firestore_databases_tx(tx: neo4j.Transaction, firestore_databases: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def _load_firestore_databases_tx(
+    tx: neo4j.Transaction, firestore_databases: List[Dict],
+    project_id: str, gcp_update_tag: int,
+) -> None:
     """
         :type neo4j_transaction: Neo4j transaction object
         :param neo4j transaction: The Neo4j transaction object
@@ -115,15 +127,15 @@ def _load_firestore_databases_tx(tx: neo4j.Transaction, firestore_databases: Lis
     """
     ingest_firestore_databases = """
     UNWIND {firestore_databases} as database
-    MERGE (d:GCPFirestoreDatabase{id:{database.id}})
+    MERGE (d:GCPFirestoreDatabase{id:database.id})
     ON CREATE SET
         d.firstseen = timestamp()
     SET
         d.name = database.name,
         d.locationId = database.locationId,
         d.type = database.type,
-        d.concurrencyMode = database.concurrencyMode,
-    WITH database, d
+        d.concurrencyMode = database.concurrencyMode
+    WITH d
     MATCH (owner:GCPProject{id:{ProjectId}})
     MERGE (owner)-[r:Resource]->(d)
     ON CREATE SET
@@ -144,7 +156,10 @@ def load_firestore_indexes(session: neo4j.Session, data_list: List[Dict], projec
 
 
 @timeit
-def _load_firestore_indexes_tx(tx: neo4j.Transaction, firestore_indexes: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def _load_firestore_indexes_tx(
+    tx: neo4j.Transaction, firestore_indexes: List[Dict],
+    project_id: str, gcp_update_tag: int,
+) -> None:
     """
         :type neo4j_transaction: Neo4j transaction object
         :param neo4j transaction: The Neo4j transaction object
@@ -160,15 +175,16 @@ def _load_firestore_indexes_tx(tx: neo4j.Transaction, firestore_indexes: List[Di
     """
     ingest_firestore_indexes = """
     UNWIND {firestore_indexes} as index
-    MERGE (ix:GCPFirestoreIndex{id:{index.id}})
+    MERGE (ix:GCPFirestoreIndex{id:index.id})
     ON CREATE SET
         d.firstseen = timestamp()
     SET
         ix.name = index.name,
         ix.queryScope = index.queryScope,
         ix.state = index.state
-    MATCH (d:GCPFirestoreDatabase{id:{index.database_id}})
-    MERGE (d)-[r:Resource]->(ix)
+    WITH ix,index
+    MATCH (d:GCPFirestoreDatabase{id:index.database_id})
+    MERGE (d)-[r:HAS_INDEX]->(ix)
     ON CREATE SET
         r.firstseen = timestamp(),
         r.lastupdated = {gcp_update_tag}
@@ -201,7 +217,7 @@ def cleanup_firestore(neo4j_session: neo4j.Session, common_job_parameters: Dict)
 @timeit
 def sync_firestore(
     neo4j_session: neo4j.Session, firestore: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: Dict
+    common_job_parameters: Dict,
 ) -> None:
     """
         Get GCP Cloud Firestore using the Cloud Firestore resource object, ingest to Neo4j, and clean up old data.
