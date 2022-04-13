@@ -8,15 +8,16 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from cartography.util import run_cleanup_job
+from . import label
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+
 @timeit
-def get_sql_instances(sql: Resource,project_id: str) -> List[Dict]:
+def get_sql_instances(sql: Resource, project_id: str) -> List[Dict]:
     """
         Returns a list of sql instances for a given project.
-        
         :type sql: Resource
         :param sql: The sql resource created by googleapiclient.discovery.build()
 
@@ -51,12 +52,15 @@ def get_sql_instances(sql: Resource,project_id: str) -> List[Dict]:
             raise
 
 @timeit
-def get_sql_users(sql: Resource,project_id: str) -> List[Dict]:
+def get_sql_users(sql: Resource, sql_instances: List[Dict], project_id: str) -> List[Dict]:
     """
         Returns a list of sql instance users for a given project.
-        
+
         :type sql: Resource
         :param sql: The sql resource created by googleapiclient.discovery.build()
+
+        :type sql_instances: List
+        :type sql_instances: List of sql instances
 
         :type project_id: str
         :param project_id: Current Google Project Id
@@ -94,11 +98,18 @@ def get_sql_users(sql: Resource,project_id: str) -> List[Dict]:
             else:
                 raise
 
+
+
 @timeit
-def load_sql_instances(neo4j_session: neo4j.Session,instances: List[Resource],project_id: str,gcp_update_tag: int) -> None:
+def load_sql_instances(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+    session.write_transaction(_load_sql_instances_tx, data_list, project_id, update_tag)
+
+
+@timeit
+def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     """
-        :type neo4j_session: Neo4j session object
-        :param neo4j session: The Neo4j session object
+        :type neo4j_transaction: Neo4j transaction object
+        :param neo4j transaction: The Neo4j transaction object
 
         :type instances_resp: List
         :param instances_resp: A list of SQL Instances
@@ -111,7 +122,7 @@ def load_sql_instances(neo4j_session: neo4j.Session,instances: List[Resource],pr
     """
     ingest_sql_instances = """
     UNWIND {instances} as instance
-    MERGE(i:GCPSQLInstance{id:instance.id})
+    MERGE (i:GCPSQLInstance{id:instance.id})
     ON CREATE SET
         i.firstseen = timestamp()
     SET
@@ -130,27 +141,37 @@ def load_sql_instances(neo4j_session: neo4j.Session,instances: List[Resource],pr
         i.satisfiesPzs = instance.satisfiesPzs, 
         i.createTime = instance.createTime
     WITH instance, i
+        i.satisfiesPzs = instance.satisfiesPzs,
+        i.createTime = instance.createTime,
+        i.lastupdated = {gcp_update_tag}
+    WITH i
     MATCH (owner:GCPProject{id:{ProjectId}})
     MERGE (owner)-[r:RESOURCE]->(i)
     ON CREATE SET
         r.firstseen = timestamp(),
         r.lastupdated = {gcp_update_tag}
     """
-    neo4j_session.run(
+    tx.run(
         ingest_sql_instances,
-        instances = instances,
+        instances=instances,
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
-@timeit
-def load_sql_users(neo4j_session: neo4j.Session,sql_users: List[Resource],project_id: str,gcp_update_tag: int) -> None:
-    """
-        :type neo4j_session: Neo4j session object
-        :param neo4j session: The Neo4j session object
 
-        :type instances_resp: List
-        :param instances_resp: A list of SQL Users
+@timeit
+def load_sql_users(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+    session.write_transaction(_load_sql_users_tx, data_list, project_id, update_tag)
+
+
+@timeit
+def _load_sql_users_tx(tx: neo4j.Transaction, sql_users: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+    """
+        :type neo4j_transaction: Neo4j transaction object
+        :param neo4j transaction: The Neo4j transaction object
+
+        :type sql_users_resp: List
+        :param sql_users_resp: A list of SQL Users
 
         :type project_id: str
         :param project_id: Current Google Project Id
@@ -236,3 +257,79 @@ def sync(
     load_sql_users(users,project_id,gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_sql_instances(neo4j_session, common_job_parameters)
+        u.region = {region},
+        u.project = user.project,
+        u.type = user.type,
+        u.lastupdated = {gcp_update_tag}
+    WITH u,user
+    MATCH (i:GCPSQLInstance{id:user.instance_id})
+    MERGE (i)-[r:USED_BY]->(u)
+    ON CREATE SET
+        r.firstseen = timestamp(),
+        r.lastupdated = {gcp_update_tag}
+    """
+    tx.run(
+        ingest_sql_users,
+        sql_users=sql_users,
+        ProjectId=project_id,
+        region="global",
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+@timeit
+def cleanup_sql(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+        Delete out-of-date GCP SQL Instances and relationships
+
+        :type neo4j_session: The Neo4j session object
+        :param neo4j_session: The Neo4j session
+
+        :type common_job_parameters: dict
+        :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+
+        :rtype: NoneType
+        :return: Nothing
+    """
+    run_cleanup_job('gcp_sql_cleanup.json', neo4j_session, common_job_parameters)
+
+
+@timeit
+def sync(
+    neo4j_session: neo4j.Session, sql: Resource, project_id: str, gcp_update_tag: int,
+    common_job_parameters: Dict,
+) -> None:
+    """
+        Get GCP Cloud SQL Instances and Users using the Cloud SQL resource object,
+        ingest to Neo4j, and clean up old data.
+
+        :type neo4j_session: The Neo4j session object
+        :param neo4j_session: The Neo4j session
+
+        :type sql: The GCP Cloud SQL resource object created by googleapiclient.discovery.build()
+        :param sql: The GCP Cloud SQL resource object
+
+        :type project_id: str
+        :param project_id: The project ID of the corresponding project
+
+        :type gcp_update_tag: timestamp
+        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+
+        :type common_job_parameters: dict
+        :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+
+        :rtype: NoneType
+        :return: Nothing
+    """
+    logger.info("Syncing GCP Cloud SQL for project %s.", project_id)
+    # SQL INSTANCES
+    sqlinstances = get_sql_instances(sql, project_id)
+    load_sql_instances(neo4j_session, sqlinstances, project_id, gcp_update_tag)
+    label.sync_labels(neo4j_session, sqlinstances, gcp_update_tag, common_job_parameters)
+
+    logger.info("Syncing GCP Cloud SQL Users for project %s.", project_id)
+    # SQL USERS
+    users = get_sql_users(sql, sqlinstances, project_id)
+    load_sql_users(neo4j_session, users, project_id, gcp_update_tag)
+    cleanup_sql(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, sqlinstances, gcp_update_tag, common_job_parameters)

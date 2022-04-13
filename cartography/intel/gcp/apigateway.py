@@ -8,6 +8,8 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from cartography.util import run_cleanup_job
+from . import label
+
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,8 @@ def get_apigateway_locations(apigateway: Resource, project_id: str) -> List[Dict
         while req is not None:
             res = req.execute()
             if res.get('locations', []):
-                for location in req['locations']:
+
+                for location in res['locations']:
                     location['project_id'] = project_id
                     location['id'] = location['name']
                     locations.append(location)
@@ -68,7 +71,7 @@ def get_apis(apigateway: Resource, project_id: str) -> List[Dict]:
     """
     apis = []
     try:
-        req = apigateway.project().locations().apis().list(parent=f'projects/{project_id}/locations/global')
+        req = apigateway.projects().locations().apis().list(parent=f'projects/{project_id}/locations/global')
         while req is not None:
             res = req.execute()
             if res.get('apis', []):
@@ -85,6 +88,13 @@ def get_apis(apigateway: Resource, project_id: str) -> List[Dict]:
                             break
                     apis.append(api)
             req = apigateway.project().locations().apis().list_next(previous_request=req, previous_response=res)
+                    x = api.get('name').split('/')
+                    x = x[x.index('locations') + 1].split("-")
+                    api['region'] = x[0]
+                    if len(x) > 1:
+                        api['region'] = f"{x[0]}-{x[1]}"
+                    apis.append(api)
+            req = apigateway.projects().locations().apis().list_next(previous_request=req, previous_response=res)
         return apis
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -116,7 +126,7 @@ def get_api_configs(apigateway: Resource, project_id: str) -> List[Dict]:
     api_configs = []
     try:
         req = apigateway.projects().locations().apis().configs().list(
-            pparent=f'projects/{project_id}/locations/global/apis/*',
+            parent=f'projects/{project_id}/locations/global/apis/*',
         )
         while req is not None:
             res = req.execute()
@@ -134,6 +144,14 @@ def get_api_configs(apigateway: Resource, project_id: str) -> List[Dict]:
                             break
                     apiConfig['id'] = apiConfig['name']
                     apiConfig['project_id'] = project_id
+
+                    apiConfig['id'] = apiConfig['name']
+                    apiConfig['project_id'] = project_id
+                    x = apiConfig.get('name').split('/')
+                    x = x[x.index('locations') + 1].split("-")
+                    apiConfig['region'] = x[0]
+                    if len(x) > 1:
+                        apiConfig['region'] = f"{x[0]}-{x[1]}"
                     api_configs.append(apiConfig)
             req = apigateway.projects().locations().apis().configs().list_next(
                 previous_request=req,
@@ -184,6 +202,11 @@ def get_gateways(apigateway: Resource, project_id: str) -> List[Dict]:
                         if user == 'allUsers' or user == 'allAuthenticatedUsers':
                             gateway['public_gateway_policy'] = True
                             break
+                    x = gateway.get('name').split('/')
+                    x = x[x.index('locations') + 1].split("-")
+                    gateway['region'] = x[0]
+                    if len(x) > 1:
+                        gateway['region'] = f"{x[0]}-{x[1]}"
                     gateways.append(gateway)
             req = apigateway.projects().locations().gateways().list_next(previous_request=req, previous_response=res)
         return gateways
@@ -237,6 +260,7 @@ def load_apigateway_locations_tx(
         location.name = loc.name,
         location.locationId = loc.locationId,
         location.displayName = loc.displayName,
+        location.region = loc.locationId,
         location.lastupdated = {gcp_update_tag}
     WITH location
     MATCH (owner:GCPProject{id:{ProjectId}})
@@ -303,10 +327,11 @@ def load_apis_tx(tx: neo4j.Transaction, apis: List[Dict], project_id: str, gcp_u
     SET
         api.name = ap.name,
         api.createTime = ap.createTime,
+        api.public_api_policy = ap.public_api_policy,
+        api.region = ap.region,
         api.updateTime = ap.updateTime,
         api.displayName = ap.displayName,
         api.managedService = ap.managedService,
-        api.public_api_policy = ap.public_api_policy,
         api.lastupdated = {gcp_update_tag}
     WITH api
     MATCH (owner:GCPProject{id:{ProjectId}})
@@ -337,7 +362,7 @@ def cleanup_apis(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> N
        :rtype: NoneType
        :return: Nothing
    """
-    run_cleanup_job('gcp_apis_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job('gcp_apigateway_apis_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit
@@ -373,10 +398,10 @@ def load_api_configs_tx(tx: neo4j.Transaction, configs: List[Dict], project_id: 
     SET
         config.name = conf.name,
         config.createTime = conf.createTime,
+        config.public_config_policy = conf.public_config_policy,
+        config.region = conf.region,
         config.updateTime = conf.updateTime,
         config.displayName = conf.displayName,
-        config.gatewayServiceAccount = conf.gatewayServiceAccount,
-        config.public_config_policy = conf.public_config_policy,
         config.serviceConfigId = conf.serviceConfigId,
         config.state = conf.state,
         config.lastupdated = {gcp_update_tag}
@@ -409,7 +434,7 @@ def cleanup_api_configs(neo4j_session: neo4j.Session, common_job_parameters: Dic
        :rtype: NoneType
        :return: Nothing
    """
-    run_cleanup_job('gcp_api_configs_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job('gcp_apigateway_configs_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit
@@ -447,8 +472,9 @@ def load_gateways_tx(tx: neo4j.Transaction, gateways: List[Dict], project_id: st
         gateway.createTime = g.createTime,
         gateway.updateTime = g.updateTime,
         gateway.displayName = g.displayName,
-        gateway.apiConfig = g.apiConfig,
         gateway.public_gateway_policy = g.public_gateway_policy,
+        gateway.region = g.region,
+        gateway.apiConfig = g.apiConfig,
         gateway.state = g.state,
         gateway.defaultHostname = g.defaultHostname,
         gateway.lastupdated = {gcp_update_tag}
@@ -485,7 +511,7 @@ def cleanup_api_gateways(neo4j_session: neo4j.Session, common_job_parameters: Di
 
 
 @timeit
-def sync_apigateways(
+def sync(
     neo4j_session: neo4j.Session, apigateway: Resource, project_id: str, gcp_update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
@@ -516,18 +542,22 @@ def sync_apigateways(
     load_apigateway_locations(neo4j_session, locations, project_id, gcp_update_tag)
     # Cleanup Locations
     cleanup_apigateway_locations(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, locations, gcp_update_tag, common_job_parameters)
     # API Gateway APIs
     apis = get_apis(apigateway, project_id)
     load_apis(neo4j_session, apis, project_id, gcp_update_tag)
     # Cleanup APIs
     cleanup_apis(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, apis, gcp_update_tag, common_job_parameters)
     # API Gateway API Configs
     configs = get_api_configs(apigateway, project_id)
     load_api_configs(neo4j_session, configs, project_id, gcp_update_tag)
     # Cleanup API Gateway Configs
     cleanup_api_configs(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, configs, gcp_update_tag, common_job_parameters)
     # API Gateway Gateways
     gateways = get_gateways(apigateway, project_id)
     load_gateways(neo4j_session, gateways, project_id, gcp_update_tag)
     # Cleanup API Gateway Gateways
     cleanup_api_gateways(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, gateways, gcp_update_tag, common_job_parameters)

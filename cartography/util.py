@@ -1,10 +1,17 @@
 import logging
+import re
 import sys
 from functools import wraps
+from string import Template
+from typing import Dict
+from typing import Optional
+from typing import Union
 
 import botocore
+import neo4j
 
 from cartography.graph.job import GraphJob
+from cartography.graph.statement import get_job_shortname
 from cartography.stats import get_stats_client
 
 if sys.version_info >= (3, 7):
@@ -23,10 +30,14 @@ def run_analysis_job(filename, neo4j_session, common_job_parameters, package='ca
             filename,
         ),
         common_job_parameters,
+        get_job_shortname(filename),
     )
 
 
-def run_cleanup_job(filename, neo4j_session, common_job_parameters, package='cartography.data.jobs.cleanup'):
+def run_cleanup_job(
+    filename: str, neo4j_session: neo4j.Session, common_job_parameters: Dict,
+    package: str = 'cartography.data.jobs.cleanup',
+) -> None:
     GraphJob.run_from_json(
         neo4j_session,
         read_text(
@@ -34,6 +45,41 @@ def run_cleanup_job(filename, neo4j_session, common_job_parameters, package='car
             filename,
         ),
         common_job_parameters,
+        get_job_shortname(filename),
+    )
+
+
+def merge_module_sync_metadata(
+    neo4j_session: neo4j.Session,
+    group_type: str,
+    group_id: Union[str, int],
+    synced_type: str,
+    update_tag: int,
+):
+    '''
+    This function creates `ModuleSyncMetadata` nodes when called from each of the individual modules or sub-modules.
+    The 'types' used here should be actual node labels. For example, if we did sync a particular AWSAccount's S3Buckets,
+    the `grouptype` is 'AWSAccount', the `groupid` is the particular account's `id`, and the `syncedtype` is 'S3Bucket'.
+
+    :param neo4j_session: Neo4j session object
+    :param group_type: The parent module's type
+    :param group_id: The parent module's id
+    :param synced_type: The sub-module's type
+    :param update_tag: Timestamp used to determine data freshness
+    '''
+    template = Template("""
+        MERGE (n:ModuleSyncMetadata{id:'${group_type}_${group_id}_${synced_type}'})
+        ON CREATE SET
+            n:SyncMetadata, n.firstseen=timestamp()
+        SET n.syncedtype='${synced_type}',
+            n.grouptype='${group_type}',
+            n.groupid={group_id},
+            n.lastupdated={UPDATE_TAG}
+    """)
+    neo4j_session.run(
+        template.safe_substitute(group_type=group_type, group_id=group_id, synced_type=synced_type),
+        group_id=group_id,
+        UPDATE_TAG=update_tag,
     )
 
 
@@ -69,10 +115,11 @@ def timeit(method):
 # TODO Move this to cartography.intel.aws.util.common
 def aws_handle_regions(func):
     ERROR_CODES = [
+        'AccessDenied',
         'AccessDeniedException',
-        'UnrecognizedClientException',
-        'InvalidClientTokenId',
         'AuthFailure',
+        'InvalidClientTokenId',
+        'UnrecognizedClientException',
     ]
 
     def inner_function(*args, **kwargs):
@@ -87,3 +134,31 @@ def aws_handle_regions(func):
             else:
                 raise
     return inner_function
+
+
+def dict_value_to_str(obj: Dict, key: str) -> Optional[str]:
+    """
+    Convert the value referenced by the key in the dict to a string, if it exists, and return it. If it doesn't exist,
+    return None.
+    """
+    value = obj.get(key)
+    if value is not None:
+        return str(value)
+    else:
+        return None
+
+
+def dict_date_to_epoch(obj: Dict, key: str) -> Optional[int]:
+    """
+    Convert the date referenced by the key in the dict to an epoch timestamp, if it exists, and return it. If it
+    doesn't exist, return None.
+    """
+    value = obj.get(key)
+    if value is not None:
+        return int(value.timestamp())
+    else:
+        return None
+
+
+def camel_to_snake(name: str) -> str:
+    return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()

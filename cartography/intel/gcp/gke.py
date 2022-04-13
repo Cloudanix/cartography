@@ -1,12 +1,14 @@
 import json
 import logging
 from typing import Dict
+from typing import List
 
 import neo4j
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from cartography.util import run_cleanup_job
+from . import label
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,8 @@ def get_gke_clusters(container: Resource, project_id: str) -> Dict:
     try:
         req = container.projects().zones().clusters().list(projectId=project_id, zone='-')
         res = req.execute()
+        for item in req:
+            item['id'] = f"project/{project_id}/clusters/{item['name']}"
         return res
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -61,7 +65,7 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
     """
 
     query = """
-    MERGE(cluster:GKECluster{id:{ClusterSelfLink}})
+    MERGE (cluster:GKECluster{id:{ClusterId}})
     ON CREATE SET
         cluster.firstseen = timestamp(),
         cluster.created_at = {ClusterCreateTime}
@@ -75,6 +79,7 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
         cluster.subnetwork = {ClusterSubnetwork},
         cluster.cluster_ipv4cidr = {ClusterIPv4Cidr},
         cluster.zone = {ClusterZone},
+        cluster.region = {ClusterRegion},
         cluster.location = {ClusterLocation},
         cluster.endpoint = {ClusterEndpoint},
         cluster.initial_version = {ClusterInitialVersion},
@@ -92,7 +97,8 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
         cluster.public_endpoint = {ClusterPublicEndpoint},
         cluster.masterGlobalAccessConfig = {ClusterMasterGlobalAccessConfig},
         cluster.masterauth_username = {ClusterMasterUsername},
-        cluster.masterauth_password = {ClusterMasterPassword}
+        cluster.masterauth_password = {ClusterMasterPassword},
+        cluster.lastupdated = {gcp_update_tag}
     WITH cluster
     MATCH (owner:GCPProject{id:{ProjectId}})
     MERGE (owner)-[r:RESOURCE]->(cluster)
@@ -100,9 +106,12 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
     SET r.lastupdated = {gcp_update_tag}
     """
     for cluster in cluster_resp.get('clusters', []):
+        cluster['region'] = cluster.get('zone')[:-2]
+
         neo4j_session.run(
             query,
             ProjectId=project_id,
+            ClusterId=f"project/{project_id}/clusters/{cluster['name']}",
             ClusterSelfLink=cluster['selfLink'],
             ClusterCreateTime=cluster['createTime'],
             ClusterName=cluster['name'],
@@ -113,6 +122,7 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
             ClusterSubnetwork=cluster.get('subnetwork'),
             ClusterIPv4Cidr=cluster.get('clusterIpv4Cidr'),
             ClusterZone=cluster.get('zone'),
+            ClusterRegion=cluster.get('region'),
             ClusterLocation=cluster.get('location'),
             ClusterEndpoint=cluster.get('endpoint'),
             ClusterInitialVersion=cluster.get('initialClusterVersion'),
@@ -165,7 +175,7 @@ def cleanup_gke_clusters(neo4j_session: neo4j.Session, common_job_parameters: Di
 
 
 @timeit
-def sync_gke_clusters(
+def sync(
     neo4j_session: neo4j.Session, container: Resource, project_id: str, gcp_update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
@@ -195,3 +205,4 @@ def sync_gke_clusters(
     load_gke_clusters(neo4j_session, gke_res, project_id, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gke_clusters(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, gke_res, gcp_update_tag, common_job_parameters)

@@ -8,6 +8,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from cartography.util import run_cleanup_job
+from . import label
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ def get_kms_keyrings(kms: Resource, kms_locations: List[Dict], project_id: str) 
     try:
         key_rings = []
         for loc in kms_locations:
-            request = kms.projects().locations().keyrings().list(parent=loc['name'])
+            request = kms.projects().locations().keyRings().list(parent=loc['name'])
             while request is not None:
                 response = request.execute()
                 if response.get('keyRings', []):
@@ -86,8 +87,9 @@ def get_kms_keyrings(kms: Resource, kms_locations: List[Dict], project_id: str) 
                             if user == 'allUsers' or user == 'allAuthenticatedUsers':
                                 key_ring['public_policy'] = True
                                 break
+                        key_ring['region'] = loc.get("locationId", "global")
                         key_rings.append(key_ring)
-                request = kms.projects().locations().keyrings().list_next(
+                request = kms.projects().locations().keyRings().list_next(
                     previous_request=request,
                     previous_response=response,
                 )
@@ -126,7 +128,7 @@ def get_kms_crypto_keys(kms: Resource, key_rings: List[Dict], project_id: str) -
     try:
         crypto_keys = []
         for key_ring in key_rings:
-            request = kms.projects().locations().keyrings().cryptokeys().list(parent=key_ring['name'])
+            request = kms.projects().locations().keyRings().cryptoKeys().list(parent=key_ring['name'])
             while request is not None:
                 response = request.execute()
                 if response.get('cryptoKeys', []):
@@ -141,8 +143,9 @@ def get_kms_crypto_keys(kms: Resource, key_rings: List[Dict], project_id: str) -
                             crypto_key['public_cryptokey_policy'] = False
                             if user == 'allUsers' or user == 'allAuthenticatedUsers':
                                 crypto_key['public_cryptokey_policy'] = True
+                        crypto_key['region'] = key_ring.get("region", "global")
                         crypto_keys.append(crypto_key)
-                request = kms.projects().locations().keyrings().cryptokeys().list_next(
+                request = kms.projects().locations().keyRings().cryptoKeys().list_next(
                     previous_request=request,
                     previous_response=response,
                 )
@@ -191,6 +194,7 @@ def _load_kms_locations_tx(
         location.name = loc.name,
         location.locationId = loc.locationId,
         location.displayName = loc.displayName,
+        location.region = loc.locationId,
         location.lastupdated = {gcp_update_tag}
     WITH location, loc
     MATCH (owner:GCPProject{id:{ProjectId}})
@@ -235,8 +239,9 @@ def _load_kms_key_rings_tx(
         keyring.firstseen = timestamp()
     SET
         keyring.name = keyr.name,
-        keyring.createTime = keyr.createTime,
         keyring.public_policy = keyr.public_policy,
+        keyring.region = keyr.region,
+        keyring.createTime = keyr.createTime,
         keyring.lastupdated = {gcp_update_tag}
     WITH keyring, keyr
     MATCH (location:GCPLocation{id:keyr.loc_id})
@@ -284,10 +289,11 @@ def _load_kms_crypto_keys_tx(
     SET
         crypto_key.name = ck.name,
         crypto_key.purpose = ck.purpose,
+        crypto_key.public_cryptokey_policy = ck.public_cryptokey_policy,
+        crypto_key.region = ck.region,
         crypto_key.createTime = ck.createTime,
         crypto_key.nextRotationTime = ck.nextRotationTime,
         crypto_key.rotationPeriod = ck.rotationPeriod,
-        crypto_key.public_cryptokey_policy = ck.public_cryptokey_policy,
         crypto_key.lastupdated = {gcp_update_tag}
     WITH crypto_key, ck
     MATCH (key_ring:GCPKMSKeyRing{id:ck.keyring_id})
@@ -322,7 +328,7 @@ def cleanup_gcp_kms(neo4j_session: neo4j.Session, common_job_parameters: Dict) -
 
 
 @timeit
-def sync_kms(
+def sync(
     neo4j_session: neo4j.Session, kms: Resource, project_id: str, gcp_update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
@@ -354,7 +360,9 @@ def sync_kms(
     # KMS KEYRINGS
     key_rings = get_kms_keyrings(kms, locations, project_id)
     load_kms_key_rings(neo4j_session, key_rings, project_id, gcp_update_tag)
+    label.sync_labels(neo4j_session, key_rings, gcp_update_tag, common_job_parameters)
     # KMS CRYPTOKEYS
     crypto_keys = get_kms_crypto_keys(kms, key_rings, project_id)
     load_kms_crypto_keys(neo4j_session, crypto_keys, project_id, gcp_update_tag)
     cleanup_gcp_kms(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, crypto_keys, gcp_update_tag, common_job_parameters)

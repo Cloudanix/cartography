@@ -8,6 +8,7 @@ from googleapiclient.discovery import Resource
 
 from cartography.intel.gcp import compute
 from cartography.util import run_cleanup_job
+from . import label
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,11 @@ def transform_gcp_buckets(bucket_res: Dict) -> List[Dict]:
         bucket['owner_entity'] = b.get('owner', {}).get('entity')
         bucket['owner_entity_id'] = b.get('owner', {}).get('entityId')
         bucket['kind'] = b.get('kind')
-        bucket['location'] = b.get('location')
+        bucket['location'] = b.get('location', "").lower()
+        x = bucket['location'].split("-")
+        bucket['region'] = x[0]
+        if len(x) > 1:
+            bucket['region'] = f"{x[0]}-{x[1]}"
         bucket['location_type'] = b.get('locationType')
         bucket['meta_generation'] = b.get('metageneration', None)
         bucket['project_number'] = b['projectNumber']
@@ -114,7 +119,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
     :param neo4j session: The Neo4j session object
 
     :type buckets: list
-    :param buckets: List of GCP Storage Buckets to injest
+    :param buckets: List of GCP Storage Buckets to ingest
 
     :type gcp_update_tag: timestamp
     :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
@@ -124,17 +129,18 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
     '''
 
     query = """
-    MERGE(p:GCPProject{projectnumber:{ProjectNumber}})
+    MERGE (p:GCPProject{id:{ProjectNumber}})
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = {gcp_update_tag}
 
-    MERGE(bucket:GCPBucket{id:{BucketId}})
+    MERGE (bucket:GCPBucket{id:{BucketId}})
     ON CREATE SET bucket.firstseen = timestamp(),
     bucket.bucket_id = {BucketId}
     SET bucket.self_link = {SelfLink},
     bucket.project_number = {ProjectNumber},
     bucket.kind = {Kind},
     bucket.location = {Location},
+    bucket.region = {region},
     bucket.location_type = {LocationType},
     bucket.meta_generation = {MetaGeneration},
     bucket.storage_class = {StorageClass},
@@ -165,6 +171,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
             SelfLink=bucket['self_link'],
             Kind=bucket['kind'],
             Location=bucket['location'],
+            region=bucket['region'],
             LocationType=bucket['location_type'],
             MetaGeneration=bucket['meta_generation'],
             StorageClass=bucket['storage_class'],
@@ -180,39 +187,6 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
             PublicAcl = bucket['public_acl'],
             DefaultObjectAclPublic = bucket['default_object_acl_public'],
             UniformBucketLevelAccess = bucket['uniformAccess'],
-            gcp_update_tag=gcp_update_tag,
-        )
-        _attach_gcp_bucket_labels(neo4j_session, bucket, gcp_update_tag)
-
-
-@timeit
-def _attach_gcp_bucket_labels(neo4j_session: neo4j.Session, bucket: Resource, gcp_update_tag: int) -> None:
-    """
-    Attach GCP bucket labels to the bucket.
-    :param neo4j_session: The neo4j session
-    :param bucket: The GCP bucket object
-    :param gcp_update_tag: The update tag for this sync
-    :return: Nothing
-    """
-    query = """
-    MERGE (l:Label:GCPBucketLabel{id: {BucketLabelId}})
-    ON CREATE SET l.firstseen = timestamp(),
-    l.key = {Key}
-    SET l.value = {Value},
-    l.lastupdated = {gcp_update_tag}
-    WITH l
-    MATCH (bucket:GCPBucket{id:{BucketId}})
-    MERGE (l)<-[r:LABELED]-(bucket)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = {gcp_update_tag}
-    """
-    for (key, val) in bucket.get('labels', []):
-        neo4j_session.run(
-            query,
-            BucketLabelId=f"GCPBucket_{key}",
-            Key=key,
-            Value=val,
-            BucketId=bucket['id'],
             gcp_update_tag=gcp_update_tag,
         )
 
@@ -235,7 +209,7 @@ def cleanup_gcp_buckets(neo4j_session: neo4j.Session, common_job_parameters: Dic
 
 
 @timeit
-def sync_gcp_buckets(
+def sync(
     neo4j_session: neo4j.Session, storage: Resource, project_id: str, gcp_update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
@@ -266,3 +240,4 @@ def sync_gcp_buckets(
     load_gcp_buckets(neo4j_session, bucket_list, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_buckets(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, bucket_list, gcp_update_tag, common_job_parameters)

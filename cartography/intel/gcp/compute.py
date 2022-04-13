@@ -15,6 +15,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from cartography.util import run_cleanup_job
+from . import label
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,9 @@ def transform_gcp_instances(response_objects: List[Dict]) -> List[Dict]:
             instance['project_id'] = prefix_fields.project_id
             instance['zone_name'] = prefix_fields.zone_name
 
+            x = instance['zone_name'].split('-')
+            instance['region'] = f"{x[0]}-{x[1]}"
+
             for nic in instance.get('networkInterfaces', []):
                 nic['subnet_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['subnetwork'])
                 nic['vpc_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['network'])
@@ -338,9 +342,10 @@ def transform_gcp_forwarding_rules(fwd_response: Resource) -> List[Dict]:
         # Region looks like "https://www.googleapis.com/compute/v1/projects/{project}/regions/{region name}"
         region = fwd.get('region', None)
         forwarding_rule['region'] = region.split('/')[-1] if region else None
-        forwarding_rule['ip_address'] = fwd['IPAddress']
-        forwarding_rule['ip_protocol'] = fwd['IPProtocol']
+        forwarding_rule['ip_address'] = fwd.get('IPAddress', None)
+        forwarding_rule['ip_protocol'] = fwd.get('IPProtocol', None)
         forwarding_rule['allow_global_access'] = fwd.get('allowGlobalAccess', None)
+
 
         forwarding_rule['load_balancing_scheme'] = fwd['loadBalancingScheme']
         if forwarding_rule['load_balancing_scheme'] == 'EXTERNAL':
@@ -546,6 +551,7 @@ def load_gcp_instances(neo4j_session: neo4j.Session, data: List[Dict], gcp_updat
     i.hostname = {Hostname},
     i.exposed_internet = {PublicFacing},
     i.public_policy = {PublicPolicy},
+    i.region = {region},
     i.zone_name = {ZoneName},
     i.project_id = {ProjectId},
     i.status = {Status},
@@ -568,11 +574,13 @@ def load_gcp_instances(neo4j_session: neo4j.Session, data: List[Dict], gcp_updat
             PublicPolicy=instance['public_policy'],
             Hostname=instance.get('hostname', None),
             Status=instance['status'],
+            region=instance['region'],
             gcp_update_tag=gcp_update_tag,
         )
         _attach_instance_tags(neo4j_session, instance, gcp_update_tag)
         _attach_gcp_nics(neo4j_session, instance, gcp_update_tag)
         _attach_gcp_vpc(neo4j_session, instance['partial_uri'], gcp_update_tag)
+        _attach_instance_service_account(neo4j_session, instance, gcp_update_tag)
 
 
 @timeit
@@ -585,14 +593,15 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
     :return: Nothing
     """
     query = """
-    MERGE(p:GCPProject{id:{ProjectId}})
+    MERGE (p:GCPProject{id:{ProjectId}})
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = {gcp_update_tag}
 
-    MERGE(vpc:GCPVpc{id:{PartialUri}})
+    MERGE (vpc:GCPVpc{id:{PartialUri}})
     ON CREATE SET vpc.firstseen = timestamp(),
     vpc.partial_uri = {PartialUri}
     SET vpc.self_link = {SelfLink},
+    vpc.region = {region},
     vpc.name = {VpcName},
     vpc.project_id = {ProjectId},
     vpc.auto_create_subnetworks = {AutoCreateSubnetworks},
@@ -614,6 +623,7 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
             AutoCreateSubnetworks=vpc['auto_create_subnetworks'],
             RoutingMode=vpc['routing_config_routing_mode'],
             Description=vpc['description'],
+            region=vpc.get('region'),
             gcp_update_tag=gcp_update_tag,
         )
 
@@ -628,11 +638,11 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
     :return: Nothing
     """
     query = """
-    MERGE(vpc:GCPVpc{id:{VpcPartialUri}})
+    MERGE (vpc:GCPVpc{id:{VpcPartialUri}})
     ON CREATE SET vpc.firstseen = timestamp(),
     vpc.partial_uri = {VpcPartialUri}
 
-    MERGE(subnet:GCPSubnet{id:{PartialUri}})
+    MERGE (subnet:GCPSubnet{id:{PartialUri}})
     ON CREATE SET subnet.firstseen = timestamp(),
     subnet.partial_uri = {PartialUri}
     SET subnet.self_link = {SubnetSelfLink},
@@ -677,7 +687,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
     """
 
     query = """
-        MERGE(fwd:GCPForwardingRule{id:{PartialUri}})
+        MERGE (fwd:GCPForwardingRule{id:{PartialUri}})
         ON CREATE SET fwd.firstseen = timestamp(),
         fwd.partial_uri = {PartialUri}
         SET fwd.ip_address = {IPAddress},
@@ -712,7 +722,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
             PortRange=fwd.get('port_range', None),
             Ports=fwd.get('ports', None),
             ProjectId=fwd['project_id'],
-            Region=fwd.get('region', None),
+            Region=fwd.get('region', "global"),
             SelfLink=fwd['self_link'],
             SubNetwork=subnetwork,
             SubNetworkPartialUri=fwd.get('subnetwork_partial_uri', None),
@@ -730,7 +740,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
 @timeit
 def _attach_fwd_rule_to_subnet(neo4j_session: neo4j.Session, fwd: Dict, gcp_update_tag: int) -> None:
     query = """
-        MERGE(subnet:GCPSubnet{id:{SubNetworkPartialUri}})
+        MERGE (subnet:GCPSubnet{id:{SubNetworkPartialUri}})
         ON CREATE SET subnet.firstseen = timestamp(),
         subnet.partial_uri = {SubNetworkPartialUri}
         SET subnet.lastupdated = {gcp_update_tag}
@@ -738,7 +748,7 @@ def _attach_fwd_rule_to_subnet(neo4j_session: neo4j.Session, fwd: Dict, gcp_upda
         WITH subnet
         MATCH(fwd:GCPForwardingRule{id:{PartialUri}})
 
-        MERGE(subnet)-[p:RESOURCE]->(fwd)
+        MERGE (subnet)-[p:RESOURCE]->(fwd)
         ON CREATE SET p.firstseen = timestamp()
         SET p.lastupdated = {gcp_update_tag}
     """
@@ -932,6 +942,31 @@ def _attach_gcp_vpc(neo4j_session: neo4j.Session, instance_id: str, gcp_update_t
 
 
 @timeit
+def _attach_instance_service_account(neo4j_session: neo4j.Session, instance: Resource, gcp_update_tag: int) -> None:
+    """
+    Attach service account to GCP instance
+    :param neo4j_session: The session
+    :param instance: The instance object
+    :param gcp_update_tag: The timestamp
+    :return: Nothing
+    """
+    query = """
+    MATCH (i:GCPInstance{id:{InstanceId}})
+    MERGE (sa:GCPServiceAccount{email:{AccountEmail}})
+    MERGE (sa)-[r:USED_BY]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = {gcp_update_tag}
+    """
+    for account in instance.get('serviceAccounts', []):
+        neo4j_session.run(
+            query,
+            InstanceId=instance['partial_uri'],
+            AccountEmail=account.get('email', ''),
+            gcp_update_tag=gcp_update_tag,
+        )
+
+
+@timeit
 def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resource], gcp_update_tag: int) -> None:
     """
     Load the firewall list to Neo4j
@@ -945,6 +980,7 @@ def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resou
     SET fw.direction = {Direction},
     fw.disabled = {Disabled},
     fw.name = {Name},
+    fw.region = {region},
     fw.priority = {Priority},
     fw.self_link = {SelfLink},
     fw.ingress_public_allow = {IngressPublicAllow},
@@ -972,6 +1008,7 @@ def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resou
             SelfLink=fw['selfLink'],
             IngressPublicAllow = fw['ingress_public_allow'],
             EgressPublicAllow = fw['egress_public_allow'],
+            region="global",
             VpcPartialUri=fw['vpc_partial_uri'],
             HasTargetServiceAccounts=fw['has_target_service_accounts'],
             gcp_update_tag=gcp_update_tag,
@@ -1145,6 +1182,7 @@ def sync_gcp_instances(
     load_gcp_instances(neo4j_session, instance_list, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_instances(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, instance_list, gcp_update_tag, common_job_parameters)
 
 
 @timeit
@@ -1166,6 +1204,7 @@ def sync_gcp_vpcs(
     load_gcp_vpcs(neo4j_session, vpcs, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_vpcs(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, vpcs, gcp_update_tag, common_job_parameters)
 
 
 @timeit
@@ -1174,11 +1213,13 @@ def sync_gcp_subnets(
     common_job_parameters: Dict,
 ) -> None:
     for r in regions:
+        logger.info("Subnet Region %s.", r)
         subnet_res = get_gcp_subnets(project_id, r, compute)
         subnets = transform_gcp_subnets(subnet_res)
         load_gcp_subnets(neo4j_session, subnets, gcp_update_tag)
         # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
         cleanup_gcp_subnets(neo4j_session, common_job_parameters)
+        label.sync_labels(neo4j_session, subnets, gcp_update_tag, common_job_parameters)
 
 
 @timeit
@@ -1202,13 +1243,16 @@ def sync_gcp_forwarding_rules(
     load_gcp_forwarding_rules(neo4j_session, forwarding_rules, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_forwarding_rules(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, forwarding_rules, gcp_update_tag, common_job_parameters)
 
     for r in regions:
+        logger.info("Forwarding Rule Region %s.", r)
         fwd_response = get_gcp_regional_forwarding_rules(project_id, r, compute)
         forwarding_rules = transform_gcp_forwarding_rules(fwd_response)
         load_gcp_forwarding_rules(neo4j_session, forwarding_rules, gcp_update_tag)
         # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
         cleanup_gcp_forwarding_rules(neo4j_session, common_job_parameters)
+        label.sync_labels(neo4j_session, forwarding_rules, gcp_update_tag, common_job_parameters)
 
 
 @timeit
@@ -1229,6 +1273,7 @@ def sync_gcp_firewall_rules(
     load_gcp_ingress_firewalls(neo4j_session, fw_list, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_firewall_rules(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, fw_list, gcp_update_tag, common_job_parameters)
 
 
 def _zones_to_regions(zones: List[str]) -> List[Set]:

@@ -8,6 +8,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from cartography.util import run_cleanup_job
+from . import label
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ def get_dns_zones(dns: Resource, project_id: str) -> List[Resource]:
         while request is not None:
             response = request.execute()
             for managed_zone in response['managedZones']:
+                managed_zone['id'] = f"projects/{project_id}/managedZones/{managed_zone['name']}"
                 zones.append(managed_zone)
             request = dns.managedZones().list_next(previous_request=request, previous_response=response)
         return zones
@@ -74,6 +76,9 @@ def get_dns_rrs(dns: Resource, dns_zones: List[Dict], project_id: str) -> List[R
                 response = request.execute()
                 for resource_record_set in response['rrsets']:
                     resource_record_set['zone'] = zone['id']
+                    resource_record_set[
+                        "id"
+                    ] = f"projects/{project_id}/resourceRecordSet/{resource_record_set.get('name',None)}"
                     rrs.append(resource_record_set)
                 request = dns.resourceRecordSets().list_next(previous_request=request, previous_response=response)
         return rrs
@@ -87,8 +92,8 @@ def get_dns_rrs(dns: Resource, dns_zones: List[Dict], project_id: str) -> List[R
             )
             return []
         else:
-            raise
-        raise e
+            # raise
+            return []
 
 
 @timeit
@@ -114,13 +119,14 @@ def load_dns_zones(neo4j_session: neo4j.Session, dns_zones: List[Dict], project_
 
     ingest_records = """
     UNWIND {records} as record
-    MERGE(zone:GCPDNSZone{id:record.id})
+    MERGE (zone:GCPDNSZone{id:record.id})
     ON CREATE SET
         zone.firstseen = timestamp(),
         zone.created_at = record.creationTime
     SET
         zone.name = record.name,
         zone.dns_name = record.dnsName,
+        zone.region = {region},
         zone.description = record.description,
         zone.visibility = record.visibility,
         zone.kind = record.kind,
@@ -136,6 +142,7 @@ def load_dns_zones(neo4j_session: neo4j.Session, dns_zones: List[Dict], project_
     neo4j_session.run(
         ingest_records,
         records=dns_zones,
+        region="global",
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
@@ -164,12 +171,13 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
 
     ingest_records = """
     UNWIND {records} as record
-    MERGE(rrs:GCPRecordSet{id:record.name})
+    MERGE (rrs:GCPRecordSet{id:record.id})
     ON CREATE SET
         rrs.firstseen = timestamp()
     SET
         rrs.name = record.name,
         rrs.type = record.type,
+        rrs.region = {region},
         rrs.ttl = record.ttl,
         rrs.data = record.rrdatas,
         rrs.lastupdated = {gcp_update_tag}
@@ -183,6 +191,7 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
     neo4j_session.run(
         ingest_records,
         records=dns_rrs,
+        region="global",
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -234,8 +243,10 @@ def sync(
     # DNS ZONES
     dns_zones = get_dns_zones(dns, project_id)
     load_dns_zones(neo4j_session, dns_zones, project_id, gcp_update_tag)
+    label.sync_labels(neo4j_session, dns_zones, gcp_update_tag, common_job_parameters)
     # RECORD SETS
     dns_rrs = get_dns_rrs(dns, dns_zones, project_id)
     load_rrs(neo4j_session, dns_rrs, project_id, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_dns_records(neo4j_session, common_job_parameters)
+    label.sync_labels(neo4j_session, dns_rrs, gcp_update_tag, common_job_parameters)
