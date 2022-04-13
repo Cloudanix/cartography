@@ -30,6 +30,16 @@ def get_gcp_buckets(storage: Resource, project_id: str) -> Dict:
     try:
         req = storage.buckets().list(project=project_id)
         res = req.execute()
+        for item in res['items']:
+            item['entity'] = item.get('acl',[]).get('entity','')
+            item['defaultentity'] = item.get('defaultObjectAcl',[]).get('entity','')
+            item['public_acl'] = False
+            if item['entity'] == 'allUsers' or item['entity'] == 'allAuthenticatedUsers':
+                item['public_acl'] = True
+            item['default_object_acl_public'] = False
+            if item['defaultentity'] == 'allUsers' or item['defaultentity'] == 'allAuthenticatedUsers':
+                item['default_object_acl'] = True
+            item['uniformAccess'] = item.get('iamConfiguration',{}).get('uniformBucketLevelAccess',{}).get('enbaled',False)
         return res
     except HttpError as e:
         reason = compute._get_error_reason(e)
@@ -137,7 +147,11 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
     bucket.versioning_enabled = {VersioningEnabled},
     bucket.log_bucket = {LogBucket},
     bucket.requester_pays = {RequesterPays},
-    bucket.default_kms_key_name = {DefaultKmsKeyName}
+    bucket.default_kms_key_name = {DefaultKmsKeyName},
+    bucket.public_acl = {PublicAcl},
+    bucket.default_object_acl_public = {DefaultObjectAclPublic},
+    bucket.uniform_bucket_level_access = {UniformBucketLevelAccess},
+    bucket.lastupdated = {gcp_update_tag}
 
     MERGE (p)-[r:RESOURCE]->(bucket)
     ON CREATE SET r.firstseen = timestamp()
@@ -163,6 +177,9 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
             LogBucket=bucket['log_bucket'],
             RequesterPays=bucket['requester_pays'],
             DefaultKmsKeyName=bucket['default_kms_key_name'],
+            PublicAcl = bucket['public_acl'],
+            DefaultObjectAclPublic = bucket['default_object_acl_public'],
+            UniformBucketLevelAccess = bucket['uniformAccess'],
             gcp_update_tag=gcp_update_tag,
         )
         _attach_gcp_bucket_labels(neo4j_session, bucket, gcp_update_tag)

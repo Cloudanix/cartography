@@ -113,6 +113,17 @@ def get_gcp_instance_responses(project_id: str, zones: Optional[List[Dict]], com
     for zone in zones:
         req = compute.instances().list(project=project_id, zone=zone['name'])
         res = req.execute()
+        for item in res['items']:
+            item['public_facing'] = item.get('networkInterfaces',[]).get('accessConfigs',[]).get('name',False)
+            if item['public_facing'] == 'External NAT':
+                item['public_facing'] = True
+            item['iam_policy'] = compute.instances().getIamPolicy(\
+                project=project_id,zone=zone['name'],resource=res.get('items',[]).get('id','')).execute()
+            item['members'] = item.get('iam_policy',{}).get('bindings',[]).get('members',[])
+            for user in item['members']:
+                item['public_policy'] = False
+                if user == 'allUsers' or user == 'allAuthenticatedUsers':
+                    item['public_policy'] = True
         response_objects.append(res)
     return response_objects
 
@@ -332,6 +343,10 @@ def transform_gcp_forwarding_rules(fwd_response: Resource) -> List[Dict]:
         forwarding_rule['allow_global_access'] = fwd.get('allowGlobalAccess', None)
 
         forwarding_rule['load_balancing_scheme'] = fwd['loadBalancingScheme']
+        if forwarding_rule['load_balancing_scheme'] == 'EXTERNAL':
+            forwarding_rule['public_load_balancer'] = True
+        else:
+            forwarding_rule['public_load_balancer'] = False
         forwarding_rule['name'] = fwd['name']
         forwarding_rule['port_range'] = fwd.get('portRange', None)
         forwarding_rule['ports'] = fwd.get('ports', None)
@@ -380,7 +395,19 @@ def transform_gcp_firewall(fw_response: Resource) -> List[Dict]:
         for allow_rule in fw.get('allowed', []):
             transformed_allow_rules = _transform_fw_entry(allow_rule, fw_partial_uri, is_allow_rule=True)
             fw['transformed_allow_list'].extend(transformed_allow_rules)
-
+            for allow_list in fw['transformed_allow_list']:
+                for source_range in fw['sourceRanges']:
+                    fw['ingress_public_allow'] = False
+                    if source_range == '0.0.0.0/0' and fw['direction'] == 'INGRESS':
+                        if allow_list.get('protocol') and allow_list.get('port'):
+                            fw['ingress_public_allow'] = True
+                            break
+            for destination_range in fw['destinationRanges']:
+                fw['egress_public_allow'] = False
+                if destination_range == '0.0.0.0/0' and fw['direction'] == 'EGRESS':
+                    if allow_list.get('protocol') and allow_list.get('port'):
+                        fw['egress_public_allow'] = True
+                        break
         for deny_rule in fw.get('denied', []):
             transformed_deny_rules = _transform_fw_entry(deny_rule, fw_partial_uri, is_allow_rule=False)
             fw['transformed_deny_list'].extend(transformed_deny_rules)
@@ -517,6 +544,8 @@ def load_gcp_instances(neo4j_session: neo4j.Session, data: List[Dict], gcp_updat
     SET i.self_link = {SelfLink},
     i.instancename = {InstanceName},
     i.hostname = {Hostname},
+    i.exposed_internet = {PublicFacing},
+    i.public_policy = {PublicPolicy},
     i.zone_name = {ZoneName},
     i.project_id = {ProjectId},
     i.status = {Status},
@@ -535,6 +564,8 @@ def load_gcp_instances(neo4j_session: neo4j.Session, data: List[Dict], gcp_updat
             SelfLink=instance['selfLink'],
             InstanceName=instance['name'],
             ZoneName=instance['zone_name'],
+            PublicFacing = instance['public_facing'],
+            PublicPolicy=instance['public_policy'],
             Hostname=instance.get('hostname', None),
             Status=instance['status'],
             gcp_update_tag=gcp_update_tag,
@@ -661,6 +692,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
         fwd.self_link = {SelfLink},
         fwd.subnetwork = {SubNetworkPartialUri},
         fwd.target = {TargetPartialUri},
+        fwd.public_load_balancer = {PublicLoadBalancer},
         fwd.lastupdated = {gcp_update_tag}
     """
 
@@ -685,6 +717,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
             SubNetwork=subnetwork,
             SubNetworkPartialUri=fwd.get('subnetwork_partial_uri', None),
             TargetPartialUri=fwd['target'],
+            PublicLoadBalancer = fwd['public_load_balancer'],
             gcp_update_tag=gcp_update_tag,
         )
 
@@ -914,6 +947,8 @@ def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resou
     fw.name = {Name},
     fw.priority = {Priority},
     fw.self_link = {SelfLink},
+    fw.ingress_public_allow = {IngressPublicAllow},
+    fw.egress_public_allow = {EgressPublicAllow},
     fw.has_target_service_accounts = {HasTargetServiceAccounts},
     fw.lastupdated = {gcp_update_tag}
 
@@ -935,6 +970,8 @@ def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resou
             Name=fw['name'],
             Priority=fw['priority'],
             SelfLink=fw['selfLink'],
+            IngressPublicAllow = fw['ingress_public_allow'],
+            EgressPublicAllow = fw['egress_public_allow'],
             VpcPartialUri=fw['vpc_partial_uri'],
             HasTargetServiceAccounts=fw['has_target_service_accounts'],
             gcp_update_tag=gcp_update_tag,

@@ -31,9 +31,11 @@ def get_sql_instances(sql: Resource,project_id: str) -> List[Dict]:
         request = sql.instances().list(project=project_id)
         while request is not None:
             response = request.execute()
-            for item in response['items']:
-                item['id'] = f"project/{project_id}/instances/{item['name']}"
-                sql_instances.append(item)
+            if response.get('items', []):
+                for item in response['items']:
+                    item['id'] = f"project/{project_id}/instances/{item['name']}"
+                    item['ipV4Enabled'] = item.get('settings',{}).get('ipConfiguration',{}).get('ipV4Enabled',False)
+                    sql_instances.append(item)
             request = sql.instances().list_next(previous_request=request, previous_response=response)
         return sql_instances
     except HttpError as e:
@@ -120,6 +122,7 @@ def load_sql_instances(neo4j_session: neo4j.Session,instances: List[Resource],pr
         i.currentDiskSize = instance.currentDiskSize,
         i.instanceType = instance.instanceType,
         i.connectionName = instance.connectionName,
+        i.ipV4Enabled = instance.ipV4Enabled,
         i.name = instance.name,
         i.region = instance.region,
         i.gceZone = instance.gceZone,
@@ -233,4 +236,3 @@ def sync(
     load_sql_users(users,project_id,gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_sql_instances(neo4j_session, common_job_parameters)
-    cleanup_sql_users(neo4j_session, common_job_parameters)

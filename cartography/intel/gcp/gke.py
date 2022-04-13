@@ -90,6 +90,7 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
         cluster.private_endpoint_enabled = {ClusterPrivateEndpointEnabled},
         cluster.private_endpoint = {ClusterPrivateEndpoint},
         cluster.public_endpoint = {ClusterPublicEndpoint},
+        cluster.masterGlobalAccessConfig = {ClusterMasterGlobalAccessConfig},
         cluster.masterauth_username = {ClusterMasterUsername},
         cluster.masterauth_password = {ClusterMasterPassword}
     WITH cluster
@@ -125,6 +126,7 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
             ClusterShieldedNodes=cluster.get('shieldedNodes', {}).get('enabled'),
             ClusterPrivateNodes=cluster.get('privateClusterConfig', {}).get('enablePrivateNodes'),
             ClusterPrivateEndpointEnabled=cluster.get('privateClusterConfig', {}).get('enablePrivateEndpoint'),
+            ClusterMasterGlobalAccessConfig = cluster.get('privateClusterConfig',{}).get('masterGlobalAccessConfig',{}).get('enabled'),
             ClusterPrivateEndpoint=cluster.get('privateClusterConfig', {}).get('privateEndpoint'),
             ClusterPublicEndpoint=cluster.get('privateClusterConfig', {}).get('publicEndpoint'),
             ClusterMasterUsername=cluster.get('masterAuth', {}).get('username'),

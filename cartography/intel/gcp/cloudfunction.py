@@ -56,7 +56,15 @@ def get_gcp_functions(function: Resource,project_id: str) -> List[Dict]:
             while request is not None:
                 response = request.execute()
                 for func in response['functions']:
-                    func['id'] = f"projects/{project_id}/locations/{region}/functions/{func['name']}"
+                    func['id'] = func['name']
+                    func['iam_policy'] = function.projects().location().functions().getIamPolicy(\
+                        resource=f"projects/{project_id}/locations/{region.get('name',None)}/functions/{func['id'].split('/')[-1]}").execute()
+                    func['members'] = func.get('iam_policy',{}).get('bindings',[]).get('members',[])
+                    for user in func['members']:
+                        func['public_policy'] = False
+                        if user == 'allUsers' or user == 'allAuthenticatedUsers':
+                            func['public_policy'] = True
+                            break
                     functions.append(func)
                 request = function.projects().locations().functions().list_next(previous_request=request, previous_response=response)
         return functions
@@ -71,6 +79,8 @@ def get_gcp_functions(function: Resource,project_id: str) -> List[Dict]:
             return []
         else:
             raise
+
+
 
 @timeit
 def load_functions(neo4j_session: neo4j.Session,functions: List[Resource],project_id: str,gcp_update_tag: int) -> None:
@@ -108,6 +118,7 @@ def load_functions(neo4j_session: neo4j.Session,functions: List[Resource],projec
         function.vpcConnector = func.vpcConnector,
         function.vpcConnectorEgressSettings = func.vpcConnectorEgressSettings,
         function.ingressSettings = func.ingressSettings,
+        function.publicPolicy = func.public_policy,
         function.buildWorkerPool = func.buildWorkerPool,
         function.buildId = func.buildId,
         fucntion.sourceToken = func.sourceToken,
