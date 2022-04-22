@@ -36,7 +36,7 @@ def get_apigateway_locations(apigateway: Resource, project_id: str) -> List[Dict
             if res.get('locations', []):
                 for location in res['locations']:
                     location['project_id'] = project_id
-                    location['id'] = location['name']
+                    location['id'] = location['locationId']
                     locations.append(location)
             req = apigateway.projects().locations().list_next(previous_request=req, previous_response=res)
         return locations
@@ -54,7 +54,7 @@ def get_apigateway_locations(apigateway: Resource, project_id: str) -> List[Dict
 
 
 @timeit
-def get_apis(apigateway: Resource, project_id: str) -> List[Dict]:
+def get_apis(apigateway: Resource, project_id: str, locations: List[Dict]) -> List[Dict]:
     """
         Returns a list of apis within the given project.
 
@@ -69,20 +69,33 @@ def get_apis(apigateway: Resource, project_id: str) -> List[Dict]:
     """
     apis = []
     try:
-        req = apigateway.projects().locations().apis().list(parent=f'projects/{project_id}/locations/global')
-        while req is not None:
-            res = req.execute()
-            if res.get('apis', []):
-                for api in res['apis']:
-                    api['project_id'] = project_id
-                    api['id'] = api['name']
-                    x = api.get('name').split('/')
-                    x = x[x.index('locations') + 1].split("-")
-                    api['region'] = x[0]
-                    if len(x) > 1:
-                        api['region'] = f"{x[0]}-{x[1]}"
-                    apis.append(api)
-            req = apigateway.projects().locations().apis().list_next(previous_request=req, previous_response=res)
+        for location in locations:
+            req = apigateway.projects().locations().apis().list(parent=f"projects/{project_id}/locations/{location['id']}")
+            while req is not None:
+                res = req.execute()
+                if res.get('apis', []):
+                    for api in res['apis']:
+                        api['project_id'] = project_id
+                        api['id'] = api.get('name','').split('/')[-1]
+                        api['iam_policy'] = apigateway.projects().locations().apis().getIamPolicy(\
+                            resource=f"projects/{project_id}/locations/{location['id']}/apis/{api['id']}").execute()
+                        bindings = api.get('iam_policy',{}).get('bindings',[])
+                        members = []
+                        for binding in bindings:
+                            members.append(binding.get('members',[]))
+                        api['members'] = members
+                        for member in api['members']:
+                            if member.startswith('allUsers'):
+                                api['user'] = 'allUsers'
+                            elif member.startswith('allAuthenticatedUsers'):
+                                api['user'] = 'allAUthenticatedUsers'
+                        x = api.get('name').split('/')
+                        x = x[x.index('locations') + 1].split("-")
+                        api['region'] = x[0]
+                        if len(x) > 1:
+                            api['region'] = f"{x[0]}-{x[1]}"
+                        apis.append(api)
+                req = apigateway.projects().locations().apis().list_next(previous_request=req, previous_response=res)
         return apis
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -98,7 +111,7 @@ def get_apis(apigateway: Resource, project_id: str) -> List[Dict]:
 
 
 @timeit
-def get_api_configs(apigateway: Resource, project_id: str) -> List[Dict]:
+def get_api_configs(apigateway: Resource, project_id: str, apis: List[Dict]) -> List[Dict]:
     """
         Returns a list of apis configs within the given project.
 
@@ -113,27 +126,40 @@ def get_api_configs(apigateway: Resource, project_id: str) -> List[Dict]:
     """
     api_configs = []
     try:
-        req = apigateway.projects().locations().apis().configs().list(
-            parent=f'projects/{project_id}/locations/global/apis/*',
-        )
-        while req is not None:
-            res = req.execute()
-            if res.get('apiConfigs', []):
-                for apiConfig in res['apiConfigs']:
-                    apiConfig['api_id'] = f"projects/{project_id}/locations/global/apis/\
-                        {apiConfig.get('name').split('/')[-3]}"
-                    apiConfig['id'] = apiConfig['name']
-                    apiConfig['project_id'] = project_id
-                    x = apiConfig.get('name').split('/')
-                    x = x[x.index('locations') + 1].split("-")
-                    apiConfig['region'] = x[0]
-                    if len(x) > 1:
-                        apiConfig['region'] = f"{x[0]}-{x[1]}"
-                    api_configs.append(apiConfig)
-            req = apigateway.projects().locations().apis().configs().list_next(
-                previous_request=req,
-                previous_response=res,
+        for api in apis:
+            req = apigateway.projects().locations().apis().configs().list(
+                parent=f'projects/{project_id}/locations/global/apis/{api["id"]}',
             )
+            while req is not None:
+                res = req.execute()
+                if res.get('apiConfigs', []):
+                    for apiConfig in res['apiConfigs']:
+                        apiConfig['api_id'] = f"projects/{project_id}/locations/global/apis/\
+                            {apiConfig.get('name').split('/')[-3]}"
+                        apiConfig['id'] = apiConfig['name']
+                        apiConfig['project_id'] = project_id
+                        apiConfig['iam_policy'] = apigateway.projects().locations().apis().configs().getIamPolicy(\
+                            resource = apiConfig.get('name'))
+                        bindings = apiConfig.get('iam_policy',{}).get('bindings',[])
+                        members = []
+                        for binding in bindings:
+                            members.append(binding.get('members',[]))
+                        apiConfig['members'] = members
+                        for member in apiConfig['members']:
+                            if member.startswith('allUsers'):
+                                apiConfig['user'] = 'allUsers'
+                            elif member.startswith('allAuthenticatedUsers'):
+                                apiConfig['user'] = 'allAUthenticatedUsers'
+                        x = apiConfig.get('name').split('/')
+                        x = x[x.index('locations') + 1].split("-")
+                        apiConfig['region'] = x[0]
+                        if len(x) > 1:
+                            apiConfig['region'] = f"{x[0]}-{x[1]}"
+                        api_configs.append(apiConfig)
+                req = apigateway.projects().locations().apis().configs().list_next(
+                    previous_request=req,
+                    previous_response=res,
+                )
         return api_configs
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -149,7 +175,7 @@ def get_api_configs(apigateway: Resource, project_id: str) -> List[Dict]:
 
 
 @timeit
-def get_gateways(apigateway: Resource, project_id: str) -> List[Dict]:
+def get_gateways(apigateway: Resource, project_id: str, locations: List[Dict]) -> List[Dict]:
     """
         Returns a list of gateways within the given project.
 
@@ -164,20 +190,33 @@ def get_gateways(apigateway: Resource, project_id: str) -> List[Dict]:
     """
     gateways = []
     try:
-        req = apigateway.projects().locations().gateways().list(parent=f'projects/{project_id}/locations/*')
-        while req is not None:
-            res = req.execute()
-            if res.get('gateways', []):
-                for gateway in res['gateways']:
-                    gateway['id'] = gateway['name']
-                    gateway['project_id'] = project_id
-                    x = gateway.get('name').split('/')
-                    x = x[x.index('locations') + 1].split("-")
-                    gateway['region'] = x[0]
-                    if len(x) > 1:
-                        gateway['region'] = f"{x[0]}-{x[1]}"
-                    gateways.append(gateway)
-            req = apigateway.projects().locations().gateways().list_next(previous_request=req, previous_response=res)
+        for location in locations:
+            req = apigateway.projects().locations().gateways().list(parent=f'projects/{project_id}/locations/{location["id"]}')
+            while req is not None:
+                res = req.execute()
+                if res.get('gateways', []):
+                    for gateway in res['gateways']:
+                        gateway['id'] = gateway['name']
+                        gateway['project_id'] = project_id
+                        gateway['iam_policy'] = apigateway.projects().locations().gateways().getIamPolicy(\
+                            resource = f"projects/{project_id}/locations/{location['id']}/gateways/{gateway['name']}")
+                        bindings = gateway.get['iam_policy',{}].get['bindings',[]]
+                        members = []
+                        for binding in bindings:
+                            members.append(binding.get('members',[]))
+                        gateway['members'] = members
+                        for member in gateway['members']:
+                            if member.startswith('allUsers'):
+                                gateway['user'] = 'allUsers'
+                            elif member.startswith('allAuthenticatedUsers'):
+                                gateway['user'] = 'allAUthenticatedUsers'
+                        x = gateway.get('name').split('/')
+                        x = x[x.index('locations') + 1].split("-")
+                        gateway['region'] = x[0]
+                        if len(x) > 1:
+                            gateway['region'] = f"{x[0]}-{x[1]}"
+                        gateways.append(gateway)
+                req = apigateway.projects().locations().gateways().list_next(previous_request=req, previous_response=res)
         return gateways
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -296,6 +335,7 @@ def load_apis_tx(tx: neo4j.Transaction, apis: List[Dict], project_id: str, gcp_u
     SET
         api.name = ap.name,
         api.createTime = ap.createTime,
+        api.user = ap.user,
         api.region = ap.region,
         api.updateTime = ap.updateTime,
         api.displayName = ap.displayName,
@@ -366,6 +406,7 @@ def load_api_configs_tx(tx: neo4j.Transaction, configs: List[Dict], project_id: 
     SET
         config.name = conf.name,
         config.createTime = conf.createTime,
+        config.user = conf.user,
         config.region = conf.region,
         config.updateTime = conf.updateTime,
         config.displayName = conf.displayName,
@@ -438,6 +479,7 @@ def load_gateways_tx(tx: neo4j.Transaction, gateways: List[Dict], project_id: st
     SET
         gateway.name = g.name,
         gateway.createTime = g.createTime,
+        gateway.user = g.user,
         gateway.updateTime = g.updateTime,
         gateway.displayName = g.displayName,
         gateway.region = g.region,
@@ -511,19 +553,19 @@ def sync(
     cleanup_apigateway_locations(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, locations, gcp_update_tag, common_job_parameters)
     # API Gateway APIs
-    apis = get_apis(apigateway, project_id)
+    apis = get_apis(apigateway, project_id, locations)
     load_apis(neo4j_session, apis, project_id, gcp_update_tag)
     # Cleanup APIs
     cleanup_apis(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, apis, gcp_update_tag, common_job_parameters)
     # API Gateway API Configs
-    configs = get_api_configs(apigateway, project_id)
+    configs = get_api_configs(apigateway, project_id, apis)
     load_api_configs(neo4j_session, configs, project_id, gcp_update_tag)
     # Cleanup API Gateway Configs
     cleanup_api_configs(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, configs, gcp_update_tag, common_job_parameters)
     # API Gateway Gateways
-    gateways = get_gateways(apigateway, project_id)
+    gateways = get_gateways(apigateway, project_id, locations)
     load_gateways(neo4j_session, gateways, project_id, gcp_update_tag)
     # Cleanup API Gateway Gateways
     cleanup_api_gateways(neo4j_session, common_job_parameters)

@@ -114,6 +114,24 @@ def get_gcp_instance_responses(project_id: str, zones: Optional[List[Dict]], com
     for zone in zones:
         req = compute.instances().list(project=project_id, zone=zone['name'])
         res = req.execute()
+        for item in res.get('items',[]):
+            public_facing = []
+            for networkinterface in item.get('networkInterfaces',[]):
+                for accessconfig in networkinterface.get('accessConfig',[]):
+                    public_facing.append(accessconfig.get('name',None))
+            item['accessConfig'] = public_facing
+            item['iam_policy'] = compute.instances().getIamPolicy(\
+                project=project_id,zone=zone['name'],resource=item.get("id")).execute()
+            bindings = item.get('iam_policy',{}).get('bindings',[])
+            members = []
+            for binding in bindings:
+                members.append(binding.get('members'))
+            item['members'] = members
+            for member in item['members']:
+                if member.startswith('allUsers'):
+                    item['user'] = 'allUsers'
+                elif member.startswith('allAuthenticatedUsers'):
+                    item['user'] = 'allAUthenticatedUsers'
         response_objects.append(res)
     return response_objects
 
@@ -336,6 +354,11 @@ def transform_gcp_forwarding_rules(fwd_response: Resource) -> List[Dict]:
         forwarding_rule['allow_global_access'] = fwd.get('allowGlobalAccess', None)
 
         forwarding_rule['load_balancing_scheme'] = fwd.get('loadBalancingScheme', None)
+        forwarding_rule['load_balancing_scheme'] = fwd['loadBalancingScheme']
+        if forwarding_rule['load_balancing_scheme'] == 'EXTERNAL':
+            forwarding_rule['public_load_balancer'] = True
+        else:
+            forwarding_rule['public_load_balancer'] = False
         forwarding_rule['name'] = fwd['name']
         forwarding_rule['port_range'] = fwd.get('portRange', None)
         forwarding_rule['ports'] = fwd.get('ports', None)
@@ -522,6 +545,8 @@ def load_gcp_instances(neo4j_session: neo4j.Session, data: List[Dict], gcp_updat
     i.instancename = {InstanceName},
     i.hostname = {Hostname},
     i.region = {region},
+    i.accessconfig = {PublicFacing},
+    i.user = {User},
     i.zone_name = {ZoneName},
     i.project_id = {ProjectId},
     i.status = {Status},
@@ -540,6 +565,8 @@ def load_gcp_instances(neo4j_session: neo4j.Session, data: List[Dict], gcp_updat
             SelfLink=instance['selfLink'],
             InstanceName=instance['name'],
             ZoneName=instance['zone_name'],
+            PublicFacing = instance.get('accessconfig',[]),
+            User = instance.get('user',None),
             Hostname=instance.get('hostname', None),
             Status=instance['status'],
             region=instance['region'],
@@ -665,6 +692,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
         fwd.network = {NetworkPartialUri},
         fwd.port_range = {PortRange},
         fwd.ports = {Ports},
+        fwd.public_load_balancer = {PublicLoadBalancer},
         fwd.project_id = {ProjectId},
         fwd.region = {Region},
         fwd.self_link = {SelfLink},
@@ -691,6 +719,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
             ProjectId=fwd['project_id'],
             Region=fwd.get('region', "global"),
             SelfLink=fwd['self_link'],
+            PublicLoadBalancer = fwd['public_load_balancer'],
             SubNetwork=subnetwork,
             SubNetworkPartialUri=fwd.get('subnetwork_partial_uri', None),
             TargetPartialUri=fwd['target'],

@@ -31,9 +31,16 @@ def get_gcp_buckets(storage: Resource, project_id: str) -> Dict:
     try:
         req = storage.buckets().list(project=project_id)
         res = req.execute()
+        for item in res['items']:
+            acl = item.get('acl',[])
+            for item2 in acl:
+                item['entity'] = item2.get('entity',None)
+            defaultObjectAcl = item.get('defaultObjectAcl',[])
+            for item3 in defaultObjectAcl:
+                item['defaultentity'] = item3.get('entity',None)
         return res
     except HttpError as e:
-        reason = compute._get_error_reason(e)
+        reason = compute._get_error_reason(e)   
         if reason == 'invalid':
             logger.warning(
                 (
@@ -96,6 +103,9 @@ def transform_gcp_buckets(bucket_res: Dict) -> List[Dict]:
         bucket['default_kms_key_name'] = b.get('encryption', {}).get('defaultKmsKeyName')
         bucket['log_bucket'] = b.get('logging', {}).get('logBucket')
         bucket['requester_pays'] = b.get('billing', {}).get('requesterPays', None)
+        bucket['entity'] = b.get('entity',None)
+        bucket['defaultentity'] = b.get('defaultentity',None)
+        bucket['uniform_bucket_level_access'] = b.get('iamConfiguration',{}).get('uniformBucketLevelAccess',{}).get('enabled',None)
         bucket_list.append(bucket)
     return bucket_list
 
@@ -140,6 +150,9 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
     bucket.owner_entity = {OwnerEntity},
     bucket.owner_entity_id = {OwnerEntityId},
     bucket.lastupdated = {gcp_update_tag},
+    bucket.entity = {Entity},
+    bucket.defaultentity = {DefaultEntity},
+    bucket.uniform_bucket_level_access = {UniformBucketLevelAccess},
     bucket.versioning_enabled = {VersioningEnabled},
     bucket.log_bucket = {LogBucket},
     bucket.requester_pays = {RequesterPays},
@@ -167,6 +180,9 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
             IamConfigBucketPolicyOnly=bucket['iam_config_bucket_policy_only'],
             OwnerEntity=bucket['owner_entity'],
             OwnerEntityId=bucket['owner_entity_id'],
+            Entity = bucket['entity'],
+            DefaultEntity = bucket['defaultentity'],
+            UniformBucketLevelAccess = bucket['uniform_bucket_level_access'],
             VersioningEnabled=bucket['versioning_enabled'],
             LogBucket=bucket['log_bucket'],
             RequesterPays=bucket['requester_pays'],

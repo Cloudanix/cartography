@@ -37,7 +37,7 @@ def get_gcp_functions(function: Resource, project_id: str) -> List[Dict]:
         while request is not None:
             response = request.execute()
             for location in response['locations']:
-                location["id"] = location.get("name", None)
+                location["id"] = location.get("locationId", None)
                 regions.append(location)
             request = function.projects().locations().list_next(previous_request=request, previous_response=response)
     except HttpError as e:
@@ -64,6 +64,18 @@ def get_gcp_functions(function: Resource, project_id: str) -> List[Dict]:
                 for func in response.get('functions', []):
                     func['id'] = func['name']
                     func['region'] = region.get('locationId', 'global')
+                    func['iam_policy'] = function.projects().locations().functions().getIamPolicy(\
+                        resource=f"projects/{project_id}/locations/{region.get('id',None)}/functions/{func['id'].split('/')[-1]}").execute()
+                    bindings = func.get('iam_policy',{}).get('bindings',[])
+                    members = []
+                    for binding in bindings:
+                        members.append(binding.get('members',[]))
+                        func['members'] = members
+                    for member in func['members']:
+                            if member.startswith('allUsers'):
+                                func['user'] = 'allUsers'
+                            elif member.startswith('allAuthenticatedUsers'):
+                                func['user'] = 'allAUthenticatedUsers'
                     functions.append(func)
                 request = function.projects().locations().functions().list_next(
                     previous_request=request,
@@ -126,6 +138,8 @@ def _load_functions_tx(tx: neo4j.Transaction, functions: List[Resource], project
         function.vpcConnectorEgressSettings = func.vpcConnectorEgressSettings,
         function.ingressSettings = func.ingressSettings,
         function.buildWorkerPool = func.buildWorkerPool,
+        function.user = func.user,
+        function.ingressSettings = func.ingressSettings,
         function.buildId = func.buildId,
         function.sourceToken = func.sourceToken,
         function.sourceArchiveUrl = func.sourceArchiveUrl,

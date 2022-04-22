@@ -80,6 +80,18 @@ def get_kms_keyrings(kms: Resource, kms_locations: List[Dict], project_id: str) 
                         key_ring['loc_id'] = loc['id']
                         key_ring['id'] = key_ring['name']
                         key_ring['region'] = loc.get("locationId", "global")
+                        key_ring['iam_policy'] = kms.projects().locations().keyrings().getIamPolicy(\
+                            resource = f"projects/{project_id}/locations/{loc['name']}/keyrings/{key_ring['name']}")
+                        bindings = key_ring.get('iam_policy',{}).get('bindings',[])
+                        members = []
+                        for binding in bindings:
+                            members.append(binding.get('members',[]))
+                            key_ring['members'] = members
+                        for member in key_ring['members']:
+                            if member.startswith('allUsers'):
+                                key_ring['user'] = 'allUsers'
+                            elif member.startswith('allAuthenticatedUsers'):
+                                key_ring['user'] = 'allAUthenticatedUsers'
                         key_rings.append(key_ring)
                 request = kms.projects().locations().keyRings().list_next(
                     previous_request=request,
@@ -128,6 +140,19 @@ def get_kms_crypto_keys(kms: Resource, key_rings: List[Dict], project_id: str) -
                         crypto_key['keyring_id'] = key_ring['id']
                         crypto_key['id'] = crypto_key['name']
                         crypto_key['region'] = key_ring.get("region", "global")
+                        crypto_key['iam_policy'] = kms.projects().locations().keyrings().cryptokeys().getIamPolicy(\
+                            resource = f"projects/{project_id}/\
+                                locations/{key_ring['loc_id']}/keyRings/{key_ring['id']}/cryptoKeys/{crypto_key['name']}")
+                        bindings = crypto_key.get('iam_policy',{}).get('bindings',[])
+                        members = []
+                        for binding in bindings:
+                            members.append(binding.get('members',[]))
+                            crypto_key['members'] = members
+                        for member in crypto_key['members']:
+                            if member.startswith('allUsers'):
+                                crypto_key['user'] = 'allUsers'
+                            elif member.startswith('allAuthenticatedUsers'):
+                                crypto_key['user'] = 'allAUthenticatedUsers'
                         crypto_keys.append(crypto_key)
                 request = kms.projects().locations().keyRings().cryptoKeys().list_next(
                     previous_request=request,
@@ -224,6 +249,7 @@ def _load_kms_key_rings_tx(
     SET
         keyring.name = keyr.name,
         keyring.region = keyr.region,
+        keyring.user = keyr.user,
         keyring.createTime = keyr.createTime,
         keyring.lastupdated = {gcp_update_tag}
     WITH keyring, keyr
@@ -274,6 +300,7 @@ def _load_kms_crypto_keys_tx(
         crypto_key.purpose = ck.purpose,
         crypto_key.region = ck.region,
         crypto_key.createTime = ck.createTime,
+        crypto_key.user = ck.user,
         crypto_key.nextRotationTime = ck.nextRotationTime,
         crypto_key.rotationPeriod = ck.rotationPeriod,
         crypto_key.lastupdated = {gcp_update_tag}

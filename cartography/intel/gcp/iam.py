@@ -290,6 +290,22 @@ def transform_bindings(bindings: List[Dict], project_id: str) -> tuple:
                     "name": dmn,
                 })
 
+            elif member.startswith('allUsers'):
+                usr = 'allUsers'
+                users.append({
+                    "id": f'projects/{project_id}/users/{usr}',
+                    "email": usr,
+                    "name": usr,
+                })
+
+            elif member.startswith('allAuthenticatedUsers'):
+                usr = 'allAuthenticatedUsers'
+                users.append({
+                    "id": f"projects/{project_id}/users/{usr}",
+                    "email": usr,
+                    "name": usr,
+                })
+
     return (
         [dict(s) for s in {frozenset(d.items()) for d in users}],
         [dict(s) for s in {frozenset(d.items()) for d in groups}],
@@ -598,6 +614,18 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
             if member.startswith('user:'):
                 attach_role_to_user(
                     neo4j_session, role_id, f"projects/{project_id}/users/{member[len('user:'):]}",
+                    project_id, gcp_update_tag,
+                )
+
+            elif member.startswith('allUsers'):
+                attach_role_to_user(
+                    neo4j_session, role_id, f"projects/{project_id}/users/allUsers",
+                    project_id, gcp_update_tag,
+                )
+            
+            elif member.startswith('allAuthenticatedUsers'):
+                attach_role_to_user(
+                    neo4j_session, role_id, f"projects/{project_id}/users/allAuthenticatedUsers",
                     project_id, gcp_update_tag,
                 )
 

@@ -30,7 +30,7 @@ def get_gke_clusters(container: Resource, project_id: str) -> Dict:
     try:
         req = container.projects().zones().clusters().list(projectId=project_id, zone='-')
         res = req.execute()
-        for item in req:
+        for item in res['clusters']:
             item['id'] = f"project/{project_id}/clusters/{item['name']}"
         return res
     except HttpError as e:
@@ -92,6 +92,7 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
         cluster.legacy_abac = {ClusterAbac},
         cluster.shielded_nodes = {ClusterShieldedNodes},
         cluster.private_nodes = {ClusterPrivateNodes},
+        cluster.masterGlobalAccessConfig = {ClusterMasterGlobalAccessConfig},
         cluster.private_endpoint_enabled = {ClusterPrivateEndpointEnabled},
         cluster.private_endpoint = {ClusterPrivateEndpoint},
         cluster.public_endpoint = {ClusterPublicEndpoint},
@@ -136,6 +137,7 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
             ClusterPrivateNodes=cluster.get('privateClusterConfig', {}).get('enablePrivateNodes'),
             ClusterPrivateEndpointEnabled=cluster.get('privateClusterConfig', {}).get('enablePrivateEndpoint'),
             ClusterPrivateEndpoint=cluster.get('privateClusterConfig', {}).get('privateEndpoint'),
+            ClusterMasterGlobalAccessConfig = cluster.get('privateClusterConfig',{}).get('masterGlobalAccessConfig',{}).get('enabled'),
             ClusterPublicEndpoint=cluster.get('privateClusterConfig', {}).get('publicEndpoint'),
             ClusterMasterUsername=cluster.get('masterAuth', {}).get('username'),
             ClusterMasterPassword=cluster.get('masterAuth', {}).get('password'),
