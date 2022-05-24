@@ -349,6 +349,7 @@ def _sync_single_project(
 
         for future in as_completed(futures):
             logger.info(f'Result from Future - Service Processing: {future.result()}')
+    # call label cleanup job at the last
     for service_name in common_job_parameters['service_labels']:
         common_job_parameters['service_label'] = service_name
         label.cleanup_labels(neo4j_session, common_job_parameters, service_name)
