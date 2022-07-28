@@ -1,6 +1,8 @@
 import logging
 from typing import Dict
 from typing import List
+from . import iam
+import json
 
 import time
 import neo4j
@@ -35,12 +37,26 @@ def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -
         req = storage.buckets().list(project=project_id)
         res = req.execute()
         for item in res['items']:
+            prevent_public_access = False
             acl = item.get('acl', [])
             for item2 in acl:
                 item['entity'] = item2.get('entity', None)
             defaultObjectAcl = item.get('defaultObjectAcl', [])
             for item3 in defaultObjectAcl:
                 item['defaultentity'] = item3.get('entity', None)
+            if item.get('iamConfiguration',{}).get('publicAccessPrevention',None) == 'enforced':
+                prevent_public_access = True
+            if not prevent_public_access:
+                if len(item.get('acl',[])) != 0:
+                    access = item.get('acl',[])[0]
+                    if access.get('entity',None) in ('allUsers','allAuthenticatedUsers'):
+                        item['is_public_facing'] = True
+                else:
+                    storage_entities,public_access = get_storage_policy_entities(storage, item['name'], project_id)
+                    if public_access:
+                        item['is_public_facing'] = True
+            else:
+                item['is_public_facing'] = False
         if common_job_parameters.get('pagination', {}).get('storage', None):
             pageNo = common_job_parameters.get("pagination", {}).get("storage", None)["pageNo"]
             pageSize = common_job_parameters.get("pagination", {}).get("storage", None)["pageSize"]
@@ -82,6 +98,26 @@ def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -
         else:
             raise
 
+@timeit
+def get_storage_policy_entities(storage,name,project_id):
+
+    try:
+        iam_policy = storage.buckets().getIamPolicy(bucket=name).execute()
+        bindings = iam_policy.get('bindings', [])
+        entity_list, public_access = iam.transform_bindings(bindings, project_id)
+        return entity_list, public_access
+    except HttpError as e:
+        err = json.loads(e.content.decode('utf-8'))['error']
+        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            logger.warning(
+                (
+                    "Could not retrieve iam policy of storage service on project %s due to permissions issues. Code: %s, Message: %s"
+                ), project_id, err['code'], err['message'],
+            )
+            return []
+        else:
+            raise
+
 
 @timeit
 def transform_gcp_buckets(bucket_res: Dict, regions: list) -> List[Dict]:
@@ -119,6 +155,7 @@ def transform_gcp_buckets(bucket_res: Dict, regions: list) -> List[Dict]:
         bucket['storage_class'] = b.get('storageClass')
         bucket['time_created'] = b.get('timeCreated')
         bucket['updated'] = b.get('updated')
+        bucket['is_public_facing'] = b.get('is_public_facing',None)
         bucket['entity'] = b.get('entity', None)
         bucket['defaultentity'] = b.get('defaultentity', None)
         bucket['uniform_bucket_level_access'] = b.get('iamConfiguration', {}).get(
@@ -140,7 +177,7 @@ def transform_gcp_buckets(bucket_res: Dict, regions: list) -> List[Dict]:
 
 
 @timeit
-def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_update_tag: int) -> None:
+def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_update_tag: int, project_id: str) -> None:
     '''
     Ingest GCP Storage Buckets to Neo4j
 
@@ -158,7 +195,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
     '''
 
     query = """
-    MERGE (p:GCPProject{id:{ProjectNumber}})
+    MERGE (p:GCPProject{id:{project_id}})
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = {gcp_update_tag}
 
@@ -178,6 +215,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
     bucket.entity = {Entity},
     bucket.defaultentity = {DefaultEntity},
     bucket.uniform_bucket_level_access = {UniformBucketLevelAccess},
+    bucket.is_public_facing = {PublicFacing},
     bucket.retention_period = {RetentionPeriod},
     bucket.iam_config_bucket_policy_only = {IamConfigBucketPolicyOnly},
     bucket.owner_entity = {OwnerEntity},
@@ -196,7 +234,8 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
     for bucket in buckets:
         neo4j_session.run(
             query,
-            ProjectNumber=bucket['project_number'],
+            project_id=project_id,
+            ProjectNumber = bucket['project_number'],
             BucketId=bucket['id'],
             SelfLink=bucket['self_link'],
             Kind=bucket['kind'],
@@ -209,6 +248,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], gcp_upda
             Entity=bucket['entity'],
             DefaultEntity=bucket['defaultentity'],
             UniformBucketLevelAccess=bucket['uniform_bucket_level_access'],
+            PublicFacing = bucket['is_public_facing'],
             RetentionPeriod=bucket['retention_period'],
             IamConfigBucketPolicyOnly=bucket['iam_config_bucket_policy_only'],
             OwnerEntity=bucket['owner_entity'],
@@ -273,7 +313,7 @@ def sync(
     logger.info("Syncing Storage objects for project %s.", project_id)
     storage_res = get_gcp_buckets(storage, project_id, common_job_parameters)
     bucket_list = transform_gcp_buckets(storage_res, regions)
-    load_gcp_buckets(neo4j_session, bucket_list, gcp_update_tag)
+    load_gcp_buckets(neo4j_session, bucket_list, gcp_update_tag, project_id)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_buckets(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, bucket_list, gcp_update_tag, common_job_parameters, 'buckets', 'GCPBucket')

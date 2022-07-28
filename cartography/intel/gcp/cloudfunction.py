@@ -78,6 +78,10 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
                     function_entities, public_access = get_function_policy_entities(function, func, project_id)
                     func['entities'] = function_entities
                     func['public_access'] = public_access
+                    func['is_public_facing'] = False
+                    if func['public_access']:
+                        if func.get('ingressSettings',None) in ('INGRESS_SETTINGS_UNSPECIFIED','ALLOW_ALL'):
+                            func['is_public_facing'] = True
                     func['consolelink'] = gcp_console_link.get_console_link(
                         resource_name='cloud_function', project_id=project_id, cloud_function_name=func['name'].split('/')[-1], region=func['region'])
                     functions.append(func)
@@ -188,6 +192,7 @@ def _load_functions_tx(tx: neo4j.Transaction, functions: List[Resource], project
         function.vpcConnector = func.vpcConnector,
         function.vpcConnectorEgressSettings = func.vpcConnectorEgressSettings,
         function.ingressSettings = func.ingressSettings,
+        function.is_public_facing = func.is_public_facing,
         function.buildWorkerPool = func.buildWorkerPool,
         function.buildId = func.buildId,
         function.sourceToken = func.sourceToken,

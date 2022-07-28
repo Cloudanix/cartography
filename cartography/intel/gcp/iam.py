@@ -276,42 +276,45 @@ def transform_bindings(bindings: Dict, project_id: str) -> tuple:
     service_account = []
     entity_list = []
     public_access = False
-    for binding in bindings:
-        for member in binding['members']:
-            if member.startswith('allUsers') or member.startswith('allAuthenticatedUsers'):
-                public_access = True
-            else:
-                if member.startswith('user:'):
-                    usr = member[len('user:'):]
-                    users.append({
-                        "id": f'projects/{project_id}/users/{usr}',
-                        "email": usr,
-                        "name": usr.split("@")[0],
-                    })
+    if len(bindings) != 0:
+        for binding in bindings:
+            for member in binding['members']:
+                if member.startswith('allUsers') or member.startswith('allAuthenticatedUsers'):
+                    public_access = True
+                else:
+                    if member.startswith('user:'):
+                        usr = member[len('user:'):]
+                        users.append({
+                            "id": f'projects/{project_id}/users/{usr}',
+                            "email": usr,
+                            "name": usr.split("@")[0],
+                        })
 
-                elif member.startswith('group:'):
-                    grp = member[len('group:'):]
-                    groups.append({
-                        "id": f'projects/{project_id}/groups/{grp}',
-                        "email": grp,
-                        "name": grp.split('@')[0],
-                    })
+                    elif member.startswith('group:'):
+                        grp = member[len('group:'):]
+                        groups.append({
+                            "id": f'projects/{project_id}/groups/{grp}',
+                            "email": grp,
+                            "name": grp.split('@')[0],
+                        })
 
-                elif member.startswith('domain:'):
-                    dmn = member[len('domain:'):]
-                    domains.append({
-                        "id": f'projects/{project_id}/domains/{dmn}',
-                        "email": dmn,
-                        "name": dmn,
-                    })
+                    elif member.startswith('domain:'):
+                        dmn = member[len('domain:'):]
+                        domains.append({
+                            "id": f'projects/{project_id}/domains/{dmn}',
+                            "email": dmn,
+                            "name": dmn,
+                        })
 
-                elif member.startswith('serviceAccount:'):
-                    sac = member[len('serviceAccount:'):]
-                    service_account.append({
-                        "id": f'projects/{project_id}/service_account/{sac}',
-                        "email": sac,
-                        "name": sac,
-                    })
+                    elif member.startswith('serviceAccount:'):
+                        sac = member[len('serviceAccount:'):]
+                        service_account.append({
+                            "id": f'projects/{project_id}/service_account/{sac}',
+                            "email": sac,
+                            "name": sac,
+                        })
+    else:
+        public_access = None  
 
     entity_list.extend(users)
     entity_list.extend(groups)
