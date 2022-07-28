@@ -1,4 +1,5 @@
 from typing import List
+from typing import Dict
 
 from cartography.intel.gcp.resources import RESOURCE_FUNCTIONS
 

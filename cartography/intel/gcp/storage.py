@@ -2,6 +2,7 @@ import logging
 from typing import Dict
 from typing import List
 import json
+from util.common import transform_bindings
 
 import time
 import neo4j
@@ -102,7 +103,7 @@ def get_storage_policy_entities(storage,name,project_id):
     try:
         iam_policy = storage.buckets().getIamPolicy(bucket=name).execute()
         bindings = iam_policy.get('bindings', [])
-        entity_list, public_access = iam.transform_bindings(bindings, project_id)
+        entity_list, public_access = transform_bindings(bindings, project_id)
         return entity_list, public_access
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
