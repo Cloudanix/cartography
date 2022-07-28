@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Dict
 from typing import List
-from . import iam
+from util.common import transform_bindings
 
 import time
 import neo4j
@@ -180,7 +180,7 @@ def get_api_policy_entities(apigateway: Resource, api: Dict, project_id: str) ->
         iam_policy = apigateway.projects().locations().apis().getIamPolicy(
             resource=api['id']).execute()
         bindings = iam_policy.get('bindings', [])
-        entity_list, public_access = iam.transform_bindings(bindings, project_id)
+        entity_list, public_access = transform_bindings(bindings, project_id)
         return entity_list, public_access
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -367,7 +367,7 @@ def get_api_gateway_policy_entities(apigateway: Resource, gateway: Dict, project
         iam_policy = apigateway.projects().locations().gateways().getIamPolicy(
             resource=gateway.get('name')).execute()
         bindings = iam_policy.get('bindings', [])
-        entity_list, public_access = iam.transform_bindings(bindings, project_id)
+        entity_list, public_access = transform_bindings(bindings, project_id)
         return entity_list, public_access
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']

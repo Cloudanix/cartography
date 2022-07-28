@@ -1,6 +1,8 @@
 import logging
 from typing import Dict
 from typing import List
+import json
+from util.common import transform_bindings
 
 import time
 import neo4j
@@ -41,6 +43,19 @@ def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -
             defaultObjectAcl = item.get('defaultObjectAcl', [])
             for item3 in defaultObjectAcl:
                 item['defaultentity'] = item3.get('entity', None)
+            if item.get('iamConfiguration',{}).get('publicAccessPrevention',None) == 'enforced':
+                prevent_public_access = True
+            if not prevent_public_access:
+                if len(item.get('acl',[])) != 0:
+                    access = item.get('acl',[])[0]
+                    if access.get('entity',None) in ('allUsers','allAuthenticatedUsers'):
+                        item['is_public_facing'] = True
+                else:
+                    storage_entities,public_access = get_storage_policy_entities(storage, item['name'], project_id)
+                    if public_access:
+                        item['is_public_facing'] = True
+            else:
+                item['is_public_facing'] = False
         if common_job_parameters.get('pagination', {}).get('storage', None):
             pageNo = common_job_parameters.get("pagination", {}).get("storage", None)["pageNo"]
             pageSize = common_job_parameters.get("pagination", {}).get("storage", None)["pageSize"]
@@ -79,6 +94,26 @@ def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -
                     "Full details: %s"
                 ), project_id, e, )
             return {}
+        else:
+            raise
+
+@timeit
+def get_storage_policy_entities(storage,name,project_id):
+
+    try:
+        iam_policy = storage.buckets().getIamPolicy(bucket=name).execute()
+        bindings = iam_policy.get('bindings', [])
+        entity_list, public_access = transform_bindings(bindings, project_id)
+        return entity_list, public_access
+    except HttpError as e:
+        err = json.loads(e.content.decode('utf-8'))['error']
+        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            logger.warning(
+                (
+                    "Could not retrieve iam policy of storage service on project %s due to permissions issues. Code: %s, Message: %s"
+                ), project_id, err['code'], err['message'],
+            )
+            return []
         else:
             raise
 

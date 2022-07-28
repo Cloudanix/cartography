@@ -38,8 +38,13 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
             response = request.execute()
             if response.get('items', []):
                 for item in response['items']:
+                    item['is_public_facing'] = False
                     item['id'] = f"projects/{project_id}/instances/{item['name']}"
-                    item['ipV4Enabled'] = item.get('settings', {}).get('ipConfiguration', {}).get('ipV4Enabled', False)
+                    item['ipv4Enabled'] = item.get('settings', {}).get('ipConfiguration', {}).get('ipv4Enabled', False)
+                    if item['ipv4Enabled']:
+                        for authorized_network in item.get('settings', {}).get('ipConfiguration', {}).get('authorizedNetworks', []):
+                            if authorized_network.get('value', '') == '0.0.0.0/0':
+                                item['is_public_facing'] = True
                     item['consolelink'] = gcp_console_link.get_console_link(
                         resource_name='sql_instance', project_id=project_id, sql_instance_name=item['name'])
                     if regions is None:
@@ -170,7 +175,8 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
         i.instanceType = instance.instanceType,
         i.connectionName = instance.connectionName,
         i.name = instance.name,
-        i.ipV4Enabled = instance.ipV4Enabled,
+        i.ipv4Enabled = instance.ipv4Enabled,
+        i.is_public_facing = instance.is_public_facing,
         i.region = instance.region,
         i.gceZone = instance.gceZone,
         i.secondaryGceZone = instance.secondaryGceZone,

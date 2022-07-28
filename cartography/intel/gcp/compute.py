@@ -372,6 +372,10 @@ def transform_gcp_subnets(subnet_res: Dict) -> List[Dict]:
         subnet['consolelink'] = gcp_console_link.get_console_link(
             resource_name='compute_instance_vpc_network_subnet', project_id=projectid, region=subnet['region'], subnet_name=subnet['name'])
         subnet['private_ip_google_access'] = s.get('privateIpGoogleAccess', None)
+        if not subnet.get('private_ip_google_access'):
+            subnet['is_public_facing'] = True
+        else:
+            subnet['is_public_facing'] = False
 
         subnet_list.append(subnet)
     return subnet_list
@@ -406,6 +410,10 @@ def transform_gcp_forwarding_rules(fwd_response: Resource,) -> List[Dict]:
         forwarding_rule['allow_global_access'] = fwd.get('allowGlobalAccess', None)
 
         forwarding_rule['load_balancing_scheme'] = fwd.get('loadBalancingScheme', None)
+        if forwarding_rule.get('load_balancing_scheme',None) in ("EXTERNAL","EXTERNAL_MANAGED"):
+            forwarding_rule['is_public_facing'] = True
+        else:
+            forwarding_rule['is_public_facing'] = False
         forwarding_rule['name'] = fwd['name']
         forwarding_rule['port_range'] = fwd.get('portRange', None)
         forwarding_rule['ports'] = fwd.get('ports', None)
@@ -764,6 +772,7 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
     subnet.gateway_address = {GatewayAddress},
     subnet.ip_cidr_range = {IpCidrRange},
     subnet.private_ip_google_access = {PrivateIpGoogleAccess},
+    subnet.is_public_facing = {PublicFacing},
     subnet.vpc_partial_uri = {VpcPartialUri},
     subnet.consolelink = {consolelink},
     subnet.lastupdated = {gcp_update_tag}
@@ -785,6 +794,7 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
             GatewayAddress=s['gateway_address'],
             IpCidrRange=s['ip_cidr_range'],
             PrivateIpGoogleAccess=s['private_ip_google_access'],
+            PublicFacing=s['is_public_facing'],
             consolelink=s['consolelink'],
             gcp_update_tag=gcp_update_tag,
         )
@@ -807,6 +817,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
         SET fwd.ip_address = {IPAddress},
         fwd.ip_protocol = {IPProtocol},
         fwd.load_balancing_scheme = {LoadBalancingScheme},
+        fwd.is_public_facing = {PublicFacing},
         fwd.name = {Name},
         fwd.network = {NetworkPartialUri},
         fwd.port_range = {PortRange},
@@ -830,6 +841,7 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
             IPAddress=fwd['ip_address'],
             IPProtocol=fwd['ip_protocol'],
             LoadBalancingScheme=fwd['load_balancing_scheme'],
+            PublicFacing=fwd['is_public_facing'],
             Name=fwd['name'],
             Network=network,
             NetworkPartialUri=fwd.get('network_partial_uri', None),

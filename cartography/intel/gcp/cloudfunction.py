@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Dict
 from typing import List
-from . import iam
+from util.common import transform_bindings
 
 import time
 import neo4j
@@ -78,6 +78,10 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
                     function_entities, public_access = get_function_policy_entities(function, func, project_id)
                     func['entities'] = function_entities
                     func['public_access'] = public_access
+                    func['is_public_facing'] = False
+                    if func['public_access']:
+                        if func.get('ingressSettings',None) in ('INGRESS_SETTINGS_UNSPECIFIED','ALLOW_ALL'):
+                            func['is_public_facing'] = True
                     func['consolelink'] = gcp_console_link.get_console_link(
                         resource_name='cloud_function', project_id=project_id, cloud_function_name=func['name'].split('/')[-1], region=func['region'])
                     functions.append(func)
@@ -128,7 +132,7 @@ def get_function_policy_entities(function: Resource, fns: Dict, project_id: str)
     try:
         iam_policy = function.projects().locations().functions().getIamPolicy(resource=fns['name']).execute()
         bindings = iam_policy.get('bindings', [])
-        entity_list, public_access = iam.transform_bindings(bindings, project_id)
+        entity_list, public_access = transform_bindings(bindings, project_id)
         return entity_list, public_access
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -188,6 +192,7 @@ def _load_functions_tx(tx: neo4j.Transaction, functions: List[Resource], project
         function.vpcConnector = func.vpcConnector,
         function.vpcConnectorEgressSettings = func.vpcConnectorEgressSettings,
         function.ingressSettings = func.ingressSettings,
+        function.is_public_facing = func.is_public_facing,
         function.buildWorkerPool = func.buildWorkerPool,
         function.buildId = func.buildId,
         function.sourceToken = func.sourceToken,

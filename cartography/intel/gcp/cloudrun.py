@@ -8,6 +8,7 @@ import neo4j
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 from cloudconsolelink.clouds.gcp import GCPLinker
+from util.common import transform_bindings
 
 from cartography.util import run_cleanup_job
 from . import label
@@ -320,6 +321,15 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
         if response.get('items', []):
             for item in response['items']:
                 item['id'] = f"projects/{project_id}/services/{item.get('metadata').get('name')}"
+                location = item.get('metadata',{}).get('labels',{}).get('cloud.googleapis.com/location',None)
+                name = f"projects/{project_id}/locations/{location}/services/{item.get('metadata').get('name')}"
+                cloudrun_entities,public_access = get_cloudrun_policy_entities(cloudrun, name, project_id)
+                item['entities'] = cloudrun_entities
+                item['public_access'] = public_access
+                item['is_public_facing'] = False
+                if item['public_access']:
+                    if item.get('metadata',{}).get('annotations',{}).get('run.googleapis.com/ingress',None)== 'all':
+                        item['is_public_facing'] = True
                 services.append(item)
         if common_job_parameters.get('pagination', {}).get('cloudrun', None):
             pageNo = common_job_parameters.get("pagination", {}).get("cloudrun", None)["pageNo"]
@@ -361,6 +371,26 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
             )
             return []
 
+        else:
+            raise
+
+@timeit
+def get_cloudrun_policy_entities(cloudrun,service_name,project_id):
+
+    try:
+        iam_policy = cloudrun.projects().locations().services().getIamPolicy(resource=service_name).execute()
+        bindings = iam_policy.get('bindings', [])
+        entity_list, public_access = transform_bindings(bindings, project_id)
+        return entity_list, public_access
+    except HttpError as e:
+        err = json.loads(e.content.decode('utf-8'))['error']
+        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            logger.warning(
+                (
+                    "Could not retrieve iam policy of cloudrun service on project %s due to permissions issues. Code: %s, Message: %s"
+                ), project_id, err['code'], err['message'],
+            )
+            return []
         else:
             raise
 
@@ -684,6 +714,7 @@ def _load_cloudrun_services_tx(
         service.selfLink = svc.metadata.selfLink,
         service.uid = svc.metadata.uid,
         service.region = {region},
+        service.is_public_facing = svc.is_public_facing,
         service.resourceVersion = svc.metadata.resourceVersion,
         service.creationTimestamp = svc.metadata.creationTimestamp,
         service.deletionTimestamp = svc.metadata.deletionTimestamp,
