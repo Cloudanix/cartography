@@ -1,6 +1,11 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages
+from setuptools import setup
 
+<<<<<<< HEAD
 __version__ = '0.2.0rc2'
+=======
+__version__ = '0.52.0'
+>>>>>>> a3330bed20ae5391fff7799244d37733f61ce15a
 
 
 setup(
@@ -15,6 +20,7 @@ setup(
     package_data={
         'cartography.data': [
             '*.cypher',
+            '*.yaml',
         ],
         'cartography.data.jobs.analysis': [
             '*.json',
@@ -25,13 +31,43 @@ setup(
     },
     dependency_links=[],
     install_requires=[
-        "boto3>=1.7.0",
-        "botocore>=1.12.0",
+        "cloudconsolelink>=1.0.0",
+        "boto3>=1.15.1",
+        "botocore>=1.18.1",
         "dnspython>=1.15.0",
-        "neo4j-driver>=1.7.0",
-        "neobolt>=1.7.0",
+        "neo4j>=1.7.6,<4.0.0",
+        "neobolt>=1.7.0,<4.0.0",
         "policyuniverse>=1.1.0.0",
-        "python-dateutil>=2.7.0",
+        "google-api-python-client>=1.7.8",
+        "oauth2client>=4.1.3",
+        "marshmallow>=3.0.0rc7",
+        "okta<1.0.0",
+        "pyyaml>=5.3.1",
+        "requests>=2.22.0",
+        "statsd",
+        "packaging",
+        "cryptography<3.4,>=3.2",
+        "python-digitalocean>=1.16.0",
+        "adal>=1.2.4",
+        "azure-cli-core>=2.26.0",
+        "azure-mgmt-compute>=5.0.0",
+        "azure-mgmt-resource>=10.2.0",
+        "azure-mgmt-cosmosdb>=6.0.0",
+        "msrestazure >= 0.6.4",
+        "azure-mgmt-storage>=16.0.0",
+        "azure-mgmt-sql<=1.0.0",
+        "azure-identity>=1.5.0",
+        "azure-mgmt-containerinstance>=1.5.0",
+        "azure-mgmt-containerregistry>=2.8.0",
+        "azure-mgmt-containerservice>=4.4.0",
+        "azure-mgmt-keyvault>=1.1.0",
+        "azure-graphrbac>=0.61.1",
+        "azure-mgmt-authorization==0.50.0",
+        "azure-mgmt-resource>=10.2.0",
+        "azure-mgmt-network>=2.7.0",
+        "azure-mgmt-web>=0.35.0",
+        "kubernetes>=18.20.0",
+        "pdpyras>=4.3.0",
     ],
     extras_require={
         ':python_version<"3.7"': [
@@ -41,7 +77,8 @@ setup(
     entry_points={
         'console_scripts': [
             'cartography = cartography.cli:main',
-        ]
+            'cartography-detectdrift = cartography.driftdetect.cli:main',
+        ],
     },
     classifiers=[
         'Development Status :: 4 - Beta',
@@ -51,6 +88,7 @@ setup(
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.8',
         'Topic :: Security',
         'Topic :: Software Development :: Libraries',
         'Topic :: Software Development :: Libraries :: Python Modules',

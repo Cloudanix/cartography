@@ -1,8 +1,17 @@
-import logging
-from cartography.intel.dns import ingest_dns_record_by_fqdn
-from cartography.util import run_cleanup_job
-from policyuniverse.policy import Policy
 import json
+import logging
+from typing import Dict
+from typing import List
+
+import boto3
+import botocore.config
+import neo4j
+from policyuniverse.policy import Policy
+
+from cartography.intel.dns import ingest_dns_record_by_fqdn
+from cartography.util import aws_handle_regions
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +37,18 @@ es_regions = [
 ]
 
 
-def _get_es_domains(client):
+# TODO memoize this
+def _get_botocore_config() -> botocore.config.Config:
+    return botocore.config.Config(
+        retries={
+            'max_attempts': 8,
+        },
+    )
+
+
+@timeit
+@aws_handle_regions
+def _get_es_domains(client: botocore.client.BaseClient) -> List[Dict]:
     """
     Get ES domains.
 
@@ -39,18 +59,21 @@ def _get_es_domains(client):
     domain_names = [d['DomainName'] for d in data.get('DomainNames', [])]
     # NOTE describe_elasticsearch_domains takes at most 5 domain names
     domain_name_chunks = [domain_names[i:i + 5] for i in range(0, len(domain_names), 5)]
-    domains = []
+    domains: List[Dict] = []
     for domain_name_chunk in domain_name_chunks:
         chunk_data = client.describe_elasticsearch_domains(DomainNames=domain_name_chunk)
         domains.extend(chunk_data['DomainStatusList'])
     return domains
 
 
-def _load_es_domains(session, domain_list, aws_account_id, aws_update_tag):
+@timeit
+def _load_es_domains(
+    neo4j_session: neo4j.Session, domain_list: List[Dict], aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
     Ingest Elastic Search domains
 
-    :param session: Neo4j session object
+    :param neo4j_session: Neo4j session object
     :param aws_account_id: The AWS account related to the domains
     :param domains: Domain list to ingest
     """
@@ -86,42 +109,49 @@ def _load_es_domains(session, domain_list, aws_account_id, aws_update_tag):
     for d in domain_list:
         del d['ServiceSoftwareOptions']
 
-    session.run(
+    neo4j_session.run(
         ingest_records,
         Records=domain_list,
         AWS_ACCOUNT_ID=aws_account_id,
-        aws_update_tag=aws_update_tag
+        aws_update_tag=aws_update_tag,
     )
 
     for domain in domain_list:
         domain_id = domain["DomainId"]
-        _link_es_domains_to_dns(session, domain_id, domain, aws_update_tag)
-        _link_es_domain_vpc(session, domain_id, domain, aws_update_tag)
-        _process_access_policy(session, domain_id, domain)
+        _link_es_domains_to_dns(neo4j_session, domain_id, domain, aws_update_tag)
+        _link_es_domain_vpc(neo4j_session, domain_id, domain, aws_update_tag)
+        _process_access_policy(neo4j_session, domain_id, domain)
 
 
-def _link_es_domains_to_dns(session, domain_id, domain_data, aws_update_tag):
+@timeit
+def _link_es_domains_to_dns(
+    neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict, aws_update_tag: int,
+) -> None:
     """
     Link the ES domain to its DNS FQDN endpoint and create associated nodes in the graph
     if needed
 
-    :param session: Neo4j session object
+    :param neo4j_session: Neo4j session object
     :param domain_id: ES domain id
     :param domain_data: domain data
     """
     # TODO add support for endpoints to this method
     if domain_data.get("Endpoint"):
-        ingest_dns_record_by_fqdn(session, aws_update_tag, domain_data["Endpoint"], domain_id)
+        ingest_dns_record_by_fqdn(
+            neo4j_session, aws_update_tag, domain_data["Endpoint"], domain_id,
+            record_label="ESDomain", dns_node_additional_label="AWSDNSRecord",
+        )
     else:
-        logger.debug("No es endpoint data for domain id {0}".format(domain_id))
+        logger.debug(f"No es endpoint data for domain id {domain_id}")
 
 
-def _link_es_domain_vpc(session, domain_id, domain_data, aws_update_tag):
+@timeit
+def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict, aws_update_tag: int) -> None:
     """
     Link the ES domain to its DNS FQDN endpoint and create associated nodes in the graph
     if needed
 
-    :param session: Neo4j session object
+    :param neo4j_session: Neo4j session object
     :param domain_id: ES domain id
     :param domain_data: domain data
     """
@@ -151,28 +181,29 @@ def _link_es_domain_vpc(session, domain_id, domain_data, aws_update_tag):
         groupList = vpc_data.get("SecurityGroupIds", [])
 
         if len(subnetList) > 0:
-            session.run(
+            neo4j_session.run(
                 ingest_subnet,
                 DomainId=domain_id,
                 SubnetList=subnetList,
-                aws_update_tag=aws_update_tag
+                aws_update_tag=aws_update_tag,
             )
 
         if len(groupList) > 0:
-            session.run(
+            neo4j_session.run(
                 ingest_sec_groups,
                 DomainId=domain_id,
                 SecGroupList=groupList,
-                aws_update_tag=aws_update_tag
+                aws_update_tag=aws_update_tag,
             )
 
 
-def _process_access_policy(session, domain_id, domain_data):
+@timeit
+def _process_access_policy(neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict) -> None:
     """
     Link the ES domain to its DNS FQDN endpoint and create associated nodes in the graph
     if needed
 
-    :param session: Neo4j session object
+    :param neo4j_session: Neo4j session object
     :param domain_id: ES domain id
     :param domain_data: domain data
     """
@@ -185,22 +216,27 @@ def _process_access_policy(session, domain_id, domain_data):
         if policy.is_internet_accessible():
             exposed_internet = True
 
-    session.run(tag_es, DomainId=domain_id, InternetExposed=exposed_internet)
+    neo4j_session.run(tag_es, DomainId=domain_id, InternetExposed=exposed_internet)
 
 
-def cleanup(session, update_tag, aws_account_id):
+@timeit
+def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job(
         'aws_import_es_cleanup.json',
-        session,
-        {'UPDATE_TAG': update_tag, 'AWS_ID': aws_account_id}
+        neo4j_session,
+        common_job_parameters,
     )
 
 
-def sync(neo4j_session, boto3_session, aws_account_id, update_tag):
+@timeit
+def sync(
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
+    update_tag: int, common_job_parameters: Dict,
+) -> None:
     for region in es_regions:
-        logger.info("Syncing Elasticsearch Service for region '%s' in account '%s'.", region, aws_account_id)
-        client = boto3_session.client('es', region_name=region)
+        logger.info("Syncing Elasticsearch Service for region '%s' in account '%s'.", region, current_aws_account_id)
+        client = boto3_session.client('es', region_name=region, config=_get_botocore_config())
         data = _get_es_domains(client)
-        _load_es_domains(neo4j_session, data, aws_account_id, update_tag)
+        _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag)
 
-    cleanup(neo4j_session, update_tag, aws_account_id)
+    cleanup(neo4j_session, common_job_parameters)

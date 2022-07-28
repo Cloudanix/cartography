@@ -1,18 +1,31 @@
-from collections import OrderedDict
 import logging
-from neo4j.v1 import GraphDatabase
-import neobolt.exceptions
 import time
+from collections import OrderedDict
+
+import neobolt.exceptions
+from neo4j import GraphDatabase
+from statsd import StatsClient
 
 import cartography.intel.analysis
-import cartography.intel.aws
 import cartography.intel.create_indexes
+import cartography.intel.gcp
+import cloudanix
+from cartography.stats import set_stats_client
+# import cartography.intel.aws
+# import cartography.intel.azure
+# import cartography.intel.crxcavator.crxcavator
+# import cartography.intel.digitalocean
+# import cartography.intel.github
+# import cartography.intel.gsuite
+# import cartography.intel.kubernetes
+# import cartography.intel.okta
 
+# from cartography.scoped_stats_client import ScopedStatsClient
 
 logger = logging.getLogger(__name__)
 
 
-class Sync(object):
+class Sync:
     """
     A cartography sync task.
 
@@ -21,6 +34,7 @@ class Sync(object):
     pushing that data to Neo4j, and removing now-invalid nodes and relationships from the graph. An instance of this
     class can be configured to run any number of stages in a specific order.
     """
+
     def __init__(self):
         # NOTE we may need meta-stages at some point to allow hooking into pre-sync, sync, and post-sync
         self._stages = OrderedDict()
@@ -60,7 +74,10 @@ class Sync(object):
             for stage_name, stage_func in self._stages.items():
                 logger.info("Starting sync stage '%s'", stage_name)
                 try:
-                    stage_func(neo4j_session, config)
+                    if stage_name in ['aws', 'azure', 'gcp']:
+                        response = stage_func(neo4j_session, config)
+                    else:
+                        stage_func(neo4j_session, config)
                 except (KeyboardInterrupt, SystemExit):
                     logger.warning("Sync interrupted during stage '%s'.", stage_name)
                     raise
@@ -69,6 +86,7 @@ class Sync(object):
                     raise  # TODO this should be configurable
                 logger.info("Finishing sync stage '%s'", stage_name)
         logger.info("Finishing sync with update tag '%d'", config.update_tag)
+        return response
 
 
 def run_with_config(sync, config):
@@ -83,6 +101,16 @@ def run_with_config(sync, config):
     :type config: cartography.config.Config
     :param config: The configuration to use to run the sync task.
     """
+    # Initialize statsd client if enabled
+    if config.statsd_enabled:
+        set_stats_client(
+            StatsClient(
+                host=config.statsd_host,
+                port=config.statsd_port,
+                prefix=config.statsd_prefix,
+            ),
+        )
+
     neo4j_auth = None
     if config.neo4j_user or config.neo4j_password:
         neo4j_auth = (config.neo4j_user, config.neo4j_password)
@@ -90,6 +118,7 @@ def run_with_config(sync, config):
         neo4j_driver = GraphDatabase.driver(
             config.neo4j_uri,
             auth=neo4j_auth,
+            max_connection_lifetime=config.neo4j_max_connection_lifetime,
         )
     except neobolt.exceptions.ServiceUnavailable as e:
         logger.debug("Error occurred during Neo4j connect.", exc_info=True)
@@ -99,9 +128,9 @@ def run_with_config(sync, config):
                 "server is running and accessible from your network."
             ),
             config.neo4j_uri,
-            e
+            e,
         )
-        return
+        return 1
     except neobolt.exceptions.AuthError as e:
         logger.debug("Error occurred during Neo4j auth.", exc_info=True)
         if not neo4j_auth:
@@ -111,7 +140,7 @@ def run_with_config(sync, config):
                     "without any auth. Check your Neo4j server settings to see if auth is required and, if it is, "
                     "provide cartography with a valid username and password."
                 ),
-                e
+                e,
             )
         else:
             logger.error(
@@ -120,9 +149,9 @@ def run_with_config(sync, config):
                     "a username and password. Check your Neo4j server settings to see if the username and password "
                     "provided to cartography are valid credentials."
                 ),
-                e
+                e,
             )
-        return
+        return 1
     default_update_tag = int(time.time())
     if not config.update_tag:
         config.update_tag = default_update_tag
@@ -139,7 +168,74 @@ def build_default_sync():
     sync = Sync()
     sync.add_stages([
         ('create-indexes', cartography.intel.create_indexes.run),
-        ('aws', cartography.intel.aws.start_aws_ingestion),
+        # ('aws', cartography.intel.aws.start_aws_ingestion),
+        # ('azure', cartography.intel.azure.start_azure_ingestion),
+        # ('gcp', cartography.intel.gcp.start_gcp_ingestion),
+        # ('gsuite', cartography.intel.gsuite.start_gsuite_ingestion),
+        # ('crxcavator', cartography.intel.crxcavator.start_extension_ingestion),
+        # ('okta', cartography.intel.okta.start_okta_ingestion),
+        # ('github', cartography.intel.github.start_github_ingestion),
+        # ('digitalocean', cartography.intel.digitalocean.start_digitalocean_ingestion),
         ('analysis', cartography.intel.analysis.run),
     ])
+
+    return sync
+
+
+def build_aws_sync():
+    """
+    Build the aws cartography sync, which runs all intelligence modules shipped with the cartography package.
+
+    :rtype: cartography.sync.Sync
+    :return: The aws cartography sync object.
+    """
+    sync = Sync()
+    sync.add_stages([
+        ('create-indexes', cartography.intel.create_indexes.run),
+        # ('cloudanix-workspace', cloudanix.run),
+        # ('aws', cartography.intel.aws.start_aws_ingestion),
+        ('analysis', cartography.intel.analysis.run),
+    ])
+
+    return sync
+
+
+def build_azure_sync():
+    """
+    Build the azure cartography sync, which runs all intelligence modules shipped with the cartography package.
+
+    :rtype: cartography.sync.Sync
+    :return: The azure cartography sync object.
+    """
+    sync = Sync()
+    sync.add_stages([
+        ('create-indexes', cartography.intel.create_indexes.run),
+        # ('cloudanix-workspace', cloudanix.run),
+        # ('azure', cartography.intel.azure.start_azure_ingestion),
+        ('analysis', cartography.intel.analysis.run),
+    ])
+
+    return sync
+
+
+def build_gcp_sync(init_indexes):
+    """
+    Build the default cartography sync, which runs all intelligence modules shipped with the cartography package.
+
+    :rtype: cartography.sync.Sync
+    :return: The default cartography sync object.
+    """
+    sync = Sync()
+
+    stages = []
+    if init_indexes:
+        stages.append(('create-indexes', cartography.intel.create_indexes.run))
+
+    else:
+        stages.append(('cloudanix-workspace', cloudanix.run))
+        stages.append(('gcp', cartography.intel.gcp.start_gcp_ingestion))
+        stages.append(('analysis', cartography.intel.analysis.run))
+
+    sync.add_stages(stages)
+
     return sync

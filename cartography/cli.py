@@ -4,19 +4,24 @@ import logging
 import os
 import sys
 
+import cartography.config
 import cartography.sync
+import cartography.util
+from cartography.config import Config
+from cartography.intel.aws.util.common import parse_and_validate_aws_requested_syncs
 
 
 logger = logging.getLogger(__name__)
 
 
-class CLI(object):
+class CLI:
     """
     :type sync: cartography.sync.Sync
     :param sync: A sync task for the command line program to execute.
     :type prog: string
     :param prog: The name of the command line program. This will be displayed in usage and help output.
     """
+
     def __init__(self, sync, prog=None):
         self.prog = prog
         self.sync = sync
@@ -69,7 +74,7 @@ class CLI(object):
             '--neo4j-user',
             type=str,
             default=None,
-            help='A username with which to authenticate to Neo4j.'
+            help='A username with which to authenticate to Neo4j.',
         )
         parser.add_argument(
             '--neo4j-password-env-var',
@@ -83,6 +88,17 @@ class CLI(object):
             help=(
                 'Present an interactive prompt for a password with which to authenticate to Neo4j. This parameter '
                 'supersedes other methods of supplying a Neo4j password.'
+            ),
+        )
+        parser.add_argument(
+            '--neo4j-max-connection-lifetime',
+            type=int,
+            default=3600,
+            help=(
+                'Time in seconds for the Neo4j driver to consider a TCP connection alive. cartography default = 3600, '
+                'which is the same as the Neo4j driver default. See '
+                'https://neo4j.com/docs/driver-manual/1.7/client-applications/#driver-config-connection-pool-management'
+                '.'
             ),
         )
         # TODO add the below parameters to a 'sync' subparser
@@ -112,6 +128,92 @@ class CLI(object):
             ),
         )
         parser.add_argument(
+            '--azure-sync-all-subscriptions',
+            action='store_true',
+            help=(
+                'Enable Azure sync for all discovered subscriptions. When this parameter is supplied cartography will '
+                'discover all configured Azure subscriptions.'
+            ),
+        )
+        parser.add_argument(
+            '--azure-sp-auth',
+            action='store_true',
+            help=(
+                'Use Service Principal authentication for Azure sync.'
+            ),
+        )
+        parser.add_argument(
+            '--azure-tenant-id',
+            type=str,
+            default=None,
+            help=(
+                'Azure Tenant Id for Service Principal Authentication.'
+            ),
+        )
+        parser.add_argument(
+            '--azure-client-id',
+            type=str,
+            default=None,
+            help=(
+                'Azure Client Id for Service Principal Authentication.'
+            ),
+        )
+        parser.add_argument(
+            '--azure-client-secret-env-var',
+            type=str,
+            default=None,
+            help=(
+                'The name of environment variable containing Azure Client Secret for Service Principal Authentication.'
+            ),
+        )
+        parser.add_argument(
+            '--aws-requested-syncs',
+            type=str,
+            default=None,
+            help=(
+                'Comma-separated list of AWS resources to sync. Example 1: "ecr,s3,ec2:instance" for ECR, S3, and all '
+                'EC2 instance resources. See the full list available in source code at cartography.intel.aws.resources.'
+                ' If not specified, cartography by default will run all AWS sync modules available.'
+            ),
+        )
+        parser.add_argument(
+            '--azure-requested-syncs',
+            type=str,
+            default=None,
+            help=(
+                'Comma-separated list of Azure resources to sync. Example 1: "compute,sql,iam".\
+                     See the full list available in source code at cartography.intel.azure.resources.'
+                ' If not specified, cartography by default will run all azure sync modules available.'
+            ),
+        )
+        parser.add_argument(
+            '--gcp-requested-syncs',
+            type=str,
+            default=None,
+            help=(
+                'Comma-separated list of GCP resources to sync. Example 1: "compute,storage,gke".\
+                     See the full list available in source code at cartography.intel.gcp.resources.'
+                ' If not specified, cartography by default will run all gcp sync modules available.'
+            ),
+        )
+        parser.add_argument(
+            '--crxcavator-api-base-uri',
+            type=str,
+            default='https://api.crxcavator.io/v1',
+            help=(
+                'Base URI for the CRXcavator API. Defaults to public API endpoint.'
+            ),
+        )
+        parser.add_argument(
+            '--crxcavator-api-key-env-var',
+            type=str,
+            default=None,
+            help=(
+                'The name of an environment variable containing a key with which to auth to the CRXcavator API. '
+                'Required if you are using the CRXcavator intel module. Ignored otherwise.'
+            ),
+        )
+        parser.add_argument(
             '--analysis-job-directory',
             type=str,
             default=None,
@@ -121,6 +223,129 @@ class CLI(object):
                 'API to execute against the graph. This allows you to apply data transformation and augmentation at '
                 'the end of a sync run without writing code. cartography does not guarantee the order in which the '
                 'jobs are executed.'
+            ),
+        )
+        parser.add_argument(
+            '--okta-org-id',
+            type=str,
+            default=None,
+            help=(
+                'Okta organizational id to sync. Required if you are using the Okta intel module. Ignored otherwise.'
+            ),
+        )
+        parser.add_argument(
+            '--okta-api-key-env-var',
+            type=str,
+            default=None,
+            help=(
+                'The name of an environment variable containing a key with which to auth to the Okta API.'
+                'Required if you are using the Okta intel module. Ignored otherwise.'
+            ),
+        )
+        parser.add_argument(
+            '--okta-saml-role-regex',
+            type=str,
+            default=r"^aws\#\S+\#(?{{role}}[\w\-]+)\#(?{{accountid}}\d+)$",
+            help=(
+                'The regex used to map Okta groups to AWS roles when using okta as a SAML provider.'
+                'The regex is the one entered in Step 5: Enabling Group Based Role Mapping in Okta'
+                'https://saml-doc.okta.com/SAML_Docs/How-to-Configure-SAML-2.0-for-Amazon-Web-Service#c-step5'
+                'The regex must contain the {{role}} and {{accountid}} tags'
+            ),
+        )
+        parser.add_argument(
+            '--github-config-env-var',
+            type=str,
+            default=None,
+            help=(
+                'The name of an environment variable containing a Base64 encoded GitHub config object.'
+                'Required if you are using the GitHub intel module. Ignored otherwise.'
+            ),
+        )
+        parser.add_argument(
+            '--digitalocean-token-env-var',
+            type=str,
+            default=None,
+            help=(
+                'The name of an environment variable containing a DigitalOcean access token.'
+                'Required if you are using the DigitalOcean intel module. Ignored otherwise.'
+            ),
+        )
+        parser.add_argument(
+            '--permission-relationships-file',
+            type=str,
+            default="cartography/data/permission_relationships.yaml",
+            help=(
+                'The path to the permission relationships mapping file.'
+                'If omitted the default permission relationships will be created'
+            ),
+        )
+        parser.add_argument(
+            '--jamf-base-uri',
+            type=str,
+            default=None,
+            help=(
+                'Your Jamf base URI, e.g. https://hostname.com/JSSResource.'
+                'Required if you are using the Jamf intel module. Ignored otherwise.'
+            ),
+        )
+        parser.add_argument(
+            '--jamf-user',
+            type=str,
+            default=None,
+            help='A username with which to authenticate to Jamf.',
+        )
+        parser.add_argument(
+            '--jamf-password-env-var',
+            type=str,
+            default=None,
+            help='The name of an environment variable containing a password with which to authenticate to Jamf.',
+        )
+        parser.add_argument(
+            '--k8s-kubeconfig',
+            default=None,
+            type=str,
+            help=(
+                'The path to kubeconfig file specifying context to access K8s cluster(s).'
+            ),
+        )
+        parser.add_argument(
+            '--statsd-enabled',
+            action='store_true',
+            help=(
+                'If set, enables sending metrics using statsd to a server of your choice.'
+            ),
+        )
+        parser.add_argument(
+            '--statsd-prefix',
+            type=str,
+            default='',
+            help=(
+                'The string to prefix statsd metrics with. Only used if --statsd-enabled is on. Default = empty string.'
+            ),
+        )
+        parser.add_argument(
+            '--statsd-host',
+            type=str,
+            default='127.0.0.1',
+            help=(
+                'The IP address of your statsd server. Only used if --statsd-enabled is on. Default = 127.0.0.1.'
+            ),
+        )
+        parser.add_argument(
+            '--statsd-port',
+            type=int,
+            default=8125,
+            help=(
+                'The port of your statsd server. Only used if --statsd-enabled is on. Default = UDP 8125.'
+            ),
+        )
+        parser.add_argument(
+            '--pagerduty-api-key-env-var',
+            type=str,
+            default=None,
+            help=(
+                'The name of environment variable containing the pagerduty API key for authentication.'
             ),
         )
         return parser
@@ -133,14 +358,16 @@ class CLI(object):
         :param argv: The parameters supplied to the command line program.
         """
         # TODO support parameter lookup in environment variables if not present on command line
-        config = self.parser.parse_args(argv)
+        config: cartography.config.Config = self.parser.parse_args(argv)
+        # Logging config
         if config.verbose:
             logging.getLogger('cartography').setLevel(logging.DEBUG)
         elif config.quiet:
             logging.getLogger('cartography').setLevel(logging.WARNING)
         else:
             logging.getLogger('cartography').setLevel(logging.INFO)
-        logger.debug("Launching cartography with CLI configuration: %r", vars(config))
+        # logger.debug("Launching cartography with CLI configuration: %r", vars(config))
+        # Neo4j config
         if config.neo4j_user:
             config.neo4j_password = None
             if config.neo4j_password_prompt:
@@ -150,17 +377,127 @@ class CLI(object):
                 logger.debug(
                     "Reading password for Neo4j user '%s' from environment variable '%s'.",
                     config.neo4j_user,
-                    config.neo4j_password_env_var
+                    config.neo4j_password_env_var,
                 )
                 config.neo4j_password = os.environ.get(config.neo4j_password_env_var)
             if not config.neo4j_password:
                 logger.warning("Neo4j username was provided but a password could not be found.")
         else:
             config.neo4j_password = None
+
+        # AWS config
+        if config.aws_requested_syncs:
+            # No need to store the returned value; we're using this for input validation.
+            parse_and_validate_aws_requested_syncs(config.aws_requested_syncs)
+
+        # Azure config
+        if config.azure_sp_auth and config.azure_client_secret_env_var:
+            logger.debug(
+                "Reading Client Secret for Azure Service Principal Authentication from environment variable %s",
+                config.azure_client_secret_env_var,
+            )
+            config.azure_client_secret = os.environ.get(config.azure_client_secret_env_var)
+        else:
+            config.azure_client_secret = None
+
+        # Okta config
+        if config.okta_org_id and config.okta_api_key_env_var:
+            logger.debug(f"Reading API key for Okta from environment variable {config.okta_api_key_env_var}")
+            config.okta_api_key = os.environ.get(config.okta_api_key_env_var)
+        else:
+            config.okta_api_key = None
+
+        # CRXcavator config
+        if config.crxcavator_api_base_uri and config.crxcavator_api_key_env_var:
+            logger.debug(f"Reading API key for CRXcavator from env variable {config.crxcavator_api_key_env_var}.")
+            config.crxcavator_api_key = os.environ.get(config.crxcavator_api_key_env_var)
+        else:
+            config.crxcavator_api_key = None
+
+        # GitHub config
+        if config.github_config_env_var:
+            logger.debug(f"Reading config string for GitHub from environment variable {config.github_config_env_var}")
+            config.github_config = os.environ.get(config.github_config_env_var)
+        else:
+            config.github_config = None
+
+        # DigitalOcean config
+        if config.digitalocean_token_env_var:
+            logger.debug(f"Reading token for DigitalOcean from env variable {config.digitalocean_token_env_var}")
+            config.digitalocean_token = os.environ.get(config.digitalocean_token_env_var)
+        else:
+            config.digitalocean_token = None
+
+        # Jamf config
+        if config.jamf_base_uri:
+            if config.jamf_user:
+                config.jamf_password = None
+                if config.jamf_password_env_var:
+                    logger.debug(
+                        "Reading password for Jamf user '%s' from environment variable '%s'.",
+                        config.jamf_user,
+                        config.jamf_password_env_var,
+                    )
+                    config.jamf_password = os.environ.get(config.jamf_password_env_var)
+            if not config.jamf_user:
+                logger.warning("A Jamf base URI was provided but a user was not.")
+            if not config.jamf_password:
+                logger.warning("A Jamf password could not be found.")
+        else:
+            config.jamf_user = None
+            config.jamf_password = None
+
+        if config.statsd_enabled:
+            logger.debug(
+                f'statsd enabled. Sending metrics to server {config.statsd_host}:{config.statsd_port}. '
+                f'Metrics have prefix "{config.statsd_prefix}".',
+            )
+
+        # Pagerduty config
+        if config.pagerduty_api_key_env_var:
+            logger.debug(f"Reading API key for PagerDuty from environment variable {config.pagerduty_api_key_env_var}")
+            config.pagerduty_api_key = os.environ.get(config.pagerduty_api_key_env_var)
+        else:
+            config.pagerduty_api_key = None
+
+        # Run cartography
         try:
             return cartography.sync.run_with_config(self.sync, config)
         except KeyboardInterrupt:
             return 130
+
+    def process(self, config):
+        # Logging config
+        if config.verbose:
+            logging.getLogger('cartography').setLevel(logging.DEBUG)
+        elif config.quiet:
+            logging.getLogger('cartography').setLevel(logging.WARNING)
+        else:
+            logging.getLogger('cartography').setLevel(logging.INFO)
+        # logger.debug("Launching cartography with CLI configuration: %r", vars(config))
+
+        # Run cartography
+        try:
+            output = cartography.sync.run_with_config(self.sync, config)
+
+            return {
+                "status": "success",
+                "message": f"output - {output}",
+                "updateTag": output.get('UPDATE_TAG', None),
+                "pagination": output.get('pagination', None),
+            }
+
+        except KeyboardInterrupt:
+            # return 130
+            return {
+                "status": "failure",
+                "message": "keyboard interuption",
+            }
+        except Exception as e:
+            return {
+                "status": "failure",
+                "message": f"error with: {str(e)}",
+            }
 
 
 def main(argv=None):
@@ -173,8 +510,91 @@ def main(argv=None):
     :return: The return code.
     """
     logging.basicConfig(level=logging.INFO)
-    logging.getLogger('neo4j.bolt').setLevel(logging.WARNING)
     logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('googleapiclient').setLevel(logging.WARNING)
+    logging.getLogger('neo4j.bolt').setLevel(logging.WARNING)
     argv = argv if argv is not None else sys.argv[1:]
     default_sync = cartography.sync.build_default_sync()
     return CLI(default_sync, prog='cartography').main(argv)
+
+
+def run_aws(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('neo4j.bolt').setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_aws_sync()
+
+    # TODO: Define config and pass it forward
+    config = Config(
+        request['neo4j']['uri'],
+        neo4j_user=request['neo4j']['user'],
+        neo4j_password=request['neo4j']['pwd'],
+        neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
+        credentials=request['credentials'],
+        params=request['params'],
+    )
+
+    if request['logging']['mode'] == "verbose":
+        config.verbose = True
+    elif request['logging']['mode'] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog='cartography').process(config)
+
+
+def run_azure(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('neo4j.bolt').setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_azure_sync()
+
+    # TODO: Define config and pass it forward
+    config = Config(
+        request['neo4j']['uri'],
+        neo4j_user=request['neo4j']['user'],
+        neo4j_password=request['neo4j']['pwd'],
+        neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
+        azure_client_id=request['azure']['client_id'],
+        azure_client_secret=request['azure']['client_secret'],
+        redirect_uri=request['azure']['redirect_uri'],
+        subscription_id=request['azure']['subscription_id'],
+        refresh_token=request['azure']['refresh_token'],
+        graph_scope=request['azure']['graph_scope'],
+        azure_scope=request['azure']['azure_scope'],
+        params=request['params'],
+    )
+
+    if request['logging']['mode'] == "verbose":
+        config.verbose = True
+    elif request['logging']['mode'] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog='cartography').process(config)
+
+
+def run_gcp(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('neo4j.bolt').setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_gcp_sync(request.get('config', {}).get('initIndexes', False))
+
+    # TODO: Define config and pass it forward
+    config = Config(
+        request['neo4j']['uri'],
+        neo4j_user=request['neo4j']['user'],
+        neo4j_password=request['neo4j']['pwd'],
+        neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
+        credentials=request['credentials'],
+        params=request['params'],
+        gcp_requested_syncs=request.get('services', None),
+    )
+
+    if request['logging']['mode'] == "verbose":
+        config.verbose = True
+    elif request['logging']['mode'] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog='cartography').process(config)

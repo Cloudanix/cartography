@@ -12,3 +12,8 @@ build/
 .idea/
 .coverage
 .mypy_cache
+*.vscode
+.env*
+.compose
+generated
+env.yml

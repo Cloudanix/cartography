@@ -1,13 +1,15 @@
 import logging
 import pathlib
 
-from cartography.graph.job import GraphJob
+import neo4j
 
+from cartography.config import Config
+from cartography.graph.job import GraphJob
 
 logger = logging.getLogger(__name__)
 
 
-def run(neo4j_session, config):
+def run(neo4j_session: neo4j.Session, config: Config) -> None:
     analysis_job_directory_path = config.analysis_job_directory
     if not analysis_job_directory_path:
         logger.info("Skipping analysis because no job path was provided.")
@@ -16,13 +18,13 @@ def run(neo4j_session, config):
     if not analysis_job_directory.exists():
         logger.warning(
             "Skipping analysis because the provided job path '%s' does not exist.",
-            analysis_job_directory
+            analysis_job_directory,
         )
         return
     if not analysis_job_directory.is_dir():
         logger.warning(
             "Skipping analysis because the provided job path '%s' is not a directory.",
-            analysis_job_directory
+            analysis_job_directory,
         )
         return
     logger.info("Loading analysis jobs from directory: %s", analysis_job_directory)
@@ -32,7 +34,7 @@ def run(neo4j_session, config):
             GraphJob.run_from_json_file(
                 path,
                 neo4j_session,
-                {"UPDATE_TAG": config.update_tag}
+                {"UPDATE_TAG": config.update_tag},
             )
         except (KeyboardInterrupt, SystemExit):
             raise
