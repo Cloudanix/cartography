@@ -8,7 +8,7 @@ import neo4j
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 from cloudconsolelink.clouds.gcp import GCPLinker
-from util.common import transform_bindings
+from util.common import transform_iam_bindings
 
 from cartography.util import run_cleanup_job
 from . import label
@@ -380,7 +380,7 @@ def get_cloudrun_policy_entities(cloudrun,service_name,project_id):
     try:
         iam_policy = cloudrun.projects().locations().services().getIamPolicy(resource=service_name).execute()
         bindings = iam_policy.get('bindings', [])
-        entity_list, public_access = transform_bindings(bindings, project_id)
+        entity_list, public_access = transform_iam_bindings(bindings, project_id)
         return entity_list, public_access
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']

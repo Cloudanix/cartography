@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Dict
 from typing import List
-from util.common import transform_bindings
+from util.common import transform_iam_bindings
 
 import time
 import neo4j
@@ -132,7 +132,7 @@ def get_function_policy_entities(function: Resource, fns: Dict, project_id: str)
     try:
         iam_policy = function.projects().locations().functions().getIamPolicy(resource=fns['name']).execute()
         bindings = iam_policy.get('bindings', [])
-        entity_list, public_access = transform_bindings(bindings, project_id)
+        entity_list, public_access = transform_iam_bindings(bindings, project_id)
         return entity_list, public_access
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']

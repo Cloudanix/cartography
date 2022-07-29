@@ -21,7 +21,7 @@ def parse_and_validate_gcp_requested_syncs(gcp_requested_syncs: str) -> List[str
             )
     return validated_resources
 
-def transform_bindings(bindings: Dict, project_id: str) -> tuple:
+def transform_iam_bindings(bindings: Dict, project_id: str) -> tuple:
     users = []
     groups = []
     domains = []

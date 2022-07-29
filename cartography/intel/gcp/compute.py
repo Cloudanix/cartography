@@ -10,7 +10,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
-from . import iam
+from util.common import transform_iam_bindings
 
 import time
 import neo4j
@@ -139,7 +139,7 @@ def get_gcp_instance_policy_entities(item: Dict, compute: Resource) -> List[Reso
         iam_policy = compute.instances().getIamPolicy(
             project=project_id, zone=item['zone_name'], resource=item.get("id")).execute()
         bindings = iam_policy.get('bindings', [])
-        entity_list, public_access = iam.transform_bindings(bindings, project_id)
+        entity_list, public_access = transform_iam_bindings(bindings, project_id)
         return entity_list, public_access
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
