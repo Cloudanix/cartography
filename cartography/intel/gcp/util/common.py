@@ -61,10 +61,12 @@ def transform_iam_bindings(bindings: Dict, project_id: str) -> tuple:
                     elif member.startswith('serviceAccount:'):
                         sac = member[len('serviceAccount:'):]
                         service_account.append({
-                            "id": f'projects/{project_id}/service_account/{sac}',
+                            "id": f'projects/{project_id}/serviceAccounts/{sac}',
                             "email": sac,
                             "name": sac,
                         })
+                    elif member.startswith('deleted:'):
+                        pass
     else:
         public_access = None  
 

@@ -303,7 +303,7 @@ def get_gateways(apigateway: Resource, project_id: str, regions: list, common_jo
                         gateway['region'] = x[0]
                         if len(x) > 1:
                             gateway['region'] = f"{x[0]}-{x[1]}"
-                        gateway_entities, public_access = get_api_policy_entities(apigateway, gateway, project_id)
+                        gateway_entities, public_access = get_api_gateway_policy_entities(apigateway, gateway, project_id)
                         gateway['entities'] = gateway_entities
                         gateway['public_access'] = public_access
                         gateway['consolelink'] = gcp_console_link.get_console_link(
