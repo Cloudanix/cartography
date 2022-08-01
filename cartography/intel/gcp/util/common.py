@@ -66,7 +66,7 @@ def transform_iam_bindings(bindings: Dict, project_id: str) -> tuple:
                             "name": sac,
                         })
                     elif member.startswith('deleted:'):
-                        pass
+                        continue
     else:
         public_access = None  
 
