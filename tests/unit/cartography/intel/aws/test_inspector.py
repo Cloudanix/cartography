@@ -17,7 +17,7 @@ TEST_UPDATE_TAG = 123456789
 def test_get_inspector_findings():
     mock_boto = mock.MagicMock()
 
-    ret = get_inspector_findings(mock_boto, 'us-east-1')
+    ret = get_inspector_findings(mock_boto, 'us-east-1', '0000')
 
     assert ret == []
     mock_boto.client.assert_called_once_with('inspector2', region_name='us-east-1')

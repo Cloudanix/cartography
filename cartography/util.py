@@ -15,6 +15,7 @@ from typing import TypeVar
 from typing import Union
 
 import backoff
+import boto3
 import botocore
 import neo4j
 
@@ -133,6 +134,26 @@ def timeit(method: F) -> F:
     return cast(F, timed)
 
 
+def aws_paginate(
+    client: boto3.client,
+    method_name: str,
+    object_name: str,
+    **kwargs: Any,
+) -> List[Dict]:
+    '''
+    Helper method for boilerplate boto3 pagination
+    The **kwargs will be forwarded to the paginator
+    '''
+    paginator = client.get_paginator(method_name)
+    items = []
+    i = 0
+    for i, page in enumerate(paginator.paginate(**kwargs), start=1):
+        if i % 100 == 0:
+            logger.info(f'fetching page number {i}')
+        items.extend(page[object_name])
+    return items
+
+
 AWSGetFunc = TypeVar('AWSGetFunc', bound=Callable[..., List])
 
 # fix for AWS TooManyRequestsException
@@ -166,6 +187,7 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
         'AuthFailure',
         'InvalidClientTokenId',
         'UnrecognizedClientException',
+        'InternalServerErrorException',
     ]
 
     @wraps(func)
