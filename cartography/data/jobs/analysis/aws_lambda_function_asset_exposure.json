@@ -11,47 +11,11 @@
 			"iterationsize": 100
 		},
 		{
-			"query": "MATCH (alias:AWSLambdaFunctionAlias)<-[:KNOWN_AS]-(:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) where EXISTS(alias.exposed_internet) WITH alias LIMIT $LIMIT_SIZE REMOVE alias.exposed_internet, alias.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (alias:AWSLambdaFunctionAlias)<-[:KNOWN_AS]-(:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) where EXISTS(alias.anonymous_access) WITH lf LIMIT $LIMIT_SIZE REMOVE alias.anonymous_access, alias.anonymous_access_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (layer:AWSLambdaLayer)<-[:HAS]-(:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) where EXISTS(layer.exposed_internet) WITH layer LIMIT $LIMIT_SIZE REMOVE layer.exposed_internet, layer.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (layer:AWSLambdaLayer)<-[:HAS]-(:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) where EXISTS(layer.anonymous_access) WITH layer LIMIT $LIMIT_SIZE REMOVE layer.anonymous_access, layer.anonymous_access_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},		
-		{
 			"query": "MATCH (lf:AWSLambda{anonymous_access: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET (CASE WHEN NOT 'policy' IN coalesce(lf.anonymous_access_type , []) THEN lf END).anonymous_access_type = coalesce(lf.anonymous_access_type , []) + 'policy';",
 			"iterative": false
 		},
 		{
 			"query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WITH lf WHERE ((NOT EXISTS(lf.vpc_id)) OR (lf.vpc_id = '')) SET lf.exposed_internet = true,(CASE WHEN NOT 'vpc_none' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'vpc_none';",
-			"iterative": false
-		},
-		{
-			"query": "MATCH (alias:AWSLambdaFunctionAlias)<-[:KNOWN_AS]-(:AWSLambda{anonymous_access: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET alias.anonymous_access = true, (CASE WHEN NOT 'lambda_policy' IN coalesce(alias.anonymous_access_type , []) THEN alias END).anonymous_access_type = coalesce(alias.anonymous_access_type , []) + 'lambda_policy';",
-			"iterative": false
-		},
-		{
-			"query": "MATCH (alias:AWSLambdaFunctionAlias)<-[:KNOWN_AS]-(lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WITH alias, lf WHERE ((NOT EXISTS(lf.vpc_id)) OR (lf.vpc_id = '')) SET alias.exposed_internet = true,(CASE WHEN NOT 'lambda_vpc_none' IN coalesce(alias.exposed_internet_type , []) THEN alias END).exposed_internet_type = coalesce(alias.exposed_internet_type , []) + 'lambda_vpc_none';",
-			"iterative": false
-		},
-		{
-			"query": "MATCH (layer:AWSLambdaLayer)<-[:HAS]-(:AWSLambda{anonymous_access: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET layer.anonymous_access = true, (CASE WHEN NOT 'lambda_policy' IN coalesce(layer.anonymous_access_type , []) THEN layer END).anonymous_access_type = coalesce(layer.anonymous_access_type , []) + 'lambda_policy';",
-			"iterative": false
-		},
-		{
-			"query": "MATCH (layer:AWSLambdaLayer)<-[:HAS]-(lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WITH layer, lf WHERE ((NOT EXISTS(lf.vpc_id)) OR (lf.vpc_id = '')) SET layer.exposed_internet = true,(CASE WHEN NOT 'lambda_vpc_none' IN coalesce(layer.exposed_internet_type , []) THEN layer END).exposed_internet_type = coalesce(layer.exposed_internet_type , []) + 'lambda_vpc_none';",
 			"iterative": false
 		}
 	],
