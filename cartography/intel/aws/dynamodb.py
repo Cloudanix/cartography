@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 from typing import Dict
 from typing import List
 
@@ -6,10 +7,14 @@ import boto3
 import neo4j
 
 import time
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.models.aws.dynamodb.gsi import DynamoDBGSISchema
+from cartography.models.aws.dynamodb.tables import DynamoDBTableSchema
 from cartography.stats import get_stats_client
 from cartography.util import aws_handle_regions
 from cartography.util import merge_module_sync_metadata
-from cartography.util import run_cleanup_job
 from cartography.util import timeit
 from cloudconsolelink.clouds.aws import AWSLinker
 
@@ -124,7 +129,8 @@ def load_gsi(
 
 @timeit
 def cleanup_dynamodb_tables(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_dynamodb_tables_cleanup.json', neo4j_session, common_job_parameters)
+    GraphJob.from_node_schema(DynamoDBTableSchema(), common_job_parameters).run(neo4j_session)
+    GraphJob.from_node_schema(DynamoDBGSISchema(), common_job_parameters).run(neo4j_session)
 
 
 @timeit

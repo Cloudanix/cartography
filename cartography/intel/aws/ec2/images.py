@@ -1,5 +1,6 @@
 import time
 import logging
+from typing import Any
 from typing import Dict
 from typing import List
 
@@ -7,9 +8,11 @@ import boto3
 import neo4j
 from botocore.exceptions import ClientError
 
-from .util import get_botocore_config
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.models.aws.ec2.images import EC2ImageSchema
 from cartography.util import aws_handle_regions
-from cartography.util import run_cleanup_job
 from cartography.util import timeit
 from cloudconsolelink.clouds.aws import AWSLinker
 
@@ -113,12 +116,9 @@ def load_images(
 
 
 @timeit
-def cleanup_images(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job(
-        'aws_import_ec2_images_cleanup.json',
-        neo4j_session,
-        common_job_parameters,
-    )
+def cleanup_images(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    cleanup_job = GraphJob.from_node_schema(EC2ImageSchema(), common_job_parameters)
+    cleanup_job.run(neo4j_session)
 
 
 @timeit

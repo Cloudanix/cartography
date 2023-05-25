@@ -38,6 +38,7 @@ class PolicyType(enum.Enum):
 def get_policy_name_from_arn(arn: str) -> str:
     return arn.split("/")[-1]
 
+
 @timeit
 def _is_common_exception(e: Exception, item: str) -> bool:
     error_msg = "Failed to retrieve IAM details"
@@ -57,6 +58,7 @@ def _is_common_exception(e: Exception, item: str) -> bool:
         logger.warning(f"{error_msg} for {item} - IllegalLocationConstraintException")
         return True
     return False
+
 
 @timeit
 def get_group_policies(boto3_session: boto3.session.Session, group_name: str) -> Dict:
@@ -616,7 +618,7 @@ def _load_policy_tx(
 
     policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy_name}"
     # consolelink = aws_console_link.get_console_link(arn=policy_arn)
-    consolelink=''
+    consolelink = ''
 
     tx.run(
         ingest_policy,
@@ -710,6 +712,7 @@ def sync_users(
     sync_user_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
     run_cleanup_job('aws_import_users_cleanup.json', neo4j_session, common_job_parameters)
+
 
 @timeit
 def sync_user_managed_policies(

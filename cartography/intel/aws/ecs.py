@@ -91,16 +91,16 @@ def get_ecs_services(cluster_arn: str, boto3_session: boto3.session.Session, reg
 
 @timeit
 @aws_handle_regions
-def get_ecs_task_definitions(boto3_session: boto3.session.Session, region: str) -> List[Dict[str, Any]]:
+def get_ecs_task_definitions(
+    boto3_session: boto3.session.Session,
+    region: str,
+    tasks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     client = boto3_session.client('ecs', region_name=region)
-    paginator = client.get_paginator('list_task_definitions')
     task_definitions: List[Dict[str, Any]] = []
-    task_definition_arns: List[str] = []
-    for page in paginator.paginate():
-        task_definition_arns.extend(page.get('taskDefinitionArns', []))
-    for arn in task_definition_arns:
+    for task in tasks:
         task_definition = client.describe_task_definition(
-            taskDefinition=arn,
+            taskDefinition=task['taskDefinitionArn'],
         )
         task_definitions.append(task_definition['taskDefinition'])
     return task_definitions
@@ -292,7 +292,8 @@ def load_ecs_task_definitions(
     UNWIND $Definitions AS def
         MERGE (d:ECSTaskDefinition{id: def.taskDefinitionArn})
         ON CREATE SET d.firstseen = timestamp()
-        SET d.arn = def.taskDefinitionArn, d.region = $Region,
+        SET d.arn = def.taskDefinitionArn,
+            d.region = $Region,
             d.family = def.family,
             d.task_role_arn = def.taskRoleArn,
             d.execution_role_arn = def.executionRoleArn,
@@ -315,6 +316,11 @@ def load_ecs_task_definitions(
             d.registered_by = def.registeredBy,
             d.ephemeral_storage_size_in_gib = def.ephemeralStorage.sizeInGiB,
             d.lastupdated = $aws_update_tag
+        WITH d
+        MATCH (task:ECSTask{task_definition_arn: d.arn})
+        MERGE (task)-[r:HAS_TASK_DEFINITION]->(d)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $aws_update_tag
         WITH d
         MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
         MERGE (owner)-[r:RESOURCE]->(d)

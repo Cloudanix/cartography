@@ -1,6 +1,7 @@
 import math
 import logging
 import time
+from collections import namedtuple
 from typing import Any
 from typing import Dict
 from typing import List
@@ -10,12 +11,34 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from botocore.exceptions import ClientError
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.models.aws.ec2.instances import EC2InstanceSchema
+from cartography.models.aws.ec2.keypairs import EC2KeyPairSchema
+from cartography.models.aws.ec2.networkinterfaces import EC2NetworkInterfaceSchema
+from cartography.models.aws.ec2.reservations import EC2ReservationSchema
+from cartography.models.aws.ec2.securitygroups import EC2SecurityGroupSchema
+from cartography.models.aws.ec2.subnets import EC2SubnetSchema
+from cartography.models.aws.ec2.volumes import EBSVolumeSchema
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+Ec2Data = namedtuple(
+    'Ec2Data', [
+        "reservation_list",
+        "instance_list",
+        "subnet_list",
+        "sg_list",
+        "keypair_list",
+        "network_interface_list",
+        "instance_ebs_volumes_list",
+    ],
+)
 
 
 @timeit
@@ -384,10 +407,14 @@ def load_ec2_instances(
             instance['ReservationId'] = reservation_id
             instances.append(instance)
 
-            # SubnetId can return None intermittently so attach only if non-None.
             subnet_id = instance.get('SubnetId')
             if subnet_id:
-                neo4j_session.write_transaction(_load_ec2_subnet_tx, instanceid, subnet_id, region, update_tag)
+                subnet_list.append(
+                    {
+                        'SubnetId': subnet_id,
+                        'InstanceId': instance_id,
+                    },
+                )
 
             if instance.get("KeyName"):
                 key_name = instance["KeyName"]
@@ -504,8 +531,12 @@ def cleanup_ec2_instances(neo4j_session: neo4j.Session, common_job_parameters: D
 
 @timeit
 def sync_ec2_instances(
-        neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str],
-        current_aws_account_id: str, update_tag: int, common_job_parameters: Dict,
+        neo4j_session: neo4j.Session,
+        boto3_session: boto3.session.Session,
+        regions: List[str],
+        current_aws_account_id: str,
+        update_tag: int,
+        common_job_parameters: Dict[str, Any],
 ) -> None:
     tic = time.perf_counter()
 
