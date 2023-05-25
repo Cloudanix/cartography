@@ -126,11 +126,15 @@ def _sync_multiple_subscriptions(
     common_job_parameters['AZURE_TENANT_ID'] = tenant_id
 
     for sub in subscriptions:
+        common_job_parameters['AZURE_SUBSCRIPTION_ID'] = sub['subscriptionId']
+
+        if common_job_parameters['AZURE_SUBSCRIPTION_ID'] != sub['subscriptionId']:
+            continue
+
         logger.info(
             "Syncing Azure Subscription with ID '%s'",
             sub['subscriptionId'],
         )
-        common_job_parameters['AZURE_SUBSCRIPTION_ID'] = sub['subscriptionId']
 
         _sync_one_subscription(
             neo4j_session,
@@ -162,6 +166,12 @@ def _sync_multiple_subscriptions(
 
         run_analysis_job(
             'azure_network_interface_asset_exposure.json',
+            neo4j_session,
+            common_job_parameters
+        )
+
+        run_analysis_job(
+            'azure_network_load_balancer_asset_exposure.json',
             neo4j_session,
             common_job_parameters
         )
