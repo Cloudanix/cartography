@@ -69,7 +69,7 @@ def _load_cloudformation_stack_tx(tx: neo4j.Transaction, stacks: List[Dict], cur
         stack.role_arn = record.RoleARN,
         stack.enable_termination_protection = record.EnableTerminationProtection,
         stack.root_id = record.RootId,
-        stack.parent_id = record.ParentId
+        stack.parent_id = [record.ParentId]
     WITH stack
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(stack)

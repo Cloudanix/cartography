@@ -413,7 +413,7 @@ def _load_apigateway_resources(
     ON CREATE SET s.firstseen = timestamp()
     SET s.path = res.path,
     s.pathpart = res.pathPart,
-    s.parentid = res.parentId,
+    s.parentid = [res.parentId],
     s.consolelink = res.consolelink,
     s.region=res.region,
     s.lastupdated =$UpdateTag,
