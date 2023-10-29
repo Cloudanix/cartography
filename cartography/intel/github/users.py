@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Tuple
@@ -55,14 +56,20 @@ def get(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
     :return: A 2-tuple containing 1. a list of dicts representing users - see tests.data.github.users.GITHUB_USER_DATA
     for shape, and 2. data on the owning GitHub organization - see tests.data.github.users.GITHUB_ORG_DATA for shape.
     """
-    users, org = fetch_all(token, api_url, organization, GITHUB_ORG_USERS_PAGINATED_GRAPHQL, 'membersWithRole', 'edges')
-    return users, org
+    users, org = fetch_all(
+        token,
+        api_url,
+        organization,
+        GITHUB_ORG_USERS_PAGINATED_GRAPHQL,
+        'membersWithRole',
+    )
+    return users.edges, org
 
 
 @timeit
 def load_organization_users(
     neo4j_session: neo4j.Session, user_data: List[Dict], org_data: Dict,
-    update_tag: int,
+    update_tag: int,workspace_id:str,
 ) -> None:
     query = """
     MERGE (org:GitHubOrganization{id: $OrgUrl})
@@ -84,9 +91,14 @@ def load_organization_users(
     u.company = user.node.company,
     u.lastupdated = $UpdateTag
 
-    MERGE (u)-[r:MEMBER_OF]->(org)
+    MERGE (u)<-[r:MEMBER_OF]-(org)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
+    WITH org
+    match (owner:CloudanixWorkspace{id:$workspace_id})
+    merge (org)<-[o:OWNER]-(owner)
+    ON CREATE SET o.firstseen = timestamp()
+    SET o.lastupdated = $UpdateTag
     """
     neo4j_session.run(
         query,
@@ -94,17 +106,22 @@ def load_organization_users(
         OrgLogin=org_data['login'],
         UserData=user_data,
         UpdateTag=update_tag,
+        workspace_id=workspace_id
     )
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, common_job_parameters: Dict, github_api_key: str, github_url: str,
-    organization: str,
+        neo4j_session: neo4j.Session,
+        common_job_parameters: Dict[str, Any],
+        github_api_key: str,
+        github_url: str,
+        organization: str,
 ) -> None:
     logger.info("Syncing GitHub users")
     user_data, org_data = get(github_api_key, github_url, organization)
-    load_organization_users(neo4j_session, user_data, org_data, common_job_parameters['UPDATE_TAG'])
+    load_organization_users(neo4j_session, user_data, org_data, common_job_parameters['UPDATE_TAG'],common_job_parameters['WORKSPACE_ID'])
+    
     run_cleanup_job('github_users_cleanup.json', neo4j_session, common_job_parameters)
     merge_module_sync_metadata(
         neo4j_session,

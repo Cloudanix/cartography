@@ -7,6 +7,8 @@ import sys
 import cartography.config
 import cartography.sync
 import cartography.util
+import json 
+import base64
 from cartography.config import Config
 from cartography.intel.aws.util.common import parse_and_validate_aws_requested_syncs
 
@@ -712,6 +714,32 @@ def run_gcp(request):
         neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
         credentials=request['credentials'],
         params=request['params'],
+        gcp_requested_syncs=request.get('services', None),
+    )
+
+    if request['logging']['mode'] == "verbose":
+        config.verbose = True
+    elif request['logging']['mode'] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog='cartography').process(config)
+
+def run_github(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('neo4j').setLevel(logging.WARNING)
+    credentials_json = json.dumps(request['credentials'])
+    credentials=base64.b64encode(credentials_json.encode())
+    default_sync = cartography.sync.build_github_sync()
+
+
+    config = Config(
+        request['neo4j']['uri'],
+        neo4j_user=request['neo4j']['user'],
+        neo4j_password=request['neo4j']['pwd'],
+        neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
+        params=request['params'],
+        github_config=credentials,
         gcp_requested_syncs=request.get('services', None),
     )
 
