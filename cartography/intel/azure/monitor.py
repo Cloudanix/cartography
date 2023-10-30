@@ -12,6 +12,7 @@ from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.credentials import Credentials
 from cartography.util import run_cleanup_job
+from cartography.util import get_azure_resource_group_name
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,7 @@ def get_log_profiles_list(client: MonitorManagementClient, regions: List, common
 def transform_log_profiles(log_profiles: List[Dict], regions: List, common_job_parameters: str):
     log_profiles_data = []
     for log in log_profiles:
-        x = log['id'].split('/')
-        log['resource_group'] = x[x.index('resourceGroups') + 1]
+        log['resource_group'] = get_azure_resource_group_name(log.get('id'))
         log['consolelink'] = azure_console_link.get_console_link(
             id=log['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
         if regions is None:
@@ -90,7 +90,26 @@ def _load_monitor_log_profiles_tx(
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
+    for log_profile in log_profiles_list:
+        resource_group=get_azure_resource_group_name(log_profile.get('id'))
+        _attach_resource_group_monitor_logs(tx,log_profile['id'],resource_group,update_tag)
+            
 
+def _attach_resource_group_monitor_logs(tx: neo4j.Transaction, log_profile_id:str,resource_group:str ,update_tag: int) -> None:
+    query = """
+    MATCH (log:AzureMonitorLogProfile{id: $log_profile_id})
+    WITH log
+    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MERGE (log)-[r:RESOURCE_GROUP]->(rg)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+    tx.run(
+        query,
+        log_profile_id=log_profile_id,
+        resource_group=resource_group,
+        update_tag=update_tag,
+    )
 
 def cleanup_monitor_log_profiles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('azure_import_monitor_log_profiles_cleanup.json', neo4j_session, common_job_parameters)
@@ -103,25 +122,6 @@ def sync_monitor_log_profiles(
     client = get_monitoring_client(credentials, subscription_id)
     log_profiles = get_log_profiles_list(client, regions, common_job_parameters)
     log_profiles_list = transform_log_profiles(log_profiles, regions, common_job_parameters)
-
-    if common_job_parameters.get('pagination', {}).get('log_profiles', None):
-        pageNo = common_job_parameters.get("pagination", {}).get("log_profiles", None)["pageNo"]
-        pageSize = common_job_parameters.get("pagination", {}).get("log_profiles", None)["pageSize"]
-        totalPages = len(log_profiles_list) / pageSize
-        if int(totalPages) != totalPages:
-            totalPages = totalPages + 1
-        totalPages = int(totalPages)
-        if pageNo < totalPages or pageNo == totalPages:
-            logger.info(f'pages process for log_profiles {pageNo}/{totalPages} pageSize is {pageSize}')
-        page_start = (common_job_parameters.get('pagination', {}).get('log_profiles', {})[
-                      'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('log_profiles', {})['pageSize']
-        page_end = page_start + common_job_parameters.get('pagination', {}).get('log_profiles', {})['pageSize']
-        if page_end > len(log_profiles_list) or page_end == len(log_profiles_list):
-            log_profiles_list = log_profiles_list[page_start:]
-        else:
-            has_next_page = True
-            log_profiles_list = log_profiles_list[page_start:page_end]
-            common_job_parameters['pagination']['log_profiles']['hasNextPage'] = has_next_page
 
     load_monitor_log_profiles(neo4j_session, subscription_id, log_profiles_list, update_tag)
     cleanup_monitor_log_profiles(neo4j_session, common_job_parameters)

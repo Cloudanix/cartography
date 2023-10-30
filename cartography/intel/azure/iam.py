@@ -7,6 +7,7 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.graphrbac import GraphRbacManagementClient
 from azure.mgmt.authorization import AuthorizationManagementClient
+from azure.mgmt.msi import ManagedServiceIdentityClient
 from cloudconsolelink.clouds.azure import AzureLinker
 from datetime import datetime
 
@@ -41,6 +42,10 @@ def load_tenant_users(session: neo4j.Session, tenant_id: str, data_list: List[Di
 
 def load_roles(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int, SUBSCRIPTION_ID: str) -> None:
     session.write_transaction(_load_roles_tx, tenant_id, data_list, update_tag, SUBSCRIPTION_ID)
+
+
+def load_managed_identities(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
+    session.write_transaction(_load_managed_identities_tx, tenant_id, data_list, update_tag)
 
 
 def load_tenant_groups(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
@@ -78,6 +83,12 @@ def get_authorization_client(credentials: Credentials, subscription_id: str) -> 
 
 
 @timeit
+def get_managed_identity_client(credentials: Credentials, subscription_id: str) -> ManagedServiceIdentityClient:
+    client = ManagedServiceIdentityClient(credentials, subscription_id)
+    return client
+
+
+@timeit
 def list_tenant_users(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
     try:
         users = client.users.list()
@@ -90,7 +101,8 @@ def list_tenant_users(client: GraphRbacManagementClient, tenant_id: str) -> List
         logger.warning(f"Error while retrieving tenant users - {e}")
         return []
 
-def transform_users(users_list: List[Dict], tenant_id:str) -> List[Dict]:
+
+def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
     users: List[Dict] = []
 
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
@@ -120,7 +132,8 @@ def transform_users(users_list: List[Dict], tenant_id:str) -> List[Dict]:
 
     return users
 
-def transform_user(user: Dict, tenant_id:str) -> Dict:
+
+def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
         'id': f"tenants/{tenant_id}/users/{user.object_id}",
@@ -215,25 +228,6 @@ def sync_tenant_users(
 ) -> None:
     client = get_graph_client(credentials, tenant_id)
     tenant_users_list = list_tenant_users(client, tenant_id)
-    
-    # if common_job_parameters.get('pagination', {}).get('iam', None):
-    #     pageNo = common_job_parameters.get("pagination", {}).get("iam", None)["pageNo"]
-    #     pageSize = common_job_parameters.get("pagination", {}).get("iam", None)["pageSize"]
-    #     totalPages = len(tenant_users_list) / pageSize
-    #     if int(totalPages) != totalPages:
-    #         totalPages = totalPages + 1
-    #     totalPages = int(totalPages)
-    #     if pageNo < totalPages or pageNo == totalPages:
-    #         logger.info(f'pages process for iam users {pageNo}/{totalPages} pageSize is {pageSize}')
-    #     page_start = (common_job_parameters.get('pagination', {}).get('iam', {})[
-    #                   'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     page_end = page_start + common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     if page_end > len(tenant_users_list) or page_end == len(tenant_users_list):
-    #         tenant_users_list = tenant_users_list[page_start:]
-    #     else:
-    #         has_next_page = True
-    #         tenant_users_list = tenant_users_list[page_start:page_end]
-    #         common_job_parameters['pagination']['iam']['hasNextPage'] = has_next_page
 
     load_tenant_users(neo4j_session, tenant_id, tenant_users_list, update_tag)
     cleanup_tenant_users(neo4j_session, common_job_parameters)
@@ -302,25 +296,6 @@ def sync_tenant_groups(
     client = get_graph_client(credentials, tenant_id)
     tenant_groups_list = get_tenant_groups_list(client, tenant_id)
 
-    # if common_job_parameters.get('pagination', {}).get('iam', None):
-    #     pageNo = common_job_parameters.get("pagination", {}).get("iam", None)["pageNo"]
-    #     pageSize = common_job_parameters.get("pagination", {}).get("iam", None)["pageSize"]
-    #     totalPages = len(tenant_groups_list) / pageSize
-    #     if int(totalPages) != totalPages:
-    #         totalPages = totalPages + 1
-    #     totalPages = int(totalPages)
-    #     if pageNo < totalPages or pageNo == totalPages:
-    #         logger.info(f'pages process for iam groups {pageNo}/{totalPages} pageSize is {pageSize}')
-    #     page_start = (common_job_parameters.get('pagination', {}).get('iam', {})[
-    #                   'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     page_end = page_start + common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     if page_end > len(tenant_groups_list) or page_end == len(tenant_groups_list):
-    #         tenant_groups_list = tenant_groups_list[page_start:]
-    #     else:
-    #         has_next_page = True
-    #         tenant_groups_list = tenant_groups_list[page_start:page_end]
-    #         common_job_parameters['pagination']['iam']['hasNextPage'] = has_next_page
-
     load_tenant_groups(neo4j_session, tenant_id, tenant_groups_list, update_tag)
     cleanup_tenant_groups(neo4j_session, common_job_parameters)
 
@@ -384,25 +359,6 @@ def sync_tenant_applications(
 ) -> None:
     client = get_graph_client(credentials, tenant_id)
     tenant_applications_list = get_tenant_applications_list(client, tenant_id)
-
-    # if common_job_parameters.get('pagination', {}).get('iam', None):
-    #     pageNo = common_job_parameters.get("pagination", {}).get("iam", None)["pageNo"]
-    #     pageSize = common_job_parameters.get("pagination", {}).get("iam", None)["pageSize"]
-    #     totalPages = len(tenant_applications_list) / pageSize
-    #     if int(totalPages) != totalPages:
-    #         totalPages = totalPages + 1
-    #     totalPages = int(totalPages)
-    #     if pageNo < totalPages or pageNo == totalPages:
-    #         logger.info(f'pages process for iam applications {pageNo}/{totalPages} pageSize is {pageSize}')
-    #     page_start = (common_job_parameters.get('pagination', {}).get('iam', {})[
-    #                   'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     page_end = page_start + common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     if page_end > len(tenant_applications_list) or page_end == len(tenant_applications_list):
-    #         tenant_applications_list = tenant_applications_list[page_start:]
-    #     else:
-    #         has_next_page = True
-    #         tenant_applications_list = tenant_applications_list[page_start:page_end]
-    #         common_job_parameters['pagination']['iam']['hasNextPage'] = has_next_page
 
     load_tenant_applications(neo4j_session, tenant_id, tenant_applications_list, update_tag)
     cleanup_tenant_applications(neo4j_session, common_job_parameters)
@@ -472,25 +428,6 @@ def sync_tenant_service_accounts(
     client = get_graph_client(credentials, tenant_id)
     tenant_service_accounts_list = get_tenant_service_accounts_list(client, tenant_id)
 
-    # if common_job_parameters.get('pagination', {}).get('iam', None):
-    #     pageNo = common_job_parameters.get("pagination", {}).get("iam", None)["pageNo"]
-    #     pageSize = common_job_parameters.get("pagination", {}).get("iam", None)["pageSize"]
-    #     totalPages = len(tenant_service_accounts_list) / pageSize
-    #     if int(totalPages) != totalPages:
-    #         totalPages = totalPages + 1
-    #     totalPages = int(totalPages)
-    #     if pageNo < totalPages or pageNo == totalPages:
-    #         logger.info(f'pages process for iam service_accounts {pageNo}/{totalPages} pageSize is {pageSize}')
-    #     page_start = (common_job_parameters.get('pagination', {}).get('iam', {})[
-    #                   'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     page_end = page_start + common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     if page_end > len(tenant_service_accounts_list) or page_end == len(tenant_service_accounts_list):
-    #         tenant_service_accounts_list = tenant_service_accounts_list[page_start:]
-    #     else:
-    #         has_next_page = True
-    #         tenant_service_accounts_list = tenant_service_accounts_list[page_start:page_end]
-    #         common_job_parameters['pagination']['iam']['hasNextPage'] = has_next_page
-
     load_tenant_service_accounts(neo4j_session, tenant_id, tenant_service_accounts_list, update_tag)
     cleanup_tenant_service_accounts(neo4j_session, common_job_parameters)
 
@@ -556,25 +493,6 @@ def sync_tenant_domains(
     client = get_graph_client(credentials, tenant_id)
     tenant_domains_list = get_tenant_domains_list(client, tenant_id)
 
-    # if common_job_parameters.get('pagination', {}).get('iam', None):
-    #     pageNo = common_job_parameters.get("pagination", {}).get("iam", None)["pageNo"]
-    #     pageSize = common_job_parameters.get("pagination", {}).get("iam", None)["pageSize"]
-    #     totalPages = len(tenant_domains_list) / pageSize
-    #     if int(totalPages) != totalPages:
-    #         totalPages = totalPages + 1
-    #     totalPages = int(totalPages)
-    #     if pageNo < totalPages or pageNo == totalPages:
-    #         logger.info(f'pages process for iam domains {pageNo}/{totalPages} pageSize is {pageSize}')
-    #     page_start = (common_job_parameters.get('pagination', {}).get('iam', {})[
-    #                   'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     page_end = page_start + common_job_parameters.get('pagination', {}).get('iam', {})['pageSize']
-    #     if page_end > len(tenant_domains_list) or page_end == len(tenant_domains_list):
-    #         tenant_domains_list = tenant_domains_list[page_start:]
-    #     else:
-    #         has_next_page = True
-    #         tenant_domains_list = tenant_domains_list[page_start:page_end]
-    #         common_job_parameters['pagination']['iam']['hasNextPage'] = has_next_page
-
     load_tenant_domains(neo4j_session, tenant_id, tenant_domains_list, update_tag)
     cleanup_tenant_domains(neo4j_session, common_job_parameters)
 
@@ -582,29 +500,59 @@ def sync_tenant_domains(
 @timeit
 def get_roles_list(client: AuthorizationManagementClient, common_job_parameters: Dict) -> List[Dict]:
     try:
-        roles_list = list(
+        role_assignments_list = list(
             map(lambda x: x.as_dict(), client.role_assignments.list()),
         )
 
-        for role in roles_list:
-            result = client.role_definitions.get_by_id(role["role_definition_id"], raw=True)
-            result = result.response.json()
-            role['type'] = result.get('properties', {}).get('type')
-            role['roleName'] = result.get('properties', {}).get('roleName', '')
-            role['type'] = result.get('properties', {}).get('type')
-            role['consolelink'] = azure_console_link.get_console_link(
-                id=role['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
-            role['permissions'] = []
-            for permission in result.get('properties', {}).get('permissions', []):
-                for action in permission.get('actions', []):
-                    role['permissions'].append(action)
-                for data_action in permission.get('dataActions', []):
-                    role['permissions'].append(data_action)
-            role['permissions'] = list(set(role['permissions']))
+        roles_list = []
+        for role_assignment in role_assignments_list:
+            role_in_roles_list = False
+            for role in roles_list:
+                if role['id'] == role_assignment["role_definition_id"]:
+                    role['principal_ids'].append(role_assignment['principal_id'])
+                    role_in_roles_list = True
+                    break
+
+            if not role_in_roles_list:
+                role = {}
+                result = client.role_definitions.get_by_id(role_assignment["role_definition_id"], raw=True)
+                result = result.response.json()
+                role['name'] = result.get('name', '')
+                role['id'] = role_assignment["role_definition_id"]
+                role['principal_ids'] = [role_assignment['principal_id']]
+                role['type'] = result.get('properties', {}).get('type')
+                role['roleName'] = result.get('properties', {}).get('roleName', '')
+                role['consolelink'] = azure_console_link.get_console_link(
+                    id=role_assignment['role_definition_id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+                role['permissions'] = []
+                for permission in result.get('properties', {}).get('permissions', []):
+                    for action in permission.get('actions', []):
+                        role['permissions'].append(action)
+                    for data_action in permission.get('dataActions', []):
+                        role['permissions'].append(data_action)
+                role['permissions'] = list(set(role['permissions']))
+                roles_list.append(role)
         return roles_list
 
     except HttpResponseError as e:
         logger.warning(f"Error while retrieving roles - {e}")
+        return []
+
+
+@timeit
+def get_managed_identity_list(client: ManagedServiceIdentityClient, subscription_id: str, common_job_parameters: Dict) -> List[Dict]:
+    try:
+        managed_identity_list = list(
+            map(lambda x: x.as_dict(), client.user_assigned_identities.list_by_subscription()),
+        )
+
+        for managed_identity in managed_identity_list:
+            managed_identity['consolelink'] = azure_console_link.get_console_link(
+                id=managed_identity['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name']
+            )
+        return managed_identity_list
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving managed identity - {e}")
         return []
 
 
@@ -624,16 +572,11 @@ def _load_roles_tx(
     i.roleName = role.roleName,
     i.permissions = role.permissions
     WITH i,role
-    MATCH (principal:AzurePrincipal) where principal.object_id = role.principal_id
-    MERGE (principal)-[r:ASSUME_ROLE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
-    WITH i
     MATCH (t:AzureTenant{id: $tenant_id})
     MERGE (t)-[tr:RESOURCE]->(i)
     ON CREATE SET tr.firstseen = timestamp()
     SET tr.lastupdated = $update_tag
-    WITH i
+    WITH i,role
     MATCH (sub:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (sub)<-[sr:HAS_ACCESS]-(i)
     ON CREATE SET sr.firstseen = timestamp()
@@ -650,9 +593,62 @@ def _load_roles_tx(
         SUBSCRIPTION_ID=SUBSCRIPTION_ID,
     )
 
+    attach_role = """
+    UNWIND $principal_ids AS principal_id
+    MATCH (principal:AzurePrincipal{object_id: principal_id})
+    WITH principal
+    MATCH (i:AzureRole{id: $role})
+    WITH i,principal
+    MERGE (principal)-[r:ASSUME_ROLE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+    for role in roles_list:
+        tx.run(
+            attach_role,
+            role=role['id'],
+            principal_ids=role['principal_ids'],
+            update_tag=update_tag
+        )
+
+
+def _load_managed_identities_tx(
+    tx: neo4j.Transaction, tenant_id: str, managed_identity_list: List[Dict], update_tag: int,
+) -> None:
+    ingest_managed_identity = """
+    UNWIND $managed_identity_list AS managed_identity
+    MERGE (i:AzureManagedIdentity{id: managed_identity.id})
+    ON CREATE SET i:AzurePrincipal,
+    i.firstseen = timestamp(),
+    i.name = managed_identity.name,
+    i.consolelink = managed_identity.consolelink,
+    i.location = managed_identity.location,
+    i.type = managed_identity.type,
+    i.object_id = managed_identity.principal_id,
+    i.principal_id = managed_identity.principal_id,
+    i.client_id = managed_identity.client_id
+    SET i.lastupdated = $update_tag
+    WITH i
+    MATCH (t:AzureTenant{id: $tenant_id})
+    MERGE (t)-[tr:RESOURCE]->(i)
+    ON CREATE SET tr.firstseen = timestamp()
+    SET tr.lastupdated = $update_tag
+    """
+
+    tx.run(
+        ingest_managed_identity,
+        managed_identity_list=managed_identity_list,
+        update_tag=update_tag,
+        tenant_id=tenant_id,
+    )
+
 
 def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('azure_import_tenant_roles_cleanup.json', neo4j_session, common_job_parameters)
+
+
+def cleanup_managed_identities(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job('azure_import_managed_identity_cleanup.json', neo4j_session, common_job_parameters)
 
 
 def sync_roles(
@@ -663,6 +659,16 @@ def sync_roles(
     roles_list = get_roles_list(client, common_job_parameters)
     load_roles(neo4j_session, tenant_id, roles_list, update_tag, credentials.subscription_id)
     cleanup_roles(neo4j_session, common_job_parameters)
+
+
+def sync_managed_identity(
+    neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
+    common_job_parameters: Dict
+) -> None:
+    client = get_managed_identity_client(credentials.arm_credentials, credentials.subscription_id)
+    managed_identity_list = get_managed_identity_list(client, credentials.subscription_id, common_job_parameters)
+    load_managed_identities(neo4j_session, tenant_id, managed_identity_list, update_tag)
+    cleanup_managed_identities(neo4j_session, common_job_parameters)
 
 
 def _set_used_state_tx(
@@ -723,13 +729,11 @@ def sync(
             tenant_id, update_tag, common_job_parameters,
         )
         sync_tenant_domains(neo4j_session, credentials.aad_graph_credentials, tenant_id, update_tag, common_job_parameters)
-        # if common_job_parameters.get('pagination', {}).get('iam', None):
-        #     if not common_job_parameters.get('pagination', {}).get('iam', {}).get('hasNextPage', False):
-        #         sync_roles(
-        #             neo4j_session, credentials, tenant_id, update_tag, common_job_parameters
-        #         )
-        #         set_used_state(neo4j_session, tenant_id, common_job_parameters, update_tag)
-        # else:
+
+        sync_managed_identity(
+            neo4j_session, credentials, tenant_id, update_tag, common_job_parameters
+        )
+
         sync_roles(
             neo4j_session, credentials, tenant_id, update_tag, common_job_parameters
         )

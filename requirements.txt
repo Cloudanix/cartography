@@ -14,6 +14,8 @@ packaging
 
 python-digitalocean>=1.16.0
 
+netaddr~=0.8.0
+
 # Cloudanix Lambda Specific requirements
 flask<2.0,>=1.0
 maya~=0.6.1
@@ -45,6 +47,7 @@ azure-mgmt-keyvault>=1.1.0
 azure-mgmt-monitor~=5.0.1
 azure-graphrbac>=0.61.1
 azure-mgmt-authorization==0.50.0
+azure-mgmt-msi~=7.0.0
 azure-mgmt-resource>=10.2.0
 azure-mgmt-network>=2.7.0
 azure-mgmt-security~=3.0.0

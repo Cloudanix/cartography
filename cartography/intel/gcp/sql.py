@@ -53,27 +53,6 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
                             sql_instances.append(item)
             request = sql.instances().list_next(previous_request=request, previous_response=response)
 
-        # if common_job_parameters.get('pagination', {}).get('sql', None):
-        #     pageNo = common_job_parameters.get("pagination", {}).get("sql", None)["pageNo"]
-        #     pageSize = common_job_parameters.get("pagination", {}).get("sql", None)["pageSize"]
-        #     totalPages = len(sql_instances) / pageSize
-        #     if int(totalPages) != totalPages:
-        #         totalPages = totalPages + 1
-        #     totalPages = int(totalPages)
-        #     if pageNo < totalPages or pageNo == totalPages:
-        #         logger.info(f'pages process for sql instances {pageNo}/{totalPages} pageSize is {pageSize}')
-        #     page_start = (
-        #         common_job_parameters.get('pagination', {}).get('sql', None)[
-        #             'pageNo'
-        #         ] - 1
-        #     ) * common_job_parameters.get('pagination', {}).get('sql', None)['pageSize']
-        #     page_end = page_start + common_job_parameters.get('pagination', {}).get('sql', None)['pageSize']
-        #     if page_end > len(sql_instances) or page_end == len(sql_instances):
-        #         sql_instances = sql_instances[page_start:]
-        #     else:
-        #         has_next_page = True
-        #         sql_instances = sql_instances[page_start:page_end]
-        #         common_job_parameters['pagination']['sql']['hasNextPage'] = has_next_page
         return sql_instances
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -195,6 +174,28 @@ def load_sql_instances(session: neo4j.Session, data_list: List[Dict], project_id
     session.write_transaction(_load_sql_instances_tx, data_list, project_id, update_tag)
 
 
+def load_sql_instances_vpc_network(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+    session.write_transaction(_load_sql_instances_vpc_network_tx, data_list, project_id, update_tag)
+
+
+def _load_sql_instances_vpc_network_tx(tx: neo4j.Transaction, instances: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+    ingest_sql_instances_vpc_network = """
+    UNWIND $instances as instance
+    MATCH (i:GCPSQLInstance{id:instance.id})
+    WITH i
+        MATCH (vpc:GCPVpc {id: i.vpcNetworkID})
+        MERGE (i)-[r:VPC_NETWORK]->(vpc)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $gcp_update_tag
+    """
+    tx.run(
+        ingest_sql_instances_vpc_network,
+        instances=instances,
+        ProjectId=project_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
 @timeit
 def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     """
@@ -227,6 +228,7 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
         i.ipV4Enabled = instance.ipV4Enabled,
         i.region = instance.region,
         i.gceZone = instance.gceZone,
+        i.vpcNetworkID=instance.settings.ipConfiguration.privateNetwork,
         i.secondaryGceZone = instance.secondaryGceZone,
         i.satisfiesPzs = instance.satisfiesPzs,
         i.createTime = instance.createTime,
@@ -301,6 +303,42 @@ def _load_sql_users_tx(tx: neo4j.Transaction, sql_users: List[Dict], project_id:
 @timeit
 def load_sql_databases(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(_load_sql_databases_tx, data_list, project_id, update_tag)
+
+
+@timeit
+def load_public_ip_address(session: neo4j.Session, instance: List[Dict], project_id: str, update_tag: int) -> None:
+    session.write_transaction(_load_public_ip_address_tx, instance, project_id, update_tag)
+
+
+@timeit
+def _load_public_ip_address_tx(tx: neo4j.Transaction, instance: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+    ipAddresses = [ip.get('ipAddress') for ip in instance.get('ipAddresses', []) if ip.get('type') == "PRIMARY"]
+    ingest_public_ip = """
+    UNWIND $ipAddresses as ip
+    MERGE (p:GCPPublicIpAddress{ipAddress:ip})
+    ON CREATE SET
+        p.firstseen = timestamp()
+    SET
+       p.IpAddress=ip,
+       p.id=ip,
+       p.type='Internal',
+       p.source='GCP',
+       p.resource='SQLInstance',
+       p.lastupdated = $gcp_update_tag
+    WITH p
+    MATCH (i:GCPSQLInstance{id:$instanceId})
+    MERGE (i)-[r:MEMBER_OF_PUBLIC_IP_ADDRESS]->(p)
+    ON CREATE SET
+        r.firstseen = timestamp()
+    SET r.lastupdated = $gcp_update_tag
+    """
+    tx.run(
+        ingest_public_ip,
+        ipAddresses=ipAddresses,
+        instanceId=instance['id'],
+        ProjectId=project_id,
+        gcp_update_tag=gcp_update_tag,
+    )
 
 
 @timeit
@@ -401,6 +439,7 @@ def sync(
     # SQL INSTANCES
     sql_instances = get_sql_instances(sql, project_id, regions, common_job_parameters)
     load_sql_instances(neo4j_session, sql_instances, project_id, gcp_update_tag)
+    load_sql_instances_vpc_network(neo4j_session, sql_instances, project_id, gcp_update_tag)
     logger.info("Load GCP Cloud SQL Instances completed for project %s.", project_id)
     label.sync_labels(
         neo4j_session, sql_instances, gcp_update_tag,
@@ -414,6 +453,7 @@ def sync(
     for instance in sql_instances:
         database = get_sql_databases(sql, instance, project_id)
         load_sql_databases(neo4j_session, database, project_id, gcp_update_tag)
+        load_public_ip_address(neo4j_session, instance, project_id, gcp_update_tag)
 
     cleanup_sql(neo4j_session, common_job_parameters)
 

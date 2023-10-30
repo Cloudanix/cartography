@@ -14,13 +14,13 @@ from statsd import StatsClient
 
 import cartography.intel.analysis
 import cartography.intel.aws
-# import cartography.intel.azure
+import cartography.intel.azure
 import cartography.intel.create_indexes
 # import cartography.intel.crowdstrike
 # import cartography.intel.crxcavator.crxcavator
 # import cartography.intel.cve
 # import cartography.intel.digitalocean
-# import cartography.intel.gcp
+import cartography.intel.gcp
 # import cartography.intel.github
 # import cartography.intel.gsuite
 # import cartography.intel.kubernetes

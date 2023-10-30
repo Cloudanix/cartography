@@ -201,7 +201,6 @@ def _load_ec2_instances(
             current_aws_account_id,
             update_tag,
         )
-
         logger.info(f"Iteration {counter + 1} of {total_iterations}. {start} - {end} - {len(paginated_instances)}")
 
 
@@ -258,7 +257,6 @@ def _load_ec2_instances_tx(
         AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
-
 
 def _load_ec2_subnet_tx(tx: neo4j.Transaction, instanceid: str, subnet_id: str, region: str, update_tag: int) -> None:
     query = """
@@ -548,31 +546,6 @@ def sync_ec2_instances(
         data.extend(get_ec2_instances(boto3_session, region))
 
     logger.info(f"Total EC2 Reservations: {len(data)}")
-
-    if common_job_parameters.get('pagination', {}).get('ec2:instance', None):
-        pageNo = common_job_parameters.get("pagination", {}).get("ec2:instance", {}).get("pageNo")
-        pageSize = common_job_parameters.get("pagination", {}).get("ec2:instance", {}).get("pageSize")
-        totalPages = len(data) / pageSize
-
-        if int(totalPages) != totalPages:
-            totalPages = totalPages + 1
-
-        totalPages = int(totalPages)
-
-        if pageNo < totalPages or pageNo == totalPages:
-            logger.info(f'pages process for ec2:instance {pageNo}/{totalPages} pageSize is {pageSize}')
-
-        page_start = (common_job_parameters.get('pagination', {}).get('ec2:instance', {})[
-                      'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('ec2:instance', {})['pageSize']
-        page_end = page_start + common_job_parameters.get('pagination', {}).get('ec2:instance', {})['pageSize']
-
-        if page_end > len(data) or page_end == len(data):
-            data = data[page_start:]
-
-        else:
-            has_next_page = True
-            data = data[page_start:page_end]
-            common_job_parameters['pagination']['ec2:instance']['hasNextPage'] = has_next_page
 
     load_ec2_instances(neo4j_session, data, current_aws_account_id, update_tag)
     cleanup_ec2_instances(neo4j_session, common_job_parameters)

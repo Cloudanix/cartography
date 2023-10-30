@@ -10,6 +10,7 @@ from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.credentials import Credentials
 from cartography.util import run_cleanup_job
+from cartography.util import get_azure_resource_group_name
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -92,8 +93,7 @@ def update_access_policies(vault: Dict, common_job_parameters: Dict, client: Key
 def transform_key_vaults(key_vaults: List[Dict], regions: List, common_job_parameters: Dict) -> List[Dict]:
     key_vaults_data = []
     for vault in key_vaults:
-        x = vault['id'].split('/')
-        vault['resource_group'] = x[x.index('resourceGroups') + 1]
+        vault['resource_group'] = get_azure_resource_group_name(vault.get('id'))
         vault['consolelink'] = azure_console_link.get_console_link(
             id=vault['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
         if regions is None:
@@ -133,7 +133,26 @@ def _load_key_vaults_tx(
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
-
+    for key_vault in key_vaults_list:
+        resource_group=get_azure_resource_group_name(key_vault.get('id'))
+        _attach_resource_group_key_vaults(tx,key_vault['id'],resource_group,update_tag)
+        
+    
+def _attach_resource_group_key_vaults( tx: neo4j.Transaction, key_vault_id:str,resource_group:str, update_tag: int) -> None:
+    ingest_vault = """
+    MATCH (k:AzureKeyVault{id: $key_vault_id})
+    WITH k
+    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MERGE (k)-[r:RESOURCE_GROUP]->(rg)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+    tx.run(
+        ingest_vault,
+        key_vault_id=key_vault_id,
+        resource_group=resource_group,
+        update_tag=update_tag,
+    )
 
 @timeit
 def get_key_vault_keys_list(client: KeyVaultManagementClient, vault: Dict) -> List[Dict]:
@@ -335,24 +354,6 @@ def sync_key_vaults(
     key_vaults = get_key_vaults_list(client)
     key_vaults_list = transform_key_vaults(key_vaults, regions, common_job_parameters)
 
-    if common_job_parameters.get('pagination', {}).get('key_vaults', None):
-        pageNo = common_job_parameters.get("pagination", {}).get("key_vaults", None)["pageNo"]
-        pageSize = common_job_parameters.get("pagination", {}).get("key_vaults", None)["pageSize"]
-        totalPages = len(key_vaults_list) / pageSize
-        if int(totalPages) != totalPages:
-            totalPages = totalPages + 1
-        totalPages = int(totalPages)
-        if pageNo < totalPages or pageNo == totalPages:
-            logger.info(f'pages process for key_vaults {pageNo}/{totalPages} pageSize is {pageSize}')
-        page_start = (common_job_parameters.get('pagination', {}).get('key_vaults', {})[
-                      'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('key_vaults', {})['pageSize']
-        page_end = page_start + common_job_parameters.get('pagination', {}).get('key_vaults', {})['pageSize']
-        if page_end > len(key_vaults_list) or page_end == len(key_vaults_list):
-            key_vaults_list = key_vaults_list[page_start:]
-        else:
-            has_next_page = True
-            key_vaults_list = key_vaults_list[page_start:page_end]
-            common_job_parameters['pagination']['key_vaults']['hasNextPage'] = has_next_page
     load_key_vaults(neo4j_session, subscription_id, key_vaults_list, update_tag)
     for key_vault in key_vaults_list:
         # KEY VAULT KEYS

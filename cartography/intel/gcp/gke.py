@@ -35,7 +35,8 @@ def get_gke_clusters(container: Resource, project_id: str, regions: list, common
         res = req.execute()
         data = []
         for item in res.get('clusters', []):
-            item['id'] = f"projects/{project_id}/clusters/{item['name']}"
+            item["region"] = get_region_from_location(item['location'])
+            item['id'] = f"projects/{project_id}/location/{item['region']}/clusters/{item['name']}"
             item['consolelink'] = gcp_console_link.get_console_link(
                 resource_name='gke_cluster', project_id=project_id, zone=item['zone'], gke_cluster_name=item['name'],
             )
@@ -44,27 +45,7 @@ def get_gke_clusters(container: Resource, project_id: str, regions: list, common
             else:
                 if get_region_from_location(item['zone']) in regions:
                     data.append(item)
-        if common_job_parameters.get('pagination', {}).get('gke', None):
-            pageNo = common_job_parameters.get("pagination", {}).get("gke", None)["pageNo"]
-            pageSize = common_job_parameters.get("pagination", {}).get("gke", None)["pageSize"]
-            totalPages = len(data) / pageSize
-            if int(totalPages) != totalPages:
-                totalPages = totalPages + 1
-            totalPages = int(totalPages)
-            if pageNo < totalPages or pageNo == totalPages:
-                logger.info(f'pages process for gke Cluster {pageNo}/{totalPages} pageSize is {pageSize}')
-            page_start = (
-                common_job_parameters.get('pagination', {}).get('gke', None)[
-                    'pageNo'
-                ] - 1
-            ) * common_job_parameters.get('pagination', {}).get('gke', None)['pageSize']
-            page_end = page_start + common_job_parameters.get('pagination', {}).get('gke', None)['pageSize']
-            if page_end > len(data) or page_end == len(data):
-                data = data[page_start:]
-            else:
-                has_next_page = True
-                data = data[page_start:page_end]
-                common_job_parameters['pagination']['gke']['hasNextPage'] = has_next_page
+
         return data
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
@@ -78,6 +59,7 @@ def get_gke_clusters(container: Resource, project_id: str, regions: list, common
         else:
             raise
 
+
 def get_region_from_location(location):
     if not location:
         return location
@@ -90,6 +72,7 @@ def get_region_from_location(location):
 
     else:
         return location
+
 
 @timeit
 def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_id: str, gcp_update_tag: int) -> None:
@@ -152,12 +135,12 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
     SET r.lastupdated = $gcp_update_tag
     """
     for cluster in cluster_resp:
-        cluster['region'] = get_region_from_location(cluster.get('zone'))
+        cluster['region'] = get_region_from_location(cluster.get('location'))
 
         neo4j_session.run(
             query,
             ProjectId=project_id,
-            ClusterId=f"projects/{project_id}/clusters/{cluster['name']}",
+            ClusterId=f"projects/{project_id}/location/{cluster['region']}/clusters/{cluster['name']}",
             ClusterSelfLink=cluster['selfLink'],
             ClusterCreateTime=cluster['createTime'],
             ClusterName=cluster['name'],
@@ -177,7 +160,7 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
             ClusterServicesIPv4Cidr=cluster.get('servicesIpv4Cidr'),
             ClusterDatabaseEncryption=cluster.get('databaseEncryption', {}).get('state'),
             ClusterNetworkPolicy=_process_network_policy(cluster),
-            ClusterMasterAuthorizedNetworks=cluster.get('masterAuthorizedNetworksConfig', {}).get('enabled'),
+            ClusterMasterAuthorizedNetworks=cluster.get('masterAuthorizedNetworksConfig', {}).get('enabled', False),
             ClusterAbac=cluster.get('legacyAbac', {}).get('enabled'),
             ClusterShieldedNodes=cluster.get('shieldedNodes', {}).get('enabled'),
             ClusterPrivateNodes=cluster.get('privateClusterConfig', {}).get('enablePrivateNodes'),

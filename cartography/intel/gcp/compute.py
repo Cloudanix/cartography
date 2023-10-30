@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import time
+import ipaddress
 from collections import namedtuple
 from string import Template
 from typing import Any
@@ -48,28 +49,6 @@ def get_compute_disks(compute: Resource, project_id: str, zones: list, common_jo
                         disk['region'] = f"{x[0]}-{x[1]}"
                         disks.append(disk)
                 req = compute.disks().list_next(previous_request=req, previous_response=res)
-
-        if common_job_parameters.get('pagination', {}).get('compute', None):
-            pageNo = common_job_parameters.get("pagination", {}).get("compute", None)["pageNo"]
-            pageSize = common_job_parameters.get("pagination", {}).get("compute", None)["pageSize"]
-            totalPages = len(disks) / pageSize
-            if int(totalPages) != totalPages:
-                totalPages = totalPages + 1
-            totalPages = int(totalPages)
-            if pageNo < totalPages or pageNo == totalPages:
-                logger.info(f'pages process for compute disks {pageNo}/{totalPages} pageSize is {pageSize}')
-            page_start = (
-                common_job_parameters.get('pagination', {}).get('compute', None)[
-                    'pageNo'
-                ] - 1
-            ) * common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-            page_end = page_start + common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-            if page_end > len(disks) or page_end == len(disks):
-                disks = disks[page_start:]
-            else:
-                has_next_page = True
-                disks = disks[page_start:page_end]
-                common_job_parameters['pagination']['compute']['hasNextPage'] = has_next_page
 
         return disks
     except HttpError as e:
@@ -153,6 +132,7 @@ def sync_compute_disks(
     load_compute_disks(neo4j_session, disks, project_id, gcp_update_tag)
     cleanup_compute_disks(neo4j_session, common_job_parameters)
 
+
 @timeit
 def get_https_proxies(compute: Resource, project_id: str, common_job_parameters) -> List[Dict]:
     https_proxies = []
@@ -163,25 +143,6 @@ def get_https_proxies(compute: Resource, project_id: str, common_job_parameters)
             if 'items' in res:
                 https_proxies.extend(res['items'])
             req = compute.targetHttpsProxies().list_next(previous_request=req, previous_response=res)
-
-        if common_job_parameters.get('pagination', {}).get('compute', None):
-            pageNo = common_job_parameters.get("pagination", {}).get("compute", None)["pageNo"]
-            pageSize = common_job_parameters.get("pagination", {}).get("compute", None)["pageSize"]
-            totalPages = len(https_proxies) / pageSize
-            if int(totalPages) != totalPages:
-                totalPages = totalPages + 1
-            totalPages = int(totalPages)
-            if pageNo < totalPages or pageNo == totalPages:
-                logger.info(f'pages process for compute https proxies {pageNo}/{totalPages} pageSize is {pageSize}')
-            page_start = (common_job_parameters.get('pagination', {}).get('compute', None)[
-                          'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-            page_end = page_start + common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-            if page_end > len(https_proxies) or page_end == len(https_proxies):
-                https_proxies = https_proxies[page_start:]
-            else:
-                has_next_page = True
-                https_proxies = https_proxies[page_start:page_end]
-                common_job_parameters['pagination']['compute']['hasNextPage'] = has_next_page
 
         return https_proxies
 
@@ -197,6 +158,7 @@ def get_https_proxies(compute: Resource, project_id: str, common_job_parameters)
         else:
             raise
 
+
 @timeit
 def transform_https_proxies(proxies: List, project_id: str) -> List[Resource]:
     list_proxies = []
@@ -208,6 +170,7 @@ def transform_https_proxies(proxies: List, project_id: str) -> List[Resource]:
 
     return list_proxies
 
+
 @timeit
 def get_ssl_proxies(compute: Resource, project_id: str, common_job_parameters) -> List[Dict]:
     ssl_proxies = []
@@ -218,25 +181,6 @@ def get_ssl_proxies(compute: Resource, project_id: str, common_job_parameters) -
             if 'items' in res:
                 ssl_proxies.extend(res['items'])
             req = compute.targetSslProxies().list_next(previous_request=req, previous_response=res)
-
-        if common_job_parameters.get('pagination', {}).get('compute', None):
-            pageNo = common_job_parameters.get("pagination", {}).get("compute", None)["pageNo"]
-            pageSize = common_job_parameters.get("pagination", {}).get("compute", None)["pageSize"]
-            totalPages = len(ssl_proxies) / pageSize
-            if int(totalPages) != totalPages:
-                totalPages = totalPages + 1
-            totalPages = int(totalPages)
-            if pageNo < totalPages or pageNo == totalPages:
-                logger.info(f'pages process for compute ssl proxies {pageNo}/{totalPages} pageSize is {pageSize}')
-            page_start = (common_job_parameters.get('pagination', {}).get('compute', None)[
-                          'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-            page_end = page_start + common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-            if page_end > len(ssl_proxies) or page_end == len(ssl_proxies):
-                ssl_proxies = ssl_proxies[page_start:]
-            else:
-                has_next_page = True
-                ssl_proxies = ssl_proxies[page_start:page_end]
-                common_job_parameters['pagination']['compute']['hasNextPage'] = has_next_page
 
         return ssl_proxies
 
@@ -252,6 +196,7 @@ def get_ssl_proxies(compute: Resource, project_id: str, common_job_parameters) -
         else:
             raise
 
+
 @timeit
 def transform_ssl_proxies(proxies: List, project_id: str) -> List[Resource]:
     list_proxies = []
@@ -263,9 +208,11 @@ def transform_ssl_proxies(proxies: List, project_id: str) -> List[Resource]:
 
     return list_proxies
 
+
 @timeit
 def load_proxies(session: neo4j.Session, proxies: List[Dict], project_id: str, update_tag: int) -> None:
     session.write_transaction(load_proxies_tx, proxies, project_id, update_tag)
+
 
 @timeit
 def load_proxies_tx(
@@ -301,6 +248,7 @@ def load_proxies_tx(
         gcp_update_tag=gcp_update_tag,
     )
 
+
 @timeit
 def attach_compute_disks_to_instance(session: neo4j.Session, data_list: List[Dict], instance_id: str, update_tag: int) -> None:
     session.write_transaction(attach_compute_disks_to_instance_tx, data_list, instance_id, update_tag)
@@ -332,7 +280,6 @@ def attach_compute_disks_to_instance_tx(
         InstanceId=instance_id,
         gcp_update_tag=gcp_update_tag,
     )
-
 
 
 def _get_error_reason(http_error: HttpError) -> str:
@@ -549,6 +496,7 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
 
         prefix_fields = _parse_instance_uri_prefix(prefix)
 
+        res['instance_id'] = res['id']
         res['id'] = f"projects/{prefix_fields.project_id}/zones/{prefix_fields.zone_name}/instances/{res['name']}"
         res['partial_uri'] = res['id']
 
@@ -562,8 +510,9 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
         )
         x = res['zone_name'].split('-')
         res['region'] = f"{x[0]}-{x[1]}"
-        
+
         for nic in res.get('networkInterfaces', []):
+            res['networkIP'] = nic.get('networkIP', None)
             nic['subnet_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['subnetwork'])
             nic['vpc_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['network'])
             nic['consolelink'] = gcp_console_link.get_console_link(project_id=prefix_fields.project_id,
@@ -921,7 +870,6 @@ def load_gcp_instances(session: neo4j.Session, instances_list: List[Dict], gcp_u
         _attach_gcp_nics(session, instance, gcp_update_tag)
         _attach_gcp_vpc(session, instance['partial_uri'], gcp_update_tag)
         _attach_instance_service_account(session, instance, gcp_update_tag)
-        
 
 
 @timeit
@@ -945,11 +893,13 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     i.partial_uri = instance.partial_uri
     SET i.self_link = instance.selfLink,
     i.instancename = instance.name,
+    i.instance_id = instance.instance_id,
     i.hostname = instance.hostname,
     i.region = instance.region,
     i.zone_name = instance.zone_name,
     i.project_id = instance.project_id,
-    i.nat_ip = instance.natIP,
+    i.natIP = instance.natIP,
+    i.networkIP = instance.networkIP,
     i.ipv6_nat_ip = instance.ipv6natIP,
     i.accessConfig = instance.accessConfig,
     i.status = instance.status,
@@ -1375,7 +1325,6 @@ def _attach_gcp_vpc(neo4j_session: neo4j.Session, instance_id: str, gcp_update_t
     )
 
 
-
 @timeit
 def _attach_instance_service_account(neo4j_session: neo4j.Session, instance: Resource, gcp_update_tag: int) -> None:
     """
@@ -1458,6 +1407,37 @@ def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resou
         )
         _attach_firewall_rules(neo4j_session, fw, gcp_update_tag)
         _attach_target_tags(neo4j_session, fw, gcp_update_tag)
+        _attach_firewall_public_ip_address(neo4j_session, fw, gcp_update_tag)
+
+
+@timeit
+def _attach_firewall_public_ip_address(neo4j_session: neo4j.Session, fw: Resource, gcp_update_tag: int) -> None:
+    ingest_public_ip_address = """
+    UNWIND $PublicIpAddress as ip
+        MERGE (i:GCPPublicIpAddress{ipAddress:ip})
+            ON CREATE SET i.firstseen = timestamp()
+            SET i.lastupdated = $gcp_update_tag,
+                i.IpAddress=ip,
+                i.id=ip,
+                i.type='Internal',
+                i.source='GCP',
+                i.resource='FirewallRule',
+                i.lastupdated = $gcp_update_tag         
+        with i
+            MATCH (p:GCPFirewall{id: $FwId})
+        with i,p
+         MERGE (p)-[r:MEMBER_OF_PUBLIC_IP_ADDRESS]->(i)
+         ON CREATE SET r.firstseen = timestamp()
+         SET
+         r.lastupdated = $gcp_update_tag       
+    """
+    public_ip_address = [ip for ip in fw.get('sourceRanges', []) if not ipaddress.IPv4Network(str(ip).split('/')[0]).is_private]
+    neo4j_session.run(
+        query=ingest_public_ip_address,
+        PublicIpAddress=public_ip_address,
+        FwId=fw['id'],
+        gcp_update_tag=gcp_update_tag,
+    )
 
 
 @timeit
@@ -1667,6 +1647,7 @@ def sync_gcp_ssl_proxies(
     cleanup_gcp_proxies(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, ssl_proxies, gcp_update_tag, common_job_parameters, 'proxies', 'GCPProxy')
 
+
 @timeit
 def cleanup_gcp_proxies(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """
@@ -1680,6 +1661,7 @@ def cleanup_gcp_proxies(neo4j_session: neo4j.Session, common_job_parameters: Dic
 
     except ClientError as ex:
         logger.error("error while syncing gcp proxies", ex)
+
 
 @timeit
 def sync_gcp_https_proxies(
@@ -1703,6 +1685,7 @@ def sync_gcp_https_proxies(
     cleanup_gcp_proxies(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, https_proxies, gcp_update_tag, common_job_parameters, 'proxies', 'GCPProxy')
 
+
 @timeit
 def sync_gcp_ssl_proxies(
     neo4j_session: neo4j.Session, compute: Resource, project_id: str, gcp_update_tag: int,
@@ -1725,6 +1708,7 @@ def sync_gcp_ssl_proxies(
     cleanup_gcp_proxies(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, ssl_proxies, gcp_update_tag, common_job_parameters, 'proxies', 'GCPProxy')
 
+
 @timeit
 def sync_gcp_instances(
     neo4j_session: neo4j.Session, compute: Resource, project_id: str, zones: Optional[List[Dict]],
@@ -1745,28 +1729,6 @@ def sync_gcp_instances(
 
     instance_responses = get_gcp_instances(project_id, zones, compute)
 
-    if common_job_parameters.get('pagination', {}).get('compute', None):
-        pageNo = common_job_parameters.get("pagination", {}).get("compute", None)["pageNo"]
-        pageSize = common_job_parameters.get("pagination", {}).get("compute", None)["pageSize"]
-        totalPages = len(instance_responses) / pageSize
-        if int(totalPages) != totalPages:
-            totalPages = totalPages + 1
-        totalPages = int(totalPages)
-        if pageNo < totalPages or pageNo == totalPages:
-            logger.info(f'pages process for compute instance {pageNo}/{totalPages} pageSize is {pageSize}')
-        page_start = (
-            common_job_parameters.get('pagination', {}).get('compute', None)[
-                'pageNo'
-            ] - 1
-        ) * common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-        page_end = page_start + common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-        if page_end > len(instance_responses) or page_end == len(instance_responses):
-            instance_responses = instance_responses[page_start:]
-        else:
-            has_next_page = True
-            instance_responses = instance_responses[page_start:page_end]
-            common_job_parameters['pagination']['compute']['hasNextPage'] = has_next_page
-
     instance_list = transform_gcp_instances(instance_responses, compute)
 
     load_gcp_instances(neo4j_session, instance_list, gcp_update_tag)
@@ -1778,7 +1740,6 @@ def sync_gcp_instances(
             disk['id'] = f"projects/{project_id}/disks/{disk.get('initializeParams', {}).get('diskName', '')}"
             disks.append(disk)
         attach_compute_disks_to_instance(neo4j_session, disks, instance['partial_uri'], gcp_update_tag)
-
 
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_instances(neo4j_session, common_job_parameters)
@@ -1801,27 +1762,6 @@ def sync_gcp_vpcs(
     """
     vpc_res = get_gcp_vpcs(project_id, compute)
     vpcs = transform_gcp_vpcs(vpc_res)
-    if common_job_parameters.get('pagination', {}).get('compute', None):
-        pageNo = common_job_parameters.get("pagination", {}).get("compute", None)["pageNo"]
-        pageSize = common_job_parameters.get("pagination", {}).get("compute", None)["pageSize"]
-        totalPages = len(vpcs) / pageSize
-        if int(totalPages) != totalPages:
-            totalPages = totalPages + 1
-        totalPages = int(totalPages)
-        if pageNo < totalPages or pageNo == totalPages:
-            logger.info(f'pages process for compute vpcs {pageNo}/{totalPages} pageSize is {pageSize}')
-        page_start = (
-            common_job_parameters.get('pagination', {}).get('compute', None)[
-                'pageNo'
-            ] - 1
-        ) * common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-        page_end = page_start + common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-        if page_end > len(vpcs) or page_end == len(vpcs):
-            vpcs = vpcs[page_start:]
-        else:
-            has_next_page = True
-            vpcs = vpcs[page_start:page_end]
-            common_job_parameters['pagination']['compute']['hasNextPage'] = has_next_page
 
     load_gcp_vpcs(neo4j_session, vpcs, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
@@ -1838,27 +1778,6 @@ def sync_gcp_subnets(
         logger.info("Subnet Region %s.", r)
         subnet_res = get_gcp_subnets(project_id, r, compute)
         subnets = transform_gcp_subnets(subnet_res)
-        if common_job_parameters.get('pagination', {}).get('compute', None):
-            pageNo = common_job_parameters.get("pagination", {}).get("compute", None)["pageNo"]
-            pageSize = common_job_parameters.get("pagination", {}).get("compute", None)["pageSize"]
-            totalPages = len(subnets) / pageSize
-            if int(totalPages) != totalPages:
-                totalPages = totalPages + 1
-            totalPages = int(totalPages)
-            if pageNo < totalPages or pageNo == totalPages:
-                logger.info(f'pages process for compute subnets {pageNo}/{totalPages} pageSize is {pageSize}')
-            page_start = (
-                common_job_parameters.get('pagination', {}).get('compute', None)[
-                    'pageNo'
-                ] - 1
-            ) * common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-            page_end = page_start + common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-            if page_end > len(subnets) or page_end == len(subnets):
-                subnets = subnets[page_start:]
-            else:
-                has_next_page = True
-                subnets = subnets[page_start:page_end]
-                common_job_parameters['pagination']['compute']['hasNextPage'] = has_next_page
 
         load_gcp_subnets(neo4j_session, subnets, gcp_update_tag)
         # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
@@ -1883,27 +1802,7 @@ def sync_gcp_forwarding_rules(
     logger.info("Syncing Compute forwarding rule for project %s.", project_id)
     global_fwd_response = get_gcp_global_forwarding_rules(project_id, compute)
     forwarding_rules = transform_gcp_forwarding_rules(global_fwd_response)
-    if common_job_parameters.get('pagination', {}).get('compute', None):
-        pageNo = common_job_parameters.get("pagination", {}).get("compute", None)["pageNo"]
-        pageSize = common_job_parameters.get("pagination", {}).get("compute", None)["pageSize"]
-        totalPages = len(forwarding_rules) / pageSize
-        if int(totalPages) != totalPages:
-            totalPages = totalPages + 1
-        totalPages = int(totalPages)
-        if pageNo < totalPages or pageNo == totalPages:
-            logger.info(f'pages process for compute forwarding_rules {pageNo}/{totalPages} pageSize is {pageSize}')
-        page_start = (
-            common_job_parameters.get('pagination', {}).get('compute', None)[
-                'pageNo'
-            ] - 1
-        ) * common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-        page_end = page_start + common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-        if page_end > len(forwarding_rules) or page_end == len(forwarding_rules):
-            forwarding_rules = forwarding_rules[page_start:]
-        else:
-            has_next_page = True
-            forwarding_rules = forwarding_rules[page_start:page_end]
-            common_job_parameters['pagination']['compute']['hasNextPage'] = has_next_page
+
     load_gcp_forwarding_rules(neo4j_session, forwarding_rules, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_forwarding_rules(neo4j_session, common_job_parameters)
@@ -1932,27 +1831,6 @@ def sync_gcp_firewall_rules(
     """
     fw_response = get_gcp_firewall_ingress_rules(project_id, compute)
     fw_list = transform_gcp_firewall(fw_response)
-    if common_job_parameters.get('pagination', {}).get('compute', None):
-        pageNo = common_job_parameters.get("pagination", {}).get("compute", None)["pageNo"]
-        pageSize = common_job_parameters.get("pagination", {}).get("compute", None)["pageSize"]
-        totalPages = len(fw_list) / pageSize
-        if int(totalPages) != totalPages:
-            totalPages = totalPages + 1
-        totalPages = int(totalPages)
-        if pageNo < totalPages or pageNo == totalPages:
-            logger.info(f'pages process for compute firewalls {pageNo}/{totalPages} pageSize is {pageSize}')
-        page_start = (
-            common_job_parameters.get('pagination', {}).get('compute', None)[
-                'pageNo'
-            ] - 1
-        ) * common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-        page_end = page_start + common_job_parameters.get('pagination', {}).get('compute', None)['pageSize']
-        if page_end > len(fw_list) or page_end == len(fw_list):
-            fw_list = fw_list[page_start:]
-        else:
-            has_next_page = True
-            fw_list = fw_list[page_start:page_end]
-            common_job_parameters['pagination']['compute']['hasNextPage'] = has_next_page
 
     load_gcp_ingress_firewalls(neo4j_session, fw_list, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381

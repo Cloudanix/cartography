@@ -222,8 +222,7 @@ def load_kms_key_details(
     for key, policy, alias, grant, region in policy_alias_grants_data:
         parsed_policy = parse_policy(key, policy)
         if parsed_policy is not None:
-            for poli in parsed_policy:
-                poli['region'] = region
+            parsed_policy['region'] = region
             policies.append(parsed_policy)
         if len(alias) > 0:
             for ali in alias:
@@ -364,25 +363,6 @@ def sync_kms_keys(
         kms_keys.extend(get_kms_key_list(boto3_session, region))
 
     logger.info(f"Total KMS Keys: {len(kms_keys)}")
-
-    if common_job_parameters.get('pagination', {}).get('kms', None):
-        pageNo = common_job_parameters.get("pagination", {}).get("kms", None)["pageNo"]
-        pageSize = common_job_parameters.get("pagination", {}).get("kms", None)["pageSize"]
-        totalPages = len(kms_keys) / pageSize
-        if int(totalPages) != totalPages:
-            totalPages = totalPages + 1
-        totalPages = int(totalPages)
-        if pageNo < totalPages or pageNo == totalPages:
-            logger.info(f'pages process for kms keys {pageNo}/{totalPages} pageSize is {pageSize}')
-        page_start = (common_job_parameters.get('pagination', {}).get('kms', {})[
-                      'pageNo'] - 1) * common_job_parameters.get('pagination', {}).get('kms', {})['pageSize']
-        page_end = page_start + common_job_parameters.get('pagination', {}).get('kms', {})['pageSize']
-        if page_end > len(kms_keys) or page_end == len(kms_keys):
-            kms_keys = kms_keys[page_start:]
-        else:
-            has_next_page = True
-            kms_keys = kms_keys[page_start:page_end]
-            common_job_parameters['pagination']['kms']['hasNextPage'] = has_next_page
 
     load_kms_keys(neo4j_session, kms_keys, current_aws_account_id, aws_update_tag)
 

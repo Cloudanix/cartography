@@ -261,7 +261,6 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
         roles.extend(page['Roles'])
     return {'Roles': roles}
 
-
 @timeit
 def get_account_access_key_data(boto3_session: boto3.session.Session, username: str) -> Dict:
     client = boto3_session.client('iam')
@@ -373,7 +372,7 @@ def load_roles(
     rnode.region = $region,
     rnode.consolelink = $consolelink,
     rnode.createdate = $CreateDate
-    ON MATCH SET rnode.name = $RoleName, rnode.path = $Path,
+    SET rnode.name = $RoleName, rnode.path = $Path,
     rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
@@ -422,7 +421,6 @@ def load_roles(
                     RoleArn=role['Arn'],
                     aws_update_tag=aws_update_tag,
                 )
-
 
 @timeit
 def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict, aws_update_tag: int) -> None:
@@ -794,7 +792,6 @@ def sync_roles(
     # sync_role_service_access_details(boto3_session, data['Roles'], neo4j_session, aws_update_tag)
 
     run_cleanup_job('aws_import_roles_cleanup.json', neo4j_session, common_job_parameters)
-
 
 def sync_role_managed_policies(
     current_aws_account_id: str, boto3_session: boto3.session.Session, data: Dict,
