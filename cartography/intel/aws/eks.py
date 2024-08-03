@@ -87,9 +87,9 @@ def transform(cluster_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     transformed_list = []
     for cluster_name, cluster_dict in cluster_data.items():
         transformed_dict = cluster_dict.copy()
-        transformed_dict['ClusterLogging'] = _process_logging(transformed_dict)
+        transformed_dict['clusterLogging'] = _process_logging(transformed_dict)
         transformed_dict['consolelink'] = aws_console_link.get_console_link(arn=transformed_dict.get('arn'))
-        transformed_dict['ClusterEndpointPublic'] = transformed_dict.get('resourcesVpcConfig', {}).get(
+        transformed_dict['clusterEndpointPublic'] = transformed_dict.get('resourcesVpcConfig', {}).get(
             'endpointPublicAccess',
         )
         if 'createdAt' in transformed_dict:
@@ -219,6 +219,8 @@ def sync(
     cluster_data: List = []
     for cluster in clusters:
         cluster_data.append(get_eks_describe_cluster(boto3_session, cluster['region'], cluster['name']))
+
+    cluster_data = transform(cluster_data)
 
     load_eks_clusters(neo4j_session, cluster_data, current_aws_account_id, update_tag)
 

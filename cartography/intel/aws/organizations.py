@@ -21,7 +21,7 @@ def get_organization(boto3_session: boto3.session.Session) -> Dict:
     try:
         return client.describe_organization()['Organization']
     except Exception as e:
-        logger.error(f"error to get organization details- {e}")
+        logger.info(f"error to get organization details- {e}")
         return
 
 

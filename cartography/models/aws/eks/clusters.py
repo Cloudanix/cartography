@@ -20,12 +20,12 @@ class EKSClusterNodeProperties(CartographyNodeProperties):
     created_at: PropertyRef = PropertyRef('created_at')
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
     endpoint: PropertyRef = PropertyRef('endpoint')
-    endpoint_public_access: PropertyRef = PropertyRef('ClusterEndpointPublic')
+    endpoint_public_access: PropertyRef = PropertyRef('clusterEndpointPublic')
     rolearn: PropertyRef = PropertyRef('roleArn')
     version: PropertyRef = PropertyRef('version')
     platform_version: PropertyRef = PropertyRef('platformVersion')
     status: PropertyRef = PropertyRef('status')
-    audit_logging: PropertyRef = PropertyRef('ClusterLogging')
+    audit_logging: PropertyRef = PropertyRef('clusterLogging')
 
 
 @dataclass(frozen=True)
