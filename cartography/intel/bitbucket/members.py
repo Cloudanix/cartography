@@ -50,7 +50,7 @@ def load_members_data(session: neo4j.Session, members_data: List[Dict], common_j
 def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict):
     ingest_workspace = """
     UNWIND $membersData as member
-    MERGE (mem:BitbucketMember{id: member.user.id})
+    MERGE (mem:BitbucketMember{id: member.id})
     ON CREATE SET mem.firstseen = timestamp()
 
     SET mem.slug = member.slug,

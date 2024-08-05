@@ -74,7 +74,7 @@ def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], comm
             ingest_workspace,
 
             name=workspace.get("name"),
-            id=workspace.get("name"),  # new
+            id=workspace.get("id"),
             created_on=workspace.get('created_on'),
             slug=workspace.get('slug'),
             type=workspace.get('type'),
