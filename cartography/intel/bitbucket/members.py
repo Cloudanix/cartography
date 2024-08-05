@@ -35,7 +35,7 @@ def transform_members(workspace_members: List[Dict], workspace: str) -> List[Dic
 
         data = {
             "workspace": workspace,
-            "member": member["user"]["display_name"]
+            "member": member["user"]["name"]
 
         }
         member['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="member")
@@ -43,14 +43,14 @@ def transform_members(workspace_members: List[Dict], workspace: str) -> List[Dic
     return workspace_members
 
 
-def load_members_data(session: neo4j.Session, members_data: List[Dict], common_job_parameters: Dict) -> None:
+def load_members_data(session: neo4j.Session, members_data: List[Dict], common_job_parameters: Dict,) -> None:
     session.write_transaction(_load_members_data, members_data, common_job_parameters)
 
 
 def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict):
     ingest_workspace = """
     UNWIND $membersData as member
-    MERGE (mem:BitbucketMember{id: member.user.uuid})
+    MERGE (mem:BitbucketMember{id: member.user.id})
     ON CREATE SET mem.firstseen = timestamp()
 
     SET mem.slug = member.slug,
@@ -92,6 +92,6 @@ def sync(
     """
     logger.info("Syncing Bitbucket All workspace members")
     workspace_members = get_workspace_members(bitbucket_access_token, workspace_name)
-    workspace_members = transform_members(workspace_members)
+    workspace_members = transform_members(workspace_members, workspace_name)
     load_members_data(neo4j_session, workspace_members, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)

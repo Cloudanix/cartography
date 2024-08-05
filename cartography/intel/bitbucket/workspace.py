@@ -34,7 +34,7 @@ def transform_workspaces(workspaces: List[Dict]) -> List[Dict]:
         workspace['uuid'] = workspace['uuid'].replace('{', '').replace('}', '')
 
         data = {
-            workspace: "workspace"
+            workspace: workspace["name"]
         }
         workspace['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="workspace")
     return workspaces
@@ -46,7 +46,7 @@ def load_workspace_data(session: neo4j.Session, workspace_data: List[Dict], comm
 
 def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], common_job_parameters: Dict):
     ingest_workspace = """
-    MERGE (work:BitbucketWorkspace{id: $uuid})
+    MERGE (work:BitbucketWorkspace{id: $id})
     ON CREATE SET
         work.firstseen = timestamp(),
         work.created_on = $created_on
@@ -72,7 +72,9 @@ def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], comm
     for workspace in workspace_data:
         tx.run(
             ingest_workspace,
+
             name=workspace.get("name"),
+            id=workspace.get("name"),  # new
             created_on=workspace.get('created_on'),
             slug=workspace.get('slug'),
             type=workspace.get('type'),

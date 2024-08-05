@@ -38,15 +38,15 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
 
         data = {
             "workspace": workspace,
-            "project": repo['project']['uuid'],
-            "repository": repo['uuid']
+            "project": repo['project']['name'],
+            "repository": repo['name']
 
         }
 
         if repo is not None and repo.get('mainbranch') is not None:
             repo['default_branch'] = repo.get('mainbranch', {}).get('name', None)
 
-        repo['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="member")
+        repo['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
 
     return workspace_repos
 
@@ -58,7 +58,7 @@ def load_repositories_data(session: neo4j.Session, repos_data: List[Dict], commo
 def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], common_job_parameters: Dict):
     ingest_repositories = """
     UNWIND $reposData as repo
-    MERGE (re:BitbucketRepository{id:repo.uuid})
+    MERGE (re:BitbucketRepository{id:repo.id})
     ON CREATE SET re.firstseen = timestamp(),
     re.created_on = repo.created_on
 
@@ -107,6 +107,6 @@ def sync(
     """
     logger.info("Syncing Bitbucket All Repositories")
     workspace_repos = get_repos(bitbucket_access_token, workspace_name)
-    workspace_repos = transform_repos(workspace_repos)
+    workspace_repos = transform_repos(workspace_repos, workspace_name)
     load_repositories_data(neo4j_session, workspace_repos, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)
