@@ -12,16 +12,18 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
 
+bitbucket_linker = BitbucketUniqueId()
+
 
 @timeit
 def get_workspaces(access_token: str):
     url = f"https://api.bitbucket.org/2.0/workspaces?pagelen=100"
 
-    response = make_requests_url(url,access_token)
+    response = make_requests_url(url, access_token)
     workspaces = response.get('values', [])
 
     while 'next' in response:
-        response = make_requests_url(response.get('next'),access_token)
+        response = make_requests_url(response.get('next'), access_token)
         workspaces.extend(response.get('values', []))
 
     return workspaces
@@ -29,9 +31,14 @@ def get_workspaces(access_token: str):
 
 def transform_workspaces(workspaces: List[Dict]) -> List[Dict]:
     for workspace in workspaces:
-        workspace['uuid'] = workspace['uuid'].replace('{','').replace('}','')
+        workspace['uuid'] = workspace['uuid'].replace('{', '').replace('}', '')
 
+        data = {
+            workspace: workspace["name"]
+        }
+        workspace['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="workspace")
     return workspaces
+
 
 def load_workspace_data(session: neo4j.Session, workspace_data: List[Dict], common_job_parameters: Dict) -> None:
     session.write_transaction(_load_workspace_data, workspace_data, common_job_parameters)
@@ -39,7 +46,7 @@ def load_workspace_data(session: neo4j.Session, workspace_data: List[Dict], comm
 
 def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], common_job_parameters: Dict):
     ingest_workspace = """
-    MERGE (work:BitbucketWorkspace{id: $uuid})
+    MERGE (work:BitbucketWorkspace{id: $id})
     ON CREATE SET
         work.firstseen = timestamp(),
         work.created_on = $created_on
@@ -65,7 +72,9 @@ def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], comm
     for workspace in workspace_data:
         tx.run(
             ingest_workspace,
+
             name=workspace.get("name"),
+            id=workspace.get("id"),
             created_on=workspace.get('created_on'),
             slug=workspace.get('slug'),
             type=workspace.get('type'),
@@ -90,5 +99,5 @@ def sync(
     """
     logger.info("Syncing Bitbucket All workspaces")
 
-    workspaces=transform_workspaces(workspaces)
+    workspaces = transform_workspaces(workspaces)
     load_workspace_data(neo4j_session, workspaces, common_job_parameters)

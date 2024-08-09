@@ -30,6 +30,7 @@ from . import ses
 from . import sns
 from . import sqs
 from . import ssm
+from . import waf
 from .ec2.auto_scaling_groups import sync_ec2_auto_scaling_groups
 from .ec2.elastic_ip_addresses import sync_elastic_ip_addresses
 from .ec2.images import sync_ec2_images
@@ -102,4 +103,5 @@ RESOURCE_FUNCTIONS: Dict = {
     'securityhub': securityhub.sync,
     'permission_relationships': permission_relationships.sync,
     'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
+    'waf': waf.sync,
 }
