@@ -91,6 +91,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'ec2:load_balancer': sync_load_balancers,
     'ec2:load_balancer_v2': sync_load_balancer_v2s,
     'ec2:network_interface': sync_network_interfaces,
+    'waf': waf.sync,
     'rds': rds.sync,
     'redshift': redshift.sync,
     'elasticache': elasticache.sync,
@@ -103,5 +104,4 @@ RESOURCE_FUNCTIONS: Dict = {
     'securityhub': securityhub.sync,
     'permission_relationships': permission_relationships.sync,
     'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
-    'waf': waf.sync,
 }
