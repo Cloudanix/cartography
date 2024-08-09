@@ -1,7 +1,8 @@
 import logging
 import time
-from typing import Dict, List
 from typing import *
+from typing import Dict
+from typing import List
 
 import boto3
 import neo4j
@@ -88,10 +89,6 @@ def sync_waf_classic(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, current_aws_account_id: str,
     update_tag: int, common_job_parameters: Dict,
 ) -> None:
-    tic = time.perf_counter()
-
-    logger.info("Syncing WAF Classic for account '%s', at %s.", current_aws_account_id, tic)
-
     web_acls = get_waf_classic_web_acls(boto3_session)
     transformed_acls = transform_waf_classic_web_acls(web_acls)
 
@@ -100,9 +97,6 @@ def sync_waf_classic(
     load_waf_classic_web_acls(neo4j_session, transformed_acls, current_aws_account_id, update_tag)
 
     cleanup_waf_classic_web_acls(neo4j_session, common_job_parameters)
-
-    toc = time.perf_counter()
-    logger.info(f"Time to process WAF Classic: {toc - tic:0.4f} seconds")
 
 
 @timeit
@@ -176,10 +170,6 @@ def sync_waf_v2(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, current_aws_account_id: str,
     update_tag: int, common_job_parameters: Dict,
 ) -> None:
-    tic = time.perf_counter()
-
-    logger.info("Syncing WAF v2 for account '%s', at %s.", current_aws_account_id, tic)
-
     web_acls = get_waf_v2_web_acls(boto3_session)
     transformed_acls = transform_waf_v2_web_acls(web_acls)
 
@@ -189,5 +179,19 @@ def sync_waf_v2(
 
     cleanup_waf_v2_web_acls(neo4j_session, common_job_parameters)
 
+
+@timeit
+def sync(
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
+    update_tag: int, common_job_parameters: Dict,
+) -> None:
+    tic = time.perf_counter()
+
+    logger.info("Syncing WAF for account '%s', at %s.", current_aws_account_id, tic)
+
+    sync_waf_classic(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+
+    sync_waf_v2(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+
     toc = time.perf_counter()
-    logger.info(f"Time to process WAF v2: {toc - tic:0.4f} seconds")
+    logger.info(f"Time to process WAF: {toc - tic:0.4f} seconds")
