@@ -103,19 +103,29 @@ def sync_waf_classic(
 @aws_handle_regions
 def get_waf_v2_web_acls(boto3_session: boto3.session.Session) -> List[Dict]:
     web_acls = []
+    response = {}
     try:
-        client = boto3_session.client('wafv2')
-        paginator = client.get_paginator('list_web_acls')
-
-        page_iterator = paginator.paginate(Scope='CLOUDFRONT')
-        for page in page_iterator:
-            web_acls.extend(page.get('WebACLs', []))
-
-        return web_acls
+        client = boto3_session.client('wafv2', region_name="us-east-1")
+        response = client.list_web_acls(Scope="CLOUDFRONT")
+        web_acls = response.get("WebACLs", [])
 
     except ClientError as e:
         logger.error(f'Failed to call WAF v2 list_web_acls: {e}')
         return web_acls
+
+    while "NextMarker" in response:
+        try:
+            response = client.list_web_acls(
+                Scope="CLOUDFRONT",
+                NextMarker=response["NextMarker"],
+            )
+            web_acls.extend(response.get("WebACLs", []))
+
+        except ClientError as e:
+            logger.error(f'Failed to call WAF v2 list_web_acls - next page: {e}')
+            break
+
+    return web_acls
 
 
 @timeit
