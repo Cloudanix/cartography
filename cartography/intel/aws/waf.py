@@ -43,7 +43,8 @@ def transform_waf_classic_web_acls(web_acls: List[Dict]) -> List[Dict]:
     for web_acl in web_acls:
         web_acl['region'] = 'global'
         web_acl['arn'] = web_acl['ARN']
-        web_acl['consolelink'] = aws_console_link.get_console_link(arn=web_acl['arn'])
+        web_acl['consolelink'] = ""
+        # web_acl['consolelink'] = aws_console_link.get_console_link(arn=web_acl['arn'])
         transformed_acls.append(web_acl)
 
     return transformed_acls
@@ -134,7 +135,8 @@ def transform_waf_v2_web_acls(web_acls: List[Dict]) -> List[Dict]:
     for web_acl in web_acls:
         web_acl['region'] = 'global'
         web_acl['arn'] = web_acl['ARN']
-        web_acl['consolelink'] = aws_console_link.get_console_link(arn=web_acl['arn'])
+        web_acl['consolelink'] = ""
+        # web_acl['consolelink'] = aws_console_link.get_console_link(arn=web_acl['arn'])
         transformed_acls.append(web_acl)
 
     return transformed_acls
@@ -199,9 +201,13 @@ def sync(
 
     logger.info("Syncing WAF for account '%s', at %s.", current_aws_account_id, tic)
 
-    sync_waf_classic(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+    try:
+        sync_waf_classic(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
 
-    sync_waf_v2(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+        sync_waf_v2(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+
+    except Exception as ex:
+        logger.error("failed to process waf", ex)
 
     toc = time.perf_counter()
     logger.info(f"Time to process WAF: {toc - tic:0.4f} seconds")

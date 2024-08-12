@@ -6,6 +6,7 @@ from typing import List
 import neo4j
 import requests
 from requests.exceptions import RequestException
+from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
