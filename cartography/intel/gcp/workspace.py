@@ -198,13 +198,11 @@ def _load_users_tx(tx: neo4j.Transaction, users: List[Dict], organization_id: st
         user.givenName = usr.name.givenName,
         user.isMailboxSetup = usr.isMailboxSetup,
         user.customerId = usr.customerId,
-        user.addresses = usr.addresses,
-        user.organizations = usr.organizations,
         user.lastLoginTime = usr.lastLoginTime,
         user.suspensionReason = usr.suspensionReason,
         user.creationTime = usr.creationTime,
         user.deletionTime = usr.deletionTime,
-        user.gender = usr.gender,
+        user.gender = usr.gender.type,
         user.lastupdated = $gcp_update_tag
     WITH user, usr
     MATCH (o:GCPOrganization{id: $organization_id})
