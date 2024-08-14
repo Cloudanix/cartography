@@ -5,8 +5,8 @@ from typing import List
 
 import neo4j
 import requests
-from requests.exceptions import RequestException
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
+from requests.exceptions import RequestException
 
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
@@ -35,7 +35,7 @@ def transform_workspaces(workspaces: List[Dict]) -> List[Dict]:
         workspace['uuid'] = workspace['uuid'].replace('{', '').replace('}', '')
 
         data = {
-            workspace: workspace["name"]
+            "workspace": workspace["name"],
         }
         workspace['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="workspace")
     return workspaces
