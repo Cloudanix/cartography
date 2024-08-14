@@ -46,7 +46,7 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
         if repo is not None and repo.get('mainbranch') is not None:
             repo['default_branch'] = repo.get('mainbranch', {}).get('name', None)
 
-        repo['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
+        repo['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="repository")
 
     return workspace_repos
 
