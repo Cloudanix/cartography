@@ -42,7 +42,6 @@ def transform_waf_classic_web_acls(web_acls: List[Dict]) -> List[Dict]:
     transformed_acls = []
     for web_acl in web_acls:
         web_acl['region'] = 'global'
-        web_acl['arn'] = web_acl['ARN']
         web_acl['consolelink'] = ""
         # web_acl['consolelink'] = aws_console_link.get_console_link(arn=web_acl['arn'])
         transformed_acls.append(web_acl)
