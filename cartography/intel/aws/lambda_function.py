@@ -41,6 +41,20 @@ def get_lambda_data(boto3_session: boto3.session.Session, region: str) -> List[D
     return lambda_functions
 
 
+def get_lambda_function_url_configs(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+
+    client = boto3_session.client('lambda', region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator('list_function_url_configs')
+    function_url_configs = []
+
+    for page in paginator.paginate():
+        for config in page['FunctionUrlConfigs']:
+            config['region'] = region
+            function_url_configs.append(config)
+
+    return function_url_configs
+
+
 @timeit
 @aws_handle_regions
 def get_lambda_policies(boto3_session: boto3.session.Session, region: str, lambda_functions: List[Dict]) -> List[Dict]:
@@ -105,6 +119,7 @@ def load_lambda_functions(
     lambda.architectures = lf.Architectures,
     lambda.masterarn = lf.MasterArn,
     lambda.kmskeyarn = lf.KMSKeyArn,
+    lambda.functionurl = lf.FunctionUrl,
     lambda.lastupdated = $aws_update_tag,
     lambda.vpc_id = CASE WHEN lf.VpcConfig.VpcId is not null then lf.VpcConfig.VpcId ELSE lambda.vpc_id END
     WITH lambda, lf
