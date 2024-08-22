@@ -38,13 +38,31 @@ def get_waf_classic_web_acls(boto3_session: boto3.session.Session) -> List[Dict]
 
 
 @timeit
-def transform_waf_classic_web_acls(web_acls: List[Dict]) -> List[Dict]:
+def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl_id: str) -> Dict:
+
+    response = {}
+    try:
+        client = boto3_session.client('waf')
+        response = client.get_web_acl(WebACLId=web_acl_id)
+    except ClientError as e:
+        logger.error(f"Error retrieving Web ACL {web_acl_id}: {e}")
+
+    return response.get("WebACL", {})
+
+
+@timeit
+def transform_waf_classic_web_acls(boto3_session: boto3.session.Session, web_acls: List[Dict]) -> List[Dict]:
+
     transformed_acls = []
     for web_acl in web_acls:
+        web_acl_id = web_acl.get("WebACLId")
+        details = get_waf_classic_details(boto3_session, web_acl_id)
+        arn = details.get("WebACLArn")
+
         web_acl['region'] = 'global'
-        web_acl['arn'] = web_acl['ARN']
         web_acl['consolelink'] = ""
-        # web_acl['consolelink'] = aws_console_link.get_console_link(arn=web_acl['arn'])
+        web_acl['arn'] = arn
+        #web_acl['consolelink'] = aws_console_link.get_console_link(arn=web_acl['arn'])
         transformed_acls.append(web_acl)
 
     return transformed_acls
@@ -91,7 +109,7 @@ def sync_waf_classic(
     update_tag: int, common_job_parameters: Dict,
 ) -> None:
     web_acls = get_waf_classic_web_acls(boto3_session)
-    transformed_acls = transform_waf_classic_web_acls(web_acls)
+    transformed_acls = transform_waf_classic_web_acls(boto3_session, web_acls)
 
     logger.info(f"Total WAF Classic WebACLs: {len(transformed_acls)}")
 
