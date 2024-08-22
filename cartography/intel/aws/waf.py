@@ -51,8 +51,8 @@ def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl_id: st
 
 
 @timeit
-def transform_waf_classic_web_acls(web_acls: List[Dict]) -> List[Dict]:
-    boto3_session = boto3.Session()
+def transform_waf_classic_web_acls(boto3_session: boto3.session.Session, web_acls: List[Dict]) -> List[Dict]:
+
     transformed_acls = []
     for web_acl in web_acls:
         web_acl_id = web_acl.get("WebACLId")
@@ -109,7 +109,7 @@ def sync_waf_classic(
     update_tag: int, common_job_parameters: Dict,
 ) -> None:
     web_acls = get_waf_classic_web_acls(boto3_session)
-    transformed_acls = transform_waf_classic_web_acls(web_acls)
+    transformed_acls = transform_waf_classic_web_acls(boto3_session, web_acls)
 
     logger.info(f"Total WAF Classic WebACLs: {len(transformed_acls)}")
 
