@@ -36,23 +36,22 @@ def get_lambda_data(boto3_session: boto3.session.Session, region: str) -> List[D
         for each_function in page['Functions']:
             each_function['region'] = region
             each_function['consolelink'] = aws_console_link.get_console_link(arn=each_function['FunctionArn'])
+            each_function['FunctionUrl'] = get_lambda_function_url_config(boto3_session, each_function['FunctionName'], region)
             lambda_functions.append(each_function)
 
     return lambda_functions
 
 
-def get_lambda_function_url_configs(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+@timeit
+def get_lambda_function_url_config(boto3_session: boto3.session.Session, function_name: str, region: str) -> str:
 
     client = boto3_session.client('lambda', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('list_function_url_configs')
-    function_url_configs = []
-
-    for page in paginator.paginate():
-        for config in page['FunctionUrlConfigs']:
-            config['region'] = region
-            function_url_configs.append(config)
-
-    return function_url_configs
+    try:
+        url_config = client.get_function_url_config(FunctionName=function_name)
+        return url_config['FunctionUrl']
+    except ClientError as e:
+        logger.debug(f"Unable to fetch function URL for {function_name}: {e}")
+        return None
 
 
 @timeit
