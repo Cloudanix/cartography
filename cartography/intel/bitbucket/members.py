@@ -35,7 +35,7 @@ def transform_members(workspace_members: List[Dict], workspace: str) -> List[Dic
 
         data = {
             "workspace": workspace,
-            "member": member["user"]["name"]
+            "member": member["user"]["nickname"]
 
         }
         member['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="member")
