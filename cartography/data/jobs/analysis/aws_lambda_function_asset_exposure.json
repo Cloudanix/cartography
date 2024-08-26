@@ -15,7 +15,7 @@
 			"iterative": false
 		},
 		{
-			"query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WITH lf WHERE ((NOT EXISTS(lf.vpc_id)) OR (lf.vpc_id = '')) SET lf.exposed_internet = true,(CASE WHEN NOT 'vpc_none' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'vpc_none';",
+			"query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WITH lf WHERE ((NOT EXISTS(lf.vpc_id) OR lf.vpc_id = '') AND EXISTS(lf.functionurl)) SET lf.exposed_internet = true, (CASE WHEN NOT 'vpc_none' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'vpc_none';",
 			"iterative": false
 		}
 	],

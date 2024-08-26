@@ -36,9 +36,22 @@ def get_lambda_data(boto3_session: boto3.session.Session, region: str) -> List[D
         for each_function in page['Functions']:
             each_function['region'] = region
             each_function['consolelink'] = aws_console_link.get_console_link(arn=each_function['FunctionArn'])
+            each_function['FunctionUrl'] = get_lambda_function_url_config(boto3_session, each_function['FunctionName'], region)
             lambda_functions.append(each_function)
 
     return lambda_functions
+
+
+@timeit
+def get_lambda_function_url_config(boto3_session: boto3.session.Session, function_name: str, region: str) -> str:
+
+    client = boto3_session.client('lambda', region_name=region, config=get_botocore_config())
+    try:
+        url_config = client.get_function_url_config(FunctionName=function_name)
+        return url_config['FunctionUrl']
+    except ClientError as e:
+        logger.debug(f"Unable to fetch function URL for {function_name}: {e}")
+        return None
 
 
 @timeit
@@ -105,6 +118,7 @@ def load_lambda_functions(
     lambda.architectures = lf.Architectures,
     lambda.masterarn = lf.MasterArn,
     lambda.kmskeyarn = lf.KMSKeyArn,
+    lambda.functionurl = lf.FunctionUrl,
     lambda.lastupdated = $aws_update_tag,
     lambda.vpc_id = CASE WHEN lf.VpcConfig.VpcId is not null then lf.VpcConfig.VpcId ELSE lambda.vpc_id END
     WITH lambda, lf
