@@ -65,6 +65,19 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
     return reservations
 
 
+@timeit
+@aws_handle_regions
+def get_roles_from_instance_profile(boto3_session: boto3.session.Session, region: str, instance_profile_arn):
+    iam_client = boto3_session.client('iam', region_name=region, config=get_botocore_config())
+    try:
+        response = iam_client.get_instance_profile(InstanceProfileName=instance_profile_arn)
+        roles = response['InstanceProfile']['Roles']
+        return [role['Arn'] for role in roles]
+    except Exception as e:
+        print(f"Error fetching roles: {e}")
+        return []
+
+
 def transform_ec2_instances(reservations: List[Dict[str, Any]], region: str, current_aws_account_id: str) -> Ec2Data:
     reservation_list = []
     instance_list = []
