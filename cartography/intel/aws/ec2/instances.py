@@ -78,7 +78,7 @@ def get_roles_from_instance_profile(boto3_session: boto3.session.Session, region
         return []
 
 
-def transform_ec2_instances(reservations: List[Dict[str, Any]], region: str, current_aws_account_id: str) -> Ec2Data:
+def transform_ec2_instances(boto3_session: boto3.session.Session, reservations: List[Dict[str, Any]], region: str, current_aws_account_id: str) -> Ec2Data:
     reservation_list = []
     instance_list = []
     subnet_list = []
@@ -94,11 +94,20 @@ def transform_ec2_instances(reservations: List[Dict[str, Any]], region: str, cur
             'ReservationId': reservation['ReservationId'],
             'OwnerId': reservation['OwnerId'],
         })
+
         for instance in reservation['Instances']:
             instance_id = instance['InstanceId']
             InstanceArn = f"arn:aws:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
             launch_time = instance.get("LaunchTime")
             launch_time_unix = str(time.mktime(launch_time.timetuple())) if launch_time else None
+
+            iam_role_arn = None
+            if 'IamInstanceProfile' in instance:
+                instance_profile_arn = instance['IamInstanceProfile']['Arn']
+                iam_role_arns = get_roles_from_instance_profile(boto3_session, region, instance_profile_arn)
+                if iam_role_arns:
+                    iam_role_arn = iam_role_arns[0]
+
             instance_list.append(
                 {
                     'InstanceId': instance_id,
@@ -125,6 +134,7 @@ def transform_ec2_instances(reservations: List[Dict[str, Any]], region: str, cur
                     "Region": region,
                     "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
+                    'RoleArn': iam_role_arn,
                 },
             )
 
@@ -358,7 +368,7 @@ def sync_ec2_instances(
     for region in regions:
         logger.info("Syncing EC2 instances for region '%s' in account '%s'.", region, current_aws_account_id)
         reservations = get_ec2_instances(boto3_session, region)
-        ec2_data = transform_ec2_instances(reservations, region, current_aws_account_id)
+        ec2_data = transform_ec2_instances(boto3_session, reservations, region, current_aws_account_id)
         load_ec2_instance_data(
             neo4j_session,
             region,
