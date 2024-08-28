@@ -797,3 +797,83 @@ def sync(
         update_tag=update_tag,
         stat_handler=stat_handler,
     )
+
+
+@timeit
+def load_bucket_policy(neo4j_session: neo4j.Session, boto3_session: boto3.session.Session):
+    # listing all the present buckets
+    bucket_list_response = get_s3_bucket_list(boto3_session)
+    buckets = bucket_list_response.get('Buckets', [])
+
+    s3_regional_clients: Dict[Any, Any] = {}
+
+    for bucket in buckets:
+        bucket_name = bucket.get('Name')
+
+        try:
+            client = s3_regional_clients.get(bucket['Region'])
+            if not client:
+                client = boto3_session.client('s3', bucket['Region'], config=get_botocore_config())
+                s3_regional_clients[bucket['Region']] = client
+
+            # get the bucket policy
+            policy = get_policy(bucket, client)
+            if policy in None:
+                continue
+
+            # get the bucket data
+            bucket_details = get_s3_bucket_details(boto3_session, bucket)
+            bucket_data = next(bucket_details, None)
+            if bucket_data is None:
+                continue
+
+            _, bucket_metadata, _, _, _, _ = bucket_data
+
+            # add the new field to the s3 bucket node
+            policy_document = json.dumps(policy)
+
+            # updating the node with the new field
+            neo4j_session.run(
+                "MATCH (b:S3Bucket {name: $bucket_name}) "
+                "SET b.policy_document = $policy_document",
+                bucket_name=bucket_name,
+                policy_document=policy_document
+            )
+
+            # creating a new policy node for the bucket node
+            policy_node = neo4j_session.run(
+                "MERGE (p:BucketPolicy {id: $policy_id}) "
+                "SET p.details = $details RETURN p",
+                policy_id=policy.get('Id'),
+                details=json.dumps(policy)
+            ).single().value()
+
+            # create a relationship between s3bucket and bucketpolicy nodes
+            neo4j_session.run(
+                "MATCH (b:S3Bucket {name: $bucket_name}), (p:BucketPolicy {id: $policy_id}) "
+                "MERGE (b)-[:POLICY]->(p)",
+                bucket_name=bucket_name,
+                policy_id=policy.get('Id')
+            )
+
+            # create nodes and relationships for each policy statement
+            for statement in policy.get('Statement', []):
+                statement_node = neo4j_session.run(
+                    "MERGE (s:PolicyStatement {sid: $sid}) "
+                    "SET s.details = $details RETURN s",
+                    sid=statement.get('Sid'),
+                    details=json.dumps(statement)
+                ).single().value()
+
+                neo4j_session.run(
+                    "MATCH (p:BucketPolicy {id: $policy_id}), (s:PolicyStatement {sid: $sid}) "
+                    "MERGE (p)-[:POLICY_STATEMENT]->(s)",
+                    policy_id=policy.get('Id'),
+                    sid=statement.get('Sid')
+                )
+
+        except Exception as e:
+            if _is_common_exception(e, bucket):
+                logger.error(f"Failed to process bucket {bucket_name}: {e}")
+            else:
+                raise
