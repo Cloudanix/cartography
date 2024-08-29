@@ -418,7 +418,34 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
     )
 
 
-@timeit
+def integrate_policy_details(
+    neo4j_session: neo4j.Session,
+    bucket_policy_map: Dict[str, Dict[str, str]],
+    bucket_statements_map: Dict[str, List[Dict]],
+    update_tag: int
+) -> None:
+
+    for bucket, policy_details in bucket_policy_map.items():
+        policy_id = policy_details['policy_id']
+        policy_document = policy_details['policy_document']
+        # Create or update the BucketPolicy node
+        load_bucket_policy(
+            neo4j_session,
+            bucket,
+            policy_document,
+            policy_id,
+            update_tag
+        )
+        # Create or update PolicyStatement nodes
+        statements = bucket_statements_map.get(policy_id, [])
+        load_policy_statements(
+            neo4j_session,
+            policy_id,
+            statements,
+            update_tag
+        )
+
+
 def load_s3_details(
     neo4j_session: neo4j.Session, s3_details_iter: Generator[Any, Any, Any], aws_account_id: str,
     update_tag: int, common_job_parameters: Dict,
@@ -429,29 +456,46 @@ def load_s3_details(
     acls: List[Dict] = []
     policies: List[Dict] = []
     policy_statuses: List[Dict] = []
-    statements = []
+    statements: List[Dict] = []
     encryption_configs: List[Dict] = []
     versioning_configs: List[Dict] = []
     public_access_block_configs: List[Dict] = []
+
+    bucket_policy_map: Dict[str, Dict[str, str]] = {}  # To store policy details keyed by bucket name
+    statements_map: Dict[str, List[Dict]] = {}  # To store policy statements keyed by policy ID
+
     for bucket, acl, policy, policy_status, encryption, versioning, public_access_block in s3_details_iter:
         parsed_acls = parse_acl(acl, bucket, aws_account_id)
         if parsed_acls is not None:
             acls.extend(parsed_acls)
+
         parsed_policy = parse_policy(bucket, policy)
         if parsed_policy is not None:
             policies.append(parsed_policy)
+            bucket_policy_map[bucket] = {
+                'policy_id': parsed_policy.get('Id', bucket + "_policy"),
+                'policy_document': parsed_policy.get('Policy', '')  # added a new policy document field
+            }
+
         parsed_policy_status = parse_policy_status(bucket, policy_status)
         if parsed_policy_status is not None:
             policy_statuses.append(parsed_policy_status)
+
         parsed_statements = parse_policy_statements(bucket, policy)
         if parsed_statements is not None:
-            statements.extend(parsed_statements)
+            policy_id = bucket_policy_map.get(bucket, {}).get('policy_id', bucket + "_policy")
+            if policy_id not in statements_map:
+                statements_map[policy_id] = []
+            statements_map[policy_id].extend(parsed_statements)
+
         parsed_encryption = parse_encryption(bucket, encryption)
         if parsed_encryption is not None:
             encryption_configs.append(parsed_encryption)
+
         parsed_versioning = parse_versioning(bucket, versioning)
         if parsed_versioning is not None:
             versioning_configs.append(parsed_versioning)
+
         parsed_public_access_block = parse_public_access_block(bucket, public_access_block)
         if parsed_public_access_block is not None:
             public_access_block_configs.append(parsed_public_access_block)
@@ -471,6 +515,9 @@ def load_s3_details(
     _load_s3_versioning(neo4j_session, versioning_configs, update_tag)
     _load_s3_public_access_block(neo4j_session, public_access_block_configs, update_tag)
     _set_default_values(neo4j_session, aws_account_id)
+
+    # Integrate the new feature using the helper function
+    integrate_policy_details(neo4j_session, bucket_policy_map, statements_map, update_tag)
 
 
 @timeit
@@ -765,6 +812,48 @@ def load_s3_buckets(neo4j_session: neo4j.Session, data: Dict, current_aws_accoun
 
 
 @timeit
+def load_bucket_policy(neo4j_session: neo4j.Session, bucket_name: str, policy_document: str, policy_id: str, update_tag: int) -> None:
+    query = """
+    MERGE (bucket:S3Bucket {name: $BucketName})
+    MERGE (policy:BucketPolicy {id: $PolicyId})
+    SET policy.policy_document = $PolicyDocument, policy.lastupdated = $UpdateTag
+    MERGE (bucket)-[r:POLICY]->(policy)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+
+    neo4j_session.run(
+        query,
+        BucketName=bucket_name,
+        PolicyId=policy_id,
+        PolicyDocument=policy_document,
+        UpdateTag=update_tag
+    )
+
+
+@timeit
+def load_policy_statements(neo4j_session: neo4j.Session, policy_id: str, policy_statements: List[Dict], update_tag: int) -> None:
+    query = """
+    MATCH (policy:BucketPolicy {id: $PolicyId})
+    WITH policy
+    UNWIND $Statements AS stmt
+    MERGE (statement:PolicyStatement {id: stmt.Sid})
+    SET statement.effect = stmt.Effect, statement.principal = stmt.Principal, statement.action = stmt.Action, statement.resource = stmt.Resource
+    MERGE (policy)-[r:POLICY_STATEMENT]->(statement)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+
+    statements = [{'Sid': s['Sid'], 'Effect': s['Effect'], 'Principal': s['Principal'], 'Action': s['Action'], 'Resource': s['Resource']} for s in policy_statements]
+    neo4j_session.run(
+        query,
+        PolicyId=policy_id,
+        Statements=statements,
+        UpdateTag=update_tag
+    )
+
+
+@timeit
 def cleanup_s3_buckets(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('aws_import_s3_buckets_cleanup.json', neo4j_session, common_job_parameters)
 
@@ -797,81 +886,3 @@ def sync(
         update_tag=update_tag,
         stat_handler=stat_handler,
     )
-
-
-@timeit
-def load_bucket_policy(neo4j_session: neo4j.Session, boto3_session: boto3.session.Session):
-    # listing all the present buckets
-    bucket_list_response = get_s3_bucket_list(boto3_session)
-    buckets = bucket_list_response.get('Buckets', [])
-
-    s3_regional_clients: Dict[Any, Any] = {}
-
-    for bucket in buckets:
-        bucket_name = bucket.get('Name')
-
-        try:
-            client = s3_regional_clients.get(bucket['Region'])
-            if not client:
-                client = boto3_session.client('s3', bucket['Region'], config=get_botocore_config())
-                s3_regional_clients[bucket['Region']] = client
-
-            # get the bucket policy
-            policy = get_policy(bucket, client)
-            if policy in None:
-                continue
-
-            # get the bucket data
-            bucket_details = get_s3_bucket_details(boto3_session, bucket)
-            bucket_data = next(bucket_details, None)
-            if bucket_data is None:
-                continue
-
-            # add the new field to the s3 bucket node
-            policy_document = json.dumps(policy)
-
-            # updating the node with the new field
-            neo4j_session.run(
-                "MATCH (b:S3Bucket {name: $bucket_name}) "
-                "SET b.policy_document = $policy_document",
-                bucket_name=bucket_name,
-                policy_document=policy_document
-            )
-
-            # creating a new policy node for the bucket node
-            neo4j_session.run(
-                "MERGE (p:BucketPolicy {id: $policy_id}) "
-                "SET p.details = $details",
-                policy_id=policy.get('Id'),
-                details=json.dumps(policy)
-            )
-
-            # create a relationship between s3bucket and bucketpolicy nodes
-            neo4j_session.run(
-                "MATCH (b:S3Bucket {name: $bucket_name}), (p:BucketPolicy {id: $policy_id}) "
-                "MERGE (b)-[:POLICY]->(p)",
-                bucket_name=bucket_name,
-                policy_id=policy.get('Id')
-            )
-
-            # create nodes and relationships for each policy statement
-            for statement in policy.get('Statement', []):
-                neo4j_session.run(
-                    "MERGE (s:PolicyStatement {sid: $sid}) "
-                    "SET s.details = $details",
-                    sid=statement.get('Sid'),
-                    details=json.dumps(statement)
-                )
-
-                neo4j_session.run(
-                    "MATCH (p:BucketPolicy {id: $policy_id}), (s:PolicyStatement {sid: $sid}) "
-                    "MERGE (p)-[:POLICY_STATEMENT]->(s)",
-                    policy_id=policy.get('Id'),
-                    sid=statement.get('Sid')
-                )
-
-        except Exception as e:
-            if _is_common_exception(e, bucket):
-                logger.error(f"Failed to process bucket {bucket_name}: {e}")
-            else:
-                raise
