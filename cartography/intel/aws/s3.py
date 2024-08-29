@@ -827,8 +827,6 @@ def load_bucket_policy(neo4j_session: neo4j.Session, boto3_session: boto3.sessio
             if bucket_data is None:
                 continue
 
-            _, bucket_metadata, _, _, _, _ = bucket_data
-
             # add the new field to the s3 bucket node
             policy_document = json.dumps(policy)
 
@@ -841,12 +839,12 @@ def load_bucket_policy(neo4j_session: neo4j.Session, boto3_session: boto3.sessio
             )
 
             # creating a new policy node for the bucket node
-            policy_node = neo4j_session.run(
+            neo4j_session.run(
                 "MERGE (p:BucketPolicy {id: $policy_id}) "
-                "SET p.details = $details RETURN p",
+                "SET p.details = $details",
                 policy_id=policy.get('Id'),
                 details=json.dumps(policy)
-            ).single().value()
+            )
 
             # create a relationship between s3bucket and bucketpolicy nodes
             neo4j_session.run(
@@ -858,12 +856,12 @@ def load_bucket_policy(neo4j_session: neo4j.Session, boto3_session: boto3.sessio
 
             # create nodes and relationships for each policy statement
             for statement in policy.get('Statement', []):
-                statement_node = neo4j_session.run(
+                neo4j_session.run(
                     "MERGE (s:PolicyStatement {sid: $sid}) "
-                    "SET s.details = $details RETURN s",
+                    "SET s.details = $details",
                     sid=statement.get('Sid'),
                     details=json.dumps(statement)
-                ).single().value()
+                )
 
                 neo4j_session.run(
                     "MATCH (p:BucketPolicy {id: $policy_id}), (s:PolicyStatement {sid: $sid}) "
