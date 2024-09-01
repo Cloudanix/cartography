@@ -418,30 +418,25 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
     )
 
 
-def integrate_policy_details(
-    neo4j_session: neo4j.Session,
-    bucket_policy_map: Dict[str, Dict[str, str]],
-    bucket_statements_map: Dict[str, List[Dict]],
-    update_tag: int
-) -> None:
+def integrate_policy_details(neo4j_session, bucket_policy_map, bucket_statements_map, update_tag):
+    for bucket_name, policy_info in bucket_policy_map.items():
+        policy_id = policy_info['policy_id']
+        policy_document = policy_info['policy_document']
 
-    for bucket, policy_details in bucket_policy_map.items():
-        policy_id = policy_details['policy_id']
-        policy_document = policy_details['policy_document']
-        # Create or update the BucketPolicy node
         load_bucket_policy(
             neo4j_session,
-            bucket,
+            bucket_name,
             policy_document,
             policy_id,
             update_tag
         )
-        # Create or update PolicyStatement nodes
-        statements = bucket_statements_map.get(policy_id, [])
+
+        # Process policy statements
+        policy_statements = bucket_statements_map.get(policy_id, [])
         load_policy_statements(
             neo4j_session,
             policy_id,
-            statements,
+            policy_statements,
             update_tag
         )
 
@@ -816,7 +811,7 @@ def load_bucket_policy(neo4j_session: neo4j.Session, bucket_name: str, policy_do
     query = """
     MERGE (bucket:S3Bucket {name: $BucketName})
     MERGE (policy:BucketPolicy {id: $PolicyId})
-    SET policy.policy_document = $PolicyDocument, policy.lastupdated = $UpdateTag
+    SET policy.policy_document = $PolicyDocument
     MERGE (bucket)-[r:POLICY]->(policy)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -844,7 +839,16 @@ def load_policy_statements(neo4j_session: neo4j.Session, policy_id: str, policy_
     SET r.lastupdated = $UpdateTag
     """
 
-    statements = [{'Sid': s['Sid'], 'Effect': s['Effect'], 'Principal': s['Principal'], 'Action': s['Action'], 'Resource': s['Resource']} for s in policy_statements]
+    statements = [
+        {
+            'Sid': s['Sid'],
+            'Effect': s['Effect'],
+            'Principal': s.get('Principal', ''),
+            'Action': s['Action'],
+            'Resource': s['Resource'],
+        }
+        for s in policy_statements
+    ]
     neo4j_session.run(
         query,
         PolicyId=policy_id,

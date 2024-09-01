@@ -23,6 +23,46 @@ LIST_BUCKETS = {
     },
 }
 
+BUCKET_POLICIES = {
+    "bucket-1": {
+        "Policy": json.dumps({
+            "Version": "2012-10-17",
+            "Id": "S3PolicyId1",
+            "Statement": [
+                {
+                    "Sid": "Stmt1",
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:GetObject",
+                    "Resource": "arn:aws:s3:::bucket-1/*"
+                },
+                {
+                    "Sid": "Stmt2",
+                    "Effect": "Deny",
+                    "Principal": "*",
+                    "Action": "s3:PutObject",
+                    "Resource": "arn:aws:s3:::bucket-1/*"
+                }
+            ]
+        })
+    },
+    "bucket-2": {
+        "Policy": json.dumps({
+            "Version": "2012-10-17",
+            "Id": "S3PolicyId2",
+            "Statement": [
+                {
+                    "Sid": "Stmt1",
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:PutObject",
+                    "Resource": "arn:aws:s3:::bucket-2/*",
+                }
+            ]
+        })
+    },
+}
+
 OPEN_BUCKET_ACLS = {
     "bucket-1": {
         "Owner": {
