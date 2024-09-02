@@ -1,22 +1,23 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
-from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
+
 import neo4j
-import requests
-from requests.exceptions import RequestException
+from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
+
 logger = logging.getLogger(__name__)
 
 bitbucket_linker = BitbucketUniqueId()
 
 
 @timeit
-def get_repos(access_token: str, workspace: str):
+def get_repos(access_token: str, workspace: str) -> List[Dict]:
     # https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-workspace-get
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=100"
 
@@ -39,14 +40,14 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
         data = {
             "workspace": workspace,
             "project": repo['project']['name'],
-            "repository": repo['name']
+            "repository": repo['name'],
 
         }
 
         if repo is not None and repo.get('mainbranch') is not None:
             repo['default_branch'] = repo.get('mainbranch', {}).get('name', None)
 
-        repo['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="repository")
+        repo['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="repository")
 
     return workspace_repos
 
@@ -55,16 +56,16 @@ def load_repositories_data(session: neo4j.Session, repos_data: List[Dict], commo
     session.write_transaction(_load_repositories_data, repos_data, common_job_parameters)
 
 
-def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], common_job_parameters: Dict):
+def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], common_job_parameters: Dict) -> None:
     ingest_repositories = """
     UNWIND $reposData as repo
-    MERGE (re:BitbucketRepository{id:repo.id})
+    MERGE (re:BitbucketRepository{id:repo.uuid})
     ON CREATE SET re.firstseen = timestamp(),
     re.created_on = repo.created_on
 
     SET re.slug = repo.slug,
     re.type = repo.type,
-    re.uuid = repo.uuid,
+    re.unique_id = repo.uniqueId,
     re.name=repo.name,
     re.is_private = repo.is_private,
     re.description=repo.description,
@@ -105,8 +106,14 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
+    tic = time.perf_counter()
+    logger.info("BEGIN Syncing Bitbucket Repositories", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "start": tic})
+
     logger.info("Syncing Bitbucket All Repositories")
     workspace_repos = get_repos(bitbucket_access_token, workspace_name)
     workspace_repos = transform_repos(workspace_repos, workspace_name)
     load_repositories_data(neo4j_session, workspace_repos, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info("END Syncing Bitbucket Repositories", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "end": toc, "duration": f"{toc - tic:0.4f}"})

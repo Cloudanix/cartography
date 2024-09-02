@@ -1,20 +1,22 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
+
 import neo4j
-import requests
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
+
 logger = logging.getLogger(__name__)
 bitbucket_linker = BitbucketUniqueId()
 
 
 @timeit
-def get_projects(access_token: str, workspace: str):
+def get_projects(access_token: str, workspace: str) -> List[Dict]:
     url = f"https://api.bitbucket.org/2.0/workspaces/{workspace}/projects?pagelen=100"
 
     response = make_requests_url(url, access_token)
@@ -31,12 +33,12 @@ def transform_projects(workspace_projects: List[Dict], workspace: str) -> List[D
     for project in workspace_projects:
         project['workspace']['uuid'] = project['workspace']['uuid'].replace('{', '').replace('}', '')
         project['uuid'] = project['uuid'].replace('{', '').replace('}', '')
+
         data = {
             "workspace": workspace,
-            "project": project["name"]
+            "project": project["name"],
         }
-
-        project['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="project")
+        project['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="project")
 
     return workspace_projects
 
@@ -45,17 +47,17 @@ def load_projects_data(session: neo4j.Session, project_data: List[Dict], common_
     session.write_transaction(_load_projects_data, project_data, common_job_parameters)
 
 
-def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_job_parameters: Dict):
+def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_job_parameters: Dict) -> None:
     ingest_workspace = """
     UNWIND $projectData as project
-    MERGE (pro:BitbucketProject{id: project.id})
+    MERGE (pro:BitbucketProject{id: project.uuid})
     ON CREATE SET pro.firstseen = timestamp(),
     pro.created_on = project.created_on
 
     SET pro.description = project.description,
     pro.type = project.type,
     pro.name=project.name,
-    pro.uuid = project.uuid,
+    pro.unique_id = project.uniqueId,
     pro.is_private = project.is_private,
     pro.has_publicly_visible_repos=project.has_publicly_visible_repos,
     pro.key=project.key,
@@ -94,8 +96,13 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
-    logger.info("Syncing Bitbucket All workspace Projects ")
+    tic = time.perf_counter()
+    logger.info("BEGIN Syncing Bitbucket Projects", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "start": tic})
+
     workspace_projects = get_projects(bitbucket_access_token, workspace_name)
     workspace_projects = transform_projects(workspace_projects, workspace_name)
     load_projects_data(neo4j_session, workspace_projects, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info("END Syncing Bitbucket Projects", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "end": toc, "duration": f"{toc - tic:0.4f}"})

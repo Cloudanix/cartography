@@ -1,24 +1,23 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
 
 import neo4j
-import requests
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
-from requests.exceptions import RequestException
 
 from cartography.util import make_requests_url
-from cartography.util import run_cleanup_job
 from cartography.util import timeit
+
 logger = logging.getLogger(__name__)
 
 bitbucket_linker = BitbucketUniqueId()
 
 
 @timeit
-def get_workspaces(access_token: str):
-    url = f"https://api.bitbucket.org/2.0/workspaces?pagelen=100"
+def get_workspaces(access_token: str) -> List[Dict]:
+    url = "https://api.bitbucket.org/2.0/workspaces?pagelen=100"
 
     response = make_requests_url(url, access_token)
     workspaces = response.get('values', [])
@@ -37,7 +36,8 @@ def transform_workspaces(workspaces: List[Dict]) -> List[Dict]:
         data = {
             "workspace": workspace["name"],
         }
-        workspace['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="workspace")
+        workspace['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="workspace")
+
     return workspaces
 
 
@@ -45,9 +45,9 @@ def load_workspace_data(session: neo4j.Session, workspace_data: List[Dict], comm
     session.write_transaction(_load_workspace_data, workspace_data, common_job_parameters)
 
 
-def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], common_job_parameters: Dict):
+def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], common_job_parameters: Dict) -> None:
     ingest_workspace = """
-    MERGE (work:BitbucketWorkspace{id: $id})
+    MERGE (work:BitbucketWorkspace{id: $uuid})
     ON CREATE SET
         work.firstseen = timestamp(),
         work.created_on = $created_on
@@ -56,7 +56,7 @@ def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], comm
         work.slug = $slug,
         work.type = $type,
         work.name= $name,
-        work.uuid = $uuid,
+        work.unique_id = $unique_id,
         work.is_private = $is_private,
         work.lastupdated = $UpdateTag
 
@@ -75,7 +75,7 @@ def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], comm
             ingest_workspace,
 
             name=workspace.get("name"),
-            id=workspace.get("id"),
+            unique_id=workspace.get("uniqueId"),
             created_on=workspace.get('created_on'),
             slug=workspace.get('slug'),
             type=workspace.get('type'),
@@ -98,7 +98,11 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
-    logger.info("Syncing Bitbucket All workspaces")
+    tic = time.perf_counter()
+    logger.info("BEGIN Syncing Bitbucket Workspaces", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "start": tic})
 
     workspaces = transform_workspaces(workspaces)
     load_workspace_data(neo4j_session, workspaces, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info("END Syncing Bitbucket Workspaces", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "end": toc, "duration": f"{toc - tic:0.4f}"})

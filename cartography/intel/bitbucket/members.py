@@ -1,12 +1,14 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
 
 import neo4j
 import requests
-from requests.exceptions import RequestException
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
+from requests.exceptions import RequestException
+
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -15,7 +17,7 @@ bitbucket_linker = BitbucketUniqueId()
 
 
 @timeit
-def get_workspace_members(access_token: str, workspace: str):
+def get_workspace_members(access_token: str, workspace: str) -> List[Dict]:
     url = f"https://api.bitbucket.org/2.0/workspaces/{workspace}/members?pagelen=100"
 
     response = make_requests_url(url, access_token)
@@ -35,29 +37,28 @@ def transform_members(workspace_members: List[Dict], workspace: str) -> List[Dic
 
         data = {
             "workspace": workspace,
-            "member": member["user"]["nickname"]
-
+            "member": member["user"]["nickname"],
         }
-        member['id'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="member")
+        member['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="member")
 
     return workspace_members
 
 
-def load_members_data(session: neo4j.Session, members_data: List[Dict], common_job_parameters: Dict,) -> None:
+def load_members_data(session: neo4j.Session, members_data: List[Dict], common_job_parameters: Dict) -> None:
     session.write_transaction(_load_members_data, members_data, common_job_parameters)
 
 
-def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict):
+def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict) -> None:
     ingest_workspace = """
     UNWIND $membersData as member
-    MERGE (mem:BitbucketMember{id: member.id})
+    MERGE (mem:BitbucketMember{id: member.user.uuid})
     ON CREATE SET mem.firstseen = timestamp()
 
     SET mem.slug = member.slug,
     mem.type = member.user.type,
     mem.name= member.user.display_name,
     mem.account_id=member.user.account_id,
-    mem.uuid = member.user.uuid,
+    mem.unique_id = member.uniqueId,
     mem.lastupdated = $UpdateTag
 
     WITH mem,member
@@ -90,8 +91,13 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
-    logger.info("Syncing Bitbucket All workspace members")
+    tic = time.perf_counter()
+    logger.info("BEGIN Syncing Bitbucket Members", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "start": tic})
+
     workspace_members = get_workspace_members(bitbucket_access_token, workspace_name)
     workspace_members = transform_members(workspace_members, workspace_name)
     load_members_data(neo4j_session, workspace_members, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info("END Syncing Bitbucket Members", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "end": toc, "duration": f"{toc - tic:0.4f}"})
