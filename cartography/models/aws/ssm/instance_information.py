@@ -42,6 +42,7 @@ class SSMInstanceInformationNodeProperties(CartographyNodeProperties):
 class SSMInstanceInformationToAWSAccountRelProperties(CartographyRelProperties):
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
 
+
 @dataclass(frozen=True)
 class SSMInstanceInformationToAWSAccount(CartographyRelSchema):
     target_node_label: str = 'AWSAccount'
@@ -79,4 +80,3 @@ class SSMInstanceInformationSchema(CartographyNodeSchema):
             SSMInstanceInformationToEC2Instance(),
         ],
     )
-

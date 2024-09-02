@@ -1,5 +1,6 @@
 import cartography.intel.aws.waf
-from tests.data.aws.waf import DESCRIBE_WAF_ACLS_RESPONSE, DESCRIBE_WAF_CLASSIC_ACLS_RESPONSE
+from tests.data.aws.waf import DESCRIBE_WAF_ACLS_RESPONSE
+from tests.data.aws.waf import DESCRIBE_WAF_CLASSIC_ACLS_RESPONSE
 
 TEST_UPDATE_TAG = 123456789
 

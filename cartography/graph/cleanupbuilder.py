@@ -122,7 +122,7 @@ def _build_cleanup_node_and_rel_queries(
             $delete_action_clause
             """,
         )
-    else :
+    else:
         query_template = Template(
             """
             MATCH (n:$node_label)$sub_resource_link(:$sub_resource_label{$match_sub_res_clause})

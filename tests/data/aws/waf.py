@@ -1,4 +1,3 @@
-
 DESCRIBE_WAF_ACLS_RESPONSE = [
     {
         'name': 'my-web-acl',
@@ -11,12 +10,12 @@ DESCRIBE_WAF_ACLS_RESPONSE = [
         'VisibilityConfig': {
             'SampledRequestsEnabled': True,
             'CloudWatchMetricsEnabled': True,
-            'MetricName': 'myWebAclMetric'
+            'MetricName': 'myWebAclMetric',
         },
         'CreatedAt': '2021-01-01T00:00:00Z',
         'LastUpdated': '2021-01-02T00:00:00Z',
         'region': 'us-east-1',
-        'consolelink': 'https://console.aws.amazon.com/wafv2/home?region=us-east-1#/webacls/12345678-1234-1234-1234-123456789012'
+        'consolelink': 'https://console.aws.amazon.com/wafv2/home?region=us-east-1#/webacls/12345678-1234-1234-1234-123456789012',
     },
 ]
 
@@ -31,7 +30,7 @@ DESCRIBE_WAF_CLASSIC_ACLS_RESPONSE = [
         'CreatedAt': '2021-01-01T00:00:00Z',
         'LastUpdated': '2021-01-02T00:00:00Z',
         'region': 'us-east-1',
-        'consolelink': 'https://console.aws.amazon.com/wafv2/home?region=us-east-1#/webacls/12345678-1234-1234-1234-123456789012'
+        'consolelink': 'https://console.aws.amazon.com/wafv2/home?region=us-east-1#/webacls/12345678-1234-1234-1234-123456789012',
 
     },
 ]

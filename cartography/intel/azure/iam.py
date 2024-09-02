@@ -51,6 +51,7 @@ def load_roles(session: neo4j.Session, tenant_id: str, data_list: List[Dict], up
 def load_managed_identities(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.write_transaction(_load_managed_identities_tx, tenant_id, data_list, update_tag)
 
+
 def load_tenant_groups(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.write_transaction(_load_tenant_groups_tx, tenant_id, data_list, update_tag)
 
@@ -95,6 +96,7 @@ def get_authorization_client(credentials: Credentials, subscription_id: str) -> 
 def get_managed_identity_client(credentials: Credentials, subscription_id: str) -> ManagedServiceIdentityClient:
     client = ManagedServiceIdentityClient(credentials, subscription_id)
     return client
+
 
 @timeit
 def list_tenant_users(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
@@ -615,6 +617,7 @@ def get_managed_identity_list(client: ManagedServiceIdentityClient, subscription
         logger.warning(f"Error while retrieving managed identity - {e}")
         return []
 
+
 def _load_roles_tx(
     tx: neo4j.Transaction, tenant_id: str, roles_list: List[Dict], update_tag: int, SUBSCRIPTION_ID: str,
 ) -> None:
@@ -701,12 +704,14 @@ def _load_managed_identities_tx(
         tenant_id=tenant_id,
     )
 
+
 def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('azure_import_tenant_roles_cleanup.json', neo4j_session, common_job_parameters)
 
 
 def cleanup_managed_identities(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('azure_import_managed_identity_cleanup.json', neo4j_session, common_job_parameters)
+
 
 def sync_roles(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
@@ -762,6 +767,7 @@ def _set_used_state_tx(
         AZURE_TENANT_ID=tenant_id,
         isUsed=False,
     )
+
 
 @timeit
 def sync(

@@ -1,7 +1,7 @@
 # Google Compute Resource Manager
 # https://cloud.google.com/resource-manager/docs/cloud-platform-resource-hierarchy
-import logging
 import hashlib
+import logging
 from string import Template
 from typing import Dict
 from typing import List
@@ -164,7 +164,7 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
 
 @timeit
 def load_gcp_projects(
-    neo4j_session: neo4j.Session, data: List[Dict], gcp_update_tag: int, common_job_parameters: Dict, crm_v2: Resource
+    neo4j_session: neo4j.Session, data: List[Dict], gcp_update_tag: int, common_job_parameters: Dict, crm_v2: Resource,
 ) -> None:
     """
     Ingest the GCP projects to Neo4j
@@ -299,7 +299,7 @@ def sync_gcp_organizations(
             {
                 "name": f"organizations/{hashlib.sha256(common_job_parameters['WORKSPACE_ID'].encode()).hexdigest()}",
                 "IsCloudanixGenerated": True,
-            }
+            },
         ]
     common_job_parameters['GCP_ORGANIZATION_ID'] = data[0]['name']
     load_gcp_organizations(neo4j_session, data, gcp_update_tag, common_job_parameters)

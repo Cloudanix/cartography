@@ -1,5 +1,7 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import neo4j
 from neo4j import GraphDatabase
@@ -9,11 +11,11 @@ import cartography.intel.bitbucket.members
 import cartography.intel.bitbucket.projects
 import cartography.intel.bitbucket.repositories
 import cartography.intel.bitbucket.workspace
+from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph.session import Session
-from cartography.util import run_cleanup_job, timeit
-
-from .resources import RESOURCE_FUNCTIONS
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

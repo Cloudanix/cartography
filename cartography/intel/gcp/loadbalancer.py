@@ -264,7 +264,7 @@ def get_regional_instance_groups(compute: Resource, project_id: str, region: str
                 ), project_id, e.status_code, e.reason,
             )
             return []
-        
+
         err = json.loads(e.content.decode('utf-8'))['error']
         if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
             logger.warning(

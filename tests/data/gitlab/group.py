@@ -94,12 +94,12 @@ DEPENDENCIES = [
                 "name": "DDoS",
                 "severity": "unknown",
                 "id": "id",
-            }
+            },
         ],
         "licenses": [
             {
                 "name": "MIT",
-            }
+            },
         ],
         "project": {
             "description": "project",
@@ -118,12 +118,12 @@ DEPENDENCIES = [
                 "name": "DDoS",
                 "severity": "unknown",
                 "id": "id",
-            }
+            },
         ],
         "licenses": [
             {
                 "name": "MIT",
-            }
+            },
         ],
         "project": {
             "description": "project",
