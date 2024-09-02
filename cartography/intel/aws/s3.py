@@ -290,7 +290,7 @@ def add_bucket_policy_documents(policies: List[Dict], boto3_session: boto3.sessi
     for policy in policies:
         bucket_name = policy.get('bucket')
         client = boto3_session.client('s3')
-        response = get_policy(bucket_name, client)
+        response = get_policy({'Name': bucket_name}, client)
         policy_document = response.get('Policy', {}) if response else {}
 
         bucket_policies.append({
