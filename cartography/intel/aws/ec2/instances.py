@@ -67,12 +67,12 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
 
 @timeit
 @aws_handle_regions
-def get_roles_from_instance_profile(boto3_session: boto3.session.Session, region: str, instance_profile_arn):
+def get_roles_from_instance_profile(boto3_session: boto3.session.Session, region: str, instance_profile_arn) -> List[Dict]:
     iam_client = boto3_session.client('iam', region_name=region, config=get_botocore_config())
     try:
         response = iam_client.get_instance_profile(InstanceProfileName=instance_profile_arn)
         roles = response['InstanceProfile']['Roles']
-        return [role['Arn'] for role in roles]
+        return roles
     except Exception as e:
         print(f"Error fetching roles: {e}")
         return []
@@ -101,12 +101,9 @@ def transform_ec2_instances(boto3_session: boto3.session.Session, reservations: 
             launch_time = instance.get("LaunchTime")
             launch_time_unix = str(time.mktime(launch_time.timetuple())) if launch_time else None
 
-            iam_role_arn = None
             if 'IamInstanceProfile' in instance:
                 instance_profile_arn = instance['IamInstanceProfile']['Arn']
                 iam_role_arns = get_roles_from_instance_profile(boto3_session, region, instance_profile_arn)
-                if iam_role_arns:
-                    iam_role_arn = iam_role_arns[0]
 
             instance_list.append(
                 {
@@ -134,7 +131,7 @@ def transform_ec2_instances(boto3_session: boto3.session.Session, reservations: 
                     "Region": region,
                     "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
-                    'RoleArn': iam_role_arn,
+                    'IamRoles': iam_role_arns,
                 },
             )
 
@@ -326,6 +323,29 @@ def load_ec2_instance_ebs_volumes(
     )
 
 
+@timeit
+def load_ec2_roles(
+        neo4j_session: neo4j.Session,
+        role_data: List[Dict[str, Any]],
+        region: str,
+        current_aws_account_id: str,
+        update_tag: int,
+) -> None:
+    ingest_role_instance_relations = """
+    UNWIND $roles as role
+    MERGE (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.IamRoles})
+    MERGE (instance)-[r:USES]->(roleNode)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+
+    neo4j_session.run(
+        ingest_role_instance_relations,
+        roles=role_data,
+        aws_update_tag=update_tag
+    )
+
+
 def load_ec2_instance_data(
         neo4j_session: neo4j.Session,
         region: str,
@@ -338,6 +358,7 @@ def load_ec2_instance_data(
         key_pair_list: List[Dict[str, Any]],
         nic_list: List[Dict[str, Any]],
         ebs_volumes_list: List[Dict[str, Any]],
+        role_data: List[Dict[str, Any]],
 ) -> None:
     load_ec2_reservations(neo4j_session, reservation_list, region, current_aws_account_id, update_tag)
     load_ec2_instance_nodes(neo4j_session, instance_list, region, current_aws_account_id, update_tag)
@@ -346,6 +367,7 @@ def load_ec2_instance_data(
     load_ec2_key_pairs(neo4j_session, key_pair_list, region, current_aws_account_id, update_tag)
     load_ec2_network_interfaces(neo4j_session, nic_list, region, current_aws_account_id, update_tag)
     load_ec2_instance_ebs_volumes(neo4j_session, ebs_volumes_list, region, current_aws_account_id, update_tag)
+    load_ec2_roles(neo4j_session, role_data, region, current_aws_account_id, update_tag)
 
 
 @timeit

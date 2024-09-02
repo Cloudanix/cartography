@@ -39,7 +39,7 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     hibernationoptions: PropertyRef = PropertyRef('HibernationOption')
     consolelink: PropertyRef = PropertyRef('consolelink')
     arn: PropertyRef = PropertyRef('arn')
-    roleArn: PropertyRef = PropertyRef('RoleArn')
+#    roleArn: PropertyRef = PropertyRef('RoleArn')
 
 
 @dataclass(frozen=True)
@@ -73,21 +73,21 @@ class EC2InstanceToEC2Reservation(CartographyRelSchema):
     rel_label: str = "MEMBER_OF_EC2_RESERVATION"
     properties: EC2InstanceToEC2ReservationRelProperties = EC2InstanceToEC2ReservationRelProperties()
 
+### TO DO  whenever  we are deploying to kubernates we will uncomment this ###
 
-@dataclass(frozen=True)
-class EC2InstanceToIAMRoleRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+# @dataclass(frozen=True)
+# class EC2InstanceToIAMRoleRelProperties(CartographyRelProperties):
+#     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
 
-
-@dataclass(frozen=True)
-class EC2InstanceToIAMRole(CartographyRelSchema):
-    target_node_label: str = 'IAMRole'
-    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'roleArn': PropertyRef('RoleArn')},
-    )
-    direction: LinkDirection = LinkDirection.OUTWARD
-    rel_label: str = "USES"
-    properties: EC2InstanceToIAMRoleRelProperties = EC2InstanceToIAMRoleRelProperties()
+# @dataclass(frozen=True)
+# class EC2InstanceToIAMRole(CartographyRelSchema):
+#     target_node_label: str = 'AWSRole'
+#     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+#         {'arn': PropertyRef('RoleArn')},
+#     )
+#     direction: LinkDirection = LinkDirection.OUTWARD
+#     rel_label: str = "USES"
+#     properties: EC2InstanceToIAMRoleRelProperties = EC2InstanceToIAMRoleRelProperties()
 
 
 @dataclass(frozen=True)
@@ -98,6 +98,6 @@ class EC2InstanceSchema(CartographyNodeSchema):
     other_relationships: OtherRelationships = OtherRelationships(
         [
             EC2InstanceToEC2Reservation(),
-            EC2InstanceToIAMRole(),
+            #EC2InstanceToIAMRole(),
         ],
     )
