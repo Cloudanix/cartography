@@ -103,7 +103,10 @@ def transform_ec2_instances(boto3_session: boto3.session.Session, reservations: 
 
             if 'IamInstanceProfile' in instance:
                 instance_profile_arn = instance['IamInstanceProfile']['Arn']
-                iam_role_arns = get_roles_from_instance_profile(boto3_session, region, instance_profile_arn)
+                iam_roles = get_roles_from_instance_profile(boto3_session, region, instance_profile_arn)
+
+                for role in iam_roles:
+                    role['InstanceId'] = instance_id
 
             instance_list.append(
                 {
@@ -131,7 +134,7 @@ def transform_ec2_instances(boto3_session: boto3.session.Session, reservations: 
                     "Region": region,
                     "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
-                    'IamRoles': iam_role_arns,
+                    'IamRoles': iam_roles,
                 },
             )
 
@@ -322,6 +325,8 @@ def load_ec2_instance_ebs_volumes(
         lastupdated=update_tag,
     )
 
+# we will remove this logic whenever we are deploying to kubernates
+
 
 @timeit
 def load_ec2_roles(
@@ -333,7 +338,7 @@ def load_ec2_roles(
 ) -> None:
     ingest_role_instance_relations = """
     UNWIND $roles as role
-    MERGE (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.IamRoles})
+    MERGE (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.Arn})
     MERGE (instance)-[r:USES]->(roleNode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -358,8 +363,11 @@ def load_ec2_instance_data(
         key_pair_list: List[Dict[str, Any]],
         nic_list: List[Dict[str, Any]],
         ebs_volumes_list: List[Dict[str, Any]],
-        role_data: List[Dict[str, Any]],
+
+
+
 ) -> None:
+    role_data = [role for instance in instance_list for role in instance.get('Roles', [])]
     load_ec2_reservations(neo4j_session, reservation_list, region, current_aws_account_id, update_tag)
     load_ec2_instance_nodes(neo4j_session, instance_list, region, current_aws_account_id, update_tag)
     load_ec2_subnets(neo4j_session, subnet_list, region, current_aws_account_id, update_tag)
@@ -403,6 +411,7 @@ def sync_ec2_instances(
             ec2_data.keypair_list,
             ec2_data.network_interface_list,
             ec2_data.instance_ebs_volumes_list,
+
         )
     cleanup(neo4j_session, common_job_parameters)
     toc = time.perf_counter()
