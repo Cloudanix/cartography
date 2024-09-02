@@ -44,12 +44,13 @@ def load_tenant_users(session: neo4j.Session, tenant_id: str, data_list: List[Di
         logger.info(f"Iteration {counter + 1} of {total_iterations}. {start} - {end} - {len(paged_users)}")
 
 
-def load_roles(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int, SUBSCRIPTION_ID: str) -> None:
-    session.write_transaction(_load_roles_tx, tenant_id, data_list, update_tag, SUBSCRIPTION_ID)
+def load_roles(session: neo4j.Session, tenant_id: str, data_list: List[Dict], role_assignments_list: List[Dict], update_tag: int, SUBSCRIPTION_ID: str) -> None:
+    session.write_transaction(_load_roles_tx, tenant_id, data_list, role_assignments_list, update_tag, SUBSCRIPTION_ID)
 
 
 def load_managed_identities(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.write_transaction(_load_managed_identities_tx, tenant_id, data_list, update_tag)
+
 
 def load_tenant_groups(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.write_transaction(_load_tenant_groups_tx, tenant_id, data_list, update_tag)
@@ -95,6 +96,7 @@ def get_authorization_client(credentials: Credentials, subscription_id: str) -> 
 def get_managed_identity_client(credentials: Credentials, subscription_id: str) -> ManagedServiceIdentityClient:
     client = ManagedServiceIdentityClient(credentials, subscription_id)
     return client
+
 
 @timeit
 def list_tenant_users(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
@@ -557,42 +559,43 @@ def sync_tenant_domains(
 
 
 @timeit
-def get_roles_list(client: AuthorizationManagementClient, common_job_parameters: Dict) -> List[Dict]:
+def get_roles_list(subscription_id: str, client: AuthorizationManagementClient, common_job_parameters: Dict) -> List[Dict]:
+    try:
+        role_definitions_list = list(
+            map(lambda x: x.as_dict(), client.role_definitions.list(scope=f"/subscriptions/{subscription_id}")),
+        )
+
+        for role in role_definitions_list:
+
+            role['name'] = role.get('name', '')
+            role['type'] = role.get('properties', {}).get('type')
+            role['roleName'] = role.get('properties', {}).get('roleName', '')
+            role['consolelink'] = azure_console_link.get_console_link(
+                id=role['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+            )
+            permissions = []
+            for permission in role.get('permissions', []):
+                for action in permission.get('actions', []):
+                    permissions.append(action)
+                for data_action in permission.get('dataActions', []):
+                    permissions.append(data_action)
+            role['permissions'] = list(set(permissions))
+
+        return role_definitions_list
+
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving roles - {e}")
+        return []
+
+
+@timeit
+def get_role_assignments(client: AuthorizationManagementClient, common_job_parameters: Dict) -> List[Dict]:
     try:
         role_assignments_list = list(
             map(lambda x: x.as_dict(), client.role_assignments.list()),
         )
 
-        roles_list = []
-        for role_assignment in role_assignments_list:
-            role_in_roles_list = False
-            for role in roles_list:
-                if role['id'] == role_assignment["role_definition_id"]:
-                    role['principal_ids'].append(role_assignment['principal_id'])
-                    role_in_roles_list = True
-                    break
-
-            if not role_in_roles_list:
-                role = {}
-                result = client.role_definitions.get_by_id(role_assignment["role_definition_id"], raw=True)
-                result = result.response.json()
-                role['name'] = result.get('name', '')
-                role['id'] = role_assignment["role_definition_id"]
-                role['principal_ids'] = [role_assignment['principal_id']]
-                role['type'] = result.get('properties', {}).get('type')
-                role['roleName'] = result.get('properties', {}).get('roleName', '')
-                role['consolelink'] = azure_console_link.get_console_link(
-                    id=role_assignment['role_definition_id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
-                role['permissions'] = []
-                for permission in result.get('properties', {}).get('permissions', []):
-                    for action in permission.get('actions', []):
-                        role['permissions'].append(action)
-                    for data_action in permission.get('dataActions', []):
-                        role['permissions'].append(data_action)
-                role['permissions'] = list(set(role['permissions']))
-                roles_list.append(role)
-        return roles_list
+        return role_assignments_list
 
     except HttpResponseError as e:
         logger.warning(f"Error while retrieving roles - {e}")
@@ -615,18 +618,20 @@ def get_managed_identity_list(client: ManagedServiceIdentityClient, subscription
         logger.warning(f"Error while retrieving managed identity - {e}")
         return []
 
+
 def _load_roles_tx(
-    tx: neo4j.Transaction, tenant_id: str, roles_list: List[Dict], update_tag: int, SUBSCRIPTION_ID: str,
+    tx: neo4j.Transaction, tenant_id: str, roles_list: List[Dict], role_assignments_list: List[Dict], update_tag: int, SUBSCRIPTION_ID: str,
 ) -> None:
     ingest_role = """
     UNWIND $roles_list AS role
     MERGE (i:AzureRole{id: role.id})
     ON CREATE SET i.firstseen = timestamp(),
-    i.name = role.name,
+    i.name = role.role_name,
     i.consolelink = role.consolelink,
     i.region = $region,
     i.create_date = $createDate,
-    i.type = role.type
+    i.type = role.type,
+    i.role_type = role.role_type
     SET i.lastupdated = $update_tag,
     i.roleName = role.roleName,
     i.permissions = role.permissions
@@ -662,11 +667,11 @@ def _load_roles_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    for role in roles_list:
+    for role_assignment in role_assignments_list:
         tx.run(
             attach_role,
-            role=role['id'],
-            principal_ids=role['principal_ids'],
+            role=role_assignment['role_definition_id'],
+            principal_ids=role_assignment['principal_id'],
             update_tag=update_tag,
         )
 
@@ -701,6 +706,7 @@ def _load_managed_identities_tx(
         tenant_id=tenant_id,
     )
 
+
 def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('azure_import_tenant_roles_cleanup.json', neo4j_session, common_job_parameters)
 
@@ -708,13 +714,15 @@ def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 def cleanup_managed_identities(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('azure_import_managed_identity_cleanup.json', neo4j_session, common_job_parameters)
 
+
 def sync_roles(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
     client = get_authorization_client(credentials.arm_credentials, credentials.subscription_id)
-    roles_list = get_roles_list(client, common_job_parameters)
-    load_roles(neo4j_session, tenant_id, roles_list, update_tag, credentials.subscription_id)
+    roles_list = get_roles_list(credentials.subscription_id, client, common_job_parameters)
+    role_assignments_list = get_role_assignments(client, common_job_parameters)
+    load_roles(neo4j_session, tenant_id, roles_list, role_assignments_list, update_tag, credentials.subscription_id)
     cleanup_roles(neo4j_session, common_job_parameters)
 
 
@@ -762,6 +770,7 @@ def _set_used_state_tx(
         AZURE_TENANT_ID=tenant_id,
         isUsed=False,
     )
+
 
 @timeit
 def sync(
