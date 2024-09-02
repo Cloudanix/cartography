@@ -7,10 +7,7 @@ import neo4j
 from neo4j import GraphDatabase
 from requests import exceptions
 
-import cartography.intel.bitbucket.members
-import cartography.intel.bitbucket.projects
-import cartography.intel.bitbucket.repositories
-import cartography.intel.bitbucket.workspace
+from . import workspace
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph.session import Session
@@ -104,9 +101,13 @@ def _sync_multiple_workspaces(
     common_job_parameters: Dict[str, Any],
     config: Config,
 ) ->bool:
-    for workspace in workspaces:
-        common_job_parameters['WORKSPACE_UUID']=workspace.get('uuid')
-        _sync_one_workspace(neo4j_session,workspace['slug'],access_token,common_job_parameters,config)
+    for ws in workspaces:
+        if config.params['workspace']['account_id'] != ws.get('slug'):
+            continue
+
+        logger.info(f'processing workspace: {ws.get("slug")}')
+        common_job_parameters['WORKSPACE_UUID']=ws.get('uuid')
+        _sync_one_workspace(neo4j_session,ws['slug'],access_token,common_job_parameters,config)
         run_cleanup_job('bitbucket_workspace_cleanup.json', neo4j_session, common_job_parameters)
 
         del common_job_parameters['WORKSPACE_UUID']
@@ -133,9 +134,26 @@ def start_bitbucket_ingestion(neo4j_session: neo4j.Session, config: Config) -> d
     }
 
     try:
-        workspaces_list =cartography.intel.bitbucket.workspace.get_workspaces(access_token)
 
-        cartography.intel.bitbucket.workspace.sync(
+        workspaces_list = workspace.get_workspaces(access_token)
+
+        has_workspace_data = False
+        if len(workspaces_list) > 0:
+            for ws in workspaces_list:
+                if ws.get('slug',"").lower() == config.params['workspace']['account_id'].lower():
+                    has_workspace_data = True
+
+        if has_workspace_data is False:
+            workspace_obj = workspace.get_workspace(access_token, config.params['workspace']['account_id'])
+            if workspace_obj:
+                workspaces_list = [workspace_obj]
+                has_workspace_data = True
+
+        if has_workspace_data is False:
+            logger.warning("Could not process. Bitbucket workspace(s) do not exist or unable to access them", extra={"workspace": common_job_parameters["WORKSPACE_ID"]})
+            return common_job_parameters
+
+        workspace.sync(
                 neo4j_session,
                 workspaces_list,
                 common_job_parameters,

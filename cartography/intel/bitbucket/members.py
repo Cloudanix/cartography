@@ -9,6 +9,7 @@ import requests
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 from requests.exceptions import RequestException
 
+from .common import cleanse_string
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -37,7 +38,7 @@ def transform_members(workspace_members: List[Dict], workspace: str) -> List[Dic
 
         data = {
             "workspace": workspace,
-            "member": member["user"]["nickname"],
+            "member": cleanse_string(member["user"]["nickname"]),
         }
         member['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="member")
 

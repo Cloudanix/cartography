@@ -272,7 +272,7 @@ def get_policy_bindings(crm_v1: Resource, crm_v2: Resource, project_id: str) -> 
     parent_type = res_project.get('parent', {}).get('type', '')
     try:
         if parent_type == 'organization':
-            req = crm_v1.organizations().getIamPolicy(resource=f"organizations/{res_project.get('parent', {}).get('id','')}")
+            req = crm_v1.organizations().getIamPolicy(resource=f"organizations/{res_project.get('parent', {}).get('id', '')}")
             res = req.execute()
             if res.get('bindings'):
                 for binding in res['bindings']:
@@ -280,7 +280,7 @@ def get_policy_bindings(crm_v1: Resource, crm_v2: Resource, project_id: str) -> 
                     binding['parent_id'] = f"organizations/{res_project.get('parent', {}).get('id', '')}"
                     bindings.append(binding)
         elif parent_type == 'folder':
-            req = crm_v2.folders().getIamPolicy(resource=f"folders/{res_project.get('parent', {}).get('id','')}")
+            req = crm_v2.folders().getIamPolicy(resource=f"folders/{res_project.get('parent', {}).get('id', '')}")
             res = req.execute()
             if res.get('bindings'):
                 for binding in res['bindings']:

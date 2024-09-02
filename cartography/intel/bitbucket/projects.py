@@ -7,6 +7,7 @@ from typing import List
 import neo4j
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
+from .common import cleanse_string
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -36,7 +37,7 @@ def transform_projects(workspace_projects: List[Dict], workspace: str) -> List[D
 
         data = {
             "workspace": workspace,
-            "project": project["name"],
+            "project": cleanse_string(project["name"]),
         }
         project['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="project")
 

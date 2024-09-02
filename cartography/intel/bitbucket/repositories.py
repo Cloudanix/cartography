@@ -7,6 +7,7 @@ from typing import List
 import neo4j
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
+from .common import cleanse_string
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -39,8 +40,8 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
 
         data = {
             "workspace": workspace,
-            "project": repo['project']['name'],
-            "repository": repo['name'],
+            "project": cleanse_string(repo['project']['name']),
+            "repository": cleanse_string(repo['slug']),
 
         }
 

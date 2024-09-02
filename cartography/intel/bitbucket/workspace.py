@@ -7,6 +7,7 @@ from typing import List
 import neo4j
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
+from .common import cleanse_string
 from cartography.util import make_requests_url
 from cartography.util import timeit
 
@@ -17,8 +18,8 @@ bitbucket_linker = BitbucketUniqueId()
 
 @timeit
 def get_workspaces(access_token: str) -> List[Dict]:
+    # https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/#api-workspaces-get
     url = "https://api.bitbucket.org/2.0/workspaces?pagelen=100"
-
     response = make_requests_url(url, access_token)
     workspaces = response.get('values', [])
 
@@ -29,12 +30,21 @@ def get_workspaces(access_token: str) -> List[Dict]:
     return workspaces
 
 
+@timeit
+def get_workspace(access_token: str, workspace: str) -> Dict:
+    # https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/#api-workspaces-workspace-get
+    url =f'https://api.bitbucket.org/2.0/workspaces/{workspace}'
+    response = make_requests_url(url, access_token)
+
+    return response
+
+
 def transform_workspaces(workspaces: List[Dict]) -> List[Dict]:
     for workspace in workspaces:
         workspace['uuid'] = workspace['uuid'].replace('{', '').replace('}', '')
 
         data = {
-            "workspace": workspace["name"],
+            "workspace": cleanse_string(workspace["slug"]),
         }
         workspace['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="workspace")
 
