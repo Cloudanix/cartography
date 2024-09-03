@@ -262,7 +262,7 @@ def _load_s3_policies(neo4j_session: neo4j.Session, policies: List[Dict], update
     Ingest S3 policy results into neo4j.
     """
 
-    add_bucket_policy_documents(policies, boto3_session)
+    policies = add_bucket_policy_documents(policies, boto3_session)
 
     # NOTE we use the coalesce function so appending works when the value is null initially
     ingest_policies = """
@@ -294,6 +294,8 @@ def add_bucket_policy_documents(policies: List[Dict], boto3_session: boto3.sessi
         policy_document = response.get('Policy', {}) if response else {}
 
         policy['policyDocument'] = policy_document
+
+    return policies
 
 
 @timeit
