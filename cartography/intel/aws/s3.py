@@ -286,21 +286,14 @@ def add_bucket_policy_documents(policies: List[Dict], boto3_session: boto3.sessi
     """
     Fetch policy documents for each S3 bucket in the policies list and prepare a list with the necessary details.
     """
-    bucket_policies = []
     for policy in policies:
         bucket_name = policy.get('bucket')
         client = boto3_session.client('s3')
-        response = get_policy({'Name': bucket_name}, client)
+        bucket_name_dict = {'Name': bucket_name}
+        response = get_policy(bucket_name_dict, client)
         policy_document = response.get('Policy', {}) if response else {}
 
-        bucket_policies.append({
-            'bucket': bucket_name,
-            'internet_accessible': policy.get('internet_accessible', False),
-            'accessible_actions': policy.get('accessible_actions', []),
-            'policyDocument': policy_document
-        })
-
-    return bucket_policies
+        policy['policyDocument'] = policy_document
 
 
 @timeit
