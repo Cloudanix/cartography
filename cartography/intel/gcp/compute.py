@@ -513,6 +513,11 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
             resource_name="compute_instance", instance_name=res['name'],
             project_id=res['project_id'], zone=res['zone_name'],
         )
+
+        res['service_accounts'] = res.get('serviceAccounts', [])
+
+        instance_list.append(res)
+
         x = res['zone_name'].split('-')
         res['region'] = f"{x[0]}-{x[1]}"
 
@@ -865,6 +870,7 @@ def load_gcp_instances(session: neo4j.Session, instances_list: List[Dict], gcp_u
         _attach_gcp_nics(session, instance, gcp_update_tag)
         _attach_gcp_vpc(session, instance['partial_uri'], gcp_update_tag)
         _attach_instance_service_account(session, instance, gcp_update_tag)
+        load_service_account_relationships(session, instance, gcp_update_tag)
 
 
 @timeit
@@ -951,6 +957,30 @@ def load_compute_entity_relation_tx(tx: neo4j.Transaction, instance: Dict, gcp_u
         ingest_entities,
         instance_id=instance.get('name', None),
         entities=instance.get('entities', []),
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+@timeit
+def load_service_account_relationships(session: neo4j.Session, instance: Dict, update_tag: int) -> None:
+    session.write_transaction(load_service_account_relationships_tx, instance, update_tag)
+
+
+@timeit
+def load_service_account_relationships_tx(tx: neo4j.Transaction, instance: Dict, gcp_update_tag: int) -> None:
+
+    query = """
+    UNWIND $service_accounts AS account
+    MERGE (sa:GCPServiceAccount {email: account.email})
+    MERGE (i:GCPInstance {id: $instance_id})
+    MERGE (sa)-[r:USES]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $gcp_update_tag
+    """
+    tx.run(
+        query,
+        service_accounts=instance['service_accounts'],
+        instance_id=instance['id'],
         gcp_update_tag=gcp_update_tag,
     )
 
