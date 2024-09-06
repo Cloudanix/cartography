@@ -244,7 +244,7 @@ def get_rds_snapshot_attributes(boto3_session: boto3.session.Session, snapshot_i
         return response['DBSnapshotAttributesResult']
 
     except ClientError as e:
-        logger.warning("failed to fetch snapshot attributes:", snapshot_id, e)
+        logger.warning(f"failed to fetch snapshot attributes: {snapshot_id} {e}")
 
         return {}
 

@@ -56,7 +56,7 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
     except ClientError as e:
         if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
             logger.warning(
-                f'ec2:describe_security_groups failed with AccessDeniedException; continuing sync.',
+                'ec2:describe_security_groups failed with AccessDeniedException; continuing sync.',
                 exc_info=True,
             )
         else:

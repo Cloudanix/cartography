@@ -38,15 +38,15 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
         repo['project']['uuid'] = repo['project']['uuid'].replace('{', '').replace('}', '')
         repo['uuid'] = repo['uuid'].replace('{', '').replace('}', '')
 
+        if repo is not None and repo.get('mainbranch') is not None:
+            repo['default_branch'] = repo.get('mainbranch', {}).get('name', None)
+
         data = {
             "workspace": workspace,
             "project": cleanse_string(repo['project']['name']),
             "repository": cleanse_string(repo['slug']),
 
         }
-
-        if repo is not None and repo.get('mainbranch') is not None:
-            repo['default_branch'] = repo.get('mainbranch', {}).get('name', None)
 
         repo['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="repository")
 
