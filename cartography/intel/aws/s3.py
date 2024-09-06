@@ -257,24 +257,45 @@ def _load_s3_acls(neo4j_session: neo4j.Session, acls: Dict, aws_account_id: str,
 
 
 @timeit
-def _load_s3_policies(neo4j_session: neo4j.Session, policies: List[Dict], update_tag: int) -> None:
+def _load_s3_policies(neo4j_session: neo4j.Session, policies: List[Dict], update_tag: int, boto3_session: boto3.session.Session) -> None:
     """
     Ingest S3 policy results into neo4j.
     """
+
+    policies = add_bucket_policy_documents(policies, boto3_session)
+
     # NOTE we use the coalesce function so appending works when the value is null initially
     ingest_policies = """
     UNWIND $policies AS policy
     MATCH (s:S3Bucket) where s.name = policy.bucket
     SET s.anonymous_access = (coalesce(s.anonymous_access, false) OR policy.internet_accessible),
     s.anonymous_actions = coalesce(s.anonymous_actions, []) + policy.accessible_actions,
-    s.lastupdated = $UpdateTag
+    s.lastupdated = $UpdateTag,
+    s.policy_document = policy.policyDocument
     """
 
     neo4j_session.run(
         ingest_policies,
         policies=policies,
-        UpdateTag=update_tag,
+        UpdateTag=update_tag
     )
+
+
+@timeit
+def add_bucket_policy_documents(policies: List[Dict], boto3_session: boto3.session.Session) -> List[Dict]:
+    """
+    Fetch policy documents for each S3 bucket in the policies list and prepare a list with the necessary details.
+    """
+    for policy in policies:
+        bucket_name = policy.get('bucket')
+        client = boto3_session.client('s3')
+        bucket_name_dict = {'Name': bucket_name}
+        response = get_policy(bucket_name_dict, client)
+        policy_document = response.get('Policy', {}) if response else {}
+
+        policy['policyDocument'] = policy_document
+
+    return policies
 
 
 @timeit
@@ -421,7 +442,7 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
 @timeit
 def load_s3_details(
     neo4j_session: neo4j.Session, s3_details_iter: Generator[Any, Any, Any], aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    update_tag: int, common_job_parameters: Dict, boto3_session: boto3.session.Session
 ) -> None:
     """
     Create dictionaries for all bucket ACLs and all bucket policies so we can import them in a single query for each
@@ -464,7 +485,7 @@ def load_s3_details(
     )
 
     _load_s3_acls(neo4j_session, acls, aws_account_id, update_tag, common_job_parameters)
-    _load_s3_policies(neo4j_session, policies, update_tag)
+    _load_s3_policies(neo4j_session, policies, update_tag, boto3_session)
     _load_s3_policy_statuses(neo4j_session, policy_statuses, update_tag)
     _load_s3_policy_statements(neo4j_session, statements, update_tag)
     _load_s3_encryption(neo4j_session, encryption_configs, update_tag)
@@ -785,7 +806,7 @@ def sync(
     load_s3_buckets(neo4j_session, bucket_data, current_aws_account_id, update_tag)
 
     acl_and_policy_data_iter = get_s3_bucket_details(boto3_session, bucket_data)
-    load_s3_details(neo4j_session, acl_and_policy_data_iter, current_aws_account_id, update_tag, common_job_parameters)
+    load_s3_details(neo4j_session, acl_and_policy_data_iter, current_aws_account_id, update_tag, common_job_parameters, boto3_session)
     cleanup_s3_bucket_acl_and_policy(neo4j_session, common_job_parameters)
     cleanup_s3_buckets(neo4j_session, common_job_parameters)
 
