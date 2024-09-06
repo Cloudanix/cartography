@@ -347,7 +347,7 @@ def load_ec2_roles(
     neo4j_session.run(
         ingest_role_instance_relations,
         roles=role_data,
-        aws_update_tag=update_tag
+        aws_update_tag=update_tag,
     )
 
 

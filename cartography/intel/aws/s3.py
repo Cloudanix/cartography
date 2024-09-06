@@ -277,7 +277,7 @@ def _load_s3_policies(neo4j_session: neo4j.Session, policies: List[Dict], update
     neo4j_session.run(
         ingest_policies,
         policies=policies,
-        UpdateTag=update_tag
+        UpdateTag=update_tag,
     )
 
 
@@ -442,7 +442,7 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
 @timeit
 def load_s3_details(
     neo4j_session: neo4j.Session, s3_details_iter: Generator[Any, Any, Any], aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict, boto3_session: boto3.session.Session
+    update_tag: int, common_job_parameters: Dict, boto3_session: boto3.session.Session,
 ) -> None:
     """
     Create dictionaries for all bucket ACLs and all bucket policies so we can import them in a single query for each
