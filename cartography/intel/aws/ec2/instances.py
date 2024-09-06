@@ -71,7 +71,7 @@ def get_roles_from_instance_profile(boto3_session: boto3.session.Session, region
     iam_client = boto3_session.client('iam', region_name=region, config=get_botocore_config())
     try:
         response = iam_client.get_instance_profile(InstanceProfileName=instance_profile_arn)
-        roles = response['InstanceProfile']['Roles']
+        roles = response.get('InstanceProfile', {}).get('Roles',[])
         return roles
     except Exception as e:
         print(f"Error fetching roles: {e}")
@@ -101,6 +101,7 @@ def transform_ec2_instances(boto3_session: boto3.session.Session, reservations: 
             launch_time = instance.get("LaunchTime")
             launch_time_unix = str(time.mktime(launch_time.timetuple())) if launch_time else None
 
+            iam_roles = []
             if 'IamInstanceProfile' in instance:
                 instance_profile_arn = instance['IamInstanceProfile']['Arn']
                 iam_roles = get_roles_from_instance_profile(boto3_session, region, instance_profile_arn)

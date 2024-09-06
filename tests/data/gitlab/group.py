@@ -1,7 +1,7 @@
 GROUPS = [
     {
         "created_at": "2023-03-24T07:12:16.787134+00:00",
-        "id":"id",
+        "id": "id",
         "path": "foo-bar",
         "name": "Foobar Group",
         "description": "An interesting group",
@@ -9,7 +9,7 @@ GROUPS = [
     },
     {
         "created_at": "2023-04-17T09:46:47.454188+00:00",
-        "id":"id12",
+        "id": "id12",
         "path": "foo-bar12",
         "name": "Foobar Group12",
         "description": "An interesting group12",
@@ -22,7 +22,7 @@ PROJECTS = [
         "id": "id",
         "name": "gitlab-test",
         "description": "gitlab-description",
-        "name_with_namespace":"name-with-namespace",
+        "name_with_namespace": "name-with-namespace",
         "visibility": "public",
         "namespace": {
             "id": 2,
@@ -40,7 +40,7 @@ PROJECTS = [
         "id": "id2",
         "name": "gitlab-test2",
         "description": "gitlab-description2",
-        "name_with_namespace":"name-with-namespace2",
+        "name_with_namespace": "name-with-namespace2",
         "visibility": "public",
         "namespace": {
             "id": 3,
@@ -74,7 +74,7 @@ REPOSITORIES = [
         "id": "id2",
         "type": "type2",
         "path": "files2/html",
-        "mode" : "mode",
+        "mode": "mode",
         "project": {
             "description": "project",
             "id": "project123",
@@ -141,7 +141,7 @@ MEMBERS = [
         "state": "state",
         "created_by": "created_by",
         "group": {
-            "id":"id456",
+            "id": "id456",
             "path": "path",
             "name": "name",
             "description": "description",
@@ -155,7 +155,7 @@ MEMBERS = [
         "state": "state",
         "created_by": "created_by",
         "group": {
-            "id":"id123",
+            "id": "id123",
             "path": "path",
             "name": "name",
             "description": "description",
