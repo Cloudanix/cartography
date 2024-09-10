@@ -1,2 +1,2 @@
 def cleanse_string(val: str) -> str:
-    return val.strip().replace(" ", "-").lower()
+    return val.strip()

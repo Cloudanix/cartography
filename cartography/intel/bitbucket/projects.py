@@ -39,7 +39,7 @@ def transform_projects(workspace_projects: List[Dict], workspace: str) -> List[D
             "workspace": workspace,
             "project": cleanse_string(project["name"]),
         }
-        project['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="project")
+        project['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="project")
 
     return workspace_projects
 

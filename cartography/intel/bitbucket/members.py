@@ -40,7 +40,7 @@ def transform_members(workspace_members: List[Dict], workspace: str) -> List[Dic
             "workspace": workspace,
             "member": cleanse_string(member["user"]["nickname"]),
         }
-        member['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="member")
+        member['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="member")
 
     return workspace_members
 

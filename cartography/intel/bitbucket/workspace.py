@@ -46,7 +46,7 @@ def transform_workspaces(workspaces: List[Dict]) -> List[Dict]:
         data = {
             "workspace": cleanse_string(workspace["slug"]),
         }
-        workspace['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resourceType="workspace")
+        workspace['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="workspace")
 
     return workspaces
 
