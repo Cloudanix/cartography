@@ -89,10 +89,10 @@ def load_ec2_security_group_rule(neo4j_session: neo4j.Session, group: Dict, rule
             to_port = rule.get("ToPort")
 
             # NOTE This hardcoding is done because some, rules might be applicable for all protocols in that case the value of
-            # NOTE protocol variable would be -1 this means it will also be available for all ports, hence from_port & to_port
-            # NOTE values might not be provided
-            # NOTE Docs Link:https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/ec2/client/describe_security_groups.html
-            if protocol == -1:
+            # protocol variable would be -1 this means it will also be available for all ports, hence from_port & to_port values
+            # might not be provided
+            # Docs Link:https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/ec2/client/describe_security_groups.html
+            if protocol == "-1":
                 from_port = 0  # the smallest possible IP
                 to_port = 65535  # the largest possible IP
 
