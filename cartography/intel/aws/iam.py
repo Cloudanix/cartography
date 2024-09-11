@@ -315,29 +315,45 @@ def transform_roles(boto3_session: boto3.session.Session, roles: List[Dict], ext
         internal_accounts = []
 
     for role in roles:
-        ExternalAccess = None
-        ExternalAccounts = []
+        ExternalAccountPrincipals = []
         if role['Arn'] in external_access_roles_arn_list:
             for statement in role["AssumeRolePolicyDocument"]["Statement"]:
                 principal_entries = _parse_principal_entries(statement["Principal"])
-                for principal_type, principal_value in principal_entries:
-                    if principal_type == "AWS":
-                        try:
-                            account_id = principal_value.split(':')[4]
-                        except Exception:
-                            account_id = principal_value
-                        if internal_accounts:
-                            if account_id not in internal_accounts:
-                                ExternalAccess = True
-                                ExternalAccounts.append(account_id)
+                for principal_type, principal in principal_entries:
+                    internal_principal = False
 
-                        if common_job_parameters["AWS_INTERNAL_ACCOUNTS"]:
-                            if account_id not in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]:
-                                ExternalAccess = True
-                                ExternalAccounts.append(account_id)
+                    try:
+                        account_id = principal.split(':')[4]
+                    except Exception:
+                        account_id = principal
 
-        role["ExternalAccess"] = ExternalAccess
-        role["ExternalAccounts"] = ExternalAccounts
+                    if account_id == common_job_parameters["AWS_ACCOUNT_ID"]:
+                        continue
+
+                    if internal_accounts and account_id in internal_accounts:
+                        internal_principal = True
+
+                    if common_job_parameters["AWS_INTERNAL_ACCOUNTS"] and account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]:
+                        internal_principal = True
+
+                    if not internal_principal:
+                        ExternalAccountPrincipals.append(
+                            {
+                                "access_type": "ThirdParty",
+                                "account_id": account_id,
+                                "principal": principal
+                            }
+                        )
+                    else:
+                        ExternalAccountPrincipals.append(
+                            {
+                                "access_type": "CrossAccount",
+                                "account_id": account_id,
+                                "principal": principal
+                            }
+                        )
+
+        role["ExternalAccountPrincipals"] = ExternalAccountPrincipals
 
     return {'Roles': roles}
 
@@ -462,9 +478,7 @@ def load_roles(
     rnode.createdate = $CreateDate
     SET rnode.name = $RoleName, rnode.path = $Path,
     rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
-    rnode.external_access = $ExternalAccess,
-    rnode.is_service_role = $IsServiceRole,
-    rnode.external_accounts = $ExternalAccounts
+    rnode.is_service_role = $IsServiceRole
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -484,6 +498,19 @@ def load_roles(
     SET r.lastupdated = $aws_update_tag
     """
 
+    ingest_external_account_principals = """
+    MERGE (epnode:AWSExternalPrincipal{principal: $principal})
+    ON CREATE SET epnode.firstseen = timestamp()
+    SET epnode.lastupdated = $aws_update_tag,
+    epnode.access_type = $AccessType,
+    epnode.account_id = $AccountId
+    WITH epnode
+    MATCH (role:AWSRole{arn: $RoleArn})
+    MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(epnode)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+
     # TODO support conditions
     logger.info(f"Loading {len(roles)} IAM roles to the graph.")
     for role in roles:
@@ -494,8 +521,6 @@ def load_roles(
             RoleId=role.get("RoleId", None),
             CreateDate=str(role["CreateDate"]),
             RoleName=role["RoleName"],
-            ExternalAccess=role["ExternalAccess"],
-            ExternalAccounts=role["ExternalAccounts"] if role["ExternalAccess"] else None,
             Path=role["Path"],
             IsServiceRole=role.get("isServiceRole", False),
             region="global",
@@ -504,6 +529,16 @@ def load_roles(
             AWS_ACCOUNT_ID=current_aws_account_id,
             aws_update_tag=aws_update_tag,
         )
+
+        for external_principal in role["ExternalAccountPrincipals"]:
+            neo4j_session.run(
+                ingest_external_account_principals,
+                principal=external_principal.get("principal"),
+                AccessType=external_principal.get("access_type"),
+                AccountId=external_principal.get("account_id"),
+                RoleArn=role['Arn'],
+                aws_update_tag=aws_update_tag,
+            )
 
         for statement in role["AssumeRolePolicyDocument"]["Statement"]:
             principal_entries = _parse_principal_entries(statement["Principal"])
