@@ -104,12 +104,6 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     MERGE (owner)-[r:RESOURCE]->(v)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
-    WITH vm, v
-    UNWIND vm.user_assigned_identities AS ua
-    MATCH (i:AzureManagedIdentity{id: ua})
-    MERGE (v)-[rel:HAS]->(i)
-    ON CREATE SET rel.firstseen = timestamp()
-    SET rel.lastupdated = $update_tag
     """
 
     neo4j_session.run(
@@ -129,6 +123,8 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
 
         if vm.get('network_interfaces', []) != []:
             load_vm_network_interfaces_relationship(neo4j_session, vm['id'], vm.get('network_interfaces'), update_tag)
+        if vm.get("user_assigned_identities"):
+            load_vm_managed_identities(neo4j_session, vm['id'], vm.get("user_assigned_identities"), update_tag)
         resource_group = get_azure_resource_group_name(vm.get('id'))
         _attach_vm_resource_group(neo4j_session, vm['id'], resource_group, update_tag)
         _attach_vm_properties_public_ip(neo4j_session, vm['id'], update_tag)
@@ -597,6 +593,27 @@ def load_vm_data_disks(neo4j_session: neo4j.Session, vm_id: str, data_disks: Lis
     )
 
 
+def load_vm_managed_identities(neo4j_session: neo4j.Session, vm_id: str, managed_identities: List[str], update_tag: int) -> None:
+    ingest_managed_identity = """
+    UNWIND $managed_identities AS ua
+    MERGE (i:AzureManagedIdentity{id: toLower(ua)})
+    ON CREATE SET i:AzurePrincipal,
+    i.firstseen = timestamp()
+    WITH i
+    MATCH (v:AzureVirtualMachine{id: $VM_ID})
+    MERGE (v)-[rel:HAS]->(i)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $update_tag
+    """
+
+    neo4j_session.run(
+        ingest_managed_identity,
+        managed_identities=managed_identities,
+        VM_ID=vm_id,
+        update_tag=update_tag,
+    )
+
+
 def load_vm_os_disk(neo4j_session: neo4j.Session, vm_id: str, os_disk: Dict, update_tag: int) -> None:
     ingest_os_disk = """
     MERGE (d:AzureDisk{id: $disk.managed_disk.id})
@@ -798,7 +815,7 @@ def sync_virtual_machine(
     neo4j_session: neo4j.Session, credentials: Credentials, subscription_id: str, update_tag: int,
     common_job_parameters: Dict, regions: list,
 ) -> None:
-    client = get_client(credentials, subscription_id)
+    # client = get_client(credentials, subscription_id)
     vm_list = get_vm_list(credentials, subscription_id, regions, common_job_parameters)
 
     load_vms(neo4j_session, subscription_id, vm_list, update_tag)
@@ -806,9 +823,10 @@ def sync_virtual_machine(
     # sync_virtual_machine_extensions(neo4j_session, client, vm_list, update_tag, common_job_parameters)
     # sync_virtual_machine_available_sizes(neo4j_session, client, vm_list, update_tag, common_job_parameters)
 
-    load_vms(neo4j_session, subscription_id, vm_list, update_tag)
+    # Removed duplicated function call
+    # load_vms(neo4j_session, subscription_id, vm_list, update_tag)
     # sync_virtual_machine_extensions(neo4j_session, client, vm_list, update_tag, common_job_parameters)
-    cleanup_virtual_machine(neo4j_session, common_job_parameters)
+    # cleanup_virtual_machine(neo4j_session, common_job_parameters)
 
 
 def sync_disk(
