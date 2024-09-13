@@ -681,9 +681,10 @@ def _load_managed_identities_tx(
 ) -> None:
     ingest_managed_identity = """
     UNWIND $managed_identity_list AS managed_identity
-    MERGE (i:AzureManagedIdentity{id: managed_identity.id})
+    MERGE (i:AzureManagedIdentity{id: toLower(managed_identity.id)})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp(),
+    i.firstseen = timestamp()
+    SET i.lastupdated = $update_tag,
     i.name = managed_identity.name,
     i.consolelink = managed_identity.consolelink,
     i.location = managed_identity.location,
@@ -691,7 +692,6 @@ def _load_managed_identities_tx(
     i.object_id = managed_identity.principal_id,
     i.principal_id = managed_identity.principal_id,
     i.client_id = managed_identity.client_id
-    SET i.lastupdated = $update_tag
     WITH i
     MATCH (t:AzureTenant{id: $tenant_id})
     MERGE (t)-[tr:RESOURCE]->(i)
