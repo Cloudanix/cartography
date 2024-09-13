@@ -341,16 +341,16 @@ def transform_roles(boto3_session: boto3.session.Session, roles: List[Dict], ext
                             {
                                 "access_type": "ThirdParty",
                                 "account_id": account_id,
-                                "principal": principal
-                            }
+                                "principal": principal,
+                            },
                         )
                     else:
                         ExternalAccountPrincipals.append(
                             {
                                 "access_type": "CrossAccount",
                                 "account_id": account_id,
-                                "principal": principal
-                            }
+                                "principal": principal,
+                            },
                         )
 
         role["ExternalAccountPrincipals"] = ExternalAccountPrincipals

@@ -71,7 +71,7 @@ def get_roles_from_instance_profile(boto3_session: boto3.session.Session, region
     iam_client = boto3_session.client('iam', region_name=region, config=get_botocore_config())
     try:
         response = iam_client.get_instance_profile(InstanceProfileName=instance_profile_arn)
-        roles = response.get('InstanceProfile', {}).get('Roles',[])
+        roles = response.get('InstanceProfile', {}).get('Roles', [])
         return roles
     except Exception as e:
         print(f"Error fetching roles: {e}")
