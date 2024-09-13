@@ -599,6 +599,7 @@ def load_vm_managed_identities(neo4j_session: neo4j.Session, vm_id: str, managed
     MERGE (i:AzureManagedIdentity{id: toLower(ua)})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp()
+    SET i.lastupdated = $update_tag
     WITH i
     MATCH (v:AzureVirtualMachine{id: $VM_ID})
     MERGE (v)-[rel:HAS]->(i)
