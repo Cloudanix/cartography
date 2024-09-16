@@ -942,11 +942,54 @@ def _load_network_security_rules_tx(
     SET r.lastupdated = $azure_update_tag
     """
 
+    # Query to form IpRange nodes
+    ingest_range = """
+    UNWIND $ranges_list as range
+    MERGE (r:$range_label{id: range.range_id})
+    ON CREATE SET r.firstseen = timestamp(), r.range = range.range
+    SET r.lastupdated = $azure_update_tag
+    WITH r, range
+    MATCH (rule:AzureNetworkSecurityRule{id: range.rule_id})
+    MERGE (rule)<-[rel:MEMBER_OF_NETWORK_SECURITY_RULE]-(r)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $azure_update_tag
+    """
+
     tx.run(
         ingest_network_rule,
         network_security_rules_list=network_security_rules_list,
         azure_update_tag=update_tag,
     )
+
+    ranges_list = []
+    for rule in network_security_rules_list:
+        for ip_range in rule.get("source_address_prefix", []):
+            range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+            ranges_list.append({
+                "range_id": range_id,
+                "range": ip_range,
+                "rule_id": rule["id"],
+                "label": "IpRange"
+            })
+
+        for ipv6_range in rule.get("destination_address_prefix", []):
+            range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipv6Range/{ipv6_range}"
+            ranges_list.append({
+                "range_id": range_id,
+                "range": ipv6_range,
+                "rule_id": rule["id"],
+                "label": "Ipv6Range"
+            })
+
+    # if ranges present in the list only then run the query
+    if ranges_list:
+        tx.run(
+            ingest_range,
+            ranges_list=ranges_list,
+            range_label="IpRange",  # Placeholder label, will be dynamically replaced
+            azure_update_tag=update_tag,
+        )
+
     for network_security_rule in network_security_rules_list:
         resource_group = get_azure_resource_group_name(network_security_rule.get('id'))
         _attack_resource_group_network_security_rules(tx, network_security_rule['id'], resource_group, update_tag)
