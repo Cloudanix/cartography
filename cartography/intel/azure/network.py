@@ -963,7 +963,7 @@ def _load_network_security_rules_tx(
 
     ranges_list = []
     for rule in network_security_rules_list:
-        for ip_range in rule.get("source_address_prefix", []):
+        for ip_range in rule.get("source_address_prefixes", []):
             range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
             ranges_list.append({
                 "range_id": range_id,
@@ -972,13 +972,15 @@ def _load_network_security_rules_tx(
                 "label": "IpRange"
             })
 
-        for ipv6_range in rule.get("destination_address_prefix", []):
-            range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipv6Range/{ipv6_range}"
+        # Handled the case where, if the list is not present then just take the single IP
+        if not rule.get("source_address_prefixes") and rule.get("source_address_prefix"):
+            ip_range = rule.get("source_address_prefix")
+            range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
             ranges_list.append({
                 "range_id": range_id,
-                "range": ipv6_range,
+                "range": ip_range,
                 "rule_id": rule["id"],
-                "label": "Ipv6Range"
+                "label": "IpRange"
             })
 
     # if ranges present in the list only then run the query
