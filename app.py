@@ -199,6 +199,7 @@ def get_auth_creds(context, args):
 
         auth_creds = auth_helper.assume_role(auth_params)
         auth_creds['type'] = 'assumerole'
+        auth_creds['primary_region'] = args.get("primaryRegion", "us-east-1")
 
     else:
         auth_creds = {
