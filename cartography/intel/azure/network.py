@@ -12,6 +12,8 @@ from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
+import ipaddress
+
 logger = logging.getLogger(__name__)
 azure_console_link = AzureLinker()
 
@@ -932,9 +934,9 @@ def _load_network_security_rules_tx(
     n.destination_port_range = rule.destination_port_range,
     n.type = rule.type
     SET n.name = rule.name,
-    n.region= rule.location,
+    n.region = rule.location,
     n.lastupdated = $azure_update_tag,
-    n.etag=rule.etag
+    n.etag = rule.etag
     WITH n, rule
     MATCH (s:AzureNetworkSecurityGroup{id: rule.security_group_id})
     MERGE (s)-[r:CONTAIN]->(n)
@@ -942,11 +944,118 @@ def _load_network_security_rules_tx(
     SET r.lastupdated = $azure_update_tag
     """
 
+    ingest_range_ipv4 = """
+    UNWIND $ranges_list as range
+    MERGE (r:IpRange{id: range.range_id})
+    ON CREATE SET r.firstseen = timestamp(), r.range = range.range
+    SET r.lastupdated = $azure_update_tag
+    WITH r, range
+    MATCH (rule:AzureNetworkSecurityRule{id: range.rule_id})
+    MERGE (rule)<-[rel:MEMBER_OF_NETWORK_SECURITY_RULE]-(r)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $azure_update_tag
+    """
+
+    ingest_range_ipv6 = """
+    UNWIND $ranges_list as range
+    MERGE (r:Ipv6Range{id: range.range_id})
+    ON CREATE SET r.firstseen = timestamp(), r.range = range.range
+    SET r.lastupdated = $azure_update_tag
+    WITH r, range
+    MATCH (rule:AzureNetworkSecurityRule{id: range.rule_id})
+    MERGE (rule)<-[rel:MEMBER_OF_NETWORK_SECURITY_RULE]-(r)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $azure_update_tag
+    """
+
     tx.run(
         ingest_network_rule,
         network_security_rules_list=network_security_rules_list,
         azure_update_tag=update_tag,
     )
+
+    ranges_list_ipv4 = []
+    ranges_list_ipv6 = []
+
+    # Helper function to check if a value is an IP address
+    def is_ip_address(value: str) -> bool:
+        try:
+            ipaddress.ip_network(value, strict=False)
+            return True
+        except ValueError:
+            return False
+
+    # Helper function to differentiate between Ipv4 and Ipv6
+    def get_ip_version(ip_range: str) -> str:
+        if ip_range == "*":
+            return "IpRange"
+        try:
+            ip_obj = ipaddress.ip_network(ip_range, strict=False)
+            return "Ipv6Range" if ip_obj.version == 6 else "IpRange"
+        except ValueError:
+            return "IpRange"
+
+    # Iterate over the security rules and categorize IP ranges
+    for rule in network_security_rules_list:
+        for ip_range in rule.get("source_address_prefixes", []):
+            if is_ip_address(ip_range):  # Only process if it's an IP address
+                label = get_ip_version(ip_range)
+                range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+                range_entry = {
+                    "range_id": range_id,
+                    "range": ip_range,
+                    "rule_id": rule["id"],
+                }
+                if label == "Ipv6Range":
+                    ranges_list_ipv6.append(range_entry)
+                else:
+                    ranges_list_ipv4.append(range_entry)
+            else:
+                range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+                ranges_list_ipv4.append({
+                    "range_id": range_id,
+                    "range": ip_range,
+                    "rule_id": rule["id"],
+                })
+
+        # Handled the case where, if the list is not present then just take the single IP
+        if not rule.get("source_address_prefixes") and rule.get("source_address_prefix"):
+            ip_range = rule.get("source_address_prefix")
+            if is_ip_address(ip_range):
+                label = get_ip_version(ip_range)
+                range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+                range_entry = {
+                    "range_id": range_id,
+                    "range": ip_range,
+                    "rule_id": rule["id"],
+                }
+                if label == "Ipv6Range":
+                    ranges_list_ipv6.append(range_entry)
+                else:
+                    ranges_list_ipv4.append(range_entry)
+            else:
+                range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+                ranges_list_ipv4.append({
+                    "range_id": range_id,
+                    "range": ip_range,
+                    "rule_id": rule["id"],
+                })
+
+    # executing queries for ipv4 and ipv6
+    if ranges_list_ipv4:
+        tx.run(
+            ingest_range_ipv4,
+            ranges_list=ranges_list_ipv4,
+            azure_update_tag=update_tag,
+        )
+
+    if ranges_list_ipv6:
+        tx.run(
+            ingest_range_ipv6,
+            ranges_list=ranges_list_ipv6,
+            azure_update_tag=update_tag,
+        )
+
     for network_security_rule in network_security_rules_list:
         resource_group = get_azure_resource_group_name(network_security_rule.get('id'))
         _attack_resource_group_network_security_rules(tx, network_security_rule['id'], resource_group, update_tag)
