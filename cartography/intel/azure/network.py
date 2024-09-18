@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 from typing import Dict
 from typing import List
@@ -11,8 +12,6 @@ from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
-
-import ipaddress
 
 logger = logging.getLogger(__name__)
 azure_console_link = AzureLinker()
