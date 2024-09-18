@@ -934,9 +934,9 @@ def _load_network_security_rules_tx(
     n.destination_port_range = rule.destination_port_range,
     n.type = rule.type
     SET n.name = rule.name,
-    n.region= rule.location,
+    n.region = rule.location,
     n.lastupdated = $azure_update_tag,
-    n.etag=rule.etag
+    n.etag = rule.etag
     WITH n, rule
     MATCH (s:AzureNetworkSecurityGroup{id: rule.security_group_id})
     MERGE (s)-[r:CONTAIN]->(n)
@@ -977,8 +977,18 @@ def _load_network_security_rules_tx(
     ranges_list_ipv4 = []
     ranges_list_ipv6 = []
 
+    # Helper function to check if a value is an IP address
+    def is_ip_address(value: str) -> bool:
+        try:
+            ipaddress.ip_network(value, strict=False)
+            return True
+        except ValueError:
+            return False
+
     # Helper function to differentiate between Ipv4 and Ipv6
     def get_ip_version(ip_range: str) -> str:
+        if ip_range == "*":
+            return "IpRange"
         try:
             ip_obj = ipaddress.ip_network(ip_range, strict=False)
             return "Ipv6Range" if ip_obj.version == 6 else "IpRange"
@@ -988,32 +998,48 @@ def _load_network_security_rules_tx(
     # Iterate over the security rules and categorize IP ranges
     for rule in network_security_rules_list:
         for ip_range in rule.get("source_address_prefixes", []):
-            label = get_ip_version(ip_range)
-            range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
-            range_entry = {
-                "range_id": range_id,
-                "range": ip_range,
-                "rule_id": rule["id"],
-            }
-            if label == "Ipv6Range":
-                ranges_list_ipv6.append(range_entry)
+            if is_ip_address(ip_range):  # Only process if it's an IP address
+                label = get_ip_version(ip_range)
+                range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+                range_entry = {
+                    "range_id": range_id,
+                    "range": ip_range,
+                    "rule_id": rule["id"],
+                }
+                if label == "Ipv6Range":
+                    ranges_list_ipv6.append(range_entry)
+                else:
+                    ranges_list_ipv4.append(range_entry)
             else:
-                ranges_list_ipv4.append(range_entry)
+                range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+                ranges_list_ipv4.append({
+                    "range_id": range_id,
+                    "range": ip_range,
+                    "rule_id": rule["id"],
+                })
 
         # Handled the case where, if the list is not present then just take the single IP
         if not rule.get("source_address_prefixes") and rule.get("source_address_prefix"):
             ip_range = rule.get("source_address_prefix")
-            label = get_ip_version(ip_range)
-            range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
-            range_entry = {
-                "range_id": range_id,
-                "range": ip_range,
-                "rule_id": rule["id"],
-            }
-            if label == "Ipv6Range":
-                ranges_list_ipv6.append(range_entry)
+            if is_ip_address(ip_range):
+                label = get_ip_version(ip_range)
+                range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+                range_entry = {
+                    "range_id": range_id,
+                    "range": ip_range,
+                    "rule_id": rule["id"],
+                }
+                if label == "Ipv6Range":
+                    ranges_list_ipv6.append(range_entry)
+                else:
+                    ranges_list_ipv4.append(range_entry)
             else:
-                ranges_list_ipv4.append(range_entry)
+                range_id = f"AzureNetworkSecurityRule/{rule['id']}/ipRange/{ip_range}"
+                ranges_list_ipv4.append({
+                    "range_id": range_id,
+                    "range": ip_range,
+                    "rule_id": rule["id"],
+                })
 
     # executing queries for ipv4 and ipv6
     if ranges_list_ipv4:
