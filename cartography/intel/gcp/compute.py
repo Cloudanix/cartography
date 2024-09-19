@@ -1449,16 +1449,36 @@ def _attach_firewall_public_ip_address(neo4j_session: neo4j.Session, fw: Resourc
     )
 
 
+def determine_ip_type(ip_range: str) -> str:
+    """
+    Helper function to determine if an IP range is IPv4 or IPv6.
+    :param ip_range: The IP range as a string
+    :return: 'IPv4' if it's an IPv4 range, 'IPv6' if it's an IPv6 range, or 'Invalid' if neither.
+    """
+    try:
+        ip = ipaddress.ip_network(ip_range.split('/')[0], strict=False)
+        if isinstance(ip, ipaddress.IPv4Network):
+            return 'IPv4'
+        elif isinstance(ip, ipaddress.IPv6Network):
+            return 'IPv6'
+    except ValueError:
+        return 'IPv4'
+
+
 @timeit
 def _attach_firewall_rules(neo4j_session: neo4j.Session, fw: Resource, gcp_update_tag: int) -> None:
     """
-    Attach the allow_rules to the Firewall object
+    Attach the allow_rules and deny_rules to the Firewall object, forming IpRule nodes.
+    This function also creates separate IpRange (for IPv4) and Ipv6Range nodes.
+
     :param neo4j_session: The Neo4j session
     :param fw: The Firewall object
-    :param gcp_update_tag: The timestamp
-    :return: Nothing
+    :param gcp_update_tag: The timestamp for updates
+    :return: None
     """
-    template = Template("""
+
+    # query that makes
+    query_ipv4 = Template("""
     MATCH (fw:GCPFirewall{id: $FwPartialUri})
 
     MERGE (rule:IpRule:IpPermissionInbound:GCPIpRule{id: $RuleId})
@@ -1482,26 +1502,68 @@ def _attach_firewall_rules(neo4j_session: neo4j.Session, fw: Resource, gcp_updat
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """)
-    for list_type in 'transformed_allow_list', 'transformed_deny_list':
+
+    query_ipv6 = Template("""
+    MATCH (fw:GCPFirewall{id: $FwPartialUri})
+
+    MERGE (rule:IpRule:IpPermissionInbound:GCPIpRule{id: $RuleId})
+    ON CREATE SET rule.firstseen = timestamp(),
+    rule.ruleid = $RuleId
+    SET rule.protocol = $Protocol,
+    rule.fromport = $FromPort,
+    rule.toport = $ToPort,
+    rule.lastupdated = $gcp_update_tag
+
+    MERGE (rng:Ipv6Range{id: $Range})
+    ON CREATE SET rng.firstseen = timestamp(),
+    rng.range = $Range
+    SET rng.lastupdated = $gcp_update_tag
+
+    MERGE (rng)-[m:MEMBER_OF_IP_RULE]->(rule)
+    ON CREATE SET m.firstseen = timestamp()
+    SET m.lastupdated = $gcp_update_tag
+
+    MERGE (fw)<-[r:$fw_rule_relationship_label]-(rule)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $gcp_update_tag
+    """)
+
+    for list_type in ['transformed_allow_list', 'transformed_deny_list']:
         if list_type == 'transformed_allow_list':
             label = "ALLOWED_BY"
         else:
             label = "DENIED_BY"
-        for rule in fw[list_type]:
-            # It is possible for sourceRanges to not be specified for this rule
-            # If sourceRanges is not specified then the rule must specify sourceTags.
-            # Since an IP range cannot have a tag applied to it, it is ok if we don't ingest this rule.
+
+        for rule in fw.get(list_type, []):
+            # Iterate over all source ranges (IP addresses or CIDRs)
             for ip_range in fw.get('sourceRanges', []):
-                neo4j_session.run(
-                    template.safe_substitute(fw_rule_relationship_label=label),
-                    FwPartialUri=fw['id'],
-                    RuleId=rule['ruleid'],
-                    Protocol=rule['protocol'],
-                    FromPort=rule.get('fromport'),
-                    ToPort=rule.get('toport'),
-                    Range=ip_range,
-                    gcp_update_tag=gcp_update_tag,
-                )
+                ip_type = determine_ip_type(ip_range)
+
+                if ip_type == 'IPv4':
+                    # Run the query for IPv4 ranges
+                    neo4j_session.run(
+                        query_ipv4.safe_substitute(fw_rule_relationship_label=label),
+                        FwPartialUri=fw['id'],
+                        RuleId=rule['ruleid'],
+                        Protocol=rule['protocol'],
+                        FromPort=rule.get('fromport'),
+                        ToPort=rule.get('toport'),
+                        Range=ip_range,
+                        gcp_update_tag=gcp_update_tag,
+                    )
+
+                elif ip_type == 'IPv6':
+                    # Run the query for IPv6 ranges
+                    neo4j_session.run(
+                        query_ipv6.safe_substitute(fw_rule_relationship_label=label),
+                        FwPartialUri=fw['id'],
+                        RuleId=rule['ruleid'],
+                        Protocol=rule['protocol'],
+                        FromPort=rule.get('fromport'),
+                        ToPort=rule.get('toport'),
+                        Range=ip_range,
+                        gcp_update_tag=gcp_update_tag,
+                    )
 
 
 @timeit
