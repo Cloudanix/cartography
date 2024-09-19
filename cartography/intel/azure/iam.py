@@ -564,12 +564,7 @@ def get_roles_list(subscription_id: str, client: AuthorizationManagementClient, 
         role_definitions_list = list(
             map(lambda x: x.as_dict(), client.role_definitions.list(scope=f"/subscriptions/{subscription_id}")),
         )
-
         for role in role_definitions_list:
-
-            role['name'] = role.get('name', '')
-            role['type'] = role.get('properties', {}).get('type')
-            role['roleName'] = role.get('properties', {}).get('roleName', '')
             role['consolelink'] = azure_console_link.get_console_link(
                 id=role['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
@@ -629,12 +624,12 @@ def _load_roles_tx(
     i.name = role.role_name,
     i.consolelink = role.consolelink,
     i.region = $region,
-    i.create_date = $createDate,
+    i.create_date = $createDate
+    SET i.lastupdated = $update_tag,
+    i.roleName = role.role_name,
+    i.permissions = role.permissions,
     i.type = role.type,
     i.role_type = role.role_type
-    SET i.lastupdated = $update_tag,
-    i.roleName = role.roleName,
-    i.permissions = role.permissions
     WITH i,role
     MATCH (t:AzureTenant{id: $tenant_id})
     MERGE (t)-[tr:RESOURCE]->(i)
