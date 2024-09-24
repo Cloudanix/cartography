@@ -7,6 +7,7 @@ from typing import List
 from typing import Optional
 
 import neo4j
+import requests
 from packaging.requirements import InvalidRequirement
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -106,7 +107,7 @@ def get(token: str, api_url: str, organization: str) -> List[Dict]:
         api_url,
         organization,
         GITHUB_ORG_REPOS_PAGINATED_GRAPHQL,
-        'repositories',
+        "repositories",
     )
     return repos.nodes
 
@@ -124,22 +125,26 @@ def transform(repos_json: List[Dict]) -> Dict:
     transformed_repo_owners: List[Dict] = []
     # See https://docs.github.com/en/graphql/reference/enums#repositorypermission
     transformed_collaborators: Dict[str, List[Any]] = {
-        'ADMIN': [], 'MAINTAIN': [], 'READ': [], 'TRIAGE': [], 'WRITE': [],
+        "ADMIN": [],
+        "MAINTAIN": [],
+        "READ": [],
+        "TRIAGE": [],
+        "WRITE": [],
     }
     transformed_requirements_files: List[Dict] = []
     for repo_object in repos_json:
-        _transform_repo_languages(repo_object['url'], repo_object, transformed_repo_languages)
+        _transform_repo_languages(repo_object["url"], repo_object, transformed_repo_languages)
         _transform_repo_objects(repo_object, transformed_repo_list)
-        _transform_repo_owners(repo_object['owner']['url'], repo_object, transformed_repo_owners)
-        _transform_collaborators(repo_object['collaborators'], repo_object['url'], transformed_collaborators)
-        _transform_requirements_txt(repo_object['requirements'], repo_object['url'], transformed_requirements_files)
-        _transform_setup_cfg_requirements(repo_object['setupCfg'], repo_object['url'], transformed_requirements_files)
+        _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
+        _transform_collaborators(repo_object["collaborators"], repo_object["url"], transformed_collaborators)
+        _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
+        _transform_setup_cfg_requirements(repo_object["setupCfg"], repo_object["url"], transformed_requirements_files)
     results = {
-        'repos': transformed_repo_list,
-        'repo_languages': transformed_repo_languages,
-        'repo_owners': transformed_repo_owners,
-        'repo_collaborators': transformed_collaborators,
-        'python_requirements': transformed_requirements_files,
+        "repos": transformed_repo_list,
+        "repo_languages": transformed_repo_languages,
+        "repo_owners": transformed_repo_owners,
+        "repo_collaborators": transformed_collaborators,
+        "python_requirements": transformed_requirements_files,
     }
     return results
 
@@ -168,33 +173,35 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
     :return: Nothing
     """
     # Create a unique ID for a GitHubBranch node representing the default branch of this repo object.
-    dbr = input_repo_object['defaultBranchRef']
-    default_branch_name = dbr['name'] if dbr else None
-    default_branch_id = _create_default_branch_id(input_repo_object['url'], dbr['id']) if dbr else None
+    dbr = input_repo_object["defaultBranchRef"]
+    default_branch_name = dbr["name"] if dbr else None
+    default_branch_id = _create_default_branch_id(input_repo_object["url"], dbr["id"]) if dbr else None
 
     # Create a git:// URL from the given SSH URL, if it exists.
-    ssh_url = input_repo_object.get('sshUrl')
+    ssh_url = input_repo_object.get("sshUrl")
     git_url = _create_git_url_from_ssh_url(ssh_url) if ssh_url else None
 
-    out_repo_list.append({
-        'id': input_repo_object['url'],
-        'createdat': input_repo_object['createdAt'],
-        'name': input_repo_object['name'],
-        'fullname': input_repo_object['nameWithOwner'],
-        'description': input_repo_object['description'],
-        'primarylanguage': input_repo_object['primaryLanguage'],
-        'homepage': input_repo_object['homepageUrl'],
-        'defaultbranch': default_branch_name,
-        'defaultbranchid': default_branch_id,
-        'private': input_repo_object['isPrivate'],
-        'disabled': input_repo_object['isDisabled'],
-        'archived': input_repo_object['isArchived'],
-        'locked': input_repo_object['isLocked'],
-        'giturl': git_url,
-        'url': input_repo_object['url'],
-        'sshurl': ssh_url,
-        'updatedat': input_repo_object['updatedAt'],
-    })
+    out_repo_list.append(
+        {
+            "id": input_repo_object["url"],
+            "createdat": input_repo_object["createdAt"],
+            "name": input_repo_object["name"],
+            "fullname": input_repo_object["nameWithOwner"],
+            "description": input_repo_object["description"],
+            "primarylanguage": input_repo_object["primaryLanguage"],
+            "homepage": input_repo_object["homepageUrl"],
+            "defaultbranch": default_branch_name,
+            "defaultbranchid": default_branch_id,
+            "private": input_repo_object["isPrivate"],
+            "disabled": input_repo_object["isDisabled"],
+            "archived": input_repo_object["isArchived"],
+            "locked": input_repo_object["isLocked"],
+            "giturl": git_url,
+            "url": input_repo_object["url"],
+            "sshurl": ssh_url,
+            "updatedat": input_repo_object["updatedAt"],
+        },
+    )
 
 
 def _transform_repo_owners(owner_id: str, repo: Dict, repo_owners: List[Dict]) -> None:
@@ -205,12 +212,14 @@ def _transform_repo_owners(owner_id: str, repo: Dict, repo_owners: List[Dict]) -
     :param repo_owners: Output array to append transformed results to.
     :return: Nothing.
     """
-    repo_owners.append({
-        'repo_id': repo['url'],
-        'owner': repo['owner']['login'],
-        'owner_id': owner_id,
-        'type': repo['owner']['__typename'],
-    })
+    repo_owners.append(
+        {
+            "repo_id": repo["url"],
+            "owner": repo["owner"]["login"],
+            "owner_id": owner_id,
+            "type": repo["owner"]["__typename"],
+        },
+    )
 
 
 def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Dict]) -> None:
@@ -221,12 +230,14 @@ def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Di
     :param repo_languages: Output array to append transformed results to.
     :return: Nothing.
     """
-    if repo['languages']['totalCount'] > 0:
-        for language in repo['languages']['nodes']:
-            repo_languages.append({
-                'repo_id': repo_url,
-                'language_name': language['name'],
-            })
+    if repo["languages"]["totalCount"] > 0:
+        for language in repo["languages"]["nodes"]:
+            repo_languages.append(
+                {
+                    "repo_id": repo_url,
+                    "language_name": language["name"],
+                },
+            )
 
 
 def _transform_collaborators(collaborators: Dict, repo_url: str, transformed_collaborators: Dict) -> None:
@@ -241,9 +252,9 @@ def _transform_collaborators(collaborators: Dict, repo_url: str, transformed_col
     """
     # `collaborators` is sometimes None
     if collaborators:
-        for idx, user in enumerate(collaborators['nodes']):
-            user_permission = collaborators['edges'][idx]['permission']
-            user['repo_url'] = repo_url
+        for idx, user in enumerate(collaborators["nodes"]):
+            user_permission = collaborators["edges"][idx]["permission"]
+            user["repo_url"] = repo_url
             transformed_collaborators[user_permission].append(user)
 
 
@@ -259,8 +270,8 @@ def _transform_requirements_txt(
     :param out_requirements_files: Output array to append transformed results to.
     :return: Nothing.
     """
-    if req_file_contents and req_file_contents.get('text'):
-        text_contents = req_file_contents['text']
+    if req_file_contents and req_file_contents.get("text"):
+        text_contents = req_file_contents["text"]
         requirements_list = text_contents.split("\n")
         _transform_python_requirements(requirements_list, repo_url, out_requirements_files)
 
@@ -277,9 +288,9 @@ def _transform_setup_cfg_requirements(
     :param out_requirements_files: Output array to append transformed results to.
     :return: Nothing.
     """
-    if not setup_cfg_contents or not setup_cfg_contents.get('text'):
+    if not setup_cfg_contents or not setup_cfg_contents.get("text"):
         return
-    text_contents = setup_cfg_contents['text']
+    text_contents = setup_cfg_contents["text"]
     setup_cfg = configparser.ConfigParser()
     try:
         setup_cfg.read_string(text_contents)
@@ -307,8 +318,8 @@ def _transform_python_requirements(
     """
     parsed_list = []
     for line in requirements_list:
-        stripped_line = line.partition('#')[0].strip()
-        if stripped_line == '':
+        stripped_line = line.partition("#")[0].strip()
+        if stripped_line == "":
             continue
         try:
             req = Requirement(stripped_line)
@@ -316,7 +327,7 @@ def _transform_python_requirements(
         except InvalidRequirement:
             # INFO and not WARN/ERROR as we intentionally don't support all ways to specify Python requirements
             logger.info(
-                f"Failed to parse line \"{line}\" in repo {repo_url}'s requirements.txt; skipping line.",
+                f'Failed to parse line "{line}" in repo {repo_url}\'s requirements.txt; skipping line.',
                 exc_info=True,
             )
 
@@ -324,26 +335,28 @@ def _transform_python_requirements(
         pinned_version = None
         if len(req.specifier) == 1:
             specifier = next(iter(req.specifier))
-            if specifier.operator == '==':
+            if specifier.operator == "==":
                 pinned_version = specifier.version
 
         # Set `spec` to a default value. Example values for str(req.specifier): "<4.0,>=3.0" or "==1.0.0".
         spec: Optional[str] = str(req.specifier)
         # Set spec to `None` instead of empty string so that the Neo4j driver will leave the library.specifier field
         # undefined. As convention, we prefer undefined values over empty strings in the graph.
-        if spec == '':
+        if spec == "":
             spec = None
 
         canon_name = canonicalize_name(req.name)
         requirement_id = f"{canon_name}|{pinned_version}" if pinned_version else canon_name
 
-        out_requirements_files.append({
-            "id": requirement_id,
-            "name": canon_name,
-            "specifier": spec,
-            "version": pinned_version,
-            "repo_url": repo_url,
-        })
+        out_requirements_files.append(
+            {
+                "id": requirement_id,
+                "name": canon_name,
+                "specifier": spec,
+                "version": pinned_version,
+                "repo_url": repo_url,
+            },
+        )
 
 
 def parse_setup_cfg(config: configparser.ConfigParser) -> List[str]:
@@ -472,13 +485,13 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
 
         # INFO: Only Organization is supported
         # account_type = {'User': "GitHubUser", 'Organization': "GitHubOrganization"}
-        account_type = {'Organization': "GitHubOrganization"}
+        account_type = {"Organization": "GitHubOrganization"}
 
         neo4j_session.run(
-            ingest_owner_template.safe_substitute(account_type=account_type[owner['type']]),
-            Id=owner['owner'],
-            UserName=owner['owner'],
-            RepoId=owner['repo_id'],
+            ingest_owner_template.safe_substitute(account_type=account_type[owner["type"]]),
+            Id=owner["owner"],
+            UserName=owner["owner"],
+            RepoId=owner["repo_id"],
             UpdateTag=update_tag,
         )
 
@@ -514,11 +527,11 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
 
 @timeit
 def load(neo4j_session: neo4j.Session, common_job_parameters: Dict, repo_data: Dict) -> None:
-    load_github_repos(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repos'])
-    load_github_owners(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_owners'])
-    load_github_languages(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_languages'])
-    load_collaborators(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_collaborators'])
-    load_python_requirements(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['python_requirements'])
+    load_github_repos(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repos"])
+    load_github_owners(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_owners"])
+    load_github_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_languages"])
+    load_collaborators(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_collaborators"])
+    load_python_requirements(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["python_requirements"])
 
 
 @timeit
@@ -545,12 +558,42 @@ def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requ
     )
 
 
+def get_org_repos(org_name, access_token):
+    # GitHub API endpoint for listing organization repositories
+    url = f"https://api.github.com/orgs/{org_name}/repos"
+
+    # Headers for authentication and API version
+    headers = {"Authorization": f"token {access_token}", "Accept": "application/vnd.github.v3+json"}
+
+    all_repos = []
+    page = 1
+
+    while True:
+        # Make the API request
+        response = requests.get(url, headers=headers, params={"page": page, "per_page": 100})
+
+        # Check if the request was successful
+        if response.status_code == 200:
+            repos = response.json()
+            if not repos:
+                break  # No more repositories to fetch
+
+            all_repos.extend(repos)
+            page += 1
+        else:
+            print(f"Error: {response.status_code}")
+            print(response.text)
+            break
+
+    return all_repos
+
+
 def sync(
-        neo4j_session: neo4j.Session,
-        common_job_parameters: Dict[str, Any],
-        github_api_key: str,
-        github_url: str,
-        organization: str,
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+    github_api_key: str,
+    github_url: str,
+    organization: str,
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync github data
@@ -562,8 +605,10 @@ def sync(
     :return: Nothing
     """
     logger.info("Syncing GitHub repos")
+
+    # repos_list = get_org_repos(organization, github_api_key)
     repos_json = get(github_api_key, github_url, organization)
     repo_data = transform(repos_json)
     load(neo4j_session, common_job_parameters, repo_data)
 
-    run_cleanup_job('github_repos_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("github_repos_cleanup.json", neo4j_session, common_job_parameters)
