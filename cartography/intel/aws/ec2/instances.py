@@ -72,7 +72,9 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
 @timeit
 @aws_handle_regions
 def get_roles_from_instance_profile(
-    boto3_session: boto3.session.Session, region: str, instance_profile_arn,
+    boto3_session: boto3.session.Session,
+    region: str,
+    instance_profile_arn,
 ) -> List[Dict]:
     iam_client = boto3_session.client("iam", region_name=region, config=get_botocore_config())
     try:
@@ -85,7 +87,10 @@ def get_roles_from_instance_profile(
 
 
 def transform_ec2_instances(
-    boto3_session: boto3.session.Session, reservations: List[Dict[str, Any]], region: str, current_aws_account_id: str,
+    boto3_session: boto3.session.Session,
+    reservations: List[Dict[str, Any]],
+    region: str,
+    current_aws_account_id: str,
 ) -> Ec2Data:
     reservation_list = []
     instance_list = []
@@ -382,7 +387,7 @@ def load_ec2_instance_data(
     nic_list: List[Dict[str, Any]],
     ebs_volumes_list: List[Dict[str, Any]],
 ) -> None:
-    role_data = [role for instance in instance_list for role in instance.get("Roles", [])]
+    role_data = [role for instance in instance_list for role in instance.get("IamRoles", [])]
     load_ec2_reservations(neo4j_session, reservation_list, region, current_aws_account_id, update_tag)
     load_ec2_instance_nodes(neo4j_session, instance_list, region, current_aws_account_id, update_tag)
     load_ec2_subnets(neo4j_session, subnet_list, region, current_aws_account_id, update_tag)
