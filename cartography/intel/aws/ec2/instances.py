@@ -56,8 +56,8 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
 
     except ClientError as e:
         if (
-            e.response["Error"]["Code"] == "AccessDeniedException"
-            or e.response["Error"]["Code"] == "UnauthorizedOperation"
+            e.response["Error"]["Code"] == "AccessDeniedException" or
+            e.response["Error"]["Code"] == "UnauthorizedOperation"
         ):
             logger.warning(
                 "ec2:describe_security_groups failed with AccessDeniedException; continuing sync.",
@@ -361,7 +361,7 @@ def load_ec2_roles(
 ) -> None:
     ingest_role_instance_relations = """
     UNWIND $roles as role
-    MERGE (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.Arn})
+    MATCH (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.Arn})
     MERGE (instance)-[r:USES]->(roleNode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
