@@ -899,6 +899,7 @@ def load_gcp_instances(session: neo4j.Session, instances_list: List[Dict], gcp_u
     logger.info(f"Loading instances  {len(instances_list)}")
     for paginated_instances in batch(instances_list, size=500):
         session.write_transaction(load_gcp_instances_tx, paginated_instances, gcp_update_tag)
+
     for instance in instances_list:
         _attach_instance_tags(session, instance, gcp_update_tag)
         _attach_gcp_nics(session, instance, gcp_update_tag)

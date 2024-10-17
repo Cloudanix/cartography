@@ -63,7 +63,7 @@ def get_ecs_container_instances(
         container_instance_arns.extend(page.get("containerInstanceArns", []))
     includes = ["CONTAINER_INSTANCE_HEALTH"]
     for i in range(0, len(container_instance_arns), 100):
-        container_instance_arn_chunk = container_instance_arns[i : i + 100]
+        container_instance_arn_chunk = container_instance_arns[i: i + 100]
         container_instance_chunk = client.describe_container_instances(
             cluster=cluster_arn,
             containerInstances=container_instance_arn_chunk,
@@ -83,7 +83,7 @@ def get_ecs_services(cluster_arn: str, boto3_session: boto3.session.Session, reg
     for page in paginator.paginate(cluster=cluster_arn):
         service_arns.extend(page.get("serviceArns", []))
     for i in range(0, len(service_arns), 10):
-        service_arn_chunk = service_arns[i : i + 10]
+        service_arn_chunk = service_arns[i: i + 10]
         service_chunk = client.describe_services(
             cluster=cluster_arn,
             services=service_arn_chunk,
@@ -119,7 +119,7 @@ def get_ecs_tasks(cluster_arn: str, boto3_session: boto3.session.Session, region
     for page in paginator.paginate(cluster=cluster_arn):
         task_arns.extend(page.get("taskArns", []))
     for i in range(0, len(task_arns), 100):
-        task_arn_chunk = task_arns[i : i + 100]
+        task_arn_chunk = task_arns[i: i + 100]
         task_chunk = client.describe_tasks(
             cluster=cluster_arn,
             tasks=task_arn_chunk,

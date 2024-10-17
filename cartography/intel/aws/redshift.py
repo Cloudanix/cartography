@@ -21,15 +21,15 @@ aws_console_link = AWSLinker()
 @aws_handle_regions
 def get_redshift_reserved_node(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     try:
-        client = boto3_session.client('redshift', region_name=region, config=get_botocore_config())
-        paginator = client.get_paginator('describe_reserved_nodes')
+        client = boto3_session.client("redshift", region_name=region, config=get_botocore_config())
+        paginator = client.get_paginator("describe_reserved_nodes")
         reserved_nodes: List = []
         for page in paginator.paginate():
-            reserved_nodes.extend(page['ReservedNodes'])
+            reserved_nodes.extend(page["ReservedNodes"])
         return reserved_nodes
 
     except ClientError as e:
-        logger.error(f'Failed to call redshift describe_reserved_nodes: {region} - {e}')
+        logger.error(f"Failed to call redshift describe_reserved_nodes: {region} - {e}")
         return reserved_nodes
 
 
@@ -37,21 +37,27 @@ def get_redshift_reserved_node(boto3_session: boto3.session.Session, region: str
 def transform_reserved_nodes(nds: List[Dict], region: str, current_aws_account_id: str) -> List[Dict]:
     reserved_nodes = []
     for reserved_node in nds:
-        reserved_node['region'] = region
-        reserved_node['arn'] = f"arn:aws:redshift:{region}:{current_aws_account_id}:reserved-node/{reserved_node['ReservedNodeId']}"
-        reserved_node['consolelink'] = aws_console_link.get_console_link(arn=reserved_node['arn'])
+        reserved_node["region"] = region
+        reserved_node["arn"] = (
+            f"arn:aws:redshift:{region}:{current_aws_account_id}:reserved-node/{reserved_node['ReservedNodeId']}"
+        )
+        reserved_node["consolelink"] = aws_console_link.get_console_link(arn=reserved_node["arn"])
         reserved_nodes.append(reserved_node)
 
     return reserved_nodes
 
 
-def load_redshift_reserved_node(session: neo4j.Session, reserved_nodes: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
+def load_redshift_reserved_node(
+    session: neo4j.Session, reserved_nodes: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     session.write_transaction(_load_redshift_reserved_node_tx, reserved_nodes, current_aws_account_id, aws_update_tag)
 
 
 @timeit
 def _load_redshift_reserved_node_tx(
-    tx: neo4j.Transaction, data: List[Dict], current_aws_account_id: str,
+    tx: neo4j.Transaction,
+    data: List[Dict],
+    current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
     ingest_rds_secgroup = """
@@ -89,13 +95,17 @@ def _load_redshift_reserved_node_tx(
 
 
 def cleanup_redshift_reserved_node(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_redshift_reserved_nodes_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("aws_import_redshift_reserved_nodes_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync_redshift_reserved_node(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     data = []
     for region in regions:
@@ -112,33 +122,37 @@ def sync_redshift_reserved_node(
 @timeit
 @aws_handle_regions
 def get_redshift_cluster_data(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
-    client = boto3_session.client('redshift', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('describe_clusters')
+    client = boto3_session.client("redshift", region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator("describe_clusters")
     clusters: List[Dict] = []
     for page in paginator.paginate():
-        clusters.extend(page['Clusters'])
+        clusters.extend(page["Clusters"])
     for cluster in clusters:
-        cluster['region'] = region
+        cluster["region"] = region
     return clusters
 
 
 def _make_redshift_cluster_arn(region: str, aws_account_id: str, cluster_identifier: str) -> str:
     """Cluster ARN format: https://docs.aws.amazon.com/redshift/latest/mgmt/redshift-iam-access-control-overview.html"""
-    return f'arn:aws:redshift:{region}:{aws_account_id}:cluster:{cluster_identifier}'
+    return f"arn:aws:redshift:{region}:{aws_account_id}:cluster:{cluster_identifier}"
 
 
 def transform_redshift_cluster_data(clusters: List[Dict], current_aws_account_id: str) -> None:
     for cluster in clusters:
-        cluster['arn'] = _make_redshift_cluster_arn(
-            cluster['region'], current_aws_account_id, cluster["ClusterIdentifier"],
+        cluster["arn"] = _make_redshift_cluster_arn(
+            cluster["region"],
+            current_aws_account_id,
+            cluster["ClusterIdentifier"],
         )
-        cluster['ClusterCreateTime'] = str(cluster['ClusterCreateTime']) if 'ClusterCreateTime' in cluster else None
+        cluster["ClusterCreateTime"] = str(cluster["ClusterCreateTime"]) if "ClusterCreateTime" in cluster else None
 
 
 @timeit
 def load_redshift_cluster_data(
-    neo4j_session: neo4j.Session, clusters: List[Dict],
-    current_aws_account_id: str, aws_update_tag: int,
+    neo4j_session: neo4j.Session,
+    clusters: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
 ) -> None:
     ingest_cluster = """
     MERGE (cluster:RedshiftCluster{id: $Arn})
@@ -169,25 +183,31 @@ def load_redshift_cluster_data(
     """
 
     for cluster in clusters:
+        endpoint_address = ""
+        endpoint_port = ""
+        if cluster.get("Endpoint"):
+            endpoint_address = cluster.get("Endpoint").get("Address")
+            endpoint_port = cluster.get("Endpoint").get("Port")
+
         neo4j_session.run(
             ingest_cluster,
-            Arn=cluster['arn'],
-            consolelink=aws_console_link.get_console_link(arn=cluster['arn']),
-            AZ=cluster['AvailabilityZone'],
-            ClusterCreateTime=cluster['ClusterCreateTime'],
-            ClusterIdentifier=cluster['ClusterIdentifier'],
-            ClusterRevisionNumber=cluster['ClusterRevisionNumber'],
-            ClusterStatus=cluster['ClusterStatus'],
-            DBName=cluster['DBName'],
-            Encrypted=cluster['Encrypted'],
-            EndpointAddress=cluster.get('Endpoint').get('Address'),    # type: ignore
-            EndpointPort=cluster.get('Endpoint').get('Port'),   # type: ignore
-            MasterUsername=cluster['MasterUsername'],
-            NodeType=cluster['NodeType'],
-            NumberOfNodes=cluster['NumberOfNodes'],
-            PubliclyAccessible=cluster['PubliclyAccessible'],
-            VpcId=cluster.get('VpcId'),
-            Region=cluster['region'],
+            Arn=cluster["arn"],
+            consolelink=aws_console_link.get_console_link(arn=cluster["arn"]),
+            AZ=cluster["AvailabilityZone"],
+            ClusterCreateTime=cluster["ClusterCreateTime"],
+            ClusterIdentifier=cluster["ClusterIdentifier"],
+            ClusterRevisionNumber=cluster["ClusterRevisionNumber"],
+            ClusterStatus=cluster["ClusterStatus"],
+            DBName=cluster["DBName"],
+            Encrypted=cluster["Encrypted"],
+            EndpointAddress=endpoint_address,
+            EndpointPort=endpoint_port,  # type: ignore
+            MasterUsername=cluster["MasterUsername"],
+            NodeType=cluster["NodeType"],
+            NumberOfNodes=cluster["NumberOfNodes"],
+            PubliclyAccessible=cluster["PubliclyAccessible"],
+            VpcId=cluster.get("VpcId"),
+            Region=cluster["region"],
             AWS_ACCOUNT_ID=current_aws_account_id,
             aws_update_tag=aws_update_tag,
         )
@@ -199,7 +219,9 @@ def load_redshift_cluster_data(
 
 
 @timeit
-def _attach_ec2_security_groups(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int, account_id: str) -> None:
+def _attach_ec2_security_groups(
+    neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int, account_id: str,
+) -> None:
     attach_cluster_to_group = """
     MATCH (c:RedshiftCluster{id:$ClusterArn})
     MERGE (sg:EC2SecurityGroup{id:$GroupId})
@@ -208,16 +230,16 @@ def _attach_ec2_security_groups(neo4j_session: neo4j.Session, cluster: Dict, aws
     ON CREATE SET m.firstseen = timestamp()
     SET m.lastupdated = $aws_update_tag
     """
-    for group in cluster.get('VpcSecurityGroups', []):
-        region = group.get('region', '')
+    for group in cluster.get("VpcSecurityGroups", []):
+        region = group.get("region", "")
         group_id = group.get("GroupId")
         group_arn = f"arn:aws:ec2:{region}:{account_id}:security-group/{group_id}"
         consolelink = aws_console_link.get_console_link(arn=group_arn)
         neo4j_session.run(
             attach_cluster_to_group,
-            ClusterArn=cluster['arn'],
+            ClusterArn=cluster["arn"],
             consolelink=consolelink,
-            GroupId=group['VpcSecurityGroupId'],
+            GroupId=group["VpcSecurityGroupId"],
             aws_update_tag=aws_update_tag,
         )
 
@@ -231,11 +253,11 @@ def _attach_iam_roles(neo4j_session: neo4j.Session, cluster: Dict, aws_update_ta
     ON CREATE SET s.firstseen = timestamp()
     SET s.lastupdated = $aws_update_tag
     """
-    for role in cluster.get('IamRoles', []):
+    for role in cluster.get("IamRoles", []):
         neo4j_session.run(
             attach_cluster_to_role,
-            ClusterArn=cluster['arn'],
-            RoleArn=role['IamRoleArn'],
+            ClusterArn=cluster["arn"],
+            RoleArn=role["IamRoleArn"],
             aws_update_tag=aws_update_tag,
         )
 
@@ -249,11 +271,11 @@ def _attach_aws_vpc(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag:
     ON CREATE SET m.firstseen = timestamp()
     SET m.lastupdated = $aws_update_tag
     """
-    if cluster.get('VpcId'):
+    if cluster.get("VpcId"):
         neo4j_session.run(
             attach_cluster_to_vpc,
-            ClusterArn=cluster['arn'],
-            VpcId=cluster['VpcId'],
+            ClusterArn=cluster["arn"],
+            VpcId=cluster["VpcId"],
             aws_update_tag=aws_update_tag,
         )
 
@@ -268,11 +290,11 @@ def _attach_aws_network_interface(neo4j_session: neo4j.Session, cluster: Dict, a
         ON CREATE SET m.firstseen = timestamp()
         SET m.lastupdated = $aws_update_tag
     """
-    for vpc_endpoint in cluster.get('VpcEndpoints', []):
+    for vpc_endpoint in cluster.get("VpcEndpoints", []):
         neo4j_session.run(
             attach_cluster_to_network_interface,
-            ClusterArn=cluster['arn'],
-            NetworkInterfaces=vpc_endpoint['NetworkInterfaces'],
+            ClusterArn=cluster["arn"],
+            NetworkInterfaces=vpc_endpoint["NetworkInterfaces"],
             aws_update_tag=aws_update_tag,
         )
 
@@ -287,24 +309,28 @@ def _attach_aws_ec2_subnet(neo4j_session: neo4j.Session, cluster: Dict, aws_upda
         ON CREATE SET m.firstseen = timestamp()
         SET m.lastupdated = $aws_update_tag
     """
-    for vpc_endpoint in cluster.get('VpcEndpoints', []):
+    for vpc_endpoint in cluster.get("VpcEndpoints", []):
         neo4j_session.run(
             attach_cluster_to_ec2_subnet,
-            ClusterArn=cluster['arn'],
-            NetworkInterfaces=vpc_endpoint['NetworkInterfaces'],
+            ClusterArn=cluster["arn"],
+            NetworkInterfaces=vpc_endpoint["NetworkInterfaces"],
             aws_update_tag=aws_update_tag,
         )
 
 
 @timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_redshift_clusters_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("aws_import_redshift_clusters_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync_redshift_clusters(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: str,
-    current_aws_account_id: str, aws_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: str,
+    current_aws_account_id: str,
+    aws_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     data = []
     for region in regions:
@@ -318,19 +344,31 @@ def sync_redshift_clusters(
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
 
     logger.info("Syncing Redshift clusters for account '%s', at %s.", current_aws_account_id, tic)
     sync_redshift_clusters(
-        neo4j_session, boto3_session, regions,
-        current_aws_account_id, update_tag, common_job_parameters,
+        neo4j_session,
+        boto3_session,
+        regions,
+        current_aws_account_id,
+        update_tag,
+        common_job_parameters,
     )
     sync_redshift_reserved_node(
-        neo4j_session, boto3_session, regions,
-        current_aws_account_id, update_tag, common_job_parameters,
+        neo4j_session,
+        boto3_session,
+        regions,
+        current_aws_account_id,
+        update_tag,
+        common_job_parameters,
     )
     cleanup(neo4j_session, common_job_parameters)
 
