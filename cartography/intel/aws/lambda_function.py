@@ -29,14 +29,16 @@ def get_lambda_data(boto3_session: boto3.session.Session, region: str) -> List[D
     """
     Create an Lambda boto3 client and grab all the lambda functions.
     """
-    client = boto3_session.client('lambda', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('list_functions')
+    client = boto3_session.client("lambda", region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator("list_functions")
     lambda_functions = []
     for page in paginator.paginate():
-        for each_function in page['Functions']:
-            each_function['region'] = region
-            each_function['consolelink'] = aws_console_link.get_console_link(arn=each_function['FunctionArn'])
-            each_function['FunctionUrl'] = get_lambda_function_url_config(boto3_session, each_function['FunctionName'], region)
+        for each_function in page["Functions"]:
+            each_function["region"] = region
+            each_function["consolelink"] = aws_console_link.get_console_link(arn=each_function["FunctionArn"])
+            each_function["FunctionUrl"] = get_lambda_function_url_config(
+                boto3_session, each_function["FunctionName"], region,
+            )
             lambda_functions.append(each_function)
 
     return lambda_functions
@@ -44,11 +46,15 @@ def get_lambda_data(boto3_session: boto3.session.Session, region: str) -> List[D
 
 @timeit
 def get_lambda_function_url_config(boto3_session: boto3.session.Session, function_name: str, region: str) -> str:
-
-    client = boto3_session.client('lambda', region_name=region, config=get_botocore_config())
+    client = boto3_session.client("lambda", region_name=region, config=get_botocore_config())
     try:
         url_config = client.get_function_url_config(FunctionName=function_name)
-        return url_config['FunctionUrl']
+        return url_config["FunctionUrl"]
+
+    except client.exceptions.ResourceNotFoundException as e:
+        logger.debug(f"unable to fetch function url - ResourceNotFoundException: {region} - {function_name} - {e}")
+        return None
+
     except ClientError as e:
         logger.debug(f"Unable to fetch function URL for {function_name}: {e}")
         return None
@@ -60,18 +66,20 @@ def get_lambda_policies(boto3_session: boto3.session.Session, region: str, lambd
     """
     Fetch policies for lambdas
     """
-    client = boto3_session.client('lambda', region_name=region, config=get_botocore_config())
+    client = boto3_session.client("lambda", region_name=region, config=get_botocore_config())
     for lambda_function in lambda_functions:
         try:
-            policy = client.get_policy(FunctionName=lambda_function['FunctionArn'])
+            policy = client.get_policy(FunctionName=lambda_function["FunctionArn"])
             if policy is not None:
-                parsed_policy = Policy(json.loads(policy['Policy']))
-                lambda_function['anonymous_access'] = parsed_policy.is_internet_accessible()
-                lambda_function['anonymous_actions'] = list(parsed_policy.internet_accessible_actions())
+                parsed_policy = Policy(json.loads(policy["Policy"]))
+                lambda_function["anonymous_access"] = parsed_policy.is_internet_accessible()
+                lambda_function["anonymous_actions"] = list(parsed_policy.internet_accessible_actions())
 
         except ClientError as e:
-            if e.response['Error']['Code'] in ("ResourceNotFoundException"):
-                logger.debug(f"unable to fetch function policy: {region} - {lambda_function['FunctionArn']} - {e}")
+            if e.response["Error"]["Code"] in ("ResourceNotFoundException"):
+                logger.debug(
+                    f"unable to fetch function policy - ResourceNotFoundException: {region} - {lambda_function['FunctionArn']} - {e}",
+                )
                 continue
 
             else:
@@ -83,7 +91,10 @@ def get_lambda_policies(boto3_session: boto3.session.Session, region: str, lambd
 
 @timeit
 def load_lambda_functions(
-        neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+    neo4j_session: neo4j.Session,
+    data: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
 ) -> None:
     ingest_lambda_functions = """
     UNWIND $lambda_functions_list AS lf
@@ -145,9 +156,9 @@ def load_lambda_functions(
 @aws_handle_regions
 def get_function_aliases(lambda_function: Dict, client: botocore.client.BaseClient) -> List[Any]:
     aliases: List[Any] = []
-    paginator = client.get_paginator('list_aliases')
-    for page in paginator.paginate(FunctionName=lambda_function['FunctionName']):
-        aliases.extend(page['Aliases'])
+    paginator = client.get_paginator("list_aliases")
+    for page in paginator.paginate(FunctionName=lambda_function["FunctionName"]):
+        aliases.extend(page["Aliases"])
 
     return aliases
 
@@ -156,9 +167,9 @@ def get_function_aliases(lambda_function: Dict, client: botocore.client.BaseClie
 @aws_handle_regions
 def get_event_source_mappings(lambda_function: Dict, client: botocore.client.BaseClient) -> List[Any]:
     event_source_mappings: List[Any] = []
-    paginator = client.get_paginator('list_event_source_mappings')
-    for page in paginator.paginate(FunctionName=lambda_function['FunctionName']):
-        event_source_mappings.extend(page['EventSourceMappings'])
+    paginator = client.get_paginator("list_event_source_mappings")
+    for page in paginator.paginate(FunctionName=lambda_function["FunctionName"]):
+        event_source_mappings.extend(page["EventSourceMappings"])
 
     return event_source_mappings
 
@@ -166,21 +177,24 @@ def get_event_source_mappings(lambda_function: Dict, client: botocore.client.Bas
 @timeit
 @aws_handle_regions
 def get_lambda_function_details(
-        boto3_session: boto3.session.Session, data: List[Dict],
+    boto3_session: boto3.session.Session,
+    data: List[Dict],
 ) -> Generator[Any, Any, None]:
     for lambda_function in data:
-        region = lambda_function['region']
-        client = boto3_session.client('lambda', region_name=region, config=get_botocore_config())
+        region = lambda_function["region"]
+        client = boto3_session.client("lambda", region_name=region, config=get_botocore_config())
         function_aliases = get_function_aliases(lambda_function, client)
         event_source_mappings = get_event_source_mappings(lambda_function, client)
-        layers = lambda_function.get('Layers', [])
-        yield lambda_function['FunctionArn'], function_aliases, event_source_mappings, layers, region
+        layers = lambda_function.get("Layers", [])
+        yield lambda_function["FunctionArn"], function_aliases, event_source_mappings, layers, region
 
 
 @timeit
 def load_lambda_function_details(
-        neo4j_session: neo4j.Session, lambda_function_details: List[Tuple[str, List[Dict], List[Dict], List[Dict]]],
-        update_tag: int, current_aws_account_id: str,
+    neo4j_session: neo4j.Session,
+    lambda_function_details: List[Tuple[str, List[Dict], List[Dict], List[Dict]]],
+    update_tag: int,
+    current_aws_account_id: str,
 ) -> None:
     lambda_aliases: List[Dict] = []
     lambda_event_source_mappings: List[Dict] = []
@@ -188,24 +202,30 @@ def load_lambda_function_details(
     for function_arn, aliases, event_source_mappings, layers, region in lambda_function_details:
         if len(aliases) > 0:
             for alias in aliases:
-                alias['FunctionArn'] = function_arn
-                function_name = function_arn.split(':')[-1]
-                alias['region'] = region
-                alias['consolelink'] = aws_console_link.get_console_link(arn=f"arn:aws:lambda::{current_aws_account_id}:alias/{function_name}")
+                alias["FunctionArn"] = function_arn
+                function_name = function_arn.split(":")[-1]
+                alias["region"] = region
+                alias["consolelink"] = aws_console_link.get_console_link(
+                    arn=f"arn:aws:lambda::{current_aws_account_id}:alias/{function_name}",
+                )
             lambda_aliases.extend(aliases)
         if len(event_source_mappings) > 0:
             for event in event_source_mappings:
-                event['FunctionArn'] = function_arn
-                function_name = function_arn.split(':')[-1]
-                event['region'] = region
-                event['consolelink'] = aws_console_link.get_console_link(arn=f"arn:aws:lambda::{current_aws_account_id}:event-source-mapping/{function_name}")
+                event["FunctionArn"] = function_arn
+                function_name = function_arn.split(":")[-1]
+                event["region"] = region
+                event["consolelink"] = aws_console_link.get_console_link(
+                    arn=f"arn:aws:lambda::{current_aws_account_id}:event-source-mapping/{function_name}",
+                )
             lambda_event_source_mappings.extend(event_source_mappings)
         if len(layers) > 0:
             for layer in layers:
-                layer['FunctionArn'] = function_arn
-                function_name = function_arn.split(':')[-1]
-                layer['consolelink'] = aws_console_link.get_console_link(arn=f"arn:aws:lambda::{current_aws_account_id}:layer/{function_name}")
-                layer['region'] = region
+                layer["FunctionArn"] = function_arn
+                function_name = function_arn.split(":")[-1]
+                layer["consolelink"] = aws_console_link.get_console_link(
+                    arn=f"arn:aws:lambda::{current_aws_account_id}:layer/{function_name}",
+                )
+                layer["region"] = region
             lambda_layers.extend(layers)
 
     _load_lambda_function_aliases(neo4j_session, lambda_aliases, update_tag)
@@ -243,7 +263,9 @@ def _load_lambda_function_aliases(neo4j_session: neo4j.Session, lambda_aliases: 
 
 @timeit
 def _load_lambda_event_source_mappings(
-        neo4j_session: neo4j.Session, lambda_event_source_mappings: List[Dict], update_tag: int,
+    neo4j_session: neo4j.Session,
+    lambda_event_source_mappings: List[Dict],
+    update_tag: int,
 ) -> None:
     ingest_esms = """
     UNWIND $esm_list AS esm
@@ -311,13 +333,17 @@ def _load_lambda_layers(neo4j_session: neo4j.Session, lambda_layers: List[Dict],
 
 @timeit
 def cleanup_lambda(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_lambda_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("aws_import_lambda_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync_lambda_functions(
-        neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str],
-        current_aws_account_id: str, aws_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     data = []
     for region in regions:
@@ -337,15 +363,24 @@ def sync_lambda_functions(
 
 @timeit
 def sync(
-        neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str],
-        current_aws_account_id: str, update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
 
     logger.info("Syncing Lambda for account '%s', at %s.", current_aws_account_id, tic)
 
     sync_lambda_functions(
-        neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters,
+        neo4j_session,
+        boto3_session,
+        regions,
+        current_aws_account_id,
+        update_tag,
+        common_job_parameters,
     )
 
     toc = time.perf_counter()
