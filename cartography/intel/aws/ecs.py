@@ -24,19 +24,21 @@ aws_console_link = AWSLinker()
 @aws_handle_regions
 def get_ecs_clusters(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     try:
-        client = boto3_session.client('ecs', region_name=region, config=get_botocore_config())
-        paginator = client.get_paginator('list_clusters')
+        client = boto3_session.client("ecs", region_name=region, config=get_botocore_config())
+        paginator = client.get_paginator("list_clusters")
         cluster_arns: List[str] = []
 
         for page in paginator.paginate():
-            cluster_arns.extend(page.get('clusterArns', []))
+            cluster_arns.extend(page.get("clusterArns", []))
 
         clusters: List[Dict] = []
         for cluster_arn in cluster_arns:
-            clusters.append({
-                'arn': cluster_arn,
-                'region': region,
-            })
+            clusters.append(
+                {
+                    "arn": cluster_arn,
+                    "region": region,
+                },
+            )
 
         return clusters
 
@@ -53,76 +55,76 @@ def get_ecs_container_instances(
     boto3_session: boto3.session.Session,
     region: str,
 ) -> List[Dict[str, Any]]:
-    client = boto3_session.client('ecs', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('list_container_instances')
+    client = boto3_session.client("ecs", region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator("list_container_instances")
     container_instances: List[Dict[str, Any]] = []
     container_instance_arns: List[str] = []
     for page in paginator.paginate(cluster=cluster_arn):
-        container_instance_arns.extend(page.get('containerInstanceArns', []))
-    includes = ['CONTAINER_INSTANCE_HEALTH']
+        container_instance_arns.extend(page.get("containerInstanceArns", []))
+    includes = ["CONTAINER_INSTANCE_HEALTH"]
     for i in range(0, len(container_instance_arns), 100):
-        container_instance_arn_chunk = container_instance_arns[i:i + 100]
+        container_instance_arn_chunk = container_instance_arns[i : i + 100]
         container_instance_chunk = client.describe_container_instances(
             cluster=cluster_arn,
             containerInstances=container_instance_arn_chunk,
             include=includes,
         )
-        container_instances.extend(container_instance_chunk.get('containerInstances', []))
+        container_instances.extend(container_instance_chunk.get("containerInstances", []))
     return container_instances
 
 
 @timeit
 @aws_handle_regions
 def get_ecs_services(cluster_arn: str, boto3_session: boto3.session.Session, region: str) -> List[Dict[str, Any]]:
-    client = boto3_session.client('ecs', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('list_services')
+    client = boto3_session.client("ecs", region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator("list_services")
     services: List[Dict[str, Any]] = []
     service_arns: List[str] = []
     for page in paginator.paginate(cluster=cluster_arn):
-        service_arns.extend(page.get('serviceArns', []))
+        service_arns.extend(page.get("serviceArns", []))
     for i in range(0, len(service_arns), 10):
-        service_arn_chunk = service_arns[i:i + 10]
+        service_arn_chunk = service_arns[i : i + 10]
         service_chunk = client.describe_services(
             cluster=cluster_arn,
             services=service_arn_chunk,
         )
-        services.extend(service_chunk.get('services', []))
+        services.extend(service_chunk.get("services", []))
     return services
 
 
 @timeit
 @aws_handle_regions
 def get_ecs_task_definitions(boto3_session: boto3.session.Session, region: str) -> List[Dict[str, Any]]:
-    client = boto3_session.client('ecs', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('list_task_definitions')
+    client = boto3_session.client("ecs", region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator("list_task_definitions")
     task_definitions: List[Dict[str, Any]] = []
     task_definition_arns: List[str] = []
     for page in paginator.paginate():
-        task_definition_arns.extend(page.get('taskDefinitionArns', []))
+        task_definition_arns.extend(page.get("taskDefinitionArns", []))
     for arn in task_definition_arns:
         task_definition = client.describe_task_definition(
             taskDefinition=arn,
         )
-        task_definitions.append(task_definition['taskDefinition'])
+        task_definitions.append(task_definition["taskDefinition"])
     return task_definitions
 
 
 @timeit
 @aws_handle_regions
 def get_ecs_tasks(cluster_arn: str, boto3_session: boto3.session.Session, region: str) -> List[Dict[str, Any]]:
-    client = boto3_session.client('ecs', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('list_tasks')
+    client = boto3_session.client("ecs", region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator("list_tasks")
     tasks: List[Dict[str, Any]] = []
     task_arns: List[str] = []
     for page in paginator.paginate(cluster=cluster_arn):
-        task_arns.extend(page.get('taskArns', []))
+        task_arns.extend(page.get("taskArns", []))
     for i in range(0, len(task_arns), 100):
-        task_arn_chunk = task_arns[i:i + 100]
+        task_arn_chunk = task_arns[i : i + 100]
         task_chunk = client.describe_tasks(
             cluster=cluster_arn,
             tasks=task_arn_chunk,
         )
-        tasks.extend(task_chunk.get('tasks', []))
+        tasks.extend(task_chunk.get("tasks", []))
     return tasks
 
 
@@ -206,7 +208,7 @@ def load_ecs_container_instances(
     """
     instances: List[Dict[str, Any]] = []
     for instance in data:
-        instance['registeredAt'] = dict_date_to_epoch(instance, 'registeredAt')
+        instance["registeredAt"] = dict_date_to_epoch(instance, "registeredAt")
         instances.append(instance)
 
     neo4j_session.run(
@@ -269,7 +271,7 @@ def load_ecs_services(
     """  # noqa:E501
     services: List[Dict[str, Any]] = []
     for service in data:
-        service['createdAt'] = dict_date_to_epoch(service, 'createdAt')
+        service["createdAt"] = dict_date_to_epoch(service, "createdAt")
         services.append(service)
 
     neo4j_session.run(
@@ -326,15 +328,15 @@ def load_ecs_task_definitions(
     container_definitions: List[Dict[str, Any]] = []
     task_definitions: List[Dict[str, Any]] = []
     for task_definition in data:
-        task_definition['registeredAt'] = dict_date_to_epoch(task_definition, 'registeredAt')
-        task_definition['deregisteredAt'] = dict_date_to_epoch(task_definition, 'deregisteredAt')
+        task_definition["registeredAt"] = dict_date_to_epoch(task_definition, "registeredAt")
+        task_definition["deregisteredAt"] = dict_date_to_epoch(task_definition, "deregisteredAt")
 
         # handle revision number in task definitions
-        arn = task_definition['taskDefinitionArn']
-        if len(arn.split(':')) > 6:
-            arn = arn[:arn.rfind(':')]
+        arn = task_definition["taskDefinitionArn"]
+        if len(arn.split(":")) > 6:
+            arn = arn[: arn.rfind(":")]
 
-        task_definition['consolelink'] = aws_console_link.get_console_link(arn=arn)
+        task_definition["consolelink"] = aws_console_link.get_console_link(arn=arn)
 
         for container in task_definition.get("containerDefinitions", []):
             container["_taskDefinitionArn"] = task_definition["taskDefinitionArn"]
@@ -421,14 +423,14 @@ def load_ecs_tasks(
     containers: List[Dict[str, Any]] = []
     tasks: List[Dict[str, Any]] = []
     for task in data:
-        task['connectivityAt'] = dict_date_to_epoch(task, 'connectivityAt')
-        task['createdAt'] = dict_date_to_epoch(task, 'createdAt')
-        task['executionStoppedAt'] = dict_date_to_epoch(task, 'executionStoppedAt')
-        task['pullStartedAt'] = dict_date_to_epoch(task, 'pullStartedAt')
-        task['pullStoppedAt'] = dict_date_to_epoch(task, 'pullStoppedAt')
-        task['startedAt'] = dict_date_to_epoch(task, 'startedAt')
-        task['stoppedAt'] = dict_date_to_epoch(task, 'stoppedAt')
-        task['stoppingAt'] = dict_date_to_epoch(task, 'stoppingAt')
+        task["connectivityAt"] = dict_date_to_epoch(task, "connectivityAt")
+        task["createdAt"] = dict_date_to_epoch(task, "createdAt")
+        task["executionStoppedAt"] = dict_date_to_epoch(task, "executionStoppedAt")
+        task["pullStartedAt"] = dict_date_to_epoch(task, "pullStartedAt")
+        task["pullStoppedAt"] = dict_date_to_epoch(task, "pullStoppedAt")
+        task["startedAt"] = dict_date_to_epoch(task, "startedAt")
+        task["stoppedAt"] = dict_date_to_epoch(task, "stoppedAt")
+        task["stoppingAt"] = dict_date_to_epoch(task, "stoppingAt")
         containers.extend(task["containers"])
         tasks.append(task)
 
@@ -545,13 +547,17 @@ def load_ecs_containers(
 
 @timeit
 def cleanup_ecs(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_ecs_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("aws_import_ecs_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
 
@@ -567,71 +573,71 @@ def sync(
     # TODO: also include attachment info, and make relationships between the attachments
     # and the cluster.
     clusters: List[Dict[str, Any]] = []
-    includes = ['SETTINGS', 'CONFIGURATIONS']
+    includes = ["SETTINGS", "CONFIGURATIONS"]
     for i in range(0, len(cluster_arns)):
-        region = cluster_arns[i]['region']
-        client = boto3_session.client('ecs', region_name=region, config=get_botocore_config())
-        cluster_arn_chunk = [cluster_arns[i]['arn']]
+        region = cluster_arns[i]["region"]
+        client = boto3_session.client("ecs", region_name=region, config=get_botocore_config())
+        cluster_arn_chunk = [cluster_arns[i]["arn"]]
         cluster_chunk = client.describe_clusters(clusters=cluster_arn_chunk, include=includes)
-        clusters_data = cluster_chunk.get('clusters', [])
+        clusters_data = cluster_chunk.get("clusters", [])
 
         for cluster in clusters_data:
-            cluster['region'] = region
+            cluster["region"] = region
 
         clusters.extend(clusters_data)
 
     load_ecs_clusters(neo4j_session, clusters, current_aws_account_id, update_tag)
     for cluster_arn in cluster_arns:
         cluster_instances = get_ecs_container_instances(
-            cluster_arn['arn'],
+            cluster_arn["arn"],
             boto3_session,
-            cluster_arn['region'],
+            cluster_arn["region"],
         )
         load_ecs_container_instances(
             neo4j_session,
-            cluster_arn['arn'],
+            cluster_arn["arn"],
             cluster_instances,
-            cluster_arn['region'],
+            cluster_arn["region"],
             current_aws_account_id,
             update_tag,
         )
-        # task_definitions = get_ecs_task_definitions(
-        #     boto3_session,
-        #     cluster_arn['region'],
-        # )
-        # load_ecs_task_definitions(
-        #     neo4j_session,
-        #     task_definitions,
-        #     cluster_arn['region'],
-        #     current_aws_account_id,
-        #     update_tag,
-        # )
-        # services = get_ecs_services(
-        #     cluster_arn['arn'],
-        #     boto3_session,
-        #     cluster_arn['region'],
-        # )
-        # load_ecs_services(
-        #     neo4j_session,
-        #     cluster_arn['arn'],
-        #     services,
-        #     cluster_arn['region'],
-        #     current_aws_account_id,
-        #     update_tag,
-        # )
-        # tasks = get_ecs_tasks(
-        #     cluster_arn['arn'],
-        #     boto3_session,
-        #     cluster_arn['region'],
-        # )
-        # load_ecs_tasks(
-        #     neo4j_session,
-        #     cluster_arn['arn'],
-        #     tasks,
-        #     cluster_arn['region'],
-        #     current_aws_account_id,
-        #     update_tag,
-        # )
+        task_definitions = get_ecs_task_definitions(
+            boto3_session,
+            cluster_arn["region"],
+        )
+        load_ecs_task_definitions(
+            neo4j_session,
+            task_definitions,
+            cluster_arn["region"],
+            current_aws_account_id,
+            update_tag,
+        )
+        services = get_ecs_services(
+            cluster_arn["arn"],
+            boto3_session,
+            cluster_arn["region"],
+        )
+        load_ecs_services(
+            neo4j_session,
+            cluster_arn["arn"],
+            services,
+            cluster_arn["region"],
+            current_aws_account_id,
+            update_tag,
+        )
+        tasks = get_ecs_tasks(
+            cluster_arn["arn"],
+            boto3_session,
+            cluster_arn["region"],
+        )
+        load_ecs_tasks(
+            neo4j_session,
+            cluster_arn["arn"],
+            tasks,
+            cluster_arn["region"],
+            current_aws_account_id,
+            update_tag,
+        )
     cleanup_ecs(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

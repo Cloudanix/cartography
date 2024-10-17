@@ -137,8 +137,8 @@ def transform(repos_json: List[Dict]) -> Dict:
         _transform_repo_objects(repo_object, transformed_repo_list)
         _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
         _transform_collaborators(repo_object["collaborators"], repo_object["url"], transformed_collaborators)
-        _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
-        _transform_setup_cfg_requirements(repo_object["setupCfg"], repo_object["url"], transformed_requirements_files)
+        # _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
+        # _transform_setup_cfg_requirements(repo_object["setupCfg"], repo_object["url"], transformed_requirements_files)
     results = {
         "repos": transformed_repo_list,
         "repo_languages": transformed_repo_languages,
