@@ -44,12 +44,13 @@ STATUS_FAILURE = 1
 STATUS_KEYBOARD_INTERRUPT = 130
 DEFAULT_BATCH_SIZE = 1000
 
-def get_azure_resource_group_name(id:str)->None:
-    resource_group=''
-    id=id.lower()
-    if id is not None and 'resourcegroups' in id:
-        x = id.split('/')
-        resource_group = x[x.index('resourcegroups') + 1]
+
+def get_azure_resource_group_name(id: str) -> None:
+    resource_group = ""
+    id = id.lower()
+    if id is not None and "resourcegroups" in id:
+        x = id.split("/")
+        resource_group = x[x.index("resourcegroups") + 1]
         return resource_group
     return resource_group
 
@@ -58,7 +59,7 @@ def run_analysis_job(
     filename: str,
     neo4j_session: neo4j.Session,
     common_job_parameters: Dict,
-    package: str = 'cartography.data.jobs.analysis',
+    package: str = "cartography.data.jobs.analysis",
 ) -> None:
     """
     Enriches existing graph data with analysis jobs. This is designed for use with the sync stage
@@ -78,12 +79,13 @@ def run_analysis_job(
         get_job_shortname(filename),
     )
 
+
 def run_analysis_and_ensure_deps(
-        analysis_job_name: str,
-        resource_dependencies: Set[str],
-        requested_syncs: Set[str],
-        common_job_parameters: Dict[str, Any],
-        neo4j_session: neo4j.Session,
+    analysis_job_name: str,
+    resource_dependencies: Set[str],
+    requested_syncs: Set[str],
+    common_job_parameters: Dict[str, Any],
+    neo4j_session: neo4j.Session,
 ) -> None:
     """
     Runs analysis job only if the given set of resource dependencies was included in the requested_syncs.
@@ -113,7 +115,7 @@ def run_scoped_analysis_job(
     filename: str,
     neo4j_session: neo4j.Session,
     common_job_parameters: Dict,
-    package: str = 'cartography.data.jobs.scoped_analysis',
+    package: str = "cartography.data.jobs.scoped_analysis",
 ) -> None:
     """
     Enriches existing graph data scoped to a given sub resource - e.g. the current AWS account.
@@ -129,8 +131,10 @@ def run_scoped_analysis_job(
 
 
 def run_cleanup_job(
-    filename: str, neo4j_session: neo4j.Session, common_job_parameters: Dict,
-    package: str = 'cartography.data.jobs.cleanup',
+    filename: str,
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict,
+    package: str = "cartography.data.jobs.cleanup",
 ) -> None:
     try:
         GraphJob.run_from_json(
@@ -155,7 +159,7 @@ def merge_module_sync_metadata(
     update_tag: int,
     stat_handler: ScopedStatsClient,
 ) -> None:
-    '''
+    """
     This creates `ModuleSyncMetadata` nodes when called from each of the individual modules or sub-modules.
     The 'types' used here should be actual node labels. For example, if we did sync a particular AWSAccount's S3Buckets,
     the `grouptype` is 'AWSAccount', the `groupid` is the particular account's `id`, and the `syncedtype` is 'S3Bucket'.
@@ -165,7 +169,7 @@ def merge_module_sync_metadata(
     :param group_id: The parent module's id
     :param synced_type: The sub-module's type
     :param update_tag: Timestamp used to determine data freshness
-    '''
+    """
     template = Template("""
         MERGE (n:ModuleSyncMetadata{id:'${group_type}_${group_id}_${synced_type}'})
         ON CREATE SET
@@ -179,15 +183,15 @@ def merge_module_sync_metadata(
         template.safe_substitute(group_type=group_type, group_id=group_id, synced_type=synced_type),
         UPDATE_TAG=update_tag,
     )
-    stat_handler.incr(f'{group_type}_{group_id}_{synced_type}_lastupdated', update_tag)
+    stat_handler.incr(f"{group_type}_{group_id}_{synced_type}_lastupdated", update_tag)
 
 
 def load_resource_binary(package: str, resource_name: str) -> BinaryIO:
     return open_binary(package, resource_name)
 
 
-R = TypeVar('R')
-F = TypeVar('F', bound=Callable[..., Any])
+R = TypeVar("R")
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def timeit(method: F) -> F:
@@ -196,6 +200,7 @@ def timeit(method: F) -> F:
     This is only active if config.statsd_enabled is True.
     :param method: The function to measure execution
     """
+
     # Allow access via `inspect` to the wrapped function. This is used in integration tests to standardize param names.
     @wraps(method)
     def timed(*args, **kwargs):  # type: ignore
@@ -219,27 +224,27 @@ def aws_paginate(
     object_name: str,
     **kwargs: Any,
 ) -> List[Dict]:
-    '''
+    """
     Helper method for boilerplate boto3 pagination
     The **kwargs will be forwarded to the paginator
-    '''
+    """
     paginator = client.get_paginator(method_name)
     items = []
     i = 0
     for i, page in enumerate(paginator.paginate(**kwargs), start=1):
         if i % 100 == 0:
-            logger.info(f'fetching page number {i}')
+            logger.info(f"fetching page number {i}")
         if object_name in page:
             items.extend(page[object_name])
         else:
             logger.warning(
-                f'''aws_paginate: Key "{object_name}" is not present, check if this is a typo.
-If not, then the AWS datatype somehow does not have this key.''',
+                f"""aws_paginate: Key "{object_name}" is not present, check if this is a typo.
+If not, then the AWS datatype somehow does not have this key.""",
             )
     return items
 
 
-AWSGetFunc = TypeVar('AWSGetFunc', bound=Callable[..., List])
+AWSGetFunc = TypeVar("AWSGetFunc", bound=Callable[..., List])
 
 # fix for AWS TooManyRequestsException
 # https://github.com/lyft/cartography/issues/297
@@ -267,13 +272,13 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
     This should be used on `get_` functions that normally return a list of items.
     """
     ERROR_CODES = [
-        'AccessDenied',
-        'AccessDeniedException',
-        'AuthFailure',
-        'InvalidClientTokenId',
-        'UnauthorizedOperation',
-        'UnrecognizedClientException',
-        'InternalServerErrorException',
+        "AccessDenied",
+        "AccessDeniedException",
+        "AuthFailure",
+        "InvalidClientTokenId",
+        "UnauthorizedOperation",
+        "UnrecognizedClientException",
+        "InternalServerErrorException",
     ]
 
     @wraps(func)
@@ -294,11 +299,12 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
         except botocore.exceptions.ClientError as e:
             # The account is not authorized to use this service in this region
             # so we can continue without raising an exception
-            if e.response['Error']['Code'] in ERROR_CODES:
-                logger.warning("{} in this region. Skipping...".format(e.response['Error']['Message']))
+            if e.response["Error"]["Code"] in ERROR_CODES:
+                logger.warning("{} in this region. Skipping...".format(e.response["Error"]["Message"]))
                 return []
             else:
                 raise
+
     return cast(AWSGetFunc, inner_function)
 
 
@@ -327,32 +333,29 @@ def dict_date_to_epoch(obj: Dict, key: str) -> Optional[int]:
 
 
 def camel_to_snake(name: str) -> str:
-    return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 def batch(items: Iterable, size: int = DEFAULT_BATCH_SIZE) -> List[List]:
-    '''
+    """
     Takes an Iterable of items and returns a list of lists of the same items,
      batched into chunks of the provided `size`.
 
     Use:
     x = [1,2,3,4,5,6,7,8]
     batch(x, size=3) -> [[1, 2, 3], [4, 5, 6], [7, 8]]
-    '''
+    """
     items = list(items)
-    return [
-        items[i: i + size]
-        for i in range(0, len(items), size)
-    ]
+    return [items[i: i + size] for i in range(0, len(items), size)]
 
 
 def is_throttling_exception(exc: Exception) -> bool:
-    '''
+    """
     Returns True if the exception is caused by a client libraries throttling mechanism
-    '''
+    """
     # https://boto3.amazonaws.com/v1/documentation/api/1.19.9/guide/error-handling.html
     if isinstance(exc, botocore.exceptions.ClientError):
-        if exc.response['Error']['Code'] in ['LimitExceededException', 'Throttling']:
+        if exc.response["Error"]["Code"] in ["LimitExceededException", "Throttling"]:
             return True
     # add other exceptions here, if needed, like:
     # https://cloud.google.com/python/docs/reference/storage/1.39.0/retry_timeout#configuring-retries
@@ -362,7 +365,7 @@ def is_throttling_exception(exc: Exception) -> bool:
 
 
 def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaitable[R]:
-    '''
+    """
     Returns a Future that will run a function and its arguments in the default threadpool.
     Helper until we start using python 3.9's asyncio.to_thread
 
@@ -392,8 +395,8 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
     NOTE: to use this in a Jupyter notebook, you need to do:
     # import nest_asyncio
     # nest_asyncio.apply()
-    '''
-    CartographyThrottlingException = type('CartographyThrottlingException', (Exception,), {})
+    """
+    CartographyThrottlingException = type("CartographyThrottlingException", (Exception,), {})
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> R:
@@ -411,7 +414,7 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
 
 
 def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
-    '''
+    """
     Synchronously waits for the Awaitable(s) to complete and returns their result(s).
     See https://docs.python.org/3.8/library/asyncio-task.html#asyncio-awaitables
 
@@ -433,10 +436,11 @@ def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
     future_2 = another_async_func(2)
 
     results = to_synchronous(future_1, future_2)
-    '''
+    """
     return asyncio.get_event_loop().run_until_complete(asyncio.gather(*awaitables))
 
-def make_requests_url(url: str,access_token: str, return_raw: bool = False):
+
+def make_requests_url(url: str, access_token: str, return_raw: bool = False):
     try:
         headers = {
             "Accept": "application/json",
@@ -447,7 +451,7 @@ def make_requests_url(url: str,access_token: str, return_raw: bool = False):
             url,
             headers=headers,
         )
-        if response.status_code!=200:
+        if response.status_code != 200:
             return {}
 
         if return_raw:
