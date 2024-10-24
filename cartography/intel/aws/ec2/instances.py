@@ -43,16 +43,45 @@ Ec2Data = namedtuple(
 
 
 @timeit
+def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], region: str) -> Dict[str, Dict]:
+    client = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
+
+    try:
+        response = client.describe_images(ImageIds=image_ids)
+        images = response.get("Images", [])
+
+        # returning a dictionary where the image id is the key and details are values
+        return {image['ImageId']: image for image in images}
+    except ClientError as e:
+        logger.error(f"Error feetching the image details {e}")
+        return {}
+
+
+@timeit
 @aws_handle_regions
 def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     client = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
     reservations = []
+    image_ids = []
     try:
         paginator = client.get_paginator("describe_instances")
         for page in paginator.paginate():
             reservations.extend(page["Reservations"])
+            for reservation in page["Reservations"]:
+                for instance in reservation["Instances"]:
+                    image_id = instance.get("ImageId")
+                    if image_id:
+                        image_ids.append(image_id)
+
+        image_details = get_ec2_images(boto3_session, list(set(image_ids)), region)
+
         for reservation in reservations:
             reservation["region"] = region
+            for instance in reservation["Instances"]:
+                image_id = instance.get("ImageId")
+
+                if image_id and image_id in image_details:
+                    instance["OSDetails"] = image_details[image_id]
 
     except ClientError as e:
         if (
@@ -124,6 +153,12 @@ def transform_ec2_instances(
                 for role in iam_roles:
                     role["InstanceId"] = instance_id
 
+            os_details = instance.get("OSDetails")
+            platform = os_details.get("Platform", "Linux")
+            architecture = os_details.get("Architecture", "Unknown")
+            virtualization_type = os_details.get("VirtualizationType", "Unknown")
+            hypervisor = os_details.get("Hypervisor", "Unknown")
+
             instance_list.append(
                 {
                     "InstanceId": instance_id,
@@ -141,8 +176,10 @@ def transform_ec2_instances(
                     "AvailabilityZone": instance.get("Placement", {}).get("AvailabilityZone"),
                     "Tenancy": instance.get("Placement", {}).get("Tenancy"),
                     "HostResourceGroupArn": instance.get("Placement", {}).get("HostResourceGroupArn"),
-                    "Platform": instance.get("Platform"),
-                    "Architecture": instance.get("Architecture"),
+                    "Platform": platform,
+                    "Architecture": architecture,
+                    "VirtualizationType": virtualization_type,
+                    "Hypervisor": hypervisor,
                     "EbsOptimized": instance.get("EbsOptimized"),
                     "BootMode": instance.get("BootMode"),
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
