@@ -1,3 +1,4 @@
+import copy
 import enum
 import json
 import logging
@@ -316,61 +317,33 @@ def get_list_account_assignments_for_principal(
 @timeit
 def load_identity_center_account_assignments(
     neo4j_session: neo4j.Session,
-    boto3_session: boto3.session.Session,
     assignments: List[Dict],
     permissions_sets: List[Dict],
     instance_arn: str,
+    managed_policies: Dict,
+    inline_policies: Dict,
     current_aws_account_id: str,
-    region: str,
     update_tag: int,
-    principal_name: str,
 ) -> List[str]:
     loaded_permissions_sets = []
     for assignment in assignments:
         for permissions_set in permissions_sets:
-            if permissions_set["PermissionSetArn"] != assignment["PermissionSetArn"]:
-                continue
+            if permissions_set["PermissionSetArn"] == assignment['PermissionSetArn']:
+                permissions_set_id = f"{assignment['PrincipalId']}/{permissions_set['Name']}"
 
-            logger.debug(
-                f"Syncing IdentityStore Permission Set for Principal {principal_name}: {permissions_set['Name']}",
-            )
+                neo4j_session.write_transaction(_load_identity_center_account_assignments_tx, assignment, permissions_set, instance_arn, update_tag)
 
-            permissions_set_id = f"{assignment['PrincipalId']}/{permissions_set['Name']}"
+                if managed_policies.get(permissions_set.get('PermissionSetArn')):
+                    permissions_set_managed_policies = {permissions_set_id: copy.deepcopy(managed_policies[permissions_set['PermissionSetArn']])}
+                    transform_policy_data(permissions_set_managed_policies, PolicyType.managed.value)
+                    load_policy_data(neo4j_session, permissions_set_managed_policies, PolicyType.managed.value, current_aws_account_id, update_tag)
+                if inline_policies.get(permissions_set.get('PermissionSetArn')):
+                    permissions_set_inline_policies = {permissions_set_id: copy.deepcopy(inline_policies[permissions_set['PermissionSetArn']])}
+                    transform_policy_data(permissions_set_inline_policies, PolicyType.inline.value)
+                    load_policy_data(neo4j_session, permissions_set_inline_policies, PolicyType.inline.value, current_aws_account_id, update_tag)
+                loaded_permissions_sets.append(permissions_set['PermissionSetArn'])
 
-            neo4j_session.write_transaction(
-                _load_identity_center_account_assignments_tx,
-                assignment,
-                permissions_set,
-                instance_arn,
-                update_tag,
-            )
-
-            # TODO: optimize this
-            permissions_set["id"] = permissions_set_id
-            managed_policies = get_managed_policies(boto3_session, instance_arn, [permissions_set], region)
-            transform_policy_data(managed_policies, PolicyType.managed.value)
-            load_policy_data(
-                neo4j_session,
-                managed_policies,
-                PolicyType.managed.value,
-                current_aws_account_id,
-                update_tag,
-            )
-
-            inline_policies = get_inline_policy(boto3_session, instance_arn, [permissions_set], region)
-            transform_policy_data(inline_policies, PolicyType.inline.value)
-            load_policy_data(
-                neo4j_session,
-                inline_policies,
-                PolicyType.inline.value,
-                current_aws_account_id,
-                update_tag,
-            )
-            del permissions_set["id"]
-            loaded_permissions_sets.append(permissions_set["PermissionSetArn"])
-
-            break
-
+                break
     return loaded_permissions_sets
 
 
@@ -457,22 +430,19 @@ def sync_identity_center_permissions_sets(
     neo4j_session: neo4j.Session,
     boto3_session: boto3.session.Session,
     instance: Dict,
-    users: list[dict],
-    groups: list[dict],
     aws_update_tag: int,
     region: str,
     current_aws_account_id: str,
 ) -> None:
-    client = get_boto3_client(boto3_session, "sso-admin", region)
-
     permissions_sets = get_identity_center_permissions_sets_list(boto3_session, instance, region)
-    logger.info(f"Processing Identity Center - Permission Sets: {permissions_sets}")
-
+    managed_policies = get_managed_policies(boto3_session, instance["InstanceArn"], permissions_sets, region)
+    inline_policies = get_inline_policy(boto3_session, instance["InstanceArn"], permissions_sets, region)
+    users = get_identity_center_users_list(boto3_session, instance, region)
+    groups = get_identity_center_groups_list(boto3_session, instance, region)
+    client = get_boto3_client(boto3_session, 'sso-admin', region)
     loaded_permissions_sets = []
 
     for user in users:
-        logger.info(f"Syncing Identity Center Permission Set Assignments for User: {user['UserName']}")
-        # TODO: can this be batched?
         assignments = get_list_account_assignments_for_principal(
             client,
             instance["InstanceArn"],
@@ -480,24 +450,19 @@ def sync_identity_center_permissions_sets(
             "USER",
             region,
         )
-        logger.info(f"permission assignments for User - {user['UserName']} - {assignments}")
         loaded_permissions_sets.extend(
             load_identity_center_account_assignments(
                 neo4j_session,
-                boto3_session,
                 assignments,
                 permissions_sets,
                 instance["InstanceArn"],
+                managed_policies,
+                inline_policies,
                 current_aws_account_id,
-                region,
                 aws_update_tag,
-                user["UserName"],
             ),
         )
-
     for group in groups:
-        logger.info(f"Syncing Identity Center Permission Set Assignments for Group: {group['DisplayName']}")
-        # TODO: can this be batched?
         assignments = get_list_account_assignments_for_principal(
             client,
             instance["InstanceArn"],
@@ -505,18 +470,16 @@ def sync_identity_center_permissions_sets(
             "GROUP",
             region,
         )
-        logger.info(f"permission assignments for Group - {group['DisplayName']} - {assignments}")
         loaded_permissions_sets.extend(
             load_identity_center_account_assignments(
                 neo4j_session,
-                boto3_session,
                 assignments,
                 permissions_sets,
                 instance["InstanceArn"],
+                managed_policies,
+                inline_policies,
                 current_aws_account_id,
-                region,
                 aws_update_tag,
-                group["DisplayName"],
             ),
         )
 
@@ -534,11 +497,8 @@ def sync_identity_center_permissions_sets(
         aws_update_tag,
     )
 
-    managed_policies = get_managed_policies(boto3_session, instance["InstanceArn"], unloaded_permissions_sets, region)
     transform_policy_data(managed_policies, PolicyType.managed.value)
     load_policy_data(neo4j_session, managed_policies, PolicyType.managed.value, current_aws_account_id, aws_update_tag)
-
-    inline_policies = get_inline_policy(boto3_session, instance["InstanceArn"], unloaded_permissions_sets, region)
     transform_policy_data(inline_policies, PolicyType.inline.value)
     load_policy_data(neo4j_session, inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
 
@@ -780,34 +740,14 @@ def sync_identitystore(
     organization_id = common_job_parameters["ORGANIZATION_ID"]
     instances = get_identity_center_instances_list(boto3_session, common_job_parameters["IDENTITY_STORE_REGION"])
     for instance in instances:
-        logger.info(f"Processing Identity Center Instance: {instance['Name']} - {instance['InstanceArn']}")
-        # load_identity_center_instance(neo4j_session, instance, aws_update_tag, organization_id)
-
-        users = get_identity_center_users_list(boto3_session, instance, region)
-        logger.info(f"Processing Identity Center - Users: {users}")
-
-        load_identity_center_users(neo4j_session, instance["InstanceArn"], users, aws_update_tag)
-
-        groups = get_identity_center_groups_list(boto3_session, instance, region)
-        logger.info(f"Processing Identity Center - Groups: {groups}")
-
-        load_identity_center_groups(neo4j_session, instance["InstanceArn"], groups, aws_update_tag)
-
-        for group in groups:
-            group_memberships = get_list_group_memberships(boto3_session, group, instance, region)
-            load_identity_center_group_memberships(neo4j_session, group_memberships, aws_update_tag)
-
-        logger.info("Processing Identity Center - Permission Sets")
-        sync_identity_center_permissions_sets(
-            neo4j_session,
-            boto3_session,
-            instance,
-            users,
-            groups,
+        load_identity_center_instance(
+            neo4j_session, instance,
             aws_update_tag,
-            region,
-            current_aws_account_id,
+            organization_id,
         )
+        sync_identity_center_users(neo4j_session, boto3_session, instance, aws_update_tag, region)
+        sync_identity_center_groups(neo4j_session, boto3_session, instance, aws_update_tag, region)
+        sync_identity_center_permissions_sets(neo4j_session, boto3_session, instance, aws_update_tag, region, current_aws_account_id)
 
     cleanup_identitystore(neo4j_session, common_job_parameters)
 
