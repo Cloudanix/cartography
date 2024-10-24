@@ -43,9 +43,8 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
 
         data = {
             "workspace": workspace,
-            "project": cleanse_string(repo['project']['name']),
-            "repository": cleanse_string(repo['slug']),
-
+            "project": cleanse_string(repo["project"]["name"]),
+            "repository": cleanse_string(repo["name"]),
         }
 
         repo['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
