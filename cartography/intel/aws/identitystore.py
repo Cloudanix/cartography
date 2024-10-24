@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 class PolicyType(enum.Enum):
-    managed = 'managed'
-    inline = 'inline'
+    managed = "managed"
+    inline = "inline"
 
 
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
@@ -31,11 +31,11 @@ def get_boto3_client(boto3_session: boto3.session.Session, service: str, region:
 def get_identity_center_instances_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     instances: List[Dict] = []
     try:
-        client = get_boto3_client(boto3_session, 'sso-admin', region)
+        client = get_boto3_client(boto3_session, "sso-admin", region)
 
-        paginator = client.get_paginator('list_instances')
+        paginator = client.get_paginator("list_instances")
         for page in paginator.paginate():
-            instances.extend(page['Instances'])
+            instances.extend(page["Instances"])
 
     except Exception as e:
         logger.warning(
@@ -45,12 +45,22 @@ def get_identity_center_instances_list(boto3_session: boto3.session.Session, reg
 
 
 @timeit
-def load_identity_center_instance(neo4j_session: neo4j.Session, instance: Dict, update_tag: int, organization_id: str) -> None:
+def load_identity_center_instance(
+    neo4j_session: neo4j.Session,
+    instance: Dict,
+    update_tag: int,
+    organization_id: str,
+) -> None:
     neo4j_session.write_transaction(_load_identity_center_instance_tx, instance, update_tag, organization_id)
 
 
 @timeit
-def _load_identity_center_instance_tx(tx: neo4j.Transaction, instance: Dict, update_tag: int, organization_id: str) -> None:
+def _load_identity_center_instance_tx(
+    tx: neo4j.Transaction,
+    instance: Dict,
+    update_tag: int,
+    organization_id: str,
+) -> None:
     ingest_instances = """
         MATCH (i:AWSOrganization{id: $ORGANIZATION_ID})
         SET
@@ -72,15 +82,21 @@ def _load_identity_center_instance_tx(tx: neo4j.Transaction, instance: Dict, upd
 
 
 @timeit
-def get_identity_center_permissions_sets_list(boto3_session: boto3.session.Session, instance: Dict, region: str) -> List[Dict]:
-    client = get_boto3_client(boto3_session, 'sso-admin', region)
+def get_identity_center_permissions_sets_list(
+    boto3_session: boto3.session.Session,
+    instance: Dict,
+    region: str,
+) -> List[Dict]:
+    client = get_boto3_client(boto3_session, "sso-admin", region)
+    iam_client = get_boto3_client(boto3_session, "iam", region)
+    iam_resource = boto3_session.resource("iam")
 
     permission_sets: List[str] = []
     try:
-        paginator = client.get_paginator('list_permission_sets')
+        paginator = client.get_paginator("list_permission_sets")
 
-        for page in paginator.paginate(InstanceArn=instance['InstanceArn']):
-            permission_sets.extend(page['PermissionSets'])
+        for page in paginator.paginate(InstanceArn=instance["InstanceArn"]):
+            permission_sets.extend(page["PermissionSets"])
 
     except Exception as e:
         logger.warning(
@@ -90,7 +106,10 @@ def get_identity_center_permissions_sets_list(boto3_session: boto3.session.Sessi
     permission_sets_list: List[Dict] = []
     for permission_set in permission_sets:
         try:
-            response = client.describe_permission_set(InstanceArn=instance['InstanceArn'], PermissionSetArn=permission_set)
+            response = client.describe_permission_set(
+                InstanceArn=instance["InstanceArn"],
+                PermissionSetArn=permission_set,
+            )
             permission_sets_list.append(response["PermissionSet"])
 
         except Exception as e:
@@ -102,12 +121,27 @@ def get_identity_center_permissions_sets_list(boto3_session: boto3.session.Sessi
 
 
 @timeit
-def load_identity_center_permissions_sets(neo4j_session: neo4j.Session, instance_arn: str, permissions_sets_list: List[Dict], update_tag: int) -> None:
-    neo4j_session.write_transaction(_load_identity_center_permissions_sets_tx, instance_arn, permissions_sets_list, update_tag)
+def load_identity_center_permissions_sets(
+    neo4j_session: neo4j.Session,
+    instance_arn: str,
+    permissions_sets_list: List[Dict],
+    update_tag: int,
+) -> None:
+    neo4j_session.write_transaction(
+        _load_identity_center_permissions_sets_tx,
+        instance_arn,
+        permissions_sets_list,
+        update_tag,
+    )
 
 
 @timeit
-def _load_identity_center_permissions_sets_tx(tx: neo4j.Transaction, instance_arn: str, permissions_sets_list: List[Dict], update_tag: int) -> None:
+def _load_identity_center_permissions_sets_tx(
+    tx: neo4j.Transaction,
+    instance_arn: str,
+    permissions_sets_list: List[Dict],
+    update_tag: int,
+) -> None:
     ingest_permissions_sets = """
     UNWIND $permissions_sets_list AS permissions_set
         MERGE (p:AWSPermissionSet{arn: permissions_set.PermissionSetArn})
@@ -141,27 +175,34 @@ def _load_identity_center_permissions_sets_tx(tx: neo4j.Transaction, instance_ar
 
 
 @timeit
-def get_managed_policies(boto3_session: boto3.session.Session, instance_arn: str, permission_sets: List[Dict], region: str):
+def get_managed_policies(
+    boto3_session: boto3.session.Session,
+    instance_arn: str,
+    permission_sets: List[Dict],
+    region: str,
+):
     managed_policies: Dict = {}
 
-    client = get_boto3_client(boto3_session, 'sso-admin', region)
-    iam_client = get_boto3_client(boto3_session, 'iam', region)
-    iam_resource = boto3_session.resource('iam')
+    client = get_boto3_client(boto3_session, "sso-admin", region)
+    iam_client = get_boto3_client(boto3_session, "iam", region)
+    iam_resource = boto3_session.resource("iam")
 
     for permission_set in permission_sets:
         permission_set_arn = permission_set["PermissionSetArn"]
-        permission_set_id = permission_set.get('id')
+        permission_set_id = permission_set.get("id")
 
         policies: List[Dict] = []
         if permission_set_id:
             managed_policy_key = permission_set_id
+
         else:
             managed_policy_key = permission_set_arn
+
         managed_policies[managed_policy_key] = {}
         try:
-            paginator = client.get_paginator('list_managed_policies_in_permission_set')
+            paginator = client.get_paginator("list_managed_policies_in_permission_set")
             for page in paginator.paginate(InstanceArn=instance_arn, PermissionSetArn=permission_set_arn):
-                policies.extend(page['AttachedManagedPolicies'])
+                policies.extend(page["AttachedManagedPolicies"])
 
         except Exception as e:
             logger.warning(
@@ -171,7 +212,10 @@ def get_managed_policies(boto3_session: boto3.session.Session, instance_arn: str
         for policy in policies:
             try:
                 policy.update(iam_client.get_policy(PolicyArn=policy["Arn"])["Policy"])
-                managed_policies[managed_policy_key][policy["PolicyName"]] = iam_resource.PolicyVersion(policy["Arn"], policy["DefaultVersionId"]).document["Statement"]
+                managed_policies[managed_policy_key][policy["PolicyName"]] = iam_resource.PolicyVersion(
+                    policy["Arn"],
+                    policy["DefaultVersionId"],
+                ).document["Statement"]
 
             except Exception as e:
                 logger.warning(
@@ -183,22 +227,26 @@ def get_managed_policies(boto3_session: boto3.session.Session, instance_arn: str
 
 @timeit
 def get_inline_policy(boto3_session: boto3.session.Session, instance_arn: str, permission_sets: dict, region: str):
-    client = get_boto3_client(boto3_session, 'sso-admin', region)
+    client = get_boto3_client(boto3_session, "sso-admin", region)
 
     inline_policies: Dict = {}
     for permission_set in permission_sets:
         name = permission_set["Name"]
         permission_set_arn = permission_set["PermissionSetArn"]
-        permission_set_id = permission_set.get('id')
+        permission_set_id = permission_set.get("id")
 
         if permission_set_id:
             inline_policy_key = permission_set_id
+
         else:
             inline_policy_key = permission_set_arn
 
-        inline_policy = ''
+        inline_policy = ""
         try:
-            inline_policy = client.get_inline_policy_for_permission_set(InstanceArn=instance_arn, PermissionSetArn=permission_set_arn).get("InlinePolicy")
+            inline_policy = client.get_inline_policy_for_permission_set(
+                InstanceArn=instance_arn,
+                PermissionSetArn=permission_set_arn,
+            ).get("InlinePolicy")
 
         except Exception as e:
             logger.warning(f"Could not get inline policy for {instance_arn} - {permission_set_arn}; skipping. - {e}")
@@ -211,63 +259,129 @@ def get_inline_policy(boto3_session: boto3.session.Session, instance_arn: str, p
 
 
 @timeit
-def get_list_account_assignments(boto3_session: boto3.session.Session, instance_arn: str, permission_set_arn: str, current_aws_account_id: str, region: str):
-    client = get_boto3_client(boto3_session, 'sso-admin', region)
+def get_list_account_assignments(
+    boto3_session: boto3.session.Session,
+    instance_arn: str,
+    permission_set_arn: str,
+    current_aws_account_id: str,
+    region: str,
+):
+    client = get_boto3_client(boto3_session, "sso-admin", region)
     assignments: List[Dict] = []
 
     try:
-        paginator = client.get_paginator('list_account_assignments')
-        for page in paginator.paginate(InstanceArn=instance_arn, PermissionSetArn=permission_set_arn, AccountId=current_aws_account_id):
-            assignments.extend(page['AccountAssignments'])
+        paginator = client.get_paginator("list_account_assignments")
+        for page in paginator.paginate(
+            InstanceArn=instance_arn,
+            PermissionSetArn=permission_set_arn,
+            AccountId=current_aws_account_id,
+        ):
+            assignments.extend(page["AccountAssignments"])
 
     except Exception as e:
-        logger.warning(f"Could not list account assignments for {instance_arn} - {permission_set_arn} - {current_aws_account_id}; skipping. - {e}")
+        logger.warning(
+            f"Could not list account assignments for {instance_arn} - {permission_set_arn} - {current_aws_account_id}; skipping. - {e}",
+        )
 
     return assignments
 
 
 @timeit
-def get_list_account_assignments_for_principal(client: boto3.session.Session, instance_arn: str, principal_id: str, principal_type: str, region: str):
+def get_list_account_assignments_for_principal(
+    client: boto3.session.Session,
+    instance_arn: str,
+    principal_id: str,
+    principal_type: str,
+    region: str,
+):
     assignments: List[Dict] = []
 
     try:
-        paginator = client.get_paginator('list_account_assignments_for_principal')
-        for page in paginator.paginate(InstanceArn=instance_arn, PrincipalId=principal_id, PrincipalType=principal_type):
-            assignments.extend(page['AccountAssignments'])
+        paginator = client.get_paginator("list_account_assignments_for_principal")
+        for page in paginator.paginate(
+            InstanceArn=instance_arn,
+            PrincipalId=principal_id,
+            PrincipalType=principal_type,
+        ):
+            assignments.extend(page["AccountAssignments"])
 
     except Exception as e:
-        logger.warning(f"Could not list account assignments for {instance_arn} - {principal_id} - {principal_type}; skipping. - {e}")
+        logger.warning(
+            f"Could not list account assignments for {instance_arn} - {principal_id} - {principal_type}; skipping. - {e}",
+        )
 
     return assignments
 
 
 @timeit
-def load_identity_center_account_assignments(neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, assignments: List[Dict], permissions_sets: List[Dict], instance_arn: str, current_aws_account_id: str, region: str, update_tag: int) -> List[str]:
+def load_identity_center_account_assignments(
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    assignments: List[Dict],
+    permissions_sets: List[Dict],
+    instance_arn: str,
+    current_aws_account_id: str,
+    region: str,
+    update_tag: int,
+    principal_name: str,
+) -> List[str]:
     loaded_permissions_sets = []
     for assignment in assignments:
         for permissions_set in permissions_sets:
-            if permissions_set['PermissionSetArn'] == assignment['PermissionSetArn']:
-                permissions_set_id = f"{assignment['PrincipalId']}/{permissions_set['Name']}"
+            if permissions_set["PermissionSetArn"] != assignment["PermissionSetArn"]:
+                continue
 
-                neo4j_session.write_transaction(_load_identity_center_account_assignments_tx, assignment, permissions_set, instance_arn, update_tag)
+            logger.debug(
+                f"Syncing IdentityStore Permission Set for Principal {principal_name}: {permissions_set['Name']}",
+            )
 
-                permissions_set['id'] = permissions_set_id
-                managed_policies = get_managed_policies(boto3_session, instance_arn, [permissions_set], region)
-                transform_policy_data(managed_policies, PolicyType.managed.value)
-                load_policy_data(neo4j_session, managed_policies, PolicyType.managed.value, current_aws_account_id, update_tag)
-                inline_policies = get_inline_policy(boto3_session, instance_arn, [permissions_set], region)
-                transform_policy_data(inline_policies, PolicyType.inline.value)
-                load_policy_data(neo4j_session, inline_policies, PolicyType.inline.value, current_aws_account_id, update_tag)
-                del permissions_set['id']
-                loaded_permissions_sets.append(permissions_set['PermissionSetArn'])
+            permissions_set_id = f"{assignment['PrincipalId']}/{permissions_set['Name']}"
 
-                break
+            neo4j_session.write_transaction(
+                _load_identity_center_account_assignments_tx,
+                assignment,
+                permissions_set,
+                instance_arn,
+                update_tag,
+            )
+
+            # TODO: optimize this
+            permissions_set["id"] = permissions_set_id
+            managed_policies = get_managed_policies(boto3_session, instance_arn, [permissions_set], region)
+            transform_policy_data(managed_policies, PolicyType.managed.value)
+            load_policy_data(
+                neo4j_session,
+                managed_policies,
+                PolicyType.managed.value,
+                current_aws_account_id,
+                update_tag,
+            )
+
+            inline_policies = get_inline_policy(boto3_session, instance_arn, [permissions_set], region)
+            transform_policy_data(inline_policies, PolicyType.inline.value)
+            load_policy_data(
+                neo4j_session,
+                inline_policies,
+                PolicyType.inline.value,
+                current_aws_account_id,
+                update_tag,
+            )
+            del permissions_set["id"]
+            loaded_permissions_sets.append(permissions_set["PermissionSetArn"])
+
+            break
+
     return loaded_permissions_sets
 
 
 @timeit
-def _load_identity_center_account_assignments_tx(tx: neo4j.Transaction, assignment: Dict, permissions_set: Dict, instance_arn: str, update_tag: int) -> None:
-
+def _load_identity_center_account_assignments_tx(
+    tx: neo4j.Transaction,
+    assignment: Dict,
+    permissions_set: Dict,
+    instance_arn: str,
+    update_tag: int,
+) -> None:
     permissions_set_id = f"{assignment['PrincipalId']}/{permissions_set['Name']}"
     attach_permission_set_to_account = """
                 MERGE (p:AWSPermissionSet{id: $permissions_set_id})
@@ -276,12 +390,12 @@ def _load_identity_center_account_assignments_tx(tx: neo4j.Transaction, assignme
                         p.firstseen = timestamp(),
                         p.created_date = $permissions_set.CreatedDate,
                         p.relay_state = $permissions_set.RelayState,
-                        p.is_sso = true,
-                        p.session_duration = $permissions_set.SessionDuration
+                        p.is_sso = true
                     SET
                         p.lastupdated = $update_tag,
                         p.name = $permissions_set.Name,
-                        p.arn = $permissions_set.PermissionSetArn
+                        p.arn = $permissions_set.PermissionSetArn,
+                        p.session_duration = $permissions_set.SessionDuration
                 MERGE (a:AWSAccount{id: $assignment.AccountId})
                     ON CREATE SET
                         a.firstseen = timestamp()
@@ -332,7 +446,7 @@ def _load_identity_center_account_assignments_tx(tx: neo4j.Transaction, assignme
 def transform_permission_sets(permissions_sets: list[dict]) -> list[dict]:
     items = []
     for permission_set in permissions_sets:
-        permission_set["id"] = permission_set.get('PermissionSetArn', '').split('/')[-1]
+        permission_set["id"] = permission_set.get("PermissionSetArn", "").split("/")[-1]
         items.append(permission_set)
 
     return items
@@ -340,32 +454,90 @@ def transform_permission_sets(permissions_sets: list[dict]) -> list[dict]:
 
 @timeit
 def sync_identity_center_permissions_sets(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, instance: Dict,
-    aws_update_tag: int, region: str, current_aws_account_id: str,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    instance: Dict,
+    users: list[dict],
+    groups: list[dict],
+    aws_update_tag: int,
+    region: str,
+    current_aws_account_id: str,
 ) -> None:
+    client = get_boto3_client(boto3_session, "sso-admin", region)
+
     permissions_sets = get_identity_center_permissions_sets_list(boto3_session, instance, region)
-    users = get_identity_center_users_list(boto3_session, instance, region)
-    groups = get_identity_center_groups_list(boto3_session, instance, region)
-    client = get_boto3_client(boto3_session, 'sso-admin', region)
+    logger.info(f"Processing Identity Center - Permission Sets: {permissions_sets}")
+
     loaded_permissions_sets = []
+
     for user in users:
-        assignments = get_list_account_assignments_for_principal(client, instance["InstanceArn"], user['UserId'], "USER", region)
-        loaded_permissions_sets.extend(load_identity_center_account_assignments(neo4j_session, boto3_session, assignments, permissions_sets, instance["InstanceArn"], current_aws_account_id, region, aws_update_tag))
+        logger.info(f"Syncing Identity Center Permission Set Assignments for User: {user['UserName']}")
+        # TODO: can this be batched?
+        assignments = get_list_account_assignments_for_principal(
+            client,
+            instance["InstanceArn"],
+            user["UserId"],
+            "USER",
+            region,
+        )
+        logger.info(f"permission assignments for User - {user['UserName']} - {assignments}")
+        loaded_permissions_sets.extend(
+            load_identity_center_account_assignments(
+                neo4j_session,
+                boto3_session,
+                assignments,
+                permissions_sets,
+                instance["InstanceArn"],
+                current_aws_account_id,
+                region,
+                aws_update_tag,
+                user["UserName"],
+            ),
+        )
+
     for group in groups:
-        assignments = get_list_account_assignments_for_principal(client, instance["InstanceArn"], group['GroupId'], "GROUP", region)
-        loaded_permissions_sets.extend(load_identity_center_account_assignments(neo4j_session, boto3_session, assignments, permissions_sets, instance["InstanceArn"], current_aws_account_id, region, aws_update_tag))
+        logger.info(f"Syncing Identity Center Permission Set Assignments for Group: {group['DisplayName']}")
+        # TODO: can this be batched?
+        assignments = get_list_account_assignments_for_principal(
+            client,
+            instance["InstanceArn"],
+            group["GroupId"],
+            "GROUP",
+            region,
+        )
+        logger.info(f"permission assignments for Group - {group['DisplayName']} - {assignments}")
+        loaded_permissions_sets.extend(
+            load_identity_center_account_assignments(
+                neo4j_session,
+                boto3_session,
+                assignments,
+                permissions_sets,
+                instance["InstanceArn"],
+                current_aws_account_id,
+                region,
+                aws_update_tag,
+                group["DisplayName"],
+            ),
+        )
 
     unloaded_permissions_sets = []
     for permissions_set in permissions_sets:
-        if permissions_set['PermissionSetArn'] in loaded_permissions_sets:
+        if permissions_set["PermissionSetArn"] in loaded_permissions_sets:
             continue
+
         unloaded_permissions_sets.append(permissions_set)
 
-    load_identity_center_permissions_sets(neo4j_session, instance["InstanceArn"], unloaded_permissions_sets, aws_update_tag)
+    load_identity_center_permissions_sets(
+        neo4j_session,
+        instance["InstanceArn"],
+        unloaded_permissions_sets,
+        aws_update_tag,
+    )
 
     managed_policies = get_managed_policies(boto3_session, instance["InstanceArn"], unloaded_permissions_sets, region)
     transform_policy_data(managed_policies, PolicyType.managed.value)
     load_policy_data(neo4j_session, managed_policies, PolicyType.managed.value, current_aws_account_id, aws_update_tag)
+
     inline_policies = get_inline_policy(boto3_session, instance["InstanceArn"], unloaded_permissions_sets, region)
     transform_policy_data(inline_policies, PolicyType.inline.value)
     load_policy_data(neo4j_session, inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
@@ -373,14 +545,14 @@ def sync_identity_center_permissions_sets(
 
 @timeit
 def get_identity_center_users_list(boto3_session: boto3.session.Session, instance: Dict, region: str) -> List[Dict]:
-    client = get_boto3_client(boto3_session, 'identitystore', region)
+    client = get_boto3_client(boto3_session, "identitystore", region)
 
     users: List[Dict] = []
     try:
-        paginator = client.get_paginator('list_users')
+        paginator = client.get_paginator("list_users")
 
-        for page in paginator.paginate(IdentityStoreId=instance['IdentityStoreId']):
-            users.extend(page['Users'])
+        for page in paginator.paginate(IdentityStoreId=instance["IdentityStoreId"]):
+            users.extend(page["Users"])
 
     except Exception as e:
         logger.warning(
@@ -388,18 +560,28 @@ def get_identity_center_users_list(boto3_session: boto3.session.Session, instanc
         )
 
     for user in users:
-        user['arn'] = f"{instance['InstanceArn']}/user/{user['UserId']}"
+        user["arn"] = f"{instance['InstanceArn']}/user/{user['UserId']}"
 
     return users
 
 
 @timeit
-def load_identity_center_users(neo4j_session: neo4j.Session, instance_arn: str, users_list: List[Dict], update_tag: int) -> None:
+def load_identity_center_users(
+    neo4j_session: neo4j.Session,
+    instance_arn: str,
+    users_list: List[Dict],
+    update_tag: int,
+) -> None:
     neo4j_session.write_transaction(_load_identity_center_users_tx, instance_arn, users_list, update_tag)
 
 
 @timeit
-def _load_identity_center_users_tx(tx: neo4j.Transaction, instance_arn: str, users_list: List[Dict], update_tag: int) -> None:
+def _load_identity_center_users_tx(
+    tx: neo4j.Transaction,
+    instance_arn: str,
+    users_list: List[Dict],
+    update_tag: int,
+) -> None:
     ingest_users = """
     UNWIND $users_list AS user
         MERGE (u:AWSUser{userid: user.UserId})
@@ -434,8 +616,11 @@ def _load_identity_center_users_tx(tx: neo4j.Transaction, instance_arn: str, use
 
 @timeit
 def sync_identity_center_users(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, instance: Dict,
-    aws_update_tag: int, region: str,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    instance: Dict,
+    aws_update_tag: int,
+    region: str,
 ) -> None:
     users = get_identity_center_users_list(boto3_session, instance, region)
     load_identity_center_users(neo4j_session, instance["InstanceArn"], users, aws_update_tag)
@@ -443,14 +628,14 @@ def sync_identity_center_users(
 
 @timeit
 def get_identity_center_groups_list(boto3_session: boto3.session.Session, instance: Dict, region: str) -> List[Dict]:
-    client = get_boto3_client(boto3_session, 'identitystore', region)
+    client = get_boto3_client(boto3_session, "identitystore", region)
 
     groups: List[Dict] = []
     try:
-        paginator = client.get_paginator('list_groups')
+        paginator = client.get_paginator("list_groups")
 
-        for page in paginator.paginate(IdentityStoreId=instance['IdentityStoreId']):
-            groups.extend(page['Groups'])
+        for page in paginator.paginate(IdentityStoreId=instance["IdentityStoreId"]):
+            groups.extend(page["Groups"])
 
     except Exception as e:
         logger.warning(
@@ -458,18 +643,28 @@ def get_identity_center_groups_list(boto3_session: boto3.session.Session, instan
         )
 
     for group in groups:
-        group['arn'] = f"{instance['InstanceArn']}/group/{group['GroupId']}"
+        group["arn"] = f"{instance['InstanceArn']}/group/{group['GroupId']}"
 
     return groups
 
 
 @timeit
-def load_identity_center_groups(neo4j_session: neo4j.Session, instance_arn: str, groups_list: List[Dict], update_tag: int) -> None:
+def load_identity_center_groups(
+    neo4j_session: neo4j.Session,
+    instance_arn: str,
+    groups_list: List[Dict],
+    update_tag: int,
+) -> None:
     neo4j_session.write_transaction(_load_identity_center_groups_tx, instance_arn, groups_list, update_tag)
 
 
 @timeit
-def _load_identity_center_groups_tx(tx: neo4j.Transaction, instance_arn: str, groups_list: List[Dict], update_tag: int) -> None:
+def _load_identity_center_groups_tx(
+    tx: neo4j.Transaction,
+    instance_arn: str,
+    groups_list: List[Dict],
+    update_tag: int,
+) -> None:
     ingest_groups = """
     UNWIND $groups_list AS group
         MERGE (g:AWSGroup{groupid: group.GroupId})
@@ -501,15 +696,20 @@ def _load_identity_center_groups_tx(tx: neo4j.Transaction, instance_arn: str, gr
 
 
 @timeit
-def get_list_group_memberships(boto3_session: boto3.session.Session, group: str, instance: Dict, region: str) -> List[Dict]:
-    client = get_boto3_client(boto3_session, 'identitystore', region)
+def get_list_group_memberships(
+    boto3_session: boto3.session.Session,
+    group: str,
+    instance: Dict,
+    region: str,
+) -> List[Dict]:
+    client = get_boto3_client(boto3_session, "identitystore", region)
 
     group_memberships: List[Dict] = []
     try:
-        paginator = client.get_paginator('list_group_memberships')
+        paginator = client.get_paginator("list_group_memberships")
 
-        for page in paginator.paginate(IdentityStoreId=instance['IdentityStoreId'], GroupId=group["GroupId"]):
-            group_memberships.extend(page['GroupMemberships'])
+        for page in paginator.paginate(IdentityStoreId=instance["IdentityStoreId"], GroupId=group["GroupId"]):
+            group_memberships.extend(page["GroupMemberships"])
 
     except Exception as e:
         logger.warning(
@@ -520,7 +720,11 @@ def get_list_group_memberships(boto3_session: boto3.session.Session, group: str,
 
 
 @timeit
-def load_identity_center_group_memberships(neo4j_session: neo4j.Session, memberships: List[Dict], update_tag: int) -> None:
+def load_identity_center_group_memberships(
+    neo4j_session: neo4j.Session,
+    memberships: List[Dict],
+    update_tag: int,
+) -> None:
     neo4j_session.write_transaction(_load_identity_center_group_memberships_tx, memberships, update_tag)
 
 
@@ -547,8 +751,11 @@ def _load_identity_center_group_memberships_tx(tx: neo4j.Transaction, membership
 
 @timeit
 def sync_identity_center_groups(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, instance: Dict,
-    aws_update_tag: int, region: str,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    instance: Dict,
+    aws_update_tag: int,
+    region: str,
 ) -> None:
     groups = get_identity_center_groups_list(boto3_session, instance, region)
     load_identity_center_groups(neo4j_session, instance["InstanceArn"], groups, aws_update_tag)
@@ -558,30 +765,61 @@ def sync_identity_center_groups(
 
 
 def cleanup_identitystore(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_identitystore_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("aws_import_identitystore_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync_identitystore(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, current_aws_account_id: str,
-    aws_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    current_aws_account_id: str,
+    aws_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     region: str = common_job_parameters["IDENTITY_STORE_REGION"]
     organization_id = common_job_parameters["ORGANIZATION_ID"]
     instances = get_identity_center_instances_list(boto3_session, common_job_parameters["IDENTITY_STORE_REGION"])
     for instance in instances:
-        load_identity_center_instance(neo4j_session, instance, aws_update_tag, organization_id)
-        sync_identity_center_users(neo4j_session, boto3_session, instance, aws_update_tag, region)
-        sync_identity_center_groups(neo4j_session, boto3_session, instance, aws_update_tag, region)
-        sync_identity_center_permissions_sets(neo4j_session, boto3_session, instance, aws_update_tag, region, current_aws_account_id)
+        logger.info(f"Processing Identity Center Instance: {instance['Name']} - {instance['InstanceArn']}")
+        # load_identity_center_instance(neo4j_session, instance, aws_update_tag, organization_id)
+
+        users = get_identity_center_users_list(boto3_session, instance, region)
+        logger.info(f"Processing Identity Center - Users: {users}")
+
+        load_identity_center_users(neo4j_session, instance["InstanceArn"], users, aws_update_tag)
+
+        groups = get_identity_center_groups_list(boto3_session, instance, region)
+        logger.info(f"Processing Identity Center - Groups: {groups}")
+
+        load_identity_center_groups(neo4j_session, instance["InstanceArn"], groups, aws_update_tag)
+
+        for group in groups:
+            group_memberships = get_list_group_memberships(boto3_session, group, instance, region)
+            load_identity_center_group_memberships(neo4j_session, group_memberships, aws_update_tag)
+
+        logger.info("Processing Identity Center - Permission Sets")
+        sync_identity_center_permissions_sets(
+            neo4j_session,
+            boto3_session,
+            instance,
+            users,
+            groups,
+            aws_update_tag,
+            region,
+            current_aws_account_id,
+        )
 
     cleanup_identitystore(neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
     sync_identitystore(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
