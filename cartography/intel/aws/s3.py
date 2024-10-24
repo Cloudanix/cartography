@@ -231,7 +231,11 @@ def _is_common_exception(e: Exception, bucket: Dict) -> bool:
 
 @timeit
 def _load_s3_acls(
-    neo4j_session: neo4j.Session, acls: Dict, aws_account_id: str, update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    acls: Dict,
+    aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     """
     Ingest S3 ACL into neo4j.
@@ -260,7 +264,10 @@ def _load_s3_acls(
 
 @timeit
 def _load_s3_policies(
-    neo4j_session: neo4j.Session, policies: List[Dict], update_tag: int, boto3_session: boto3.session.Session,
+    neo4j_session: neo4j.Session,
+    policies: List[Dict],
+    update_tag: int,
+    boto3_session: boto3.session.Session,
 ) -> None:
     """
     Ingest S3 policy results into neo4j.
