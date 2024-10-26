@@ -45,16 +45,20 @@ Ec2Data = namedtuple(
 @timeit
 def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], region: str) -> Dict[str, Dict]:
     client = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
+    image_details = {}
 
-    try:
-        response = client.describe_images(ImageIds=image_ids)
-        images = response.get("Images", [])
+    for i in range(0, len(image_ids), 1000):
+        batch = image_ids[i:i+1000]
 
-        # returning a dictionary where the image id is the key and details are values
-        return {image['ImageId']: image for image in images}
-    except ClientError as e:
-        logger.error(f"Error feetching the image details {e}")
-        return {}
+        try:
+            response = client.describe_images(ImageIds=batch)
+            images = response.get("Image", [])
+            image_details.update({image['ImageId']: image for image in images})
+        except ClientError as e:
+            logger.error(f"Error fetching image details for batch {i//1000 + 1}: {e}")
+            continue
+
+    return image_details
 
 
 @timeit
