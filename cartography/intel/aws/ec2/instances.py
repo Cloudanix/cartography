@@ -48,12 +48,12 @@ def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], r
     image_details = {}
 
     for i in range(0, len(image_ids), 1000):
-        batch = image_ids[i:i+1000]
+        batch = image_ids[i : i + 1000]
 
         try:
             response = client.describe_images(ImageIds=batch)
             images = response.get("Image", [])
-            image_details.update({image['ImageId']: image for image in images})
+            image_details.update({image["ImageId"]: image for image in images})
         except ClientError as e:
             logger.error(f"Error fetching image details for batch {i//1000 + 1}: {e}")
             continue
@@ -157,7 +157,7 @@ def transform_ec2_instances(
                 for role in iam_roles:
                     role["InstanceId"] = instance_id
 
-            os_details = instance.get("OSDetails")
+            os_details = instance.get("OSDetails", {})
             platform = os_details.get("Platform", "Linux")
             architecture = os_details.get("Architecture", "Unknown")
             virtualization_type = os_details.get("VirtualizationType", "Unknown")
