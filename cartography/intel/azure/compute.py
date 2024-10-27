@@ -65,6 +65,10 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
             for config in vm.get('network_profile', {}).get('network_interface_configurations', []):
                 network_security_group.append(config.get('network_security_group'), None)
             vm['network_security_group'] = network_security_group
+
+            os_disk = vm.get("storage_profile", {}).get("os_disk", {})
+            vm['os_type'] = os_disk.get('os_type')
+            vm['os_disk_name'] = os_disk.get('name')
             if regions is None:
                 vm_data.append(vm)
             else:
@@ -98,7 +102,9 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.offer=vm.storage_profile.image_reference.offer,
     v.sku=vm.storage_profile.image_reference.sku,
     v.version=vm.storage_profile.image_reference.version,
-    v.exact_version=vm.storage_profile.image_reference.exact_version
+    v.exact_version=vm.storage_profile.image_reference.exact_version,
+    v.os_type=vm.os_type,
+    v.os_disk_name=vm.os_disk_name
     WITH vm, v
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(v)
