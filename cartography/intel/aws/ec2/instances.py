@@ -56,8 +56,8 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
 
     except ClientError as e:
         if (
-            e.response["Error"]["Code"] == "AccessDeniedException" or
-            e.response["Error"]["Code"] == "UnauthorizedOperation"
+            e.response["Error"]["Code"] == "AccessDeniedException"
+            or e.response["Error"]["Code"] == "UnauthorizedOperation"
         ):
             logger.warning(
                 "ec2:describe_security_groups failed with AccessDeniedException; continuing sync.",
@@ -74,11 +74,11 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
 def get_roles_from_instance_profile(
     boto3_session: boto3.session.Session,
     region: str,
-    instance_profile_arn,
+    instance_profile_id,
 ) -> List[Dict]:
     iam_client = boto3_session.client("iam", region_name=region, config=get_botocore_config())
     try:
-        response = iam_client.get_instance_profile(InstanceProfileName=instance_profile_arn)
+        response = iam_client.get_instance_profile(InstanceProfileName=instance_profile_id)
         roles = response.get("InstanceProfile", {}).get("Roles", [])
         return roles
     except Exception as e:
@@ -118,8 +118,8 @@ def transform_ec2_instances(
 
             iam_roles = []
             if "IamInstanceProfile" in instance:
-                instance_profile_arn = instance["IamInstanceProfile"]["Arn"]
-                iam_roles = get_roles_from_instance_profile(boto3_session, region, instance_profile_arn)
+                instance_profile_id = instance["IamInstanceProfile"]["Id"]
+                iam_roles = get_roles_from_instance_profile(boto3_session, region, instance_profile_id)
 
                 for role in iam_roles:
                     role["InstanceId"] = instance_id

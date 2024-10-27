@@ -344,8 +344,8 @@ def transform_roles(
                         internal_principal = True
 
                     if (
-                        common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
-                        and account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
+                        common_job_parameters["AWS_INTERNAL_ACCOUNTS"] and
+                        account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
                     ):
                         internal_principal = True
 
