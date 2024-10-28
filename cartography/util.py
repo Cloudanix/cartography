@@ -152,6 +152,7 @@ def run_cleanup_job(
         logger.warning(f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}")
         # to handle deadlocks retry transaction
         if retry < 2:
+            retry += 1
             run_cleanup_job(filename=filename, common_job_parameters=common_job_parameters, retry=retry)
 
 
