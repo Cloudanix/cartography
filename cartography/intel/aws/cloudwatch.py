@@ -315,7 +315,7 @@ def transform_metrics(mets: List[Dict], account_id: str, region: str) -> List[Di
         console_arn = f"arn:aws:cloudwatch:{region if region else ''}:{account_id if account_id else ''}:metrics/{metric['MetricName']}"
         # metric['consolelink'] = aws_console_link.get_console_link(console_arn)
         metric["consolelink"] = ""
-        metric["arn"] = metric["MetricName"]
+        metric["arn"] = f"arn:aws:cloudwatch:{region}:{account_id}:metrics/{metric['MetricName']}"
         metric["region"] = region
         metrics.append(metric)
 
@@ -342,7 +342,7 @@ def _load_metrics_tx(
 ) -> None:
     query: str = """
     UNWIND $Records as record
-    MERGE (metric:AWSCloudWatchMetric{id: record.MetricName})
+    MERGE (metric:AWSCloudWatchMetric{id: record.arn})
     ON CREATE SET metric.firstseen = timestamp(),
         metric.arn = record.arn
     SET metric.lastupdated = $aws_update_tag,

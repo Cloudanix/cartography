@@ -44,9 +44,10 @@ STATUS_FAILURE = 1
 STATUS_KEYBOARD_INTERRUPT = 130
 DEFAULT_BATCH_SIZE = 1000
 
-def get_azure_resource_group_name(id:str)->None:
-    resource_group=''
-    id=id.lower()
+
+def get_azure_resource_group_name(id: str) -> None:
+    resource_group = ''
+    id = id.lower()
     if id is not None and 'resourcegroups' in id:
         x = id.split('/')
         resource_group = x[x.index('resourcegroups') + 1]
@@ -77,6 +78,7 @@ def run_analysis_job(
         common_job_parameters,
         get_job_shortname(filename),
     )
+
 
 def run_analysis_and_ensure_deps(
         analysis_job_name: str,
@@ -130,7 +132,7 @@ def run_scoped_analysis_job(
 
 def run_cleanup_job(
     filename: str, neo4j_session: neo4j.Session, common_job_parameters: Dict,
-    package: str = 'cartography.data.jobs.cleanup',
+    package: str = 'cartography.data.jobs.cleanup', retry: int = 1
 ) -> None:
     try:
         GraphJob.run_from_json(
@@ -145,6 +147,9 @@ def run_cleanup_job(
 
     except Exception as e:
         logger.warning(f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}")
+        # to handle deadlocks retry transaction
+        if retry < 2:
+            run_cleanup_job(filename=filename, common_job_parameters=common_job_parameters, retry=retry)
 
 
 def merge_module_sync_metadata(
@@ -436,7 +441,8 @@ def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
     '''
     return asyncio.get_event_loop().run_until_complete(asyncio.gather(*awaitables))
 
-def make_requests_url(url: str,access_token: str, return_raw: bool = False):
+
+def make_requests_url(url: str, access_token: str, return_raw: bool = False):
     try:
         headers = {
             "Accept": "application/json",
@@ -447,7 +453,7 @@ def make_requests_url(url: str,access_token: str, return_raw: bool = False):
             url,
             headers=headers,
         )
-        if response.status_code!=200:
+        if response.status_code != 200:
             return {}
 
         if return_raw:
