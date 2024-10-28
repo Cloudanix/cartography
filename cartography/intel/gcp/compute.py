@@ -53,6 +53,10 @@ def get_compute_disks(compute: Resource, project_id: str, zones: list, common_jo
                         disk["id"] = f"projects/{project_id}/disks/{disk['name']}"
                         x = zone["name"].split("-")
                         disk["region"] = f"{x[0]}-{x[1]}"
+
+                        os_feature_types = [feature["type"] for feature in disk.get("guestOsFeatures", [])]
+                        disk["osFeatures"] = "WINDOWS" if "WINDOWS" in os_feature_types else "LINUX"
+
                         disks.append(disk)
                 req = compute.disks().list_next(previous_request=req, previous_response=res)
 
@@ -102,6 +106,8 @@ def load_compute_disks_tx(
         disk.options = record.options,
         disk.self_link = record.selfLink,
         disk.source_image = record.sourceImage,
+        disk.architecture = record.architecture,
+        disk.os_features = record.osFeatures,
         disk.last_attach_timestamp = record.lastAttachTimestamp,
         disk.last_detach_timestamp = record.lastDetachTimestamp,
         disk.physical_block_size_bytes = record.physicalBlockSizeBytes,
@@ -539,6 +545,13 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
         x = res["zone_name"].split("-")
         res["region"] = f"{x[0]}-{x[1]}"
 
+        for disk in res.get("disks", []):
+            if disk.get("boot"):
+                res["diskName"] = disk.get("initializeParams", {}).get("diskName")
+                os_feature_types = [feature["type"] for feature in disk.get("guestOsFeatures", [])]
+                res["osFeatures"] = "WINDOWS" if "WINDOWS" in os_feature_types else "LINUX"
+                break
+
         for nic in res.get("networkInterfaces", []):
             res["networkIP"] = nic.get("networkIP", None)
             nic["subnet_partial_uri"] = _parse_compute_full_uri_to_partial_uri(nic["subnetwork"])
@@ -941,7 +954,9 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     i.consolelink = instance.consolelink,
     i.lastupdated = $gcp_update_tag,
     i.machine_type = instance.machineType,
-    i.source_image = instance.sourceImage
+    i.source_image = instance.sourceImage,
+    i.disk_name = instance.diskName,
+    i.os_features = instance.osFeatures
     WITH i, p
 
     MERGE (p)-[r:RESOURCE]->(i)
