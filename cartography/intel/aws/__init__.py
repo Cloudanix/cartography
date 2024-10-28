@@ -32,37 +32,48 @@ logger = logging.getLogger(__name__)
 
 
 def _build_aws_sync_kwargs(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    sync_tag: int, common_job_parameters: Dict[str, Any],
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    sync_tag: int,
+    common_job_parameters: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
-        'neo4j_session': neo4j_session,
-        'boto3_session': boto3_session,
-        'regions': regions,
-        'current_aws_account_id': current_aws_account_id,
-        'update_tag': sync_tag,
-        'common_job_parameters': common_job_parameters,
+        "neo4j_session": neo4j_session,
+        "boto3_session": boto3_session,
+        "regions": regions,
+        "current_aws_account_id": current_aws_account_id,
+        "update_tag": sync_tag,
+        "common_job_parameters": common_job_parameters,
     }
 
 
 def concurrent_execution(
-    service: str, service_func: Any, creds: Dict[str, str], config: Config, neo4j_session: neo4j.Session,
-    boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    service: str,
+    service_func: Any,
+    creds: Dict[str, str],
+    config: Config,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ):
     logger.info(f"BEGIN processing for service: {service}")
 
-    if creds['type'] == 'self':
+    if creds["type"] == "self":
         boto3_session = boto3.Session(
-            aws_access_key_id=creds['aws_access_key_id'],
-            aws_secret_access_key=creds['aws_secret_access_key'],
+            aws_access_key_id=creds["aws_access_key_id"],
+            aws_secret_access_key=creds["aws_secret_access_key"],
         )
 
-    elif creds['type'] == 'assumerole':
+    elif creds["type"] == "assumerole":
         boto3_session = boto3.Session(
-            aws_access_key_id=creds['aws_access_key_id'],
-            aws_secret_access_key=creds['aws_secret_access_key'],
-            aws_session_token=creds['session_token'],
+            aws_access_key_id=creds["aws_access_key_id"],
+            aws_secret_access_key=creds["aws_secret_access_key"],
+            aws_session_token=creds["session_token"],
         )
 
     neo4j_auth = (config.neo4j_user, config.neo4j_password)
@@ -73,7 +84,12 @@ def concurrent_execution(
     )
 
     sync_args = _build_aws_sync_kwargs(
-        Session(neo4j_driver), boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters,
+        Session(neo4j_driver),
+        boto3_session,
+        regions,
+        current_aws_account_id,
+        update_tag,
+        common_job_parameters,
     )
 
     service_func(**sync_args)
@@ -104,7 +120,12 @@ def _sync_one_account(
         regions = allowed_regions
 
     sync_args = _build_aws_sync_kwargs(
-        neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters,
+        neo4j_session,
+        boto3_session,
+        regions,
+        current_aws_account_id,
+        update_tag,
+        common_job_parameters,
     )
 
     if os.environ.get("LOCAL_RUN", "0") == "1":
@@ -113,13 +134,15 @@ def _sync_one_account(
         for func_name in aws_requested_syncs:
             if func_name in RESOURCE_FUNCTIONS:
                 # Skip permission relationships and tags for now because they rely on data already being in the graph
-                if func_name not in ['permission_relationships', 'resourcegroupstaggingapi']:
+                if func_name not in ["permission_relationships", "resourcegroupstaggingapi"]:
                     logger.info(f"Processing {func_name}")
                     RESOURCE_FUNCTIONS[func_name](**sync_args)
                 else:
                     continue
             else:
-                raise ValueError(f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?')
+                raise ValueError(
+                    f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?',
+                )
 
         # END - Sequential Run
 
@@ -132,14 +155,18 @@ def _sync_one_account(
 
             for func_name in aws_requested_syncs:
                 if func_name in RESOURCE_FUNCTIONS:
-                    if func_name == "identitystore" and not config.params['workspace'].get('is_identity_sso_used'):
+                    if func_name == "identitystore" and not config.params["workspace"].get("is_identity_sso_used"):
                         continue
                     # Skip permission relationships and tags for now because they rely on data already being in the graph
-                    if func_name not in ['permission_relationships', 'resourcegroupstaggingapi']:
+                    if func_name not in ["permission_relationships", "resourcegroupstaggingapi"]:
                         futures.append(
                             executor.submit(
-                                concurrent_execution, func_name,
-                                RESOURCE_FUNCTIONS[func_name], creds, config, **sync_args,
+                                concurrent_execution,
+                                func_name,
+                                RESOURCE_FUNCTIONS[func_name],
+                                creds,
+                                config,
+                                **sync_args,
                             ),
                         )
                     else:
@@ -151,32 +178,32 @@ def _sync_one_account(
                     )
 
             for future in as_completed(futures):
-                logger.info(f'Result from Future - Service Processing: {future.result()}')
+                logger.info(f"Result from Future - Service Processing: {future.result()}")
 
         # END - Parallel Run
 
     # MAP IAM permissions
-    if 'permission_relationships' in aws_requested_syncs:
-        RESOURCE_FUNCTIONS['permission_relationships'](**sync_args)
+    if "permission_relationships" in aws_requested_syncs:
+        RESOURCE_FUNCTIONS["permission_relationships"](**sync_args)
 
     # AWS Tags - Must always be last.
-    if 'resourcegroupstaggingapi' in aws_requested_syncs:
-        RESOURCE_FUNCTIONS['resourcegroupstaggingapi'](config, **sync_args)
+    if "resourcegroupstaggingapi" in aws_requested_syncs:
+        RESOURCE_FUNCTIONS["resourcegroupstaggingapi"](config, **sync_args)
     if config.refresh_entitlements:
-        run_cleanup_job('aws_unused_cleanup.json', neo4j_session, common_job_parameters)
+        run_cleanup_job("aws_unused_cleanup.json", neo4j_session, common_job_parameters)
     run_analysis_job(
-        'aws_ec2_iaminstanceprofile.json',
+        "aws_ec2_iaminstanceprofile.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_lambda_ecr.json',
+        "aws_lambda_ecr.json",
         neo4j_session,
         common_job_parameters,
     )
     run_analysis_job(
-        'implicit_relationship_creation.json',
+        "implicit_relationship_creation.json",
         neo4j_session,
         common_job_parameters,
     )  # NOTE temp solution (query has to be only executed after both subnet & route table is loaded)
@@ -189,19 +216,19 @@ def _sync_one_account(
     # )
 
     run_analysis_job(
-        'aws_ec2_subnet_asset_exposure.json',
+        "aws_ec2_subnet_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_ec2_elb_asset_exposure.json',
+        "aws_ec2_elb_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_ec2_instance_asset_exposure.json',
+        "aws_ec2_instance_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
@@ -214,97 +241,97 @@ def _sync_one_account(
     # )
 
     run_analysis_job(
-        'aws_ec2_keypair_analysis.json',
+        "aws_ec2_keypair_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     # INFO: connect EKS to subnets via CIDR. Public facing logic can be extended to use public Subnets.
     run_analysis_job(
-        'aws_eks_asset_exposure.json',
+        "aws_eks_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_lambda_function_asset_exposure.json',
+        "aws_lambda_function_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_s3acl_analysis.json',
+        "aws_s3acl_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_s3_asset_exposure.json',
+        "aws_s3_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_rds_asset_exposure.json',
+        "aws_rds_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_cloudtrail_asset_exposure.json',
+        "aws_cloudtrail_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_apigateway_asset_exposure.json',
+        "aws_apigateway_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
     run_analysis_job(
-        'aws_cloudfront_asset_exposure.json',
+        "aws_cloudfront_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
     run_analysis_job(
-        'aws_ebs_snapshot_asset_exposure.json',
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        'aws_elasticache_cluster_asset_exposure.json',
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        'aws_ecs_service_asset_exposure.json',
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        'aws_emr_asset_exposure.json',
+        "aws_ebs_snapshot_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_redshift_cluster_asset_exposure.json',
+        "aws_elasticache_cluster_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_ecs_service_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_emr_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'aws_internetgateway_asset_exposure.json',
+        "aws_redshift_cluster_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
+    run_analysis_job(
+        "aws_internetgateway_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     merge_module_sync_metadata(
         neo4j_session,
-        group_type='AWSAccount',
+        group_type="AWSAccount",
         group_id=current_aws_account_id,
-        synced_type='AWSAccount',
+        synced_type="AWSAccount",
         update_tag=update_tag,
         stat_handler=stat_handler,
     )
@@ -317,9 +344,7 @@ def _autodiscover_account_regions(boto3_session: boto3.session.Session, account_
     except botocore.exceptions.ClientError as e:
         logger.debug("Error occurred getting EC2 regions.", exc_info=True)
         logger.error(
-            (
-                "Failed to retrieve AWS region list, an error occurred: %s. Could not get regions for account %s."
-            ),
+            ("Failed to retrieve AWS region list, an error occurred: %s. Could not get regions for account %s."),
             e,
             account_id,
         )
@@ -337,12 +362,17 @@ def get_allowed_regions(boto3_session: boto3.session.Session):
     # Check for EC2 instances in each region to determine if the region is enabled
     for region in all_regions:
         try:
-            ec2_region = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
+            ec2_region = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
             ec2_region.describe_vpcs()
             allowed_regions.append(region)
 
         except botocore.exceptions.ClientError as e:
-            if e.response['Error']['Code'] in ['UnauthorizedOperation', 'AccessDenied', 'AccessDeniedException', 'AuthorizationError']:
+            if e.response["Error"]["Code"] in [
+                "UnauthorizedOperation",
+                "AccessDenied",
+                "AccessDeniedException",
+                "AuthorizationError",
+            ]:
                 print(f"Access denied or region restricted: {region}")
             else:
                 print(f"Unexpected error occurred in region {region}: {e}")
@@ -351,21 +381,24 @@ def get_allowed_regions(boto3_session: boto3.session.Session):
 
 
 def _autodiscover_accounts(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, account_id: str,
-    sync_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    account_id: str,
+    sync_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     logger.info("Trying to autodiscover accounts.")
     try:
         # Fetch all accounts
-        client = boto3_session.client('organizations')
-        paginator = client.get_paginator('list_accounts')
+        client = boto3_session.client("organizations")
+        paginator = client.get_paginator("list_accounts")
         accounts: List[Dict] = []
         for page in paginator.paginate():
-            accounts.extend(page['Accounts'])
+            accounts.extend(page["Accounts"])
 
         # Filter out every account which is not in the ACTIVE status
         # and select only the Id and Name fields
-        filtered_accounts: Dict[str, str] = {x['Name']: x['Id'] for x in accounts if x['Status'] == 'ACTIVE'}
+        filtered_accounts: Dict[str, str] = {x["Name"]: x["Id"] for x in accounts if x["Status"] == "ACTIVE"}
 
         # Add them to the graph
         logger.info("Loading autodiscovered accounts.")
@@ -376,13 +409,13 @@ def _autodiscover_accounts(
 
 def list_all_regions(boto3_session, logger):
     try:
-        client = boto3_session.client('ec2', region_name="us-east-1", config=get_botocore_config())
+        client = boto3_session.client("ec2", region_name="us-east-1", config=get_botocore_config())
         regions = client.describe_regions(
             Filters=[
                 {
-                    'Name': 'opt-in-status',
-                    'Values': [
-                            'opt-in-not-required',
+                    "Name": "opt-in-status",
+                    "Values": [
+                        "opt-in-not-required",
                     ],
                 },
             ],
@@ -392,7 +425,7 @@ def list_all_regions(boto3_session, logger):
         logger.error(f"Failed retrieve enabled regions. Error - {e}")
         return []
 
-    return list(map(lambda region: region['RegionName'], regions['Regions']))
+    return list(map(lambda region: region["RegionName"], regions["Regions"]))
 
 
 def _sync_multiple_accounts(
@@ -404,7 +437,7 @@ def _sync_multiple_accounts(
     aws_best_effort_mode: bool,
     aws_requested_syncs: List[str] = [],
 ) -> bool:
-    logger.info("Syncing AWS accounts: %s", ', '.join(accounts.values()))
+    logger.info("Syncing AWS accounts: %s", ", ".join(accounts.values()))
     organizations.sync(neo4j_session, accounts, organization, config.update_tag, common_job_parameters)
 
     for profile_name, account_id in accounts.items():
@@ -415,33 +448,33 @@ def _sync_multiple_accounts(
         common_job_parameters["AWS_ID"] = account_id
         # boto3_session = boto3.Session(profile_name=profile_name)
 
-        if config.credentials['type'] == 'self':
+        if config.credentials["type"] == "self":
             boto3_session = boto3.Session(
                 # profile_name=profile_name,
-                aws_access_key_id=config.credentials['aws_access_key_id'],
-                aws_secret_access_key=config.credentials['aws_secret_access_key'],
+                aws_access_key_id=config.credentials["aws_access_key_id"],
+                aws_secret_access_key=config.credentials["aws_secret_access_key"],
             )
 
-        elif config.credentials['type'] == 'assumerole':
+        elif config.credentials["type"] == "assumerole":
             boto3_session = boto3.Session(
                 # profile_name=profile_name,
-                aws_access_key_id=config.credentials['aws_access_key_id'],
-                aws_secret_access_key=config.credentials['aws_secret_access_key'],
-                aws_session_token=config.credentials['session_token'],
+                aws_access_key_id=config.credentials["aws_access_key_id"],
+                aws_secret_access_key=config.credentials["aws_secret_access_key"],
+                aws_session_token=config.credentials["session_token"],
             )
 
         # _autodiscover_accounts(neo4j_session, boto3_session, account_id, config.update_tag, common_job_parameters)
 
         # INFO: fetching active regions for customers instead of reading from parameters
-        if len(config.params.get('regions', [])) > 0:
-            regions = config.params.get('regions', [])
+        if len(config.params.get("regions", [])) > 0:
+            regions = config.params.get("regions", [])
 
         else:
             regions = list_all_regions(boto3_session, logger)
 
         if len(regions) == 0:
             logger.info("regions could not be fetched. reading regions from input parameters")
-            regions = config.params.get('regions', [])
+            regions = config.params.get("regions", [])
 
         _sync_one_account(
             neo4j_session,
@@ -473,10 +506,10 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     common_job_parameters = {
         "UPDATE_TAG": config.update_tag,
         "permission_relationships_file": config.permission_relationships_file,
-        "WORKSPACE_ID": config.params['workspace']['id_string'],
-        "AWS_ACCOUNT_ID": config.params['workspace']['account_id'],
+        "WORKSPACE_ID": config.params["workspace"]["id_string"],
+        "AWS_ACCOUNT_ID": config.params["workspace"]["account_id"],
         "pagination": {},
-        "PUBLIC_PORTS": ['20', '21', '22', '3306', '3389', '4333'],
+        "PUBLIC_PORTS": ["20", "21", "22", "3306", "3389", "4333"],
         "IDENTITY_STORE_REGION": config.identity_store_region,
         "AWS_INTERNAL_ACCOUNTS": config.aws_internal_accounts,
     }
@@ -484,17 +517,17 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     try:
         # boto3_session = boto3.Session()
 
-        if config.credentials['type'] == 'self':
+        if config.credentials["type"] == "self":
             boto3_session = boto3.Session(
-                aws_access_key_id=config.credentials['aws_access_key_id'],
-                aws_secret_access_key=config.credentials['aws_secret_access_key'],
+                aws_access_key_id=config.credentials["aws_access_key_id"],
+                aws_secret_access_key=config.credentials["aws_secret_access_key"],
             )
 
-        elif config.credentials['type'] == 'assumerole':
+        elif config.credentials["type"] == "assumerole":
             boto3_session = boto3.Session(
-                aws_access_key_id=config.credentials['aws_access_key_id'],
-                aws_secret_access_key=config.credentials['aws_secret_access_key'],
-                aws_session_token=config.credentials['session_token'],
+                aws_access_key_id=config.credentials["aws_access_key_id"],
+                aws_secret_access_key=config.credentials["aws_secret_access_key"],
+                aws_session_token=config.credentials["session_token"],
             )
 
     except (botocore.exceptions.BotoCoreError, botocore.exceptions.ClientError) as e:
@@ -541,10 +574,11 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         aws_requested_syncs_string = ""
         for service in config.aws_requested_syncs:
             aws_requested_syncs_string += f"{service.get('name', '')},"
-            if service.get('pagination', None):
-                pagination = service.get('pagination', {})
-                pagination['hasNextPage'] = False
-                common_job_parameters['pagination'][service.get('name', None)] = pagination
+            if service.get("pagination", None):
+                pagination = service.get("pagination", {})
+                pagination["hasNextPage"] = False
+                common_job_parameters["pagination"][service.get("name", None)] = pagination
+
         requested_syncs = parse_and_validate_aws_requested_syncs(aws_requested_syncs_string[:-1])
 
     sync_successful = _sync_multiple_accounts(

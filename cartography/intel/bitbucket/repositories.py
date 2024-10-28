@@ -23,32 +23,31 @@ def get_repos(access_token: str, workspace: str) -> List[Dict]:
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=100"
 
     response = make_requests_url(url, access_token)
-    repositories = response.get('values', [])
+    repositories = response.get("values", [])
 
-    while 'next' in response:
-        response = make_requests_url(response.get('next'), access_token)
-        repositories.extend(response.get('values', []))
+    while "next" in response:
+        response = make_requests_url(response.get("next"), access_token)
+        repositories.extend(response.get("values", []))
 
     return repositories
 
 
 def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
     for repo in workspace_repos:
-        repo['workspace']['uuid'] = repo['workspace']['uuid'].replace('{', '').replace('}', '')
-        repo['project']['uuid'] = repo['project']['uuid'].replace('{', '').replace('}', '')
-        repo['uuid'] = repo['uuid'].replace('{', '').replace('}', '')
+        repo["workspace"]["uuid"] = repo["workspace"]["uuid"].replace("{", "").replace("}", "")
+        repo["project"]["uuid"] = repo["project"]["uuid"].replace("{", "").replace("}", "")
+        repo["uuid"] = repo["uuid"].replace("{", "").replace("}", "")
 
-        if repo is not None and repo.get('mainbranch') is not None:
-            repo['default_branch'] = repo.get('mainbranch', {}).get('name', None)
+        if repo is not None and repo.get("mainbranch") is not None:
+            repo["default_branch"] = repo.get("mainbranch", {}).get("name", None)
 
         data = {
             "workspace": workspace,
-            "project": cleanse_string(repo['project']['name']),
-            "repository": cleanse_string(repo['slug']),
-
+            "project": cleanse_string(repo["project"]["name"]),
+            "repository": cleanse_string(repo["name"]),
         }
 
-        repo['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
+        repo["uniqueId"] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
 
     return workspace_repos
 
@@ -87,19 +86,19 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     tx.run(
         ingest_repositories,
         reposData=repos_data,
-        UpdateTag=common_job_parameters['UPDATE_TAG'],
+        UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('bitbucket_workspace_repositories_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("bitbucket_workspace_repositories_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def sync(
-        neo4j_session: neo4j.Session,
-        workspace_name: str,
-        bitbucket_access_token: str,
-        common_job_parameters: Dict[str, Any],
+    neo4j_session: neo4j.Session,
+    workspace_name: str,
+    bitbucket_access_token: str,
+    common_job_parameters: Dict[str, Any],
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync bitbucket data
@@ -108,7 +107,10 @@ def sync(
     :return: Nothing
     """
     tic = time.perf_counter()
-    logger.info("BEGIN Syncing Bitbucket Repositories", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "start": tic})
+    logger.info(
+        "BEGIN Syncing Bitbucket Repositories",
+        extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "start": tic},
+    )
 
     logger.info("Syncing Bitbucket All Repositories")
     workspace_repos = get_repos(bitbucket_access_token, workspace_name)
@@ -117,4 +119,12 @@ def sync(
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
-    logger.info("END Syncing Bitbucket Repositories", extra={"workspace": common_job_parameters["WORKSPACE_ID"], "slug": workspace_name, "end": toc, "duration": f"{toc - tic:0.4f}"})
+    logger.info(
+        "END Syncing Bitbucket Repositories",
+        extra={
+            "workspace": common_job_parameters["WORKSPACE_ID"],
+            "slug": workspace_name,
+            "end": toc,
+            "duration": f"{toc - tic:0.4f}",
+        },
+    )

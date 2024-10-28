@@ -43,21 +43,54 @@ Ec2Data = namedtuple(
 
 
 @timeit
+def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], region: str) -> Dict[str, Dict]:
+    client = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
+    image_details = {}
+
+    for i in range(0, len(image_ids), 1000):
+        batch = image_ids[i : i + 1000]
+
+        try:
+            response = client.describe_images(ImageIds=batch)
+            images = response.get("Image", [])
+            image_details.update({image["ImageId"]: image for image in images})
+        except ClientError as e:
+            logger.error(f"Error fetching image details for batch {i//1000 + 1}: {e}")
+            continue
+
+    return image_details
+
+
+@timeit
 @aws_handle_regions
 def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     client = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
     reservations = []
+    image_ids = []
     try:
         paginator = client.get_paginator("describe_instances")
         for page in paginator.paginate():
             reservations.extend(page["Reservations"])
+            for reservation in page["Reservations"]:
+                for instance in reservation["Instances"]:
+                    image_id = instance.get("ImageId")
+                    if image_id:
+                        image_ids.append(image_id)
+
+        image_details = get_ec2_images(boto3_session, list(set(image_ids)), region)
+
         for reservation in reservations:
             reservation["region"] = region
+            for instance in reservation["Instances"]:
+                image_id = instance.get("ImageId")
+
+                if image_id and image_id in image_details:
+                    instance["OSDetails"] = image_details[image_id]
 
     except ClientError as e:
         if (
-            e.response["Error"]["Code"] == "AccessDeniedException" or
-            e.response["Error"]["Code"] == "UnauthorizedOperation"
+            e.response["Error"]["Code"] == "AccessDeniedException"
+            or e.response["Error"]["Code"] == "UnauthorizedOperation"
         ):
             logger.warning(
                 "ec2:describe_security_groups failed with AccessDeniedException; continuing sync.",
@@ -74,11 +107,11 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
 def get_roles_from_instance_profile(
     boto3_session: boto3.session.Session,
     region: str,
-    instance_profile_arn,
+    instance_profile_id,
 ) -> List[Dict]:
     iam_client = boto3_session.client("iam", region_name=region, config=get_botocore_config())
     try:
-        response = iam_client.get_instance_profile(InstanceProfileName=instance_profile_arn)
+        response = iam_client.get_instance_profile(InstanceProfileName=instance_profile_id)
         roles = response.get("InstanceProfile", {}).get("Roles", [])
         return roles
     except Exception as e:
@@ -118,11 +151,17 @@ def transform_ec2_instances(
 
             iam_roles = []
             if "IamInstanceProfile" in instance:
-                instance_profile_arn = instance["IamInstanceProfile"]["Arn"]
-                iam_roles = get_roles_from_instance_profile(boto3_session, region, instance_profile_arn)
+                instance_profile_id = instance["IamInstanceProfile"]["Id"]
+                iam_roles = get_roles_from_instance_profile(boto3_session, region, instance_profile_id)
 
                 for role in iam_roles:
                     role["InstanceId"] = instance_id
+
+            os_details = instance.get("OSDetails", {})
+            platform = os_details.get("Platform", "Linux")
+            architecture = os_details.get("Architecture", "Unknown")
+            virtualization_type = os_details.get("VirtualizationType", "Unknown")
+            hypervisor = os_details.get("Hypervisor", "Unknown")
 
             instance_list.append(
                 {
@@ -141,8 +180,10 @@ def transform_ec2_instances(
                     "AvailabilityZone": instance.get("Placement", {}).get("AvailabilityZone"),
                     "Tenancy": instance.get("Placement", {}).get("Tenancy"),
                     "HostResourceGroupArn": instance.get("Placement", {}).get("HostResourceGroupArn"),
-                    "Platform": instance.get("Platform"),
-                    "Architecture": instance.get("Architecture"),
+                    "Platform": platform,
+                    "Architecture": architecture,
+                    "VirtualizationType": virtualization_type,
+                    "Hypervisor": hypervisor,
                     "EbsOptimized": instance.get("EbsOptimized"),
                     "BootMode": instance.get("BootMode"),
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
