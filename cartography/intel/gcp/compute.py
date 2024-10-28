@@ -53,6 +53,10 @@ def get_compute_disks(compute: Resource, project_id: str, zones: list, common_jo
                         disk["id"] = f"projects/{project_id}/disks/{disk['name']}"
                         x = zone["name"].split("-")
                         disk["region"] = f"{x[0]}-{x[1]}"
+
+                        os_feature_types = [feature["type"] for feature in disk.get("guestOsFeatures", [])]
+                        disk["osFeatures"] = "WINDOWS" if "WINDOWS" in os_feature_types else "LINUX"
+
                         disks.append(disk)
                 req = compute.disks().list_next(previous_request=req, previous_response=res)
 
@@ -102,6 +106,8 @@ def load_compute_disks_tx(
         disk.options = record.options,
         disk.self_link = record.selfLink,
         disk.source_image = record.sourceImage,
+        disk.architecture = record.architecture,
+        disk.os_features = record.osFeatures,
         disk.last_attach_timestamp = record.lastAttachTimestamp,
         disk.last_detach_timestamp = record.lastDetachTimestamp,
         disk.physical_block_size_bytes = record.physicalBlockSizeBytes,
