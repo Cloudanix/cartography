@@ -135,6 +135,7 @@ def run_cleanup_job(
     neo4j_session: neo4j.Session,
     common_job_parameters: Dict,
     package: str = "cartography.data.jobs.cleanup",
+    retry: int = 1,
 ) -> None:
     try:
         GraphJob.run_from_json(
@@ -149,6 +150,10 @@ def run_cleanup_job(
 
     except Exception as e:
         logger.warning(f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}")
+        # to handle deadlocks retry transaction
+        if retry < 2:
+            retry += 1
+            run_cleanup_job(filename=filename, common_job_parameters=common_job_parameters, retry=retry)
 
 
 def merge_module_sync_metadata(
