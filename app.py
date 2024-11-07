@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import uuid
 
 import cartography.cli
 from libraries.authlibrary import AuthLibrary
@@ -180,6 +181,8 @@ def publish_request_iam_entitlement(context, req, body):
     if 'iamEntitlementRequestTopic' in req:
         sns_helper = SNSLibrary(context)
         req['credentials'] = body['credentials']
+        if req.get("loggingAccount"):
+            req["loggingAccount"] = get_logging_account_auth_creds(context, req)
         context.logger.info('publishing results to IAM_ENTITLEMENT_REQUEST_TOPIC')
         status = sns_helper.publish(json.dumps(req), req['iamEntitlementRequestTopic'])
         context.logger.info(f'result published to SNS with status: {status}')
@@ -209,6 +212,37 @@ def get_auth_creds(context, args):
         }
 
     return auth_creds
+
+
+def get_logging_account_auth_creds(context, args):
+    auth_helper = AuthLibrary(context)
+    aws_access_key_id = auth_helper.get_assume_role_access_key()
+    aws_secret_access_key = auth_helper.get_assume_role_access_secret()
+    logging_account = args.get("loggingAccount", {})
+
+    if context.app_env == 'PRODUCTION' or context.app_env == 'DEBUG':
+        auth_params = {
+            'aws_access_key_id': aws_access_key_id,
+            'aws_secret_access_key': aws_secret_access_key,
+            'role_session_name': str(uuid.uuid4()),
+            'role_arn': logging_account.get('awsExternalRoleArn'),
+            'external_id': logging_account.get('awsExternalId'),
+        }
+
+        auth_creds = auth_helper.assume_role(auth_params)
+        auth_creds['type'] = 'assumerole'
+        auth_creds['primary_region'] = args.get("primaryRegion", "us-east-1")
+
+    else:
+        auth_creds = {
+            'type': 'self',
+            'aws_access_key_id': args.get('credentials', {}).get('awsAccessKeyID') if 'credentials' in args else None,
+            'aws_secret_access_key': args.get('credentials', {}).get('awsSecretAccessKey') if 'credentials' in args else None,
+        }
+
+    args["loggingAccount"]["creds"] = auth_creds
+
+    return args.get("loggingAccount", {})
 
 
 def load_cartography(event, ctx):
