@@ -65,7 +65,10 @@ def process_request(context, args):
         svcs.append(svc)
 
     creds = get_auth_creds(context, args)
-
+    if args.get("dc", "US") == "IN":
+        context.neo4j_uri = os.environ['CDX_IN_APP_NEO4J_URI']
+        context.neo4j_user = os.environ['CDX_IN_APP_NEO4J_USER']
+        context.neo4j_pwd = os.environ['CDX_IN_APP_NEO4J_PWD']
     body = {
         "credentials": creds,
         "neo4j": {
