@@ -267,7 +267,8 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
     for page in paginator.paginate():
         roles.extend(page["Roles"])
 
-    service_role_types = ["/aws-service-role/"]
+    service_role_types = ["/aws-service-role/", "/service-role/", "/aws-reserved/"]
+    sso_reserved_types = ["/aws-reserved/sso.amazonaws.com/"]
     for role in roles:
         try:
             role_data = client.get_role(RoleName=role.get("RoleName")).get("Role")
@@ -276,6 +277,10 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
             if any(service_role_type in role_data.get("Path", "") for service_role_type in service_role_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isServiceRole"] = True
+
+            if any(sso_reserved_type in role_data.get("Path", "") for sso_reserved_type in sso_reserved_types):
+                # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
+                role["isSSOReservedRole"] = True
 
         except Exception as e:
             logger.warning(f"Failed to get role info. {e}")
@@ -500,7 +505,8 @@ def load_roles(
     rnode.createdate = $CreateDate
     SET rnode.name = $RoleName, rnode.path = $Path,
     rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
-    rnode.is_service_role = $IsServiceRole
+    rnode.is_service_role = $IsServiceRole,
+    rnode.i_sso_reserved_role = $IsSSOReservedRole
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -545,6 +551,7 @@ def load_roles(
             RoleName=role["RoleName"],
             Path=role["Path"],
             IsServiceRole=role.get("isServiceRole", False),
+            IsSSOReservedRole=role.get("isSSOReservedRole", False),
             region="global",
             LastUsedDate=role["RoleLastUsed"].get("LastUsedDate") if "RoleLastUsed" in role else None,
             LastUsedRegion=role["RoleLastUsed"].get("Region") if "RoleLastUsed" in role else None,
