@@ -10,7 +10,6 @@ from libraries.snslibrary import SNSLibrary
 from utils.context import AppContext
 from utils.logger import get_logger
 
-
 lambda_init = None
 context = None
 
@@ -26,20 +25,15 @@ def set_assume_role_keys(context):
     context.neo4j_uri = os.environ['CDX_APP_NEO4J_URI']
     context.neo4j_user = os.environ['CDX_APP_NEO4J_USER']
     context.neo4j_pwd = os.environ['CDX_APP_NEO4J_PWD']
+    context.neo4j_connection_lifetime = 200
 
 
 def init_lambda(ctx):
     global lambda_init, context
 
-    logging.getLogger('cartography').setLevel(os.environ.get('LOG_LEVEL'))
-    # logging.getLogger('cartography.intel').setLevel(os.environ.get('LOG_LEVEL'))
-    logging.getLogger('cartography.sync').setLevel(os.environ.get('LOG_LEVEL'))
-    logging.getLogger('cartography.graph').setLevel(os.environ.get('LOG_LEVEL'))
-    logging.getLogger('cartography.cartography').setLevel(os.environ.get('LOG_LEVEL'))
-
     context = AppContext(
         region=os.environ['CDX_DEFAULT_REGION'],
-        log_level=os.environ['LOG_LEVEL'],
+        log_level=os.environ['CDX_LOG_LEVEL'],
         app_env=os.environ['CDX_APP_ENV'],
     )
     context.logger = get_logger(context.log_level)
@@ -60,7 +54,7 @@ def init_lambda(ctx):
 
 
 def process_request(context, args):
-    context.logger.warning(f'request - {args.get("templateType")} - {args.get("sessionString")} - {args.get("eventId")} - {args.get("workspace")}')
+    context.logger.info(f'request - {args.get("templateType")} - {args.get("sessionString")} - {args.get("eventId")} - {args.get("workspace")}')
 
     svcs = []
     for svc in args.get('services', []):
@@ -71,14 +65,17 @@ def process_request(context, args):
         svcs.append(svc)
 
     creds = get_auth_creds(context, args)
-
+    if args.get("dc", "US") == "IN":
+        context.neo4j_uri = os.environ['CDX_IN_APP_NEO4J_URI']
+        context.neo4j_user = os.environ['CDX_IN_APP_NEO4J_USER']
+        context.neo4j_pwd = os.environ['CDX_IN_APP_NEO4J_PWD']
     body = {
         "credentials": creds,
         "neo4j": {
             "uri": context.neo4j_uri,
             "user": context.neo4j_user,
             "pwd": context.neo4j_pwd,
-            "connection_lifetime": 200,
+            "connection_lifetime": context.neo4j_connection_lifetime,
         },
         "logging": {
             "mode": "verbose",
@@ -87,22 +84,26 @@ def process_request(context, args):
             "sessionString": args.get('sessionString'),
             "eventId": args.get('eventId'),
             "templateType": args.get('templateType'),
+            "regions": args.get('regions'),
             "workspace": args.get('workspace'),
             "actions": args.get('actions'),
             "resultTopic": args.get('resultTopic'),
             "requestTopic": args.get("requestTopic"),
+            "iamEntitlementRequestTopic": args.get('iamEntitlementRequestTopic'),
+            "identityStoreIdentifier": args.get('identityStoreIdentifier'),
+            "partial": args.get("partial"),
+            "services": args.get("services"),
         },
         "services": svcs,
         "updateTag": args.get("updateTag"),
         "refreshEntitlements": args.get("refreshEntitlements"),
         "identityStoreRegion": args.get("identityStoreRegion"),
-        "awsInternalAccounts": args.get("awsInternalAccounts")
-
+        "awsInternalAccounts": args.get("awsInternalAccounts"),
     }
 
     resp = cartography.cli.run_aws(body)
 
-    if 'status' in resp and resp['status'] == 'success':
+    if resp.get('status', '') == 'success':
         if resp.get('pagination', None):
             services = []
             for service, pagination in resp.get('pagination', {}).items():
@@ -119,6 +120,7 @@ def process_request(context, args):
             else:
                 del resp['updateTag']
             del resp['pagination']
+
         context.logger.info(f'successfully processed cartography: {resp}')
 
     else:
@@ -129,7 +131,7 @@ def process_request(context, args):
     context.logger.info(f'inventory sync aws response - {args["eventId"]}: {json.dumps(resp)}')
 
 
-def publish_response(context, req, resp, args):
+def publish_response(context, body, resp, args):
     if context.app_env != 'PRODUCTION':
         try:
             with open('response.json', 'w') as outfile:
@@ -139,47 +141,55 @@ def publish_response(context, req, resp, args):
             context.logger.error(f'Failed to write to file: {e}')
 
     else:
-        body = {
+        payload = {
             "status": resp['status'],
-            "params": req['params'],
-            "sessionString": req['params']['sessionString'],
-            "eventId": req['params']['eventId'],
-            "templateType": req['params']['templateType'],
-            "workspace": req['params']['workspace'],
-            "actions": req['params']['actions'],
-            "externalRoleArn": req.get('externalRoleArn'),
-            "externalId": req.get('externalId'),
-            "resultTopic": req['params'].get('resultTopic'),
-            "requestTopic": req['params'].get('requestTopic'),
+            "params": body['params'],
+            "sessionString": body.get('params', {}).get('sessionString'),
+            "eventId": body.get('params', {}).get('eventId'),
+            "templateType": body.get('params', {}).get('templateType'),
+            "workspace": body.get('params', {}).get('workspace'),
+            "actions": body.get('params', {}).get('actions'),
+            "resultTopic": body.get('params', {}).get('resultTopic'),
+            "requestTopic": body.get('params', {}).get('requestTopic'),
+            "identityStoreIdentifier": body.get('params', {}).get('identityStoreIdentifier'),
+            "partial": body.get('params', {}).get("partial"),
+            "externalRoleArn": body.get('externalRoleArn'),
+            "externalId": body.get('externalId'),
             "response": resp,
-            "services": resp.get("services", None),
+            "services": body.get('params', {}).get("services"),
             "updateTag": resp.get("updateTag", None),
+            "iamEntitlementRequestTopic": body.get('params', {}).get('iamEntitlementRequestTopic'),
         }
 
         sns_helper = SNSLibrary(context)
-        if body.get('services', None):
-            if 'requestTopic' in req['params']:
-                status = sns_helper.publish(json.dumps(body), req['params']['requestTopic'])
+        # If cartography processing response object contains `services` object that means pagination is in progress. push the message back to the same queue for continuation.
+        if resp.get('services', None):
+            if body.get('params', {}).get('requestTopic'):
+                status = sns_helper.publish(json.dumps(payload), body['params']['requestTopic'])
 
-        elif 'resultTopic' in req['params']:
-            # Result should be pushed to "resultTopic" passed in the request
-            # status = sns_helper.publish(json.dumps(body), req['params']['resultTopic'])
+        elif body.get('params', {}).get('resultTopic'):
+            if body.get('params', {}).get('partial'):
+                # In case of a partial request processing, result should be pushed to "resultTopic" passed in the request
+                status = sns_helper.publish(json.dumps(payload), body['params']['resultTopic'])
 
-            context.logger.info('Result not published anywhere. since we want to avoid query when inventory is refreshed')
+            else:
+                context.logger.info('Result not published anywhere. since we want to avoid query when inventory is refreshed')
+
             status = True
-            publish_request_iam_entitlement(context, args, req)
+            publish_request_iam_entitlement(context, args, body)
 
         else:
-            context.logger.info('publishing results to CARTOGRAPHY_RESULT_TOPIC')
-            status = sns_helper.publish(json.dumps(body), context.aws_inventory_sync_response_topic)
-            publish_request_iam_entitlement(context, args, req)
+            context.logger.info('publishing results to CDX_CARTOGRAPHY_RESULT_TOPIC')
+            status = sns_helper.publish(json.dumps(payload), context.aws_inventory_sync_response_topic)
+            publish_request_iam_entitlement(context, args, body)
 
         context.logger.info(f'result published to SNS with status: {status}')
 
 
 def publish_request_iam_entitlement(context, req, body):
-    if 'iamEntitlementRequestTopic' in req:
+    if req.get('iamEntitlementRequestTopic'):
         sns_helper = SNSLibrary(context)
+        del body['credentials']['expiration']
         req['credentials'] = body['credentials']
         if req.get("loggingAccount"):
             req["loggingAccount"] = get_logging_account_auth_creds(context, req)
@@ -245,12 +255,17 @@ def get_logging_account_auth_creds(context, args):
     return args.get("loggingAccount", {})
 
 
-def load_cartography(event, ctx):
+def aws_process_cartography(event, ctx):
     global lambda_init, context
     if not lambda_init:
         init_lambda(ctx)
 
-    context.logger.info('inventory sync aws worker request received via SNS')
+    logging.getLogger('cartography').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.graph').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.intel').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.sync').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.cartography').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cloudconsolelink.clouds').setLevel(os.environ.get('CDX_LOG_LEVEL'))
 
     record = event['Records'][0]
     message = record['Sns']['Message']
@@ -261,53 +276,29 @@ def load_cartography(event, ctx):
     except Exception as e:
         context.logger.error(f'error while parsing inventory sync aws request json: {e}', exc_info=True, stack_info=True)
 
-        return {
+        response = {
             "status": 'failure',
             "message": 'unable to parse request',
         }
+
+        return {
+            'statusCode': 200,
+            "headers": {
+                "Content-Type": "application/json",
+            },
+            'body': json.dumps(response),
+        }
+
+    context.logger.info(f"message: {json.dumps(params)}")
 
     process_request(context, params)
 
     return {
         'statusCode': 200,
+        "headers": {
+            "Content-Type": "application/json",
+        },
         'body': json.dumps({
             "status": 'success',
         }),
     }
-
-
-def process_request_duplicate(context, args):
-    context.logger.info(f'{args["templateType"]} request received - {args["eventId"]}')
-    context.logger.info(f'workspace - {args["workspace"]}')
-
-    creds = get_auth_creds(context, args)
-
-    body = {
-        "credentials": creds,
-        "neo4j": {
-            "uri": context.neo4j_uri,
-            "user": context.neo4j_user,
-            "pwd": context.neo4j_pwd,
-        },
-        "logging": {
-            "mode": "verbose",
-        },
-        "params": {
-            "sessionString": args['sessionString'],
-            "eventId": args['eventId'],
-            "templateType": args['templateType'],
-            "workspace": args['workspace'],
-        },
-    }
-
-    resp = cartography.cli.run_aws(body)
-
-    if 'status' in resp and resp['status'] == 'success':
-        context.logger.info(f'successfully processed cartography: {resp}')
-
-    else:
-        context.logger.info(f'failed to process cartography: {resp["message"]}')
-
-    publish_response(context, body, resp)
-
-    context.logger.info(f'inventory sync aws response - {args["eventId"]}: {json.dumps(resp)}')
