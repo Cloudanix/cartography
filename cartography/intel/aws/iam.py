@@ -506,7 +506,7 @@ def load_roles(
     SET rnode.name = $RoleName, rnode.path = $Path,
     rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
     rnode.is_service_role = $IsServiceRole,
-    rnode.i_sso_reserved_role = $IsSSOReservedRole
+    rnode.is_sso_reserved_role = $IsSSOReservedRole
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
