@@ -6,6 +6,10 @@
 			"iterationsize": 100
 		},
 		{
+			"query": "MATCH (rds:RDSInstance{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET rds.exposed_internet = true,(CASE WHEN NOT 'direct' IN coalesce(rds.exposed_internet_type , []) THEN rds END).exposed_internet_type = coalesce(rds.exposed_internet_type , []) + 'direct';",
+			"iterative": false
+		},
+		{
 			"query": "MATCH (cidr:IpRange{range:'0.0.0.0/0'})—[:MEMBER_OF_IP_RULE]->(:IpPermissionInbound)—[:MEMBER_OF_EC2_SECURITY_GROUP]->(:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(rds:RDSInstance{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET rds.exposed_internet = true,(CASE WHEN NOT 'direct_ipv4' IN coalesce(rds.exposed_internet_type , []) THEN rds END).exposed_internet_type = coalesce(rds.exposed_internet_type , []) + 'direct_ipv4';",
 			"iterative": false
 		},
