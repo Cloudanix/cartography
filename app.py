@@ -65,17 +65,31 @@ def process_request(context, args):
         svcs.append(svc)
 
     creds = get_auth_creds(context, args)
-    if args.get("dc", "US") == "IN":
+
+    # Connect to Data Center Specific database
+    request_data_center = args.get("dc", "US")
+    if request_data_center == "US":
+        context.neo4j_uri = os.environ['CDX_APP_NEO4J_URI']
+        context.neo4j_user = os.environ['CDX_APP_NEO4J_USER']
+        context.neo4j_pwd = os.environ['CDX_APP_NEO4J_PWD']
+
+    elif request_data_center == "IN":
         context.neo4j_uri = os.environ['CDX_IN_APP_NEO4J_URI']
         context.neo4j_user = os.environ['CDX_IN_APP_NEO4J_USER']
         context.neo4j_pwd = os.environ['CDX_IN_APP_NEO4J_PWD']
+
+    else:
+        context.neo4j_uri = os.environ['CDX_APP_NEO4J_URI']
+        context.neo4j_user = os.environ['CDX_APP_NEO4J_USER']
+        context.neo4j_pwd = os.environ['CDX_APP_NEO4J_PWD']
+
     body = {
         "credentials": creds,
         "neo4j": {
             "uri": context.neo4j_uri,
             "user": context.neo4j_user,
             "pwd": context.neo4j_pwd,
-            "connection_lifetime": context.neo4j_connection_lifetime,
+            "connection_lifetime": int(context.neo4j_connection_lifetime),
         },
         "logging": {
             "mode": "verbose",
