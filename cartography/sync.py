@@ -20,6 +20,7 @@ import cartography.intel.create_indexes
 import cartography.intel.gcp
 import cartography.intel.github
 import cartography.intel.gitlab
+import cartography.customer_data_cleanup.aws
 import cloudanix
 from cartography.config import Config
 from cartography.stats import set_stats_client
@@ -58,6 +59,7 @@ TOP_LEVEL_MODULES = OrderedDict({  # preserve order so that the default sync alw
     # 'duo': cartography.intel.duo.start_duo_ingestion,
     # 'semgrep': cartography.intel.semgrep.start_semgrep_ingestion,
     'analysis': cartography.intel.analysis.run,
+    'aws-cleanup': cartography.customer_data_cleanup.aws.start_aws_cleanup,
 })
 
 
@@ -229,6 +231,23 @@ def build_aws_sync():
     stages.append(('cloudanix-workspace', cloudanix.run))
     stages.append(('aws', cartography.intel.aws.start_aws_ingestion))
     stages.append(('analysis', cartography.intel.analysis.run))
+
+    sync.add_stages(stages)
+
+    return sync
+
+
+def build_aws_cleanup_sync():
+    """
+    Build the aws cartography sync, which runs all intelligence modules shipped with the cartography package.
+
+    :rtype: cartography.sync.Sync
+    :return: The aws cartography sync object.
+    """
+    sync = Sync()
+
+    stages = []
+    stages.append(('aws-cleanup', cartography.customer_data_cleanup.aws.start_aws_cleanup))
 
     sync.add_stages(stages)
 
