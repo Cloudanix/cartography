@@ -114,6 +114,9 @@ def sync(
 
     org_data = get_organization(github_api_key, github_url, github_org)
 
-    load_organization(neo4j_session, org_data, common_job_parameters)
+    # Cartography supports Organizations only. No individual accounts.
+    # Handle non-org based ingestion
+    if org_data:
+        load_organization(neo4j_session, org_data, common_job_parameters)
 
     cleanup(neo4j_session, common_job_parameters)
