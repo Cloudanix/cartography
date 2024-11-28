@@ -102,7 +102,10 @@ def load_aws_accounts(
 ) -> None:
     query = """
     MERGE (w:CloudanixWorkspace{id: $WORKSPACE_ID})
-    SET w.lastupdated = $UPDATE_TAG
+    ON CREATE SET w.firstseen = timestamp()
+    SET w.lastupdated = $UPDATE_TAG,
+    w.name = $WORKSPACE_NAME,
+    w.account_id = $ACCOUNT_ID
     WITH w
     MERGE (org:AWSOrganization{id: $organizationId})
     ON CREATE SET org.firstseen = timestamp()
@@ -139,6 +142,7 @@ def load_aws_accounts(
         neo4j_session.run(
             query,
             WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+            WORKSPACE_NAME=common_job_parameters['WORKSPACE_NAME'],
             ACCOUNT_ID=account_id,
             ACCOUNT_NAME=account_name,
             RootArn=root_arn,
@@ -150,7 +154,6 @@ def load_aws_accounts(
             masterAccountArn=organization.get("MasterAccountArn", None),
             masterAccountId=organization.get("MasterAccountId", None),
             masterAccountEmail=organization.get("MasterAccountEmail", None),
-
         )
 
         cleanup(neo4j_session, account_id, common_job_parameters)

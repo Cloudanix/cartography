@@ -13,7 +13,8 @@ def run(neo4j_session, config):
 
     load_cloudanix_workspace(neo4j_session, config.update_tag, common_job_parameters)
 
-    run_cleanup_job('cloudanix_workspace_cleanup.json', neo4j_session, common_job_parameters)
+    # TODO: do we need to cleanup?
+    # run_cleanup_job('cloudanix_workspace_cleanup.json', neo4j_session, common_job_parameters)
 
 
 def load_cloudanix_workspace(neo4j_session, update_tag, common_job_parameters):
@@ -21,11 +22,15 @@ def load_cloudanix_workspace(neo4j_session, update_tag, common_job_parameters):
 
 
 def load_cloudanix_workspace_tx(tx, update_tag, common_job_parameters):
+    # TODO: do we need to assign `account_id`, it changes for each inventory run. Is it used anywhere?
     query = """
     MERGE (w:CloudanixWorkspace{id: $WORKSPACE_ID})
-    ON CREATE SET w.firstseen = timestamp(), w.lastupdated = $UPDATE_TAG,
-    w.name = $WORKSPACE_NAME, w.account_id= $WORKSPACE_ACCOUNT_ID
-    SET w.lastupdated = $UPDATE_TAG, w.name = $WORKSPACE_NAME, w.account_id= $WORKSPACE_ACCOUNT_ID
+    ON CREATE SET
+        w.firstseen = timestamp()
+    SET
+        w.lastupdated = $UPDATE_TAG,
+        w.name = $WORKSPACE_NAME,
+        w.account_id= $WORKSPACE_ACCOUNT_ID
     """
 
     tx.run(

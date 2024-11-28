@@ -189,8 +189,10 @@ def _sync_one_account(
     # AWS Tags - Must always be last.
     if "resourcegroupstaggingapi" in aws_requested_syncs:
         RESOURCE_FUNCTIONS["resourcegroupstaggingapi"](config, **sync_args)
+
     if config.refresh_entitlements:
         run_cleanup_job("aws_unused_cleanup.json", neo4j_session, common_job_parameters)
+
     run_analysis_job(
         "aws_ec2_iaminstanceprofile.json",
         neo4j_session,
@@ -437,7 +439,7 @@ def _sync_multiple_accounts(
     aws_best_effort_mode: bool,
     aws_requested_syncs: List[str] = [],
 ) -> bool:
-    logger.info("Syncing AWS accounts: %s", ", ".join(accounts.values()))
+    logger.info("Syncing AWS accounts for org: %s - %s", ", ".join(accounts.values()), organization.get('Id'))
     organizations.sync(neo4j_session, accounts, organization, config.update_tag, common_job_parameters)
 
     for profile_name, account_id in accounts.items():
@@ -507,6 +509,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "UPDATE_TAG": config.update_tag,
         "permission_relationships_file": config.permission_relationships_file,
         "WORKSPACE_ID": config.params["workspace"]["id_string"],
+        "WORKSPACE_NAME": config.params['workspace']["name"],
         "AWS_ACCOUNT_ID": config.params["workspace"]["account_id"],
         "pagination": {},
         "PUBLIC_PORTS": ["20", "21", "22", "3306", "3389", "4333"],
