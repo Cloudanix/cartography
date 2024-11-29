@@ -242,7 +242,7 @@ def _load_waf_v2_web_acls_tx(tx: neo4j.Transaction, web_acls: List[Dict], curren
         web_acl.scope = record.scope,
         web_acl.default_action = record.default_action,
         web_acl.rules_count = record.rules_count,
-        web_acl.capacity = record.capacity,
+        web_acl.capacity = record.capacity
     WITH web_acl
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(web_acl)
