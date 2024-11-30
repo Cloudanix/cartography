@@ -246,6 +246,16 @@ def transform_users_data(boto3_session: boto3.session.Session, users: List[Dict]
             user["consoleLoginEnabled"] = False
         except Exception:
             user["consoleLoginEnabled"] = False
+        try:
+            mfa_devices = client.list_mfa_devices(UserName=user["UserName"])
+            if len(mfa_devices.get("MFADevices", [])) > 0:
+                user["MFAEnabled"] = True
+            else:
+                user["MFAEnabled"] = False
+        except client.exceptions.NoSuchEntityException:
+            user["MFAEnabled"] = False
+        except Exception:
+            user["MFAEnabled"] = False
     return {"Users": users}
 
 
@@ -414,6 +424,7 @@ def load_users(
     unode.path = $PATH, unode.passwordlastused = $PASSWORD_LASTUSED,
     unode.region = $region,
     unode.consoleloginenabled = $CONSOLELOGINENABLED,
+    unode.mfaenabled = $MFAENABLED,
     unode.lastupdated = $aws_update_tag
     WITH unode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -432,6 +443,7 @@ def load_users(
             USERNAME=user["UserName"],
             PATH=user["Path"],
             CONSOLELOGINENABLED=user.get("consoleLoginEnabled", False),
+            MFAENABLED=user.get("MFAEnabled", False),
             PASSWORD_LASTUSED=str(user.get("PasswordLastUsed", "")),
             AWS_ACCOUNT_ID=current_aws_account_id,
             region="global",
