@@ -39,6 +39,12 @@ def get_cloudfront_distributions(boto3_session: boto3.session.Session) -> List[D
 def trtansform_distribution(dists: List[Dict]) -> List[Dict]:
     distributions = []
     for distribution in dists:
+        bucketId = distribution.get("Origins", {}).get("Items", []).get("Id", "")
+
+        if bucketId.startswith("S3-"):
+            bucket_name = bucketId[3:]
+
+        distribution['S3bucketName'] = bucket_name
         distribution['region'] = 'global'
         distribution['arn'] = distribution['ARN']
         distribution['consolelink'] = aws_console_link.get_console_link(arn=distribution['arn'])
@@ -70,12 +76,18 @@ def _load_cloudfront_distributions_tx(tx: neo4j.Transaction, distributions: List
         distribution.viewer_protocol_policy = record.DefaultCacheBehavior.ViewerProtocolPolicy,
         distribution.web_acl_id = record.WebACLId,
         distribution.is_ipv6_enabled = record.IsIPV6Enabled,
-        distribution.http_version = record.HttpVersion
-    WITH distribution
+        distribution.http_version = record.HttpVersion,
+        distribution.s3_bucket_name = record.S3bucketName
+    WITH distribution, record
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(distribution)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
+    WITH distribution, record
+    MATCH (bucket:S3Bucket {name: record.S3bucketName})
+    MERGE (distribution)-[rel:LINKED_TO]->(bucket)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $aws_update_tag
     """
 
     tx.run(

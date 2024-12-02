@@ -774,15 +774,21 @@ def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) 
 def load_s3_buckets(neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str, aws_update_tag: int) -> None:
     ingest_bucket = """
     MERGE (bucket:S3Bucket{id:$BucketName})
-    ON CREATE SET bucket.firstseen = timestamp(), bucket.creationdate = $CreationDate
-    SET bucket.name = $BucketName, bucket.region = $BucketRegion, bucket.arn = $Arn,
-    bucket.consolelink = $consolelink,
-    bucket.lastupdated = $aws_update_tag
+    ON CREATE SET bucket.firstseen = timestamp(), 
+                  bucket.creationdate = $CreationDate
+    SET bucket.name = $BucketName, 
+        bucket.region = $BucketRegion, 
+        bucket.arn = $Arn,
+        bucket.consolelink = $consolelink,
+        bucket.lastupdated = $aws_update_tag
     WITH bucket
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(bucket)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
+    WITH bucket
+    OPTIONAL MATCH (bucket)<-[:LINKED_TO]-(distribution:AWSCloudfrontDistribution)
+    SET bucket.cloudfront_arn = distribution.arn
     """
 
     # The owner data returned by the API maps to the aws account nickname and not the IAM user
