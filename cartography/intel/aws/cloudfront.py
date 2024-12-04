@@ -48,7 +48,7 @@ def trtansform_distribution(dists: List[Dict]) -> List[Dict]:
                 bucket_name = bucket_id[3:]
                 bucket_names.append(bucket_name)
 
-        distribution['S3bucketName'] = bucket_names
+        distribution['s3BucketNames'] = bucket_names
         distribution['region'] = 'global'
         distribution['arn'] = distribution['ARN']
         distribution['consolelink'] = aws_console_link.get_console_link(arn=distribution['arn'])
@@ -81,14 +81,14 @@ def _load_cloudfront_distributions_tx(tx: neo4j.Transaction, distributions: List
         distribution.web_acl_id = record.WebACLId,
         distribution.is_ipv6_enabled = record.IsIPV6Enabled,
         distribution.http_version = record.HttpVersion,
-        distribution.s3_bucket_names = record.S3bucketName
+        distribution.s3_bucket_names = record.s3BucketNames
     WITH distribution, record
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(distribution)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     WITH distribution, record
-    UNWIND record.S3bucketName AS bucket_name
+    UNWIND record.s3BucketNames AS bucket_name
     MATCH (bucket:S3Bucket {name: bucket_name})
     MERGE (distribution)-[rel:LINKED_TO]->(bucket)
     ON CREATE SET rel.firstseen = timestamp()
