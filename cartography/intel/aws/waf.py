@@ -128,14 +128,14 @@ def get_waf_v2_web_acl_details(
         acl_details = response.get("WebACL", {})
 
         return {
-            "Name": str(acl["Name"]),
-            "Id": str(acl["Id"]),
-            "ARN": str(acl["ARN"]),
-            "region": str(region),
-            "scope": str(scope),
-            "default_action": str(acl_details.get("DefaultAction", {}).get("Type", "")),
+            "Name": acl.get("Name", ""),
+            "Id": acl.get("Id", ""),
+            "ARN": acl.get("ARN", ""),
+            "region": region,
+            "scope": scope,
+            "default_action": acl_details.get("DefaultAction", {}).get("Type", ""),
             "rules_count": str(len(acl_details.get("Rules", []))),
-            "capacity": str(acl_details.get("Capacity", 0)),
+            "capacity": str(acl_details.get("Capacity", 0))
         }
     except ClientError as e:
         logger.error(
