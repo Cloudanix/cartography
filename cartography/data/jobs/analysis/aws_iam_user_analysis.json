@@ -1,0 +1,25 @@
+{
+    "name": "IAM User Analysis Jobs",
+    "statements": [
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(n:AWSUser) where EXISTS(n.lastactivity) WITH n LIMIT $LIMIT_SIZE REMOVE n.lastactivity, n.accesskeys, n.accesskeysage return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "__comment": "Determine user's last activity",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(aa:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(au:AWSUser)-[:AWS_ACCESS_KEY]->(ak:AccountAccessKey) SET au.lastactivity = (CASE WHEN coalesce(au.last_activity , (CASE WHEN coalesce(au.passwordlastused, $DEFAULT_DATETIME) IN $NULL_STRINGS THEN $DEFAULT_DATETIME ELSE coalesce(au.passwordlastused, $DEFAULT_DATETIME) END)) > (CASE WHEN coalesce(ak.lastuseddate, $DEFAULT_DATETIME) IN $NULL_STRINGS THEN $DEFAULT_DATETIME ELSE coalesce(ak.lastuseddate, $DEFAULT_DATETIME) END) THEN coalesce(au.last_activity , (CASE WHEN coalesce(au.passwordlastused, $DEFAULT_DATETIME) IN $NULL_STRINGS THEN $DEFAULT_DATETIME ELSE coalesce(au.passwordlastused, $DEFAULT_DATETIME) END)) ELSE (CASE WHEN coalesce(ak.lastuseddate, $DEFAULT_DATETIME) IN $NULL_STRINGS THEN $DEFAULT_DATETIME ELSE coalesce(ak.lastuseddate, $DEFAULT_DATETIME) END) END)",
+            "iterative": false
+        },
+        {
+            "__comment": "List user's access keys",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(aa:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(au:AWSUser)-[:AWS_ACCESS_KEY]->(ak:AccountAccessKey) SET (CASE WHEN NOT ak.accesskeyid IN coalesce(au.accesskeys , []) THEN au END).accesskeys = coalesce(au.accesskeys , []) + ak.accesskeyid;",
+            "iterative": false
+        },
+        {
+            "__comment": "Set user's access keys age",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(aa:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(au:AWSUser)-[:AWS_ACCESS_KEY]->(ak:AccountAccessKey) SET (CASE WHEN NOT (ak.accesskeyid + ' : ' + ak.keyage) IN coalesce(au.accesskeysage , []) THEN au END).accesskeysage = coalesce(au.accesskeysage , []) + (ak.accesskeyid + ' : ' + ak.keyage);",
+            "iterative": false
+        }
+    ]
+}

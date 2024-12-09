@@ -329,6 +329,18 @@ def _sync_one_account(
         common_job_parameters,
     )
 
+    run_analysis_job(
+        "aws_iam_user_analysis.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
+    run_analysis_job(
+        "aws_ec2_instance_analysis.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
     merge_module_sync_metadata(
         neo4j_session,
         group_type="AWSAccount",
@@ -515,6 +527,8 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "PUBLIC_PORTS": ["20", "21", "22", "3306", "3389", "4333"],
         "IDENTITY_STORE_REGION": config.identity_store_region,
         "AWS_INTERNAL_ACCOUNTS": config.aws_internal_accounts,
+        "DEFAULT_DATETIME": '2000-01-01 00:00:00+00:00',
+        "NULL_STRINGS": ['NONE', 'none', 'None', ''],
     }
 
     try:
