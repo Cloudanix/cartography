@@ -17,6 +17,8 @@ from cartography.intel.aws.permission_relationships import principal_allowed_on_
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
+from datetime import datetime, timezone
+
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
@@ -398,6 +400,10 @@ def get_account_access_key_data(boto3_session: boto3.session.Session, username: 
             access_key["LastUsedDate"] = last_used.get("AccessKeyLastUsed", {}).get("LastUsedDate")
             access_key["CreateDate"] = access_key.get("CreateDate")
 
+            current_date = datetime.now(timezone.utc)
+            day_difference = (current_date - access_key.get("CreateDate")).days
+            access_key["KeyAge"] = f"{day_difference} days"
+
     except ClientError as e:
         if _is_common_exception(e, username):
             pass
@@ -692,6 +698,8 @@ def sync_assumerole_relationships(
 def load_user_access_keys(
     neo4j_session: neo4j.Session, user_access_keys: Dict, aws_update_tag: int, consolelink: str,
 ) -> None:
+    # Ref to rotatedate - https://aws.amazon.com/blogs/security/how-to-rotate-access-keys-for-iam-users/
+    # To rotate key there is no option in aws. we need to create new and delete existing key that's why rotatedate same as createdate
     # TODO change the node label to reflect that this is a user access key, not an account access key
     ingest_account_key = """
     MATCH (user:AWSUser{name: $UserName})
@@ -700,6 +708,8 @@ def load_user_access_keys(
     ON CREATE SET key.firstseen = timestamp(),
     key.region = $region,
     key.createdate = $CreateDate,
+    key.rotatedate = $CreateDate,
+    key.keyage = $KeyAge,
     key.consolelink = $consolelink,
     key.lastuseddate= $LastUsedDate
     SET key.status = $Status, key.lastupdated = $aws_update_tag
@@ -719,6 +729,7 @@ def load_user_access_keys(
                     AccessKeyId=key["AccessKeyId"],
                     LastUsedDate=str(key.get("LastUsedDate", "")),
                     CreateDate=str(key.get("CreateDate", "")),
+                    KeyAge=str(key.get("KeyAge", "")),
                     Status=key["Status"],
                     region="global",
                     aws_update_tag=aws_update_tag,
