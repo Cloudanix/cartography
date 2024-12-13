@@ -63,18 +63,20 @@ setup(
         "azure-mgmt-containerregistry>=2.8.0",
         "azure-mgmt-containerservice>=4.4.0",
         "azure-mgmt-keyvault>=1.1.0",
-        "azure-graphrbac>=0.61.1",
-        "azure-mgmt-authorization==0.50.0",
+        "azure-mgmt-authorization>=3.0.0",
         "azure-mgmt-resource>=10.2.0",
         "azure-mgmt-network>=2.7.0",
         "azure-mgmt-web>=0.35.0",
-        "msgraph-sdk==1.1.0"
+        "msgraph-sdk>=1.0.0",
+        "msgraph-core>=1.0.0",
         "kubernetes=22.6.0",
         "pdpyras>=4.3.0",
         "crowdstrike-falconpy>=0.5.1",
         "python-dateutil",
         "xmltodict",
         "duo-client",
+        "azure-identity>=1.12.0",
+        "azure-mgmt-msi>=7.0.0",
     ],
     extras_require={
         ':python_version<"3.7"': [
