@@ -99,12 +99,15 @@ def get_managed_identity_client(credentials: Credentials, subscription_id: str) 
 
 
 @timeit
-def list_tenant_users(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+def list_tenant_users(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    List users using Microsoft Graph API
+    Docs: https://learn.microsoft.com/en-us/graph/api/user-list
+    """
     try:
-        users = client.users.list()
+        users_response = client.users.get()
 
-        users = transform_users(client.users.list(), tenant_id)
-
+        users = transform_users(users_response.value, tenant_id)
         return users
 
     except HttpResponseError as e:
@@ -113,30 +116,29 @@ def list_tenant_users(client: GraphRbacManagementClient, tenant_id: str) -> List
 
 
 def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
+    """
+    Transform user objects from MS Graph API format
+    Docs: https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
+    """
     users: List[Dict] = []
 
-    # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     for user in users_list:
+        # Only include properties from default response
         usr = {
-            'id': f"tenants/{tenant_id}/users/{user.object_id}",
-            'consolelink': azure_console_link.get_console_link(id=user.object_id, iam_entity_type='user'),
-            'object_id': user.object_id,
-            'user_principal_name': user.user_principal_name,
-            'email': user.mail,
-            'name': user.display_name,
-            'given_name': user.given_name,
+            'id': f"tenants/{tenant_id}/users/{user.id}",
+            'consolelink': azure_console_link.get_console_link(id=user.id, iam_entity_type='user'),
+            'objectType': '#microsoft.graph.user',
+            'object_id': user.id,
+            'userPrincipalName': user.userPrincipalName,
+            'businessPhones': user.businessPhones or [],
+            'displayName': user.displayName,
+            'givenName': user.givenName,
             'surname': user.surname,
-            'user_type': user.user_type,
-            'object_type': user.object_type,
-            'mail_nickname': user.mail_nickname,
-            'account_enabled': user.account_enabled,
-            'usage_location': user.usage_location,
-            'account_enabled': user.account_enabled,
-            'deletion_timestamp': user.deletion_timestamp,
-            'create_date': user.additional_properties['createdDateTime'],
-            'company_name': user.additional_properties['companyName'],
-            'refresh_tokens_valid_from': user.additional_properties['refreshTokensValidFromDateTime'],
-            'mobile': user.additional_properties['mobile'],
+            'jobTitle': user.jobTitle,
+            'mail': user.mail,
+            'mobilePhone': user.mobilePhone,
+            'officeLocation': user.officeLocation,
+            'preferredLanguage': user.preferredLanguage,
         }
         users.append(usr)
 
@@ -146,7 +148,7 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
 def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
-        'id': f"tenants/{tenant_id}/users/{user.object_id}",
+        'id': f"tenants/{tenant_id}/users/{user.id}",
         'consolelink': azure_console_link.get_console_link(id=user.object_id, iam_entity_type='user'),
         'object_id': user.object_id,
         'user_principal_name': user.user_principal_name,
@@ -159,7 +161,6 @@ def transform_user(user: Dict, tenant_id: str) -> Dict:
         'mail_nickname': user.mail_nickname,
         'account_enabled': user.account_enabled,
         'usage_location': user.usage_location,
-        'account_enabled': user.account_enabled,
         'deletion_timestamp': user.deletion_timestamp,
         'create_date': user.additional_properties['createdDateTime'],
         'company_name': user.additional_properties['companyName'],
@@ -169,48 +170,32 @@ def transform_user(user: Dict, tenant_id: str) -> Dict:
 
 
 def _load_tenant_users_tx(
-    tx: neo4j.Transaction, tenant_id: str, tenant_users_list: List[Dict], update_tag: int,
+    tx: neo4j.Transaction,
+    tenant_id: str,
+    tenant_users_list: List[Dict],
+    update_tag: int,
 ) -> None:
+    """Load Azure users into Neo4j"""
     ingest_user = """
     UNWIND $tenant_users_list AS user
     MERGE (i:AzureUser{id: user.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp(),
-    i.consolelink =user.consolelink,
-    i.object_id =user.object_id,
-    i.user_principal_name =user.user_principal_name,
-    i.email =user.email,
-    i.name =user.name,
-    i.given_name =user.given_name,
-    i.surname =user.surname,
-    i.user_type =user.user_type,
-    i.object_type =user.object_type,
-    i.mail_nickname =user.mail_nickname,
-    i.account_enabled =user.account_enabled,
-    i.usage_location =user.usage_location,
-    i.account_enabled =user.account_enabled,
-    i.deletion_timestamp =user.deletion_timestamp,
-    i.create_date =user.create_date,
-    i.company_name =user.company_name,
-    i.refresh_tokens_valid_from =user.refresh_tokens_valid_from,
-    i.mobile =user.mobile,
-    i.region = $region
+    i.firstseen = timestamp()
     SET i.lastupdated = $update_tag,
-    i.consolelink =user.consolelink,
-    i.user_principal_name =user.user_principal_name,
-    i.name =user.name,
-    i.given_name =user.given_name,
-    i.surname =user.surname,
-    i.mail_nickname =user.mail_nickname,
-    i.account_enabled =user.account_enabled,
-    i.usage_location =user.usage_location,
-    i.account_enabled =user.account_enabled,
-    i.deletion_timestamp =user.deletion_timestamp,
-    i.create_date =user.create_date,
-    i.company_name =user.company_name,
-    i.refresh_tokens_valid_from =user.refresh_tokens_valid_from,
-    i.mobile =user.mobile,
-    i.region = $region
+        i.object_id = user.object_id,
+        i.consolelink = user.consolelink,
+        i.object_type = user.objectType,
+        i.user_principal_name = user.userPrincipalName,
+        i.business_phones = user.businessPhones,
+        i.display_name = user.displayName,
+        i.given_name = user.givenName,
+        i.surname = user.surname,
+        i.job_title = user.jobTitle,
+        i.mail = user.mail,
+        i.mobile_phone = user.mobilePhone,
+        i.office_location = user.officeLocation,
+        i.preferred_language = user.preferredLanguage,
+        i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -233,10 +218,14 @@ def cleanup_tenant_users(neo4j_session: neo4j.Session, common_job_parameters: Di
 
 
 def sync_tenant_users(
-    neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
+    neo4j_session: neo4j.Session,
+    credentials: Credentials,
+    tenant_id: str,
+    update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials, tenant_id)
+    """Sync users from Microsoft Graph API to neo4j"""
+    client = get_default_graph_client(credentials.default_graph_credentials)
     tenant_users_list = list_tenant_users(client, tenant_id)
 
     load_tenant_users(neo4j_session, tenant_id, tenant_users_list, update_tag)
@@ -244,13 +233,25 @@ def sync_tenant_users(
 
 
 @timeit
-def get_tenant_groups_list(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    List groups using Microsoft Graph API
+    Docs: https://learn.microsoft.com/en-us/graph/api/group-list
+    """
     try:
-        tenant_groups_list = list(map(lambda x: x.as_dict(), client.groups.list()))
+        groups_response = client.groups.get()
+        
+        if not groups_response or not groups_response.value:
+            return []
 
-        for group in tenant_groups_list:
-            group['id'] = f"tenants/{tenant_id}/Groups/{group.get('object_id', None)}"
-            group['consolelink'] = azure_console_link.get_console_link(iam_entity_type='group', id=group['object_id'])
+        tenant_groups_list = []
+        for group in groups_response.value:
+            group.id = f"tenants/{tenant_id}/Groups/{group.id}"
+            group.consolelink = azure_console_link.get_console_link(
+                iam_entity_type='group',
+                id=group.id
+            )
+            tenant_groups_list.append(group)
 
         return tenant_groups_list
 
@@ -260,24 +261,54 @@ def get_tenant_groups_list(client: GraphRbacManagementClient, tenant_id: str) ->
 
 
 def _load_tenant_groups_tx(
-    tx: neo4j.Transaction, tenant_id: str, tenant_groups_list: List[Dict], update_tag: int,
+    tx: neo4j.Transaction,
+    tenant_id: str,
+    tenant_groups_list: List[Dict],
+    update_tag: int,
 ) -> None:
+    """Load Azure groups into Neo4j"""
     ingest_group = """
     UNWIND $tenant_groups_list AS group
     MERGE (i:AzureGroup{id: group.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp(),
-    i.object_id=group.object_id,
-    i.region = $region,
-    i.create_date = $createDate,
-    i.name = group.display_name,
-    i.visibility = group.visibility,
-    i.classification = group.classification,
-    i.createdDateTime = group.createdDateTime,
-    i.consolelink = group.consolelink,
-    i.securityEnabled = group.security_enabled
+    i.firstseen = timestamp()
     SET i.lastupdated = $update_tag,
-    i.mail = group.mail
+        i.object_id = group.id,
+        i.deleted_date_time = group.deletedDateTime,
+        i.classification = group.classification,
+        i.created_date_time = group.createdDateTime,
+        i.creation_options = group.creationOptions,
+        i.description = group.description,
+        i.display_name = group.displayName,
+        i.expiration_date_time = group.expirationDateTime,
+        i.group_types = group.groupTypes,
+        i.is_assignable_to_role = group.isAssignableToRole,
+        i.mail = group.mail,
+        i.mail_enabled = group.mailEnabled,
+        i.mail_nickname = group.mailNickname,
+        i.membership_rule = group.membershipRule,
+        i.membership_rule_processing_state = group.membershipRuleProcessingState,
+        i.on_premises_domain_name = group.onPremisesDomainName,
+        i.on_premises_last_sync_date_time = group.onPremisesLastSyncDateTime,
+        i.on_premises_net_bios_name = group.onPremisesNetBiosName,
+        i.on_premises_sam_account_name = group.onPremisesSamAccountName,
+        i.on_premises_security_identifier = group.onPremisesSecurityIdentifier,
+        i.on_premises_sync_enabled = group.onPremisesSyncEnabled,
+        i.preferred_data_location = group.preferredDataLocation,
+        i.preferred_language = group.preferredLanguage,
+        i.proxy_addresses = group.proxyAddresses,
+        i.renewed_date_time = group.renewedDateTime,
+        i.resource_behavior_options = group.resourceBehaviorOptions,
+        i.resource_provisioning_options = group.resourceProvisioningOptions,
+        i.security_enabled = group.securityEnabled,
+        i.security_identifier = group.securityIdentifier,
+        i.theme = group.theme,
+        i.unique_name = group.uniqueName,
+        i.visibility = group.visibility,
+        i.on_premises_provisioning_errors = group.onPremisesProvisioningErrors,
+        i.service_provisioning_errors = group.serviceProvisioningErrors,
+        i.consolelink = group.consolelink,
+        i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -348,7 +379,7 @@ def sync_tenant_groups(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials.aad_graph_credentials, tenant_id)
+    client = get_default_graph_client(credentials.default_graph_credentials)
     tenant_groups_list = get_tenant_groups_list(client, tenant_id)
 
     load_tenant_groups(neo4j_session, tenant_id, tenant_groups_list, update_tag)
@@ -360,13 +391,26 @@ def sync_tenant_groups(
 
 
 @timeit
-def get_tenant_applications_list(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+def get_tenant_applications_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    List applications using Microsoft Graph API
+    Docs: https://learn.microsoft.com/en-us/graph/api/application-list
+    """
     try:
-        tenant_applications_list = list(map(lambda x: x.as_dict(), client.applications.list()))
+        apps_response = client.applications.get()
 
-        for app in tenant_applications_list:
-            app['id'] = f"tenants/{tenant_id}/Applications/{app.get('object_id', None)}"
-            app['consolelink'] = azure_console_link.get_console_link(iam_entity_type='application', id=app['app_id'])
+        if not apps_response or not apps_response.value:
+            return []
+
+        tenant_applications_list = []
+        for app in apps_response.value:
+            # Only modify custom properties
+            app.id = f"tenants/{tenant_id}/Applications/{app.id}"
+            app.consolelink = azure_console_link.get_console_link(
+                iam_entity_type='application',
+                id=app.appId,
+            )
+            tenant_applications_list.append(app)
 
         return tenant_applications_list
 
@@ -376,21 +420,44 @@ def get_tenant_applications_list(client: GraphRbacManagementClient, tenant_id: s
 
 
 def _load_tenant_applications_tx(
-    tx: neo4j.Transaction, tenant_id: str, tenant_applications_list: List[Dict], update_tag: int,
+    tx: neo4j.Transaction,
+    tenant_id: str,
+    tenant_applications_list: List[Dict],
+    update_tag: int,
 ) -> None:
+    """Load Azure applications into Neo4j"""
     ingest_app = """
     UNWIND $tenant_applications_list AS app
     MERGE (i:AzureApplication{id: app.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp(),
-    i.object_id=app.object_id,
-    i.region = $region,
-    i.create_date = $createDate,
-    i.name = app.display_name,
-    i.consolelink = app.consolelink,
-    i.publisherDomain = app.publisher_domain
+    i.firstseen = timestamp()
     SET i.lastupdated = $update_tag,
-    i.signInAudience = app.sign_in_audience
+        i.object_id = app.id,
+        i.app_id = app.appId,
+        i.deleted_date_time = app.deletedDateTime,
+        i.application_template_id = app.applicationTemplateId,
+        i.disabled_by_microsoft_status = app.disabledByMicrosoftStatus,
+        i.created_date_time = app.createdDateTime,
+        i.display_name = app.displayName,
+        i.description = app.description,
+        i.group_membership_claims = app.groupMembershipClaims,
+        i.identifier_uris = app.identifierUris,
+        i.is_device_only_auth_supported = app.isDeviceOnlyAuthSupported,
+        i.is_fallback_public_client = app.isFallbackPublicClient,
+        i.notes = app.notes,
+        i.publisher_domain = app.publisherDomain,
+        i.sign_in_audience = app.signInAudience,
+        i.tags = app.tags,
+        i.api = app.api,
+        i.app_roles = app.appRoles,
+        i.info = app.info,
+        i.key_credentials = app.keyCredentials,
+        i.password_credentials = app.passwordCredentials,
+        i.required_resource_access = app.requiredResourceAccess,
+        i.web = app.web,
+        i.spa = app.spa,
+        i.consolelink = app.consolelink,
+        i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -413,10 +480,14 @@ def cleanup_tenant_applications(neo4j_session: neo4j.Session, common_job_paramet
 
 
 def sync_tenant_applications(
-    neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
+    neo4j_session: neo4j.Session,
+    credentials: Credentials,
+    tenant_id: str,
+    update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials, tenant_id)
+    """Sync applications from Microsoft Graph API to neo4j"""
+    client = get_default_graph_client(credentials.default_graph_credentials)
     tenant_applications_list = get_tenant_applications_list(client, tenant_id)
 
     load_tenant_applications(neo4j_session, tenant_id, tenant_applications_list, update_tag)
@@ -424,18 +495,26 @@ def sync_tenant_applications(
 
 
 @timeit
-def get_tenant_service_accounts_list(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    List service principals using Microsoft Graph API
+    Docs: https://learn.microsoft.com/en-us/graph/api/serviceprincipal-list
+    """
     try:
-        tenant_service_accounts_list = list(
-            map(lambda x: x.as_dict(), client.service_principals.list()),
-        )
+        service_principals_response = client.service_principals.get()
 
-        for account in tenant_service_accounts_list:
-            account['id'] = f"tenants/{tenant_id}/ServiceAccounts/{account.get('object_id', None)}"
-            account['consolelink'] = azure_console_link.get_console_link(
-                id=account['object_id'],
-                app_id=account['app_id'], iam_entity_type='service_principal',
+        if not service_principals_response or not service_principals_response.value:
+            return []
+
+        tenant_service_accounts_list = []
+        for account in service_principals_response.value:
+            account.id = f"tenants/{tenant_id}/ServiceAccounts/{account.id}"
+            account.consolelink = azure_console_link.get_console_link(
+                id=account.id,
+                app_id=account.appId,
+                iam_entity_type='service_principal',
             )
+            tenant_service_accounts_list.append(account)
 
         return tenant_service_accounts_list
 
@@ -445,22 +524,56 @@ def get_tenant_service_accounts_list(client: GraphRbacManagementClient, tenant_i
 
 
 def _load_tenant_service_accounts_tx(
-    tx: neo4j.Transaction, tenant_id: str, tenant_service_accounts_list: List[Dict], update_tag: int,
+    tx: neo4j.Transaction,
+    tenant_id: str,
+    tenant_service_accounts_list: List[Dict],
+    update_tag: int,
 ) -> None:
+    """Load Azure service principals into Neo4j"""
     ingest_app = """
-    UNWIND $tenant_service_accounts_list AS service
-    MERGE (i:AzureServiceAccount{id: service.id})
+    UNWIND $tenant_service_accounts_list AS account
+    MERGE (i:AzureServicePrincipal{id: account.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp(),
-    i.name = service.display_name,
-    i.consolelink = service.consolelink,
-    i.region = $region,
-    i.create_date = $createDate,
-    i.object_id=service.object_id,
-    i.accountEnabled = service.account_enabled,
-    i.servicePrincipalType = service.service_principal_type
+    i.firstseen = timestamp()
     SET i.lastupdated = $update_tag,
-    i.signInAudience = service.signInAudience
+        i.object_id = account.id,
+        i.deleted_date_time = account.deletedDateTime,
+        i.account_enabled = account.accountEnabled,
+        i.alternative_names = account.alternativeNames,
+        i.app_display_name = account.appDisplayName,
+        i.app_description = account.appDescription,
+        i.app_id = account.appId,
+        i.application_template_id = account.applicationTemplateId,
+        i.app_owner_organization_id = account.appOwnerOrganizationId,
+        i.app_role_assignment_required = account.appRoleAssignmentRequired,
+        i.created_date_time = account.createdDateTime,
+        i.description = account.description,
+        i.disabled_by_microsoft_status = account.disabledByMicrosoftStatus,
+        i.display_name = account.displayName,
+        i.homepage = account.homepage,
+        i.login_url = account.loginUrl,
+        i.logout_url = account.logoutUrl,
+        i.notes = account.notes,
+        i.notification_email_addresses = account.notificationEmailAddresses,
+        i.preferred_single_sign_on_mode = account.preferredSingleSignOnMode,
+        i.preferred_token_signing_key_thumbprint = account.preferredTokenSigningKeyThumbprint,
+        i.reply_urls = account.replyUrls,
+        i.service_principal_names = account.servicePrincipalNames,
+        i.service_principal_type = account.servicePrincipalType,
+        i.sign_in_audience = account.signInAudience,
+        i.tags = account.tags,
+        i.token_encryption_key_id = account.tokenEncryptionKeyId,
+        i.saml_single_sign_on_settings = account.samlSingleSignOnSettings,
+        i.add_ins = account.addIns,
+        i.app_roles = account.appRoles,
+        i.info = account.info,
+        i.key_credentials = account.keyCredentials,
+        i.oauth2_permission_scopes = account.oauth2PermissionScopes,
+        i.password_credentials = account.passwordCredentials,
+        i.resource_specific_application_permissions = account.resourceSpecificApplicationPermissions,
+        i.verified_publisher = account.verifiedPublisher,
+        i.consolelink = account.consolelink,
+        i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -483,24 +596,39 @@ def cleanup_tenant_service_accounts(neo4j_session: neo4j.Session, common_job_par
 
 
 def sync_tenant_service_accounts(
-    neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
+    neo4j_session: neo4j.Session,
+    credentials: Credentials,
+    tenant_id: str,
+    update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials, tenant_id)
+    """Sync service principals from Microsoft Graph API to neo4j"""
+    client = get_default_graph_client(credentials.default_graph_credentials)
     tenant_service_accounts_list = get_tenant_service_accounts_list(client, tenant_id)
-
     load_tenant_service_accounts(neo4j_session, tenant_id, tenant_service_accounts_list, update_tag)
     cleanup_tenant_service_accounts(neo4j_session, common_job_parameters)
 
 
 @timeit
-def get_tenant_domains_list(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+def get_tenant_domains_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    List domains using Microsoft Graph API
+    Docs: https://learn.microsoft.com/en-us/graph/api/domain-list
+    """
     try:
-        tenant_domains_list = list(map(lambda x: x.as_dict(), client.domains.list()))
+        domains_response = client.domains.get()
 
-        for domain in tenant_domains_list:
-            domain["id"] = f"tenants/{tenant_id}/domains/{domain.get('name', None)}"
-            domain['consolelink'] = azure_console_link.get_console_link(id=domain['name'], iam_entity_type='domain')
+        if not domains_response or not domains_response.value:
+            return []
+
+        tenant_domains_list = []
+        for domain in domains_response.value:
+            domain.id = f"tenants/{tenant_id}/domains/{domain.id}"
+            domain.consolelink = azure_console_link.get_console_link(
+                id=domain.id,
+                iam_entity_type='domain',
+            )
+            tenant_domains_list.append(domain)
 
         return tenant_domains_list
 
@@ -510,22 +638,31 @@ def get_tenant_domains_list(client: GraphRbacManagementClient, tenant_id: str) -
 
 
 def _load_tenant_domains_tx(
-    tx: neo4j.Transaction, tenant_id: str, tenant_domains_list: List[Dict], update_tag: int,
+    tx: neo4j.Transaction,
+    tenant_id: str,
+    tenant_domains_list: List[Dict],
+    update_tag: int,
 ) -> None:
+    """Load Azure domains into Neo4j"""
     ingest_domain = """
     UNWIND $tenant_domains_list AS domain
     MERGE (i:AzureDomain{id: domain.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp(),
-    i.isRoot = domain.isRoot,
-    i.consolelink = domain.consolelink,
-    i.region = $region,
-    i.create_date = $createDate,
-    i.name = domain.name,
-    i.isInitial = domain.isInitial
+    i.firstseen = timestamp()
     SET i.lastupdated = $update_tag,
-    i.authenticationType = domain.authentication_type,
-    i.availabilityStatus = domain.availabilityStatus
+        i.authentication_type = domain.authenticationType,
+        i.availability_status = domain.availabilityStatus,
+        i.is_admin_managed = domain.isAdminManaged,
+        i.is_default = domain.isDefault,
+        i.is_initial = domain.isInitial,
+        i.is_root = domain.isRoot,
+        i.is_verified = domain.isVerified,
+        i.supported_services = domain.supportedServices,
+        i.password_validity_period_in_days = domain.passwordValidityPeriodInDays,
+        i.password_notification_window_in_days = domain.passwordNotificationWindowInDays,
+        i.state = domain.state,
+        i.consolelink = domain.consolelink,
+        i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -548,12 +685,15 @@ def cleanup_tenant_domains(neo4j_session: neo4j.Session, common_job_parameters: 
 
 
 def sync_tenant_domains(
-    neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
+    neo4j_session: neo4j.Session,
+    credentials: Credentials,
+    tenant_id: str,
+    update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials, tenant_id)
+    """Sync domains from Microsoft Graph API to neo4j"""
+    client = get_default_graph_client(credentials.default_graph_credentials)
     tenant_domains_list = get_tenant_domains_list(client, tenant_id)
-
     load_tenant_domains(neo4j_session, tenant_id, tenant_domains_list, update_tag)
     cleanup_tenant_domains(neo4j_session, common_job_parameters)
 
@@ -778,7 +918,7 @@ def sync(
 
     try:
         sync_tenant_users(
-            neo4j_session, credentials.aad_graph_credentials, tenant_id,
+            neo4j_session, credentials.default_graph_credentials, tenant_id,
             update_tag, common_job_parameters,
         )
         sync_tenant_groups(
@@ -786,14 +926,14 @@ def sync(
             update_tag, common_job_parameters,
         )
         sync_tenant_applications(
-            neo4j_session, credentials.aad_graph_credentials,
+            neo4j_session, credentials.default_graph_credentials,
             tenant_id, update_tag, common_job_parameters,
         )
         sync_tenant_service_accounts(
-            neo4j_session, credentials.aad_graph_credentials,
+            neo4j_session, credentials.default_graph_credentials,
             tenant_id, update_tag, common_job_parameters,
         )
-        sync_tenant_domains(neo4j_session, credentials.aad_graph_credentials, tenant_id, update_tag, common_job_parameters)
+        sync_tenant_domains(neo4j_session, credentials.default_graph_credentials, tenant_id, update_tag, common_job_parameters)
         sync_managed_identity(
             neo4j_session, credentials, tenant_id, update_tag, common_job_parameters,
         )
