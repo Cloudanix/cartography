@@ -25,6 +25,7 @@ click<8.0,>=7.0
 pyparsing==2.4.7
 markupsafe==2.0.1
 cloudconsolelink~=1.0.23
+clouduniqueid==1.0.3
 
 # Azure specific packages
 azure-eventgrid~=4.1.1
@@ -54,3 +55,4 @@ azure-mgmt-security~=3.0.0
 azure-mgmt-web>=0.47.0
 azure-storage-blob~=12.14.1
 pdpyras>=4.3.0
+msgraph-sdk==1.1.0
