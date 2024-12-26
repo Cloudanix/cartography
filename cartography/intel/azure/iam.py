@@ -127,7 +127,7 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
         usr = {
             'id': f"tenants/{tenant_id}/users/{user.id}",
             'consolelink': azure_console_link.get_console_link(id=user.id, iam_entity_type='user'),
-            'objectType': '#microsoft.graph.user',
+            'objectType': 'microsoft.graph.user',
             'object_id': user.id,
             'userPrincipalName': user.userPrincipalName,
             'businessPhones': user.businessPhones or [],
@@ -531,48 +531,48 @@ def _load_tenant_service_accounts_tx(
 ) -> None:
     """Load Azure service principals into Neo4j"""
     ingest_app = """
-    UNWIND $tenant_service_accounts_list AS account
-    MERGE (i:AzureServicePrincipal{id: account.id})
+    UNWIND $tenant_service_accounts_list AS service
+    MERGE (i:AzureServiceAccount{id: service.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp()
     SET i.lastupdated = $update_tag,
-        i.object_id = account.id,
-        i.deleted_date_time = account.deletedDateTime,
-        i.account_enabled = account.accountEnabled,
-        i.alternative_names = account.alternativeNames,
-        i.app_display_name = account.appDisplayName,
-        i.app_description = account.appDescription,
-        i.app_id = account.appId,
-        i.application_template_id = account.applicationTemplateId,
-        i.app_owner_organization_id = account.appOwnerOrganizationId,
-        i.app_role_assignment_required = account.appRoleAssignmentRequired,
-        i.created_date_time = account.createdDateTime,
-        i.description = account.description,
-        i.disabled_by_microsoft_status = account.disabledByMicrosoftStatus,
-        i.display_name = account.displayName,
-        i.homepage = account.homepage,
-        i.login_url = account.loginUrl,
-        i.logout_url = account.logoutUrl,
-        i.notes = account.notes,
-        i.notification_email_addresses = account.notificationEmailAddresses,
-        i.preferred_single_sign_on_mode = account.preferredSingleSignOnMode,
-        i.preferred_token_signing_key_thumbprint = account.preferredTokenSigningKeyThumbprint,
-        i.reply_urls = account.replyUrls,
-        i.service_principal_names = account.servicePrincipalNames,
-        i.service_principal_type = account.servicePrincipalType,
-        i.sign_in_audience = account.signInAudience,
-        i.tags = account.tags,
-        i.token_encryption_key_id = account.tokenEncryptionKeyId,
-        i.saml_single_sign_on_settings = account.samlSingleSignOnSettings,
-        i.add_ins = account.addIns,
-        i.app_roles = account.appRoles,
-        i.info = account.info,
-        i.key_credentials = account.keyCredentials,
-        i.oauth2_permission_scopes = account.oauth2PermissionScopes,
-        i.password_credentials = account.passwordCredentials,
-        i.resource_specific_application_permissions = account.resourceSpecificApplicationPermissions,
-        i.verified_publisher = account.verifiedPublisher,
-        i.consolelink = account.consolelink,
+        i.object_id = service.id,
+        i.deleted_date_time = service.deletedDateTime,
+        i.account_enabled = service.accountEnabled,
+        i.alternative_names = service.alternativeNames,
+        i.app_display_name = service.appDisplayName,
+        i.app_description = service.appDescription,
+        i.app_id = service.appId,
+        i.application_template_id = service.applicationTemplateId,
+        i.app_owner_organization_id = service.appOwnerOrganizationId,
+        i.app_role_assignment_required = service.appRoleAssignmentRequired,
+        i.created_date_time = service.createdDateTime,
+        i.description = service.description,
+        i.disabled_by_microsoft_status = service.disabledByMicrosoftStatus,
+        i.display_name = service.displayName,
+        i.homepage = service.homepage,
+        i.login_url = service.loginUrl,
+        i.logout_url = service.logoutUrl,
+        i.notes = service.notes,
+        i.notification_email_addresses = service.notificationEmailAddresses,
+        i.preferred_single_sign_on_mode = service.preferredSingleSignOnMode,
+        i.preferred_token_signing_key_thumbprint = service.preferredTokenSigningKeyThumbprint,
+        i.reply_urls = service.replyUrls,
+        i.service_principal_names = service.servicePrincipalNames,
+        i.service_principal_type = service.servicePrincipalType,
+        i.sign_in_audience = service.signInAudience,
+        i.tags = service.tags,
+        i.token_encryption_key_id = service.tokenEncryptionKeyId,
+        i.saml_single_sign_on_settings = service.samlSingleSignOnSettings,
+        i.add_ins = service.addIns,
+        i.app_roles = service.appRoles,
+        i.info = service.info,
+        i.key_credentials = service.keyCredentials,
+        i.oauth2_permission_scopes = service.oauth2PermissionScopes,
+        i.password_credentials = service.passwordCredentials,
+        i.resource_specific_application_permissions = service.resourceSpecificApplicationPermissions,
+        i.verified_publisher = service.verifiedPublisher,
+        i.consolelink = service.consolelink,
         i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -918,7 +918,7 @@ def sync(
 
     try:
         sync_tenant_users(
-            neo4j_session, credentials.default_graph_credentials, tenant_id,
+            neo4j_session, credentials, tenant_id,
             update_tag, common_job_parameters,
         )
         sync_tenant_groups(
@@ -926,14 +926,14 @@ def sync(
             update_tag, common_job_parameters,
         )
         sync_tenant_applications(
-            neo4j_session, credentials.default_graph_credentials,
+            neo4j_session, credentials,
             tenant_id, update_tag, common_job_parameters,
         )
         sync_tenant_service_accounts(
-            neo4j_session, credentials.default_graph_credentials,
+            neo4j_session, credentials,
             tenant_id, update_tag, common_job_parameters,
         )
-        sync_tenant_domains(neo4j_session, credentials.default_graph_credentials, tenant_id, update_tag, common_job_parameters)
+        sync_tenant_domains(neo4j_session, credentials, tenant_id, update_tag, common_job_parameters)
         sync_managed_identity(
             neo4j_session, credentials, tenant_id, update_tag, common_job_parameters,
         )
