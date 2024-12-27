@@ -26,6 +26,12 @@ def get_ec2_vpcs(boto3_session: boto3.session.Session, region: str) -> List[Dict
     try:
         vpcs = client.describe_vpcs().get('Vpcs', [])
         for vpc in vpcs:
+            is_default = vpc.get('IsDefault', False)
+            if is_default:
+                vpc['createdBy'] = 'predefined'
+            else:
+                vpc['createdBy'] = 'user'
+
             vpc['region'] = region
 
     except ClientError as e:
@@ -141,6 +147,7 @@ def load_ec2_vpcs(
     new_vpc.lastupdated = $update_tag,
     new_vpc.consolelink = $consolelink,
     new_vpc.arn = $Arn
+    new_vpc.created_by = $createdBy
     WITH new_vpc
     MATCH (awsAccount:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (awsAccount)-[r:RESOURCE]->(new_vpc)
