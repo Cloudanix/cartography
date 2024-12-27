@@ -173,6 +173,7 @@ def load_ec2_vpcs(
             Arn=vpc_arn,
             AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
+            createdBy=vpc.get("createdBy", None)
         )
 
         load_cidr_association_set(

@@ -156,7 +156,7 @@ def load_ec2_security_groupinfo(
     group.consolelink = $consolelink,
     group.region = $Region,
     group.lastupdated = $update_tag, group.arn = $GroupArn,
-    group.createdBy = $CreatedBy
+    group.created_by = $CreatedBy
     WITH group
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(group)
