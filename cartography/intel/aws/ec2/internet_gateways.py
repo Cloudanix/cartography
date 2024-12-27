@@ -22,10 +22,41 @@ def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> 
         client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
         internet_gateways = client.describe_internet_gateways()['InternetGateways']
 
+        default_vpc = get_default_vpc(client)
+        default_vpc_id = default_vpc.get('VpcId') if default_vpc else None
+
+        for igw in internet_gateways:
+            vpc_attachments = igw.get('Attachments', [])
+            # IGW is predefined if it's attached to the default VPC
+            if default_vpc_id and any(attachment.get('VpcId') == default_vpc_id
+                                      for attachment in vpc_attachments):
+                igw['createdBy'] = 'predefined'
+            else:
+                igw['createdBy'] = 'user'
+
     except Exception as e:
         logger.warning(f"Failed retrieve internet gateways for region - {region}. Error - {e}")
 
     return internet_gateways
+
+
+@timeit
+def get_default_vpc(ec2_client):
+    try:
+        response = ec2_client.describe_vpcs(
+            Filters=[{'Name': 'isDefault', 'Values': ['true']}]
+        )
+        vpcs = response.get('Vpcs', [])
+
+        if not vpcs:
+            logger.info("No default VPC found.")
+            return {}
+
+        return vpcs[0]
+
+    except Exception as e:
+        logger.error(f"Error fetching default VPC: {e}")
+        return {}
 
 
 @timeit

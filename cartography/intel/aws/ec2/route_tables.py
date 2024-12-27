@@ -51,11 +51,21 @@ def get_route_tables_data(boto3_session: boto3.session.Session, region: str) -> 
 
 @timeit
 def get_default_vpc(ec2_client):
-    default_vpc = ec2_client.describe_vpcs(
-        Filters=[{'Name': 'isDefault', 'Values': ['true']}]
-    )['Vpcs'][0]
+    try:
+        response = ec2_client.describe_vpcs(
+            Filters=[{'Name': 'isDefault', 'Values': ['true']}]
+        )
+        vpcs = response.get('Vpcs', [])
 
-    return default_vpc
+        if not vpcs:
+            logger.info("No default VPC found.")
+            return {}
+
+        return vpcs[0]
+
+    except Exception as e:
+        logger.error(f"Error fetching default VPC: {e}")
+        return {}
 
 
 @timeit
