@@ -26,7 +26,17 @@ def get_route_tables_data(boto3_session: boto3.session.Session, region: str) -> 
         route_tables: List[Dict] = []
         for page in paginator.paginate():
             route_tables.extend(page['RouteTables'])
+
+        default_vpc = get_default_vpc(client)
+
         for route_table in route_tables:
+            if route_table.get('VpcId') == default_vpc.get('VpcId'):
+                is_default_table = route_table.get('Associations', [{}]).get('Main', False)
+                if is_default_table:
+                    route_table['createdBy'] = 'predefined'
+            else:
+                route_table['createdBy'] = 'user'
+
             route_table['region'] = region
     except ClientError as e:
         if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
@@ -37,6 +47,15 @@ def get_route_tables_data(boto3_session: boto3.session.Session, region: str) -> 
         else:
             raise
     return route_tables
+
+
+@timeit
+def get_default_vpc(ec2_client):
+    default_vpc = ec2_client.describe_vpcs(
+        Filters=[{'Name': 'isDefault', 'Values': ['true']}]
+    )['Vpcs'][0]
+
+    return default_vpc
 
 
 @timeit
@@ -70,7 +89,8 @@ def load_route_tables_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id
         rtab.lastupdated = $aws_update_tag,
         rtab.consolelink = route_table.consolelink,
         rtab.arn = route_table.arn,
-        rtab.owner_id = route_table.OwnerId
+        rtab.owner_id = route_table.OwnerId,
+        rtab.created_by = route_table.createdBy
 
     WITH route_table, rtab
     MATCH (vpc:AWSVpc{id: route_table.VpcId})
