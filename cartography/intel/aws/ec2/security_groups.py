@@ -30,6 +30,13 @@ def get_ec2_security_group_data(boto3_session: boto3.session.Session, region: st
         for page in paginator.paginate():
             security_groups.extend(page['SecurityGroups'])
         for group in security_groups:
+            groupName = group.get('GroupName', '')
+
+            if groupName == 'default':
+                group['createdBy'] = 'predefined'
+            else:
+                group['createdBy'] = 'user'
+
             group['region'] = region
     except ClientError as e:
         if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
@@ -148,7 +155,8 @@ def load_ec2_security_groupinfo(
     SET group.name = $GroupName, group.description = $Description,
     group.consolelink = $consolelink,
     group.region = $Region,
-    group.lastupdated = $update_tag, group.arn = $GroupArn
+    group.lastupdated = $update_tag, group.arn = $GroupArn,
+    group.createdBy = $CreatedBy
     WITH group
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(group)
@@ -182,6 +190,7 @@ def load_ec2_security_groupinfo(
             Region=region,
             AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
+            CreatedBy=group.get("createdBy", None)
         )
 
         load_ec2_security_group_rule(neo4j_session, group, "IpPermissions", update_tag)
