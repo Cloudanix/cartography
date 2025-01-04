@@ -149,7 +149,7 @@ def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
         'id': f"tenants/{tenant_id}/users/{user.id}",
-        'consolelink': azure_console_link.get_console_link(id=user.object_id, iam_entity_type='user'),
+        'console_link': azure_console_link.get_console_link(id=user.object_id, iam_entity_type='user'),
         'object_id': user.object_id,
         'user_principal_name': user.user_principal_name,
         'email': user.mail,
@@ -181,26 +181,27 @@ def _load_tenant_users_tx(
     MERGE (i:AzureUser{id: user.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp()
-    SET i.lastupdated = $update_tag,
+    SET i.last_updated = $update_tag,
         i.object_id = user.object_id,
-        i.consolelink = user.consolelink,
-        i.object_type = user.objectType,
-        i.user_principal_name = user.userPrincipalName,
-        i.business_phones = user.businessPhones,
-        i.display_name = user.displayName,
-        i.given_name = user.givenName,
+        i.create_date = $createDate,
+        i.console_link = user.console_link,
+        i.object_type = user.object_type,
+        i.user_principal_name = user.user_principal_name,
+        i.business_phones = user.business_phones,
+        i.name = user.display_name,
+        i.given_name = user.given_name,
         i.surname = user.surname,
-        i.job_title = user.jobTitle,
-        i.mail = user.mail,
-        i.mobile_phone = user.mobilePhone,
-        i.office_location = user.officeLocation,
-        i.preferred_language = user.preferredLanguage,
+        i.job_title = user.job_title,
+        i.email = user.email,
+        i.mobile = user.mobile,
+        i.office_location = user.office_location,
+        i.preferred_language = user.preferred_language,
         i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    ON CREATE SET r.first_seen = timestamp()
+    SET r.last_updated = $update_tag
     """
 
     tx.run(
@@ -238,9 +239,10 @@ def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> List[D
     List groups using Microsoft Graph API
     Docs: https://learn.microsoft.com/en-us/graph/api/group-list
     """
+    groups_data = []
     try:
         groups_response = client.groups.get()
-        
+
         if not groups_response or not groups_response.value:
             return []
 
@@ -249,7 +251,7 @@ def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> List[D
             group.id = f"tenants/{tenant_id}/Groups/{group.id}"
             group.consolelink = azure_console_link.get_console_link(
                 iam_entity_type='group',
-                id=group.id
+                id=group.id,
             )
             tenant_groups_list.append(group)
 
@@ -257,7 +259,7 @@ def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> List[D
 
     except HttpResponseError as e:
         logger.warning(f"Error while retrieving tenant groups - {e}")
-        return []
+    return groups_data
 
 
 def _load_tenant_groups_tx(
@@ -276,10 +278,11 @@ def _load_tenant_groups_tx(
         i.object_id = group.id,
         i.deleted_date_time = group.deletedDateTime,
         i.classification = group.classification,
-        i.created_date_time = group.createdDateTime,
+        i.create_date = $createDate,
+        i.create_date_time = group.createdDateTime,
         i.creation_options = group.creationOptions,
         i.description = group.description,
-        i.display_name = group.displayName,
+        i.name = group.displayName,
         i.expiration_date_time = group.expirationDateTime,
         i.group_types = group.groupTypes,
         i.is_assignable_to_role = group.isAssignableToRole,
@@ -305,9 +308,7 @@ def _load_tenant_groups_tx(
         i.theme = group.theme,
         i.unique_name = group.uniqueName,
         i.visibility = group.visibility,
-        i.on_premises_provisioning_errors = group.onPremisesProvisioningErrors,
-        i.service_provisioning_errors = group.serviceProvisioningErrors,
-        i.consolelink = group.consolelink,
+        i.console_link = group.console_link,
         i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -406,7 +407,7 @@ def get_tenant_applications_list(client: GraphServiceClient, tenant_id: str) -> 
         for app in apps_response.value:
             # Only modify custom properties
             app.id = f"tenants/{tenant_id}/Applications/{app.id}"
-            app.consolelink = azure_console_link.get_console_link(
+            app.console_link = azure_console_link.get_console_link(
                 iam_entity_type='application',
                 id=app.appId,
             )
@@ -437,8 +438,9 @@ def _load_tenant_applications_tx(
         i.deleted_date_time = app.deletedDateTime,
         i.application_template_id = app.applicationTemplateId,
         i.disabled_by_microsoft_status = app.disabledByMicrosoftStatus,
+        i.create_date = $createDate,
         i.created_date_time = app.createdDateTime,
-        i.display_name = app.displayName,
+        i.name = app.displayName,
         i.description = app.description,
         i.group_membership_claims = app.groupMembershipClaims,
         i.identifier_uris = app.identifierUris,
@@ -448,15 +450,7 @@ def _load_tenant_applications_tx(
         i.publisher_domain = app.publisherDomain,
         i.sign_in_audience = app.signInAudience,
         i.tags = app.tags,
-        i.api = app.api,
-        i.app_roles = app.appRoles,
-        i.info = app.info,
-        i.key_credentials = app.keyCredentials,
-        i.password_credentials = app.passwordCredentials,
-        i.required_resource_access = app.requiredResourceAccess,
-        i.web = app.web,
-        i.spa = app.spa,
-        i.consolelink = app.consolelink,
+        i.console_link = app.console_link,
         i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -543,13 +537,14 @@ def _load_tenant_service_accounts_tx(
         i.app_display_name = service.appDisplayName,
         i.app_description = service.appDescription,
         i.app_id = service.appId,
+        i.create_date = $createDate,
         i.application_template_id = service.applicationTemplateId,
         i.app_owner_organization_id = service.appOwnerOrganizationId,
         i.app_role_assignment_required = service.appRoleAssignmentRequired,
         i.created_date_time = service.createdDateTime,
         i.description = service.description,
         i.disabled_by_microsoft_status = service.disabledByMicrosoftStatus,
-        i.display_name = service.displayName,
+        i.name = service.displayName,
         i.homepage = service.homepage,
         i.login_url = service.loginUrl,
         i.logout_url = service.logoutUrl,
@@ -563,15 +558,6 @@ def _load_tenant_service_accounts_tx(
         i.sign_in_audience = service.signInAudience,
         i.tags = service.tags,
         i.token_encryption_key_id = service.tokenEncryptionKeyId,
-        i.saml_single_sign_on_settings = service.samlSingleSignOnSettings,
-        i.add_ins = service.addIns,
-        i.app_roles = service.appRoles,
-        i.info = service.info,
-        i.key_credentials = service.keyCredentials,
-        i.oauth2_permission_scopes = service.oauth2PermissionScopes,
-        i.password_credentials = service.passwordCredentials,
-        i.resource_specific_application_permissions = service.resourceSpecificApplicationPermissions,
-        i.verified_publisher = service.verifiedPublisher,
         i.consolelink = service.consolelink,
         i.region = $region
     WITH i
@@ -650,6 +636,7 @@ def _load_tenant_domains_tx(
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp()
     SET i.lastupdated = $update_tag,
+        i.create_date = $createDate,
         i.authentication_type = domain.authenticationType,
         i.availability_status = domain.availabilityStatus,
         i.is_admin_managed = domain.isAdminManaged,
@@ -660,7 +647,7 @@ def _load_tenant_domains_tx(
         i.supported_services = domain.supportedServices,
         i.password_validity_period_in_days = domain.passwordValidityPeriodInDays,
         i.password_notification_window_in_days = domain.passwordNotificationWindowInDays,
-        i.state = domain.state,
+        i.state_last_action_date_time = domain.state.lastActionDateTime,
         i.consolelink = domain.consolelink,
         i.region = $region
     WITH i
