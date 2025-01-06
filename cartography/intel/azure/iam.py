@@ -125,20 +125,22 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
     for user in users_list:
         # Only include properties from default response
         usr = {
-            'id': f"tenants/{tenant_id}/users/{user.id}",
-            'consolelink': azure_console_link.get_console_link(id=user.id, iam_entity_type='user'),
-            'objectType': 'microsoft.graph.user',
-            'object_id': user.id,
-            'userPrincipalName': user.userPrincipalName,
-            'businessPhones': user.businessPhones or [],
-            'displayName': user.displayName,
-            'givenName': user.givenName,
-            'surname': user.surname,
-            'jobTitle': user.jobTitle,
-            'mail': user.mail,
-            'mobilePhone': user.mobilePhone,
-            'officeLocation': user.officeLocation,
-            'preferredLanguage': user.preferredLanguage,
+            "id": f"tenants/{tenant_id}/users/{user.id}",
+            "console_link": azure_console_link.get_console_link(
+                id=user.id, iam_entity_type="user"
+            ),
+            "object_type": "microsoft.graph.user",
+            "object_id": user.id,
+            "user_principal_name": user.userPrincipalName,
+            "business_phones": user.businessPhones or [],
+            "display_name": user.displayName,
+            "given_name": user.givenName,
+            "surname": user.surname,
+            "job_title": user.jobTitle,
+            "mail": user.mail,
+            "mobile": user.mobilePhone,
+            "office_location": user.officeLocation,
+            "preferred_language": user.preferredLanguage,
         }
         users.append(usr)
 
@@ -148,24 +150,28 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
 def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
-        'id': f"tenants/{tenant_id}/users/{user.id}",
-        'console_link': azure_console_link.get_console_link(id=user.object_id, iam_entity_type='user'),
-        'object_id': user.object_id,
-        'user_principal_name': user.user_principal_name,
-        'email': user.mail,
-        'name': user.display_name,
-        'given_name': user.given_name,
-        'surname': user.surname,
-        'user_type': user.user_type,
-        'object_type': user.object_type,
-        'mail_nickname': user.mail_nickname,
-        'account_enabled': user.account_enabled,
-        'usage_location': user.usage_location,
-        'deletion_timestamp': user.deletion_timestamp,
-        'create_date': user.additional_properties['createdDateTime'],
-        'company_name': user.additional_properties['companyName'],
-        'refresh_tokens_valid_from': user.additional_properties['refreshTokensValidFromDateTime'],
-        'mobile': user.additional_properties['mobile'],
+        "id": f"tenants/{tenant_id}/users/{user.id}",
+        "console_link": azure_console_link.get_console_link(
+            id=user.object_id, iam_entity_type="user"
+        ),
+        "object_id": user.object_id,
+        "user_principal_name": user.user_principal_name,
+        "email": user.mail,
+        "name": user.display_name,
+        "given_name": user.given_name,
+        "surname": user.surname,
+        "user_type": user.user_type,
+        "object_type": user.object_type,
+        "mail_nickname": user.mail_nickname,
+        "account_enabled": user.account_enabled,
+        "usage_location": user.usage_location,
+        "deletion_timestamp": user.deletion_timestamp,
+        "create_date": user.additional_properties["createdDateTime"],
+        "company_name": user.additional_properties["companyName"],
+        "refresh_tokens_valid_from": user.additional_properties[
+            "refreshTokensValidFromDateTime"
+        ],
+        "mobile": user.additional_properties["mobile"],
     }
 
 
@@ -180,10 +186,10 @@ def _load_tenant_users_tx(
     UNWIND $tenant_users_list AS user
     MERGE (i:AzureUser{id: user.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp()
+    i.first_seen = timestamp()
     SET i.last_updated = $update_tag,
         i.object_id = user.object_id,
-        i.create_date = $createDate,
+        i.create_date = $create_date,
         i.console_link = user.console_link,
         i.object_type = user.object_type,
         i.user_principal_name = user.user_principal_name,
@@ -192,7 +198,7 @@ def _load_tenant_users_tx(
         i.given_name = user.given_name,
         i.surname = user.surname,
         i.job_title = user.job_title,
-        i.email = user.email,
+        i.email = user.mail,
         i.mobile = user.mobile,
         i.office_location = user.office_location,
         i.preferred_language = user.preferred_language,
@@ -208,7 +214,7 @@ def _load_tenant_users_tx(
         ingest_user,
         region="global",
         tenant_users_list=tenant_users_list,
-        createDate=datetime.utcnow(),
+        create_date=datetime.utcnow(),
         tenant_id=tenant_id,
         update_tag=update_tag,
     )
@@ -249,8 +255,8 @@ def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> List[D
         tenant_groups_list = []
         for group in groups_response.value:
             group.id = f"tenants/{tenant_id}/Groups/{group.id}"
-            group.consolelink = azure_console_link.get_console_link(
-                iam_entity_type='group',
+            group.console_link = azure_console_link.get_console_link(
+                iam_entity_type="group",
                 id=group.id,
             )
             tenant_groups_list.append(group)
@@ -273,12 +279,12 @@ def _load_tenant_groups_tx(
     UNWIND $tenant_groups_list AS group
     MERGE (i:AzureGroup{id: group.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp()
-    SET i.lastupdated = $update_tag,
+    i.first_seen = timestamp()
+    SET i.last_updated = $update_tag,
         i.object_id = group.id,
         i.deleted_date_time = group.deletedDateTime,
         i.classification = group.classification,
-        i.create_date = $createDate,
+        i.create_date = $create_date,
         i.create_date_time = group.createdDateTime,
         i.creation_options = group.creationOptions,
         i.description = group.description,
@@ -313,8 +319,8 @@ def _load_tenant_groups_tx(
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    ON CREATE SET r.first_seen = timestamp()
+    SET r.last_updated = $update_tag
     """
 
     tx.run(
@@ -322,7 +328,7 @@ def _load_tenant_groups_tx(
         region="global",
         tenant_groups_list=tenant_groups_list,
         tenant_id=tenant_id,
-        createDate=datetime.utcnow(),
+        create_date=datetime.utcnow(),
         update_tag=update_tag,
     )
 
@@ -360,9 +366,9 @@ def _load_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], u
         WITH p,pr
         MERGE (pr)-[r:MEMBER_AZURE_GROUP]->(p)
         ON CREATE SET
-                r.firstseen = timestamp()
+                r.first_seen = timestamp()
         SET
-                r.lastupdated = $update_tag
+                r.last_updated = $update_tag
     """
 
     tx.run(
@@ -431,14 +437,14 @@ def _load_tenant_applications_tx(
     UNWIND $tenant_applications_list AS app
     MERGE (i:AzureApplication{id: app.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp()
-    SET i.lastupdated = $update_tag,
+    i.first_seen = timestamp()
+    SET i.last_updated = $update_tag,
         i.object_id = app.id,
         i.app_id = app.appId,
         i.deleted_date_time = app.deletedDateTime,
         i.application_template_id = app.applicationTemplateId,
         i.disabled_by_microsoft_status = app.disabledByMicrosoftStatus,
-        i.create_date = $createDate,
+        i.create_date = $create_date,
         i.created_date_time = app.createdDateTime,
         i.name = app.displayName,
         i.description = app.description,
@@ -455,8 +461,8 @@ def _load_tenant_applications_tx(
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    ON CREATE SET r.first_seen = timestamp()
+    SET r.last_updated = $update_tag
     """
 
     tx.run(
@@ -464,7 +470,7 @@ def _load_tenant_applications_tx(
         region="global",
         tenant_applications_list=tenant_applications_list,
         tenant_id=tenant_id,
-        createDate=datetime.utcnow(),
+        create_date=datetime.utcnow(),
         update_tag=update_tag,
     )
 
@@ -503,10 +509,10 @@ def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id: str)
         tenant_service_accounts_list = []
         for account in service_principals_response.value:
             account.id = f"tenants/{tenant_id}/ServiceAccounts/{account.id}"
-            account.consolelink = azure_console_link.get_console_link(
+            account.console_link = azure_console_link.get_console_link(
                 id=account.id,
                 app_id=account.appId,
-                iam_entity_type='service_principal',
+                iam_entity_type="service_principal",
             )
             tenant_service_accounts_list.append(account)
 
@@ -528,8 +534,8 @@ def _load_tenant_service_accounts_tx(
     UNWIND $tenant_service_accounts_list AS service
     MERGE (i:AzureServiceAccount{id: service.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp()
-    SET i.lastupdated = $update_tag,
+    i.first_seen = timestamp()
+    SET i.last_updated = $update_tag,
         i.object_id = service.id,
         i.deleted_date_time = service.deletedDateTime,
         i.account_enabled = service.accountEnabled,
@@ -537,7 +543,7 @@ def _load_tenant_service_accounts_tx(
         i.app_display_name = service.appDisplayName,
         i.app_description = service.appDescription,
         i.app_id = service.appId,
-        i.create_date = $createDate,
+        i.create_date = $create_date,
         i.application_template_id = service.applicationTemplateId,
         i.app_owner_organization_id = service.appOwnerOrganizationId,
         i.app_role_assignment_required = service.appRoleAssignmentRequired,
@@ -558,13 +564,13 @@ def _load_tenant_service_accounts_tx(
         i.sign_in_audience = service.signInAudience,
         i.tags = service.tags,
         i.token_encryption_key_id = service.tokenEncryptionKeyId,
-        i.consolelink = service.consolelink,
+        i.console_link = service.console_link,
         i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    ON CREATE SET r.first_seen = timestamp()
+    SET r.last_updated = $update_tag
     """
 
     tx.run(
@@ -572,7 +578,7 @@ def _load_tenant_service_accounts_tx(
         region="global",
         tenant_service_accounts_list=tenant_service_accounts_list,
         tenant_id=tenant_id,
-        createDate=datetime.utcnow(),
+        create_date=datetime.utcnow(),
         update_tag=update_tag,
     )
 
@@ -634,9 +640,9 @@ def _load_tenant_domains_tx(
     UNWIND $tenant_domains_list AS domain
     MERGE (i:AzureDomain{id: domain.id})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp()
-    SET i.lastupdated = $update_tag,
-        i.create_date = $createDate,
+    i.first_seen = timestamp()
+    SET i.last_updated = $update_tag,
+        i.create_date = $create_date,
         i.authentication_type = domain.authenticationType,
         i.availability_status = domain.availabilityStatus,
         i.is_admin_managed = domain.isAdminManaged,
@@ -648,13 +654,13 @@ def _load_tenant_domains_tx(
         i.password_validity_period_in_days = domain.passwordValidityPeriodInDays,
         i.password_notification_window_in_days = domain.passwordNotificationWindowInDays,
         i.state_last_action_date_time = domain.state.lastActionDateTime,
-        i.consolelink = domain.consolelink,
+        i.console_link = domain.console_link,
         i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    ON CREATE SET r.first_seen = timestamp()
+    SET r.last_updated = $update_tag
     """
 
     tx.run(
@@ -662,7 +668,7 @@ def _load_tenant_domains_tx(
         region="global",
         tenant_domains_list=tenant_domains_list,
         tenant_id=tenant_id,
-        createDate=datetime.utcnow(),
+        create_date=datetime.utcnow(),
         update_tag=update_tag,
     )
 
@@ -692,8 +698,11 @@ def get_roles_list(subscription_id: str, client: AuthorizationManagementClient, 
             map(lambda x: x.as_dict(), client.role_definitions.list(scope=f"/subscriptions/{subscription_id}")),
         )
         for role in role_definitions_list:
-            role['consolelink'] = azure_console_link.get_console_link(
-                id=role['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+            role["console_link"] = azure_console_link.get_console_link(
+                id=role["id"],
+                primary_ad_domain_name=common_job_parameters[
+                    "Azure_Primary_AD_Domain_Name"
+                ],
             )
             permissions = []
             for permission in role.get('permissions', []):
@@ -732,8 +741,11 @@ def get_managed_identity_list(client: ManagedServiceIdentityClient, subscription
         )
 
         for managed_identity in managed_identity_list:
-            managed_identity['consolelink'] = azure_console_link.get_console_link(
-                id=managed_identity['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+            managed_identity["console_link"] = azure_console_link.get_console_link(
+                id=managed_identity["id"],
+                primary_ad_domain_name=common_job_parameters[
+                    "Azure_Primary_AD_Domain_Name"
+                ],
             )
         return managed_identity_list
     except HttpResponseError as e:
@@ -749,9 +761,9 @@ def _load_roles_tx(
     MERGE (i:AzureRole{id: role.id})
     ON CREATE SET i.firstseen = timestamp(),
     i.name = role.role_name,
-    i.consolelink = role.consolelink,
+    i.console_link = role.console_link,
     i.region = $region,
-    i.create_date = $createDate
+    i.create_date = $create_date
     SET i.lastupdated = $update_tag,
     i.roleName = role.role_name,
     i.permissions = role.permissions,
@@ -760,13 +772,13 @@ def _load_roles_tx(
     WITH i,role
     MATCH (t:AzureTenant{id: $tenant_id})
     MERGE (t)-[tr:RESOURCE]->(i)
-    ON CREATE SET tr.firstseen = timestamp()
-    SET tr.lastupdated = $update_tag
+    ON CREATE SET tr.first_seen = timestamp()
+    SET tr.last_updated = $update_tag
     WITH i,role
     MATCH (sub:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (sub)<-[sr:HAS_ACCESS]-(i)
-    ON CREATE SET sr.firstseen = timestamp()
-    SET sr.lastupdated = $update_tag
+    ON CREATE SET sr.first_seen = timestamp()
+    SET sr.last_updated = $update_tag
     """
 
     tx.run(
@@ -774,7 +786,7 @@ def _load_roles_tx(
         region="global",
         roles_list=roles_list,
         update_tag=update_tag,
-        createDate=datetime.utcnow(),
+        create_date=datetime.utcnow(),
         tenant_id=tenant_id,
         SUBSCRIPTION_ID=SUBSCRIPTION_ID,
     )
@@ -786,8 +798,8 @@ def _load_roles_tx(
     MATCH (i:AzureRole{id: $role})
     WITH i,principal
     MERGE (principal)-[r:ASSUME_ROLE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    ON CREATE SET r.first_seen = timestamp()
+    SET r.last_updated = $update_tag
     """
     for role_assignment in role_assignments_list:
         tx.run(
@@ -805,10 +817,10 @@ def _load_managed_identities_tx(
     UNWIND $managed_identity_list AS managed_identity
     MERGE (i:AzureManagedIdentity{id: toLower(managed_identity.id)})
     ON CREATE SET i:AzurePrincipal,
-    i.firstseen = timestamp()
-    SET i.lastupdated = $update_tag,
+    i.first_seen = timestamp()
+    SET i.last_updated = $update_tag,
     i.name = managed_identity.name,
-    i.consolelink = managed_identity.consolelink,
+    i.console_link = managed_identity.console_link,
     i.location = managed_identity.location,
     i.type = managed_identity.type,
     i.object_id = managed_identity.principal_id,
@@ -817,8 +829,8 @@ def _load_managed_identities_tx(
     WITH i
     MATCH (t:AzureTenant{id: $tenant_id})
     MERGE (t)-[tr:RESOURCE]->(i)
-    ON CREATE SET tr.firstseen = timestamp()
-    SET tr.lastupdated = $update_tag
+    ON CREATE SET tr.first_seen = timestamp()
+    SET tr.last_updated = $update_tag
     """
 
     tx.run(
