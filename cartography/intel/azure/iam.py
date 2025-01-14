@@ -654,6 +654,8 @@ def _load_tenant_domains_tx(
         i.password_validity_period_in_days = domain.passwordValidityPeriodInDays,
         i.password_notification_window_in_days = domain.passwordNotificationWindowInDays,
         i.state_last_action_date_time = domain.state.lastActionDateTime,
+        i.state_operation = domain.state.operation,
+        i.state_status = domain.state.status
         i.console_link = domain.console_link,
         i.region = $region
     WITH i
