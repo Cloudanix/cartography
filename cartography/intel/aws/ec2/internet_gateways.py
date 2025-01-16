@@ -10,6 +10,7 @@ from .util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
+from cartography.intel.aws.util.common import get_default_vpc
 
 logger = logging.getLogger(__name__)
 
@@ -38,25 +39,6 @@ def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> 
         logger.warning(f"Failed retrieve internet gateways for region - {region}. Error - {e}")
 
     return internet_gateways
-
-
-@timeit
-def get_default_vpc(ec2_client):
-    try:
-        response = ec2_client.describe_vpcs(
-            Filters=[{'Name': 'isDefault', 'Values': ['true']}]
-        )
-        vpcs = response.get('Vpcs', [])
-
-        if not vpcs:
-            logger.info("No default VPC found.")
-            return {}
-
-        return vpcs[0]
-
-    except Exception as e:
-        logger.error(f"Error fetching default VPC: {e}")
-        return {}
 
 
 @timeit
