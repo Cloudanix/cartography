@@ -35,7 +35,7 @@ def get_subnet_data(boto3_session: boto3.session.Session, region: str) -> List[D
         default_vpc = get_default_vpc(client)
 
         for subnet in subnets:
-            if subnet.get('VpcId') != default_vpc('VpcId'):
+            if subnet.get('VpcId') != default_vpc.get('VpcId'):
                 subnet['createdBy'] = 'user'
             else:
                 subnet['createdBy'] = 'predefined'
