@@ -57,7 +57,8 @@ def load_internet_gateways(
         SET
             ig.ownerid = igw.OwnerId,
             ig.lastupdated = $aws_update_tag,
-            ig.arn = "arn:aws:ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId
+            ig.arn = "arn:aws:ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
+            ig.created_by = igw.createdBy
         WITH igw, ig
 
         MATCH (awsAccount:AWSAccount {id: $aws_account_id})
