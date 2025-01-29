@@ -1063,7 +1063,7 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
     vpc.description = $Description,
     vpc.consolelink = $consolelink,
     vpc.lastupdated = $gcp_update_tag,
-    vpc.createdby = $createdBy
+    vpc.created_by = $createdBy
 
     MERGE (p)-[r:RESOURCE]->(vpc)
     ON CREATE SET r.firstseen = timestamp()
@@ -1114,7 +1114,7 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
     subnet.vpc_partial_uri = $VpcPartialUri,
     subnet.consolelink = $consolelink,
     subnet.lastupdated = $gcp_update_tag,
-    subnet.createdby = $createdBy
+    subnet.created_by = $createdBy
 
     MERGE (vpc)-[r:RESOURCE]->(subnet)
     ON CREATE SET r.firstseen = timestamp()
