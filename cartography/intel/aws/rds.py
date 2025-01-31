@@ -504,15 +504,14 @@ def load_rds_instances(
             rds.performance_insights_enabled = rds_instance.PerformanceInsightsEnabled,
             rds.performance_insights_kms_key_id = rds_instance.PerformanceInsightsKMSKeyId,
             rds.region = rds_instance.region,
-            rds.consolelink = rds_instance.consolelink,
             rds.deletion_protection = rds_instance.DeletionProtection,
             rds.preferred_backup_window = rds_instance.PreferredBackupWindow,
             rds.latest_restorable_time = rds_instance.LatestRestorableTime,
             rds.preferred_maintenance_window = rds_instance.PreferredMaintenanceWindow,
             rds.backup_retention_period = rds_instance.BackupRetentionPeriod,
-            rds.endpoint_address = rds_instance.EndpointAddress,
-            rds.endpoint_hostedzoneid = rds_instance.EndpointHostedZoneId,
-            rds.endpoint_port = rds_instance.EndpointPort,
+            rds.endpoint_address = rds_instance.Endpoint.Address,
+            rds.endpoint_hostedzoneid = rds_instance.Endpoint.HostedZoneId,
+            rds.endpoint_port = rds_instance.Endpoint.Port,
             rds.iam_database_authentication_enabled = rds_instance.IAMDatabaseAuthenticationEnabled,
             rds.auto_minor_version_upgrade = rds_instance.AutoMinorVersionUpgrade,
             rds.lastupdated = $aws_update_tag
@@ -529,6 +528,8 @@ def load_rds_instances(
 
     for rds in data:
         ep = _validate_rds_endpoint(rds)
+        if not ep['Address'] or not ep['Port']:
+            logger.warning(f"Missing endpoint data for RDS instance {rds.get('DBInstanceIdentifier')}")
 
         # Keep track of instances that are read replicas so we can attach them to their source instances later
         if rds.get("ReadReplicaSourceDBInstanceIdentifier"):
@@ -546,9 +547,9 @@ def load_rds_instances(
 
         rds['InstanceCreateTime'] = dict_value_to_str(rds, 'InstanceCreateTime')
         rds['LatestRestorableTime'] = dict_value_to_str(rds, 'LatestRestorableTime')
-        rds['EndpointAddress'] = ep.get('Address')
-        rds['EndpointHostedZoneId'] = ep.get('HostedZoneId')
-        rds['EndpointPort'] = ep.get('Port')
+        rds['EndpointAddress'] = ep.get('Address', '')
+        rds['EndpointHostedZoneId'] = ep.get('HostedZoneId', '')
+        rds['EndpointPort'] = ep.get('Port', '')
         rds['consolelink'] = aws_console_link.get_console_link(arn=rds['DBInstanceArn'])
     neo4j_session.run(
         ingest_rds_instance,
