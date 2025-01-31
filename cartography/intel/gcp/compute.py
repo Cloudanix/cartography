@@ -719,7 +719,7 @@ def transform_gcp_subnets(subnet_res: Dict, projectId: str, compute: Resource) -
         subnet["private_ip_google_access"] = s.get("privateIpGoogleAccess", None)
 
         default_vpc = get_default_vpc(projectId=projectId, compute=compute)
-        if default_vpc.get("selfLink") == s.get("network"):
+        if default_vpc.get("selfLink") == s.get("network") and default_vpc.get("autoCreateSubnetworks"):
             subnet["createdBy"] = "predefined"
         else:
             subnet["createdBy"] = "user"
