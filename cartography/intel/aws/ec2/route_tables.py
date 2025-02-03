@@ -31,12 +31,14 @@ def get_route_tables_data(boto3_session: boto3.session.Session, region: str) -> 
         default_vpc = get_default_vpc(client)
 
         for route_table in route_tables:
+            route_table['createdBy'] = 'user'
+
             if route_table.get('VpcId') == default_vpc.get('VpcId'):
-                is_default_table = route_table.get('Associations', [{}]).get('Main', False)
-                if is_default_table:
-                    route_table['createdBy'] = 'predefined'
-            else:
-                route_table['createdBy'] = 'user'
+                associations = route_table.get('Associations', [])
+                for association in associations:
+                    if association.get('Main', False):
+                        route_table['createdBy'] = 'predefined'
+                        break
 
             route_table['region'] = region
     except ClientError as e:
