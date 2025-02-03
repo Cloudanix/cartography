@@ -12,6 +12,7 @@ from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
+from cartography.intel.aws.util.common import get_default_vpc
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
@@ -26,7 +27,19 @@ def get_route_tables_data(boto3_session: boto3.session.Session, region: str) -> 
         route_tables: List[Dict] = []
         for page in paginator.paginate():
             route_tables.extend(page['RouteTables'])
+
+        default_vpc = get_default_vpc(client)
+
         for route_table in route_tables:
+            route_table['createdBy'] = 'user'
+
+            if route_table.get('VpcId') == default_vpc.get('VpcId'):
+                associations = route_table.get('Associations', [])
+                for association in associations:
+                    if association.get('Main', False):
+                        route_table['createdBy'] = 'predefined'
+                        break
+
             route_table['region'] = region
     except ClientError as e:
         if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
@@ -70,7 +83,8 @@ def load_route_tables_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id
         rtab.lastupdated = $aws_update_tag,
         rtab.consolelink = route_table.consolelink,
         rtab.arn = route_table.arn,
-        rtab.owner_id = route_table.OwnerId
+        rtab.owner_id = route_table.OwnerId,
+        rtab.created_by = route_table.createdBy
 
     WITH route_table, rtab
     MATCH (vpc:AWSVpc{id: route_table.VpcId})
