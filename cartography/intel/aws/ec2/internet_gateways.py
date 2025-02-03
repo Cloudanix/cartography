@@ -24,19 +24,45 @@ def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> 
         internet_gateways = client.describe_internet_gateways()['InternetGateways']
 
         default_vpc = get_default_vpc(client)
-        default_vpc_id = default_vpc.get('VpcId') if default_vpc else None
 
-        for igw in internet_gateways:
-            vpc_attachments = igw.get('Attachments', [])
-            # IGW is predefined if it's attached to the default VPC
-            if default_vpc_id and any(attachment.get('VpcId') == default_vpc_id
-                                      for attachment in vpc_attachments):
-                igw['createdBy'] = 'predefined'
-            else:
+        if default_vpc:
+            default_vpc_id = default_vpc.get('VpcId')
+
+            # fetching the creation time of the default VPC
+            vpc_response = client.describe_vpcs(VpcIds=[default_vpc_id])
+            vpc_creation_time = vpc_response['Vpcs'][0].get('CreateTime') if vpc_response['Vpcs'] else None
+
+            for igw in internet_gateways:
+                # marking the igw as user by default
+                igw['createdBy'] = 'user'
+
+                vpc_attachments = igw.get('Attachments', [])
+                if vpc_attachments:
+                    # checking if IGW is attached to default VPC as the previous logic
+                    is_attached_to_default_vpc = any(
+                        attachment.get('VpcId') == default_vpc_id
+                        for attachment in vpc_attachments
+                    )
+
+                    if is_attached_to_default_vpc:
+                        # fetching the creation time of the igw if it is attached to the default VPC
+                        igw_response = client.describe_internet_gateways(
+                            InternetGatewayIds=[igw['InternetGatewayId']]
+                        )
+                        igw_creation_time = igw_response['InternetGateways'][0].get('CreateTime') if igw_response['InternetGateways'] else None
+
+                        # if IGW was created within 1 minute of default VPC creation, it would be set to as predefined
+                        if vpc_creation_time and igw_creation_time:
+                            time_difference = abs((igw_creation_time - vpc_creation_time).total_seconds())
+                            if time_difference <= 60:
+                                igw['createdBy'] = 'predefined'
+        else:
+            # if no default VPC exists, all IGWs are user-created
+            for igw in internet_gateways:
                 igw['createdBy'] = 'user'
 
     except Exception as e:
-        logger.warning(f"Failed retrieve internet gateways for region - {region}. Error - {e}")
+        logger.warning(f"Failed to retrieve internet gateways for region - {region}. Error - {e}")
 
     return internet_gateways
 
