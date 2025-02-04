@@ -669,10 +669,12 @@ def get_default_vpc(projectId: str, compute: Resource):
         return None
 
     default_vpc = next(
-        (network for network in vpc_response['items']
-         if network['name'] == 'default' and
-         network.get('autoCreateSubnetworks', False) == True),
-        None
+        (
+            network for network in vpc_response['items']
+            if network['name'] == 'default' and
+            network.get('autoCreateSubnetworks', False)
+        ),
+        None,
     )
 
     return default_vpc
@@ -719,7 +721,7 @@ def transform_gcp_subnets(subnet_res: Dict, projectId: str, compute: Resource) -
         subnet["private_ip_google_access"] = s.get("privateIpGoogleAccess", None)
 
         default_vpc = get_default_vpc(projectId=projectId, compute=compute)
-        if default_vpc.get("selfLink") == s.get("network") and default_vpc.get("autoCreateSubnetworks"):
+        if default_vpc and default_vpc.get("selfLink") == s.get("network") and default_vpc.get("autoCreateSubnetworks"):
             subnet["createdBy"] = "predefined"
         else:
             subnet["createdBy"] = "user"

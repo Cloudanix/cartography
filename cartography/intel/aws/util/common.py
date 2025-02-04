@@ -1,5 +1,5 @@
-from typing import List
 import logging
+from typing import List
 
 from cartography.intel.aws.resources import RESOURCE_FUNCTIONS
 
@@ -24,19 +24,19 @@ def parse_and_validate_aws_requested_syncs(aws_requested_syncs: str) -> List[str
     return validated_resources
 
 
-def get_default_vpc(ec2_client):
-    try:
-        response = ec2_client.describe_vpcs(
-            Filters=[{'Name': 'isDefault', 'Values': ['true']}]
-        )
-        vpcs = response.get('Vpcs', [])
+# def get_default_vpc(ec2_client):
+#     try:
+#         response = ec2_client.describe_vpcs(
+#             Filters=[{'Name': 'isDefault', 'Values': ['true']}],
+#         )
+#         vpcs = response.get('Vpcs', [])
 
-        if not vpcs:
-            logger.info("No default VPC found.")
-            return {}
+#         if not vpcs:
+#             logger.info("No default VPC found.")
+#             return {}
 
-        return vpcs[0]
+#         return vpcs[0]
 
-    except Exception as e:
-        logger.error(f"Error fetching default VPC: {e}")
-        return {}
+#     except Exception as e:
+#         logger.error(f"Error fetching default VPC: {e}")
+#         return {}
