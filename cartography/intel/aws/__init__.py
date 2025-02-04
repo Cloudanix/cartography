@@ -113,7 +113,7 @@ def _sync_one_account(
     enabled_regions = _autodiscover_account_regions(boto3_session, current_aws_account_id)
     enabled_regions.sort()
 
-    allowed_regions = get_allowed_regions(boto3_session)
+    allowed_regions = get_allowed_regions(enabled_regions, boto3_session)
     allowed_regions.sort()
 
     if regions != allowed_regions:
@@ -352,29 +352,15 @@ def _sync_one_account(
 
 
 def _autodiscover_account_regions(boto3_session: boto3.session.Session, account_id: str) -> List[str]:
-    regions: List[str] = []
-    try:
-        regions = ec2.get_ec2_regions(boto3_session)
-    except botocore.exceptions.ClientError as e:
-        logger.debug("Error occurred getting EC2 regions.", exc_info=True)
-        logger.error(
-            ("Failed to retrieve AWS region list, an error occurred: %s. Could not get regions for account %s."),
-            e,
-            account_id,
-        )
-        raise
-
-    return regions
+    return ec2.get_ec2_regions(boto3_session, account_id)
 
 
 # Get list of all regions where API calls are not blocked
-def get_allowed_regions(boto3_session: boto3.session.Session):
-    all_regions = ec2.get_ec2_regions(boto3_session)
-
+def get_allowed_regions(enabled_regions: list[str], boto3_session: boto3.session.Session):
     allowed_regions = []
 
     # Check for EC2 instances in each region to determine if the region is enabled
-    for region in all_regions:
+    for region in enabled_regions:
         try:
             ec2_region = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
             ec2_region.describe_vpcs()

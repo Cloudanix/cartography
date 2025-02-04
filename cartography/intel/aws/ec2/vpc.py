@@ -146,7 +146,7 @@ def load_ec2_vpcs(
     new_vpc.region = $Region,
     new_vpc.lastupdated = $update_tag,
     new_vpc.consolelink = $consolelink,
-    new_vpc.arn = $Arn
+    new_vpc.arn = $Arn,
     new_vpc.created_by = $createdBy
     WITH new_vpc
     MATCH (awsAccount:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -173,7 +173,7 @@ def load_ec2_vpcs(
             Arn=vpc_arn,
             AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
-            createdBy=vpc.get("createdBy", None)
+            createdBy=vpc.get("createdBy", None),
         )
 
         load_cidr_association_set(

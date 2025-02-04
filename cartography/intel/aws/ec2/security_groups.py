@@ -190,7 +190,7 @@ def load_ec2_security_groupinfo(
             Region=region,
             AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
-            CreatedBy=group.get("createdBy", None)
+            CreatedBy=group.get("createdBy", None),
         )
 
         load_ec2_security_group_rule(neo4j_session, group, "IpPermissions", update_tag)
