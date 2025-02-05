@@ -654,9 +654,9 @@ def transform_gcp_vpcs(vpc_res: Dict) -> List[Dict]:
         vpc["routing_config_routing_mode"] = v.get("routingConfig", {}).get("routingMode", None)
 
         if v.get("name") == "default" and v.get("autoCreateSubnetworks"):
-            vpc["createdBy"] = "predefined"
+            vpc["isDefault"] = True
         else:
-            vpc["createdBy"] = "user"
+            vpc["isDefault"] = False
 
         vpc_list.append(vpc)
     return vpc_list
@@ -722,9 +722,9 @@ def transform_gcp_subnets(subnet_res: Dict, projectId: str, compute: Resource) -
 
         default_vpc = get_default_vpc(projectId=projectId, compute=compute)
         if default_vpc and default_vpc.get("selfLink") == s.get("network") and default_vpc.get("autoCreateSubnetworks"):
-            subnet["createdBy"] = "predefined"
+            subnet["isDefault"] = True
         else:
-            subnet["createdBy"] = "user"
+            subnet["isDefault"] = False
 
         subnet_list.append(subnet)
     return subnet_list
@@ -1065,7 +1065,7 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
     vpc.description = $Description,
     vpc.consolelink = $consolelink,
     vpc.lastupdated = $gcp_update_tag,
-    vpc.created_by = $createdBy
+    vpc.is_default = $isDefault
 
     MERGE (p)-[r:RESOURCE]->(vpc)
     ON CREATE SET r.firstseen = timestamp()
@@ -1084,7 +1084,7 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
             region=vpc.get("region"),
             consolelink=vpc.get("consolelink"),
             gcp_update_tag=gcp_update_tag,
-            createdBy=vpc.get("createdBy"),
+            isDefault=vpc.get("isDefault"),
         )
 
 
@@ -1116,7 +1116,7 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
     subnet.vpc_partial_uri = $VpcPartialUri,
     subnet.consolelink = $consolelink,
     subnet.lastupdated = $gcp_update_tag,
-    subnet.created_by = $createdBy
+    subnet.is_default = $isDefault
 
     MERGE (vpc)-[r:RESOURCE]->(subnet)
     ON CREATE SET r.firstseen = timestamp()
@@ -1137,7 +1137,7 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
             PrivateIpGoogleAccess=s["private_ip_google_access"],
             consolelink=s["consolelink"],
             gcp_update_tag=gcp_update_tag,
-            createdBy=s["createdBy"],
+            isDefault=s["isDefault"],
         )
 
 

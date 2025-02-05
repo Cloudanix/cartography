@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
-
 def get_default_vpc(ec2_client):
     try:
         response = ec2_client.describe_vpcs(
@@ -55,9 +54,9 @@ def get_subnet_data(boto3_session: boto3.session.Session, region: str) -> List[D
 
         for subnet in subnets:
             if default_vpc and subnet.get('VpcId') != default_vpc.get('VpcId'):
-                subnet['createdBy'] = 'user'
+                subnet['isDefault'] = False
             else:
-                subnet['createdBy'] = 'predefined'
+                subnet['isDefault'] = True
 
             subnet['region'] = region
             subnet['consolelink'] = aws_console_link.get_console_link(arn=subnet['SubnetArn'])
@@ -91,7 +90,7 @@ def load_subnets(
     snet.map_public_ip_on_launch = subnet.MapPublicIpOnLaunch, snet.subnet_arn = subnet.SubnetArn,
     snet.availability_zone = subnet.AvailabilityZone, snet.availability_zone_id = subnet.AvailabilityZoneId,
     snet.subnetid = subnet.SubnetId, snet.arn = subnet.SubnetArn, snet.consolelink = subnet.consolelink,
-    snet.created_by = subnet.createdBy
+    snet.is_default = subnet.isDefault
     """
 
     ingest_subnet_vpc_relations = """

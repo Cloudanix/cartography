@@ -33,9 +33,9 @@ def get_ec2_security_group_data(boto3_session: boto3.session.Session, region: st
             groupName = group.get('GroupName', '')
 
             if groupName == 'default':
-                group['createdBy'] = 'predefined'
+                group['isDefault'] = True
             else:
-                group['createdBy'] = 'user'
+                group['isDefault'] = False
 
             group['region'] = region
     except ClientError as e:
@@ -156,7 +156,7 @@ def load_ec2_security_groupinfo(
     group.consolelink = $consolelink,
     group.region = $Region,
     group.lastupdated = $update_tag, group.arn = $GroupArn,
-    group.created_by = $CreatedBy
+    group.is_default = $isDefault
     WITH group
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(group)
@@ -190,7 +190,7 @@ def load_ec2_security_groupinfo(
             Region=region,
             AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
-            CreatedBy=group.get("createdBy", None),
+            isDefault=group.get("isDefault", None),
         )
 
         load_ec2_security_group_rule(neo4j_session, group, "IpPermissions", update_tag)

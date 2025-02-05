@@ -15,7 +15,6 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 
 
-
 def get_default_vpc(ec2_client):
     try:
         response = ec2_client.describe_vpcs(
@@ -53,7 +52,7 @@ def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> 
 
             for igw in internet_gateways:
                 # marking the igw as user by default
-                igw['createdBy'] = 'user'
+                igw['isDefault'] = False
 
                 vpc_attachments = igw.get('Attachments', [])
                 if vpc_attachments:
@@ -74,11 +73,11 @@ def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> 
                         if vpc_creation_time and igw_creation_time:
                             time_difference = abs((igw_creation_time - vpc_creation_time).total_seconds())
                             if time_difference <= 60:
-                                igw['createdBy'] = 'predefined'
+                                igw['isDefault'] = True
         else:
             # if no default VPC exists, all IGWs are user-created
             for igw in internet_gateways:
-                igw['createdBy'] = 'user'
+                igw['isDefault'] = False
 
     except Exception as e:
         logger.warning(f"Failed to retrieve internet gateways for region - {region}. Error - {e}")
@@ -103,7 +102,7 @@ def load_internet_gateways(
             ig.ownerid = igw.OwnerId,
             ig.lastupdated = $aws_update_tag,
             ig.arn = "arn:aws:ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
-            ig.created_by = igw.createdBy
+            ig.is_default = igw.isDefault
         WITH igw, ig
 
         MATCH (awsAccount:AWSAccount {id: $aws_account_id})
