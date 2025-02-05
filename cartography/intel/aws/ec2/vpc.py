@@ -28,9 +28,9 @@ def get_ec2_vpcs(boto3_session: boto3.session.Session, region: str) -> List[Dict
         for vpc in vpcs:
             is_default = vpc.get('IsDefault', False)
             if is_default:
-                vpc['createdBy'] = 'predefined'
+                vpc['isDefault'] = True
             else:
-                vpc['createdBy'] = 'user'
+                vpc['isDefault'] = False
 
             vpc['region'] = region
 
@@ -147,7 +147,7 @@ def load_ec2_vpcs(
     new_vpc.lastupdated = $update_tag,
     new_vpc.consolelink = $consolelink,
     new_vpc.arn = $Arn,
-    new_vpc.created_by = $createdBy
+    new_vpc.is_default = $isDefault
     WITH new_vpc
     MATCH (awsAccount:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (awsAccount)-[r:RESOURCE]->(new_vpc)
@@ -173,7 +173,7 @@ def load_ec2_vpcs(
             Arn=vpc_arn,
             AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
-            createdBy=vpc.get("createdBy", None),
+            isDefault=vpc.get("isDefault", None),
         )
 
         load_cidr_association_set(

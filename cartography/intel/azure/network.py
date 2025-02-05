@@ -181,7 +181,7 @@ def get_networks_list(client: NetworkManagementClient, regions: list, common_job
             network['consolelink'] = azure_console_link.get_console_link(
                 id=network['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
-            network['createdBy'] = "user"  # since in Azure all the VPCs are created by the user and no defaults exist
+            network['isDefault'] = False  # since in Azure all the VPCs are created by the user and no defaults exist
             if regions is None:
                 network_data.append(network)
             else:
@@ -210,7 +210,7 @@ def _load_networks_tx(tx: neo4j.Transaction, subscription_id: str, networks_list
     n.provisioning_state=network.provisioning_state,
     n.enable_ddos_protection=network.enable_ddos_protection,
     n.etag=network.etag,
-    n.created_by=network.createdBy
+    n.is_default=network.isDefault
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(n)
@@ -289,7 +289,7 @@ def get_networks_subnets_list(networks_list: List[Dict], client: NetworkManageme
                 subnet['consolelink'] = azure_console_link.get_console_link(
                     id=subnet['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
                 )
-                subnet['createdBy'] = 'user'  # subnets in Azure are created by user and not by default
+                subnet['isDefault'] = False  # subnets in Azure are created by user and not by default
             networks_subnets_list.extend(subnets_list)
         return networks_subnets_list
 
@@ -317,7 +317,7 @@ def _load_networks_subnets_tx(
     n.private_endpoint_network_policies=subnet.private_endpoint_network_policies,
     n.private_link_service_network_policies=subnet.private_link_service_network_policies,
     n.etag=subnet.etag,
-    n.created_by=subnet.createdBy
+    n.is_default=subnet.isDefault
     WITH n, subnet
     MATCH (s:AzureNetwork{id: subnet.network_id})
     MERGE (s)-[r:CONTAIN]->(n)
@@ -386,7 +386,7 @@ def get_network_routetables_list(client: NetworkManagementClient, regions: list,
             routetable['consolelink'] = azure_console_link.get_console_link(
                 id=routetable['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
-            routetable['createdBy'] = 'user'
+            routetable['isDefault'] = False
             if regions is None:
                 tables_data.append(routetable)
             else:
@@ -414,7 +414,7 @@ def _load_network_routetables_tx(
     n.name = routetable.name,
     n.consolelink = routetable.consolelink,
     n.etag=routetable.etag,
-    n.created_by=routetable.createdBy
+    n.is_default=routetable.isDefault
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(n)
@@ -679,7 +679,7 @@ def get_network_security_groups_list(client: NetworkManagementClient, regions: l
             network['consolelink'] = azure_console_link.get_console_link(
                 id=network['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
-            network['createdBy'] = 'user'  # SGs are created by users and not created by default
+            network['isDefault'] = False  # SGs are created by users and not created by default
             if regions is None:
                 group_list.append(network)
             else:
@@ -707,7 +707,7 @@ def _load_network_security_groups_tx(
     SET n.lastupdated = $update_tag,
     n.name = network.name,
     n.etag=network.etag,
-    n.created_by=network.createdBy
+    n.is_default=network.isDefault
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(n)
