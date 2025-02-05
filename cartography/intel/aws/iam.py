@@ -709,10 +709,11 @@ def load_user_access_keys(
     key.region = $region,
     key.createdate = $CreateDate,
     key.rotatedate = $CreateDate,
+    key.consolelink = $consolelink
+    SET key.status = $Status,
     key.keyage = $KeyAge,
-    key.consolelink = $consolelink,
-    key.lastuseddate= $LastUsedDate
-    SET key.status = $Status, key.lastupdated = $aws_update_tag
+    key.lastuseddate = $LastUsedDate,
+    key.lastupdated = $aws_update_tag
     WITH user,key
     MERGE (user)-[r:AWS_ACCESS_KEY]->(key)
     ON CREATE SET r.firstseen = timestamp()
