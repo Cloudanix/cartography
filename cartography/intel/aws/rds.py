@@ -487,7 +487,7 @@ def load_rds_instances(
             rds.db_instance_class = rds_instance.DBInstanceClass,
             rds.engine = rds_instance.Engine,
             rds.master_username = rds_instance.MasterUsername,
-            rds.db_name = rds_instance.DBName,
+            rds.db_name = rds_instance.DatabaseName,
             rds.consolelink = rds_instance.consolelink,
             rds.instance_create_time = rds_instance.InstanceCreateTime,
             rds.availability_zone = rds_instance.AvailabilityZone,
@@ -543,6 +543,11 @@ def load_rds_instances(
 
         if rds.get('DBSubnetGroup'):
             subnets.append(rds)
+
+        if rds.get("Engine") in ["aurora-mysql", "mysql", "mariadb", "aurora-postgres", "postgres", "aurora-postgresql", "postgresql"]:
+            arn = rds.get("DBInstanceArn", "")
+            database_name = arn.split(":db:")[-1] if ":db:" in arn else ""
+            rds['DatabaseName'] = rds.get("DBName", database_name)
 
         rds['InstanceCreateTime'] = dict_value_to_str(rds, 'InstanceCreateTime')
         rds['LatestRestorableTime'] = dict_value_to_str(rds, 'LatestRestorableTime')
