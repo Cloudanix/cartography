@@ -41,11 +41,11 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
 
     for repo in workspace_repos:
         # Existing transformations
-        repo["workspace"]["uuid"] = repo["workspace"]["uuid"].replace("{", "").replace("}", "")
-        repo["project"]["uuid"] = repo["project"]["uuid"].replace("{", "").replace("}", "")
-        repo["uuid"] = repo["uuid"].replace("{", "").replace("}", "")
-        repo["primary_language"] = repo["language"].replace("{", "").replace("}", "") if repo.get("language") else None
-        repo["console_link"] = repo.get("links", {}).get("html", {}).get("href")
+        repo["workspace"]["uuid"] = repo["workspace"]["uuid"].replace("{", "").replace("}", None)
+        repo["project"]["uuid"] = repo["project"]["uuid"].replace("{", "").replace("}", None)
+        repo["uuid"] = repo["uuid"].replace("{", "").replace("}", None)
+        repo["primary_language"] = repo.get("language", None)
+        repo["console_link"] = repo.get("links", {}).get("html", {}).get("href", None)
 
         if repo is not None and repo.get("mainbranch") is not None:
             repo["default_branch"] = repo.get("mainbranch", {}).get("name", None)
@@ -121,21 +121,11 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     re.full_name = repo.full_name,
     re.has_issues = repo.has_issues,
     re.primary_language = repo.primary_language,
-    re.owner = repo.owner,
+    re.owner = repo.owner.display_name,
+    re.parent = repo.parent.name,
     re.default_branch = repo.default_branch,
-    re.lastupdated = $UpdateTag
+    re.lastupdated = $UpdateTag,
     re.console_link = repo.console_link
-
-    // Create primary language relationship
-    WITH re, repo
-    WHERE repo.primary_language IS NOT NULL
-    MERGE (pl:ProgrammingLanguage{id: repo.primary_language})
-    ON CREATE SET pl.firstseen = timestamp(),
-    pl.name = repo.primary_language
-    SET pl.lastupdated = $UpdateTag
-    MERGE (re)-[lang:PRIMARY_LANGUAGE]->(pl)
-    ON CREATE SET lang.firstseen = timestamp()
-    SET lang.lastupdated = $UpdateTag
 
     WITH re, repo
     MATCH (project:BitbucketProject{id:repo.project.uuid})
