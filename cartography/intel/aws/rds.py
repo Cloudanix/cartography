@@ -487,7 +487,7 @@ def load_rds_instances(
             rds.db_instance_class = rds_instance.DBInstanceClass,
             rds.engine = rds_instance.Engine,
             rds.master_username = rds_instance.MasterUsername,
-            rds.db_name = rds_instance.DatabaseName,
+            rds.name = rds_instance.DatabaseName,
             rds.consolelink = rds_instance.consolelink,
             rds.instance_create_time = rds_instance.InstanceCreateTime,
             rds.availability_zone = rds_instance.AvailabilityZone,
