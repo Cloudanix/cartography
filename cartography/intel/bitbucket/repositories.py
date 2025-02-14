@@ -86,9 +86,9 @@ def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_l
     ingest_languages = """
         UNWIND $Languages as lang
 
-        MERGE (pl:ProgrammingLanguage{id: lang.primary_language})
+        MERGE (pl:ProgrammingLanguage{id: lang.repo_id})
         ON CREATE SET pl.firstseen = timestamp(),
-        pl.name = lang.primary_language
+        pl.primary_language = lang.primary_language
         SET pl.lastupdated = $UpdateTag
         WITH pl, lang
 
