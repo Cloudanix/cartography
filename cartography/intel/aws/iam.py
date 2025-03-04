@@ -702,7 +702,7 @@ def load_user_access_keys(
     # To rotate key there is no option in aws. we need to create new and delete existing key that's why rotatedate same as createdate
     # TODO change the node label to reflect that this is a user access key, not an account access key
     ingest_account_key = """
-    MATCH (user:AWSUser{name: $UserName})
+    MATCH (user:AWSUser{arn: $ARN})
     WITH user
     MERGE (key:AccountAccessKey{accesskeyid: $AccessKeyId})
     ON CREATE SET key.firstseen = timestamp(),
@@ -720,13 +720,13 @@ def load_user_access_keys(
     SET r.lastupdated = $aws_update_tag
     """
 
-    for username, access_keys in user_access_keys.items():
+    for arn, access_keys in user_access_keys.items():
         for key in access_keys["AccessKeyMetadata"]:
             if key.get("AccessKeyId"):
                 neo4j_session.run(
                     ingest_account_key,
                     consolelink=consolelink,
-                    UserName=username,
+                    ARN=arn,
                     AccessKeyId=key["AccessKeyId"],
                     LastUsedDate=str(key.get("LastUsedDate", "")),
                     CreateDate=str(key.get("CreateDate", "")),
@@ -1147,7 +1147,7 @@ def sync_user_access_keys(
             consolelink = aws_console_link.get_console_link(
                 arn=f"arn:aws:iam::{current_aws_account_id}:access_keys/{name}",
             )
-            account_access_keys = {name: access_keys}
+            account_access_keys = {f"arn:aws:iam::{current_aws_account_id}:user/{name}": access_keys}
             load_user_access_keys(neo4j_session, account_access_keys, aws_update_tag, consolelink)
     run_cleanup_job(
         "aws_import_account_access_key_cleanup.json",
