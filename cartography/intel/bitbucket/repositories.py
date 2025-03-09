@@ -41,9 +41,9 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
 
     for repo in workspace_repos:
         # Existing transformations
-        repo["workspace"]["uuid"] = repo["workspace"]["uuid"].replace("{", "").replace("}", None)
-        repo["project"]["uuid"] = repo["project"]["uuid"].replace("{", "").replace("}", None)
-        repo["uuid"] = repo["uuid"].replace("{", "").replace("}", None)
+        repo["workspace"]["uuid"] = repo["workspace"]["uuid"].replace("{", "").replace("}", "")
+        repo["project"]["uuid"] = repo["project"]["uuid"].replace("{", "").replace("}", "")
+        repo["uuid"] = repo["uuid"].replace("{", "").replace("}", "")
         repo["primary_language"] = repo.get("language", None)
         repo["console_link"] = repo.get("links", {}).get("html", {}).get("href", None)
 

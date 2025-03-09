@@ -373,9 +373,9 @@ def get_allowed_regions(enabled_regions: list[str], boto3_session: boto3.session
                 "AccessDeniedException",
                 "AuthorizationError",
             ]:
-                print(f"Access denied or region restricted: {region}")
+                logger.info(f"Access denied or region restricted: {region}")
             else:
-                print(f"Unexpected error occurred in region {region}: {e}")
+                logger.info(f"Unexpected error occurred in region {region}: {e}")
 
     return allowed_regions
 

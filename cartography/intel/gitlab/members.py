@@ -66,7 +66,6 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 
 def sync(
         neo4j_session: neo4j.Session,
-        group_id:str,
         group_name:str,
         access_token:str,
         common_job_parameters: Dict[str, Any],
@@ -78,6 +77,6 @@ def sync(
     :return: Nothing
     """
     logger.info("Syncing Gitlab All group members")
-    group_members=get_group_members(access_token,group_id)
+    group_members=get_group_members(access_token,group_name)
     load_members_data(neo4j_session,group_members,common_job_parameters)
     cleanup(neo4j_session,common_job_parameters)

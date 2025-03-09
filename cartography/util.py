@@ -450,12 +450,14 @@ def make_requests_url(url: str, access_token: str, return_raw: bool = False):
         headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
         }
         response = requests.request(
             "GET",
             url,
             headers=headers,
         )
+
         if response.status_code != 200:
             return {}
 

@@ -33,7 +33,9 @@ def concurrent_execution(
         max_connection_lifetime=config.neo4j_max_connection_lifetime,
     )
     service_func(
-        Session(neo4j_driver), group_name,access_token,
+        Session(neo4j_driver),
+        group_name,
+        access_token,
         common_job_parameters,
     )
     logger.info(f"END processing for service: {service}")
@@ -140,7 +142,9 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     }
 
     try:
-        groups_list =cartography.intel.gitlab.group.get_groups(access_token)
+        # groups_list =cartography.intel.gitlab.group.get_groups(access_token)
+        group_info = cartography.intel.gitlab.group.get_group(access_token,common_job_parameters["ACCOUNT_ID"])
+        groups_list = [group_info]
 
         cartography.intel.gitlab.group.sync(
             neo4j_session,
