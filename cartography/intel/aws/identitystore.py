@@ -502,11 +502,15 @@ def sync_identity_center_permissions_sets(
         )
 
     unloaded_permissions_sets = []
+    unloaded_managed_policies = {}
+    unloaded_inline_policies = {}
     for permissions_set in permissions_sets:
         if permissions_set["PermissionSetArn"] in loaded_permissions_sets:
             continue
 
         unloaded_permissions_sets.append(permissions_set)
+        unloaded_managed_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(managed_policies[permissions_set["PermissionSetArn"]])
+        unloaded_inline_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(inline_policies[permissions_set["PermissionSetArn"]])
 
     load_identity_center_permissions_sets(
         neo4j_session,
@@ -515,10 +519,10 @@ def sync_identity_center_permissions_sets(
         aws_update_tag,
     )
 
-    transform_policy_data(managed_policies, PolicyType.managed.value)
-    load_policy_data(neo4j_session, managed_policies, PolicyType.managed.value, current_aws_account_id, aws_update_tag)
-    transform_policy_data(inline_policies, PolicyType.inline.value)
-    load_policy_data(neo4j_session, inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    transform_policy_data(unloaded_managed_policies, PolicyType.managed.value)
+    load_policy_data(neo4j_session, unloaded_managed_policies, PolicyType.managed.value, current_aws_account_id, aws_update_tag)
+    transform_policy_data(unloaded_inline_policies, PolicyType.inline.value)
+    load_policy_data(neo4j_session, unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
 
 
 @timeit
