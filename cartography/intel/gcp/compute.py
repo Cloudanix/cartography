@@ -1307,8 +1307,7 @@ def _attach_gcp_nics(neo4j_session: neo4j.Session, instance: Resource, gcp_updat
     MERGE (nic:GCPNetworkInterface{id: $NicId})
     ON CREATE SET nic.firstseen = timestamp(),
     nic.nic_id = $NicId
-    SET nic.private_ip = $NetworkIP,
-    nic.network = $Network,
+    SET nic.network = $Network,
     nic.consolelink=$ConsoleLink,
     nic.name = $NicName,
     nic.lastupdated = $gcp_update_tag
@@ -1470,14 +1469,6 @@ def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resou
     MERGE (vpc)-[r:RESOURCE]->(fw)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
-
-    MERGE (nic:GCPNetworkInterface{network: fw.network})
-    ON CREATE SET nic.firstseen = timestamp()
-    SET nic.lastupdated = $gcp_update_tag
-
-    MERGE (fw)-[c:ATTACHED_TO]->(nic)
-    ON CREATE SET c.firstseen = timestamp()
-    SET c.lastupdated = $gcp_update_tag
     """
     for fw in fw_list:
         neo4j_session.run(
