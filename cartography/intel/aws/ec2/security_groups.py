@@ -78,7 +78,7 @@ def load_ec2_security_group_rule(neo4j_session: neo4j.Session, group: Dict, rule
     ingest_range = Template("""
     MERGE (range:$range_label{id: $RangeId})
     ON CREATE SET range.firstseen = timestamp(), range.range = $Range
-    SET range.lastupdated = $update_tag
+    SET range.lastupdated = $update_tag, range.name = split($Range, '/')[0]
     WITH range
     MATCH (rule:IpRule{ruleid: $RuleId})
     MERGE (rule)<-[r:MEMBER_OF_IP_RULE]-(range)
