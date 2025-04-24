@@ -147,7 +147,7 @@ def load_ec2_vpcs(
     new_vpc.lastupdated = $update_tag,
     new_vpc.consolelink = $consolelink,
     new_vpc.arn = $Arn,
-    new_vpc.is_default = $isDefault
+    new_vpc.is_default = $isDefault,
     new_vpc.name = $Name
     WITH new_vpc
     MATCH (awsAccount:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -160,7 +160,7 @@ def load_ec2_vpcs(
         vpc_id = vpc["VpcId"]  # fail if not present
         vpc_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:vpc/{vpc_id}"
         consolelink = aws_console_link.get_console_link(arn=vpc_arn)
-        vpc_name = None
+        vpc_name = vpc_id
         for tag in vpc.get("Tags", []):
             if tag.get("Key") == "Name":
                 vpc_name = tag.get("Value")
