@@ -796,6 +796,30 @@ def run_aws(request):
     return CLI(default_sync, prog='cartography').process(config)
 
 
+def run_aws_cleanup(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('neo4j').setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_aws_cleanup_sync()
+
+    # TODO: Define config and pass it forward
+    config = Config(
+        request['neo4j']['uri'],
+        neo4j_user=request['neo4j']['user'],
+        neo4j_password=request['neo4j']['pwd'],
+        neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
+        params=request['params']
+    )
+
+    if request['logging']['mode'] == "verbose":
+        config.verbose = True
+    elif request['logging']['mode'] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog='cartography').process(config)
+
+
 def run_azure(request):
     logging.basicConfig(level=logging.INFO)
     logging.getLogger('botocore').setLevel(logging.WARNING)
