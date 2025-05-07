@@ -565,6 +565,12 @@ def get_roles_list(subscription_id: str, client: AuthorizationManagementClient, 
             map(lambda x: x.as_dict(), client.role_definitions.list(scope=f"/subscriptions/{subscription_id}")),
         )
         for role in role_definitions_list:
+            if role.get('type') == 'Microsoft.Authorization/roleDefinitions' or role.get('role_type') == 'BuiltInRole':
+                role["role_owner_type"] = 'predefined'
+
+            else:
+                role["role_owner_type"] = 'custom'
+
             role['consolelink'] = azure_console_link.get_console_link(
                 id=role['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
@@ -629,7 +635,8 @@ def _load_roles_tx(
     i.roleName = role.role_name,
     i.permissions = role.permissions,
     i.type = role.type,
-    i.role_type = role.role_type
+    i.role_type = role.role_type,
+    i.role_owner_type = role.role_owner_type
     WITH i,role
     MATCH (t:AzureTenant{id: $tenant_id})
     MERGE (t)-[tr:RESOURCE]->(i)

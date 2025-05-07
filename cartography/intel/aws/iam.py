@@ -2,6 +2,8 @@ import enum
 import json
 import logging
 import time
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
@@ -16,8 +18,6 @@ from cartography.intel.aws.permission_relationships import parse_statement_node
 from cartography.intel.aws.permission_relationships import principal_allowed_on_resource
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
-
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
@@ -285,14 +285,17 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
         try:
             role_data = client.get_role(RoleName=role.get("RoleName")).get("Role")
             role["RoleLastUsed"] = role_data.get("RoleLastUsed")
+            role["type"] = "custom"
 
             if any(service_role_type in role_data.get("Path", "") for service_role_type in service_role_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isServiceRole"] = True
+                role["type"] = "predefined"
 
             if any(sso_reserved_type in role_data.get("Path", "") for sso_reserved_type in sso_reserved_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isSSOReservedRole"] = True
+                role["type"] = "predefined"
 
         except Exception as e:
             logger.warning(f"Failed to get role info. {e}")
@@ -524,7 +527,8 @@ def load_roles(
     SET rnode.name = $RoleName, rnode.path = $Path,
     rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
     rnode.is_service_role = $IsServiceRole,
-    rnode.is_sso_reserved_role = $IsSSOReservedRole
+    rnode.is_sso_reserved_role = $IsSSOReservedRole,
+    rnode.type = $Type
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -570,6 +574,7 @@ def load_roles(
             Path=role["Path"],
             IsServiceRole=role.get("isServiceRole", False),
             IsSSOReservedRole=role.get("isSSOReservedRole", False),
+            Type=role.get("type", None),
             region="global",
             LastUsedDate=role["RoleLastUsed"].get("LastUsedDate") if "RoleLastUsed" in role else None,
             LastUsedRegion=role["RoleLastUsed"].get("Region") if "RoleLastUsed" in role else None,
