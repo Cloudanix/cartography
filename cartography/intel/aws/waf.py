@@ -118,7 +118,7 @@ def sync_waf_classic(
 
 @timeit
 def get_waf_v2_web_acl_details(
-    client: boto3.client, acl: Dict, scope: str, region: str
+    client: boto3.client, acl: Dict, scope: str, region: str,
 ) -> Dict:
     """
     Get detailed information about a WAFv2 Web ACL
@@ -135,18 +135,18 @@ def get_waf_v2_web_acl_details(
             "scope": scope,
             "default_action": acl_details.get("DefaultAction", {}).get("Type", ""),
             "rules_count": str(len(acl_details.get("Rules", []))),
-            "capacity": str(acl_details.get("Capacity", 0))
+            "capacity": str(acl_details.get("Capacity", 0)),
         }
     except ClientError as e:
         logger.error(
-            f'Failed to get WAF ACL details for {acl.get("Name", "Unknown")}: {e}'
+            f'Failed to get WAF ACL details for {acl.get("Name", "Unknown")}: {e}',
         )
         return {}
 
 
 @timeit
 def get_waf_v2_web_acls_for_scope(
-    client: boto3.client, scope: str, region: str
+    client: boto3.client, scope: str, region: str,
 ) -> List[Dict]:
     """
     Get WAFv2 Web ACLs for a specific scope.
@@ -172,7 +172,7 @@ def get_waf_v2_web_acls_for_scope(
             )
             for acl in response.get("WebACLs", []):
                 acl_with_details = get_waf_v2_web_acl_details(
-                    client, acl, scope, region
+                    client, acl, scope, region,
                 )
                 if acl_with_details:
                     web_acls.append(acl_with_details)
@@ -203,8 +203,8 @@ def get_waf_v2_web_acls(boto3_session: boto3.session.Session) -> List[Dict]:
         regional_client = boto3_session.client("wafv2")
         web_acls.extend(
             get_waf_v2_web_acls_for_scope(
-                regional_client, "REGIONAL", boto3_session.region_name
-            )
+                regional_client, "REGIONAL", boto3_session.region_name,
+            ),
         )
 
     except ClientError as e:
