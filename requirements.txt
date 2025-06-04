@@ -31,6 +31,7 @@ clouduniqueid==1.0.3
 azure-eventgrid~=4.1.1
 azure-functions~=1.6.0
 adal>=1.2.4
+msal>=1.16.0
 azure-core<2.0.0,>=1.15.0
 azure-cli-core>=2.33.0
 azure-mgmt-compute>=5.0.0

@@ -2,6 +2,8 @@ import enum
 import json
 import logging
 import time
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
@@ -16,8 +18,6 @@ from cartography.intel.aws.permission_relationships import parse_statement_node
 from cartography.intel.aws.permission_relationships import principal_allowed_on_resource
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
-
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
