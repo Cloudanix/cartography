@@ -2,12 +2,15 @@ import asyncio
 import logging
 import math
 from datetime import datetime
+from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
+from typing import TypedDict
+from typing import Union
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
-from azure.graphrbac import GraphRbacManagementClient
 from azure.mgmt.authorization import AuthorizationManagementClient
 from azure.mgmt.msi import ManagedServiceIdentityClient
 from cloudconsolelink.clouds.azure import AzureLinker
@@ -75,15 +78,25 @@ def set_used_state(session: neo4j.Session, tenant_id: str, common_job_parameters
 
 
 @timeit
-def get_graph_client(credentials: Credentials, tenant_id: str) -> GraphRbacManagementClient:
-    client = GraphRbacManagementClient(credentials, tenant_id)
+def get_graph_client(credentials: Credentials, tenant_id: Optional[str] = None) -> GraphServiceClient:
+    """
+    Create a Microsoft Graph client.
+    This replaces the deprecated Azure AD Graph client.
+    """
+    client = GraphServiceClient(credentials, scopes)
     return client
 
 
 @timeit
 def get_default_graph_client(credentials: Credentials) -> GraphServiceClient:
-    client = GraphServiceClient(credentials, scopes)
-    return client
+    """
+    Create a Microsoft Graph client - maintained for backward compatibility.
+    This replaces the deprecated Azure AD Graph client (GraphRbacManagementClient)
+    which Microsoft is retiring by June 30, 2025.
+
+    Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/use-the-api
+    """
+    return get_graph_client(credentials)
 
 
 @timeit
@@ -99,12 +112,17 @@ def get_managed_identity_client(credentials: Credentials, subscription_id: str) 
 
 
 @timeit
-def list_tenant_users(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+async def list_tenant_users(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    List users from Microsoft Graph API.
+    Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/user-list
+    """
     try:
-        users = client.users.list()
+        response = await client.users.get()
+        if not response or not response.value:
+            return []
 
-        users = transform_users(client.users.list(), tenant_id)
-
+        users = transform_users(response.value, tenant_id)
         return users
 
     except HttpResponseError as e:
@@ -113,30 +131,65 @@ def list_tenant_users(client: GraphRbacManagementClient, tenant_id: str) -> List
 
 
 def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
+    """
+    User properties documentation: https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
+    """
     users: List[Dict] = []
 
-    # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     for user in users_list:
+        # Microsoft Graph API property names are in camelCase when coming from the API
+        user_id = getattr(user, 'id', None) or user.get('id')
+        display_name = getattr(user, 'displayName', None) or user.get('displayName')
+        user_principal_name = getattr(user, 'userPrincipalName', None) or user.get('userPrincipalName')
+        mail = getattr(user, 'mail', None) or user.get('mail')
+        given_name = getattr(user, 'givenName', None) or user.get('givenName')
+        surname = getattr(user, 'surname', None) or user.get('surname')
+        job_title = getattr(user, 'jobTitle', None) or user.get('jobTitle')
+        mobile_phone = getattr(user, 'mobilePhone', None) or user.get('mobilePhone')
+        office_location = getattr(user, 'officeLocation', None) or user.get('officeLocation')
+        preferred_language = getattr(user, 'preferredLanguage', None) or user.get('preferredLanguage')
+        business_phones = getattr(user, 'businessPhones', None) or user.get('businessPhones', [])
+
+        # User account properties
+        account_enabled = getattr(user, 'accountEnabled', None) or user.get('accountEnabled')
+        user_type = getattr(user, 'userType', None) or user.get('userType')
+        mail_nickname = getattr(user, 'mailNickname', None) or user.get('mailNickname')
+        usage_location = getattr(user, 'usageLocation', None) or user.get('usageLocation')
+        deleted_date_time = getattr(user, 'deletedDateTime', None) or user.get('deletedDateTime')
+        created_date_time = getattr(user, 'createdDateTime', None) or user.get('createdDateTime')
+
+        # Additional properties that might not be available in all responses
+        department = getattr(user, 'department', None) or user.get('department')
+        company_name = getattr(user, 'companyName', None) or user.get('companyName')
+
+        # Custom properties we use internally
+        custom_id = f"tenants/{tenant_id}/users/{user_id}"
+        consolelink = azure_console_link.get_console_link(id=user_id, iam_entity_type='user')
+
+        # Map to our internal structure
         usr = {
-            'id': f"tenants/{tenant_id}/users/{user.object_id}",
-            'consolelink': azure_console_link.get_console_link(id=user.object_id, iam_entity_type='user'),
-            'object_id': user.object_id,
-            'user_principal_name': user.user_principal_name,
-            'email': user.mail,
-            'name': user.display_name,
-            'given_name': user.given_name,
-            'surname': user.surname,
-            'user_type': user.user_type,
-            'object_type': user.object_type,
-            'mail_nickname': user.mail_nickname,
-            'account_enabled': user.account_enabled,
-            'usage_location': user.usage_location,
-            'account_enabled': user.account_enabled,
-            'deletion_timestamp': user.deletion_timestamp,
-            'create_date': user.additional_properties['createdDateTime'],
-            'company_name': user.additional_properties['companyName'],
-            'refresh_tokens_valid_from': user.additional_properties['refreshTokensValidFromDateTime'],
-            'mobile': user.additional_properties['mobile'],
+            'id': custom_id,
+            'consolelink': consolelink,
+            'object_id': user_id,
+            'user_principal_name': user_principal_name,
+            'email': mail,
+            'name': display_name,
+            'given_name': given_name,
+            'surname': surname,
+            'job_title': job_title,
+            'user_type': user_type,
+            'object_type': 'User',  # Custom property - not from the API
+            'mail_nickname': mail_nickname,
+            'account_enabled': account_enabled,
+            'usage_location': usage_location,
+            'deletion_timestamp': deleted_date_time,
+            'create_date': created_date_time,
+            'company_name': company_name,
+            'mobile': mobile_phone,
+            'office_location': office_location,
+            'preferred_language': preferred_language,
+            'business_phones': business_phones or [],
+            'department': department,
         }
         users.append(usr)
 
@@ -146,25 +199,24 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
 def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
-        'id': f"tenants/{tenant_id}/users/{user.object_id}",
-        'consolelink': azure_console_link.get_console_link(id=user.object_id, iam_entity_type='user'),
-        'object_id': user.object_id,
-        'user_principal_name': user.user_principal_name,
-        'email': user.mail,
-        'name': user.display_name,
-        'given_name': user.given_name,
-        'surname': user.surname,
-        'user_type': user.user_type,
-        'object_type': user.object_type,
-        'mail_nickname': user.mail_nickname,
-        'account_enabled': user.account_enabled,
-        'usage_location': user.usage_location,
-        'account_enabled': user.account_enabled,
-        'deletion_timestamp': user.deletion_timestamp,
-        'create_date': user.additional_properties['createdDateTime'],
-        'company_name': user.additional_properties['companyName'],
-        'refresh_tokens_valid_from': user.additional_properties['refreshTokensValidFromDateTime'],
-        'mobile': user.additional_properties['mobile'],
+        'id': f"tenants/{tenant_id}/users/{user['object_id']}",
+        'consolelink': azure_console_link.get_console_link(id=user['object_id'], iam_entity_type='user'),
+        'object_id': user['object_id'],
+        'user_principal_name': user['user_principal_name'],
+        'email': user['mail'],
+        'name': user['display_name'],
+        'given_name': user['given_name'],
+        'surname': user['surname'],
+        'user_type': user['user_type'],
+        'object_type': user['object_type'],
+        'mail_nickname': user['mail_nickname'],
+        'account_enabled': user['account_enabled'],
+        'usage_location': user['usage_location'],
+        'deletion_timestamp': user['deletion_timestamp'],
+        'create_date': user['additional_properties']['createdDateTime'],
+        'company_name': user['additional_properties']['companyName'],
+        'refresh_tokens_valid_from': user['additional_properties']['refreshTokensValidFromDateTime'],
+        'mobile': user['additional_properties']['mobile'],
     }
 
 
@@ -176,40 +228,48 @@ def _load_tenant_users_tx(
     MERGE (i:AzureUser{id: user.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.consolelink =user.consolelink,
-    i.object_id =user.object_id,
-    i.user_principal_name =user.user_principal_name,
-    i.email =user.email,
-    i.name =user.name,
-    i.given_name =user.given_name,
-    i.surname =user.surname,
-    i.user_type =user.user_type,
-    i.object_type =user.object_type,
-    i.mail_nickname =user.mail_nickname,
-    i.account_enabled =user.account_enabled,
-    i.usage_location =user.usage_location,
-    i.account_enabled =user.account_enabled,
-    i.deletion_timestamp =user.deletion_timestamp,
-    i.create_date =user.create_date,
-    i.company_name =user.company_name,
-    i.refresh_tokens_valid_from =user.refresh_tokens_valid_from,
-    i.mobile =user.mobile,
+    i.consolelink = user.consolelink,
+    i.object_id = user.object_id,
+    i.user_principal_name = user.user_principal_name,
+    i.email = user.email,
+    i.name = user.name,
+    i.given_name = user.given_name,
+    i.surname = user.surname,
+    i.user_type = user.user_type,
+    i.object_type = user.object_type,
+    i.mail_nickname = user.mail_nickname,
+    i.account_enabled = user.account_enabled,
+    i.usage_location = user.usage_location,
+    i.deletion_timestamp = user.deletion_timestamp,
+    i.create_date = user.create_date,
+    i.company_name = user.company_name,
+    i.mobile = user.mobile,
+    i.job_title = user.job_title,
+    i.office_location = user.office_location,
+    i.preferred_language = user.preferred_language,
+    i.business_phones = user.business_phones,
+    i.department = user.department,
     i.region = $region
     SET i.lastupdated = $update_tag,
-    i.consolelink =user.consolelink,
-    i.user_principal_name =user.user_principal_name,
-    i.name =user.name,
-    i.given_name =user.given_name,
-    i.surname =user.surname,
-    i.mail_nickname =user.mail_nickname,
-    i.account_enabled =user.account_enabled,
-    i.usage_location =user.usage_location,
-    i.account_enabled =user.account_enabled,
-    i.deletion_timestamp =user.deletion_timestamp,
-    i.create_date =user.create_date,
-    i.company_name =user.company_name,
-    i.refresh_tokens_valid_from =user.refresh_tokens_valid_from,
-    i.mobile =user.mobile,
+    i.consolelink = user.consolelink,
+    i.user_principal_name = user.user_principal_name,
+    i.email = user.email,
+    i.name = user.name,
+    i.given_name = user.given_name,
+    i.surname = user.surname,
+    i.job_title = user.job_title,
+    i.user_type = user.user_type,
+    i.mail_nickname = user.mail_nickname,
+    i.account_enabled = user.account_enabled,
+    i.usage_location = user.usage_location,
+    i.deletion_timestamp = user.deletion_timestamp,
+    i.create_date = user.create_date,
+    i.company_name = user.company_name,
+    i.mobile = user.mobile,
+    i.office_location = user.office_location,
+    i.preferred_language = user.preferred_language,
+    i.business_phones = user.business_phones,
+    i.department = user.department,
     i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -236,21 +296,64 @@ def sync_tenant_users(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials, tenant_id)
-    tenant_users_list = list_tenant_users(client, tenant_id)
+    """
+    Sync users from Microsoft Graph API to Neo4j.
+    """
+    client = get_graph_client(credentials.default_graph_credentials)
+    tenant_users_list = asyncio.run(list_tenant_users(client, tenant_id))
 
     load_tenant_users(neo4j_session, tenant_id, tenant_users_list, update_tag)
     cleanup_tenant_users(neo4j_session, common_job_parameters)
 
 
 @timeit
-def get_tenant_groups_list(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+async def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    Get groups from Microsoft Graph API.
+    Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/group-list
+    """
     try:
-        tenant_groups_list = list(map(lambda x: x.as_dict(), client.groups.list()))
+        response = await client.groups.get()
+        if not response or not response.value:
+            return []
 
-        for group in tenant_groups_list:
-            group['id'] = f"tenants/{tenant_id}/Groups/{group.get('object_id', None)}"
-            group['consolelink'] = azure_console_link.get_console_link(iam_entity_type='group', id=group['object_id'])
+        tenant_groups_list = []
+
+        for group in response.value:
+            # Convert the Graph API response to a dictionary
+            if hasattr(group, 'as_dict'):
+                group_dict = group.as_dict()
+            else:
+                # Extract properties directly using camelCase as per Microsoft Graph API
+                group_dict = {
+                    'id': getattr(group, 'id', None),
+                    'display_name': getattr(group, 'displayName', None),
+                    'mail': getattr(group, 'mail', None),
+                    'mail_nickname': getattr(group, 'mailNickname', None),
+                    'mail_enabled': getattr(group, 'mailEnabled', None),
+                    'security_enabled': getattr(group, 'securityEnabled', None),
+                    'visibility': getattr(group, 'visibility', None),
+                    'classification': getattr(group, 'classification', None),
+                    'created_date_time': getattr(group, 'createdDateTime', None),
+                    'description': getattr(group, 'description', None),
+                    'group_types': getattr(group, 'groupTypes', []),
+                    'on_premises_sync_enabled': getattr(group, 'onPremisesSyncEnabled', None),
+                    'on_premises_domain_name': getattr(group, 'onPremisesDomainName', None),
+                    'on_premises_sam_account_name': getattr(group, 'onPremisesSamAccountName', None),
+                    'on_premises_security_identifier': getattr(group, 'onPremisesSecurityIdentifier', None),
+                    'proxy_addresses': getattr(group, 'proxyAddresses', []),
+                    'renewal_timestamp': getattr(group, 'renewalTimestamp', None),
+                    'security_identifier': getattr(group, 'securityIdentifier', None),
+                }
+
+            # Add tenant-specific ID for consistency with previous implementation
+            group_dict['id'] = f"tenants/{tenant_id}/Groups/{group_dict.get('id')}"
+            group_dict['consolelink'] = azure_console_link.get_console_link(
+                iam_entity_type='group',
+                id=getattr(group, 'id', None),
+            )
+
+            tenant_groups_list.append(group_dict)
 
         return tenant_groups_list
 
@@ -267,17 +370,43 @@ def _load_tenant_groups_tx(
     MERGE (i:AzureGroup{id: group.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.object_id=group.object_id,
+    i.object_id = group.id,
     i.region = $region,
     i.create_date = $createDate,
     i.name = group.display_name,
     i.visibility = group.visibility,
     i.classification = group.classification,
-    i.createdDateTime = group.createdDateTime,
+    i.created_date_time = group.created_date_time,
     i.consolelink = group.consolelink,
-    i.securityEnabled = group.security_enabled
+    i.security_enabled = group.security_enabled,
+    i.mail_enabled = group.mail_enabled,
+    i.mail_nickname = group.mail_nickname,
+    i.description = group.description,
+    i.group_types = group.group_types,
+    i.on_premises_sync_enabled = group.on_premises_sync_enabled,
+    i.on_premises_domain_name = group.on_premises_domain_name,
+    i.on_premises_sam_account_name = group.on_premises_sam_account_name,
+    i.on_premises_security_identifier = group.on_premises_security_identifier,
+    i.proxy_addresses = group.proxy_addresses,
+    i.renewal_timestamp = group.renewal_timestamp,
+    i.security_identifier = group.security_identifier
     SET i.lastupdated = $update_tag,
-    i.mail = group.mail
+    i.mail = group.mail,
+    i.visibility = group.visibility,
+    i.classification = group.classification,
+    i.created_date_time = group.created_date_time,
+    i.security_enabled = group.security_enabled,
+    i.mail_enabled = group.mail_enabled,
+    i.mail_nickname = group.mail_nickname,
+    i.description = group.description,
+    i.group_types = group.group_types,
+    i.on_premises_sync_enabled = group.on_premises_sync_enabled,
+    i.on_premises_domain_name = group.on_premises_domain_name,
+    i.on_premises_sam_account_name = group.on_premises_sam_account_name,
+    i.on_premises_security_identifier = group.on_premises_security_identifier,
+    i.proxy_addresses = group.proxy_addresses,
+    i.renewal_timestamp = group.renewal_timestamp,
+    i.security_identifier = group.security_identifier
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -295,7 +424,7 @@ def _load_tenant_groups_tx(
     )
 
 
-async def get_group_members(credentials: Credentials, group_id: str):
+async def get_group_members(credentials: Credentials, group_id: str) -> List[Dict[str, Any]]:
     client: GraphServiceClient = get_default_graph_client(credentials.default_graph_credentials)
     members_data = []
     try:
@@ -348,8 +477,11 @@ def sync_tenant_groups(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials.aad_graph_credentials, tenant_id)
-    tenant_groups_list = get_tenant_groups_list(client, tenant_id)
+    """
+    Sync groups from Microsoft Graph API to Neo4j.
+    """
+    client = get_graph_client(credentials.default_graph_credentials)
+    tenant_groups_list = asyncio.run(get_tenant_groups_list(client, tenant_id))
 
     load_tenant_groups(neo4j_session, tenant_id, tenant_groups_list, update_tag)
     for group in tenant_groups_list:
@@ -360,13 +492,51 @@ def sync_tenant_groups(
 
 
 @timeit
-def get_tenant_applications_list(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+async def get_tenant_applications_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    Get applications from Microsoft Graph API.
+    Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/application-list
+    """
     try:
-        tenant_applications_list = list(map(lambda x: x.as_dict(), client.applications.list()))
+        response = await client.applications.get()
+        if not response or not response.value:
+            return []
 
-        for app in tenant_applications_list:
-            app['id'] = f"tenants/{tenant_id}/Applications/{app.get('object_id', None)}"
-            app['consolelink'] = azure_console_link.get_console_link(iam_entity_type='application', id=app['app_id'])
+        tenant_applications_list = []
+
+        for app in response.value:
+            # Convert the Graph API response to a dictionary
+            if hasattr(app, 'as_dict'):
+                app_dict = app.as_dict()
+            else:
+                # Extract properties directly using camelCase as per Microsoft Graph API
+                app_dict = {
+                    'id': getattr(app, 'id', None),
+                    'display_name': getattr(app, 'displayName', None),
+                    'app_id': getattr(app, 'appId', None),
+                    'created_date_time': getattr(app, 'createdDateTime', None),
+                    'description': getattr(app, 'description', None),
+                    'deleted_date_time': getattr(app, 'deletedDateTime', None),
+                    'publisher_domain': getattr(app, 'publisherDomain', None),
+                    'sign_in_audience': getattr(app, 'signInAudience', None),
+                    'application_template_id': getattr(app, 'applicationTemplateId', None),
+                    'disabled_by_microsoft_status': getattr(app, 'disabledByMicrosoftStatus', None),
+                    'group_membership_claims': getattr(app, 'groupMembershipClaims', None),
+                    'identifier_uris': getattr(app, 'identifierUris', []),
+                    'is_device_only_auth_supported': getattr(app, 'isDeviceOnlyAuthSupported', None),
+                    'is_fallback_public_client': getattr(app, 'isFallbackPublicClient', None),
+                    'notes': getattr(app, 'notes', None),
+                    'tags': getattr(app, 'tags', []),
+                }
+
+            # Add tenant-specific ID for consistency with previous implementation
+            app_dict['id'] = f"tenants/{tenant_id}/Applications/{app_dict.get('id')}"
+            app_dict['consolelink'] = azure_console_link.get_console_link(
+                iam_entity_type='application',
+                id=app_dict.get('app_id'),
+            )
+
+            tenant_applications_list.append(app_dict)
 
         return tenant_applications_list
 
@@ -383,14 +553,40 @@ def _load_tenant_applications_tx(
     MERGE (i:AzureApplication{id: app.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.object_id=app.object_id,
+    i.object_id = app.id,
     i.region = $region,
     i.create_date = $createDate,
     i.name = app.display_name,
     i.consolelink = app.consolelink,
-    i.publisherDomain = app.publisher_domain
+    i.app_id = app.app_id,
+    i.publisher_domain = app.publisher_domain,
+    i.sign_in_audience = app.sign_in_audience,
+    i.created_date_time = app.created_date_time,
+    i.description = app.description,
+    i.deleted_date_time = app.deleted_date_time,
+    i.application_template_id = app.application_template_id,
+    i.disabled_by_microsoft_status = app.disabled_by_microsoft_status,
+    i.group_membership_claims = app.group_membership_claims,
+    i.identifier_uris = app.identifier_uris,
+    i.is_device_only_auth_supported = app.is_device_only_auth_supported,
+    i.is_fallback_public_client = app.is_fallback_public_client,
+    i.notes = app.notes,
+    i.tags = app.tags
     SET i.lastupdated = $update_tag,
-    i.signInAudience = app.sign_in_audience
+    i.name = app.display_name,
+    i.publisher_domain = app.publisher_domain,
+    i.sign_in_audience = app.sign_in_audience,
+    i.created_date_time = app.created_date_time,
+    i.description = app.description,
+    i.deleted_date_time = app.deleted_date_time,
+    i.application_template_id = app.application_template_id,
+    i.disabled_by_microsoft_status = app.disabled_by_microsoft_status,
+    i.group_membership_claims = app.group_membership_claims,
+    i.identifier_uris = app.identifier_uris,
+    i.is_device_only_auth_supported = app.is_device_only_auth_supported,
+    i.is_fallback_public_client = app.is_fallback_public_client,
+    i.notes = app.notes,
+    i.tags = app.tags
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -416,26 +612,72 @@ def sync_tenant_applications(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials, tenant_id)
-    tenant_applications_list = get_tenant_applications_list(client, tenant_id)
+    """
+    Sync applications from Microsoft Graph API to Neo4j.
+    """
+    client = get_graph_client(credentials.default_graph_credentials)
+    tenant_applications_list = asyncio.run(get_tenant_applications_list(client, tenant_id))
 
     load_tenant_applications(neo4j_session, tenant_id, tenant_applications_list, update_tag)
     cleanup_tenant_applications(neo4j_session, common_job_parameters)
 
 
 @timeit
-def get_tenant_service_accounts_list(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
+async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    Get service principals from Microsoft Graph API.
+    Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/serviceprincipal-list
+    """
     try:
-        tenant_service_accounts_list = list(
-            map(lambda x: x.as_dict(), client.service_principals.list()),
-        )
+        response = await client.service_principals.get()
+        if not response or not response.value:
+            return []
 
-        for account in tenant_service_accounts_list:
-            account['id'] = f"tenants/{tenant_id}/ServiceAccounts/{account.get('object_id', None)}"
-            account['consolelink'] = azure_console_link.get_console_link(
-                id=account['object_id'],
-                app_id=account['app_id'], iam_entity_type='service_principal',
+        tenant_service_accounts_list = []
+
+        for sp in response.value:
+            # Convert the Graph API response to a dictionary
+            if hasattr(sp, 'as_dict'):
+                sp_dict = sp.as_dict()
+            else:
+                # Extract properties directly using camelCase as per Microsoft Graph API
+                sp_dict = {
+                    'id': getattr(sp, 'id', None),
+                    'display_name': getattr(sp, 'displayName', None),
+                    'app_id': getattr(sp, 'appId', None),
+                    'account_enabled': getattr(sp, 'accountEnabled', None),
+                    'app_display_name': getattr(sp, 'appDisplayName', None),
+                    'app_owner_organization_id': getattr(sp, 'appOwnerOrganizationId', None),
+                    'app_role_assignment_required': getattr(sp, 'appRoleAssignmentRequired', None),
+                    'application_template_id': getattr(sp, 'applicationTemplateId', None),
+                    'created_date_time': getattr(sp, 'createdDateTime', None),
+                    'deleted_date_time': getattr(sp, 'deletedDateTime', None),
+                    'description': getattr(sp, 'description', None),
+                    'disabled_by_microsoft_status': getattr(sp, 'disabledByMicrosoftStatus', None),
+                    'homepage': getattr(sp, 'homepage', None),
+                    'login_url': getattr(sp, 'loginUrl', None),
+                    'logout_url': getattr(sp, 'logoutUrl', None),
+                    'notes': getattr(sp, 'notes', None),
+                    'notification_email_addresses': getattr(sp, 'notificationEmailAddresses', []),
+                    'preferred_single_sign_on_mode': getattr(sp, 'preferredSingleSignOnMode', None),
+                    'preferred_token_signing_key_thumbprint': getattr(sp, 'preferredTokenSigningKeyThumbprint', None),
+                    'service_principal_names': getattr(sp, 'servicePrincipalNames', []),
+                    'service_principal_type': getattr(sp, 'servicePrincipalType', None),
+                    'sign_in_audience': getattr(sp, 'signInAudience', None),
+                    'tags': getattr(sp, 'tags', []),
+                    'token_encryption_key_id': getattr(sp, 'tokenEncryptionKeyId', None),
+                    'alternative_names': getattr(sp, 'alternativeNames', []),
+                }
+
+            # Add tenant-specific ID for consistency with previous implementation
+            sp_dict['id'] = f"tenants/{tenant_id}/ServiceAccounts/{sp_dict.get('id')}"
+            sp_dict['consolelink'] = azure_console_link.get_console_link(
+                id=sp_dict.get('id'),
+                app_id=sp_dict.get('app_id'),
+                iam_entity_type='service_principal',
             )
+
+            tenant_service_accounts_list.append(sp_dict)
 
         return tenant_service_accounts_list
 
@@ -456,11 +698,55 @@ def _load_tenant_service_accounts_tx(
     i.consolelink = service.consolelink,
     i.region = $region,
     i.create_date = $createDate,
-    i.object_id=service.object_id,
-    i.accountEnabled = service.account_enabled,
-    i.servicePrincipalType = service.service_principal_type
+    i.object_id = service.id,
+    i.account_enabled = service.account_enabled,
+    i.app_id = service.app_id,
+    i.app_display_name = service.app_display_name,
+    i.app_owner_organization_id = service.app_owner_organization_id,
+    i.app_role_assignment_required = service.app_role_assignment_required,
+    i.application_template_id = service.application_template_id,
+    i.created_date_time = service.created_date_time,
+    i.deleted_date_time = service.deleted_date_time,
+    i.description = service.description,
+    i.disabled_by_microsoft_status = service.disabled_by_microsoft_status,
+    i.homepage = service.homepage,
+    i.login_url = service.login_url,
+    i.logout_url = service.logout_url,
+    i.notes = service.notes,
+    i.notification_email_addresses = service.notification_email_addresses,
+    i.preferred_single_sign_on_mode = service.preferred_single_sign_on_mode,
+    i.preferred_token_signing_key_thumbprint = service.preferred_token_signing_key_thumbprint,
+    i.service_principal_names = service.service_principal_names,
+    i.service_principal_type = service.service_principal_type,
+    i.sign_in_audience = service.sign_in_audience,
+    i.tags = service.tags,
+    i.token_encryption_key_id = service.token_encryption_key_id,
+    i.alternative_names = service.alternative_names
     SET i.lastupdated = $update_tag,
-    i.signInAudience = service.signInAudience
+    i.name = service.display_name,
+    i.account_enabled = service.account_enabled,
+    i.app_id = service.app_id,
+    i.app_display_name = service.app_display_name,
+    i.app_owner_organization_id = service.app_owner_organization_id,
+    i.app_role_assignment_required = service.app_role_assignment_required,
+    i.application_template_id = service.application_template_id,
+    i.created_date_time = service.created_date_time,
+    i.deleted_date_time = service.deleted_date_time,
+    i.description = service.description,
+    i.disabled_by_microsoft_status = service.disabled_by_microsoft_status,
+    i.homepage = service.homepage,
+    i.login_url = service.login_url,
+    i.logout_url = service.logout_url,
+    i.notes = service.notes,
+    i.notification_email_addresses = service.notification_email_addresses,
+    i.preferred_single_sign_on_mode = service.preferred_single_sign_on_mode,
+    i.preferred_token_signing_key_thumbprint = service.preferred_token_signing_key_thumbprint,
+    i.service_principal_names = service.service_principal_names,
+    i.service_principal_type = service.service_principal_type,
+    i.sign_in_audience = service.sign_in_audience,
+    i.tags = service.tags,
+    i.token_encryption_key_id = service.token_encryption_key_id,
+    i.alternative_names = service.alternative_names
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -486,21 +772,68 @@ def sync_tenant_service_accounts(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials, tenant_id)
-    tenant_service_accounts_list = get_tenant_service_accounts_list(client, tenant_id)
+    """
+    Sync service principals from Microsoft Graph API to Neo4j.
+    """
+    client = get_graph_client(credentials.default_graph_credentials)
+    tenant_service_accounts_list = asyncio.run(get_tenant_service_accounts_list(client, tenant_id))
 
     load_tenant_service_accounts(neo4j_session, tenant_id, tenant_service_accounts_list, update_tag)
     cleanup_tenant_service_accounts(neo4j_session, common_job_parameters)
 
 
 @timeit
-def get_tenant_domains_list(client: GraphRbacManagementClient, tenant_id: str) -> List[Dict]:
-    try:
-        tenant_domains_list = list(map(lambda x: x.as_dict(), client.domains.list()))
+async def get_tenant_domains_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+    """
+    Get domains from Microsoft Graph API.
+    Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/domain-list
 
-        for domain in tenant_domains_list:
-            domain["id"] = f"tenants/{tenant_id}/domains/{domain.get('name', None)}"
-            domain['consolelink'] = azure_console_link.get_console_link(id=domain['name'], iam_entity_type='domain')
+    Note: Microsoft Graph's domain resource is accessed through the domains endpoint,
+    unlike Azure AD Graph which had a separate domains.list() method.
+    """
+    try:
+        # Access domains through the Microsoft Graph API
+        response = await client.domains.get()
+        if not response or not response.value:
+            return []
+
+        tenant_domains_list = []
+
+        for domain in response.value:
+            if hasattr(domain, 'as_dict'):
+                domain_dict = domain.as_dict()
+            else:
+                # Extract properties directly using camelCase as per Microsoft Graph API
+                domain_dict = {
+                    'id': getattr(domain, 'id', None),
+                    'authentication_type': getattr(domain, 'authenticationType', None),
+                    'availability_status': getattr(domain, 'availabilityStatus', None),
+                    'is_admin_managed': getattr(domain, 'isAdminManaged', None),
+                    'is_default': getattr(domain, 'isDefault', None),
+                    'is_initial': getattr(domain, 'isInitial', None),
+                    'is_root': getattr(domain, 'isRoot', None),
+                    'is_verified': getattr(domain, 'isVerified', None),
+                    'password_notification_window_in_days': getattr(domain, 'passwordNotificationWindowInDays', None),
+                    'password_validity_period_in_days': getattr(domain, 'passwordValidityPeriodInDays', None),
+                    'supported_services': getattr(domain, 'supportedServices', []),
+                }
+
+                # Handle state property which is a complex object
+                if hasattr(domain, 'state') and domain.state:
+                    domain_dict['state'] = {
+                        'last_action_date_time': getattr(domain.state, 'lastActionDateTime', None),
+                        'operation': getattr(domain.state, 'operation', None),
+                        'status': getattr(domain.state, 'status', None),
+                    }
+
+            # Add custom properties
+            domain_dict['id'] = f"tenants/{tenant_id}/domains/{domain_dict.get('id')}"
+            domain_dict['consolelink'] = azure_console_link.get_console_link(
+                id=domain_dict.get('id'),
+                iam_entity_type='domain',
+            )
+
+            tenant_domains_list.append(domain_dict)
 
         return tenant_domains_list
 
@@ -517,15 +850,36 @@ def _load_tenant_domains_tx(
     MERGE (i:AzureDomain{id: domain.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.isRoot = domain.isRoot,
     i.consolelink = domain.consolelink,
     i.region = $region,
     i.create_date = $createDate,
-    i.name = domain.name,
-    i.isInitial = domain.isInitial
+    i.authentication_type = domain.authentication_type,
+    i.availability_status = domain.availability_status,
+    i.is_admin_managed = domain.is_admin_managed,
+    i.is_default = domain.is_default,
+    i.is_initial = domain.is_initial,
+    i.is_root = domain.is_root,
+    i.is_verified = domain.is_verified,
+    i.password_notification_window_in_days = domain.password_notification_window_in_days,
+    i.password_validity_period_in_days = domain.password_validity_period_in_days,
+    i.supported_services = domain.supported_services,
+    i.state_last_action_date_time = CASE WHEN domain.state IS NOT NULL THEN domain.state.last_action_date_time ELSE null END,
+    i.state_operation = CASE WHEN domain.state IS NOT NULL THEN domain.state.operation ELSE null END,
+    i.state_status = CASE WHEN domain.state IS NOT NULL THEN domain.state.status ELSE null END
     SET i.lastupdated = $update_tag,
-    i.authenticationType = domain.authentication_type,
-    i.availabilityStatus = domain.availabilityStatus
+    i.authentication_type = domain.authentication_type,
+    i.availability_status = domain.availability_status,
+    i.is_admin_managed = domain.is_admin_managed,
+    i.is_default = domain.is_default,
+    i.is_initial = domain.is_initial,
+    i.is_root = domain.is_root,
+    i.is_verified = domain.is_verified,
+    i.password_notification_window_in_days = domain.password_notification_window_in_days,
+    i.password_validity_period_in_days = domain.password_validity_period_in_days,
+    i.supported_services = domain.supported_services,
+    i.state_last_action_date_time = CASE WHEN domain.state IS NOT NULL THEN domain.state.last_action_date_time ELSE null END,
+    i.state_operation = CASE WHEN domain.state IS NOT NULL THEN domain.state.operation ELSE null END,
+    i.state_status = CASE WHEN domain.state IS NOT NULL THEN domain.state.status ELSE null END
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
     MERGE (owner)-[r:RESOURCE]->(i)
@@ -551,8 +905,11 @@ def sync_tenant_domains(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_graph_client(credentials, tenant_id)
-    tenant_domains_list = get_tenant_domains_list(client, tenant_id)
+    """
+    Sync domains from Microsoft Graph API to Neo4j.
+    """
+    client = get_graph_client(credentials.default_graph_credentials)
+    tenant_domains_list = asyncio.run(get_tenant_domains_list(client, tenant_id))
 
     load_tenant_domains(neo4j_session, tenant_id, tenant_domains_list, update_tag)
     cleanup_tenant_domains(neo4j_session, common_job_parameters)
@@ -779,13 +1136,16 @@ def sync(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
+    """
+    Sync IAM resources from Microsoft Graph API to Neo4j.
+    """
     logger.info("Syncing IAM for Tenant '%s'.", tenant_id)
 
     common_job_parameters['AZURE_TENANT_ID'] = tenant_id
 
     try:
         sync_tenant_users(
-            neo4j_session, credentials.aad_graph_credentials, tenant_id,
+            neo4j_session, credentials, tenant_id,
             update_tag, common_job_parameters,
         )
         sync_tenant_groups(
@@ -793,14 +1153,14 @@ def sync(
             update_tag, common_job_parameters,
         )
         sync_tenant_applications(
-            neo4j_session, credentials.aad_graph_credentials,
+            neo4j_session, credentials,
             tenant_id, update_tag, common_job_parameters,
         )
         sync_tenant_service_accounts(
-            neo4j_session, credentials.aad_graph_credentials,
+            neo4j_session, credentials,
             tenant_id, update_tag, common_job_parameters,
         )
-        sync_tenant_domains(neo4j_session, credentials.aad_graph_credentials, tenant_id, update_tag, common_job_parameters)
+        sync_tenant_domains(neo4j_session, credentials, tenant_id, update_tag, common_job_parameters)
         sync_managed_identity(
             neo4j_session, credentials, tenant_id, update_tag, common_job_parameters,
         )
