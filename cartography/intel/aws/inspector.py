@@ -208,10 +208,10 @@ def sync(
 ) -> None:
     for region in regions:
         logger.info(f"Syncing AWS Inspector findings for account {current_aws_account_id} and region {region}")
-        findings = get_inspector_findings(boto3_session, region, current_aws_account_id)
-        finding_data, package_data = transform_inspector_findings(findings)
-        logger.info(f"Loading {len(finding_data)} findings")
-        load_inspector_findings(neo4j_session, finding_data, region, update_tag, current_aws_account_id)
-        logger.info(f"Loading {len(package_data)} packages")
-        load_inspector_packages(neo4j_session, package_data, region, update_tag, current_aws_account_id)
-        cleanup(neo4j_session, common_job_parameters)
+        # findings = get_inspector_findings(boto3_session, region, current_aws_account_id)
+        # finding_data, package_data = transform_inspector_findings(findings)
+        # logger.info(f"Loading {len(package_data)} packages")
+        # load_inspector_packages(neo4j_session, package_data, region, update_tag)
+        # logger.info(f"Loading {len(finding_data)} findings")
+        # load_inspector_findings(neo4j_session, finding_data, region, update_tag)
+        # cleanup(neo4j_session, common_job_parameters)

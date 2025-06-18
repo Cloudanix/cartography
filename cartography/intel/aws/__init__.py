@@ -30,6 +30,8 @@ from cartography.util import timeit
 stat_handler = get_stats_client(__name__)
 logger = logging.getLogger(__name__)
 
+PARALLEL_PROCESSING_SERVICES = ["identitystore", "iam"]
+
 
 def _build_aws_sync_kwargs(
     neo4j_session: neo4j.Session,
@@ -128,17 +130,52 @@ def _sync_one_account(
         common_job_parameters,
     )
 
-    if os.environ.get("LOCAL_RUN", "0") == "1":
+    if os.environ.get("LOCAL_RUN", "0") == "1" or os.environ.get("CDX_RUN_AS") == "EKS":
+        # BEGIN Parallel Run for Identitystore and IAM
+        with ThreadPoolExecutor(max_workers=len(PARALLEL_PROCESSING_SERVICES)) as executor:
+            futures = []
+
+            for func_name in aws_requested_syncs:
+                if func_name not in PARALLEL_PROCESSING_SERVICES:
+                    continue
+
+                if func_name == "identitystore" and not config.params["workspace"].get("is_identity_sso_used"):
+                    continue
+
+                futures.append(
+                    executor.submit(
+                        concurrent_execution,
+                        func_name,
+                        RESOURCE_FUNCTIONS[func_name],
+                        creds,
+                        config,
+                        **sync_args,
+                    ),
+                )
+
+            for future in as_completed(futures):
+                logger.info(f"Result from Future - Service Processing: {future.result()}")
+
+            # END - Parallel Run for Identitystore and IAM
+
         # BEGIN - Sequential Run
 
         for func_name in aws_requested_syncs:
             if func_name in RESOURCE_FUNCTIONS:
+                if func_name in PARALLEL_PROCESSING_SERVICES:
+                    continue
+
+                if func_name == "identitystore" and not config.params["workspace"].get("is_identity_sso_used"):
+                    continue
+
                 # Skip permission relationships and tags for now because they rely on data already being in the graph
                 if func_name not in ["permission_relationships", "resourcegroupstaggingapi"]:
                     logger.info(f"Processing {func_name}")
                     RESOURCE_FUNCTIONS[func_name](**sync_args)
+
                 else:
                     continue
+
             else:
                 raise ValueError(
                     f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?',
@@ -157,6 +194,7 @@ def _sync_one_account(
                 if func_name in RESOURCE_FUNCTIONS:
                     if func_name == "identitystore" and not config.params["workspace"].get("is_identity_sso_used"):
                         continue
+
                     # Skip permission relationships and tags for now because they rely on data already being in the graph
                     if func_name not in ["permission_relationships", "resourcegroupstaggingapi"]:
                         futures.append(
@@ -169,6 +207,7 @@ def _sync_one_account(
                                 **sync_args,
                             ),
                         )
+
                     else:
                         continue
 
@@ -181,6 +220,10 @@ def _sync_one_account(
                 logger.info(f"Result from Future - Service Processing: {future.result()}")
 
         # END - Parallel Run
+
+    # INFO: This is a temporary solution to skip Loading Tags & Analysis Jobs for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        return
 
     # MAP IAM permissions
     if "permission_relationships" in aws_requested_syncs:
@@ -515,6 +558,8 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "AWS_INTERNAL_ACCOUNTS": config.aws_internal_accounts,
         "DEFAULT_DATETIME": '2000-01-01 00:00:00+00:00',
         "NULL_STRINGS": ['NONE', 'none', 'None', ''],
+        "PARTIAL": config.partial,
+        "DC": config.dc,
     }
 
     try:
@@ -556,6 +601,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             "Id": f"{hashlib.sha256(common_job_parameters['WORKSPACE_ID'].encode()).hexdigest()}",
             "IsCloudanixGenerated": True,
         }
+
     common_job_parameters["ORGANIZATION_ID"] = organization["Id"]
 
     if not aws_accounts:
@@ -563,6 +609,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             "No valid AWS credentials could be found. No AWS accounts can be synced. Exiting AWS sync stage.",
         )
         return
+
     if len(list(aws_accounts.values())) != len(set(aws_accounts.values())):
         logger.warning(
             (

@@ -257,6 +257,9 @@ class Authenticator:
         pload = f'grant_type={grant_type}&scope={scope}&client_id={client_id}&client_secret={client_secret}&redirect_uri={redirect_uri}&refresh_token={refresh_token}'
         r = requests.post(token_url, data=pload, headers=headers)
 
+        # logging.info(scope)
+        # logging.info(r.json())
+
         return r.json()
 
     def decode_jwt(self, id_token: str) -> Dict:
@@ -265,14 +268,14 @@ class Authenticator:
         # Standard Base64 Decoding
         decodedBytes = base64.b64decode(payload + '===')
         decodedStr = str(decodedBytes.decode('utf-8'))
-
-        # print(decodedStr)
-
         decoded = json.loads(decodedStr)
-        # print('tenant id', decoded['tid'])
-        # print('user id', decoded['oid'])
-        # print('name', decoded['name'])
-        # print('email', decoded['preferred_username'])
+
+        # logging.info(decodedStr)
+        # logging.info(decoded)
+        # logging.info('tenant id', decoded['tid'])
+        # logging.info('user id', decoded['oid'])
+        # logging.info('name', decoded['name'])
+        # logging.info('email', decoded['preferred_username'])
 
         return decoded['tid'], {
             'id': decoded['oid'],

@@ -1,17 +1,17 @@
 {
-  "scriptFile": "__init__.py",
-  "bindings": [
-    {
-      "type": "eventGridTrigger",
-      "name": "event",
-      "direction": "in"
-    },
-    {
-      "type": "eventGrid",
-      "name": "outputEvent",
-      "topicEndpointUri": "resEventGridURI",
-      "topicKeySetting": "resEventGridKey",
-      "direction": "out"
-    }
-  ]
+	"scriptFile": "__init__.py",
+	"bindings": [
+		{
+			"type": "eventGridTrigger",
+			"name": "event",
+			"direction": "in"
+		},
+		{
+			"type": "eventGrid",
+			"name": "outputEvent",
+			"topicEndpointUri": "CDX_RESPONSE_EVENT_GRID_URI",
+			"topicKeySetting": "CDX_RESPONSE_EVENT_GRID_KEY",
+			"direction": "out"
+		}
+	]
 }

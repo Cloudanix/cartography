@@ -312,7 +312,8 @@ def get_external_access_roles(boto3_session: boto3.session.Session) -> List[Dict
         if analyzers_list:
             paginator = analyzer_client.get_paginator("list_findings_v2")
             for page in paginator.paginate(
-                analyzerArn=analyzers_list[0].get("arn"), filter={"resourceType": {"eq": ["AWS::IAM::Role"]}},
+                analyzerArn=analyzers_list[0].get("arn"),
+                filter={"resourceType": {"eq": ["AWS::IAM::Role"]}},
             ):
                 findings.extend(page.get("findings", []))
             return findings
@@ -364,8 +365,8 @@ def transform_roles(
                         internal_principal = True
 
                     if (
-                        common_job_parameters["AWS_INTERNAL_ACCOUNTS"] and
-                        account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
+                        common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
+                        and account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
                     ):
                         internal_principal = True
 
@@ -701,7 +702,10 @@ def sync_assumerole_relationships(
 
 @timeit
 def load_user_access_keys(
-    neo4j_session: neo4j.Session, user_access_keys: Dict, aws_update_tag: int, consolelink: str,
+    neo4j_session: neo4j.Session,
+    user_access_keys: Dict,
+    aws_update_tag: int,
+    consolelink: str,
 ) -> None:
     # Ref to rotatedate - https://aws.amazon.com/blogs/security/how-to-rotate-access-keys-for-iam-users/
     # To rotate key there is no option in aws. we need to create new and delete existing key that's why rotatedate same as createdate
@@ -960,9 +964,14 @@ def sync_users(
 
     load_users(neo4j_session, data["Users"], current_aws_account_id, aws_update_tag)
 
-    sync_user_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+    # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        pass
 
-    sync_user_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+    else:
+        sync_user_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+
+        sync_user_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
     run_cleanup_job("aws_import_users_cleanup.json", neo4j_session, common_job_parameters)
 
@@ -1014,11 +1023,16 @@ def sync_groups(
 
     load_groups(neo4j_session, data["Groups"], current_aws_account_id, aws_update_tag)
 
-    sync_groups_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+    # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        pass
 
-    sync_group_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+    else:
+        sync_groups_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
-    # sync_group_service_access_details(boto3_session, data['Groups'], neo4j_session, aws_update_tag)
+        sync_group_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+
+        # sync_group_service_access_details(boto3_session, data['Groups'], neo4j_session, aws_update_tag)
 
     run_cleanup_job("aws_import_groups_cleanup.json", neo4j_session, common_job_parameters)
 
@@ -1070,11 +1084,16 @@ def sync_roles(
 
     load_roles(neo4j_session, data["Roles"], current_aws_account_id, aws_update_tag)
 
-    sync_role_inline_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
+    # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        pass
 
-    sync_role_managed_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
+    else:
+        sync_role_inline_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
 
-    # sync_role_service_access_details(boto3_session, data['Roles'], neo4j_session, aws_update_tag)
+        sync_role_managed_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
+
+        # sync_role_service_access_details(boto3_session, data['Roles'], neo4j_session, aws_update_tag)
 
     run_cleanup_job("aws_import_roles_cleanup.json", neo4j_session, common_job_parameters)
 
@@ -1234,9 +1253,15 @@ def sync(
     sync_groups(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
     sync_roles(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
     sync_group_memberships(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
-    sync_assumerole_relationships(neo4j_session, current_aws_account_id, update_tag, common_job_parameters)
-    sync_user_access_keys(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
-    set_used_state(neo4j_session, current_aws_account_id, common_job_parameters, update_tag)
+
+    # INFO: This is a temporary solution to skip Loading Assume Role relationships, Access Keys and Analysis Jobs for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        pass
+
+    else:
+        sync_assumerole_relationships(neo4j_session, current_aws_account_id, update_tag, common_job_parameters)
+        sync_user_access_keys(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+        set_used_state(neo4j_session, current_aws_account_id, common_job_parameters, update_tag)
 
     run_cleanup_job("aws_import_principals_cleanup.json", neo4j_session, common_job_parameters)
 

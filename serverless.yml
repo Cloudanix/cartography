@@ -4,30 +4,37 @@ service: cartography-service
 
 provider:
   name: aws
-  runtime: python3.8
+  runtime: python3.11
   stage: prod
   region: us-east-2
-  memorySize: 1024
-  profile: cloudanix-serverless-admin
+  lambdaHashingVersion: 20201221
+  memorySize: 2048
+  profile: cdx-prod-purusottam@cloudanix.com
   apiGateway:
     shouldStartNameWithService: true
   environment:
-    CDX_DEFAULT_REGION: ${env:CDX_DEFAULT_REGION}
-    CDX_DEFAULT_LOG_LEVEL: ${env:CDX_DEFAULT_LOG_LEVEL}
     CDX_APP_ENV: ${env:CDX_APP_ENV}
-    CDX_APP_ASSUME_ROLE_KMS_KEY_ID: ${env:CDX_APP_ASSUME_ROLE_KMS_KEY_ID}
-    CDX_APP_ASSUME_ROLE_ACCESS_KEY: ${env:CDX_APP_ASSUME_ROLE_ACCESS_KEY}
-    CDX_APP_ASSUME_ROLE_ACCESS_SECRET: ${env:CDX_APP_ASSUME_ROLE_ACCESS_SECRET}
+    CDX_LOG_LEVEL: ${env:CDX_LOG_LEVEL}
+    CDX_SENTRY_DSN: ${env:CDX_SENTRY_DSN}
+    AWS_STS_REGIONAL_ENDPOINTS: ${env:AWS_STS_REGIONAL_ENDPOINTS}
     CDX_APP_NEO4J_URI: ${env:CDX_APP_NEO4J_URI}
     CDX_APP_NEO4J_USER: ${env:CDX_APP_NEO4J_USER}
     CDX_APP_NEO4J_PWD: ${env:CDX_APP_NEO4J_PWD}
+    CDX_IN_APP_NEO4J_URI: ${env:CDX_IN_APP_NEO4J_URI}
+    CDX_IN_APP_NEO4J_USER: ${env:CDX_IN_APP_NEO4J_USER}
+    CDX_IN_APP_NEO4J_PWD: ${env:CDX_IN_APP_NEO4J_PWD}
+    CDX_APP_NEO4J_CONNECTION_LIFETIME: ${env:CDX_APP_NEO4J_CONNECTION_LIFETIME}
+    CDX_DEFAULT_REGION: ${env:CDX_DEFAULT_REGION}
+    CDX_APP_ASSUME_ROLE_KMS_KEY_ID: ${env:CDX_APP_ASSUME_ROLE_KMS_KEY_ID}
+    CDX_APP_ASSUME_ROLE_ACCESS_KEY: ${env:CDX_APP_ASSUME_ROLE_ACCESS_KEY}
+    CDX_APP_ASSUME_ROLE_ACCESS_SECRET: ${env:CDX_APP_ASSUME_ROLE_ACCESS_SECRET}
   # deploymentBucket:
   #   name: serverless-deployments
   #   serverSideEncryption: AES256
 
 functions:
   cartographyService:
-    handler: app.load_cartography
+    handler: app.aws_process_cartography
     timeout: 900 # optional, in seconds, default is 30
 
     role: arn:aws:iam::774118602354:role/cloudanix-lambda-role
@@ -77,6 +84,7 @@ package:
     - .python_packages/**
     - .vscode/**
     - venv/**
+    - .venv/**
     - build/**
     - misc/**
     - tests/**
@@ -99,5 +107,5 @@ package:
     - deploy.sh
     - __main__.py
     - requirements.txt
-    - .env.aws.development.json
-    - .env.aws.production.json
+    - .env.dev.json
+    - .env.prod.json

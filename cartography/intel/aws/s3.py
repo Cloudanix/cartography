@@ -64,6 +64,7 @@ def get_s3_bucket_details(
         # in us-east-1 region
         client = s3_regional_clients.get(bucket["Region"])
         if not client:
+            # TODO: instead of the boto3_session, the assume role itself should be region specific
             client = boto3_session.client("s3", bucket["Region"], config=get_botocore_config())
             s3_regional_clients[bucket["Region"]] = client
         acl = get_acl(bucket, client)

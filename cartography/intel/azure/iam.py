@@ -589,7 +589,7 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
                     'preferred_token_signing_key_thumbprint': getattr(sp, 'preferred_token_signing_key_thumbprint', None),
                     'service_principal_type': getattr(sp, 'service_principal_type', None),
                     'sign_in_audience': getattr(sp, 'sign_on_audience', None),
-                    'token_encryption_key_id': getattr(sp, 'token_encryption_key_id', None)
+                    'token_encryption_key_id': getattr(sp, 'token_encryption_key_id', None),
                 }
 
             # Add tenant-specific ID for consistency with previous implementation

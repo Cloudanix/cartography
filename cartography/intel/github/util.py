@@ -170,6 +170,13 @@ def fetch_all(
             time.sleep(2 ** retry)
             continue
 
+        if resp is None:
+            logger.error(
+                f"GitHub: Could not retrieve page of resource `{resource_type}` due to HTTP error.",
+                exc_info=True,
+            )
+            raise exc
+
         resource = resp['data']['organization'][resource_type]
         if resource_inner_type:
             resource = resp['data']['organization'][resource_type][resource_inner_type]

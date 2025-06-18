@@ -82,17 +82,17 @@ def sync(
 
     logger.info("Syncing Security Hub for account '%s', at %s.", current_aws_account_id, tic)
 
-    hub = {}
-    try:
-        hub = get_hub(boto3_session)
+    # hub = {}
+    # try:
+    #     hub = get_hub(boto3_session)
 
-    except (ClientError, ConnectTimeoutError) as e:
-        logger.error(f'Failed to get Security Hub details - {e}')
+    # except (ClientError, ConnectTimeoutError) as e:
+    #     logger.error(f'Failed to get Security Hub details - {e}')
 
-    if hub:
-        transform_hub(hub)
-        load_hub(neo4j_session, hub, current_aws_account_id, update_tag)
-        cleanup_securityhub(neo4j_session, common_job_parameters)
+    # if hub:
+    #     transform_hub(hub)
+    #     load_hub(neo4j_session, hub, current_aws_account_id, update_tag)
+    #     cleanup_securityhub(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process Security Hub: {toc - tic:0.4f} seconds")

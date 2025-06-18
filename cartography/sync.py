@@ -13,18 +13,12 @@ from neo4j import GraphDatabase
 from statsd import StatsClient
 
 import cartography.intel.analysis
-import cartography.intel.aws
-import cartography.intel.azure
-import cartography.intel.bitbucket
 import cartography.intel.create_indexes
-import cartography.intel.gcp
-import cartography.intel.github
-import cartography.intel.gitlab
 import cloudanix
 from cartography.config import Config
 from cartography.stats import set_stats_client
 from cartography.util import STATUS_FAILURE
-from cartography.util import STATUS_SUCCESS
+
 # import cartography.intel.crowdstrike
 # import cartography.intel.crxcavator.crxcavator
 # import cartography.intel.cve
@@ -40,17 +34,19 @@ logger = logging.getLogger(__name__)
 
 TOP_LEVEL_MODULES = OrderedDict({  # preserve order so that the default sync always runs `analysis` at the very end
     'create-indexes': cartography.intel.create_indexes.run,
-    'aws': cartography.intel.aws.start_aws_ingestion,
-    'azure': cartography.intel.azure.start_azure_ingestion,
+    'cloudanix': cloudanix.run,
+    # 'aws': cartography. intel.aws.start_aws_ingestion,
+    # 'azure': cartography.intel.azure.start_azure_ingestion,
     # 'crowdstrike': cartography.intel.crowdstrike.start_crowdstrike_ingestion,
-    'gcp': cartography.intel.gcp.start_gcp_ingestion,
+    # 'gcp': cartography.intel.gcp.start_gcp_ingestion,
     # 'gsuite': cartography.intel.gsuite.start_gsuite_ingestion,
     # 'crxcavator': cartography.intel.crxcavator.start_extension_ingestion,
     # 'cve': cartography.intel.cve.start_cve_ingestion,
     # 'oci': cartography.intel.oci.start_oci_ingestion,
     # 'okta': cartography.intel.okta.start_okta_ingestion,
-    'github': cartography.intel.github.start_github_ingestion,
-    'bitbucket': cartography.intel.bitbucket.start_bitbucket_ingestion,
+    # 'github': cartography.intel.github.start_github_ingestion,
+    # 'gitlab': cartography.intel.gitlab.start_gitlab_ingestion,
+    # 'bitbucket': cartography.intel.bitbucket.start_bitbucket_ingestion,
     # 'digitalocean': cartography.intel.digitalocean.start_digitalocean_ingestion,
     # 'kubernetes': cartography.intel.kubernetes.start_k8s_ingestion,
     # 'lastpass': cartography.intel.lastpass.start_lastpass_ingestion,
@@ -223,6 +219,8 @@ def build_aws_sync():
     :rtype: cartography.sync.Sync
     :return: The aws cartography sync object.
     """
+    import cartography.intel.aws
+
     sync = Sync()
 
     stages = []
@@ -242,6 +240,8 @@ def build_azure_sync():
     :rtype: cartography.sync.Sync
     :return: The azure cartography sync object.
     """
+    import cartography.intel.azure
+
     sync = Sync()
 
     stages = []
@@ -261,6 +261,8 @@ def build_gcp_sync():
     :rtype: cartography.sync.Sync
     :return: The default cartography sync object.
     """
+    import cartography.intel.gcp
+
     sync = Sync()
 
     stages = []
@@ -315,6 +317,8 @@ def build_github_sync():
     :rtype: cartography.sync.Sync
     :return: The default cartography sync object.
     """
+    import cartography.intel.github
+
     sync = Sync()
 
     stages = []
@@ -333,6 +337,8 @@ def build_bitbucket_sync():
     :rtype: cartography.sync.Sync
     :return: The default cartography sync object.
     """
+    import cartography.intel.bitbucket
+
     sync = Sync()
 
     stages = []
@@ -351,6 +357,8 @@ def build_gitlab_sync():
     :rtype: cartography.sync.Sync
     :return: The default cartography sync object.
     """
+    import cartography.intel.gitlab
+
     sync = Sync()
 
     stages = []

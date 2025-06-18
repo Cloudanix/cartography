@@ -10,9 +10,11 @@ import azure.functions as func
 import cartography.cli
 from libraries.eventgridlibrary import EventGridLibrary
 
+logger = logging.getLogger(__name__)
+
 
 def process_request(msg: Dict):
-    logging.info(f'{msg["templateType"]} request received - {msg["eventId"]} - {msg["workspace"]}')
+    logger.info(f'{msg["templateType"]} request received - {msg["eventId"]} - {msg["workspace"]}')
 
     svcs = []
     for svc in msg.get('services', []):
@@ -24,21 +26,21 @@ def process_request(msg: Dict):
 
     body = {
         "azure": {
-            "client_id": os.environ.get('client_id'),
-            "client_secret": os.environ.get('client_secret'),
-            "redirect_uri": os.environ.get('redirect_uri'),
+            "client_id": os.environ.get('CDX_AZURE_CLIENT_ID'),
+            "client_secret": os.environ.get('CDX_AZURE_CLIENT_SECRET'),
+            "redirect_uri": os.environ.get('CDX_AZURE_REDIRECT_URI'),
             "subscription_id": msg.get('workspace', {}).get('account_id'),
             "tenant_id": msg.get('tenantId'),
             "refresh_token": msg.get('refreshToken'),
-            "graph_scope": os.environ.get('graph_scope'),
-            "default_graph_scope": os.environ.get('default_graph_scope'),
-            "azure_scope": os.environ.get('azure_scope'),
-            "vault_scope": os.environ.get('vault_scope'),
+            "graph_scope": os.environ.get('CDX_AZURE_GRAPH_SCOPE'),
+            "azure_scope": os.environ.get('CDX_AZURE_AZURE_SCOPE'),
+            "default_graph_scope": os.environ.get('CDX_AZURE_DEFAULT_GRAPH_SCOPE'),
+            "vault_scope": os.environ.get('CDX_AZURE_KEY_VAULT_SCOPE'),
         },
         "neo4j": {
-            "uri": os.environ.get('neo4juri'),
-            "user": os.environ.get('neo4juser'),
-            "pwd": os.environ.get('neo4jpwd'),
+            "uri": os.environ['CDX_APP_NEO4J_URI'],
+            "user": os.environ['CDX_APP_NEO4J_USER'],
+            "pwd": os.environ['CDX_APP_NEO4J_PWD'],
             "connection_lifetime": 200,
         },
         "logging": {
@@ -53,6 +55,8 @@ def process_request(msg: Dict):
             "actions": msg.get('actions'),
             "resultTopic": msg.get('resultTopic'),
             "requestTopic": msg.get('requestTopic'),
+            "partial": msg.get('partial'),
+            "services": msg.get('services'),
         },
         "services": svcs,
         "updateTag": msg.get('updateTag'),
@@ -78,26 +82,33 @@ def process_request(msg: Dict):
                 del resp['updateTag']
             del resp['pagination']
 
-        logging.info(f'successfully processed cartography: {resp}')
+        logger.info(f'successfully processed cartography: {resp}')
 
     return resp
 
 
 def main(event: func.EventGridEvent, outputEvent: func.Out[func.EventGridOutputEvent]):
-    logging.info('worker request received via EventGrid')
+    logger.info('worker request received via EventGrid')
+
+    logging.getLogger('cartography').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.graph').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.intel').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.sync').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.cartography').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cloudconsolelink.clouds').setLevel(os.environ.get('CDX_LOG_LEVEL'))
 
     try:
         msg = event.get_json()
 
-        logging.info(f'request: {msg}')
+        logger.info(f'request: {msg}')
 
         resp = process_request(msg)
 
         if resp.get('status') == 'success':
-            logging.info(f'successfully processed cartography: {msg["eventId"]} - {json.dumps(resp)}')
+            logger.info(f'successfully processed cartography: {msg["eventId"]} - {json.dumps(resp)}')
 
         else:
-            logging.info(f'failed to process cartography: {msg["eventId"]} - {resp["message"]}')
+            logger.info(f'failed to process cartography: {msg["eventId"]} - {resp["message"]}')
 
         message = {
             "status": resp.get('status'),
@@ -110,33 +121,37 @@ def main(event: func.EventGridEvent, outputEvent: func.Out[func.EventGridOutputE
             "actions": msg.get('actions'),
             "resultTopic": msg.get('resultTopic'),
             "requestTopic": msg.get('requestTopic'),
+            "partial": msg.get('partial'),
             "response": resp,
             "services": resp.get("services", None),
             "updateTag": resp.get("updateTag", None),
         }
 
-        if message.get('services', None):
-            if 'requestTopic' in message:
+        # If cartography processing response object contains `services` object that means pagination is in progress. push the message back to the same queue for continuation.
+        if resp.get('services', None):
+            if message.get('requestTopic'):
                 # Result should be pushed to "requestTopic" passed in the request
 
                 # Push message to Cartography Queue, if refresh is needed
-                topic = os.environ.get('requestTopic')
-                access_key = os.environ.get('requestTopicAccessKey')
+                topic = os.environ.get('CDX_AZURE_CARTOGRAPHY_REQUEST_TOPIC')
+                access_key = os.environ.get('CDX_AZURE_CARTOGRAPHY_REQUEST_TOPIC_ACCESS_KEY')
 
                 lib = EventGridLibrary(topic, access_key)
                 resp = lib.publish_event(message)
 
-        elif 'resultTopic' in message:
-            # topic = message['resultTopic']
-            # access_key = msg['resultTopicAccessKey']
+        elif message.get('resultTopic'):
+            if message.get('partial'):
+                topic = message['resultTopic']
+                access_key = msg['resultTopicAccessKey']
 
-            # lib = EventGridLibrary(topic, access_key)
-            # resp = lib.publish_event(message)
+                lib = EventGridLibrary(topic, access_key)
+                resp = lib.publish_event(message)
 
-            logging.info(f'Result not published anywhere. since we want to avoid query when inventory is refreshed')
+            else:
+                logger.info('Result not published anywhere. since we want to avoid query when inventory is refreshed')
 
         else:
-            logging.info('publishing results to CARTOGRAPHY_RESULT_TOPIC')
+            logger.info('publishing results to CDX_CARTOGRAPHY_RESULT_TOPIC')
             outputEvent.set(
                 func.EventGridOutputEvent(
                     id=str(uuid.uuid4()),
@@ -148,7 +163,7 @@ def main(event: func.EventGridEvent, outputEvent: func.Out[func.EventGridOutputE
                 ),
             )
 
-        logging.info(f'worker processed successfully: {msg["eventId"]}')
+        logger.info(f'worker processed successfully: {msg["eventId"]}')
 
     except Exception as ex:
-        logging.error(f"failed to process request from event grid: {ex}", exc_info=True, stack_info=True)
+        logger.error(f"failed to process request from event grid: {ex}", exc_info=True, stack_info=True)

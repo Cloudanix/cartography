@@ -24,3 +24,5 @@ tmp
 node_modules
 .serverless
 .venv
+
+build.log

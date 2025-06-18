@@ -324,6 +324,7 @@ def load_identity_center_account_assignments(
     inline_policies: Dict,
     current_aws_account_id: str,
     update_tag: int,
+    common_job_parameters: Dict,
 ) -> List[str]:
     loaded_permissions_sets = []
     for assignment in assignments:
@@ -335,9 +336,14 @@ def load_identity_center_account_assignments(
                     _load_identity_center_account_assignments_tx, assignment, permissions_set, instance_arn, update_tag,
                 )
 
+                # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+                if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+                    loaded_permissions_sets.append(permissions_set["PermissionSetArn"])
+                    break
+
                 if managed_policies.get(permissions_set.get("PermissionSetArn")):
                     permissions_set_managed_policies = {
-                        permissions_set_id: copy.deepcopy(managed_policies[permissions_set["PermissionSetArn"]]),
+                        permissions_set_id: copy.deepcopy(managed_policies.get(permissions_set["PermissionSetArn"], {})),
                     }
                     transform_policy_data(permissions_set_managed_policies, PolicyType.managed.value)
                     load_policy_data(
@@ -349,7 +355,7 @@ def load_identity_center_account_assignments(
                     )
                 if inline_policies.get(permissions_set.get("PermissionSetArn")):
                     permissions_set_inline_policies = {
-                        permissions_set_id: copy.deepcopy(inline_policies[permissions_set["PermissionSetArn"]]),
+                        permissions_set_id: copy.deepcopy(inline_policies.get(permissions_set["PermissionSetArn"], {})),
                     }
                     transform_policy_data(permissions_set_inline_policies, PolicyType.inline.value)
                     load_policy_data(
@@ -451,10 +457,19 @@ def sync_identity_center_permissions_sets(
     aws_update_tag: int,
     region: str,
     current_aws_account_id: str,
+    common_job_parameters: Dict,
 ) -> None:
     permissions_sets = get_identity_center_permissions_sets_list(boto3_session, instance, region)
-    managed_policies = get_managed_policies(boto3_session, instance["InstanceArn"], permissions_sets, region)
-    inline_policies = get_inline_policy(boto3_session, instance["InstanceArn"], permissions_sets, region)
+
+    # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        managed_policies = {}
+        inline_policies = {}
+
+    else:
+        managed_policies = get_managed_policies(boto3_session, instance["InstanceArn"], permissions_sets, region)
+        inline_policies = get_inline_policy(boto3_session, instance["InstanceArn"], permissions_sets, region)
+
     users = get_identity_center_users_list(boto3_session, instance, region)
     groups = get_identity_center_groups_list(boto3_session, instance, region)
     client = get_boto3_client(boto3_session, "sso-admin", region)
@@ -478,6 +493,7 @@ def sync_identity_center_permissions_sets(
                 inline_policies,
                 current_aws_account_id,
                 aws_update_tag,
+                common_job_parameters,
             ),
         )
     for group in groups:
@@ -498,6 +514,7 @@ def sync_identity_center_permissions_sets(
                 inline_policies,
                 current_aws_account_id,
                 aws_update_tag,
+                common_job_parameters,
             ),
         )
 
@@ -509,8 +526,11 @@ def sync_identity_center_permissions_sets(
             continue
 
         unloaded_permissions_sets.append(permissions_set)
-        unloaded_managed_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(managed_policies[permissions_set["PermissionSetArn"]])
-        unloaded_inline_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(inline_policies[permissions_set["PermissionSetArn"]])
+        # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+        if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+            continue
+        unloaded_managed_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(managed_policies.get(permissions_set["PermissionSetArn"], {}))
+        unloaded_inline_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(inline_policies.get(permissions_set["PermissionSetArn"], {}))
 
     load_identity_center_permissions_sets(
         neo4j_session,
@@ -771,7 +791,7 @@ def sync_identitystore(
         sync_identity_center_users(neo4j_session, boto3_session, instance, aws_update_tag, region)
         sync_identity_center_groups(neo4j_session, boto3_session, instance, aws_update_tag, region)
         sync_identity_center_permissions_sets(
-            neo4j_session, boto3_session, instance, aws_update_tag, region, current_aws_account_id,
+            neo4j_session, boto3_session, instance, aws_update_tag, region, current_aws_account_id, common_job_parameters,
         )
 
     cleanup_identitystore(neo4j_session, common_job_parameters)

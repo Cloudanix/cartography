@@ -16,7 +16,7 @@ def paginate_request(url: str, access_token: str):
             items.append(response)
 
         # Check for pagination
-        if "next" in response.links:
+        if response and "next" in response.links:
             url = response.links["next"]["url"]
 
         else:
