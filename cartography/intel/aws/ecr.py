@@ -51,8 +51,8 @@ def get_ecr_repository_images(boto3_session: boto3.session.Session, region: str,
     client = boto3_session.client('ecr', region_name=region, config=get_botocore_config())
     paginator = client.get_paginator('list_images')
     ecr_repository_images: List[Dict] = []
-    for page in paginator.paginate(repositoryName=repository_name):
         ecr_repository_images.extend(page['imageIds'])
+    for page in paginator.paginate(repositoryName=repository_name, maxResults=10):
 
     for image in ecr_repository_images:
         image['region'] = region
@@ -200,13 +200,18 @@ def sync(
 
     load_ecr_repositories(neo4j_session, repositories, current_aws_account_id, update_tag)
 
-    # image_data = {}
-    # for repo in repositories:
-    #     repo_image_obj = get_ecr_repository_images(boto3_session, repo['region'], repo['repositoryName'], current_aws_account_id)
-    #     image_data[repo['repositoryUri']] = repo_image_obj
+    image_data = {}
+    for repo in repositories:
+        repo_image_obj = get_ecr_repository_images(
+            boto3_session,
+            repo["region"],
+            repo["repositoryName"],
+            current_aws_account_id,
+        )
+        image_data[repo["repositoryUri"]] = repo_image_obj
 
-    # repo_images_list = transform_ecr_repository_images(image_data)
-    # load_ecr_repository_images(neo4j_session, repo_images_list, update_tag)
+    repo_images_list = transform_ecr_repository_images(image_data)
+    load_ecr_repository_images(neo4j_session, repo_images_list, update_tag)
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
