@@ -8,7 +8,7 @@ from typing import Dict
 import azure.functions as func
 
 import cartography.cli
-from libraries.eventgridlibrary import EventGridLibrary
+from libraries.storagequeuelibrary import StorageQueueLibrary
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def process_request(msg: Dict):
     return resp
 
 
-def main(event: func.EventGridEvent, outputEvent: func.Out[func.EventGridOutputEvent]):
+def main(msg: func.QueueMessage, outputEvent: func.Out[func.EventGridOutputEvent]):
     logger.info('worker request received via EventGrid')
 
     logging.getLogger('cartography').setLevel(os.environ.get('CDX_LOG_LEVEL'))
@@ -98,7 +98,7 @@ def main(event: func.EventGridEvent, outputEvent: func.Out[func.EventGridOutputE
     logging.getLogger('cloudconsolelink.clouds').setLevel(os.environ.get('CDX_LOG_LEVEL'))
 
     try:
-        msg = event.get_json()
+        msg = json.loads(msg.get_body().decode("utf-8"))
 
         logger.info(f'request: {msg}')
 
@@ -119,8 +119,8 @@ def main(event: func.EventGridEvent, outputEvent: func.Out[func.EventGridOutputE
             "workspace": msg.get('workspace'),
             "subscriptions": msg.get('subscriptions'),
             "actions": msg.get('actions'),
-            "resultTopic": msg.get('resultTopic'),
-            "requestTopic": msg.get('requestTopic'),
+            "resultQueue": msg.get('resultQueue'),
+            "requestQueue": msg.get('requestQueue'),
             "partial": msg.get('partial'),
             "response": resp,
             "services": resp.get("services", None),
@@ -129,22 +129,22 @@ def main(event: func.EventGridEvent, outputEvent: func.Out[func.EventGridOutputE
 
         # If cartography processing response object contains `services` object that means pagination is in progress. push the message back to the same queue for continuation.
         if resp.get('services', None):
-            if message.get('requestTopic'):
-                # Result should be pushed to "requestTopic" passed in the request
+            if message.get('requestQueue'):
+                # Result should be pushed to "requestQueue" passed in the request
 
                 # Push message to Cartography Queue, if refresh is needed
-                topic = os.environ.get('CDX_AZURE_CARTOGRAPHY_REQUEST_TOPIC')
-                access_key = os.environ.get('CDX_AZURE_CARTOGRAPHY_REQUEST_TOPIC_ACCESS_KEY')
+                queue = os.environ.get('CDX_AZURE_CARTOGRAPHY_REQUEST_QUEUE')
+                storage_account_connection_string = os.environ.get('CDX_AZURE_CARTOGRAPHY_STORAGE_ACCOUNT_CONNECTION_STRING')
 
-                lib = EventGridLibrary(topic, access_key)
+                lib = StorageQueueLibrary(storage_account_connection_string, queue)
                 resp = lib.publish_event(message)
 
-        elif message.get('resultTopic'):
+        elif message.get('resultQueue'):
             if message.get('partial'):
-                topic = message['resultTopic']
-                access_key = msg['resultTopicAccessKey']
+                queue = message['resultQueue']
+                storage_account_connection_string = msg['resultQueueConnectionString']
 
-                lib = EventGridLibrary(topic, access_key)
+                lib = StorageQueueLibrary(storage_account_connection_string, queue)
                 resp = lib.publish_event(message)
 
             else:

@@ -2,9 +2,11 @@
 	"scriptFile": "__init__.py",
 	"bindings": [
 		{
-			"type": "eventGridTrigger",
-			"name": "event",
-			"direction": "in"
+			"type": "queueTrigger",
+			"connection": "CDX_CARTOGRAPHY_STORAGE_ACCOUNT_CONNECTION_STRING",
+			"name": "msg",
+			"direction": "in",
+			"queueName": "cartographyreqqueue"
 		},
 		{
 			"type": "eventGrid",

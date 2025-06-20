@@ -52,6 +52,7 @@ azure-mgmt-security~=3.0.0
 azure-mgmt-network>=2.7.0
 azure-mgmt-web>=0.47.0
 azure-storage-blob~=12.14.1
+azure-storage-queue~=12.6.0
 msgraph-sdk~=1.1.0
 kubernetes>=18.20.0
 pdpyras>=4.3.0
