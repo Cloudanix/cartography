@@ -3,7 +3,7 @@
 	"bindings": [
 		{
 			"type": "queueTrigger",
-			"connection": "CDX_CARTOGRAPHY_STORAGE_ACCOUNT_CONNECTION_STRING",
+			"connection": "CDX_AZURE_CARTOGRAPHY_STORAGE_ACCOUNT_CONNECTION_STRING",
 			"name": "msg",
 			"direction": "in",
 			"queueName": "cartographyreqqueue"
