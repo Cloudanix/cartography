@@ -88,7 +88,7 @@ def process_request(msg: Dict):
 
 
 def main(msg: func.QueueMessage, outputEvent: func.Out[func.EventGridOutputEvent]):
-    logger.info('worker request received via EventGrid')
+    logger.info('worker request received via StorageQueue')
 
     logging.getLogger('cartography').setLevel(os.environ.get('CDX_LOG_LEVEL'))
     logging.getLogger('cartography.graph').setLevel(os.environ.get('CDX_LOG_LEVEL'))
