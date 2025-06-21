@@ -133,7 +133,10 @@ def _load_ecr_repo_img_tx(
         ON CREATE SET ri.firstseen = timestamp()
         SET ri.lastupdated = $aws_update_tag,
             ri.tag = repo_img.imageTag,
-            ri.uri = repo_img.repo_uri + COALESCE(":" + repo_img.imageTag, '')
+            ri.uri = repo_img.repo_uri + COALESCE(":" + repo_img.imageTag, ''),
+            ri.digest = repo_img.imageDigest,
+            ri.region = repo_img.region,
+            ri.consolelink = repo_img.consolelink
         WITH ri, repo_img
 
         MERGE (img:ECRImage{id: repo_img.imageDigest})
