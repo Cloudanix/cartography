@@ -297,11 +297,12 @@ async def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> 
 
         for group in response.value:
             # Convert the Graph API response to a dictionary
+            group_id = getattr(group, 'id', None)
             if hasattr(group, 'as_dict'):
                 group_dict = group.as_dict()
             else:
                 group_dict = {
-                    'id': getattr(group, 'id', None),
+                    'id': group_id,
                     'display_name': getattr(group, 'display_name', None),
                     'mail': getattr(group, 'mail', None),
                     'mail_nickname': getattr(group, 'mail_nickname', None),
@@ -320,10 +321,11 @@ async def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> 
                 }
 
             # Add tenant-specific ID for consistency with previous implementation
-            group_dict['id'] = f"tenants/{tenant_id}/Groups/{group_dict.get('id')}"
+            group_dict['object_id'] = group_id
+            group_dict['id'] = f"tenants/{tenant_id}/Groups/{group_id}"
             group_dict['consolelink'] = azure_console_link.get_console_link(
                 iam_entity_type='group',
-                id=getattr(group, 'id', None),
+                id=group_id,
             )
 
             tenant_groups_list.append(group_dict)
@@ -955,11 +957,16 @@ def cleanup_managed_identities(neo4j_session: neo4j.Session, common_job_paramete
 
 def sync_roles(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
-    common_job_parameters: Dict,
+    common_job_parameters: Dict, ingested_principal_ids: Optional[set] = None,
 ) -> None:
     client = get_authorization_client(credentials.arm_credentials, credentials.subscription_id)
     roles_list = get_roles_list(credentials.subscription_id, client, common_job_parameters)
     role_assignments_list = get_role_assignments(client, common_job_parameters)
+    if ingested_principal_ids is not None:
+        role_assignments_list = [
+            assignment for assignment in role_assignments_list
+            if assignment.get('principal_id') in ingested_principal_ids
+        ]
     load_roles(neo4j_session, tenant_id, roles_list, role_assignments_list, update_tag, credentials.subscription_id)
     cleanup_roles(neo4j_session, common_job_parameters)
 
@@ -1010,20 +1017,79 @@ def _set_used_state_tx(
     )
 
 
+async def sync_scoped_users_and_groups(
+    neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
+    common_job_parameters: Dict, scoped_group_ids: List[str],
+) -> None:
+    """
+    Syncs only specified groups and their members (users).
+    """
+    client = get_graph_client(credentials.default_graph_credentials)
+
+    # 1. Fetch all groups and filter them by the given scope
+    all_groups = await get_tenant_groups_list(client, tenant_id)
+    scoped_groups = [g for g in all_groups if g.get('object_id') in scoped_group_ids]
+
+    if not scoped_groups:
+        return set()
+
+    # 2. Fetch members for each scoped group
+    all_memberships = []
+    all_member_ids = set()
+    for group in scoped_groups:
+        memberships = await get_group_members(credentials, group["id"])
+        if memberships:
+            all_memberships.extend(memberships)
+            for member in memberships:
+                all_member_ids.add(member['id'])
+
+    # 3. Fetch all users and filter them based on membership in scoped groups
+    all_users = await list_tenant_users(client, tenant_id)
+    scoped_users = [u for u in all_users if u.get('object_id') in all_member_ids]
+
+    # 4. Load the filtered data into Neo4j
+    load_tenant_groups(neo4j_session, tenant_id, scoped_groups, update_tag)
+    load_tenant_users(neo4j_session, tenant_id, scoped_users, update_tag)
+
+    if all_memberships:
+        load_group_memberships(neo4j_session, all_memberships, update_tag)
+
+    # 5. Collect and return the IDs of all ingested principals
+    ingested_principal_ids = {u.get('object_id') for u in scoped_users}
+    ingested_principal_ids.update({g.get('object_id') for g in scoped_groups})
+
+    # 6. Run cleanup jobs
+    cleanup_tenant_users(neo4j_session, common_job_parameters)
+    cleanup_tenant_groups(neo4j_session, common_job_parameters)
+
+    return ingested_principal_ids
+
+
 @timeit
 async def async_sync(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
+    scoped_group_ids = common_job_parameters.get('GROUPS', [])
+    ingested_principal_ids: Optional[set] = None
     try:
-        await sync_tenant_users(
-            neo4j_session, credentials, tenant_id,
-            update_tag, common_job_parameters,
-        )
-        await sync_tenant_groups(
-            neo4j_session, credentials, tenant_id,
-            update_tag, common_job_parameters,
-        )
+        if scoped_group_ids:
+            # Only sync specified groups and their users
+            ingested_principal_ids = await sync_scoped_users_and_groups(
+                neo4j_session, credentials, tenant_id,
+                update_tag, common_job_parameters, scoped_group_ids,
+            )
+        else:
+            # Sync all users and groups
+            await sync_tenant_users(
+                neo4j_session, credentials, tenant_id,
+                update_tag, common_job_parameters,
+            )
+            await sync_tenant_groups(
+                neo4j_session, credentials, tenant_id,
+                update_tag, common_job_parameters,
+            )
+
         await sync_tenant_applications(
             neo4j_session, credentials,
             tenant_id, update_tag, common_job_parameters,
@@ -1038,7 +1104,7 @@ async def async_sync(
         )
 
         sync_roles(
-            neo4j_session, credentials, tenant_id, update_tag, common_job_parameters,
+            neo4j_session, credentials, tenant_id, update_tag, common_job_parameters, ingested_principal_ids, 
         )
         set_used_state(neo4j_session, tenant_id, common_job_parameters, update_tag)
 
