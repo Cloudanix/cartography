@@ -6,6 +6,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import TypedDict
 from typing import Union
 
@@ -15,6 +16,8 @@ from azure.mgmt.authorization import AuthorizationManagementClient
 from azure.mgmt.msi import ManagedServiceIdentityClient
 from cloudconsolelink.clouds.azure import AzureLinker
 from msgraph import GraphServiceClient
+from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
+from msgraph.generated.users.users_request_builder import UsersRequestBuilder
 
 from .util.credentials import Credentials
 from cartography.util import run_cleanup_job
@@ -25,6 +28,10 @@ azure_console_link = AzureLinker()
 
 scopes = ['https://graph.microsoft.com/.default']
 
+# A safe batch size for "in" filters with GUIDs to avoid 414 URI Too Long errors.
+# MS Graph URL limit is ~2048 chars. 36-char GUID + quotes/commas = ~39 chars.
+# 2048 / 39 = ~52. A batch size of 25 is safe.
+SAFE_BATCH_SIZE = 25
 
 def load_tenant_users(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     iteration_size = 500
@@ -112,13 +119,22 @@ def get_managed_identity_client(credentials: Credentials, subscription_id: str) 
 
 
 @timeit
-async def list_tenant_users(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+async def list_tenant_users(client: GraphServiceClient, tenant_id: str, filter_query: Optional[str] = None) -> List[Dict]:
     """
     List users from Microsoft Graph API.
     Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/user-list
     """
     try:
-        response = await client.users.get()
+        request_config = None
+        if filter_query:
+            # Use a request configuration to add the $filter query parameter
+            query_params = UsersRequestBuilder.UsersRequestBuilderGetQueryParameters(
+                filter=filter_query,
+            )
+            request_config = UsersRequestBuilder.UsersRequestBuilderGetRequestConfiguration(
+                query_parameters=query_params,
+            )
+        response = await client.users.get(request_configuration=request_config)
         if not response or not response.value:
             return []
 
@@ -283,13 +299,22 @@ async def sync_tenant_users(
 
 
 @timeit
-async def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
+async def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str, filter_query: Optional[str] = None) -> List[Dict]:
     """
     Get groups from Microsoft Graph API.
     Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/group-list
     """
     try:
-        response = await client.groups.get()
+        request_config = None
+        if filter_query:
+            # Use a request configuration to add the $filter query parameter
+            query_params = GroupsRequestBuilder.GroupsRequestBuilderGetQueryParameters(
+                filter=filter_query,
+            )
+            request_config = GroupsRequestBuilder.GroupsRequestBuilderGetRequestConfiguration(
+                query_parameters=query_params,
+            )
+        response = await client.groups.get(request_configuration=request_config)
         if not response or not response.value:
             return []
 
@@ -1020,15 +1045,21 @@ def _set_used_state_tx(
 async def sync_scoped_users_and_groups(
     neo4j_session: neo4j.Session, credentials: Credentials, tenant_id: str, update_tag: int,
     common_job_parameters: Dict, scoped_group_ids: List[str],
-) -> None:
+) -> Set[str]:
     """
     Syncs only specified groups and their members (users).
     """
     client = get_graph_client(credentials.default_graph_credentials)
 
-    # 1. Fetch all groups and filter them by the given scope
-    all_groups = await get_tenant_groups_list(client, tenant_id)
-    scoped_groups = [g for g in all_groups if g.get('object_id') in scoped_group_ids]
+    # 1. Fetch only the scoped groups in batches to avoid URL length limits.
+    scoped_groups = []
+    group_id_list = list(scoped_group_ids)
+    for i in range(0, len(group_id_list), SAFE_BATCH_SIZE):
+        batch_ids = group_id_list[i:i + SAFE_BATCH_SIZE]
+        id_filter_str = f"id in ({','.join(f'\'{id_val}\'' for id_val in batch_ids)})"
+        group_batch = await get_tenant_groups_list(client, tenant_id, filter_query=id_filter_str)
+        if group_batch:
+            scoped_groups.extend(group_batch)
 
     if not scoped_groups:
         return set()
@@ -1043,13 +1074,27 @@ async def sync_scoped_users_and_groups(
             for member in memberships:
                 all_member_ids.add(member['id'])
 
-    # 3. Fetch all users and filter them based on membership in scoped groups
-    all_users = await list_tenant_users(client, tenant_id)
-    scoped_users = [u for u in all_users if u.get('object_id') in all_member_ids]
+    # 3. Fetch only the required users in batches using a $filter query to avoid URL length limits.
+    scoped_users = []
+    if all_member_ids:
+        member_id_list = list(all_member_ids)
+        user_fetch_tasks = []
+        for i in range(0, len(member_id_list), SAFE_BATCH_SIZE):
+            batch_ids = member_id_list[i:i + SAFE_BATCH_SIZE]
+            id_filter_str = f"id in ({','.join(f'\'{id_val}\'' for id_val in batch_ids)})"
+            user_fetch_tasks.append(list_tenant_users(client, tenant_id, filter_query=id_filter_str))
+
+        # Run all batch fetches concurrently
+        user_batch_responses = await asyncio.gather(*user_fetch_tasks)
+        for user_batch in user_batch_responses:
+            if user_batch:
+                scoped_users.extend(user_batch)
+
 
     # 4. Load the filtered data into Neo4j
     load_tenant_groups(neo4j_session, tenant_id, scoped_groups, update_tag)
-    load_tenant_users(neo4j_session, tenant_id, scoped_users, update_tag)
+    if scoped_users:
+        load_tenant_users(neo4j_session, tenant_id, scoped_users, update_tag)
 
     if all_memberships:
         load_group_memberships(neo4j_session, all_memberships, update_tag)
@@ -1104,7 +1149,7 @@ async def async_sync(
         )
 
         sync_roles(
-            neo4j_session, credentials, tenant_id, update_tag, common_job_parameters, ingested_principal_ids, 
+            neo4j_session, credentials, tenant_id, update_tag, common_job_parameters, ingested_principal_ids,
         )
         set_used_state(neo4j_session, tenant_id, common_job_parameters, update_tag)
 
