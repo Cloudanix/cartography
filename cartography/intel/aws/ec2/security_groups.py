@@ -30,6 +30,13 @@ def get_ec2_security_group_data(boto3_session: boto3.session.Session, region: st
         for page in paginator.paginate():
             security_groups.extend(page['SecurityGroups'])
         for group in security_groups:
+            groupName = group.get('GroupName', '')
+
+            if groupName == 'default':
+                group['isDefault'] = True
+            else:
+                group['isDefault'] = False
+
             group['region'] = region
     except ClientError as e:
         if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
@@ -71,7 +78,7 @@ def load_ec2_security_group_rule(neo4j_session: neo4j.Session, group: Dict, rule
     ingest_range = Template("""
     MERGE (range:$range_label{id: $RangeId})
     ON CREATE SET range.firstseen = timestamp(), range.range = $Range
-    SET range.lastupdated = $update_tag
+    SET range.lastupdated = $update_tag, range.name = $RangeName
     WITH range
     MATCH (rule:IpRule{ruleid: $RuleId})
     MERGE (rule)<-[r:MEMBER_OF_IP_RULE]-(range)
@@ -117,21 +124,27 @@ def load_ec2_security_group_rule(neo4j_session: neo4j.Session, group: Dict, rule
             )
 
             for ip_range in rule["IpRanges"]:
-                range_id = f"IpRule/{ruleid}/ipRange/{ip_range['CidrIp']}"
+                cidr_ip = ip_range['CidrIp']
+                range_id = f"IpRule/{ruleid}/ipRange/{cidr_ip}"
+                range_name = cidr_ip.split('/')[0]
                 neo4j_session.run(
                     ingest_range.safe_substitute(range_label='IpRange'),
                     RangeId=range_id,
-                    Range=ip_range['CidrIp'],
+                    Range=cidr_ip,
+                    RangeName=range_name,
                     RuleId=ruleid,
                     update_tag=update_tag,
                 )
 
             for ipv6_range in rule["Ipv6Ranges"]:
-                range_id = f"IpRule/{ruleid}/ipv6Range/{ipv6_range['CidrIpv6']}"
+                cidr_ipv6 = ipv6_range['CidrIpv6']
+                range_id = f"IpRule/{ruleid}/ipv6Range/{cidr_ipv6}"
+                range_name = cidr_ipv6.split('/')[0]
                 neo4j_session.run(
                     ingest_range.safe_substitute(range_label='Ipv6Range'),
                     RangeId=range_id,
-                    Range=ipv6_range['CidrIpv6'],
+                    Range=cidr_ipv6,
+                    RangeName=range_name,
                     RuleId=ruleid,
                     update_tag=update_tag,
                 )
@@ -148,7 +161,8 @@ def load_ec2_security_groupinfo(
     SET group.name = $GroupName, group.description = $Description,
     group.consolelink = $consolelink,
     group.region = $Region,
-    group.lastupdated = $update_tag, group.arn = $GroupArn
+    group.lastupdated = $update_tag, group.arn = $GroupArn,
+    group.is_default = $isDefault
     WITH group
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(group)
@@ -182,6 +196,7 @@ def load_ec2_security_groupinfo(
             Region=region,
             AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
+            isDefault=group.get("isDefault", None),
         )
 
         load_ec2_security_group_rule(neo4j_session, group, "IpPermissions", update_tag)

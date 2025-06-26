@@ -1,5 +1,5 @@
-# Unused file
 # Used by GCP Functions
+# GCP Python API Docs - https://googleapis.github.io/google-api-python-client/docs/dyn/
 import base64
 import json
 import logging
@@ -17,12 +17,13 @@ from utils.errors import PubSubPublishError
 # Used by GCP Functions
 
 
-def cartography_worker(event, ctx):
-    logging.getLogger('cartography').setLevel(os.environ.get('LOG_LEVEL'))
-    # logging.getLogger('cartography.intel').setLevel(os.environ.get('LOG_LEVEL'))
-    logging.getLogger('cartography.sync').setLevel(os.environ.get('LOG_LEVEL'))
-    logging.getLogger('cartography.graph').setLevel(os.environ.get('LOG_LEVEL'))
-    logging.getLogger('cartography.cartography').setLevel(os.environ.get('LOG_LEVEL'))
+def gcp_cartography_worker(event, ctx):
+    logging.getLogger('cartography').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.graph').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.intel').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.sync').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cartography.cartography').setLevel(os.environ.get('CDX_LOG_LEVEL'))
+    logging.getLogger('cloudconsolelink.clouds').setLevel(os.environ.get('CDX_LOG_LEVEL'))
 
     logger = lgr.get_logger("DEBUG")
     logger.info('inventory sync gcp worker request received via PubSub')
@@ -54,6 +55,8 @@ def cartography_worker(event, ctx):
         github_process_request(logger, params)
     elif params.get("templateType") == "BITBUCKETINVENTORYVIEWS":
         bitbucket_process_request(logger, params)
+    elif params.get("templateType") == "GITLABINVENTORYVIEWS":
+        gitlab_process_request(logger, params)
 
     return {
         'statusCode': 200,
@@ -82,9 +85,9 @@ def gcp_process_request(logger, params):
             'token_uri': os.environ['CDX_TOKEN_URI'],
         },
         "neo4j": {
-            "uri": os.environ.get('neo4juri'),
-            "user": os.environ.get('neo4juser'),
-            "pwd": os.environ.get('neo4jpwd'),
+            "uri": os.environ['CDX_APP_NEO4J_URI'],
+            "user": os.environ['CDX_APP_NEO4J_USER'],
+            "pwd": os.environ['CDX_APP_NEO4J_PWD'],
             "connection_lifetime": 200,
         },
         "logging": {
@@ -98,6 +101,8 @@ def gcp_process_request(logger, params):
             "actions": params.get('actions'),
             "resultTopic": params.get('resultTopic'),
             "requestTopic": params.get('requestTopic'),
+            "partial": params.get("partial"),
+            "services": params.get("services"),
             "iamEntitlementRequestTopic": params.get('iamEntitlementRequestTopic'),
         },
         "services": svcs,
@@ -105,134 +110,6 @@ def gcp_process_request(logger, params):
     }
 
     resp = cartography.cli.run_gcp(body)
-
-    if 'status' in resp and resp['status'] == 'success':
-        if resp.get('pagination', None):
-            services = []
-            for service, pagination in resp.get('pagination', {}).items():
-                if pagination.get('hasNextPage', False):
-                    services.append({
-                        "name": service,
-                        "pagination": {
-                            "pageSize": pagination.get('pageSize', 1),
-                            "pageNo": pagination.get('pageNo', 0) + 1,
-                        },
-                    })
-            if len(services) > 0:
-                resp['services'] = services
-            else:
-                del resp['updateTag']
-            del resp['pagination']
-        logger.info(f'successfully processed cartography: {resp}')
-
-    else:
-        logger.info(f'failed to process cartography: {resp["message"]}')
-
-    publish_response(logger, body, resp, params)
-
-    logger.info(f'inventory sync gcp response - {params.get("eventId")}: {json.dumps(resp)}')
-
-
-def publish_response(logger, req, resp, params):
-    body = {
-        "status": resp['status'],
-        "params": req['params'],
-        "accountEmail": req['credentials']['account_email'],
-        "sessionString": req['params']['sessionString'],
-        "eventId": req['params']['eventId'],
-        "templateType": req['params']['templateType'],
-        "workspace": req['params']['workspace'],
-        "actions": req['params']['actions'],
-        "resultTopic": req['params'].get('resultTopic'),
-        "requestTopic": req['params'].get('requestTopic'),
-        "response": resp,
-        "services": resp.get("services", None),
-        "updateTag": resp.get("updateTag", None),
-    }
-
-    pubsub_helper = PubSubLibrary()
-
-    status = None
-    try:
-        if body.get('services', None):
-            if 'requestTopic' in req['params']:
-                # Result should be pushed to "requestTopic" passed in the request
-                status = pubsub_helper.publish(
-                    os.environ['CDX_PROJECT_ID'], json.dumps(body), req['params']['requestTopic'],
-                )
-
-        elif 'resultTopic' in req['params']:
-            # Result should be pushed to "resultTopic" passed in the request
-            # status = pubsub_helper.publish(
-            #     os.environ['CDX_PROJECT_ID'], json.dumps(body), req['params']['resultTopic'],
-            # )
-
-            logger.info(f'Result not published anywhere. since we want to avoid query when inventory is refreshed')
-            status = True
-            status = pubsub_helper.publish(
-                os.environ['CDX_PROJECT_ID'], json.dumps(params), req['params']['iamEntitlementRequestTopic'],
-            )
-
-        else:
-            logger.info('publishing results to CARTOGRAPHY_RESULT_TOPIC')
-            status = pubsub_helper.publish(
-                os.environ['CDX_PROJECT_ID'], json.dumps(body), os.environ['CARTOGRAPHY_RESULT_TOPIC'],
-            )
-            status = pubsub_helper.publish(
-                os.environ['CDX_PROJECT_ID'], json.dumps(params), req['params']['iamEntitlementRequestTopic'],
-            )
-
-        logger.info(f'result published to PubSub with status: {status}')
-
-    except PubSubPublishError as e:
-        logger.error(f'Failed while publishing response to PubSub: {str(e)}')
-
-
-def bitbucket_process_request(logger, params):
-    logger.info(f'request - {params.get("templateType")} - {params.get("eventId")} - {params.get("workspace")}')
-
-    svcs = []
-    for svc in params.get('services', []):
-        page = svc.get('pagination', {}).get('pageSize')
-        if page:
-            svc['pagination']['pageSize'] = 10000
-
-        svcs.append(svc)
-
-    body = {
-        "credentials": {
-            'account_email': params['accountEmail'],
-            'token_uri': os.environ['CDX_TOKEN_URI'],
-        },
-        "neo4j": {
-            "uri": os.environ.get('neo4juri'),
-            "user": os.environ.get('neo4juser'),
-            "pwd": os.environ.get('neo4jpwd'),
-            "connection_lifetime": 200,
-        },
-        "logging": {
-            "mode": "verbose",
-        },
-        "bitbucket": {
-            'client_id': os.environ['bitbucket_client_id'],
-            'client_secret': os.environ['bitbucket_client_secret'],
-            "refresh_token": os.environ['bitbucket_refresh_token'],
-            "access_token": get_access_token(os.environ['bitbucket_client_id'], os.environ['bitbucket_client_secret'], os.environ['bitbucket_refresh_token']),
-        },
-        "params": {
-            "sessionString": params.get('sessionString'),
-            "eventId": params.get('eventId'),
-            "templateType": params.get('templateType'),
-            "workspace": params.get('workspace'),
-            "actions": params.get('actions'),
-            "resultTopic": params.get('resultTopic'),
-            "requestTopic": params.get('requestTopic'),
-        },
-        "services": svcs,
-        "updateTag": params.get('updateTag'),
-    }
-
-    resp = cartography.cli.run_bitbucket(body)
 
     if 'status' in resp and resp['status'] == 'success':
         if resp.get('pagination', None):
@@ -271,23 +148,35 @@ def github_process_request(logger, params):
             svc['pagination']['pageSize'] = 10000
 
         svcs.append(svc)
+
     # github_config must be encoded
     # format={"organization":[{"token":"",url="","name":""}]}
+
+    auth = {
+        "organization": [
+            {
+                "token": params.get("token"),
+                "url": "https://api.github.com/graphql",
+                "name": params.get("workspace", {}).get("account_id"),
+            },
+        ],
+    }
+
+    auth_json = json.dumps(auth)
+    github_config = base64.b64encode(auth_json.encode())
+
     body = {
-        "credentials": {
-            'account_email': params['accountEmail'],
-            'token_uri': os.environ['CDX_TOKEN_URI'],
-        },
+        "credentials": {},
         "neo4j": {
-            "uri": os.environ.get('neo4juri'),
-            "user": os.environ.get('neo4juser'),
-            "pwd": os.environ.get('neo4jpwd'),
+            "uri": os.environ['CDX_APP_NEO4J_URI'],
+            "user": os.environ['CDX_APP_NEO4J_USER'],
+            "pwd": os.environ['CDX_APP_NEO4J_PWD'],
             "connection_lifetime": 200,
         },
         "logging": {
             "mode": "verbose",
         },
-        "github_config": params['github_config'],
+        "github_config": github_config,
         "params": {
             "sessionString": params.get('sessionString'),
             "eventId": params.get('eventId'),
@@ -296,6 +185,8 @@ def github_process_request(logger, params):
             "actions": params.get('actions'),
             "resultTopic": params.get('resultTopic'),
             "requestTopic": params.get('requestTopic'),
+            "partial": params.get("partial"),
+            "services": params.get("services"),
         },
         "services": svcs,
         "updateTag": params.get('updateTag'),
@@ -330,7 +221,148 @@ def github_process_request(logger, params):
     logger.info(f'inventory sync gcp response - {params.get("eventId")}: {json.dumps(resp)}')
 
 
-def get_access_token(client_id: str, client_secret: str, refresh_token: str):
+def bitbucket_process_request(logger, params):
+    logger.info(f'request - {params.get("templateType")} - {params.get("eventId")} - {params.get("workspace")}')
+
+    svcs = []
+    for svc in params.get('services', []):
+        page = svc.get('pagination', {}).get('pageSize')
+        if page:
+            svc['pagination']['pageSize'] = 10000
+
+        svcs.append(svc)
+
+    body = {
+        "credentials": {},
+        "neo4j": {
+            "uri": os.environ['CDX_APP_NEO4J_URI'],
+            "user": os.environ['CDX_APP_NEO4J_USER'],
+            "pwd": os.environ['CDX_APP_NEO4J_PWD'],
+            "connection_lifetime": 200,
+        },
+        "logging": {
+            "mode": "verbose",
+        },
+        "bitbucket": {
+            'client_id': os.environ['CDX_BITBUCKET_CLIENT_ID'],
+            'client_secret': os.environ['CDX_BITBUCKET_CLIENT_SECRET'],
+            "refresh_token": params.get('refreshToken'),
+            "access_token": get_bitbucket_access_token(logger, os.environ['CDX_BITBUCKET_CLIENT_ID'], os.environ['CDX_BITBUCKET_CLIENT_SECRET'], params.get('refreshToken')),
+        },
+        "params": {
+            "sessionString": params.get('sessionString'),
+            "eventId": params.get('eventId'),
+            "templateType": params.get('templateType'),
+            "workspace": params.get('workspace'),
+            "actions": params.get('actions'),
+            "resultTopic": params.get('resultTopic'),
+            "requestTopic": params.get('requestTopic'),
+            "partial": params.get("partial"),
+            "services": params.get("services"),
+        },
+        "services": svcs,
+        "updateTag": params.get('updateTag'),
+    }
+
+    resp = cartography.cli.run_bitbucket(body)
+
+    if 'status' in resp and resp['status'] == 'success':
+        if resp.get('pagination', None):
+            services = []
+            for service, pagination in resp.get('pagination', {}).items():
+                if pagination.get('hasNextPage', False):
+                    services.append({
+                        "name": service,
+                        "pagination": {
+                            "pageSize": pagination.get('pageSize', 1),
+                            "pageNo": pagination.get('pageNo', 0) + 1,
+                        },
+                    })
+            if len(services) > 0:
+                resp['services'] = services
+            else:
+                del resp['updateTag']
+            del resp['pagination']
+        logger.info(f'successfully processed cartography: {resp}')
+
+    else:
+        logger.info(f'failed to process cartography: {resp["message"]}')
+
+    publish_response(logger, body, resp, params)
+
+    logger.info(f'inventory sync gcp response - {params.get("eventId")}: {json.dumps(resp)}')
+
+
+def gitlab_process_request(logger, params):
+    logger.info(f'request - {params.get("templateType")} - {params.get("eventId")} - {params.get("workspace")}')
+
+    svcs = []
+    for svc in params.get('services', []):
+        page = svc.get('pagination', {}).get('pageSize')
+        if page:
+            svc['pagination']['pageSize'] = 10000
+
+        svcs.append(svc)
+
+    body = {
+        "credentials": {},
+        "neo4j": {
+            "uri": os.environ['CDX_APP_NEO4J_URI'],
+            "user": os.environ['CDX_APP_NEO4J_USER'],
+            "pwd": os.environ['CDX_APP_NEO4J_PWD'],
+            "connection_lifetime": 200,
+        },
+        "logging": {
+            "mode": "verbose",
+        },
+        "gitlab": {
+            "access_token": params.get('accessToken'),
+        },
+        "params": {
+            "sessionString": params.get('sessionString'),
+            "eventId": params.get('eventId'),
+            "templateType": params.get('templateType'),
+            "workspace": params.get('workspace'),
+            "actions": params.get('actions'),
+            "resultTopic": params.get('resultTopic'),
+            "requestTopic": params.get('requestTopic'),
+            "partial": params.get("partial"),
+            "services": params.get("services"),
+        },
+        "services": svcs,
+        "updateTag": params.get('updateTag'),
+    }
+
+    resp = cartography.cli.run_gitlab(body)
+
+    if 'status' in resp and resp['status'] == 'success':
+        if resp.get('pagination', None):
+            services = []
+            for service, pagination in resp.get('pagination', {}).items():
+                if pagination.get('hasNextPage', False):
+                    services.append({
+                        "name": service,
+                        "pagination": {
+                            "pageSize": pagination.get('pageSize', 1),
+                            "pageNo": pagination.get('pageNo', 0) + 1,
+                        },
+                    })
+            if len(services) > 0:
+                resp['services'] = services
+            else:
+                del resp['updateTag']
+            del resp['pagination']
+        logger.info(f'successfully processed cartography: {resp}')
+
+    else:
+        logger.info(f'failed to process cartography: {resp["message"]}')
+
+    publish_response(logger, body, resp, params)
+
+    logger.info(f'inventory sync gcp response - {params.get("eventId")}: {json.dumps(resp)}')
+
+
+def get_bitbucket_access_token(logger, client_id: str, client_secret: str, refresh_token: str):
     try:
         TOKEN_URL = 'https://bitbucket.org/site/oauth2/access_token'
         token_req_payload = {'grant_type': 'refresh_token', 'refresh_token': refresh_token}
@@ -338,7 +370,74 @@ def get_access_token(client_id: str, client_secret: str, refresh_token: str):
         if response.status_code == requests.codes['ok']:
             output: dict = response.json()
             return output.get('access_token')
+
         return None
+
     except RequestException as e:
-        logging.info(f"geting error access token{e}")
+        logger.info(f"getting error access token{e}")
         return None
+
+
+def publish_response(logger, body, resp, params):
+    payload = {
+        "status": resp['status'],
+        "params": body['params'],
+        "accountEmail": body.get('credentials', {}).get('account_email'),
+        "sessionString": body.get('params', {}).get('sessionString'),
+        "eventId": body.get('params', {}).get('eventId'),
+        "templateType": body.get('params', {}).get('templateType'),
+        "workspace": body.get('params', {}).get('workspace'),
+        "actions": body.get('params', {}).get('actions'),
+        "resultTopic": body.get('params', {}).get('resultTopic'),
+        "requestTopic": body.get('params', {}).get('requestTopic'),
+        "partial": body.get('params', {}).get("partial"),
+        "iamEntitlementRequestTopic": body.get('params', {}).get('iamEntitlementRequestTopic'),
+        "response": resp,
+        "services": body.get('params', {}).get('services', []),
+        "updateTag": resp.get("updateTag", None),
+    }
+
+    pubsub_helper = PubSubLibrary()
+
+    status = None
+    try:
+        # If cartography processing response object contains `services` object that means pagination is in progress. push the message back to the same queue for continuation.
+        if resp.get('services', None):
+            if body.get('params', {}).get('requestTopic'):
+                # Result should be pushed to "requestTopic" passed in the request
+                status = pubsub_helper.publish(
+                    os.environ['CDX_PROJECT_ID'], json.dumps(payload), body.get('params', {}).get('requestTopic'),
+                )
+
+        elif body.get('params', {}).get('resultTopic'):
+            if body.get('params', {}).get('partial'):
+                # In case of a partial request processing, result should be pushed to "resultTopic" passed in the request
+                status = pubsub_helper.publish(
+                    os.environ['CDX_PROJECT_ID'], json.dumps(payload), body.get('params', {}).get('resultTopic'),
+                )
+
+            else:
+                logger.info('Result not published anywhere. since we want to avoid query when inventory is refreshed')
+
+            status = True
+
+            if body.get('params', {}).get('iamEntitlementRequestTopic'):
+                status = pubsub_helper.publish(
+                    os.environ['CDX_PROJECT_ID'], json.dumps(params), body.get('params', {}).get('iamEntitlementRequestTopic'),
+                )
+
+        else:
+            logger.info('publishing results to CDX_CARTOGRAPHY_RESULT_TOPIC')
+            status = pubsub_helper.publish(
+                os.environ['CDX_PROJECT_ID'], json.dumps(payload), os.environ['CDX_CARTOGRAPHY_RESULT_TOPIC'],
+            )
+
+            if body.get('params', {}).get('iamEntitlementRequestTopic'):
+                status = pubsub_helper.publish(
+                    os.environ['CDX_PROJECT_ID'], json.dumps(params), body.get('params', {}).get('iamEntitlementRequestTopic'),
+                )
+
+        logger.info(f'result published to PubSub with status: {status}')
+
+    except PubSubPublishError as e:
+        logger.error(f'Failed while publishing response to PubSub: {str(e)}')

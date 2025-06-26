@@ -39,27 +39,36 @@ def get_ses_identity(boto3_session: boto3.session.Session, region: str) -> List[
 
 
 @timeit
-def transform_identities(boto3_session: boto3.session.Session, idsnames: List[Dict], region: str, current_aws_account_id: str) -> List[Dict]:
-    identities = []
+def transform_identities(boto3_session: boto3.session.Session, ids_names: List[Dict], region: str, current_aws_account_id: str) -> List[Dict]:
     resources = []
     try:
         client = boto3_session.client('ses', region_name=region, config=get_botocore_config())
-        for identity_name in idsnames:
-            identities.append({'name': identity_name})
-        dkim_attributes = client.get_identity_dkim_attributes(Identities=idsnames).get('DkimAttributes', {})
 
-        identity_verifications = client.get_identity_verification_attributes(
-            Identities=idsnames,
-        ).get('VerificationAttributes', {})
+        identity_verifications: dict = {}
+        dkim_attributes: dict = {}
 
-        for identity in identities:
-            identity['arn'] = f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity['name']}"
-            identity['consolelink'] = aws_console_link.get_console_link(arn=identity['arn'])
-            identity['region'] = region
-            identity['dkim'] = dkim_attributes.get(identity['name'], {})
-            identity['verification'] = identity_verifications.get(identity['name'], {})
+        for i in range(0, len(ids_names), 100):
+            batch = ids_names[i:i + 100]
 
+            identity_verifications.update(
+                client.get_identity_verification_attributes(
+                Identities=batch,
+                ).get('VerificationAttributes', {}),
+            )
+
+            dkim_attributes.update(client.get_identity_dkim_attributes(Identities=ids_names).get('DkimAttributes', {}))
+
+        for identity_name in ids_names:
+            identity = {
+            'name': identity_name,
+            'arn': f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}",
+            'consolelink': aws_console_link.get_console_link(arn=f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}"),
+            'region': region,
+            'dkim': dkim_attributes.get(identity_name, {}),
+            'verification': identity_verifications.get(identity_name, {}),
+            }
             resources.append(identity)
+
     except (ClientError, ConnectTimeoutError, EndpointConnectionError) as e:
         logger.error(f'Failed to call SES get_identity_dkim_attributes: {region} - {e}')
 

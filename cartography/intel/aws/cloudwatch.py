@@ -551,7 +551,7 @@ def sync(
     flowlogs = []
     event_buses = []
     log_groups = []
-    metrics = []
+    # metrics = []
     rules = []
     for region in regions:
         logger.info("Syncing Cloudwatch for region '%s' in account '%s'.", region, current_aws_account_id)
@@ -564,8 +564,8 @@ def sync(
         event_buses.extend(transform_event_buses(ebs, region))
         log_g = get_log_groups(boto3_session, region)
         log_groups.extend(transform_log_groups(boto3_session, log_g, region))
-        mets = get_metrics(boto3_session, region)
-        metrics.extend(transform_metrics(mets, current_aws_account_id, region))
+        # mets = get_metrics(boto3_session, region)
+        # metrics.extend(transform_metrics(mets, current_aws_account_id, region))
 
     logger.info(f"Total Cloudwatch Alarms: {len(alarms)}")
 
@@ -575,7 +575,7 @@ def sync(
 
     logger.info(f"Total Cloudwatch Log Groups: {len(log_groups)}")
 
-    logger.info(f"Total Cloudwatch Metrics: {len(metrics)}")
+    # logger.info(f"Total Cloudwatch Metrics: {len(metrics)}")
 
     logger.info(f"Total Cloudwatch Rules: {len(rules)}")
 
@@ -589,13 +589,15 @@ def sync(
 
     load_event_buses(neo4j_session, event_buses, current_aws_account_id, update_tag)
 
+    cleanup_event_buses(neo4j_session, common_job_parameters)
+
     load_log_groups(neo4j_session, log_groups, current_aws_account_id, update_tag)
 
     cleanup_log_groups(neo4j_session, common_job_parameters)
 
-    load_metrics(neo4j_session, metrics, current_aws_account_id, update_tag)
+    # load_metrics(neo4j_session, metrics, current_aws_account_id, update_tag)
 
-    cleanup_metrics(neo4j_session, common_job_parameters)
+    # cleanup_metrics(neo4j_session, common_job_parameters)
 
     for region in regions:
         rls = get_event_rules(boto3_session, region, current_aws_account_id)
@@ -604,7 +606,6 @@ def sync(
     load_event_rules(neo4j_session, rules, current_aws_account_id, update_tag)
 
     cleanup_event_rules(neo4j_session, common_job_parameters)
-    cleanup_event_buses(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process Cloudwatch: {toc - tic:0.4f} seconds")

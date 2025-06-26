@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
@@ -245,37 +246,21 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 
 
 @timeit
-def sync(
-    config: Config,
+def sync_tags(
     neo4j_session: neo4j.Session,
     boto3_session: boto3.session.Session,
-    regions: List[str],
+    region: str,
+    resource_type: str,
     current_aws_account_id: str,
     update_tag: int,
-    common_job_parameters: Dict,
-    tag_resource_type_mappings: Dict = TAG_RESOURCE_TYPE_MAPPINGS,
 ) -> None:
-    tic = time.perf_counter()
+    logger.debug(f"BEGIN processing tags for {region} & {resource_type}")
 
-    logger.info("Begin processing tags for account '%s', at %s.", current_aws_account_id, tic)
+    tag_data = get_tags(boto3_session, resource_type, region)
+    transform_tags(tag_data, resource_type)
+    load_tags(neo4j_session=neo4j_session, tag_data=tag_data, resource_type=resource_type, region=region, current_aws_account_id=current_aws_account_id, aws_update_tag=update_tag)
 
-    # Process each region in parallel.
-    with ThreadPoolExecutor(max_workers=len(regions)) as executor:
-        futures = []
-
-        for region in regions:
-            logger.info("Syncing AWS tags for region '%s'.", region)
-            for resource_type in tag_resource_type_mappings.keys():
-                futures.append(executor.submit(concurrent_execution, config, region, resource_type, current_aws_account_id, update_tag))
-
-        for future in as_completed(futures):
-            logger.info(f'Result from Future - Tags Processing: {future.result()}')
-
-    cleanup(neo4j_session, common_job_parameters)
-
-    toc = time.perf_counter()
-    logger.info(f"Time to process tags: {toc - tic:0.4f} seconds")
-
+    logger.debug(f"END processing tags for {region} & {resource_type}")
 
 def concurrent_execution(
     config: Config,
@@ -284,7 +269,7 @@ def concurrent_execution(
     current_aws_account_id,
     update_tag: int,
 ):
-    logger.info(f"BEGIN processing tags for {region} & {resource_type}")
+    logger.info(f"BEGIN concurrent execution of tags for {region} & {resource_type}")
 
     if config.credentials['type'] == 'self':
         boto3_session = boto3.Session(
@@ -306,9 +291,49 @@ def concurrent_execution(
         max_connection_lifetime=config.neo4j_max_connection_lifetime,
     )
 
-    tag_data = get_tags(boto3_session, resource_type, region)
+    neo4j_session = Session(neo4j_driver)
+    sync_tags(neo4j_session, boto3_session, region, resource_type, current_aws_account_id, update_tag)
+    neo4j_session.close()
 
-    transform_tags(tag_data, resource_type)
-    load_tags(neo4j_session=Session(neo4j_driver), tag_data=tag_data, resource_type=resource_type, region=region, current_aws_account_id=current_aws_account_id, aws_update_tag=update_tag)
+    logger.info(f"END concurrent execution of tags for {region} & {resource_type}")
 
-    logger.info(f"END processing tags for {region} & {resource_type}")
+    return f"Tags Processing for {region} & {resource_type} completed successfully"
+
+@timeit
+def sync(
+    config: Config,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
+    tag_resource_type_mappings: Dict = TAG_RESOURCE_TYPE_MAPPINGS,
+) -> None:
+    tic = time.perf_counter()
+
+    logger.info("Begin processing tags for account '%s', at %s.", current_aws_account_id, tic)
+
+    if os.environ.get("LOCAL_RUN", "0") == "1" or os.environ.get("CDX_RUN_AS") == "EKS":
+        for region in regions:
+            logger.info("Syncing AWS tags for region '%s'.", region)
+            for resource_type in tag_resource_type_mappings.keys():
+                sync_tags(neo4j_session, boto3_session, region, resource_type, current_aws_account_id, update_tag)
+
+    else:
+        # Process each region in parallel.
+        with ThreadPoolExecutor(max_workers=len(regions)) as executor:
+            futures = []
+
+            for region in regions:
+                logger.info("Syncing AWS tags for region '%s'.", region)
+                for resource_type in tag_resource_type_mappings.keys():
+                    futures.append(executor.submit(concurrent_execution, config, region, resource_type, current_aws_account_id, update_tag))
+
+            for future in as_completed(futures):
+                logger.info(f'Result from Future - Tags Processing: {future.result()}')
+
+    cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process tags: {toc - tic:0.4f} seconds")

@@ -6,6 +6,7 @@ from typing import List
 import neo4j
 
 from cartography.intel.gitlab.pagination import paginate_request
+from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 def get_groups(access_token: str):
     """
     As per the rest api docs:https://docs.gitlab.com/ee/api/api_resources.html
+    List Groups: https://docs.gitlab.com/api/groups/#list-all-groups
     Pagination: https://docs.gitlab.com/ee/api/rest/index.html#pagination
     """
     url = "https://gitlab.com/api/v4/groups?per_page=100"
@@ -23,6 +25,16 @@ def get_groups(access_token: str):
 
     return groups
 
+@timeit
+def get_group(access_token: str, group_id: str) -> Dict:
+    """
+    Fetch information about a particular group.
+    Group Details: https://docs.gitlab.com/ee/api/groups/#details-of-a-group
+    """
+    url = f"https://gitlab.com/api/v4/groups/{group_id}"
+    response = make_requests_url(url, access_token)
+
+    return response
 
 def load_group_data(session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict) -> None:
     session.write_transaction(_load_group_data, group_data, common_job_parameters)
@@ -51,8 +63,8 @@ def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_p
         o.firstseen = timestamp()
     SET
         o.lastupdated = $UpdateTag
-
     """
+
     for group in group_data:
         tx.run(
             ingest_group,

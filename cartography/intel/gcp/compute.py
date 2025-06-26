@@ -653,12 +653,35 @@ def transform_gcp_vpcs(vpc_res: Dict) -> List[Dict]:
         vpc["description"] = v.get("description", None)
         vpc["routing_config_routing_mode"] = v.get("routingConfig", {}).get("routingMode", None)
 
+        if v.get("name") == "default" and v.get("autoCreateSubnetworks"):
+            vpc["isDefault"] = True
+        else:
+            vpc["isDefault"] = False
+
         vpc_list.append(vpc)
     return vpc_list
 
 
+def get_default_vpc(projectId: str, compute: Resource):
+    vpc_response = get_gcp_vpcs(projectid=projectId, compute=compute)
+
+    if not vpc_response or 'items' not in vpc_response:
+        return None
+
+    default_vpc = next(
+        (
+            network for network in vpc_response['items']
+            if network['name'] == 'default' and
+            network.get('autoCreateSubnetworks', False)
+        ),
+        None,
+    )
+
+    return default_vpc
+
+
 @timeit
-def transform_gcp_subnets(subnet_res: Dict) -> List[Dict]:
+def transform_gcp_subnets(subnet_res: Dict, projectId: str, compute: Resource) -> List[Dict]:
     """
     Add additional fields to the subnet object to make it easier to process in `load_gcp_subnets()`.
     :param subnet_res: The response object returned from compute.subnetworks.list()
@@ -696,6 +719,12 @@ def transform_gcp_subnets(subnet_res: Dict) -> List[Dict]:
             subnet_name=subnet["name"],
         )
         subnet["private_ip_google_access"] = s.get("privateIpGoogleAccess", None)
+
+        default_vpc = get_default_vpc(projectId=projectId, compute=compute)
+        if default_vpc and default_vpc.get("selfLink") == s.get("network") and default_vpc.get("autoCreateSubnetworks"):
+            subnet["isDefault"] = True
+        else:
+            subnet["isDefault"] = False
 
         subnet_list.append(subnet)
     return subnet_list
@@ -1035,7 +1064,8 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
     vpc.routing_config_routing_mode = $RoutingMode,
     vpc.description = $Description,
     vpc.consolelink = $consolelink,
-    vpc.lastupdated = $gcp_update_tag
+    vpc.lastupdated = $gcp_update_tag,
+    vpc.is_default = $isDefault
 
     MERGE (p)-[r:RESOURCE]->(vpc)
     ON CREATE SET r.firstseen = timestamp()
@@ -1054,6 +1084,7 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
             region=vpc.get("region"),
             consolelink=vpc.get("consolelink"),
             gcp_update_tag=gcp_update_tag,
+            isDefault=vpc.get("isDefault"),
         )
 
 
@@ -1084,7 +1115,8 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
     subnet.private_ip_google_access = $PrivateIpGoogleAccess,
     subnet.vpc_partial_uri = $VpcPartialUri,
     subnet.consolelink = $consolelink,
-    subnet.lastupdated = $gcp_update_tag
+    subnet.lastupdated = $gcp_update_tag,
+    subnet.is_default = $isDefault
 
     MERGE (vpc)-[r:RESOURCE]->(subnet)
     ON CREATE SET r.firstseen = timestamp()
@@ -1105,6 +1137,7 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
             PrivateIpGoogleAccess=s["private_ip_google_access"],
             consolelink=s["consolelink"],
             gcp_update_tag=gcp_update_tag,
+            isDefault=s["isDefault"],
         )
 
 
@@ -1274,8 +1307,7 @@ def _attach_gcp_nics(neo4j_session: neo4j.Session, instance: Resource, gcp_updat
     MERGE (nic:GCPNetworkInterface{id: $NicId})
     ON CREATE SET nic.firstseen = timestamp(),
     nic.nic_id = $NicId
-    SET nic.private_ip = $NetworkIP,
-    nic.network = $Network,
+    SET nic.network = $Network,
     nic.consolelink=$ConsoleLink,
     nic.name = $NicName,
     nic.lastupdated = $gcp_update_tag
@@ -1437,14 +1469,6 @@ def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resou
     MERGE (vpc)-[r:RESOURCE]->(fw)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
-
-    MERGE (nic:GCPNetworkInterface{network: fw.network})
-    ON CREATE SET nic.firstseen = timestamp()
-    SET nic.lastupdated = $gcp_update_tag
-
-    MERGE (fw)-[c:ATTACHED_TO]->(nic)
-    ON CREATE SET c.firstseen = timestamp()
-    SET c.lastupdated = $gcp_update_tag
     """
     for fw in fw_list:
         neo4j_session.run(
@@ -1862,7 +1886,7 @@ def sync_gcp_subnets(
     for r in regions:
         logger.info("Subnet Region %s.", r)
         subnet_res = get_gcp_subnets(project_id, r, compute)
-        subnets = transform_gcp_subnets(subnet_res)
+        subnets = transform_gcp_subnets(subnet_res, project_id, compute)
 
         load_gcp_subnets(neo4j_session, subnets, gcp_update_tag)
         # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381

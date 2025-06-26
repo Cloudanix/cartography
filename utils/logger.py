@@ -2,6 +2,8 @@ import logging
 import os
 import sys
 
+from utils.sentry import capture_error
+
 
 class Logger():
     def __init__(self, logLevel):
@@ -69,12 +71,22 @@ class Logger():
         a json value, e.g.
 
         """
-        if extra is None:
-            self.logger.warning(msg, *args, extra={"context": {}}, **kwargs)
+        if os.getenv('CDX_APP_ENV') == 'PRODUCTION':
+            if extra:
+                print(f"WARNING - {msg} - {extra}")
+
+            else:
+                print(f"WARNING - {msg}")
 
         else:
-            extra = {'context': extra}
-            self.logger.warning(msg, *args, extra=extra, **kwargs)
+            if extra is None:
+                self.logger.warning(msg, *args, extra={"context": {}}, **kwargs)
+
+            else:
+                extra = {'context': extra}
+                self.logger.warning(msg, *args, extra=extra, **kwargs)
+
+        capture_error(error=sys.exc_info(), extra=extra)
 
     def error(self, msg, *args, extra=None, **kwargs):
         """
@@ -84,14 +96,24 @@ class Logger():
         a json value, e.g.
 
         """
-        if extra is None:
-            self.logger.error(msg, *args, extra={"context": {}}, **kwargs)
+        if os.getenv('CDX_APP_ENV') == 'PRODUCTION':
+            if extra:
+                print(f"ERROR - {msg} - {extra}")
+
+            else:
+                print(f"ERROR - {msg}")
 
         else:
-            extra = {'context': extra}
-            self.logger.error(msg, *args, extra=extra, **kwargs)
+            if extra is None:
+                self.logger.error(msg, *args, extra={"context": {}}, **kwargs)
 
-    def exception(self, msg, *args, extra=None, exc_info=True, **kwargs):
+            else:
+                extra = {'context': extra}
+                self.logger.error(msg, *args, extra=extra, **kwargs)
+
+        capture_error(error=sys.exc_info(), extra=extra)
+
+    def exception(self, msg, *args, extra=None, **kwargs):
         """
         Log 'msg % args' with severity 'EXCEPTION'.
 
@@ -99,12 +121,22 @@ class Logger():
         a json value, e.g.
 
         """
-        if extra is None:
-            self.logger.exception(msg, *args, extra={'context': {}}, exc_info=exc_info, **kwargs)
+        if os.getenv('CDX_APP_ENV') == 'PRODUCTION':
+            if extra:
+                print(f"EXCEPTION - {msg} - {extra}")
+
+            else:
+                print(f"EXCEPTION - {msg}")
 
         else:
-            extra = {'context': extra}
-            self.logger.exception(msg, *args, extra=extra, exc_info=exc_info, **kwargs)
+            if extra is None:
+                self.logger.exception(msg, *args, extra={'context': {}}, **kwargs)
+
+            else:
+                extra = {'context': extra}
+                self.logger.exception(msg, *args, extra=extra, **kwargs)
+
+        capture_error(error=sys.exc_info(), extra=extra)
 
     def critical(self, msg, *args, extra=None, **kwargs):
         """
@@ -114,12 +146,22 @@ class Logger():
         a json value, e.g.
 
         """
-        if extra is None:
-            self.logger.critical(msg, *args, extra={"context": {}}, **kwargs)
+        if os.getenv('CDX_APP_ENV') == 'PRODUCTION':
+            if extra:
+                print(f"CRITICAL - {msg} - {extra}")
+
+            else:
+                print(f"CRITICAL - {msg}")
 
         else:
-            extra = {'context': extra}
-            self.logger.critical(msg, *args, extra=extra, **kwargs)
+            if extra is None:
+                self.logger.critical(msg, *args, extra={"context": {}}, **kwargs)
+
+            else:
+                extra = {'context': extra}
+                self.logger.critical(msg, *args, extra=extra, **kwargs)
+
+        capture_error(error=sys.exc_info(), extra=extra)
 
 
 log_client = None

@@ -26,6 +26,12 @@ def get_ec2_vpcs(boto3_session: boto3.session.Session, region: str) -> List[Dict
     try:
         vpcs = client.describe_vpcs().get('Vpcs', [])
         for vpc in vpcs:
+            is_default = vpc.get('IsDefault', False)
+            if is_default:
+                vpc['isDefault'] = True
+            else:
+                vpc['isDefault'] = False
+
             vpc['region'] = region
 
     except ClientError as e:
@@ -140,7 +146,9 @@ def load_ec2_vpcs(
     new_vpc.region = $Region,
     new_vpc.lastupdated = $update_tag,
     new_vpc.consolelink = $consolelink,
-    new_vpc.arn = $Arn
+    new_vpc.arn = $Arn,
+    new_vpc.is_default = $isDefault,
+    new_vpc.name = $Name
     WITH new_vpc
     MATCH (awsAccount:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (awsAccount)-[r:RESOURCE]->(new_vpc)
@@ -152,6 +160,11 @@ def load_ec2_vpcs(
         vpc_id = vpc["VpcId"]  # fail if not present
         vpc_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:vpc/{vpc_id}"
         consolelink = aws_console_link.get_console_link(arn=vpc_arn)
+        vpc_name = vpc_id
+        for tag in vpc.get("Tags", []):
+            if tag.get("Key") == "Name":
+                vpc_name = tag.get("Value")
+                break
 
         neo4j_session.run(
             ingest_vpc,
@@ -166,6 +179,8 @@ def load_ec2_vpcs(
             Arn=vpc_arn,
             AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
+            isDefault=vpc.get("isDefault", None),
+            Name=vpc_name,
         )
 
         load_cidr_association_set(

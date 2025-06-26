@@ -285,14 +285,17 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
         try:
             role_data = client.get_role(RoleName=role.get("RoleName")).get("Role")
             role["RoleLastUsed"] = role_data.get("RoleLastUsed")
+            role["type"] = "custom"
 
             if any(service_role_type in role_data.get("Path", "") for service_role_type in service_role_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isServiceRole"] = True
+                role["type"] = "predefined"
 
             if any(sso_reserved_type in role_data.get("Path", "") for sso_reserved_type in sso_reserved_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isSSOReservedRole"] = True
+                role["type"] = "predefined"
 
         except Exception as e:
             logger.warning(f"Failed to get role info. {e}")
@@ -309,7 +312,8 @@ def get_external_access_roles(boto3_session: boto3.session.Session) -> List[Dict
         if analyzers_list:
             paginator = analyzer_client.get_paginator("list_findings_v2")
             for page in paginator.paginate(
-                analyzerArn=analyzers_list[0].get("arn"), filter={"resourceType": {"eq": ["AWS::IAM::Role"]}},
+                analyzerArn=analyzers_list[0].get("arn"),
+                filter={"resourceType": {"eq": ["AWS::IAM::Role"]}},
             ):
                 findings.extend(page.get("findings", []))
             return findings
@@ -361,8 +365,8 @@ def transform_roles(
                         internal_principal = True
 
                     if (
-                        common_job_parameters["AWS_INTERNAL_ACCOUNTS"] and
-                        account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
+                        common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
+                        and account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
                     ):
                         internal_principal = True
 
@@ -524,7 +528,8 @@ def load_roles(
     SET rnode.name = $RoleName, rnode.path = $Path,
     rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
     rnode.is_service_role = $IsServiceRole,
-    rnode.is_sso_reserved_role = $IsSSOReservedRole
+    rnode.is_sso_reserved_role = $IsSSOReservedRole,
+    rnode.type = $Type
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -570,6 +575,7 @@ def load_roles(
             Path=role["Path"],
             IsServiceRole=role.get("isServiceRole", False),
             IsSSOReservedRole=role.get("isSSOReservedRole", False),
+            Type=role.get("type", None),
             region="global",
             LastUsedDate=role["RoleLastUsed"].get("LastUsedDate") if "RoleLastUsed" in role else None,
             LastUsedRegion=role["RoleLastUsed"].get("Region") if "RoleLastUsed" in role else None,
@@ -696,36 +702,40 @@ def sync_assumerole_relationships(
 
 @timeit
 def load_user_access_keys(
-    neo4j_session: neo4j.Session, user_access_keys: Dict, aws_update_tag: int, consolelink: str,
+    neo4j_session: neo4j.Session,
+    user_access_keys: Dict,
+    aws_update_tag: int,
+    consolelink: str,
 ) -> None:
     # Ref to rotatedate - https://aws.amazon.com/blogs/security/how-to-rotate-access-keys-for-iam-users/
     # To rotate key there is no option in aws. we need to create new and delete existing key that's why rotatedate same as createdate
     # TODO change the node label to reflect that this is a user access key, not an account access key
     ingest_account_key = """
-    MATCH (user:AWSUser{name: $UserName})
+    MATCH (user:AWSUser{arn: $ARN})
     WITH user
     MERGE (key:AccountAccessKey{accesskeyid: $AccessKeyId})
     ON CREATE SET key.firstseen = timestamp(),
     key.region = $region,
     key.createdate = $CreateDate,
     key.rotatedate = $CreateDate,
+    key.consolelink = $consolelink
+    SET key.status = $Status,
     key.keyage = $KeyAge,
-    key.consolelink = $consolelink,
-    key.lastuseddate= $LastUsedDate
-    SET key.status = $Status, key.lastupdated = $aws_update_tag
+    key.lastuseddate = $LastUsedDate,
+    key.lastupdated = $aws_update_tag
     WITH user,key
     MERGE (user)-[r:AWS_ACCESS_KEY]->(key)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
 
-    for username, access_keys in user_access_keys.items():
+    for arn, access_keys in user_access_keys.items():
         for key in access_keys["AccessKeyMetadata"]:
             if key.get("AccessKeyId"):
                 neo4j_session.run(
                     ingest_account_key,
                     consolelink=consolelink,
-                    UserName=username,
+                    ARN=arn,
                     AccessKeyId=key["AccessKeyId"],
                     LastUsedDate=str(key.get("LastUsedDate", "")),
                     CreateDate=str(key.get("CreateDate", "")),
@@ -954,9 +964,14 @@ def sync_users(
 
     load_users(neo4j_session, data["Users"], current_aws_account_id, aws_update_tag)
 
-    sync_user_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+    # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        pass
 
-    sync_user_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+    else:
+        sync_user_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+
+        sync_user_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
     run_cleanup_job("aws_import_users_cleanup.json", neo4j_session, common_job_parameters)
 
@@ -1008,11 +1023,16 @@ def sync_groups(
 
     load_groups(neo4j_session, data["Groups"], current_aws_account_id, aws_update_tag)
 
-    sync_groups_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+    # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        pass
 
-    sync_group_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+    else:
+        sync_groups_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
-    # sync_group_service_access_details(boto3_session, data['Groups'], neo4j_session, aws_update_tag)
+        sync_group_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+
+        # sync_group_service_access_details(boto3_session, data['Groups'], neo4j_session, aws_update_tag)
 
     run_cleanup_job("aws_import_groups_cleanup.json", neo4j_session, common_job_parameters)
 
@@ -1064,11 +1084,16 @@ def sync_roles(
 
     load_roles(neo4j_session, data["Roles"], current_aws_account_id, aws_update_tag)
 
-    sync_role_inline_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
+    # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        pass
 
-    sync_role_managed_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
+    else:
+        sync_role_inline_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
 
-    # sync_role_service_access_details(boto3_session, data['Roles'], neo4j_session, aws_update_tag)
+        sync_role_managed_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
+
+        # sync_role_service_access_details(boto3_session, data['Roles'], neo4j_session, aws_update_tag)
 
     run_cleanup_job("aws_import_roles_cleanup.json", neo4j_session, common_job_parameters)
 
@@ -1146,7 +1171,7 @@ def sync_user_access_keys(
             consolelink = aws_console_link.get_console_link(
                 arn=f"arn:aws:iam::{current_aws_account_id}:access_keys/{name}",
             )
-            account_access_keys = {name: access_keys}
+            account_access_keys = {f"arn:aws:iam::{current_aws_account_id}:user/{name}": access_keys}
             load_user_access_keys(neo4j_session, account_access_keys, aws_update_tag, consolelink)
     run_cleanup_job(
         "aws_import_account_access_key_cleanup.json",
@@ -1228,9 +1253,15 @@ def sync(
     sync_groups(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
     sync_roles(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
     sync_group_memberships(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
-    sync_assumerole_relationships(neo4j_session, current_aws_account_id, update_tag, common_job_parameters)
-    sync_user_access_keys(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
-    set_used_state(neo4j_session, current_aws_account_id, common_job_parameters, update_tag)
+
+    # INFO: This is a temporary solution to skip Loading Assume Role relationships, Access Keys and Analysis Jobs for partial run particularly for IN DC.
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+        pass
+
+    else:
+        sync_assumerole_relationships(neo4j_session, current_aws_account_id, update_tag, common_job_parameters)
+        sync_user_access_keys(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+        set_used_state(neo4j_session, current_aws_account_id, common_job_parameters, update_tag)
 
     run_cleanup_job("aws_import_principals_cleanup.json", neo4j_session, common_job_parameters)
 

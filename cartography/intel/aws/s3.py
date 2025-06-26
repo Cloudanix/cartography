@@ -64,6 +64,7 @@ def get_s3_bucket_details(
         # in us-east-1 region
         client = s3_regional_clients.get(bucket["Region"])
         if not client:
+            # TODO: instead of the boto3_session, the assume role itself should be region specific
             client = boto3_session.client("s3", bucket["Region"], config=get_botocore_config())
             s3_regional_clients[bucket["Region"]] = client
         acl = get_acl(bucket, client)
@@ -774,10 +775,10 @@ def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) 
 def load_s3_buckets(neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str, aws_update_tag: int) -> None:
     ingest_bucket = """
     MERGE (bucket:S3Bucket{id:$BucketName})
-    ON CREATE SET bucket.firstseen = timestamp(), 
+    ON CREATE SET bucket.firstseen = timestamp(),
                   bucket.creationdate = $CreationDate
-    SET bucket.name = $BucketName, 
-        bucket.region = $BucketRegion, 
+    SET bucket.name = $BucketName,
+        bucket.region = $BucketRegion,
         bucket.arn = $Arn,
         bucket.consolelink = $consolelink,
         bucket.lastupdated = $aws_update_tag

@@ -14,8 +14,28 @@ from cartography.models.aws.ec2.subnet_instance import EC2SubnetInstanceSchema
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
+# from cartography.intel.aws.util.common import get_default_vpc
+
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+
+def get_default_vpc(ec2_client):
+    try:
+        response = ec2_client.describe_vpcs(
+            Filters=[{'Name': 'isDefault', 'Values': ['true']}],
+        )
+        vpcs = response.get('Vpcs', [])
+
+        if not vpcs:
+            logger.info("No default VPC found.")
+            return {}
+
+        return vpcs[0]
+
+    except Exception as e:
+        logger.error(f"Error fetching default VPC: {e}")
+        return {}
 
 
 @timeit
@@ -29,7 +49,15 @@ def get_subnet_data(boto3_session: boto3.session.Session, region: str) -> List[D
         subnets: List[Dict] = []
         for page in paginator.paginate():
             subnets.extend(page['Subnets'])
+
+        default_vpc = get_default_vpc(client)
+
         for subnet in subnets:
+            if default_vpc and subnet.get('VpcId') != default_vpc.get('VpcId'):
+                subnet['isDefault'] = False
+            else:
+                subnet['isDefault'] = True
+
             subnet['region'] = region
             subnet['consolelink'] = aws_console_link.get_console_link(arn=subnet['SubnetArn'])
 
@@ -61,7 +89,8 @@ def load_subnets(
     snet.state = subnet.State, snet.assignipv6addressoncreation = subnet.AssignIpv6AddressOnCreation,
     snet.map_public_ip_on_launch = subnet.MapPublicIpOnLaunch, snet.subnet_arn = subnet.SubnetArn,
     snet.availability_zone = subnet.AvailabilityZone, snet.availability_zone_id = subnet.AvailabilityZoneId,
-    snet.subnetid = subnet.SubnetId, snet.arn = subnet.SubnetArn, snet.consolelink = subnet.consolelink
+    snet.subnetid = subnet.SubnetId, snet.arn = subnet.SubnetArn, snet.consolelink = subnet.consolelink,
+    snet.is_default = subnet.isDefault
     """
 
     ingest_subnet_vpc_relations = """

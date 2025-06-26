@@ -13,67 +13,68 @@ class AuthLibrary:
         self.context = context
 
     def get_assume_role_access_key(self):
-        kms_helper = KMSLibrary(self.context)
-        return kms_helper.decrypt(self.context.assume_role_access_key_cipher)
+        kms_library = KMSLibrary(self.context)
+        return kms_library.decrypt(self.context.assume_role_access_key_cipher)
 
     def get_assume_role_access_secret(self):
-        kms_helper = KMSLibrary(self.context)
-        return kms_helper.decrypt(self.context.assume_role_access_secret_cipher)
+        kms_library = KMSLibrary(self.context)
+        return kms_library.decrypt(self.context.assume_role_access_secret_cipher)
 
     def assume_role(self, args):
         # Create a Session with the credentials passed
         session = Session(
-            aws_access_key_id=args['aws_access_key_id'],
-            aws_secret_access_key=args['aws_secret_access_key'],
+            aws_access_key_id=args["aws_access_key_id"],
+            aws_secret_access_key=args["aws_secret_access_key"],
         )
 
         try:
             sts_client = session.client(
-                'sts',
-                region_name=self.context.region,
+                "sts",
+                region_name="us-east-1",
+                # endpoint_url=f"https://sts.{region_name}.amazonaws.com",
             )
         except ClientError as e:
-            raise classify_error(self.context.logger, e, 'Failed to create STS client')
+            raise classify_error(self.context.logger, e, "Failed to create STS client")
 
         try:
             response = sts_client.assume_role(
-                ExternalId=args['external_id'],
-                RoleArn=args['role_arn'],
-                RoleSessionName=args['role_session_name'],
-                DurationSeconds=3600*4,
+                ExternalId=args["external_id"],
+                RoleArn=args["role_arn"],
+                RoleSessionName=args["role_session_name"],
+                DurationSeconds=3600 * 4,
             )
 
         except ClientError as e:
             try:
                 response = sts_client.assume_role(
-                    ExternalId=args['external_id'],
-                    RoleArn=args['role_arn'],
-                    RoleSessionName=args['role_session_name'],
+                    ExternalId=args["external_id"],
+                    RoleArn=args["role_arn"],
+                    RoleSessionName=args["role_session_name"],
                     DurationSeconds=3600,
                 )
 
             except ClientError as e:
                 # TODO: Check if the error is related to Duration, if yes, retry with 1 hour
-                raise classify_error(self.context.logger, e, 'Failed to assume role')
+                raise classify_error(self.context.logger, e, "Failed to assume role")
 
         return {
-            'aws_access_key_id': response['Credentials']['AccessKeyId'],
-            'aws_secret_access_key': response['Credentials']['SecretAccessKey'],
-            'session_token': response['Credentials']['SessionToken'],
-            'expiration': response['Credentials']['Expiration'],
+            "aws_access_key_id": response["Credentials"]["AccessKeyId"],
+            "aws_secret_access_key": response["Credentials"]["SecretAccessKey"],
+            "session_token": response["Credentials"]["SessionToken"],
+            "expiration": response["Credentials"]["Expiration"],
         }
 
     def get_session(self, creds):
         # Create a Session with the credentials passed
-        if creds['type'] == 'credentials':
+        if creds["type"] == "credentials":
             return Session(
-                aws_access_key_id=creds['aws_access_key_id'],
-                aws_secret_access_key=creds['aws_secret_access_key'],
+                aws_access_key_id=creds["aws_access_key_id"],
+                aws_secret_access_key=creds["aws_secret_access_key"],
             )
 
-        elif creds['type'] == 'assumerole':
+        elif creds["type"] == "assumerole":
             return Session(
-                aws_access_key_id=creds['aws_access_key_id'],
-                aws_secret_access_key=creds['aws_secret_access_key'],
-                aws_session_token=creds['session_token'],
+                aws_access_key_id=creds["aws_access_key_id"],
+                aws_secret_access_key=creds["aws_secret_access_key"],
+                aws_session_token=creds["session_token"],
             )

@@ -146,6 +146,8 @@ class Config:
         bitbucket_access_token=None,
         gitlab_access_token=None,
         aws_internal_accounts=None,
+        partial=None,
+        dc=None,
     ):
         self.neo4j_uri = neo4j_uri
         self.neo4j_user = neo4j_user
@@ -204,3 +206,5 @@ class Config:
         self.refresh_entitlements = refresh_entitlements
         self.identity_store_region = identity_store_region
         self.aws_internal_accounts = aws_internal_accounts
+        self.partial = partial
+        self.dc = dc

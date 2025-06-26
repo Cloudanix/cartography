@@ -72,4 +72,4 @@ class KMSLibrary:
             raise classify_error(self.context.logger, e, 'Failed to decrypt cipher')
 
         # Return plaintext decoded in utf-8
-        return response['Plaintext'].decode('utf-8')
+        return response['Plaintext'].decode('utf-8').replace('\n', '').replace('\r', '')

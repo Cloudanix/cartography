@@ -11,6 +11,7 @@ from . import cloudmonitoring
 from . import cloudrun
 from . import cloudtasks
 from . import compute
+from . import containerregistry
 from . import dataflow
 from . import dataproc
 from . import dns
@@ -27,28 +28,29 @@ from . import workspace
 
 
 RESOURCE_FUNCTIONS: Dict = {
-    'admin': workspace.sync,
-    'iam': iam.sync,
-    'bigtable': bigtable.sync,
-    'cloudfunction': cloudfunction.sync,
-    'cloudkms': cloudkms.sync,
-    'cloudrun': cloudrun.sync,
-    'compute': compute.sync,
-    'dns': dns.sync,
-    'firestore': firestore.sync,
-    'gke': gke.sync,
-    'sql': sql.sync,
-    'storage': storage.sync,
-    'apigateway': apigateway.sync,
-    'pubsub': pubsub.sync,
-    'cloud_logging': cloud_logging.sync,
-    'cloudmonitoring': cloudmonitoring.sync,
-    'dataproc': dataproc.sync,
-    'cloudcdn': cloudcdn.sync,
-    'loadbalancer': loadbalancer.sync,
-    'bigquery': bigquery.sync,
-    'spanner': spanner.sync,
-    'dataflow': dataflow.sync,
-    'pubsublite': pubsublite.sync,
-    'cloudtasks': cloudtasks.sync,
+    "admin": workspace.sync,
+    "iam": iam.sync,
+    "bigtable": bigtable.sync,
+    "cloudfunction": cloudfunction.sync,
+    "cloudkms": cloudkms.sync,
+    "cloudrun": cloudrun.sync,
+    "compute": compute.sync,
+    "artifacts": containerregistry.sync,
+    "dns": dns.sync,
+    "firestore": firestore.sync,
+    "gke": gke.sync,
+    "sql": sql.sync,
+    "storage": storage.sync,
+    "apigateway": apigateway.sync,
+    "pubsub": pubsub.sync,
+    "cloud_logging": cloud_logging.sync,
+    "cloudmonitoring": cloudmonitoring.sync,
+    "dataproc": dataproc.sync,
+    "cloudcdn": cloudcdn.sync,
+    "loadbalancer": loadbalancer.sync,
+    "bigquery": bigquery.sync,
+    "spanner": spanner.sync,
+    "dataflow": dataflow.sync,
+    "pubsublite": pubsublite.sync,
+    "cloudtasks": cloudtasks.sync,
 }

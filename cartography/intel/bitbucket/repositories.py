@@ -32,14 +32,29 @@ def get_repos(access_token: str, workspace: str) -> List[Dict]:
     return repositories
 
 
-def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
+def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
+    """
+    Transform the repos data including languages
+    """
+    transformed_repo_list = []
+    transformed_repo_languages: List[Dict[str, str]] = []
+
     for repo in workspace_repos:
+        # Existing transformations
         repo["workspace"]["uuid"] = repo["workspace"]["uuid"].replace("{", "").replace("}", "")
         repo["project"]["uuid"] = repo["project"]["uuid"].replace("{", "").replace("}", "")
         repo["uuid"] = repo["uuid"].replace("{", "").replace("}", "")
+        repo["primary_language"] = repo.get("language", None)
+        repo["console_link"] = repo.get("links", {}).get("html", {}).get("href", None)
 
         if repo is not None and repo.get("mainbranch") is not None:
             repo["default_branch"] = repo.get("mainbranch", {}).get("name", None)
+
+        if repo.get("language"):
+            transformed_repo_languages.append({
+                "repo_id": repo["uuid"],
+                "primary_language": repo["primary_language"],
+            })
 
         data = {
             "workspace": workspace,
@@ -48,12 +63,46 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> List[Dict]:
         }
 
         repo["uniqueId"] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
+        transformed_repo_list.append(repo)
 
-    return workspace_repos
+    return {
+        "repos": transformed_repo_list,
+        "repo_primary_language": transformed_repo_languages,
+    }
 
 
 def load_repositories_data(session: neo4j.Session, repos_data: List[Dict], common_job_parameters: Dict) -> None:
     session.write_transaction(_load_repositories_data, repos_data, common_job_parameters)
+
+
+@timeit
+def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_language: List[Dict]) -> None:
+    """
+    Ingest the relationships for repo languages
+    :param neo4j_session: Neo4J session object for server communication
+    :param update_tag: Timestamp used to determine data freshness
+    :param repo_primary_language: list of primary language to repo mappings
+    """
+    ingest_languages = """
+        UNWIND $Languages as lang
+
+        MERGE (pl:ProgrammingLanguage{id: lang.primary_language})
+        ON CREATE SET pl.firstseen = timestamp(),
+        pl.name = lang.primary_language
+        SET pl.lastupdated = $UpdateTag
+        WITH pl, lang
+
+        MATCH (repo:BitbucketRepository{id: lang.repo_id})
+        MERGE (repo)-[r:PRIMARY_LANGUAGE]->(pl)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $UpdateTag
+    """
+
+    neo4j_session.run(
+        ingest_languages,
+        Languages=repo_primary_language,
+        UpdateTag=update_tag,
+    )
 
 
 def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], common_job_parameters: Dict) -> None:
@@ -66,19 +115,21 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     SET re.slug = repo.slug,
     re.type = repo.type,
     re.unique_id = repo.uniqueId,
-    re.name=repo.name,
+    re.name = repo.name,
     re.is_private = repo.is_private,
-    re.description=repo.description,
-    re.full_name=repo.full_name,
-    re.has_issues=repo.has_issues,
-    re.language=repo.language,
-    re.owner=repo.owner.display_name,
-    re.parent=repo.parent.name,
-    re.default_branch=repo.default_branch,
-    re.lastupdated = $UpdateTag
-    WITH re,repo
+    re.description = repo.description,
+    re.full_name = repo.full_name,
+    re.has_issues = repo.has_issues,
+    re.primary_language = repo.primary_language,
+    re.owner = repo.owner.display_name,
+    re.parent = repo.parent.name,
+    re.default_branch = repo.default_branch,
+    re.lastupdated = $UpdateTag,
+    re.console_link = repo.console_link
+
+    WITH re, repo
     MATCH (project:BitbucketProject{id:repo.project.uuid})
-    merge (project)<-[o:RESOURCE]-(re)
+    MERGE (project)<-[o:RESOURCE]-(re)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
     """
@@ -114,8 +165,14 @@ def sync(
 
     logger.info("Syncing Bitbucket All Repositories")
     workspace_repos = get_repos(bitbucket_access_token, workspace_name)
-    workspace_repos = transform_repos(workspace_repos, workspace_name)
-    load_repositories_data(neo4j_session, workspace_repos, common_job_parameters)
+    transformed_data = transform_repos(workspace_repos, workspace_name)
+
+    # Load repositories
+    load_repositories_data(neo4j_session, transformed_data["repos"], common_job_parameters)
+
+    # Load languages
+    load_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"])
+
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

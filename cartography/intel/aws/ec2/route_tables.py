@@ -12,9 +12,28 @@ from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
+# from cartography.intel.aws.util.common import get_default_vpc
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+
+def get_default_vpc(ec2_client):
+    try:
+        response = ec2_client.describe_vpcs(
+            Filters=[{'Name': 'isDefault', 'Values': ['true']}],
+        )
+        vpcs = response.get('Vpcs', [])
+
+        if not vpcs:
+            logger.info("No default VPC found.")
+            return {}
+
+        return vpcs[0]
+
+    except Exception as e:
+        logger.error(f"Error fetching default VPC: {e}")
+        return {}
 
 
 @timeit
@@ -26,16 +45,31 @@ def get_route_tables_data(boto3_session: boto3.session.Session, region: str) -> 
         route_tables: List[Dict] = []
         for page in paginator.paginate():
             route_tables.extend(page['RouteTables'])
+
+        default_vpc = get_default_vpc(client)
+
         for route_table in route_tables:
+            route_table['isDefault'] = False
+
+            if default_vpc and route_table.get('VpcId') == default_vpc.get('VpcId'):
+                associations = route_table.get('Associations', [])
+                for association in associations:
+                    if association.get('Main', False):
+                        route_table['isDefault'] = True
+                        break
+
             route_table['region'] = region
+
     except ClientError as e:
         if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
             logger.warning(
                 'ec2:describe_subnets failed with AccessDeniedException; continuing sync.',
                 exc_info=True,
             )
+
         else:
             raise
+
     return route_tables
 
 
@@ -70,7 +104,8 @@ def load_route_tables_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id
         rtab.lastupdated = $aws_update_tag,
         rtab.consolelink = route_table.consolelink,
         rtab.arn = route_table.arn,
-        rtab.owner_id = route_table.OwnerId
+        rtab.owner_id = route_table.OwnerId,
+        rtab.is_default = route_table.isDefault
 
     WITH route_table, rtab
     MATCH (vpc:AWSVpc{id: route_table.VpcId})

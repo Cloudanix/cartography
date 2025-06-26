@@ -1,0 +1,10 @@
+{
+    "statements": [
+        {
+            "query": "MATCH (n:AzureContainerRegistry)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        }
+    ],
+    "name": "cleanup Azure Container Registry resources"
+}

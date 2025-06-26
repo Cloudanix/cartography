@@ -110,6 +110,7 @@ class AppContext:
         aws_cost_anomaly_services=None,
         aws_cost_saving_request_topic=None,
         aws_cost_saving_response_topic=None,
+        aws_cartography_queue_url=None,
     ):
         self.region = region
         self.log_level = log_level
@@ -218,9 +219,13 @@ class AppContext:
         self.aws_cost_saving_request_topic = aws_cost_saving_request_topic
         self.aws_cost_saving_response_topic = aws_cost_saving_response_topic
 
+        self.aws_cartography_queue_url = aws_cartography_queue_url
+
     def parse(self, config):
         config = json.loads(config)
         self.sns_offline_url = self.get_value(config, ['common', 'sns', 'offlineURL'])
+
+        self.aws_cartography_queue_url = self.get_value(config, ["common", "cartography", "queueUrl"])
 
         if config.get('audit'):
             cfg = config['audit']
