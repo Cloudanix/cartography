@@ -308,14 +308,14 @@ class Authenticator:
         # Standard Base64 Decoding
         decodedBytes = base64.b64decode(payload + '===')
         decodedStr = str(decodedBytes.decode('utf-8'))
-
-        # print(decodedStr)
-
         decoded = json.loads(decodedStr)
-        # print('tenant id', decoded['tid'])
-        # print('user id', decoded['oid'])
-        # print('name', decoded['name'])
-        # print('email', decoded['preferred_username'])
+
+        # logging.info(decodedStr)
+        # logging.info(decoded)
+        # logging.info('tenant id', decoded['tid'])
+        # logging.info('user id', decoded['oid'])
+        # logging.info('name', decoded['name'])
+        # logging.info('email', decoded['preferred_username'])
 
         return decoded['tid'], {
             'id': decoded['oid'],
