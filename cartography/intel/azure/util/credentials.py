@@ -219,6 +219,7 @@ class Authenticator:
             redirect_uri: str,
             refresh_token: str,
             graph_scope: str,
+            default_graph_scope: str,
             azure_scope: str,
             vault_scope: str,
             subscription_id: str,
