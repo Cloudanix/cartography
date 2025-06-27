@@ -134,11 +134,17 @@ async def list_tenant_users(client: GraphServiceClient, tenant_id: str, filter_q
             request_config = UsersRequestBuilder.UsersRequestBuilderGetRequestConfiguration(
                 query_parameters=query_params,
             )
+        users: List[Dict] = []
         response = await client.users.get(request_configuration=request_config)
         if not response or not response.value:
             return []
+        users.extend(response.value)
 
-        users = transform_users(response.value, tenant_id)
+        while response.odata_next_link:
+            response = await client.users.with_url(response.odata_next_link).get()
+            users.extend(response.value)
+
+        users = transform_users(users, tenant_id)
         return users
 
     except HttpResponseError as e:
@@ -314,13 +320,18 @@ async def get_tenant_groups_list(client: GraphServiceClient, tenant_id: str, fil
             request_config = GroupsRequestBuilder.GroupsRequestBuilderGetRequestConfiguration(
                 query_parameters=query_params,
             )
+        groups: List[Dict] = []
         response = await client.groups.get(request_configuration=request_config)
         if not response or not response.value:
             return []
+        groups.extend(response.value)
 
+        while response.odata_next_link:
+            response = await client.groups.with_url(response.odata_next_link).get()
+            groups.extend(response.value)
         tenant_groups_list = []
 
-        for group in response.value:
+        for group in groups:
             # Convert the Graph API response to a dictionary
             group_id = getattr(group, 'id', None)
             if hasattr(group, 'as_dict'):
@@ -409,10 +420,16 @@ async def get_group_members(credentials: Credentials, group_id: str) -> List[Dic
     client: GraphServiceClient = get_default_graph_client(credentials.default_graph_credentials)
     members_data = []
     try:
-        members = await client.groups.by_group_id(group_id.split("/")[-1]).members.get()
+        members: List[Dict] = []
+        response = await client.groups.by_group_id(group_id.split("/")[-1]).members.get()
+        members.extend(response.value)
 
-        if members and members.value:
-            for member in members.value:
+        while response.odata_next_link:
+            response = await client.groups.by_group_id(group_id.split("/")[-1]).members.with_url(response.odata_next_link).get()
+            members.extend(response.value)
+
+        if members:
+            for member in members:
                 members_data.append({
                     "id": member.id,
                     "display_name": member.display_name,
@@ -479,13 +496,19 @@ async def get_tenant_applications_list(client: GraphServiceClient, tenant_id: st
     Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/application-list
     """
     try:
+        apps: List[Dict] = []
         response = await client.applications.get()
         if not response or not response.value:
             return []
+        apps.extend(response.value)
+
+        while response.odata_next_link:
+            response = await client.applications.with_url(response.odata_next_link).get()
+            apps.extend(response.value)
 
         tenant_applications_list = []
 
-        for app in response.value:
+        for app in apps:
             # Convert the Graph API response to a dictionary
             if hasattr(app, 'as_dict'):
                 app_dict = app.as_dict()
@@ -586,13 +609,19 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
     Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/serviceprincipal-list
     """
     try:
+        service_accounts: List[Dict] = []
         response = await client.service_principals.get()
         if not response or not response.value:
             return []
+        service_accounts.extend(response.value)
+
+        while response.odata_next_link:
+            response = await client.service_principals.with_url(response.odata_next_link).get()
+            service_accounts.extend(response.value)
 
         tenant_service_accounts_list = []
 
-        for sp in response.value:
+        for sp in service_accounts:
             # Convert the Graph API response to a dictionary
             if hasattr(sp, 'as_dict'):
                 sp_dict = sp.as_dict()
