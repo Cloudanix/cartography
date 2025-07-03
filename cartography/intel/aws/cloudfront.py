@@ -36,7 +36,7 @@ def get_cloudfront_distributions(boto3_session: boto3.session.Session) -> List[D
 
 
 @timeit
-def trtansform_distribution(dists: List[Dict]) -> List[Dict]:
+def transform_distribution(dists: List[Dict]) -> List[Dict]:
     distributions = []
     for distribution in dists:
         bucket_items = distribution.get("Origins", {}).get("Items", [])
@@ -118,7 +118,7 @@ def sync(
     logger.info("Syncing Cloudfront for account '%s', at %s.", current_aws_account_id, tic)
 
     dists = get_cloudfront_distributions(boto3_session)
-    distributions = trtansform_distribution(dists)
+    distributions = transform_distribution(dists)
 
     logger.info(f"Total Cloudfront Distributions: {len(distributions)}")
 
