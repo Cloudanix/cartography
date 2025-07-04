@@ -4,6 +4,7 @@ from collections import namedtuple
 from typing import Any
 from typing import Dict
 from typing import List
+from cartography.data.operating_systems import OPERATING_SYSTEMS
 
 import boto3
 import neo4j
@@ -162,6 +163,16 @@ def transform_ec2_instances(
             architecture = os_details.get("Architecture", "Unknown")
             virtualization_type = os_details.get("VirtualizationType", "Unknown")
             hypervisor = os_details.get("Hypervisor", "Unknown")
+            vm_os = "Unknown"
+            image_description = os_details.get("Description", "").lower()
+
+            if image_description:
+                for op_system in OPERATING_SYSTEMS:
+                    if op_system in image_description:
+                        vm_os = op_system
+                        break
+
+            vm_os_version = os_details.get("Name", "Unknown")
 
             instance_list.append(
                 {
@@ -184,6 +195,8 @@ def transform_ec2_instances(
                     "Architecture": architecture,
                     "VirtualizationType": virtualization_type,
                     "Hypervisor": hypervisor,
+                    "VmOs": vm_os,
+                    "VmOsVersion": vm_os_version,
                     "EbsOptimized": instance.get("EbsOptimized"),
                     "BootMode": instance.get("BootMode"),
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
