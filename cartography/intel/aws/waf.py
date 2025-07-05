@@ -18,33 +18,64 @@ aws_console_link = AWSLinker()
 
 
 @timeit
-@aws_handle_regions
-def get_waf_classic_web_acls(boto3_session: boto3.session.Session) -> List[Dict]:
-
+def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session) -> List[Dict]:
+    """
+    Get WAF Classic Web ACLs for a specific region (for ALBs, etc.).
+    """
     web_acls = []
+    region = boto3_session.region_name
     try:
-        client = boto3_session.client('waf')
+        client = boto3_session.client('waf-regional', region_name=region)
         paginator = client.get_paginator('list_web_acls')
-
-        page_iterator = paginator.paginate()
-        for page in page_iterator:
-            web_acls.extend(page.get('WebACLs', []))
-
+        for page in paginator.paginate():
+            for acl in page.get('WebACLs', []):
+                acl['region'] = region
+                web_acls.append(acl)
         return web_acls
-
     except ClientError as e:
-        logger.error(f'Failed to call WAF Classic list_web_acls: {e}')
+        logger.warning(f"Failed to call WAF Classic Regional list_web_acls in {region}: {e}")
         return web_acls
 
 
 @timeit
-def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl_id: str) -> Dict:
-    response = {}
+def get_waf_classic_global_web_acls(boto3_session: boto3.session.Session) -> List[Dict]:
+    """
+    Get WAF Classic Web ACLs for the global scope (for CloudFront).
+    This should only be called once, not for every region.
+    """
+    web_acls = []
     try:
-        client = boto3_session.client('waf')
+        client = boto3_session.client('waf', region_name='us-east-1')
+        paginator = client.get_paginator('list_web_acls')
+        for page in paginator.paginate():
+            for acl in page.get('WebACLs', []):
+                acl['region'] = 'global'
+                web_acls.append(acl)
+        return web_acls
+    except ClientError as e:
+        logger.error(f"Failed to call WAF Classic Global list_web_acls: {e}")
+        return web_acls
+
+
+@timeit
+def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl: Dict) -> Dict:
+    """
+    Gets detailed information for a given Web ACL. It determines whether to use
+    the 'waf' or 'waf-regional' client based on the ACL's region tag.
+    """
+    response = {}
+    web_acl_id = web_acl.get("WebACLId")
+    region = web_acl.get("region")
+
+    try:
+        if region == 'global':
+            client = boto3_session.client('waf', region_name='us-east-1')
+        else:
+            client = boto3_session.client('waf-regional', region_name=region)
+
         response = client.get_web_acl(WebACLId=web_acl_id)
     except ClientError as e:
-        logger.error(f"Error retrieving Web ACL {web_acl_id}: {e}")
+        logger.error(f"Error retrieving Web ACL details for {web_acl_id} in region {region}: {e}")
 
     return response.get("WebACL", {})
 
@@ -53,16 +84,14 @@ def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl_id: st
 def transform_waf_classic_web_acls(boto3_session: boto3.session.Session, web_acls: List[Dict]) -> List[Dict]:
     transformed_acls = []
     for web_acl in web_acls:
-        web_acl_id = web_acl.get("WebACLId")
-        details = get_waf_classic_details(boto3_session, web_acl_id)
-        arn = details.get("WebACLArn")
+        details = get_waf_classic_details(boto3_session, web_acl)
+        if not details:
+            continue
 
-        web_acl['region'] = 'global'
+        arn = details.get("WebACLArn")
         web_acl['consolelink'] = ""
         web_acl['arn'] = arn
-        #web_acl['consolelink'] = aws_console_link.get_console_link(arn=web_acl['arn'])
         transformed_acls.append(web_acl)
-
     return transformed_acls
 
 
@@ -103,13 +132,27 @@ def cleanup_waf_classic_web_acls(neo4j_session: neo4j.Session, common_job_parame
 
 @timeit
 def sync_waf_classic(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     update_tag: int, common_job_parameters: Dict,
 ) -> None:
-    web_acls = get_waf_classic_web_acls(boto3_session)
-    transformed_acls = transform_waf_classic_web_acls(boto3_session, web_acls)
+    """
+    Syncs both regional and global WAF Classic ACLs.
+    """
+    all_web_acls = []
 
-    logger.info(f"Total WAF Classic WebACLs: {len(transformed_acls)}")
+    global_acls = get_waf_classic_global_web_acls(boto3_session)
+    all_web_acls.extend(global_acls)
+
+    for region in regions:
+        regional_session = boto3.Session(region_name=region)
+        regional_acls = get_waf_classic_regional_web_acls(regional_session)
+        all_web_acls.extend(regional_acls)
+
+    if not all_web_acls:
+        return
+
+    logger.info(f"Found {len(all_web_acls)} total WAF Classic WebACLs (global and regional).")
+    transformed_acls = transform_waf_classic_web_acls(boto3_session, all_web_acls)
 
     load_waf_classic_web_acls(neo4j_session, transformed_acls, current_aws_account_id, update_tag)
 
@@ -145,71 +188,40 @@ def get_waf_v2_web_acl_details(
 
 
 @timeit
-def get_waf_v2_web_acls_for_scope(
-    client: boto3.client, scope: str, region: str,
-) -> List[Dict]:
+def get_waf_v2_global_acls(boto3_session: boto3.session.Session) -> List[Dict]:
     """
-    Get WAFv2 Web ACLs for a specific scope.
+    Get WAFv2 Web ACLs for the global scope (CloudFront).
+    Should only be called once, not for every region.
     """
-    web_acls = []
-    response = {}
-    try:
-        response = client.list_web_acls(Scope=scope)
-        for acl in response.get("WebACLs", []):
-            acl_with_details = get_waf_v2_web_acl_details(client, acl, scope, region)
-            if acl_with_details:
-                web_acls.append(acl_with_details)
-
-    except ClientError as e:
-        logger.error(f"Failed to call WAF v2 list_web_acls for scope {scope}: {e}")
-        return web_acls
-
-    while "NextMarker" in response:
-        try:
-            response = client.list_web_acls(
-                Scope=scope,
-                NextMarker=response["NextMarker"],
-            )
-            for acl in response.get("WebACLs", []):
-                acl_with_details = get_waf_v2_web_acl_details(
-                    client, acl, scope, region,
-                )
-                if acl_with_details:
-                    web_acls.append(acl_with_details)
-
-        except ClientError as e:
-            logger.error(f"Failed to call WAF v2 list_web_acls - next page: {e}")
-            break
-
-    return web_acls
-
+    client = boto3_session.client("wafv2", region_name="us-east-1")
+    return get_waf_v2_web_acls_for_scope(client, "CLOUDFRONT", "global")
 
 @timeit
 @aws_handle_regions
-def get_waf_v2_web_acls(boto3_session: boto3.session.Session) -> List[Dict]:
-    """Get all WAFv2 Web ACLs (both CloudFront and Regional).
-    Args:
-        boto3_session: Boto3 session
-    Returns:
-        List[Dict]: Combined list of global and regional WAF ACLs
+def get_waf_v2_regional_acls(boto3_session: boto3.session.Session) -> List[Dict]:
     """
+    Get WAFv2 Web ACLs for a specific region.
+    """
+    regional_client = boto3_session.client("wafv2")
+    return get_waf_v2_web_acls_for_scope(
+        regional_client, "REGIONAL", boto3_session.region_name,
+    )
+
+
+@timeit
+def get_waf_v2_web_acls_for_scope(
+    client: boto3.client, scope: str, region: str,
+) -> List[Dict]:
     web_acls = []
     try:
-        # CloudFront (Global) ACLs - requires us-east-1
-        client = boto3_session.client("wafv2", region_name="us-east-1")
-        web_acls.extend(get_waf_v2_web_acls_for_scope(client, "CLOUDFRONT", "global"))
-
-        # Regional ACLs
-        regional_client = boto3_session.client("wafv2")
-        web_acls.extend(
-            get_waf_v2_web_acls_for_scope(
-                regional_client, "REGIONAL", boto3_session.region_name,
-            ),
-        )
-
+        paginator = client.get_paginator('list_web_acls')
+        for page in paginator.paginate(Scope=scope):
+            for acl in page.get("WebACLs", []):
+                acl_with_details = get_waf_v2_web_acl_details(client, acl, scope, region)
+                if acl_with_details:
+                    web_acls.append(acl_with_details)
     except ClientError as e:
-        logger.error(f"Failed to get WAFv2 web ACLs: {e}")
-
+        logger.error(f"Failed to list WAF v2 ACLs for scope {scope} in {region}: {e}")
     return web_acls
 
 
@@ -265,16 +277,24 @@ def cleanup_waf_v2_web_acls(neo4j_session: neo4j.Session, common_job_parameters:
 
 @timeit
 def sync_waf_v2(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     update_tag: int, common_job_parameters: Dict,
 ) -> None:
-    web_acls = get_waf_v2_web_acls(boto3_session)
-    transformed_acls = transform_waf_v2_web_acls(web_acls)
+    # 1. Call the global function ONCE
+    all_web_acls = get_waf_v2_global_acls(boto3_session)
 
-    logger.info(f"Total WAF v2 WebACLs: {len(transformed_acls)}")
+    # 2. Loop through regions for regional resources
+    for region in regions:
+        regional_session = boto3.Session(region_name=region)
+        all_web_acls.extend(get_waf_v2_regional_acls(regional_session))
 
+    logger.info(f"Total WAF v2 WebACLs: {len(all_web_acls)}")
+    if not all_web_acls:
+        return
+
+    # 3. No de-duplication is needed
+    transformed_acls = transform_waf_v2_web_acls(all_web_acls)
     load_waf_v2_web_acls(neo4j_session, transformed_acls, current_aws_account_id, update_tag)
-
     cleanup_waf_v2_web_acls(neo4j_session, common_job_parameters)
 
 
@@ -288,9 +308,9 @@ def sync(
     logger.info("Syncing WAF for account '%s', at %s.", current_aws_account_id, tic)
 
     try:
-        sync_waf_classic(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+        sync_waf_classic(neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters)
 
-        sync_waf_v2(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+        sync_waf_v2(neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters)
 
     except Exception as ex:
         logger.error("failed to process waf", ex)
