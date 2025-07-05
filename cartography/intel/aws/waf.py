@@ -18,23 +18,20 @@ aws_console_link = AWSLinker()
 
 
 @timeit
+@aws_handle_regions
 def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session) -> List[Dict]:
     """
     Get WAF Classic Web ACLs for a specific region (for ALBs, etc.).
     """
     web_acls = []
     region = boto3_session.region_name
-    try:
-        client = boto3_session.client('waf-regional', region_name=region)
-        paginator = client.get_paginator('list_web_acls')
-        for page in paginator.paginate():
-            for acl in page.get('WebACLs', []):
-                acl['region'] = region
-                web_acls.append(acl)
-        return web_acls
-    except ClientError as e:
-        logger.warning(f"Failed to call WAF Classic Regional list_web_acls in {region}: {e}")
-        return web_acls
+    client = boto3_session.client('waf-regional', region_name=region)
+    paginator = client.get_paginator('list_web_acls')
+    for page in paginator.paginate():
+        for acl in page.get('WebACLs', []):
+            acl['region'] = region
+            web_acls.append(acl)
+    return web_acls
 
 
 @timeit
