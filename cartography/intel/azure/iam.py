@@ -33,6 +33,7 @@ scopes = ['https://graph.microsoft.com/.default']
 # 2048 / 39 = ~52. A batch size of 25 is safe.
 SAFE_BATCH_SIZE = 25
 
+
 def load_tenant_users(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     iteration_size = 500
     total_items = len(data_list)
@@ -1085,7 +1086,7 @@ async def sync_scoped_users_and_groups(
     group_id_list = list(scoped_group_ids)
     for i in range(0, len(group_id_list), SAFE_BATCH_SIZE):
         batch_ids = group_id_list[i:i + SAFE_BATCH_SIZE]
-        id_filter_str = f"id in ({','.join(f'\'{id_val}\'' for id_val in batch_ids)})"
+        id_filter_str = "id in ({})".format(','.join(f"'{id_val['id']}'" for id_val in batch_ids))
         group_batch = await get_tenant_groups_list(client, tenant_id, filter_query=id_filter_str)
         if group_batch:
             scoped_groups.extend(group_batch)
@@ -1110,7 +1111,7 @@ async def sync_scoped_users_and_groups(
         user_fetch_tasks = []
         for i in range(0, len(member_id_list), SAFE_BATCH_SIZE):
             batch_ids = member_id_list[i:i + SAFE_BATCH_SIZE]
-            id_filter_str = f"id in ({','.join(f'\'{id_val}\'' for id_val in batch_ids)})"
+            id_filter_str = "id in ({})".format(','.join(f"'{id_val}'" for id_val in batch_ids))
             user_fetch_tasks.append(list_tenant_users(client, tenant_id, filter_query=id_filter_str))
 
         # Run all batch fetches concurrently
@@ -1118,7 +1119,6 @@ async def sync_scoped_users_and_groups(
         for user_batch in user_batch_responses:
             if user_batch:
                 scoped_users.extend(user_batch)
-
 
     # 4. Load the filtered data into Neo4j
     load_tenant_groups(neo4j_session, tenant_id, scoped_groups, update_tag)
