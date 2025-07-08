@@ -59,36 +59,50 @@ def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl: Dict)
     """
     Gets detailed information for a given Web ACL. It determines whether to use
     the 'waf' or 'waf-regional' client based on the ACL's region tag.
+    Now extracts additional details to align with WAFv2 ingestion.
     """
-    response = {}
     web_acl_id = web_acl.get("WebACLId")
     region = web_acl.get("region")
 
     try:
         if region == 'global':
             client = boto3_session.client('waf', region_name='us-east-1')
+            scope = 'CLOUDFRONT'
         else:
             client = boto3_session.client('waf-regional', region_name=region)
+            scope = 'REGIONAL'
 
         response = client.get_web_acl(WebACLId=web_acl_id)
+        details = response.get("WebACL", {})
+
+        if not details:
+            return {}
+
+        # Add new details directly to the web_acl dictionary
+        web_acl['arn'] = details.get("WebACLArn")
+        web_acl['default_action'] = details.get("DefaultAction", {}).get("Type")
+        web_acl['rules_count'] = len(details.get("Rules", []))
+        web_acl['metric_name'] = details.get("MetricName")
+        web_acl['scope'] = scope
+        return web_acl
+
     except ClientError as e:
         logger.error(f"Error retrieving Web ACL details for {web_acl_id} in region {region}: {e}")
-
-    return response.get("WebACL", {})
+        return {}
 
 
 @timeit
 def transform_waf_classic_web_acls(boto3_session: boto3.session.Session, web_acls: List[Dict]) -> List[Dict]:
     transformed_acls = []
     for web_acl in web_acls:
-        details = get_waf_classic_details(boto3_session, web_acl)
-        if not details:
-            continue
+        # get_waf_classic_details now returns the fully enriched object
+        detailed_acl = get_waf_classic_details(boto3_session, web_acl.copy())
 
-        arn = details.get("WebACLArn")
-        web_acl['consolelink'] = ""
-        web_acl['arn'] = arn
-        transformed_acls.append(web_acl)
+        # Ensure we have a valid, enriched ACL with an ARN before adding it
+        if detailed_acl and detailed_acl.get("arn"):
+            detailed_acl['consolelink'] = ""  # Set placeholder
+            transformed_acls.append(detailed_acl)
+            
     return transformed_acls
 
 
@@ -100,13 +114,18 @@ def load_waf_classic_web_acls(session: neo4j.Session, web_acls: List[Dict], curr
 def _load_waf_classic_web_acls_tx(tx: neo4j.Transaction, web_acls: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
     query: str = """
     UNWIND $Records as record
+    WITH record WHERE record.arn IS NOT NULL
     MERGE (web_acl:AWSWAFClassicWebACL{id: record.arn})
     ON CREATE SET web_acl.firstseen = timestamp(),
         web_acl.arn = record.arn
     SET web_acl.lastupdated = $aws_update_tag,
         web_acl.name = record.Name,
         web_acl.region = record.region,
-        web_acl.consolelink = record.consolelink
+        web_acl.consolelink = record.consolelink,
+        web_acl.scope = record.scope,
+        web_acl.default_action = record.default_action,
+        web_acl.rules_count = record.rules_count,
+        web_acl.metric_name = record.metric_name
     WITH web_acl
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(web_acl)
