@@ -11,7 +11,7 @@ from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
-
+from cartography.data.operating_systems import OPERATING_SYSTEMS
 logger = logging.getLogger(__name__)
 azure_console_link = AzureLinker()
 
@@ -69,6 +69,26 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
             os_disk = vm.get("storage_profile", {}).get("os_disk", {})
             vm['os_type'] = os_disk.get('os_type')
             vm['os_disk_name'] = os_disk.get('name')
+            image_reference = vm.get("storage_profile", {}).get("image_reference", {})
+            sku = image_reference.get('sku')
+            offer = image_reference.get('offer')
+            vm['os_version'] = sku
+            vm['os'] = 'unknown'
+
+            if offer:
+                lower_offer = offer.lower()
+                for op_system in OPERATING_SYSTEMS:
+                    if op_system in lower_offer:
+                        vm['os'] = op_system
+                        break
+
+            if vm['os'] == 'unknown' and sku:
+                lower_sku = sku.lower()
+                for op_system in OPERATING_SYSTEMS:
+                    if op_system in lower_sku:
+                        vm['os'] = op_system
+                        break
+
             if regions is None:
                 vm_data.append(vm)
             else:
@@ -104,7 +124,9 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.version=vm.storage_profile.image_reference.version,
     v.exact_version=vm.storage_profile.image_reference.exact_version,
     v.os_type=vm.os_type,
-    v.os_disk_name=vm.os_disk_name
+    v.os_disk_name=vm.os_disk_name,
+    v.vm_os=vm.os,
+    v.os_version=vm.os_version
     WITH vm, v
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(v)
