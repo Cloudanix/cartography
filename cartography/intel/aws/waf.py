@@ -211,6 +211,7 @@ def get_waf_v2_global_acls(boto3_session: boto3.session.Session) -> List[Dict]:
     return get_waf_v2_web_acls_for_scope(client, "CLOUDFRONT", "global")
 
 @timeit
+@aws_handle_regions
 def get_waf_v2_regional_acls(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     """
     Get WAFv2 Web ACLs for a specific region.
