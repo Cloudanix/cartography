@@ -19,12 +19,11 @@ aws_console_link = AWSLinker()
 
 @timeit
 @aws_handle_regions
-def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session) -> List[Dict]:
+def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     """
     Get WAF Classic Web ACLs for a specific region (for ALBs, etc.).
     """
     web_acls = []
-    region = boto3_session.region_name
     client = boto3_session.client('waf-regional', region_name=region)
     paginator = client.get_paginator('list_web_acls')
     for page in paginator.paginate():
@@ -160,8 +159,7 @@ def sync_waf_classic(
     all_web_acls.extend(global_acls)
 
     for region in regions:
-        regional_session = boto3.Session(region_name=region)
-        regional_acls = get_waf_classic_regional_web_acls(regional_session)
+        regional_acls = get_waf_classic_regional_web_acls(boto3_session, region)
         all_web_acls.extend(regional_acls)
 
     if not all_web_acls:
@@ -213,18 +211,18 @@ def get_waf_v2_global_acls(boto3_session: boto3.session.Session) -> List[Dict]:
     return get_waf_v2_web_acls_for_scope(client, "CLOUDFRONT", "global")
 
 @timeit
-@aws_handle_regions
-def get_waf_v2_regional_acls(boto3_session: boto3.session.Session) -> List[Dict]:
+def get_waf_v2_regional_acls(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     """
     Get WAFv2 Web ACLs for a specific region.
     """
-    regional_client = boto3_session.client("wafv2")
+    regional_client = boto3_session.client("wafv2", region_name=region)
     return get_waf_v2_web_acls_for_scope(
-        regional_client, "REGIONAL", boto3_session.region_name,
+        regional_client, "REGIONAL", region,
     )
 
 
 @timeit
+@aws_handle_regions
 def get_waf_v2_web_acls_for_scope(
     client: boto3.client, scope: str, region: str,
 ) -> List[Dict]:
@@ -301,8 +299,7 @@ def sync_waf_v2(
 
     # 2. Loop through regions for regional resources
     for region in regions:
-        regional_session = boto3.Session(region_name=region)
-        all_web_acls.extend(get_waf_v2_regional_acls(regional_session))
+        all_web_acls.extend(get_waf_v2_regional_acls(boto3_session, region))
 
     logger.info(f"Total WAF v2 WebACLs: {len(all_web_acls)}")
     if not all_web_acls:
