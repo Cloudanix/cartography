@@ -28,7 +28,13 @@ def get_group_members(access_token:str,group:str):
 
 
 def load_members_data(session: neo4j.Session, members_data:List[Dict],common_job_parameters:Dict) -> None:
-    session.write_transaction(_load_members_data, members_data,  common_job_parameters)
+    # Ensure that we only process members that have an ID.
+    # Some members, like invited members, may not have an ID.
+    valid_members = [member for member in members_data if member.get('id')]
+    if not valid_members:
+        logger.warning("No valid GitLab members with IDs found to sync.")
+        return
+    session.write_transaction(_load_members_data, valid_members,  common_job_parameters)
 
 
 def _load_members_data(tx: neo4j.Transaction,members_data:List[Dict],common_job_parameters:Dict):

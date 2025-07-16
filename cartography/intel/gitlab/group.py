@@ -6,6 +6,7 @@ from typing import List
 import neo4j
 
 from cartography.intel.gitlab.pagination import paginate_request
+from cartography.intel.gitlab.projects import load_projects_data
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -97,6 +98,14 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
-    logger.info("Syncing Gitlab All groups")
+    logger.info("Syncing Gitlab Group and its projects")
 
     load_group_data(neo4j_session, groups, common_job_parameters)
+
+    # Explicitly load the projects that are attached to the group data.
+    for group in groups:
+        if 'projects' in group and group['projects']:
+            logger.info(f"Loading {len(group['projects'])} projects found within group '{group['name']}'.")
+            load_projects_data(neo4j_session, group['projects'], common_job_parameters)
+        else:
+            logger.warning(f"No projects found in the API response for group '{group['name']}'.")

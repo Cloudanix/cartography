@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 @timeit
 def get_projects(access_token:str,group:str):
     """
-    As per the rest api docs:https://docs.gitlab.com/api/projects/#list-all-projects
+    As per the rest api docs:https://docs.gitlab.com/ee/api/groups.html#list-a-groups-projects
     Pagination: https://docs.gitlab.com/ee/api/rest/index.html#pagination
     """
-    url = "https://gitlab.com/api/v4/projects?per_page=100"
+    url = f"https://gitlab.com/api/v4/groups/{group}/projects?per_page=100"
     projects = paginate_request(url, access_token)
 
     return projects

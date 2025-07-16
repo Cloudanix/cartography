@@ -26,3 +26,4 @@ node_modules
 .venv
 
 build.log
+*/venv_cartography_test/
