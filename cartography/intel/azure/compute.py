@@ -8,10 +8,10 @@ from azure.mgmt.compute import ComputeManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.credentials import Credentials
+from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
-from cartography.data.operating_systems import OPERATING_SYSTEMS
 logger = logging.getLogger(__name__)
 azure_console_link = AzureLinker()
 
