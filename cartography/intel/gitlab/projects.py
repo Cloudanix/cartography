@@ -14,12 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def get_projects(access_token:str,group:str):
+def get_group_projects(access_token:str,group:str):
     """
-    As per the rest api docs:https://docs.gitlab.com/api/projects/#list-all-projects
+    As per the rest api docs:https://docs.gitlab.com/ee/api/groups.html#list-a-groups-projects
     Pagination: https://docs.gitlab.com/ee/api/rest/index.html#pagination
     """
-    url = "https://gitlab.com/api/v4/projects?per_page=100"
+    url = f"https://gitlab.com/api/v4/groups/{group}/projects?per_page=100"
     projects = paginate_request(url, access_token)
 
     return projects
@@ -66,9 +66,10 @@ def cleanup(neo4j_session: neo4j.Session,  common_job_parameters: Dict) -> None:
 
 def sync(
         neo4j_session: neo4j.Session,
-        group_name:str,
+        group_id: int,
         access_token:str,
         common_job_parameters: Dict[str, Any],
+        group_name:str,
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync gitlab data
@@ -76,7 +77,7 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
-    logger.info("Syncing Gitlab All group Projects ")
-    group_projects=get_projects(access_token,group_name)
+    logger.info("Syncing Gitlab All group Projects")
+    group_projects=get_group_projects(access_token,group_id)
     load_projects_data(neo4j_session,group_projects,common_job_parameters)
     cleanup(neo4j_session,common_job_parameters)
