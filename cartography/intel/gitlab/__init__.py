@@ -23,17 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 def concurrent_execution(
-    service: str, service_func: Any, config:Config,group_name:str, access_token:str,common_job_parameters: Dict,
+    service: str, service_func: Any, neo4j_session: neo4j.Session, group_name:str, access_token:str,common_job_parameters: Dict,
 ):
     logger.info(f"BEGIN processing for service: {service}")
-    neo4j_auth = (config.neo4j_user, config.neo4j_password)
-    neo4j_driver = GraphDatabase.driver(
-        config.neo4j_uri,
-        auth=neo4j_auth,
-        max_connection_lifetime=config.neo4j_max_connection_lifetime,
-    )
     service_func(
-        Session(neo4j_driver),
+        neo4j_session,
         common_job_parameters['GITLAB_GROUP_ID'],
         access_token,
         common_job_parameters,
@@ -86,7 +80,7 @@ def _sync_one_gitlab_group(
                             concurrent_execution,
                             request,
                             RESOURCE_FUNCTIONS[request],
-                            config,
+                            neo4j_session,
                             group_name,
                             access_token,
                             common_job_parameters,
