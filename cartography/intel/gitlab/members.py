@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
@@ -14,31 +15,34 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+
 @timeit
-def get_group_members(access_token:str,group:str):
+def get_group_members(access_token: str, group_id: int):
     """
     As per the rest api docs:https://docs.gitlab.com/ee/api/members.html
     Pagination: https://docs.gitlab.com/ee/api/rest/index.html#pagination
     """
-    url = f"https://gitlab.com/api/v4/groups/{group}/members?per_page=100"
+    url = f"https://gitlab.com/api/v4/groups/{group_id}/members?per_page=100"
     members = paginate_request(url, access_token)
 
     return members
 
 
-
-def load_members_data(session: neo4j.Session, members_data:List[Dict],common_job_parameters:Dict, group_id: int) -> None:
+def load_members_data(
+    session: neo4j.Session, members_data: List[Dict], common_job_parameters: Dict, group_id: int,
+) -> None:
     # Ensure that we only process members that have an ID.
     # Some members, like invited members, may not have an ID.
-    valid_members = [member for member in members_data if member.get('id')]
+    valid_members = [member for member in members_data if member.get("id")]
     if not valid_members:
         logger.warning("No valid GitLab members with IDs found to sync.")
         return
-    session.write_transaction(_load_members_data, valid_members,  common_job_parameters, group_id)
+
+    session.write_transaction(_load_members_data, valid_members, common_job_parameters, group_id)
 
 
-def _load_members_data(tx: neo4j.Transaction,members_data:List[Dict],common_job_parameters:Dict, group_id: int):
-    ingest_group="""
+def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict, group_id: int):
+    ingest_group = """
     UNWIND $membersData as member
     MERGE (mem:GitLabMember {id: member.id})
     ON CREATE SET mem.firstseen = timestamp(),
@@ -61,28 +65,28 @@ def _load_members_data(tx: neo4j.Transaction,members_data:List[Dict],common_job_
     """
     for member in members_data:
         try:
-            member['created_by'] = member['created_by']['username']
+            member["created_by"] = member["created_by"]["username"]
         except (KeyError, TypeError):
-            member['created_by'] = None
+            member["created_by"] = None
 
     tx.run(
         ingest_group,
         membersData=members_data,
-        UpdateTag=common_job_parameters['UPDATE_TAG'],
+        UpdateTag=common_job_parameters["UPDATE_TAG"],
         GroupId=group_id,
     )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gitlab_group_member_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("gitlab_group_member_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def sync(
-        neo4j_session: neo4j.Session,
-        group_id: int,
-        access_token:str,
-        common_job_parameters: Dict[str, Any],
-        group_name:str,
+    neo4j_session: neo4j.Session,
+    group_id: int,
+    access_token: str,
+    common_job_parameters: Dict[str, Any],
+    group_name: str,
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync gitlab data
@@ -90,7 +94,13 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
-    logger.info("Syncing Gitlab All group members")
-    group_members=get_group_members(access_token,group_id)
-    load_members_data(neo4j_session,group_members,common_job_parameters, group_id)
-    cleanup(neo4j_session,common_job_parameters)
+    tic = time.perf_counter()
+
+    logger.info("Syncing Members for Gitlab Group '%s', at %s.", group_name, tic)
+
+    group_members = get_group_members(access_token, group_id)
+    load_members_data(neo4j_session, group_members, common_job_parameters, group_id)
+    cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process Members for Gitlab Group '{group_name}': {toc - tic:0.4f} seconds")

@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
@@ -26,8 +27,9 @@ def get_groups(access_token: str):
 
     return groups
 
+
 @timeit
-def get_group(access_token: str, group_id: str) -> Dict:
+def get_group(access_token: str, group_id: int) -> Dict:
     """
     Fetch information about a particular group.
     Group Details: https://docs.gitlab.com/ee/api/groups/#details-of-a-group
@@ -36,6 +38,7 @@ def get_group(access_token: str, group_id: str) -> Dict:
     response = make_requests_url(url, access_token)
 
     return response
+
 
 def load_group_data(session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict) -> None:
     session.write_transaction(_load_group_data, group_data, common_job_parameters)
@@ -71,26 +74,25 @@ def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_p
             ingest_group,
             id=group.get("id"),
             name=group.get("name"),
-            created_at=group.get('created_at'),
-            path=group.get('path'),
-            description=group.get('description'),
-            visibility=group.get('visibility'),
-            web_url=group.get('web_url'),
-            avatar_url=group.get('avatar_url'),
-            UpdateTag=common_job_parameters['UPDATE_TAG'],
-            workspace_id=common_job_parameters['WORKSPACE_ID'],
+            created_at=group.get("created_at"),
+            path=group.get("path"),
+            description=group.get("description"),
+            visibility=group.get("visibility"),
+            web_url=group.get("web_url"),
+            avatar_url=group.get("avatar_url"),
+            UpdateTag=common_job_parameters["UPDATE_TAG"],
+            workspace_id=common_job_parameters["WORKSPACE_ID"],
         )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gitlab_group_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("gitlab_group_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def sync(
-        neo4j_session: neo4j.Session,
-        groups: List[Dict],
-        common_job_parameters: Dict[str, Any],
-
+    neo4j_session: neo4j.Session,
+    groups: List[Dict],
+    common_job_parameters: Dict[str, Any],
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync gitlab data
@@ -98,14 +100,21 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
-    logger.info("Syncing Gitlab Group and its projects")
+
+    tic = time.perf_counter()
+    logger.info("Syncing Groups '%s', at %s.", groups, tic)
 
     load_group_data(neo4j_session, groups, common_job_parameters)
 
     # Explicitly load the projects that are attached to the group data.
     for group in groups:
-        if 'projects' in group and group['projects']:
+        if "projects" in group and group["projects"]:
             logger.info(f"Loading {len(group['projects'])} projects found within group '{group['name']}'.")
-            load_projects_data(neo4j_session, group['projects'], common_job_parameters)
+            load_projects_data(neo4j_session, group["projects"], common_job_parameters)
         else:
             logger.warning(f"No projects found in the API response for group '{group['name']}'.")
+
+    cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process Groups '{groups}': {toc - tic:0.4f} seconds")
