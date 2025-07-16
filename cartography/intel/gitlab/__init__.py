@@ -34,9 +34,10 @@ def concurrent_execution(
     )
     service_func(
         Session(neo4j_driver),
-        group_name,
+        common_job_parameters['GITLAB_GROUP_ID'],
         access_token,
         common_job_parameters,
+        group_name,
     )
     logger.info(f"END processing for service: {service}")
 

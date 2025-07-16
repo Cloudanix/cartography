@@ -27,17 +27,17 @@ def get_group_members(access_token:str,group:str):
 
 
 
-def load_members_data(session: neo4j.Session, members_data:List[Dict],common_job_parameters:Dict) -> None:
+def load_members_data(session: neo4j.Session, members_data:List[Dict],common_job_parameters:Dict, group_id: int) -> None:
     # Ensure that we only process members that have an ID.
     # Some members, like invited members, may not have an ID.
     valid_members = [member for member in members_data if member.get('id')]
     if not valid_members:
         logger.warning("No valid GitLab members with IDs found to sync.")
         return
-    session.write_transaction(_load_members_data, valid_members,  common_job_parameters)
+    session.write_transaction(_load_members_data, valid_members,  common_job_parameters, group_id)
 
 
-def _load_members_data(tx: neo4j.Transaction,members_data:List[Dict],common_job_parameters:Dict):
+def _load_members_data(tx: neo4j.Transaction,members_data:List[Dict],common_job_parameters:Dict, group_id: int):
     ingest_group="""
     UNWIND $membersData as member
     MERGE (mem:GitLabMember {id: member.id})
@@ -49,20 +49,27 @@ def _load_members_data(tx: neo4j.Transaction,members_data:List[Dict],common_job_
     mem.username = member.username,
     mem.state = member.state,
     mem.profile_url = member.web_url,
-    mem.created_by = member.created_by.username,
+    mem.created_by = member.created_by,
     mem.lastupdated = $UpdateTag
 
     WITH mem,member
-    MATCH (owner:GitLabGroup {id: member.group_id})
+    MATCH (owner:GitLabGroup {id: $GroupId})
     merge (owner)-[o:MEMBER]->(mem)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
 
     """
+    for member in members_data:
+        try:
+            member['created_by'] = member['created_by']['username']
+        except (KeyError, TypeError):
+            member['created_by'] = None
+
     tx.run(
         ingest_group,
         membersData=members_data,
         UpdateTag=common_job_parameters['UPDATE_TAG'],
+        GroupId=group_id,
     )
 
 
@@ -72,9 +79,10 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 
 def sync(
         neo4j_session: neo4j.Session,
-        group_name:str,
+        group_id: int,
         access_token:str,
         common_job_parameters: Dict[str, Any],
+        group_name:str,
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync gitlab data
@@ -83,6 +91,6 @@ def sync(
     :return: Nothing
     """
     logger.info("Syncing Gitlab All group members")
-    group_members=get_group_members(access_token,group_name)
-    load_members_data(neo4j_session,group_members,common_job_parameters)
+    group_members=get_group_members(access_token,group_id)
+    load_members_data(neo4j_session,group_members,common_job_parameters, group_id)
     cleanup(neo4j_session,common_job_parameters)
