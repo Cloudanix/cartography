@@ -105,3 +105,8 @@ def sync(
     logger.info("Syncing Groups '%s', at %s.", groups, tic)
 
     load_group_data(neo4j_session, groups, common_job_parameters)
+
+    cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process Groups '{groups}': {toc - tic:0.4f} seconds")

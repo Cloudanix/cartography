@@ -86,9 +86,5 @@ def sync(
     load_projects_data(neo4j_session, group_projects, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)
 
-    group_projects = get_group_projects(access_token, group_name)
-    load_projects_data(neo4j_session, group_projects, common_job_parameters)
-    cleanup(neo4j_session, common_job_parameters)
-
     toc = time.perf_counter()
     logger.info(f"Time to process Projects for Gitlab Group '{group_name}': {toc - tic:0.4f} seconds")

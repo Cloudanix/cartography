@@ -101,7 +101,7 @@ def transform_waf_classic_web_acls(boto3_session: boto3.session.Session, web_acl
         if detailed_acl and detailed_acl.get("arn"):
             detailed_acl['consolelink'] = ""  # Set placeholder
             transformed_acls.append(detailed_acl)
-            
+
     return transformed_acls
 
 

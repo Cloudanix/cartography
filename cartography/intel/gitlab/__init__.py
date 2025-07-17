@@ -23,35 +23,41 @@ logger = logging.getLogger(__name__)
 
 
 def concurrent_execution(
-    service: str, service_func: Any, neo4j_session: neo4j.Session, group_name:str, access_token:str,common_job_parameters: Dict,
+    service: str,
+    service_func: Any,
+    neo4j_session: neo4j.Session,
+    group_name: str,
+    access_token: str,
+    common_job_parameters: Dict,
 ):
     logger.info(f"BEGIN processing for service: {service}")
     service_func(
         neo4j_session,
-        common_job_parameters['GITLAB_GROUP_ID'],
+        common_job_parameters["GITLAB_GROUP_ID"],
         access_token,
         common_job_parameters,
         group_name,
     )
     logger.info(f"END processing for service: {service}")
 
+
 def _sync_one_gitlab_group(
     neo4j_session: neo4j.Session,
-    group_name:str,
-    access_token:str,
+    group_name: str,
+    access_token: str,
     common_job_parameters: Dict[str, Any],
-    config:Config,
+    config: Config,
 ):
     logger.info(f"Syncing Gitlab Group: {common_job_parameters['GITLAB_GROUP_ID']} - {group_name}")
 
-    sync_order = ['projects', 'members']
+    sync_order = ["projects", "members"]
 
     sync_args = {
-        'neo4j_session': neo4j_session,
-        'common_job_parameters': common_job_parameters,
-        'group_id': common_job_parameters['GITLAB_GROUP_ID'],
-        'group_name': group_name,
-        'access_token': access_token,
+        "neo4j_session": neo4j_session,
+        "common_job_parameters": common_job_parameters,
+        "group_id": common_job_parameters["GITLAB_GROUP_ID"],
+        "group_name": group_name,
+        "access_token": access_token,
     }
 
     for func_name in sync_order:
@@ -63,24 +69,23 @@ def _sync_one_gitlab_group(
 
     return True
 
+
 def _sync_multiple_groups(
     neo4j_session: neo4j.Session,
     access_token: str,
-    groups:List[Dict],
+    groups: List[Dict],
     common_job_parameters: Dict[str, Any],
     config: Config,
-) ->bool:
+) -> bool:
     for group in groups:
-        if common_job_parameters["GROUP_NAME"].lower() != group.get('name').lower():
+        if common_job_parameters["GITLAB_GROUP_ID"].lower() != group.get("id").lower():
             continue
 
-        common_job_parameters['GITLAB_GROUP_ID']=group.get('id')
-        _sync_one_gitlab_group(neo4j_session,group.get('path'),access_token,common_job_parameters,config)
-        run_cleanup_job('gitlab_group_cleanup.json', neo4j_session, common_job_parameters)
-
-        del common_job_parameters['GITLAB_GROUP_ID']
+        _sync_one_gitlab_group(neo4j_session, group.get("name"), access_token, common_job_parameters, config)
+        run_cleanup_job("gitlab_group_cleanup.json", neo4j_session, common_job_parameters)
 
     return True
+
 
 @timeit
 def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
@@ -91,30 +96,30 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     :return: None
     """
     if not config.gitlab_access_token:
-        logger.info('gitlab import is not configured - skipping this module. See docs to configure.')
+        logger.info("gitlab import is not configured - skipping this module. See docs to configure.")
         return
 
     access_token = config.gitlab_access_token
-    workspace_id = config.params.get('workspace', {}).get('id_string', "")
-    group_name = config.params.get('workspace', {}).get('group_name', "")
+    workspace_id = config.params.get("workspace", {}).get("id_string", "")
+    group_id = config.params.get("workspace", {}).get("account_id", "")
 
-    if not isinstance(group_name, str) or not group_name:
-        logger.error("GitLab 'group_name' must be configured and be a non-empty string.")
+    if not isinstance(group_id, str) or not group_id:
+        logger.error("GitLab 'group_id' must be configured and be a non-empty string.")
         return
 
     common_job_parameters = {
         "WORKSPACE_ID": workspace_id,
-        "GROUP_NAME": group_name,
+        "GITLAB_GROUP_ID": group_id,
         "UPDATE_TAG": config.update_tag,
     }
 
     try:
         # groups_list =cartography.intel.gitlab.group.get_groups(access_token)
-        group_info = cartography.intel.gitlab.group.get_group(access_token,common_job_parameters["GROUP_NAME"])
+        group_info = cartography.intel.gitlab.group.get_group(access_token, common_job_parameters["GITLAB_GROUP_ID"])
         groups_list = [group_info]
 
-        if( not groups_list or not isinstance(groups_list, list) or not groups_list[0]):
-            logger.error(f"No valid groups found for the name '{common_job_parameters['GROUP_NAME']}'.")
+        if not groups_list or not isinstance(groups_list, list) or not groups_list[0]:
+            logger.error(f"No valid groups found for the id '{common_job_parameters['GITLAB_GROUP_ID']}'.")
             return
 
         cartography.intel.gitlab.group.sync(
@@ -132,6 +137,6 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
         )
 
     except exceptions.RequestException as e:
-            logger.error("Could not complete request to the Gitlab API: %s", e)
+        logger.error("Could not complete request to the Gitlab API: %s", e)
 
     return common_job_parameters
