@@ -71,7 +71,7 @@ def _sync_multiple_groups(
     config: Config,
 ) ->bool:
     for group in groups:
-        if common_job_parameters["ACCOUNT_ID"].lower() != group.get('name').lower():
+        if common_job_parameters["GROUP_NAME"].lower() != group.get('name').lower():
             continue
 
         common_job_parameters['GITLAB_GROUP_ID']=group.get('id')
@@ -97,13 +97,13 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     access_token = config.gitlab_access_token
     common_job_parameters = {
         "WORKSPACE_ID": config.params['workspace']['id_string'],
-        "ACCOUNT_ID": config.params['workspace']['account_id'],
+        "GROUP_NAME": config.params['workspace']['group_name'],
         "UPDATE_TAG": config.update_tag,
     }
 
     try:
         # groups_list =cartography.intel.gitlab.group.get_groups(access_token)
-        group_info = cartography.intel.gitlab.group.get_group(access_token,common_job_parameters["ACCOUNT_ID"])
+        group_info = cartography.intel.gitlab.group.get_group(access_token,common_job_parameters["GROUP_NAME"])
         groups_list = [group_info]
 
         cartography.intel.gitlab.group.sync(

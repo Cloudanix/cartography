@@ -102,10 +102,3 @@ def sync(
 
     load_group_data(neo4j_session, groups, common_job_parameters)
 
-    # Explicitly load the projects that are attached to the group data.
-    for group in groups:
-        if 'projects' in group and group['projects']:
-            logger.info(f"Loading {len(group['projects'])} projects found within group '{group['name']}'.")
-            load_projects_data(neo4j_session, group['projects'], common_job_parameters)
-        else:
-            logger.warning(f"No projects found in the API response for group '{group['name']}'.")
