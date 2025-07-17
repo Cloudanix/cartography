@@ -95,9 +95,16 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
         return
 
     access_token = config.gitlab_access_token
+    workspace_id = config.params.get('workspace', {}).get('id_string', "")
+    group_name = config.params.get('workspace', {}).get('group_name', "")
+
+    if not isinstance(group_name, str) or not group_name:
+        logger.error("GitLab 'group_name' must be configured and be a non-empty string.")
+        return
+
     common_job_parameters = {
-        "WORKSPACE_ID": config.params['workspace']['id_string'],
-        "GROUP_NAME": config.params['workspace']['group_name'],
+        "WORKSPACE_ID": workspace_id,
+        "GROUP_NAME": group_name,
         "UPDATE_TAG": config.update_tag,
     }
 
@@ -105,6 +112,10 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
         # groups_list =cartography.intel.gitlab.group.get_groups(access_token)
         group_info = cartography.intel.gitlab.group.get_group(access_token,common_job_parameters["GROUP_NAME"])
         groups_list = [group_info]
+
+        if( not groups_list or not isinstance(groups_list, list) or not groups_list[0]):
+            logger.error(f"No valid groups found for the name '{common_job_parameters['GROUP_NAME']}'.")
+            return
 
         cartography.intel.gitlab.group.sync(
             neo4j_session,
