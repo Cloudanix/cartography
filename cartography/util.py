@@ -45,13 +45,14 @@ STATUS_KEYBOARD_INTERRUPT = 130
 DEFAULT_BATCH_SIZE = 1000
 
 
-def get_azure_resource_group_name(id: str) -> None:
+def get_azure_resource_group_name(id: str) -> str:
     resource_group = ""
     id = id.lower()
     if id is not None and "resourcegroups" in id:
         x = id.split("/")
         resource_group = x[x.index("resourcegroups") + 1]
         return resource_group
+
     return resource_group
 
 
@@ -153,7 +154,9 @@ def run_cleanup_job(
         # to handle deadlocks retry transaction
         if retry < 2:
             retry += 1
-            run_cleanup_job(filename=filename, common_job_parameters=common_job_parameters, retry=retry)
+            run_cleanup_job(
+                filename=filename, neo4j_session=neo4j_session, common_job_parameters=common_job_parameters, retry=retry,
+            )
 
 
 def merge_module_sync_metadata(
