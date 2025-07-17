@@ -78,7 +78,7 @@ def _sync_multiple_groups(
     config: Config,
 ) -> bool:
     for group in groups:
-        if common_job_parameters["GITLAB_GROUP_ID"].lower() != group.get("id").lower():
+        if common_job_parameters["GITLAB_GROUP_ID"] != group.get("id"):
             continue
 
         _sync_one_gitlab_group(neo4j_session, group.get("name"), access_token, common_job_parameters, config)
