@@ -44,57 +44,22 @@ def _sync_one_gitlab_group(
 ):
     logger.info(f"Syncing Gitlab Group: {common_job_parameters['GITLAB_GROUP_ID']} - {group_name}")
 
-    requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
+    sync_order = ['projects', 'members']
 
-    if os.environ.get("LOCAL_RUN","0") == "1":
-        # BEGIN - Sequential Run
+    sync_args = {
+        'neo4j_session': neo4j_session,
+        'common_job_parameters': common_job_parameters,
+        'group_id': common_job_parameters['GITLAB_GROUP_ID'],
+        'group_name': group_name,
+        'access_token': access_token,
+    }
 
-        sync_args = {
-            'neo4j_session': neo4j_session,
-            'common_job_parameters': common_job_parameters,
-            'group_id': common_job_parameters['GITLAB_GROUP_ID'],
-            'group_name': group_name,
-            'access_token': access_token,
-        }
-
-        for func_name in requested_syncs:
-            if func_name in RESOURCE_FUNCTIONS:
-                logger.info(f"Processing {func_name}")
-                RESOURCE_FUNCTIONS[func_name](**sync_args)
-
-            else:
-                raise ValueError(f'GITLAB sync function "{func_name}" was specified but does not exist. Did you misspell it?')
-
-        # END - Sequential Run
-
-    else:
-        # BEGIN - Parallel Run
-
-        # Process each service in parallel.
-        with ThreadPoolExecutor(max_workers=len(RESOURCE_FUNCTIONS)) as executor:
-            futures = []
-            for request in requested_syncs:
-                if request in RESOURCE_FUNCTIONS:
-                    futures.append(
-                        executor.submit(
-                            concurrent_execution,
-                            request,
-                            RESOURCE_FUNCTIONS[request],
-                            neo4j_session,
-                            group_name,
-                            access_token,
-                            common_job_parameters,
-                        ),
-                    )
-                else:
-                    raise ValueError(
-                        f'Gitlab sync function "{request}" was specified but does not exist. Did you misspell it?',
-                    )
-
-            for future in as_completed(futures):
-                logger.info(f'Result from Future - Service Processing: {future.result()}')
-
-        # END - Parallel Run
+    for func_name in sync_order:
+        if func_name in RESOURCE_FUNCTIONS:
+            logger.info(f"Processing {func_name}")
+            RESOURCE_FUNCTIONS[func_name](**sync_args)
+        else:
+            logger.warning(f'Gitlab sync function "{func_name}" was specified but is not available.')
 
     return True
 
@@ -106,7 +71,7 @@ def _sync_multiple_groups(
     config: Config,
 ) ->bool:
     for group in groups:
-        if common_job_parameters["ACCOUNT_ID"].lower() != group.get('name').lower():
+        if common_job_parameters["GROUP_NAME"].lower() != group.get('name').lower():
             continue
 
         common_job_parameters['GITLAB_GROUP_ID']=group.get('id')
@@ -130,16 +95,27 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
         return
 
     access_token = config.gitlab_access_token
+    workspace_id = config.params.get('workspace', {}).get('id_string', "")
+    group_name = config.params.get('workspace', {}).get('group_name', "")
+
+    if not isinstance(group_name, str) or not group_name:
+        logger.error("GitLab 'group_name' must be configured and be a non-empty string.")
+        return
+
     common_job_parameters = {
-        "WORKSPACE_ID": config.params['workspace']['id_string'],
-        "ACCOUNT_ID": config.params['workspace']['account_id'],
+        "WORKSPACE_ID": workspace_id,
+        "GROUP_NAME": group_name,
         "UPDATE_TAG": config.update_tag,
     }
 
     try:
         # groups_list =cartography.intel.gitlab.group.get_groups(access_token)
-        group_info = cartography.intel.gitlab.group.get_group(access_token,common_job_parameters["ACCOUNT_ID"])
+        group_info = cartography.intel.gitlab.group.get_group(access_token,common_job_parameters["GROUP_NAME"])
         groups_list = [group_info]
+
+        if( not groups_list or not isinstance(groups_list, list) or not groups_list[0]):
+            logger.error(f"No valid groups found for the name '{common_job_parameters['GROUP_NAME']}'.")
+            return
 
         cartography.intel.gitlab.group.sync(
             neo4j_session,
