@@ -31,7 +31,7 @@ scopes = ['https://graph.microsoft.com/.default']
 # A safe batch size for "in" filters with GUIDs to avoid 414 URI Too Long errors.
 # MS Graph URL limit is ~2048 chars. 36-char GUID + quotes/commas = ~39 chars.
 # 2048 / 39 = ~52. A batch size of 25 is safe.
-SAFE_BATCH_SIZE = 25
+SAFE_BATCH_SIZE = 15
 
 
 def load_tenant_users(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:

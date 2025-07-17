@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def get_repos(access_token:str,project:str):
+def get_repos(access_token: str, project: str):
     """
     As per the rest api docs:https://docs.gitlab.com/ee/api/repositories.html#list-repository-tree
     Pagination: https://docs.gitlab.com/ee/api/rest/index.html#pagination
@@ -26,12 +27,13 @@ def get_repos(access_token:str,project:str):
 
     return repositories
 
-def load_repositories_data(session: neo4j.Session, repos_data:List[Dict],common_job_parameters:Dict) -> None:
-    session.write_transaction(_load_repositories_data, repos_data,  common_job_parameters)
+
+def load_repositories_data(session: neo4j.Session, repos_data: List[Dict], common_job_parameters: Dict) -> None:
+    session.write_transaction(_load_repositories_data, repos_data, common_job_parameters)
 
 
-def _load_repositories_data(tx: neo4j.Transaction,repos_data:List[Dict],common_job_parameters:Dict):
-    ingest_repositories="""
+def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], common_job_parameters: Dict):
+    ingest_repositories = """
     UNWIND $reposData as repo
     MERGE (re:GitLabRepository{id: repo.id})
     ON CREATE SET re.firstseen = timestamp(),
@@ -54,19 +56,19 @@ def _load_repositories_data(tx: neo4j.Transaction,repos_data:List[Dict],common_j
     tx.run(
         ingest_repositories,
         reposData=repos_data,
-        UpdateTag=common_job_parameters['UPDATE_TAG'],
+        UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gitlab_project_repositories_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("gitlab_project_repositories_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def sync(
-        neo4j_session: neo4j.Session,
-        project_id:str,
-        access_token:str,
-        common_job_parameters: Dict[str, Any],
+    neo4j_session: neo4j.Session,
+    project_id: str,
+    access_token: str,
+    common_job_parameters: Dict[str, Any],
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync gitlab data
@@ -74,7 +76,13 @@ def sync(
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :return: Nothing
     """
-    logger.info("Syncing Gitlab All Repositories")
-    project_repos=get_repos(access_token,project_id)
-    load_repositories_data(neo4j_session,project_repos,common_job_parameters)
-    cleanup(neo4j_session,common_job_parameters)
+    tic = time.perf_counter()
+
+    logger.info("Syncing Repositories for Gitlab Project '%s', at %s.", project_id, tic)
+
+    project_repos = get_repos(access_token, project_id)
+    load_repositories_data(neo4j_session, project_repos, common_job_parameters)
+    cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process Repositories for Gitlab Project '{project_id}': {toc - tic:0.4f} seconds")

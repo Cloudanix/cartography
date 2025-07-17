@@ -4,7 +4,6 @@ from collections import namedtuple
 from typing import Any
 from typing import Dict
 from typing import List
-from cartography.data.operating_systems import OPERATING_SYSTEMS
 
 import boto3
 import neo4j
@@ -12,6 +11,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load
+from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.models.aws.ec2.instances import EC2InstanceSchema

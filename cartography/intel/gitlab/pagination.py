@@ -1,4 +1,5 @@
 import logging
+
 import requests
 
 from cartography.util import make_requests_url
