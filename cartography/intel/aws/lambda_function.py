@@ -37,7 +37,9 @@ def get_lambda_data(boto3_session: boto3.session.Session, region: str) -> List[D
             each_function["region"] = region
             each_function["consolelink"] = aws_console_link.get_console_link(arn=each_function["FunctionArn"])
             each_function["FunctionUrl"] = get_lambda_function_url_config(
-                boto3_session, each_function["FunctionName"], region,
+                boto3_session,
+                each_function["FunctionName"],
+                region,
             )
             lambda_functions.append(each_function)
 
@@ -269,6 +271,8 @@ def _load_lambda_event_source_mappings(
 ) -> None:
     ingest_esms = """
     UNWIND $esm_list AS esm
+    WHERE esm.EventSourceArn IS NOT NULL AND esm.FunctionArn IS NOT NULL
+    AND esm.EventSourceArn <> '' AND esm.FunctionArn <> ''
     MERGE (e:AWSLambdaEventSourceMapping{id: esm.EventSourceArn})
     ON CREATE SET e.firstseen = timestamp()
     SET e.batchsize = esm.BatchSize,
