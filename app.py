@@ -74,39 +74,6 @@ def process_request(context, args):
 
         svcs.append(svc)
 
-    creds = None
-    try:
-        creds = get_auth_creds(context, args)
-
-    except Exception as e:
-        context.logger.error(
-            f"error while getting auth creds: {e}", exc_info=True, stack_info=True, extra={"context": args},
-        )
-
-        sns_helper = SNSLibrary(context)
-        if args.get("params", {}).get("resultTopic"):
-            payload = {
-                "status": "failure",
-                "params": args.get("params"),
-                "sessionString": args.get("sessionString"),
-                "eventId": args.get("eventId"),
-                "templateType": args.get("templateType"),
-                "workspace": args.get("workspace"),
-                "actions": args.get("actions"),
-                "resultTopic": args.get("resultTopic"),
-                "requestTopic": args.get("requestTopic"),
-                "identityStoreIdentifier": args.get("identityStoreIdentifier"),
-                "partial": args.get("partial", False),
-                "inventoryReturn": args.get("inventoryReturn", False),
-                "services": args.get("services"),
-                "dc": args.get("dc"),
-                "error": str(e),
-            }
-            status = sns_helper.publish(json.dumps(payload), args["params"]["resultTopic"])
-            context.logger.debug(f"result published to SNS with status: {status}")
-
-        return
-
     # Connect to Data Center Specific database
     request_data_center = args.get("dc", "US")
     if request_data_center == "US":
@@ -124,41 +91,117 @@ def process_request(context, args):
         context.neo4j_user = os.environ["CDX_APP_NEO4J_USER"]
         context.neo4j_pwd = os.environ["CDX_APP_NEO4J_PWD"]
 
-    body = {
-        "credentials": creds,
-        "neo4j": {
-            "uri": context.neo4j_uri,
-            "user": context.neo4j_user,
-            "pwd": context.neo4j_pwd,
-            "connection_lifetime": int(context.neo4j_connection_lifetime),
-        },
-        "logging": {
-            "mode": "verbose",
-        },
-        "params": {
-            "sessionString": args.get("sessionString"),
-            "eventId": args.get("eventId"),
-            "templateType": args.get("templateType"),
-            "regions": args.get("regions"),
-            "workspace": args.get("workspace"),
-            "actions": args.get("actions"),
-            "resultTopic": args.get("resultTopic"),
-            "requestTopic": args.get("requestTopic"),
-            "iamEntitlementRequestTopic": args.get("iamEntitlementRequestTopic"),
-            "identityStoreIdentifier": args.get("identityStoreIdentifier"),
-            "partial": args.get("partial", False),
-            "inventoryReturn": args.get("inventoryReturn", False),
-            "services": args.get("services"),
-            "dc": args.get("dc"),
-        },
-        "services": svcs,
-        "updateTag": args.get("updateTag"),
-        "refreshEntitlements": args.get("refreshEntitlements"),
-        "identityStoreRegion": args.get("identityStoreRegion"),
-        "awsInternalAccounts": args.get("awsInternalAccounts"),
-    }
+    if args.get("templateType") == "AWSINVENTORYVIEWS":
+        creds = None
+        try:
+            creds = get_auth_creds(context, args)
 
-    resp = cartography.cli.run_aws(body)
+        except Exception as e:
+            context.logger.error(
+                f"error while getting auth creds: {e}", exc_info=True, stack_info=True, extra={"context": args},
+            )
+
+            sns_helper = SNSLibrary(context)
+            if args.get("params", {}).get("resultTopic"):
+                payload = {
+                    "status": "failure",
+                    "params": args.get("params"),
+                    "sessionString": args.get("sessionString"),
+                    "eventId": args.get("eventId"),
+                    "templateType": args.get("templateType"),
+                    "workspace": args.get("workspace"),
+                    "actions": args.get("actions"),
+                    "resultTopic": args.get("resultTopic"),
+                    "requestTopic": args.get("requestTopic"),
+                    "identityStoreIdentifier": args.get("identityStoreIdentifier"),
+                    "partial": args.get("partial", False),
+                    "inventoryReturn": args.get("inventoryReturn", False),
+                    "services": args.get("services"),
+                    "dc": args.get("dc"),
+                    "error": str(e),
+                }
+                status = sns_helper.publish(json.dumps(payload), args["params"]["resultTopic"])
+                context.logger.debug(f"result published to SNS with status: {status}")
+
+            return
+
+        body = {
+            "credentials": creds,
+            "neo4j": {
+                "uri": context.neo4j_uri,
+                "user": context.neo4j_user,
+                "pwd": context.neo4j_pwd,
+                "connection_lifetime": int(context.neo4j_connection_lifetime),
+            },
+            "logging": {
+                "mode": "verbose",
+            },
+            "params": {
+                "sessionString": args.get("sessionString"),
+                "eventId": args.get("eventId"),
+                "templateType": args.get("templateType"),
+                "regions": args.get("regions"),
+                "workspace": args.get("workspace"),
+                "actions": args.get("actions"),
+                "resultTopic": args.get("resultTopic"),
+                "requestTopic": args.get("requestTopic"),
+                "iamEntitlementRequestTopic": args.get("iamEntitlementRequestTopic"),
+                "identityStoreIdentifier": args.get("identityStoreIdentifier"),
+                "partial": args.get("partial", False),
+                "inventoryReturn": args.get("inventoryReturn", False),
+                "services": args.get("services"),
+                "dc": args.get("dc"),
+            },
+            "services": svcs,
+            "updateTag": args.get("updateTag"),
+            "refreshEntitlements": args.get("refreshEntitlements"),
+            "identityStoreRegion": args.get("identityStoreRegion"),
+            "awsInternalAccounts": args.get("awsInternalAccounts"),
+        }
+
+        resp = cartography.cli.run_aws(body)
+
+    elif args.get("templateType") == "AZUREINVENTORYVIEWS":
+        body = {
+            "azure": {
+                "client_id": os.environ.get('CDX_AZURE_CLIENT_ID'),
+                "client_secret": os.environ.get('CDX_AZURE_CLIENT_SECRET'),
+                "redirect_uri": os.environ.get('CDX_AZURE_REDIRECT_URI'),
+                "subscription_id": args.get('workspace', {}).get('account_id'),
+                "tenant_id": args.get('tenantId'),
+                "refresh_token": args.get('refreshToken'),
+                "graph_scope": os.environ.get('CDX_AZURE_GRAPH_SCOPE'),
+                "azure_scope": os.environ.get('CDX_AZURE_AZURE_SCOPE'),
+                "default_graph_scope": os.environ.get('CDX_AZURE_DEFAULT_GRAPH_SCOPE'),
+                "vault_scope": os.environ.get('CDX_AZURE_KEY_VAULT_SCOPE'),
+            },
+            "neo4j": {
+                "uri": context.neo4j_uri,
+                "user": context.neo4j_user,
+                "pwd": context.neo4j_pwd,
+                "connection_lifetime": 200,
+            },
+            "logging": {
+                "mode": "verbose",
+            },
+            "params": {
+                "sessionString": args.get('sessionString'),
+                "eventId": args.get('eventId'),
+                "templateType": args.get('templateType'),
+                "workspace": args.get('workspace'),
+                "groups": args.get('groups'),
+                "subscriptions": args.get('subscriptions'),
+                "actions": args.get('actions'),
+                "resultTopic": args.get('resultTopic'),
+                "requestTopic": args.get('requestTopic'),
+                "partial": args.get('partial'),
+                "services": args.get('services'),
+            },
+            "services": svcs,
+            "updateTag": args.get('updateTag'),
+        }
+
+        resp = cartography.cli.run_azure(body)
 
     if resp.get("status", "") == "success":
         if resp.get("pagination", None):
@@ -200,26 +243,50 @@ def publish_response(context, body, resp, args):
             context.logger.error(f"Failed to write to file: {e}")
 
     else:
-        payload = {
-            "status": resp["status"],
-            "params": body["params"],
-            "sessionString": body.get("params", {}).get("sessionString"),
-            "eventId": body.get("params", {}).get("eventId"),
-            "templateType": body.get("params", {}).get("templateType"),
-            "workspace": body.get("params", {}).get("workspace"),
-            "actions": body.get("params", {}).get("actions"),
-            "resultTopic": body.get("params", {}).get("resultTopic"),
-            "requestTopic": body.get("params", {}).get("requestTopic"),
-            "identityStoreIdentifier": body.get("params", {}).get("identityStoreIdentifier"),
-            "partial": body.get("params", {}).get("partial"),
-            "externalRoleArn": body.get("externalRoleArn"),
-            "externalId": body.get("externalId"),
-            "response": resp,
-            "services": body.get("params", {}).get("services"),
-            "updateTag": resp.get("updateTag", None),
-            "iamEntitlementRequestTopic": body.get("params", {}).get("iamEntitlementRequestTopic"),
-            "dc": args.get("dc"),
-        }
+        template_type = body.get("params", {}).get("templateType", "")
+
+        if template_type == "AWSINVENTORYVIEWS":
+            # AWS-specific payload
+            payload = {
+                "status": resp["status"],
+                "params": body["params"],
+                "sessionString": body.get("params", {}).get("sessionString"),
+                "eventId": body.get("params", {}).get("eventId"),
+                "templateType": body.get("params", {}).get("templateType"),
+                "workspace": body.get("params", {}).get("workspace"),
+                "actions": body.get("params", {}).get("actions"),
+                "resultTopic": body.get("params", {}).get("resultTopic"),
+                "requestTopic": body.get("params", {}).get("requestTopic"),
+                "identityStoreIdentifier": body.get("params", {}).get("identityStoreIdentifier"),
+                "partial": body.get("params", {}).get("partial"),
+                "externalRoleArn": body.get("externalRoleArn"),
+                "externalId": body.get("externalId"),
+                "response": resp,
+                "services": body.get("params", {}).get("services"),
+                "updateTag": resp.get("updateTag", None),
+                "iamEntitlementRequestTopic": body.get("params", {}).get("iamEntitlementRequestTopic"),
+                "dc": args.get("dc"),
+            }
+
+        elif template_type == "AZUREINVENTORYVIEWS":
+            payload = {
+                "status": resp["status"],
+                "params": body["params"],
+                "sessionString": body.get("params", {}).get("sessionString"),
+                "eventId": body.get("params", {}).get("eventId"),
+                "templateType": body.get("params", {}).get("templateType"),
+                "workspace": body.get("params", {}).get("workspace"),
+                "actions": body.get("params", {}).get("actions"),
+                "resultTopic": body.get("params", {}).get("resultTopic"),
+                "requestTopic": body.get("params", {}).get("requestTopic"),
+                "subscriptions": body.get("params", {}).get("subscriptions"),
+                "partial": body.get("params", {}).get("partial"),
+                "response": resp,
+                "services": body.get("params", {}).get("services"),
+                "updateTag": resp.get("updateTag", None),
+                "tenantId": body.get("azure", {}).get("tenant_id"),
+                "dc": args.get("dc"),
+            }
 
         sns_helper = SNSLibrary(context)
         # If cartography processing response object contains `services` object that means pagination is in progress. push the message back to the same queue for continuation.
@@ -238,12 +305,14 @@ def publish_response(context, body, resp, args):
                 )
 
             status = True
-            publish_request_iam_entitlement(context, args, body)
+            if template_type == "AWSINVENTORYVIEWS":
+                publish_request_iam_entitlement(context, args, body)
 
         else:
             context.logger.debug("publishing results to CDX_CARTOGRAPHY_RESULT_TOPIC")
             status = sns_helper.publish(json.dumps(payload), context.aws_inventory_sync_response_topic)
-            publish_request_iam_entitlement(context, args, body)
+            if template_type == "AWSINVENTORYVIEWS":
+                publish_request_iam_entitlement(context, args, body)
 
         context.logger.debug(f"result published to SNS with status: {status}")
 
@@ -382,18 +451,32 @@ def aws_process_cartography(event, ctx):
     }
 
 
-def extend_visibility_timeout(receipt_handle, timeout_duration, stop_event):
+def extend_visibility_timeout(message, receipt_handle, timeout_duration, stop_event):
+    max_runtime_minutes = 295
+    start_time = time.time()
+    max_runtime_seconds = max_runtime_minutes * 60
     try:
+        sqs_library = SQSLibrary(context)
         while not stop_event.is_set():
             # Wait until 10 seconds before the visibility timeout expires, or until stop_event is set
             stop_event.wait(timeout_duration - 10)
+
+            # Check if maximum runtime has been reached
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= max_runtime_seconds:
+                status = sqs_library.delete_message(receipt_handle)
+                if status:
+                    context.logger.warning(
+                        f"Maximum runtime has been reached. Deleted message from queue - {json.loads(message["Body"])}",
+                        extra={"message": message["Body"], "handle": receipt_handle, "status": status},
+                    )
+                break
 
             if stop_event.is_set():
                 break
 
             logging.debug(f"Extending visibilityTimeout for message: {receipt_handle}")
 
-            sqs_library = SQSLibrary(context)
             status = sqs_library.change_message_visibility(receipt_handle, timeout_duration)
             if status:
                 context.logger.debug(
@@ -422,7 +505,7 @@ def process_message(context: AppContext, message: dict):
         # Extend Visibility Timeout by 5 mins each time
         visibility_extension_thread = Thread(
             target=extend_visibility_timeout,
-            args=(receipt_handle, 120, stop_event),
+            args=(message, receipt_handle, 120, stop_event),
             daemon=True,
         )
 
