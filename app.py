@@ -153,7 +153,7 @@ def process_request(context, args):
                 "dc": args.get("dc"),
             },
             "services": svcs,
-            "updateTag": args.get("updateTag"),
+            "updateTag": args.get("runTimestamp"),
             "refreshEntitlements": args.get("refreshEntitlements"),
             "identityStoreRegion": args.get("identityStoreRegion"),
             "awsInternalAccounts": args.get("awsInternalAccounts"),
@@ -198,7 +198,7 @@ def process_request(context, args):
                 "services": args.get('services'),
             },
             "services": svcs,
-            "updateTag": args.get('updateTag'),
+            "updateTag": args.get('runTimestamp'),
         }
 
         resp = cartography.cli.run_azure(body)
@@ -263,7 +263,7 @@ def publish_response(context, body, resp, args):
                 "externalId": body.get("externalId"),
                 "response": resp,
                 "services": body.get("params", {}).get("services"),
-                "updateTag": resp.get("updateTag", None),
+                "runTimestamp": resp.get("updateTag", None),
                 "iamEntitlementRequestTopic": body.get("params", {}).get("iamEntitlementRequestTopic"),
                 "dc": args.get("dc"),
             }
@@ -283,9 +283,9 @@ def publish_response(context, body, resp, args):
                 "partial": body.get("params", {}).get("partial"),
                 "response": resp,
                 "services": body.get("params", {}).get("services"),
-                "updateTag": resp.get("updateTag", None),
+                "runTimestamp": resp.get("updateTag", None),
                 "tenantId": body.get("azure", {}).get("tenant_id"),
-                "dc": args.get("dc"),
+                "dc": args.get("dc")
             }
 
         sns_helper = SNSLibrary(context)

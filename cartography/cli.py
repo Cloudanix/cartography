@@ -851,6 +851,7 @@ def run_gcp(request):
         params=request['params'],
         gcp_requested_syncs=request.get('services', None),
         refresh_entitlements=request.get('refreshEntitlements', False),
+        update_tag=request.get('updateTag', None),
     )
 
     if request['logging']['mode'] == "verbose":
@@ -875,6 +876,7 @@ def run_github(request):
         params=request['params'],
         github_config=request.get('github_config', None),
         gcp_requested_syncs=request.get('services', None),
+        update_tag=request.get('updateTag', None),
     )
 
     if request['logging']['mode'] == "verbose":
@@ -898,6 +900,7 @@ def run_bitbucket(request):
         neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
         params=request['params'],
         bitbucket_access_token=request['bitbucket']['access_token'],
+        update_tag=request.get('updateTag', None),
     )
 
     if request['logging']['mode'] == "verbose":
@@ -921,6 +924,7 @@ def run_gitlab(request):
         neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
         params=request['params'],
         gitlab_access_token=request['gitlab']['access_token'],
+        update_tag=request.get('updateTag', None),
     )
 
     if request['logging']['mode'] == "verbose":

@@ -60,7 +60,7 @@ def process_request(msg: Dict):
             "services": msg.get('services'),
         },
         "services": svcs,
-        "updateTag": msg.get('updateTag'),
+        "updateTag": msg.get('runTimestamp'),
     }
 
     resp = cartography.cli.run_azure(body)
@@ -126,7 +126,7 @@ def main(event: func.EventGridEvent, outputEvent: func.Out[func.EventGridOutputE
             "partial": msg.get('partial'),
             "response": resp,
             "services": resp.get("services", None),
-            "updateTag": resp.get("updateTag", None),
+            "runTimestamp": resp.get("updateTag", None),
         }
 
         # If cartography processing response object contains `services` object that means pagination is in progress. push the message back to the same queue for continuation.

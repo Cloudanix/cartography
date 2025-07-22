@@ -271,8 +271,6 @@ def _load_lambda_event_source_mappings(
 ) -> None:
     ingest_esms = """
     UNWIND $esm_list AS esm
-    WHERE esm.EventSourceArn IS NOT NULL AND esm.FunctionArn IS NOT NULL
-    AND esm.EventSourceArn <> '' AND esm.FunctionArn <> ''
     MERGE (e:AWSLambdaEventSourceMapping{id: esm.EventSourceArn})
     ON CREATE SET e.firstseen = timestamp()
     SET e.batchsize = esm.BatchSize,
