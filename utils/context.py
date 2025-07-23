@@ -1,4 +1,5 @@
 import json
+import os
 
 
 class AppContext:
@@ -226,6 +227,8 @@ class AppContext:
         self.sns_offline_url = self.get_value(config, ['common', 'sns', 'offlineURL'])
 
         self.aws_cartography_queue_url = self.get_value(config, ["common", "cartography", "queueUrl"])
+        if os.environ.get("CDX_CLOUD_TYPE") == "AZURE":
+            self.aws_cartography_queue_url = self.get_value(config, ["common", "cartography", "azure", "queueUrl"])
 
         if config.get('audit'):
             cfg = config['audit']

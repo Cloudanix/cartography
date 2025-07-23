@@ -106,7 +106,7 @@ def gcp_process_request(logger, params):
             "iamEntitlementRequestTopic": params.get('iamEntitlementRequestTopic'),
         },
         "services": svcs,
-        "updateTag": params.get('updateTag'),
+        "updateTag": params.get('runTimestamp'),
     }
 
     resp = cartography.cli.run_gcp(body)
@@ -189,7 +189,7 @@ def github_process_request(logger, params):
             "services": params.get("services"),
         },
         "services": svcs,
-        "updateTag": params.get('updateTag'),
+        "updateTag": params.get('runTimestamp'),
     }
 
     resp = cartography.cli.run_github(body)
@@ -261,7 +261,7 @@ def bitbucket_process_request(logger, params):
             "services": params.get("services"),
         },
         "services": svcs,
-        "updateTag": params.get('updateTag'),
+        "updateTag": params.get('runTimestamp'),
     }
 
     resp = cartography.cli.run_bitbucket(body)
@@ -330,7 +330,7 @@ def gitlab_process_request(logger, params):
             "services": params.get("services"),
         },
         "services": svcs,
-        "updateTag": params.get('updateTag'),
+        "updateTag": params.get('runTimestamp'),
     }
 
     resp = cartography.cli.run_gitlab(body)
@@ -394,7 +394,7 @@ def publish_response(logger, body, resp, params):
         "iamEntitlementRequestTopic": body.get('params', {}).get('iamEntitlementRequestTopic'),
         "response": resp,
         "services": body.get('params', {}).get('services', []),
-        "updateTag": resp.get("updateTag", None),
+        "runTimestamp": resp.get("updateTag", None),
     }
 
     pubsub_helper = PubSubLibrary()
