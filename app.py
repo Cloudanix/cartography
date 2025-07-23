@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from threading import Thread
+from neo4j.exceptions import Neo4jError
 
 import cartography.cli
 from libraries.authlibrary import AuthLibrary
@@ -61,176 +62,189 @@ def init_app(ctx):
     app_init = True
 
 
-def process_request(context, args):
-    context.logger.info(
-        f'request - {args.get("templateType")} - {args.get("sessionString")} - {args.get("eventId")} - {args.get("workspace")}',
-    )
+def process_request(context, args, retry=0):
+    try:
+        context.logger.info(
+            f'request - {args.get("templateType")} - {args.get("sessionString")} - {args.get("eventId")} - {args.get("workspace")}',
+        )
 
-    svcs = []
-    for svc in args.get("services", []):
-        page = svc.get("pagination", {}).get("pageSize")
-        if page:
-            svc["pagination"]["pageSize"] = 10000
+        svcs = []
+        for svc in args.get("services", []):
+            page = svc.get("pagination", {}).get("pageSize")
+            if page:
+                svc["pagination"]["pageSize"] = 10000
 
-        svcs.append(svc)
+            svcs.append(svc)
 
-    # Connect to Data Center Specific database
-    request_data_center = args.get("dc", "US")
-    if request_data_center == "US":
-        context.neo4j_uri = os.environ["CDX_APP_NEO4J_URI"]
-        context.neo4j_user = os.environ["CDX_APP_NEO4J_USER"]
-        context.neo4j_pwd = os.environ["CDX_APP_NEO4J_PWD"]
+        # Connect to Data Center Specific database
+        request_data_center = args.get("dc", "US")
+        if request_data_center == "US":
+            context.neo4j_uri = os.environ["CDX_APP_NEO4J_URI"]
+            context.neo4j_user = os.environ["CDX_APP_NEO4J_USER"]
+            context.neo4j_pwd = os.environ["CDX_APP_NEO4J_PWD"]
 
-    elif request_data_center == "IN":
-        context.neo4j_uri = os.environ["CDX_IN_APP_NEO4J_URI"]
-        context.neo4j_user = os.environ["CDX_IN_APP_NEO4J_USER"]
-        context.neo4j_pwd = os.environ["CDX_IN_APP_NEO4J_PWD"]
+        elif request_data_center == "IN":
+            context.neo4j_uri = os.environ["CDX_IN_APP_NEO4J_URI"]
+            context.neo4j_user = os.environ["CDX_IN_APP_NEO4J_USER"]
+            context.neo4j_pwd = os.environ["CDX_IN_APP_NEO4J_PWD"]
 
-    else:
-        context.neo4j_uri = os.environ["CDX_APP_NEO4J_URI"]
-        context.neo4j_user = os.environ["CDX_APP_NEO4J_USER"]
-        context.neo4j_pwd = os.environ["CDX_APP_NEO4J_PWD"]
+        else:
+            context.neo4j_uri = os.environ["CDX_APP_NEO4J_URI"]
+            context.neo4j_user = os.environ["CDX_APP_NEO4J_USER"]
+            context.neo4j_pwd = os.environ["CDX_APP_NEO4J_PWD"]
 
-    if args.get("templateType") == "AWSINVENTORYVIEWS":
-        creds = None
-        try:
-            creds = get_auth_creds(context, args)
+        if args.get("templateType") == "AWSINVENTORYVIEWS":
+            creds = None
+            try:
+                creds = get_auth_creds(context, args)
 
-        except Exception as e:
-            context.logger.error(
-                f"error while getting auth creds: {e}", exc_info=True, stack_info=True, extra={"context": args},
-            )
+            except Exception as e:
+                context.logger.error(
+                    f"error while getting auth creds: {e}", exc_info=True, stack_info=True, extra={"context": args},
+                )
 
-            sns_helper = SNSLibrary(context)
-            if args.get("params", {}).get("resultTopic"):
-                payload = {
-                    "status": "failure",
-                    "params": args.get("params"),
+                sns_helper = SNSLibrary(context)
+                if args.get("params", {}).get("resultTopic"):
+                    payload = {
+                        "status": "failure",
+                        "params": args.get("params"),
+                        "sessionString": args.get("sessionString"),
+                        "eventId": args.get("eventId"),
+                        "templateType": args.get("templateType"),
+                        "workspace": args.get("workspace"),
+                        "actions": args.get("actions"),
+                        "resultTopic": args.get("resultTopic"),
+                        "requestTopic": args.get("requestTopic"),
+                        "identityStoreIdentifier": args.get("identityStoreIdentifier"),
+                        "partial": args.get("partial", False),
+                        "inventoryReturn": args.get("inventoryReturn", False),
+                        "services": args.get("services"),
+                        "dc": args.get("dc"),
+                        "error": str(e),
+                    }
+                    status = sns_helper.publish(json.dumps(payload), args["params"]["resultTopic"])
+                    context.logger.debug(f"result published to SNS with status: {status}")
+
+                return
+
+            body = {
+                "credentials": creds,
+                "neo4j": {
+                    "uri": context.neo4j_uri,
+                    "user": context.neo4j_user,
+                    "pwd": context.neo4j_pwd,
+                    "connection_lifetime": int(context.neo4j_connection_lifetime),
+                },
+                "logging": {
+                    "mode": "verbose",
+                },
+                "params": {
                     "sessionString": args.get("sessionString"),
                     "eventId": args.get("eventId"),
                     "templateType": args.get("templateType"),
+                    "regions": args.get("regions"),
                     "workspace": args.get("workspace"),
                     "actions": args.get("actions"),
                     "resultTopic": args.get("resultTopic"),
                     "requestTopic": args.get("requestTopic"),
+                    "iamEntitlementRequestTopic": args.get("iamEntitlementRequestTopic"),
                     "identityStoreIdentifier": args.get("identityStoreIdentifier"),
                     "partial": args.get("partial", False),
                     "inventoryReturn": args.get("inventoryReturn", False),
                     "services": args.get("services"),
                     "dc": args.get("dc"),
-                    "error": str(e),
-                }
-                status = sns_helper.publish(json.dumps(payload), args["params"]["resultTopic"])
-                context.logger.debug(f"result published to SNS with status: {status}")
+                },
+                "services": svcs,
+                "updateTag": args.get("runTimestamp"),
+                "refreshEntitlements": args.get("refreshEntitlements"),
+                "identityStoreRegion": args.get("identityStoreRegion"),
+                "awsInternalAccounts": args.get("awsInternalAccounts"),
+            }
 
-            return
+            resp = cartography.cli.run_aws(body)
 
-        body = {
-            "credentials": creds,
-            "neo4j": {
-                "uri": context.neo4j_uri,
-                "user": context.neo4j_user,
-                "pwd": context.neo4j_pwd,
-                "connection_lifetime": int(context.neo4j_connection_lifetime),
-            },
-            "logging": {
-                "mode": "verbose",
-            },
-            "params": {
-                "sessionString": args.get("sessionString"),
-                "eventId": args.get("eventId"),
-                "templateType": args.get("templateType"),
-                "regions": args.get("regions"),
-                "workspace": args.get("workspace"),
-                "actions": args.get("actions"),
-                "resultTopic": args.get("resultTopic"),
-                "requestTopic": args.get("requestTopic"),
-                "iamEntitlementRequestTopic": args.get("iamEntitlementRequestTopic"),
-                "identityStoreIdentifier": args.get("identityStoreIdentifier"),
-                "partial": args.get("partial", False),
-                "inventoryReturn": args.get("inventoryReturn", False),
-                "services": args.get("services"),
-                "dc": args.get("dc"),
-            },
-            "services": svcs,
-            "updateTag": args.get("runTimestamp"),
-            "refreshEntitlements": args.get("refreshEntitlements"),
-            "identityStoreRegion": args.get("identityStoreRegion"),
-            "awsInternalAccounts": args.get("awsInternalAccounts"),
-        }
+        elif args.get("templateType") == "AZUREINVENTORYVIEWS":
+            body = {
+                "azure": {
+                    "client_id": os.environ.get('CDX_AZURE_CLIENT_ID'),
+                    "client_secret": os.environ.get('CDX_AZURE_CLIENT_SECRET'),
+                    "redirect_uri": os.environ.get('CDX_AZURE_REDIRECT_URI'),
+                    "subscription_id": args.get('workspace', {}).get('account_id'),
+                    "tenant_id": args.get('tenantId'),
+                    "refresh_token": args.get('refreshToken'),
+                    "graph_scope": os.environ.get('CDX_AZURE_GRAPH_SCOPE'),
+                    "azure_scope": os.environ.get('CDX_AZURE_AZURE_SCOPE'),
+                    "default_graph_scope": os.environ.get('CDX_AZURE_DEFAULT_GRAPH_SCOPE'),
+                    "vault_scope": os.environ.get('CDX_AZURE_KEY_VAULT_SCOPE'),
+                },
+                "neo4j": {
+                    "uri": context.neo4j_uri,
+                    "user": context.neo4j_user,
+                    "pwd": context.neo4j_pwd,
+                    "connection_lifetime": 200,
+                },
+                "logging": {
+                    "mode": "verbose",
+                },
+                "params": {
+                    "sessionString": args.get('sessionString'),
+                    "eventId": args.get('eventId'),
+                    "templateType": args.get('templateType'),
+                    "workspace": args.get('workspace'),
+                    "groups": args.get('groups'),
+                    "subscriptions": args.get('subscriptions'),
+                    "actions": args.get('actions'),
+                    "resultTopic": args.get('resultTopic'),
+                    "requestTopic": args.get('requestTopic'),
+                    "partial": args.get('partial'),
+                    "services": args.get('services'),
+                },
+                "services": svcs,
+                "updateTag": args.get('runTimestamp'),
+            }
 
-        resp = cartography.cli.run_aws(body)
+            resp = cartography.cli.run_azure(body)
 
-    elif args.get("templateType") == "AZUREINVENTORYVIEWS":
-        body = {
-            "azure": {
-                "client_id": os.environ.get('CDX_AZURE_CLIENT_ID'),
-                "client_secret": os.environ.get('CDX_AZURE_CLIENT_SECRET'),
-                "redirect_uri": os.environ.get('CDX_AZURE_REDIRECT_URI'),
-                "subscription_id": args.get('workspace', {}).get('account_id'),
-                "tenant_id": args.get('tenantId'),
-                "refresh_token": args.get('refreshToken'),
-                "graph_scope": os.environ.get('CDX_AZURE_GRAPH_SCOPE'),
-                "azure_scope": os.environ.get('CDX_AZURE_AZURE_SCOPE'),
-                "default_graph_scope": os.environ.get('CDX_AZURE_DEFAULT_GRAPH_SCOPE'),
-                "vault_scope": os.environ.get('CDX_AZURE_KEY_VAULT_SCOPE'),
-            },
-            "neo4j": {
-                "uri": context.neo4j_uri,
-                "user": context.neo4j_user,
-                "pwd": context.neo4j_pwd,
-                "connection_lifetime": 200,
-            },
-            "logging": {
-                "mode": "verbose",
-            },
-            "params": {
-                "sessionString": args.get('sessionString'),
-                "eventId": args.get('eventId'),
-                "templateType": args.get('templateType'),
-                "workspace": args.get('workspace'),
-                "groups": args.get('groups'),
-                "subscriptions": args.get('subscriptions'),
-                "actions": args.get('actions'),
-                "resultTopic": args.get('resultTopic'),
-                "requestTopic": args.get('requestTopic'),
-                "partial": args.get('partial'),
-                "services": args.get('services'),
-            },
-            "services": svcs,
-            "updateTag": args.get('runTimestamp'),
-        }
-
-        resp = cartography.cli.run_azure(body)
-
-    if resp.get("status", "") == "success":
-        if resp.get("pagination", None):
-            services = []
-            for service, pagination in resp.get("pagination", {}).items():
-                if pagination.get("hasNextPage", False):
-                    services.append(
-                        {
-                            "name": service,
-                            "pagination": {
-                                "pageSize": pagination.get("pageSize", 1),
-                                "pageNo": pagination.get("pageNo", 0) + 1,
+        if resp.get("status", "") == "success":
+            if resp.get("pagination", None):
+                services = []
+                for service, pagination in resp.get("pagination", {}).items():
+                    if pagination.get("hasNextPage", False):
+                        services.append(
+                            {
+                                "name": service,
+                                "pagination": {
+                                    "pageSize": pagination.get("pageSize", 1),
+                                    "pageNo": pagination.get("pageNo", 0) + 1,
+                                },
                             },
-                        },
-                    )
-            if len(services) > 0:
-                resp["services"] = services
-            else:
-                del resp["updateTag"]
-            del resp["pagination"]
+                        )
+                if len(services) > 0:
+                    resp["services"] = services
+                else:
+                    del resp["updateTag"]
+                del resp["pagination"]
 
-        context.logger.debug(f"successfully processed cartography: {resp}")
+            context.logger.debug(f"successfully processed cartography: {resp}")
 
-    else:
-        context.logger.info(f'failed to process cartography: {resp["message"]}')
+        else:
+            context.logger.info(f'failed to process cartography: {resp["message"]}')
 
-    publish_response(context, body, resp, args)
+        publish_response(context, body, resp, args)
 
-    context.logger.debug(f'inventory sync aws response - {args["eventId"]}: {json.dumps(resp)}')
+        context.logger.debug(f'inventory sync aws response - {args["eventId"]}: {json.dumps(resp)}')
+    except Neo4jError as e:
+        context.logger.error(
+            f"Neo4j Error. Retry - {retry} ",
+            extra={
+                "error": str(e),
+                "message": args
+            },
+        )
+        retry += 1
+        if retry < 2:
+            time.sleep(60)
+            process_request(context, args, retry)
 
 
 def publish_response(context, body, resp, args):
