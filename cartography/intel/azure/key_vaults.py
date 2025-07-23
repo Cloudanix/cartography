@@ -93,8 +93,8 @@ def update_access_policies(vault: Dict, common_job_parameters: Dict, client: Key
 def transform_key_vaults(key_vaults: List[Dict], regions: List, common_job_parameters: Dict) -> List[Dict]:
     key_vaults_data = []
     for vault in key_vaults:
-        vault['created_on'] = vault.get('systemData',{}).get('createdAt')
-        vault['updated_on'] = vault.get('systemData',{}).get('lastModifiedAt')
+        vault['created_on'] = vault.get('systemData', {}).get('createdAt')
+        vault['updated_on'] = vault.get('systemData', {}).get('lastModifiedAt')
         vault['resource_group'] = get_azure_resource_group_name(vault.get('id'))
         vault['consolelink'] = azure_console_link.get_console_link(
             id=vault['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
@@ -137,11 +137,11 @@ def _load_key_vaults_tx(
         update_tag=update_tag,
     )
     for key_vault in key_vaults_list:
-        resource_group=get_azure_resource_group_name(key_vault.get('id'))
-        _attach_resource_group_key_vaults(tx,key_vault['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(key_vault.get('id'))
+        _attach_resource_group_key_vaults(tx, key_vault['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_key_vaults( tx: neo4j.Transaction, key_vault_id:str,resource_group:str, update_tag: int) -> None:
+def _attach_resource_group_key_vaults(tx: neo4j.Transaction, key_vault_id: str, resource_group: str, update_tag: int) -> None:
     ingest_vault = """
     MATCH (k:AzureKeyVault{id: $key_vault_id})
     WITH k
@@ -156,6 +156,7 @@ def _attach_resource_group_key_vaults( tx: neo4j.Transaction, key_vault_id:str,r
         resource_group=resource_group,
         update_tag=update_tag,
     )
+
 
 @timeit
 def get_key_vault_keys_list(client: KeyVaultManagementClient, vault: Dict) -> List[Dict]:
@@ -300,6 +301,7 @@ def get_key_vault_certificates(client: CertificateClient, vault: Dict) -> List[D
         logger.warning(f"Error while retrieving certificates list - {e}")
         return []
 
+
 @timeit
 def transform_key_vault_certificates(certificates: List[Dict], vault_id: str, common_job_parameters):
     certificates_data = []
@@ -374,7 +376,8 @@ def sync_key_vaults(
 
         # KEY VAULT CERTIFICATES
         try:
-            update_access_policies(key_vault, common_job_parameters, client)
+            # To update access policies need write permissions
+            # update_access_policies(key_vault, common_job_parameters, client)
             certificate_client = get_key_vault_certificates_client(credentials.vault_credentials, key_vault.get('properties', {}).get('vault_uri', None))
             certificates = get_key_vault_certificates(certificate_client, key_vault)
             certificates_list = transform_key_vault_certificates(certificates, key_vault.get('id', None), common_job_parameters)
