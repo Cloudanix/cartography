@@ -481,7 +481,7 @@ def extend_visibility_timeout(message, receipt_handle, timeout_duration, stop_ev
                 status = sqs_library.delete_message(receipt_handle)
                 if status:
                     context.logger.warning(
-                        f"Maximum runtime has been reached. Deleted message from queue - {json.loads(message["Body"])}",
+                        f"Maximum runtime has been reached. Deleted message from queue - {json.loads(message['Body'])}",
                         extra={"message": message["Body"], "handle": receipt_handle, "status": status},
                     )
                 break
