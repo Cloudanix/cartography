@@ -66,7 +66,7 @@ def _sync_one_subscription(
 
     common_job_parameters['Azure_Primary_AD_Domain_Name'] = tenant['defaultDomain']
 
-    if os.environ.get("LOCAL_RUN", "0") == "1":
+    if os.environ.get("LOCAL_RUN", "0") == "1" or os.environ.get("CDX_RUN_AS") == "EKS":
         # BEGIN - Sequential Run
 
         for func_name in requested_syncs:
