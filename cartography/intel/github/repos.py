@@ -473,14 +473,14 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
     """
     for owner in repo_owners:
         ingest_owner_template = Template("""
-            MERGE (user:$account_type{id: $Id})
-            ON CREATE SET user.firstseen = timestamp()
-            SET user.username = $UserName,
-            user.lastupdated = $UpdateTag
-            WITH user
+            MERGE (node:$account_type{id: $Id})
+            ON CREATE SET node.firstseen = timestamp()
+            SET node.username = $UserName,
+            node.lastupdated = $UpdateTag
+            WITH node
 
             MATCH (repo:GitHubRepository{id: $RepoId})
-            MERGE (user)<-[r:RESOURCE]-(repo)
+            MERGE (node)-[r:RESOURCE]->(repo)
             ON CREATE SET r.firstseen = timestamp()
             SET r.lastupdated = $UpdateTag""")
 
