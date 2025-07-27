@@ -1,5 +1,6 @@
 import configparser
 import logging
+import time
 from string import Template
 from typing import Any
 from typing import Dict
@@ -581,8 +582,6 @@ def get_org_repos(org_name, access_token):
             all_repos.extend(repos)
             page += 1
         else:
-            print(f"Error: {response.status_code}")
-            print(response.text)
             break
 
     return all_repos
@@ -604,11 +603,16 @@ def sync(
     :param organization: The organization to query GitHub for
     :return: Nothing
     """
-    logger.info("Syncing GitHub repos")
+    tic = time.perf_counter()
+    logger.info("Syncing GitHub Repositories instances in account %s - url %s", organization, github_url)
 
     # repos_list = get_org_repos(organization, github_api_key)
     repos_json = get(github_api_key, github_url, organization)
+
     repo_data = transform(repos_json)
     load(neo4j_session, common_job_parameters, repo_data)
 
     run_cleanup_job("github_repos_cleanup.json", neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process GitHub repositories: {toc - tic:0.4f} seconds")

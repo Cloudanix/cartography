@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from threading import Thread
+
 from neo4j.exceptions import Neo4jError
 
 import cartography.cli
@@ -238,7 +239,7 @@ def process_request(context, args, retry=0):
             f"Neo4j Error. Retry - {retry} ",
             extra={
                 "error": str(e),
-                "message": args
+                "message": args,
             },
         )
         retry += 1
@@ -299,7 +300,7 @@ def publish_response(context, body, resp, args):
                 "services": body.get("params", {}).get("services"),
                 "runTimestamp": resp.get("updateTag", None),
                 "tenantId": body.get("azure", {}).get("tenant_id"),
-                "dc": args.get("dc")
+                "dc": args.get("dc"),
             }
 
         sns_helper = SNSLibrary(context)

@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
@@ -41,26 +42,26 @@ def get_teams(org: str, api_url: str, token: str) -> Tuple[PaginatedGraphqlData,
             }
         }
     """
-    return fetch_all(token, api_url, org, org_teams_gql, 'teams')
+    return fetch_all(token, api_url, org, org_teams_gql, "teams")
 
 
 @timeit
 def _get_team_repos_for_multiple_teams(
-        team_raw_data: List[Dict[str, Any]],
-        org: str,
-        api_url: str,
-        token: str,
+    team_raw_data: List[Dict[str, Any]],
+    org: str,
+    api_url: str,
+    token: str,
 ) -> Dict[str, Any]:
     result = {}
     for team in team_raw_data:
-        team_name = team['slug']
-        repo_count = team['repositories']['totalCount']
+        team_name = team["slug"]
+        repo_count = team["repositories"]["totalCount"]
 
         team_repos = _get_team_repos(org, api_url, token, team_name) if repo_count > 0 else None
 
         # Shape = [(repo_url, 'WRITE'), ...]]
-        repo_urls = [t['url'] for t in team_repos.nodes] if team_repos else []
-        repo_permissions = [t['permission'] for t in team_repos.edges] if team_repos else []
+        repo_urls = [t["url"] for t in team_repos.nodes] if team_repos else []
+        repo_permissions = [t["permission"] for t in team_repos.edges] if team_repos else []
 
         result[team_name] = list(zip(repo_urls, repo_permissions))
     return result
@@ -102,28 +103,28 @@ def _get_team_repos(org: str, api_url: str, token: str, team: str) -> PaginatedG
         api_url,
         org,
         team_repos_gql,
-        'team',
-        resource_inner_type='repositories',
+        "team",
+        resource_inner_type="repositories",
         team=team,
     )
     return team_repos
 
 
 def transform_teams(
-        team_paginated_data: PaginatedGraphqlData,
-        org_data: Dict[str, Any],
-        team_repo_data: Dict[str, Any],
+    team_paginated_data: PaginatedGraphqlData,
+    org_data: Dict[str, Any],
+    team_repo_data: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     result = []
     for team in team_paginated_data.nodes:
-        team_name = team['slug']
+        team_name = team["slug"]
         repo_info = {
-            'name': team_name,
-            'url': team['url'],
-            'description': team['description'],
-            'repo_count': team['repositories']['totalCount'],
-            'org_url': org_data['url'],
-            'org_login': org_data['login'],
+            "name": team_name,
+            "url": team["url"],
+            "description": team["description"],
+            "repo_count": team["repositories"]["totalCount"],
+            "org_url": org_data["url"],
+            "org_login": org_data["login"],
         }
         repo_permissions = team_repo_data[team_name]
         if not repo_permissions:
@@ -140,10 +141,10 @@ def transform_teams(
 
 @timeit
 def load_team_repos(
-        neo4j_session: neo4j.Session,
-        data: List[Dict[str, Any]],
-        update_tag: int,
-        organization_login: str,
+    neo4j_session: neo4j.Session,
+    data: List[Dict[str, Any]],
+    update_tag: int,
+    organization_login: str,
 ) -> None:
     logger.info(f"Loading {len(data)} GitHub team-repos to the graph")
     load(
@@ -158,22 +159,28 @@ def load_team_repos(
 @timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
     # TODO: implement the cleanup statements
-    run_cleanup_job('github_teams_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("github_teams_cleanup.json", neo4j_session, common_job_parameters)
 
     GraphJob.from_node_schema(GitHubTeamSchema(), common_job_parameters).run(neo4j_session)
 
 
 @timeit
 def sync_github_teams(
-        neo4j_session: neo4j.Session,
-        common_job_parameters: Dict[str, Any],
-        github_api_key: str,
-        github_url: str,
-        organization: str,
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+    github_api_key: str,
+    github_url: str,
+    organization: str,
 ) -> None:
+    tic = time.perf_counter()
+    logger.info("Syncing GitHub Teams in account %s - url %s", organization, github_url)
+
     teams_paginated, org_data = get_teams(organization, github_url, github_api_key)
     team_repos = _get_team_repos_for_multiple_teams(teams_paginated.nodes, organization, github_url, github_api_key)
     processed_data = transform_teams(teams_paginated, org_data, team_repos)
-    load_team_repos(neo4j_session, processed_data, common_job_parameters['UPDATE_TAG'], org_data['login'])
-    common_job_parameters['org_login'] = org_data['login']
+    load_team_repos(neo4j_session, processed_data, common_job_parameters["UPDATE_TAG"], org_data["login"])
+    common_job_parameters["org_login"] = org_data["login"]
     cleanup(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process GitHub Teams: {toc - tic:0.4f} seconds")

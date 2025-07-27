@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import List
@@ -61,14 +62,16 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
         api_url,
         organization,
         GITHUB_ORG_USERS_PAGINATED_GRAPHQL,
-        'membersWithRole',
+        "membersWithRole",
     )
     return users.edges, org
 
 
 @timeit
 def load_organization_users(
-    neo4j_session: neo4j.Session, user_data: List[Dict], org_data: Dict,
+    neo4j_session: neo4j.Session,
+    user_data: List[Dict],
+    org_data: Dict,
     common_job_parameters: Dict[str, Any],
 ) -> None:
     query = """
@@ -101,35 +104,40 @@ def load_organization_users(
     """
     neo4j_session.run(
         query,
-        OrgUrl=org_data['url'],
-        OrgLogin=org_data['login'],
+        OrgUrl=org_data["url"],
+        OrgLogin=org_data["login"],
         UserData=user_data,
-        UpdateTag=common_job_parameters['UPDATE_TAG'],
-        workspace_id=common_job_parameters['WORKSPACE_ID'],
+        UpdateTag=common_job_parameters["UPDATE_TAG"],
+        workspace_id=common_job_parameters["WORKSPACE_ID"],
     )
 
 
 @timeit
 def sync(
-        neo4j_session: neo4j.Session,
-        common_job_parameters: Dict[str, Any],
-        github_api_key: str,
-        github_url: str,
-        organization: str,
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+    github_api_key: str,
+    github_url: str,
+    organization: str,
 ) -> None:
-    logger.info("Syncing GitHub users")
-    user_data, org_data = get_users(github_api_key,github_url, organization)
+    tic = time.perf_counter()
+    logger.info("Syncing GitHub Users in account %s - url %s", organization, github_url)
 
-    common_job_parameters['ORGANIZATION_ID']=org_data.get('login')
+    user_data, org_data = get_users(github_api_key, github_url, organization)
+
+    common_job_parameters["ORGANIZATION_ID"] = org_data.get("login")
 
     load_organization_users(neo4j_session, user_data, org_data, common_job_parameters)
     merge_module_sync_metadata(
         neo4j_session,
-        group_type='GitHubOrganization',
-        group_id=org_data['url'],
-        synced_type='GitHubOrganization',
-        update_tag=common_job_parameters['UPDATE_TAG'],
+        group_type="GitHubOrganization",
+        group_id=org_data["url"],
+        synced_type="GitHubOrganization",
+        update_tag=common_job_parameters["UPDATE_TAG"],
         stat_handler=stat_handler,
     )
 
-    run_cleanup_job('github_users_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("github_users_cleanup.json", neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process GitHub Users: {toc - tic:0.4f} seconds")
