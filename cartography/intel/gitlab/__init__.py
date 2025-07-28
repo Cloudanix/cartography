@@ -1,21 +1,14 @@
 import logging
-import os
-from concurrent.futures import as_completed
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from typing import Dict
 from typing import List
 
 import neo4j
-from neo4j import GraphDatabase
 from requests import exceptions
 
 import cartography.intel.gitlab.group
-import cartography.intel.gitlab.members
-import cartography.intel.gitlab.projects
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
-from cartography.graph.session import Session
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -48,7 +41,7 @@ def _sync_one_gitlab_group(
     common_job_parameters: Dict[str, Any],
     config: Config,
 ):
-    logger.info(f"Syncing Gitlab Group: {common_job_parameters['GITLAB_GROUP_ID']} - {group_name}")
+    logger.info(f"Syncing Gitlab Group: {common_job_parameters['GITLAB_GROUP_ID']}")
 
     sync_order = ["projects", "members"]
 

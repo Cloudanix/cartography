@@ -29,7 +29,10 @@ def get_group_members(access_token: str, group_id: int):
 
 
 def load_members_data(
-    session: neo4j.Session, members_data: List[Dict], common_job_parameters: Dict, group_id: int,
+    session: neo4j.Session,
+    members_data: List[Dict],
+    common_job_parameters: Dict,
+    group_id: int,
 ) -> None:
     # Ensure that we only process members that have an ID.
     # Some members, like invited members, may not have an ID.
@@ -42,35 +45,41 @@ def load_members_data(
 
 
 def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict, group_id: int):
-    ingest_group = """
+    ingest_group_query = """
     UNWIND $membersData as member
     MERGE (mem:GitLabMember {id: member.id})
-    ON CREATE SET mem.firstseen = timestamp(),
-    mem.created_at = member.created_at
+    ON CREATE SET
+        mem.firstseen = timestamp(),
+        mem.created_at = member.created_at
 
-    SET mem.name = member.name,
-    mem.id = member.id,
-    mem.username = member.username,
-    mem.state = member.state,
-    mem.profile_url = member.web_url,
-    mem.created_by = member.created_by,
-    mem.lastupdated = $UpdateTag
+    SET
+        mem.name = member.name,
+        mem.username = member.username,
+        mem.state = member.state,
+        mem.profile_url = member.web_url,
+        mem.created_by = member.created_by,
+        mem.access_level = member.access_level,
+        mem.avatar_url = member.avatar_url,
+        mem.email = member.public_email,
+        mem.expires_at = member.expires_at,
+        mem.group_id = member.group_id,
+        mem.locked = member.locked,
+        mem.membership_state = member.membership_state,
+        mem.web_url = member.web_url,
+        mem.lastupdated = $UpdateTag
 
-    WITH mem,member
+    WITH mem
     MATCH (owner:GitLabGroup {id: $GroupId})
-    merge (owner)-[o:MEMBER]->(mem)
+    MERGE (owner)-[o:MEMBER]->(mem)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
 
     """
     for member in members_data:
-        try:
-            member["created_by"] = member["created_by"]["username"]
-        except (KeyError, TypeError):
-            member["created_by"] = None
+        member["created_by"] = member.get("created_by", {}).get("username") if member.get("created_by") else None
 
     tx.run(
-        ingest_group,
+        ingest_group_query,
         membersData=members_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
         GroupId=group_id,
@@ -99,6 +108,7 @@ def sync(
     logger.info("Syncing Members for Gitlab Group '%s', at %s.", group_name, tic)
 
     group_members = get_group_members(access_token, group_id)
+
     load_members_data(neo4j_session, group_members, common_job_parameters, group_id)
     cleanup(neo4j_session, common_job_parameters)
 

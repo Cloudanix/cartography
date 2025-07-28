@@ -26,29 +26,46 @@ def get_group_projects(access_token: str, group_id: int):
     return projects
 
 
-def load_projects_data(session: neo4j.Session, project_data: List[Dict], common_job_parameters: Dict) -> None:
-    session.write_transaction(_load_projects_data, project_data, common_job_parameters)
+def load_projects_data(
+    session: neo4j.Session,
+    project_data: List[Dict],
+    common_job_parameters: Dict,
+    group_id: int,
+) -> None:
+    session.write_transaction(_load_projects_data, project_data, common_job_parameters, group_id)
 
 
-def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_job_parameters: Dict):
+def _load_projects_data(
+    tx: neo4j.Transaction,
+    project_data: List[Dict],
+    common_job_parameters: Dict,
+    group_id: int,
+) -> None:
     ingest_group = """
     UNWIND $projectData as project
     MERGE (pro:GitLabProject {id: project.id})
-    ON CREATE SET pro.firstseen = timestamp(),
-    pro.created_at = project.created_at
+    ON CREATE SET
+        pro.firstseen = timestamp(),
+        pro.created_at = project.created_at
 
-    SET pro.description = project.description,
-    pro.name = project.name,
-    pro.name_with_namespace = project.name_with_namespace,
-    pro.id = project.id,
-    pro.visibility = project.visibility,
-    pro.namespace= project.namespace.path,
-    pro.last_activity_at = project.last_activity_at,
-    pro.default_branch = project.default_branch,
-    pro.lastupdated = $UpdateTag
+    SET
+        pro.name = project.name,
+        pro.archived = project.archived,
+        pro.avatar_url = project.avatar_url,
+        pro.creator_id = project.creator_id,
+        pro.web_url = project.web_url,
+        pro.path = project.path,
+        pro.path_with_namespace = project.path_with_namespace,
+        pro.description = project.description,
+        pro.name_with_namespace = project.name_with_namespace,
+        pro.visibility = project.visibility,
+        pro.namespace= project.namespace.path,
+        pro.last_activity_at = project.last_activity_at,
+        pro.default_branch = project.default_branch,
+        pro.lastupdated = $UpdateTag
 
     WITH pro, project
-    MATCH (group:GitLabGroup{id: project.namespace.id})
+    MATCH (group:GitLabGroup{id: $GroupId})
     MERGE (group)-[r:RESOURCE]->(pro)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -58,6 +75,7 @@ def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_
         ingest_group,
         projectData=project_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
+        GroupId=group_id,
     )
 
 
@@ -83,7 +101,8 @@ def sync(
     logger.info("Syncing Projects for Gitlab Group '%s', at %s.", group_name, tic)
 
     group_projects = get_group_projects(access_token, group_id)
-    load_projects_data(neo4j_session, group_projects, common_job_parameters)
+
+    load_projects_data(neo4j_session, group_projects, common_job_parameters, group_id)
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

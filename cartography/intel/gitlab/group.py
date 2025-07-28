@@ -7,7 +7,6 @@ from typing import List
 import neo4j
 
 from cartography.intel.gitlab.pagination import paginate_request
-from cartography.intel.gitlab.projects import load_projects_data
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -45,18 +44,28 @@ def load_group_data(session: neo4j.Session, group_data: List[Dict], common_job_p
 
 
 def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_parameters: Dict):
-    ingest_group = """
-    MERGE (group:GitLabGroup{id: $id})
+    ingest_group_query = """
+    UNWIND $groups AS grp
+    WITH grp
+    WHERE grp.id IS NOT NULL AND grp.name IS NOT NULL
+    MERGE (group:GitLabGroup{id: grp.name})
     ON CREATE SET
         group.firstseen = timestamp(),
-        group.created_at = $created_at
+        group.created_at = grp.created_at,
+        group.group_id = grp.id
 
     SET
-        group.path = $path,
-        group.id = $id,
-        group.name = $name,
-        group.description = $description,
-        group.visibility = $visibility,
+        group.path = grp.path,
+        group.name = grp.name,
+        group.description = grp.description,
+        group.visibility = grp.visibility,
+        group.web_url = grp.web_url,
+        group.archived = grp.archived,
+        group.full_name = grp.full_name,
+        group.avatar_url = grp.avatar_url,
+        group.full_path = grp.full_path,
+        group.organization_id = grp.organization_id,
+        group.parent_id = grp.parent_id,
         group.lastupdated = $UpdateTag
 
     WITH group
@@ -69,20 +78,12 @@ def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_p
         o.lastupdated = $UpdateTag
     """
 
-    for group in group_data:
-        tx.run(
-            ingest_group,
-            id=group.get("id"),
-            name=group.get("name"),
-            created_at=group.get("created_at"),
-            path=group.get("path"),
-            description=group.get("description"),
-            visibility=group.get("visibility"),
-            web_url=group.get("web_url"),
-            avatar_url=group.get("avatar_url"),
-            UpdateTag=common_job_parameters["UPDATE_TAG"],
-            workspace_id=common_job_parameters["WORKSPACE_ID"],
-        )
+    tx.run(
+        ingest_group_query,
+        groups=group_data,
+        UpdateTag=common_job_parameters["UPDATE_TAG"],
+        workspace_id=common_job_parameters["WORKSPACE_ID"],
+    )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
@@ -102,11 +103,11 @@ def sync(
     """
 
     tic = time.perf_counter()
-    logger.info("Syncing Groups '%s', at %s.", groups, tic)
+    logger.info("Syncing Groups at %s.", tic)
 
     load_group_data(neo4j_session, groups, common_job_parameters)
 
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
-    logger.info(f"Time to process Groups '{groups}': {toc - tic:0.4f} seconds")
+    logger.info(f"Time to process Groups '{len(groups)}': {toc - tic:0.4f} seconds")
