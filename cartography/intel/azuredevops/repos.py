@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def get_repositories_for_project(api_url: str, organization_name: str, project_id: str, token: str) -> List[Dict]:
+def get_repositories_for_project(api_url: str, organization_name: str, project_id: str, access_token: str) -> List[Dict]:
     """
     Retrieve a list of repositories from the given Azure DevOps project.
     """
     url = f"{api_url}/{organization_name}/{project_id}/_apis/git/repositories?api-version=7.1-preview.1"
-    response = call_azure_devops_api(url, token)
+    response = call_azure_devops_api(url, access_token)
     return response.get("value", []) if response else []
 
 
@@ -67,19 +67,23 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 def sync(
     neo4j_session: neo4j.Session,
     common_job_parameters: Dict[str, Any],
-    azure_devops_api_key: str,
+    access_token: str,
     azure_devops_url: str,
-    organization: str,
+    organization_name: str,
 ) -> None:
-    logger.info("Syncing Azure DevOps Repositories")
-    # We need to get the projects first to get the repositories
+    """
+    Syncs the repositories for the given Azure DevOps organization.
+    This function will iterate over all projects to get their repos.
+    """
+    logger.info(f"Syncing repositories for organization '{organization_name}'")
     from .projects import get_projects
-    projects = get_projects(azure_devops_url, organization, azure_devops_api_key)
+    projects = get_projects(azure_devops_url, organization_name, access_token)
 
     for project in projects:
-        project_id = project.get("id")
-        if project_id:
-            repos = get_repositories_for_project(azure_devops_url, organization, project_id, azure_devops_api_key)
-            if repos:
-                load_repositories(neo4j_session, repos, project_id, common_job_parameters)
-    cleanup(neo4j_session, common_job_parameters) 
+        project_id = project['id']
+        logger.info(f"Syncing repositories for project '{project['name']}'")
+        repos = get_repositories_for_project(azure_devops_url, organization_name, project_id, access_token)
+        if repos:
+            load_repositories(neo4j_session, repos, project_id, common_job_parameters)
+
+    cleanup(neo4j_session, common_job_parameters)

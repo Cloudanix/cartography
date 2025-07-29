@@ -7,9 +7,26 @@ logger = logging.getLogger(__name__)
 TIMEOUT = (60, 60)
 
 
+def get_access_token(tenant_id, client_id, client_secret, refresh_token):
+    """
+    Exchanges a refresh token for a new OAuth 2.0 access token.
+    """
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    data = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "scope": "499b84ac-1321-427f-aa17-267ca6975798/.default",  # Azure DevOps resource ID
+    }
+    response = requests.post(token_url, data=data, timeout=TIMEOUT)
+    response.raise_for_status()
+    return response.json()["access_token"]
+
+
 def call_azure_devops_api(
     url: str,
-    token: str,
+    access_token: str,
     method: str = "GET",
     params: Optional[Dict] = None,
     json_data: Optional[Dict] = None,
@@ -19,7 +36,7 @@ def call_azure_devops_api(
     """
     headers = {
         'Accept': 'application/json',
-        'Authorization': f'Basic {base64.b64encode(f":{token}".encode("ascii")).decode("ascii")}'
+        'Authorization': f'Bearer {access_token}',
     }
     try:
         response = requests.request(

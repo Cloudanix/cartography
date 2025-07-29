@@ -14,6 +14,7 @@ from requests import exceptions
 
 from . import organization
 from .resources import RESOURCE_FUNCTIONS
+from .util import get_access_token
 from cartography.config import Config
 from cartography.graph.session import Session
 from cartography.util import timeit
@@ -21,10 +22,12 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 
 
+@timeit
 def concurrent_execution(
-    service: str, service_func: Any, config: Config, organization_name: str, url, refresh_token: str, common_job_parameters: Dict,
+    service: str, service_func: Any, config: Config, org_name: str,
+    url: str, access_token: str, common_job_parameters: Dict,
 ):
-    logger.info(f"BEGIN processing for service: {service}")
+    logger.info(f"BEGIN processing for service: {service} for organization {org_name}")
     neo4j_auth = (config.neo4j_user, config.neo4j_password)
     neo4j_driver = GraphDatabase.driver(
         config.neo4j_uri,
@@ -32,69 +35,46 @@ def concurrent_execution(
         max_connection_lifetime=config.neo4j_max_connection_lifetime,
     )
     service_func(
-        Session(neo4j_driver), common_job_parameters, refresh_token, url, organization_name,
+        Session(neo4j_driver), common_job_parameters, access_token, url, org_name,
     )
-    logger.info(f"END processing for service: {service}")
+    logger.info(f"END processing for service: {service} for organization {org_name}")
 
 
 @timeit
-def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: Dict, common_job_parameters: Dict) -> None:
+def sync_organization(
+    neo4j_session: neo4j.Session, config: Config, org_name: str, url: str, access_token: str, common_job_parameters: Dict,
+) -> None:
     try:
-        logger.info("Syncing Azure DevOps Organization: %s", common_job_parameters["ORGANIZATION_ID"])
-        organization.sync(neo4j_session, auth_data["token"], auth_data["name"], auth_data["url"], common_job_parameters)
+        logger.info("Syncing Azure DevOps Organization: %s", org_name)
+        organization.sync(
+            neo4j_session,
+            access_token,
+            org_name,
+            url,
+            common_job_parameters,
+        )
 
         requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
 
-        if os.environ.get("LOCAL_RUN", "0") == "1":
-            # BEGIN - Sequential Run
-
-            sync_args = {
-                'neo4j_session': neo4j_session,
-                'common_job_parameters': common_job_parameters,
-                'azure_devops_api_key': auth_data['token'],
-                'azure_devops_url': auth_data['url'],
-                'organization': auth_data['name'],
-            }
-
+        with ThreadPoolExecutor(max_workers=len(requested_syncs)) as executor:
+            futures = []
             for func_name in requested_syncs:
-                if func_name in RESOURCE_FUNCTIONS:
-                    logger.info(f"Processing {func_name}")
-                    RESOURCE_FUNCTIONS[func_name](**sync_args)
+                logger.info(f"Queueing {func_name} for {org_name}")
+                futures.append(
+                    executor.submit(
+                        concurrent_execution,
+                        func_name,
+                        RESOURCE_FUNCTIONS[func_name],
+                        config,
+                        org_name,
+                        url,
+                        access_token,
+                        common_job_parameters,
+                    ),
+                )
 
-                else:
-                    raise ValueError(f'AZUREDEVOPS sync function "{func_name}" was specified but does not exist. Did you misspell it?')
-
-            # END - Sequential Run
-
-        else:
-            # BEGIN - Parallel Run
-
-            # Process each service in parallel.
-            with ThreadPoolExecutor(max_workers=len(RESOURCE_FUNCTIONS)) as executor:
-                futures = []
-                for request in requested_syncs:
-                    if request in RESOURCE_FUNCTIONS:
-                        futures.append(
-                            executor.submit(
-                                concurrent_execution,
-                                request,
-                                RESOURCE_FUNCTIONS[request],
-                                config,
-                                auth_data['name'],
-                                auth_data['url'],
-                                auth_data['token'],
-                                common_job_parameters,
-                            ),
-                        )
-                    else:
-                        raise ValueError(
-                            f'Azure DevOps sync function "{request}" was specified but does not exist. Did you misspell it?',
-                        )
-
-                for future in as_completed(futures):
-                    logger.info(f'Result from Future - Service Processing: {future.result()}')
-
-            # END - Parallel Run
+            for future in as_completed(futures):
+                logger.info(f'Result from Future - Service Processing: {future.result()}')
 
     except exceptions.RequestException as e:
         logger.error("Could not complete request to the Azure DevOps API: %s", e)
@@ -112,15 +92,40 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
         logger.info('Azure DevOps import is not configured - skipping this module. See docs to configure.')
         return
 
-    auth_tokens = json.loads(base64.b64decode(config.azure_devops_config).decode())
+    try:
+        auth_details = json.loads(base64.b64decode(config.azure_devops_config).decode())
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.error(f"Failed to parse Azure DevOps config: {e}", exc_info=True)
+        return
+
     common_job_parameters = {
         "WORKSPACE_ID": config.params['workspace']['id_string'],
         "UPDATE_TAG": config.update_tag,
-        "ORGANIZATION_ID": config.params['workspace']['account_id'],
     }
 
-    # run sync for the provided azure_devops tokens
-    for auth_data in auth_tokens['organization']:
-        sync_organization(neo4j_session, config, auth_data, common_job_parameters)
+    for account in auth_details.get('accounts', []):
+        try:
+            token_data = get_access_token(
+                account['tenant_id'],
+                account['client_id'],
+                account['client_secret'],
+                account['refresh_token'],
+            )
+            if not token_data or 'access_token' not in token_data:
+                logger.error(f"Failed to retrieve Azure DevOps access token for tenant {account.get('tenant_id')}")
+                continue
+
+            access_token = token_data['access_token']
+        except Exception as e:
+            logger.error(
+                f"Failed to retrieve Azure DevOps access token for tenant {account.get('tenant_id')}: {e}",
+                exc_info=True,
+            )
+            continue
+
+        for org_name in account.get('organization_names', []):
+            sync_organization(
+                neo4j_session, config, org_name, account['url'], access_token, common_job_parameters,
+            )
 
     return common_job_parameters 
