@@ -240,7 +240,7 @@ def start_azure_ingestion(
 ) -> None:
     common_job_parameters = {
         "WORKSPACE_ID": config.params['workspace']['id_string'],
-        "IAM_REFRASH": config.params.get('workspace', {}).get('iam_refrash'),
+        "IAM_REFRASH": config.params.get('workspace', {}).get('iam_refrash', True),
         "GROUPS": config.params.get('groups', []),
         "UPDATE_TAG": config.update_tag,
         "permission_relationships_file": config.permission_relationships_file,

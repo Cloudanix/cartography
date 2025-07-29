@@ -864,6 +864,7 @@ def get_roles_list(subscription_id: str, client: AuthorizationManagementClient, 
             else:
                 role["role_owner_type"] = 'custom'
 
+            role["identity_id"] = role['id'].split("/")[-1]
             role['consolelink'] = azure_console_link.get_console_link(
                 id=role['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
@@ -929,6 +930,7 @@ def _load_roles_tx(
     i.permissions = role.permissions,
     i.type = role.type,
     i.role_type = role.role_type,
+    i.identity_id = role.identity_id,
     i.role_owner_type = role.role_owner_type
     WITH i,role
     MATCH (t:AzureTenant{id: $tenant_id})
