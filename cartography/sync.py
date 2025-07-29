@@ -15,6 +15,7 @@ from statsd import StatsClient
 import cartography.intel.analysis
 import cartography.intel.create_indexes
 import cloudanix
+import cartography.intel.azuredevops
 from cartography.config import Config
 from cartography.stats import set_stats_client
 from cartography.util import STATUS_FAILURE
@@ -45,6 +46,7 @@ TOP_LEVEL_MODULES = OrderedDict({  # preserve order so that the default sync alw
     # 'oci': cartography.intel.oci.start_oci_ingestion,
     # 'okta': cartography.intel.okta.start_okta_ingestion,
     # 'github': cartography.intel.github.start_github_ingestion,
+    # 'azuredevops': cartography.intel.azuredevops.start_azure_devops_ingestion,
     # 'gitlab': cartography.intel.gitlab.start_gitlab_ingestion,
     # 'bitbucket': cartography.intel.bitbucket.start_bitbucket_ingestion,
     # 'digitalocean': cartography.intel.digitalocean.start_digitalocean_ingestion,
@@ -364,6 +366,26 @@ def build_gitlab_sync():
     stages = []
     stages.append(('cloudanix-workspace', cloudanix.run))
     stages.append(('gitlab', cartography.intel.gitlab.start_gitlab_ingestion))
+    stages.append(('analysis', cartography.intel.analysis.run))
+
+    sync.add_stages(stages)
+
+    return sync
+
+
+def build_azure_devops_sync():
+    """
+    Build the Azure DevOps cartography sync.
+    :rtype: cartography.sync.Sync
+    :return: The Azure DevOps cartography sync object.
+    """
+    import cartography.intel.azuredevops
+
+    sync = Sync()
+
+    stages = []
+    stages.append(('cloudanix-workspace', cloudanix.run))
+    stages.append(('azuredevops', cartography.intel.azuredevops.start_azure_devops_ingestion))
     stages.append(('analysis', cartography.intel.analysis.run))
 
     sync.add_stages(stages)

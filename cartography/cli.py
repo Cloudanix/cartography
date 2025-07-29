@@ -310,6 +310,15 @@ class CLI:
             ),
         )
         parser.add_argument(
+            '--azure-devops-config-env-var',
+            type=str,
+            default=None,
+            help=(
+                'The name of an environment variable containing a Base64 encoded Azure DevOps config object.'
+                'Required if you are using the Azure DevOps intel module. Ignored otherwise.'
+            ),
+        )
+        parser.add_argument(
             '--digitalocean-token-env-var',
             type=str,
             default=None,
@@ -608,6 +617,13 @@ class CLI:
             config.github_config = os.environ.get(config.github_config_env_var)
         else:
             config.github_config = None
+
+        # Azure DevOps config
+        if config.azure_devops_config_env_var:
+            logger.debug(f"Reading config string for Azure DevOps from environment variable {config.azure_devops_config_env_var}")
+            config.azure_devops_config = os.environ.get(config.azure_devops_config_env_var)
+        else:
+            config.azure_devops_config = None
 
         # DigitalOcean config
         if config.digitalocean_token_env_var:
@@ -924,6 +940,30 @@ def run_gitlab(request):
         neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
         params=request['params'],
         gitlab_access_token=request['gitlab']['access_token'],
+        update_tag=request.get('updateTag', None),
+    )
+
+    if request['logging']['mode'] == "verbose":
+        config.verbose = True
+    elif request['logging']['mode'] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog='cartography').process(config)
+
+
+def run_azure_devops(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('neo4j').setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_azure_devops_sync()
+    config = Config(
+        request['neo4j']['uri'],
+        neo4j_user=request['neo4j']['user'],
+        neo4j_password=request['neo4j']['pwd'],
+        neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
+        params=request['params'],
+        azure_devops_config=request.get('azure_devops_config', None),
         update_tag=request.get('updateTag', None),
     )
 
