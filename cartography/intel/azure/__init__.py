@@ -73,7 +73,7 @@ def _sync_one_subscription(
             if func_name in RESOURCE_FUNCTIONS:
                 logger.info(f"Processing {func_name}")
                 if func_name == 'iam':
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, subscription_id, update_tag, common_job_parameters)
+                    RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, credentials.tenant_id, update_tag, common_job_parameters)
 
                 elif func_name == 'key_vaults':
                     RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
@@ -240,6 +240,7 @@ def start_azure_ingestion(
 ) -> None:
     common_job_parameters = {
         "WORKSPACE_ID": config.params['workspace']['id_string'],
+        "IAM_REFRASH": config.params.get('workspace', {}).get('iam_refrash'),
         "GROUPS": config.params.get('groups', []),
         "UPDATE_TAG": config.update_tag,
         "permission_relationships_file": config.permission_relationships_file,
@@ -285,6 +286,7 @@ def start_azure_ingestion(
         requested_syncs = parse_and_validate_azure_requested_syncs(azure_requested_syncs_string[:-1])
 
     tenant_obj = tenant.get_active_tenant(credentials)
+    print(tenant_obj)
     common_job_parameters['Azure_Primary_AD_Domain_Name'] = tenant_obj['defaultDomain']
 
     _sync_tenant(

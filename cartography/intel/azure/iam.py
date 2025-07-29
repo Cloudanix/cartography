@@ -1147,35 +1147,36 @@ async def async_sync(
     scoped_group_ids = common_job_parameters.get('GROUPS', [])
     ingested_principal_ids: Optional[set] = None
     try:
-        if scoped_group_ids:
-            # Only sync specified groups and their users
-            ingested_principal_ids = await sync_scoped_users_and_groups(
-                neo4j_session, credentials, tenant_id,
-                update_tag, common_job_parameters, scoped_group_ids,
-            )
-        else:
-            # Sync all users and groups
-            await sync_tenant_users(
-                neo4j_session, credentials, tenant_id,
-                update_tag, common_job_parameters,
-            )
-            await sync_tenant_groups(
-                neo4j_session, credentials, tenant_id,
-                update_tag, common_job_parameters,
-            )
+        if common_job_parameters.get("IAM_REFRASH"):
+            if scoped_group_ids:
+                # Only sync specified groups and their users
+                ingested_principal_ids = await sync_scoped_users_and_groups(
+                    neo4j_session, credentials, tenant_id,
+                    update_tag, common_job_parameters, scoped_group_ids,
+                )
+            else:
+                # Sync all users and groups
+                await sync_tenant_users(
+                    neo4j_session, credentials, tenant_id,
+                    update_tag, common_job_parameters,
+                )
+                await sync_tenant_groups(
+                    neo4j_session, credentials, tenant_id,
+                    update_tag, common_job_parameters,
+                )
 
-        await sync_tenant_applications(
-            neo4j_session, credentials,
-            tenant_id, update_tag, common_job_parameters,
-        )
-        await sync_tenant_service_accounts(
-            neo4j_session, credentials,
-            tenant_id, update_tag, common_job_parameters,
-        )
-        await sync_tenant_domains(neo4j_session, credentials, tenant_id, update_tag, common_job_parameters)
-        sync_managed_identity(
-            neo4j_session, credentials, tenant_id, update_tag, common_job_parameters,
-        )
+            await sync_tenant_applications(
+                neo4j_session, credentials,
+                tenant_id, update_tag, common_job_parameters,
+            )
+            await sync_tenant_service_accounts(
+                neo4j_session, credentials,
+                tenant_id, update_tag, common_job_parameters,
+            )
+            await sync_tenant_domains(neo4j_session, credentials, tenant_id, update_tag, common_job_parameters)
+            sync_managed_identity(
+                neo4j_session, credentials, tenant_id, update_tag, common_job_parameters,
+            )
 
         sync_roles(
             neo4j_session, credentials, tenant_id, update_tag, common_job_parameters, ingested_principal_ids,
