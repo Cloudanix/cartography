@@ -5,9 +5,9 @@ from typing import List
 
 import neo4j
 
+from .util import call_azure_devops_api
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
-from .util import call_azure_devops_api
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +77,4 @@ def sync(
     projects = get_projects(azure_devops_url, organization_name, access_token)
     if projects:
         load_projects(neo4j_session, projects, organization_name, common_job_parameters)
-        run_cleanup_job(
-            "azure_devops_projects_cleanup.json",
-            neo4j_session,
-            common_job_parameters,
-        ) 
+        cleanup(neo4j_session, common_job_parameters)

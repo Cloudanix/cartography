@@ -5,9 +5,9 @@ from typing import List
 
 import neo4j
 
+from .util import call_azure_devops_api
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
-from .util import call_azure_devops_api
 
 logger = logging.getLogger(__name__)
 

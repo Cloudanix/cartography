@@ -48,10 +48,10 @@ def sync_organization(
         logger.info("Syncing Azure DevOps Organization: %s", org_name)
         organization.sync(
             neo4j_session,
-            access_token,
-            org_name,
-            url,
             common_job_parameters,
+            access_token,
+            url,
+            org_name,
         )
 
         requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
@@ -105,17 +105,16 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
 
     for account in auth_details.get('accounts', []):
         try:
-            token_data = get_access_token(
+            access_token = get_access_token(
                 account['tenant_id'],
                 account['client_id'],
                 account['client_secret'],
                 account['refresh_token'],
             )
-            if not token_data or 'access_token' not in token_data:
+            if not access_token:
                 logger.error(f"Failed to retrieve Azure DevOps access token for tenant {account.get('tenant_id')}")
                 continue
 
-            access_token = token_data['access_token']
         except Exception as e:
             logger.error(
                 f"Failed to retrieve Azure DevOps access token for tenant {account.get('tenant_id')}: {e}",
@@ -128,4 +127,4 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
                 neo4j_session, config, org_name, account['url'], access_token, common_job_parameters,
             )
 
-    return common_job_parameters 
+    return None

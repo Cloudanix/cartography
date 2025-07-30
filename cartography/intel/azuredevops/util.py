@@ -1,13 +1,16 @@
-import logging
-import requests
 import base64
-from typing import Dict, Any, Optional
+import logging
+from typing import Any
+from typing import Dict
+from typing import Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 TIMEOUT = (60, 60)
 
 
-def get_access_token(tenant_id, client_id, client_secret, refresh_token):
+def get_access_token(tenant_id: str, client_id: str, client_secret: str, refresh_token: str) -> str:
     """
     Exchanges a refresh token for a new OAuth 2.0 access token.
     """
@@ -45,7 +48,7 @@ def call_azure_devops_api(
             headers=headers,
             params=params,
             json=json_data,
-            timeout=TIMEOUT
+            timeout=TIMEOUT,
         )
         response.raise_for_status()
         if response.status_code == 204:  # No Content
@@ -59,4 +62,4 @@ def call_azure_devops_api(
         return None
     except requests.exceptions.RequestException as e:
         logger.error(f"Error calling Azure DevOps API at {url}: {e}")
-        return None 
+        return None

@@ -13,9 +13,9 @@ from neo4j import GraphDatabase
 from statsd import StatsClient
 
 import cartography.intel.analysis
+import cartography.intel.azuredevops
 import cartography.intel.create_indexes
 import cloudanix
-import cartography.intel.azuredevops
 from cartography.config import Config
 from cartography.stats import set_stats_client
 from cartography.util import STATUS_FAILURE
