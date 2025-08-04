@@ -199,6 +199,7 @@ def process_request(context, args, retry=0):
                     "requestTopic": args.get('requestTopic'),
                     "partial": args.get('partial'),
                     "services": args.get('services'),
+                    "defaultSubscription": args.get("defaultSubscription")
                 },
                 "services": svcs,
                 "updateTag": args.get('runTimestamp'),
