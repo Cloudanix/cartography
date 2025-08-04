@@ -575,7 +575,7 @@ def _sync_single_project(
                             ),
                         )
                     except Exception as e:
-                        logger.warning(f"error to append service {func_name} in futures - {e}")
+                        logger.warning(f"error to append service {request} in futures - {e}")
                 else:
                     logger.warning(f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?')
 
