@@ -26,16 +26,19 @@ def concurrent_execution(
     service: str, service_func: Any, config: Config, organization_name: str, url, refresh_token: str, common_job_parameters: Dict,
 ):
     logger.info(f"BEGIN processing for service: {service}")
-    neo4j_auth = (config.neo4j_user, config.neo4j_password)
-    neo4j_driver = GraphDatabase.driver(
-        config.neo4j_uri,
-        auth=neo4j_auth,
-        max_connection_lifetime=config.neo4j_max_connection_lifetime,
-    )
-    service_func(
-        Session(neo4j_driver), common_job_parameters, refresh_token, url, organization_name,
-    )
-    logger.info(f"END processing for service: {service}")
+    try:
+        neo4j_auth = (config.neo4j_user, config.neo4j_password)
+        neo4j_driver = GraphDatabase.driver(
+            config.neo4j_uri,
+            auth=neo4j_auth,
+            max_connection_lifetime=config.neo4j_max_connection_lifetime,
+        )
+        service_func(
+            Session(neo4j_driver), common_job_parameters, refresh_token, url, organization_name,
+        )
+        logger.info(f"END processing for service: {service}")
+    except Exception as e:
+        logger.warning(f"error to process service {service} - {e}")
 
 
 @timeit
@@ -59,11 +62,13 @@ def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: D
 
             for func_name in requested_syncs:
                 if func_name in RESOURCE_FUNCTIONS:
-                    logger.info(f"Processing {func_name}")
-                    RESOURCE_FUNCTIONS[func_name](**sync_args)
-
+                    try:
+                        logger.info(f"Processing {func_name}")
+                        RESOURCE_FUNCTIONS[func_name](**sync_args)
+                    except Exception as e:
+                        logger.warning(f"error to process service {func_name} - {e}")
                 else:
-                    raise ValueError(f'GITHUB sync function "{func_name}" was specified but does not exist. Did you misspell it?')
+                    logger.warning(f'GITHUB sync function "{func_name}" was specified but does not exist. Did you misspell it?')
 
             # END - Sequential Run
 
@@ -75,22 +80,23 @@ def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: D
                 futures = []
                 for request in requested_syncs:
                     if request in RESOURCE_FUNCTIONS:
-                        futures.append(
-                            executor.submit(
-                                concurrent_execution,
-                                request,
-                                RESOURCE_FUNCTIONS[request],
-                                config,
-                                auth_data['name'],
-                                auth_data['url'],
-                                auth_data['token'],
-                                common_job_parameters,
-                            ),
-                        )
+                        try:
+                            futures.append(
+                                executor.submit(
+                                    concurrent_execution,
+                                    request,
+                                    RESOURCE_FUNCTIONS[request],
+                                    config,
+                                    auth_data['name'],
+                                    auth_data['url'],
+                                    auth_data['token'],
+                                    common_job_parameters,
+                                ),
+                            )
+                        except Exception as e:
+                            logger.warning(f"error to append service {func_name} in futures - {e}")
                     else:
-                        raise ValueError(
-                            f'Github sync function "{request}" was specified but does not exist. Did you misspell it?',
-                        )
+                        logger.warning(f'Github sync function "{request}" was specified but does not exist. Did you misspell it?')
 
                 for future in as_completed(futures):
                     logger.info(f'Result from Future - Service Processing: {future.result()}')

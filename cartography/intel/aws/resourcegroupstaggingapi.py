@@ -10,6 +10,7 @@ from typing import List
 import boto3
 import neo4j
 from neo4j import GraphDatabase
+from botocore.exceptions import ClientError
 
 from cartography.config import Config
 from cartography.graph.session import Session
@@ -152,18 +153,22 @@ def get_tags(boto3_session: boto3.session.Session, resource_type: str, region: s
     # this is a temporary workaround to populate AWS tags for IAM roles.
     # resourcegroupstaggingapi does not support IAM roles and no ETA is provided
     # TODO: when resourcegroupstaggingapi supports iam:role, remove this condition block
-    if resource_type == 'iam:role':
-        return get_role_tags(boto3_session)
-
-    client = boto3_session.client('resourcegroupstaggingapi', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('get_resources')
     resources: List[Dict] = []
-    for page in paginator.paginate(
-        # Only ingest tags for resources that Cartography supports.
-        # This is just a starting list; there may be others supported by this API.
-        ResourceTypeFilters=[resource_type],
-    ):
-        resources.extend(page['ResourceTagMappingList'])
+    try:
+        if resource_type == 'iam:role':
+            return get_role_tags(boto3_session)
+
+        client = boto3_session.client('resourcegroupstaggingapi', region_name=region, config=get_botocore_config())
+        paginator = client.get_paginator('get_resources')
+
+        for page in paginator.paginate(
+            # Only ingest tags for resources that Cartography supports.
+            # This is just a starting list; there may be others supported by this API.
+            ResourceTypeFilters=[resource_type],
+        ):
+            resources.extend(page['ResourceTagMappingList'])
+    except (ClientError, Exception) as e:
+        logger.warning(f"Failed to get tags for resource type {resource_type}. {e}")
     return resources
 
 
@@ -262,6 +267,7 @@ def sync_tags(
 
     logger.debug(f"END processing tags for {region} & {resource_type}")
 
+
 def concurrent_execution(
     config: Config,
     region: str,
@@ -298,6 +304,7 @@ def concurrent_execution(
     logger.info(f"END concurrent execution of tags for {region} & {resource_type}")
 
     return f"Tags Processing for {region} & {resource_type} completed successfully"
+
 
 @timeit
 def sync(

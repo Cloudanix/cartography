@@ -55,8 +55,11 @@ def _sync_one_gitlab_group(
 
     for func_name in sync_order:
         if func_name in RESOURCE_FUNCTIONS:
-            logger.info(f"Processing {func_name}")
-            RESOURCE_FUNCTIONS[func_name](**sync_args)
+            try:
+                logger.info(f"Processing {func_name}")
+                RESOURCE_FUNCTIONS[func_name](**sync_args)
+            except Exception as e:
+                logger.warning(f"error to process service {func_name} - {e}")
         else:
             logger.warning(f'Gitlab sync function "{func_name}" was specified but is not available.')
 
