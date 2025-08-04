@@ -491,19 +491,20 @@ def concurrent_execution(
         auth=neo4j_auth,
         max_connection_lifetime=config.neo4j_max_connection_lifetime,
     )
+    try:
+        if service == 'iam':
+            service_func(
+                Session(neo4j_driver), resource, policyanalyzer, crm_v1, crm_v2, apikey, project_id,
+                gcp_update_tag, common_job_parameters,
+            )
 
-    if service == 'iam':
-        service_func(
-            Session(neo4j_driver), resource, policyanalyzer, crm_v1, crm_v2, apikey, project_id,
-            gcp_update_tag, common_job_parameters,
-        )
-
-    else:
-        service_func(
-            Session(neo4j_driver), resource, project_id, gcp_update_tag,
-            common_job_parameters, regions,
-        )
-
+        else:
+            service_func(
+                Session(neo4j_driver), resource, project_id, gcp_update_tag,
+                common_job_parameters, regions,
+            )
+    except Exception as e:
+        logger.warning(f"error to process service {service} - {e}")
     logger.info(f"END processing for service: {service}")
 
 
@@ -542,14 +543,16 @@ def _sync_single_project(
         for func_name in requested_syncs:
             if func_name in RESOURCE_FUNCTIONS:
                 logger.info(f"Processing {func_name}")
-                if func_name == 'iam':
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, resources.iam, resources.policyanalyzer, resources.crm_v1, resources.crm_v2, resources.apikey, project_id, gcp_update_tag, common_job_parameters)
+                try:
+                    if func_name == 'iam':
+                        RESOURCE_FUNCTIONS[func_name](neo4j_session, resources.iam, resources.policyanalyzer, resources.crm_v1, resources.crm_v2, resources.apikey, project_id, gcp_update_tag, common_job_parameters)
 
-                else:
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, getattr(resources, func_name), project_id, gcp_update_tag, common_job_parameters, regions)
-
+                    else:
+                        RESOURCE_FUNCTIONS[func_name](neo4j_session, getattr(resources, func_name), project_id, gcp_update_tag, common_job_parameters, regions)
+                except Exception as e:
+                    logger.warning(f"error to process service {func_name} - {e}")
             else:
-                raise ValueError(f'GCP sync function "{func_name}" was specified but does not exist. Did you misspell it?')
+                logger.warning(f'GCP sync function "{func_name}" was specified but does not exist. Did you misspell it?')
 
         # END - Sequential Run
 
@@ -563,19 +566,18 @@ def _sync_single_project(
             for request in requested_syncs:
                 if request in RESOURCE_FUNCTIONS:
                     # if getattr(service_names, request) in enabled_services:
-
-                    futures.append(
-                        executor.submit(
-                            concurrent_execution, request, RESOURCE_FUNCTIONS[request], config, getattr(
-                                resources, request,
-                            ), common_job_parameters, gcp_update_tag, project_id, resources.policyanalyzer, resources.crm_v1, resources.crm_v2, resources.apikey, regions,
-                        ),
-                    )
-
+                    try:
+                        futures.append(
+                            executor.submit(
+                                concurrent_execution, request, RESOURCE_FUNCTIONS[request], config, getattr(
+                                    resources, request,
+                                ), common_job_parameters, gcp_update_tag, project_id, resources.policyanalyzer, resources.crm_v1, resources.crm_v2, resources.apikey, regions,
+                            ),
+                        )
+                    except Exception as e:
+                        logger.warning(f"error to append service {func_name} in futures - {e}")
                 else:
-                    raise ValueError(
-                        f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?',
-                    )
+                    logger.warning(f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?')
 
             for future in as_completed(futures):
                 logger.info(f'Result from Future - Service Processing: {future.result()}')

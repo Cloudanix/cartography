@@ -28,29 +28,32 @@ logger = logging.getLogger(__name__)
 def concurrent_execution(
     service: str, service_func: Any, config: Config, credentials: Credentials, common_job_parameters: Dict, update_tag: int, subscription_id: str,
 ):
-    logger.info(f"BEGIN processing for service: {service}")
+    try:
+        logger.info(f"BEGIN processing for service: {service}")
 
-    regions = config.params.get('regions', None)
+        regions = config.params.get('regions', None)
 
-    neo4j_auth = (config.neo4j_user, config.neo4j_password)
-    neo4j_driver = GraphDatabase.driver(
-        config.neo4j_uri,
-        auth=neo4j_auth,
-        max_connection_lifetime=config.neo4j_max_connection_lifetime,
-    )
-    if service == 'iam':
-        service_func(Session(neo4j_driver), credentials, credentials.tenant_id, update_tag, common_job_parameters)
-    elif service == 'key_vaults':
-        service_func(
-            Session(neo4j_driver), credentials,
-            subscription_id, update_tag, common_job_parameters, regions,
+        neo4j_auth = (config.neo4j_user, config.neo4j_password)
+        neo4j_driver = GraphDatabase.driver(
+            config.neo4j_uri,
+            auth=neo4j_auth,
+            max_connection_lifetime=config.neo4j_max_connection_lifetime,
         )
-    else:
-        service_func(
-            Session(neo4j_driver), credentials.arm_credentials,
-            subscription_id, update_tag, common_job_parameters, regions,
-        )
-    logger.info(f"END processing for service: {service}")
+        if service == 'iam':
+            service_func(Session(neo4j_driver), credentials, credentials.tenant_id, update_tag, common_job_parameters)
+        elif service == 'key_vaults':
+            service_func(
+                Session(neo4j_driver), credentials,
+                subscription_id, update_tag, common_job_parameters, regions,
+            )
+        else:
+            service_func(
+                Session(neo4j_driver), credentials.arm_credentials,
+                subscription_id, update_tag, common_job_parameters, regions,
+            )
+        logger.info(f"END processing for service: {service}")
+    except Exception as e:
+        logger.warning(f"error to process service {service} - {e}")
 
 
 def _sync_one_subscription(
@@ -71,18 +74,20 @@ def _sync_one_subscription(
 
         for func_name in requested_syncs:
             if func_name in RESOURCE_FUNCTIONS:
-                logger.info(f"Processing {func_name}")
-                if func_name == 'iam':
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, credentials.tenant_id, update_tag, common_job_parameters)
+                try:
+                    logger.info(f"Processing {func_name}")
+                    if func_name == 'iam':
+                        RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, credentials.tenant_id, update_tag, common_job_parameters)
 
-                elif func_name == 'key_vaults':
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
+                    elif func_name == 'key_vaults':
+                        RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
 
-                else:
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials.arm_credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
-
+                    else:
+                        RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials.arm_credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
+                except Exception as e:
+                    logger.warning(f"error to process service {func_name} - {e}")
             else:
-                raise ValueError(f'AZURE sync function "{func_name}" was specified but does not exist. Did you misspell it?')
+                logger.warning(f'AZURE sync function "{func_name}" was specified but does not exist. Did you misspell it?')
 
         # END - Sequential Run
 
@@ -93,23 +98,23 @@ def _sync_one_subscription(
             futures = []
             for request in requested_syncs:
                 if request in RESOURCE_FUNCTIONS:
-                    futures.append(
-                        executor.submit(
-                            concurrent_execution,
-                            request,
-                            RESOURCE_FUNCTIONS[request],
-                            config,
-                            credentials,
-                            common_job_parameters,
-                            update_tag,
-                            subscription_id,
-                        ),
-                    )
-
+                    try:
+                        futures.append(
+                            executor.submit(
+                                concurrent_execution,
+                                request,
+                                RESOURCE_FUNCTIONS[request],
+                                config,
+                                credentials,
+                                common_job_parameters,
+                                update_tag,
+                                subscription_id,
+                            ),
+                        )
+                    except Exception as e:
+                        logger.warning(f"error to append service {request} in futures - {e}")
                 else:
-                    raise ValueError(
-                        f'Azure sync function "{request}" was specified but does not exist. Did you misspell it?',
-                    )
+                    logger.warning(f'Azure sync function "{request}" was specified but does not exist. Did you misspell it?')
 
             for future in as_completed(futures):
                 logger.info(f'Result from Future - Service Processing: {future.result()}')
