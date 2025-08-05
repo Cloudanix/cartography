@@ -1149,7 +1149,7 @@ async def async_sync(
     scoped_group_ids = common_job_parameters.get('GROUPS', [])
     ingested_principal_ids: Optional[set] = None
     try:
-        if common_job_parameters.get("DEFAULT_SUBSCRIPTION") == credentials.subscription_id:
+        if common_job_parameters.get("DEFAULT_SUBSCRIPTION") == credentials.subscription_id or not common_job_parameters.get("DEFAULT_SUBSCRIPTION"):
             if scoped_group_ids:
                 # Only sync specified groups and their users
                 ingested_principal_ids = await sync_scoped_users_and_groups(
