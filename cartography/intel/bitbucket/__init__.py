@@ -142,7 +142,7 @@ def start_bitbucket_ingestion(neo4j_session: neo4j.Session, config: Config) -> d
         has_workspace_data = False
         if len(workspaces_list) > 0:
             for ws in workspaces_list:
-                if ws.get('slug', "").lower() == config.params['workspace']['account_id'].lower():
+                if ws.get('slug', "") == config.params['workspace']['account_id']:
                     has_workspace_data = True
 
         if has_workspace_data is False:
