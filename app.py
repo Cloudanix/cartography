@@ -341,7 +341,7 @@ def publish_request_iam_entitlement(context, req, body):
         if body.get("credentials", {}).get("expiration"):
             del body["credentials"]["expiration"]
 
-        req["credentials"] = body["credentials"]
+        req["credentials"] = get_auth_creds(context, req)
         if req.get("loggingAccount"):
             req["loggingAccount"] = get_logging_account_auth_creds(context, req)
 
