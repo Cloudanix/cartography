@@ -342,6 +342,10 @@ def publish_request_iam_entitlement(context, req, body):
             del body["credentials"]["expiration"]
 
         req["credentials"] = get_auth_creds(context, req)
+        # remove expiration (datetime field) attribute from resp
+        if req.get("credentials", {}).get("expiration"):
+            del req["credentials"]["expiration"]
+
         if req.get("loggingAccount"):
             req["loggingAccount"] = get_logging_account_auth_creds(context, req)
 
