@@ -66,7 +66,7 @@ def init_app(ctx):
 def process_request(context, args, retry=0):
     try:
         context.logger.info(
-            f'request - {args.get("templateType")} - {args.get("sessionString")} - {args.get("eventId")} - {args.get("workspace")}',
+            f"request - {args.get('templateType')} - {args.get('sessionString')} - {args.get('eventId')} - {args.get('workspace')}",
         )
 
         svcs = []
@@ -101,7 +101,10 @@ def process_request(context, args, retry=0):
 
             except Exception as e:
                 context.logger.error(
-                    f"error while getting auth creds: {e}", exc_info=True, stack_info=True, extra={"context": args},
+                    f"error while getting auth creds: {e}",
+                    exc_info=True,
+                    stack_info=True,
+                    extra={"context": args},
                 )
 
                 sns_helper = SNSLibrary(context)
@@ -167,16 +170,16 @@ def process_request(context, args, retry=0):
         elif args.get("templateType") == "AZUREINVENTORYVIEWS":
             body = {
                 "azure": {
-                    "client_id": os.environ.get('CDX_AZURE_CLIENT_ID'),
-                    "client_secret": os.environ.get('CDX_AZURE_CLIENT_SECRET'),
-                    "redirect_uri": os.environ.get('CDX_AZURE_REDIRECT_URI'),
-                    "subscription_id": args.get('workspace', {}).get('account_id'),
-                    "tenant_id": args.get('tenantId'),
-                    "refresh_token": args.get('refreshToken'),
-                    "graph_scope": os.environ.get('CDX_AZURE_GRAPH_SCOPE'),
-                    "azure_scope": os.environ.get('CDX_AZURE_AZURE_SCOPE'),
-                    "default_graph_scope": os.environ.get('CDX_AZURE_DEFAULT_GRAPH_SCOPE'),
-                    "vault_scope": os.environ.get('CDX_AZURE_KEY_VAULT_SCOPE'),
+                    "client_id": os.environ.get("CDX_AZURE_CLIENT_ID"),
+                    "client_secret": os.environ.get("CDX_AZURE_CLIENT_SECRET"),
+                    "redirect_uri": os.environ.get("CDX_AZURE_REDIRECT_URI"),
+                    "subscription_id": args.get("workspace", {}).get("account_id"),
+                    "tenant_id": args.get("tenantId"),
+                    "refresh_token": args.get("refreshToken"),
+                    "graph_scope": os.environ.get("CDX_AZURE_GRAPH_SCOPE"),
+                    "azure_scope": os.environ.get("CDX_AZURE_AZURE_SCOPE"),
+                    "default_graph_scope": os.environ.get("CDX_AZURE_DEFAULT_GRAPH_SCOPE"),
+                    "vault_scope": os.environ.get("CDX_AZURE_KEY_VAULT_SCOPE"),
                 },
                 "neo4j": {
                     "uri": context.neo4j_uri,
@@ -188,21 +191,21 @@ def process_request(context, args, retry=0):
                     "mode": "verbose",
                 },
                 "params": {
-                    "sessionString": args.get('sessionString'),
-                    "eventId": args.get('eventId'),
-                    "templateType": args.get('templateType'),
-                    "workspace": args.get('workspace'),
-                    "groups": args.get('groups'),
-                    "subscriptions": args.get('subscriptions'),
-                    "actions": args.get('actions'),
-                    "resultTopic": args.get('resultTopic'),
-                    "requestTopic": args.get('requestTopic'),
-                    "partial": args.get('partial'),
-                    "services": args.get('services'),
-                    "defaultSubscription": args.get("defaultSubscription")
+                    "sessionString": args.get("sessionString"),
+                    "eventId": args.get("eventId"),
+                    "templateType": args.get("templateType"),
+                    "workspace": args.get("workspace"),
+                    "groups": args.get("groups"),
+                    "subscriptions": args.get("subscriptions"),
+                    "actions": args.get("actions"),
+                    "resultTopic": args.get("resultTopic"),
+                    "requestTopic": args.get("requestTopic"),
+                    "partial": args.get("partial"),
+                    "services": args.get("services"),
+                    "defaultSubscription": args.get("defaultSubscription"),
                 },
                 "services": svcs,
-                "updateTag": args.get('runTimestamp'),
+                "updateTag": args.get("runTimestamp"),
             }
 
             resp = cartography.cli.run_azure(body)
@@ -230,11 +233,11 @@ def process_request(context, args, retry=0):
             context.logger.debug(f"successfully processed cartography: {resp}")
 
         else:
-            context.logger.info(f'failed to process cartography: {resp["message"]}')
+            context.logger.info(f"failed to process cartography: {resp['message']}")
 
         publish_response(context, body, resp, args)
 
-        context.logger.debug(f'inventory sync aws response - {args["eventId"]}: {json.dumps(resp)}')
+        context.logger.debug(f"inventory sync aws response - {args['eventId']}: {json.dumps(resp)}")
     except Neo4jError as e:
         context.logger.error(
             f"Neo4j Error. Retry - {retry} ",
@@ -337,11 +340,12 @@ def publish_request_iam_entitlement(context, req, body):
     if req.get("iamEntitlementRequestTopic"):
         sns_helper = SNSLibrary(context)
 
-        # remove DEFAULT_DATETIME attribute from resp
+        # remove expiration (datetime field) attribute from resp
         if body.get("credentials", {}).get("expiration"):
             del body["credentials"]["expiration"]
 
         req["credentials"] = get_auth_creds(context, req)
+
         # remove expiration (datetime field) attribute from resp
         if req.get("credentials", {}).get("expiration"):
             del req["credentials"]["expiration"]
@@ -349,6 +353,7 @@ def publish_request_iam_entitlement(context, req, body):
         if req.get("loggingAccount"):
             req["loggingAccount"] = get_logging_account_auth_creds(context, req)
 
+            # remove expiration (datetime field) attribute from loggingAccount creds
             if req.get("loggingAccount", {}).get("creds", {}).get("expiration"):
                 del req["loggingAccount"]["creds"]["expiration"]
 
@@ -438,7 +443,9 @@ def aws_process_cartography(event, ctx):
 
     except Exception as e:
         context.logger.error(
-            f"error while parsing inventory sync aws request json: {e}", exc_info=True, stack_info=True,
+            f"error while parsing inventory sync aws request json: {e}",
+            exc_info=True,
+            stack_info=True,
         )
 
         response = {

@@ -9,8 +9,8 @@ from typing import List
 
 import boto3
 import neo4j
-from neo4j import GraphDatabase
 from botocore.exceptions import ClientError
+from neo4j import GraphDatabase
 
 from cartography.config import Config
 from cartography.graph.session import Session

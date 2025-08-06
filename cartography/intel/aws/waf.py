@@ -31,7 +31,7 @@ def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session, regi
         web_acls.append(acl)
     while resp.get("NextMarker"):
         resp = client.list_web_acls(
-            NextMarker=resp.get("NextMarker")
+            NextMarker=resp.get("NextMarker"),
         )
         for acl in resp.get('WebACLs', []):
             acl['region'] = region
@@ -243,7 +243,7 @@ def get_waf_v2_web_acls_for_scope(
         while resp.get("NextMarker"):
             resp = client.list_web_acls(
                 Scope=scope,
-                NextMarker=resp.get("NextMarker")
+                NextMarker=resp.get("NextMarker"),
             )
             for acl in resp.get("WebACLs", []):
                 acl_with_details = get_waf_v2_web_acl_details(client, acl, scope, region)
