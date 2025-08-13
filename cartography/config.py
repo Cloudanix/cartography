@@ -57,6 +57,8 @@ class Config:
     :param okta_saml_role_regex: The regex used to map okta groups to AWS roles. Optional.
     :type github_config: str
     :param github_config: Base64 encoded config object for GitHub ingestion. Optional.
+    :type azure_devops_config: str
+    :param azure_devops_config: Base64 encoded config object for Azure DevOps ingestion. Optional.
     :type digitalocean_token: str
     :param digitalocean_token: DigitalOcean access token. Optional.
     :type permission_relationships_file: str
@@ -120,6 +122,7 @@ class Config:
         okta_api_key=None,
         okta_saml_role_regex=None,
         github_config=None,
+        azure_devops_config=None,
         digitalocean_token=None,
         permission_relationships_file=None,
         jamf_base_uri=None,
@@ -180,6 +183,7 @@ class Config:
         self.okta_api_key = okta_api_key
         self.okta_saml_role_regex = okta_saml_role_regex
         self.github_config = github_config
+        self.azure_devops_config = azure_devops_config
         self.bitbucket_access_token = bitbucket_access_token
         self.gitlab_access_token = gitlab_access_token
         self.digitalocean_token = digitalocean_token
