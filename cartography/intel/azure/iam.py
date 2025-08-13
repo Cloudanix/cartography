@@ -382,11 +382,11 @@ def _load_tenant_groups_tx(
     MERGE (i:AzureGroup{id: group.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.object_id = group.id,
     i.region = $region,
     i.name = group.display_name
     SET i.lastupdated = $update_tag,
     i.mail = group.mail,
+    i.object_id = group.object_id,
     i.visibility = group.visibility,
     i.classification = group.classification,
     i.created_date_time = group.created_date_time,
@@ -431,6 +431,21 @@ async def get_group_members(credentials: Credentials, group_id: str) -> List[Dic
 
         if members:
             for member in members:
+                if member.odata_type == "#microsoft.graph.group":
+                    inherited_members: List[Dict] = []
+                    response = await client.groups.by_group_id(member.id).members.get()
+                    inherited_members.extend(response.value)
+
+                    while response.odata_next_link:
+                        response = await client.groups.by_group_id(member.id).members.with_url(response.odata_next_link).get()
+                        inherited_members.extend(response.value)
+                    for inherited_member in inherited_members:
+                        members_data.append({
+                            "id": inherited_member.id,
+                            "display_name": inherited_member.display_name,
+                            "mail": inherited_member.mail,
+                            "group_id": group_id,
+                        })
                 members_data.append({
                     "id": member.id,
                     "display_name": member.display_name,
