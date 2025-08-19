@@ -24,28 +24,80 @@ logger = logging.getLogger(__name__)
 
 @timeit
 def concurrent_execution(
-    service: str, service_func: Any, config: Config, org_name: str,
-    url: str, access_token: str, common_job_parameters: Dict,
+    service: str,
+    service_func: Any,
+    config: Config,
+    org_name: str,
+    url: str,
+    access_token: str,
+    common_job_parameters: Dict,
 ):
+    """
+    Execute a service sync function concurrently with proper error handling.
+
+    This function creates a new Neo4j session for each concurrent execution
+    to ensure thread safety and proper connection management.
+    """
     logger.info(f"BEGIN processing for service: {service} for organization {org_name}")
-    neo4j_auth = (config.neo4j_user, config.neo4j_password)
-    neo4j_driver = GraphDatabase.driver(
-        config.neo4j_uri,
-        auth=neo4j_auth,
-        max_connection_lifetime=config.neo4j_max_connection_lifetime,
-    )
-    service_func(
-        Session(neo4j_driver), common_job_parameters, access_token, url, org_name,
-    )
-    logger.info(f"END processing for service: {service} for organization {org_name}")
+
+    try:
+        neo4j_auth = (config.neo4j_user, config.neo4j_password)
+        neo4j_driver = GraphDatabase.driver(
+            config.neo4j_uri,
+            auth=neo4j_auth,
+            max_connection_lifetime=config.neo4j_max_connection_lifetime,
+        )
+
+        service_func(
+            Session(neo4j_driver),
+            common_job_parameters,
+            access_token,
+            url,
+            org_name,
+        )
+
+        logger.info(
+            f"END processing for service: {service} for organization {org_name}"
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in concurrent execution of {service} for {org_name}: {e}",
+            exc_info=True,
+        )
+        raise
 
 
 @timeit
 def sync_organization(
-    neo4j_session: neo4j.Session, config: Config, org_name: str, url: str, access_token: str, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    config: Config,
+    org_name: str,
+    url: str,
+    access_token: str,
+    common_job_parameters: Dict,
 ) -> None:
+    """
+    Sync an Azure DevOps organization with all its resources.
+
+    The sync of:
+    1. Organization details
+    2. Projects (concurrently)
+    3. Repositories (concurrently)
+    4. Members (concurrently)
+
+    Args:
+        neo4j_session: Neo4j session for database operations
+        config: Cartography configuration object
+        org_name: Name of the Azure DevOps organization
+        url: Base Azure DevOps URL
+        access_token: Microsoft Entra ID OAuth access token
+        common_job_parameters: Common parameters for all sync operations
+    """
     try:
-        logger.info("Syncing Azure DevOps Organization: %s", org_name)
+        logger.info(f"Syncing Azure DevOps Organization: {org_name}")
+
+        # First, sync the organization details
         organization.sync(
             neo4j_session,
             common_job_parameters,
@@ -55,11 +107,12 @@ def sync_organization(
         )
 
         requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
+        failed_syncs = []
 
         with ThreadPoolExecutor(max_workers=len(requested_syncs)) as executor:
             futures = []
             for func_name in requested_syncs:
-                logger.info(f"Queueing {func_name} for {org_name}")
+                logger.info(f"Queueing {func_name} sync for {org_name}")
                 futures.append(
                     executor.submit(
                         concurrent_execution,
@@ -73,11 +126,77 @@ def sync_organization(
                     ),
                 )
 
+            # Wait for all futures to complete and handle results
             for future in as_completed(futures):
-                logger.info(f'Result from Future - Service Processing: {future.result()}')
+                try:
+                    result = future.result()
+                    logger.info(f"Service processing completed: {result}")
+                except Exception as e:
+                    logger.error(f"Service processing failed: {e}", exc_info=True)
+                    failed_syncs.append(str(e))
+
+        if failed_syncs:
+            logger.warning(
+                f"Some sync operations failed for organization {org_name}: {failed_syncs}"
+            )
+        else:
+            logger.info(
+                f"All sync operations completed successfully for organization {org_name}"
+            )
 
     except exceptions.RequestException as e:
-        logger.error("Could not complete request to the Azure DevOps API: %s", e)
+        logger.error(
+            f"Could not complete request to the Azure DevOps API for {org_name}: {e}"
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error during organization sync for {org_name}: {e}",
+            exc_info=True,
+        )
+
+
+def validate_auth_config(auth_details: Dict) -> bool:
+    """
+    Validates the Azure DevOps authentication configuration.
+
+    Required fields for Microsoft Entra ID OAuth:
+    - tenant_id: Microsoft Entra ID tenant ID
+    - client_id: Application (client) ID
+    - client_secret: Application client secret
+    - url: Azure DevOps base URL
+    - name: Organization name to sync
+    """
+    if not isinstance(auth_details, dict):
+        logger.error("Auth details must be a dictionary")
+        return False
+
+    if "organization" not in auth_details or not isinstance(
+        auth_details["organization"], list
+    ):
+        logger.error("Auth details must contain 'organization' as a list")
+        return False
+
+    for i, org in enumerate(auth_details["organization"]):
+        required_fields = [
+            "tenant_id",
+            "client_id",
+            "client_secret",
+            "url",
+            "name",
+        ]
+
+        missing_fields = [field for field in required_fields if field not in org]
+        if missing_fields:
+            logger.error(f"Organization {i} missing required fields: {missing_fields}")
+            return False
+
+        # Validate URL format
+        if not org["url"].startswith("https://"):
+            logger.error(f"Organization {i} URL must use HTTPS: {org['url']}")
+            return False
+
+    logger.info("Azure DevOps authentication configuration validation passed")
+    return True
 
 
 @timeit
@@ -89,42 +208,80 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
     :return: None
     """
     if not config.azure_devops_config:
-        logger.info('Azure DevOps import is not configured - skipping this module. See docs to configure.')
+        logger.info(
+            "Azure DevOps import is not configured - skipping this module. See docs to configure."
+        )
         return
 
     try:
+        # Decode the base64-encoded configuration
         auth_details = json.loads(base64.b64decode(config.azure_devops_config).decode())
+        logger.info("Successfully decoded Azure DevOps configuration")
+
     except (json.JSONDecodeError, TypeError) as e:
         logger.error(f"Failed to parse Azure DevOps config: {e}", exc_info=True)
         return
 
+    # Validate the configuration structure
+    if not validate_auth_config(auth_details):
+        logger.error("Invalid Azure DevOps configuration format")
+        return
+
     common_job_parameters = {
-        "WORKSPACE_ID": config.params['workspace']['id_string'],
+        "WORKSPACE_ID": config.params["workspace"]["id_string"],
         "UPDATE_TAG": config.update_tag,
+        "ORGANIZATION_ID": config.params["workspace"]["account_id"],
     }
 
-    for account in auth_details.get('accounts', []):
+    logger.info(
+        f"Starting Azure DevOps sync for {len(auth_details['organization'])} organization(s)"
+    )
+
+    # Process each organization configuration
+    for org_idx, org in enumerate(auth_details.get("organization", [])):
         try:
+            logger.info(f"Processing organization {org_idx + 1}: {org.get('name')}")
+
+            # Get Microsoft Entra ID OAuth access token
             access_token = get_access_token(
-                account['tenant_id'],
-                account['client_id'],
-                account['client_secret'],
-                account['refresh_token'],
+                org["tenant_id"],
+                org["client_id"],
+                org["client_secret"],
             )
+
             if not access_token:
-                logger.error(f"Failed to retrieve Azure DevOps access token for tenant {account.get('tenant_id')}")
+                logger.error(
+                    f"Failed to retrieve Azure DevOps access token for organization {org.get('name')}"
+                )
                 continue
+
+            logger.info(
+                f"Successfully obtained access token for organization {org.get('name')}"
+            )
+
+            # Filter organizations based on workspace account_id (similar to GitHub pattern)
+            if common_job_parameters["ORGANIZATION_ID"] != org["name"]:
+                logger.debug(
+                    f"Skipping organization {org['name']} - not matching workspace account_id {common_job_parameters['ORGANIZATION_ID']}"
+                )
+                continue
+
+            logger.info(f"Starting sync for organization: {org['name']}")
+            sync_organization(
+                neo4j_session,
+                config,
+                org["name"],
+                org["url"],
+                access_token,
+                common_job_parameters,
+            )
 
         except Exception as e:
             logger.error(
-                f"Failed to retrieve Azure DevOps access token for tenant {account.get('tenant_id')}: {e}",
+                f"Failed to process organization {org_idx + 1} ({org.get('name')}): {e}",
                 exc_info=True,
             )
             continue
 
-        for org_name in account.get('organization_names', []):
-            sync_organization(
-                neo4j_session, config, org_name, account['url'], access_token, common_job_parameters,
-            )
-
-    return None
+    logger.info("Azure DevOps ingestion completed")
+    return common_job_parameters

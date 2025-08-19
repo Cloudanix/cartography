@@ -1,5 +1,6 @@
 import base64
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import Optional
@@ -8,23 +9,63 @@ import requests
 
 logger = logging.getLogger(__name__)
 TIMEOUT = (60, 60)
+MAX_RETRIES = 3
+RETRY_DELAY = 1
 
 
-def get_access_token(tenant_id: str, client_id: str, client_secret: str, refresh_token: str) -> str:
+def get_access_token(
+    tenant_id: str, client_id: str, client_secret: str, refresh_token: str = None
+) -> str:
     """
-    Exchanges a refresh token for a new OAuth 2.0 access token.
+    Exchanges client credentials for an OAuth 2.0 access token using Microsoft Entra ID.
+    This implementation uses the client credentials grant type.
     """
     token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     data = {
         "client_id": client_id,
         "client_secret": client_secret,
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
+        "grant_type": "client_credentials",
         "scope": "499b84ac-1321-427f-aa17-267ca6975798/.default",  # Azure DevOps resource ID
     }
-    response = requests.post(token_url, data=data, timeout=TIMEOUT)
-    response.raise_for_status()
-    return response.json()["access_token"]
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.post(token_url, data=data, timeout=TIMEOUT)
+            response.raise_for_status()
+
+            token_response = response.json()
+            if "access_token" not in token_response:
+                logger.error("Access token not found in response")
+                raise ValueError("Access token not found in response")
+
+            # Log token expiry for debugging
+            if "expires_in" in token_response:
+                logger.debug(
+                    f"Access token expires in {token_response['expires_in']} seconds"
+                )
+
+            return token_response["access_token"]
+
+        except requests.exceptions.RequestException as e:
+            if attempt == MAX_RETRIES - 1:
+                logger.error(
+                    f"Failed to get access token after {MAX_RETRIES} attempts: {e}"
+                )
+                raise
+            logger.warning(
+                f"Attempt {attempt + 1} failed, retrying in {RETRY_DELAY} seconds: {e}"
+            )
+            time.sleep(RETRY_DELAY)
+        except (KeyError, ValueError) as e:
+            if attempt == MAX_RETRIES - 1:
+                logger.error(
+                    f"Failed to parse token response after {MAX_RETRIES} attempts: {e}"
+                )
+                raise
+            logger.warning(
+                f"Attempt {attempt + 1} failed to parse response, retrying: {e}"
+            )
+            time.sleep(RETRY_DELAY)
 
 
 def call_azure_devops_api(
@@ -35,31 +76,124 @@ def call_azure_devops_api(
     json_data: Optional[Dict] = None,
 ) -> Optional[Dict]:
     """
-    Calls the Azure DevOps REST API.
+    Calls the Azure DevOps REST API with Microsoft Entra ID OAuth authentication.
     """
     headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {access_token}',
+        "Accept": "application/json",
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": "Cartography-AzureDevOps/1.0",
     }
-    try:
-        response = requests.request(
-            method=method,
-            url=url,
-            headers=headers,
-            params=params,
-            json=json_data,
-            timeout=TIMEOUT,
-        )
-        response.raise_for_status()
-        if response.status_code == 204:  # No Content
-            return None
-        return response.json()
-    except requests.exceptions.HTTPError as e:
-        logger.error(
-            f"Error calling Azure DevOps API: {e}. "
-            f"URL: {url}, Status: {e.response.status_code}, Response: {e.response.text}",
-        )
-        return None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error calling Azure DevOps API at {url}: {e}")
-        return None
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers,
+                params=params,
+                json=json_data,
+                timeout=TIMEOUT,
+            )
+            response.raise_for_status()
+
+            if response.status_code == 204:  # No Content
+                return None
+            return response.json()
+
+        except requests.exceptions.HTTPError as e:
+            if (
+                e.response.status_code in [429, 500, 502, 503, 504]
+                and attempt < MAX_RETRIES - 1
+            ):
+                # Retry on rate limiting and server errors
+                retry_after = int(e.response.headers.get("Retry-After", RETRY_DELAY))
+                logger.warning(
+                    f"HTTP {e.response.status_code} error, retrying in {retry_after} seconds (attempt {attempt + 1}/{MAX_RETRIES})"
+                )
+                time.sleep(retry_after)
+                continue
+            else:
+                # Log detailed error information for debugging
+                error_details = {
+                    "status_code": e.response.status_code,
+                    "url": url,
+                    "response_text": e.response.text[
+                        :500
+                    ],  # Limit response text length
+                    "headers": dict(e.response.headers),
+                }
+                logger.error(
+                    f"HTTP error calling Azure DevOps API: {e}. "
+                    f"Details: {error_details}",
+                )
+                return None
+
+        except requests.exceptions.RequestException as e:
+            if attempt < MAX_RETRIES - 1:
+                logger.warning(
+                    f"Request error, retrying in {RETRY_DELAY} seconds (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
+                )
+                time.sleep(RETRY_DELAY)
+                continue
+            else:
+                logger.error(
+                    f"Failed to call Azure DevOps API at {url} after {MAX_RETRIES} attempts: {e}"
+                )
+                return None
+
+    return None
+
+
+def validate_organization_data(data: Dict) -> bool:
+    """
+    Validates organization data from Azure DevOps API.
+
+    Required fields:
+    - name: Organization name
+    - url: Organization URL
+    """
+    required_fields = ["name", "url"]
+    return all(field in data and data[field] for field in required_fields)
+
+
+def validate_project_data(data: Dict) -> bool:
+    """
+    Validates project data from Azure DevOps API.
+
+    Required fields:
+    - id: Project ID
+    - name: Project name
+    - url: Project URL
+    """
+    required_fields = ["id", "name", "url"]
+    return all(field in data and data[field] for field in required_fields)
+
+
+def validate_repository_data(data: Dict) -> bool:
+    """
+    Validates repository data from Azure DevOps API.
+
+    Required fields:
+    - id: Repository ID
+    - name: Repository name
+    - url: Repository URL
+    """
+    required_fields = ["id", "name", "url"]
+    return all(field in data and data[field] for field in required_fields)
+
+
+def validate_user_data(data: Dict) -> bool:
+    """
+    Validates user data from Azure DevOps API.
+
+    Required fields:
+    - id: User ID
+    - user: User object containing displayName and principalName
+    """
+    required_fields = ["id", "user"]
+    if not all(field in data and data[field] for field in required_fields):
+        return False
+
+    user = data.get("user", {})
+    user_required_fields = ["displayName", "principalName"]
+    return all(field in user and user[field] for field in user_required_fields)

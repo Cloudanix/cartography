@@ -5,7 +5,7 @@ from typing import List
 
 import neo4j
 
-from .util import call_azure_devops_api
+from .util import call_azure_devops_api, validate_project_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -16,10 +16,39 @@ logger = logging.getLogger(__name__)
 def get_projects(api_url: str, organization_name: str, access_token: str) -> List[Dict]:
     """
     Retrieve a list of projects from the given Azure DevOps organization.
+
+    Args:
+        api_url: Base Azure DevOps URL (e.g., https://dev.azure.com)
+        organization_name: Name of the organization
+        access_token: Microsoft Entra ID OAuth access token
+
+    Returns:
+        List of project dictionaries or empty list if failed
     """
     url = f"{api_url}/{organization_name}/_apis/projects?api-version=7.1-preview.4"
+
+    logger.debug(f"Fetching projects from: {url}")
     response = call_azure_devops_api(url, access_token)
-    return response.get("value", []) if response else []
+
+    if not response:
+        logger.warning(
+            f"No response received for projects in organization {organization_name}"
+        )
+        return []
+
+    projects = response.get("value", [])
+    # Filter out invalid projects
+    valid_projects = [p for p in projects if validate_project_data(p)]
+
+    if len(valid_projects) != len(projects):
+        logger.warning(
+            f"Filtered out {len(projects) - len(valid_projects)} invalid projects for organization {organization_name}"
+        )
+
+    logger.debug(
+        f"Retrieved {len(valid_projects)} valid projects for organization {organization_name}"
+    )
+    return valid_projects
 
 
 @timeit
@@ -29,6 +58,18 @@ def load_projects(
     organization_name: str,
     common_job_parameters: Dict[str, Any],
 ) -> None:
+    """
+    Load Azure DevOps project data into Neo4j with comprehensive properties.
+    - id: Project ID (unique identifier)
+    - name: Project name
+    - url: Project URL
+    - state: Project state (active, deleted, etc.)
+    - revision: Project revision number
+    - visibility: Project visibility (private, public)
+    - lastUpdateTime: Last update timestamp
+    - description: Project description (if available)
+    - capabilities: Project capabilities (if available)
+    """
     query = """
     UNWIND $ProjectData as project
 
@@ -41,7 +82,9 @@ def load_projects(
         p.state = project.state,
         p.revision = project.revision,
         p.visibility = project.visibility,
-        p.lastupdatetime = project.lastUpdateTime
+        p.lastupdatetime = project.lastUpdateTime,
+        p.description = project.description,
+        p.capabilities = project.capabilities
 
     WITH p, project
     MATCH (org:AzureDevOpsOrganization{id: $OrganizationName})
@@ -59,7 +102,9 @@ def load_projects(
 
 @timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('azure_devops_projects_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job(
+        "azure_devops_projects_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
