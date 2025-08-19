@@ -24,6 +24,9 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+AZURE_AUTH_MODE_USER_IMPERSONATION = "user_impersonation"
+AZURE_AUTH_MODE_SERVICE_PRINCIPAL = "service_principal"
+
 
 def concurrent_execution(
     service: str, service_func: Any, config: Config, credentials: Credentials, common_job_parameters: Dict, update_tag: int, subscription_id: str,
@@ -262,18 +265,32 @@ def start_azure_ingestion(
         # else:
         #     credentials = Authenticator().authenticate_cli()
 
-        credentials = Authenticator().impersonate_user(
-            config.azure_client_id,
-            config.azure_client_secret,
-            config.azure_redirect_uri,
-            config.azure_refresh_token,
-            config.azure_graph_scope,
-            config.azure_default_graph_scope,
-            config.azure_azure_scope,
-            config.azure_vault_scope,
-            config.azure_subscription_id,
-            config.azure_tenant_id,
-        )
+        auth_mode = config.params.get('authMode', AZURE_AUTH_MODE_USER_IMPERSONATION)
+        if auth_mode == AZURE_AUTH_MODE_USER_IMPERSONATION:
+            logger.info("Using user impersonation for Azure authentication")
+            credentials = Authenticator().impersonate_user(
+                config.azure_client_id,
+                config.azure_client_secret,
+                config.azure_redirect_uri,
+                config.azure_refresh_token,
+                config.azure_graph_scope,
+                config.azure_default_graph_scope,
+                config.azure_azure_scope,
+                config.azure_vault_scope,
+                config.azure_subscription_id,
+                config.azure_tenant_id,
+            )
+        elif auth_mode == AZURE_AUTH_MODE_SERVICE_PRINCIPAL:
+            logger.info("Using service principal for Azure authentication")
+            credentials = Authenticator().authenticate_service_principal(
+                config.azure_tenant_id,
+                config.azure_subscription_id,
+                config.azure_client_id,
+                config.azure_client_secret,
+            )
+        else:
+            logger.error(f"Unsupported Azure authentication mode: {auth_mode}")
+            raise ValueError(f"Unsupported Azure authentication mode: {auth_mode}")
 
     except Exception as e:
         logger.error(f"Unable to authenticate with Azure Service Principal, an error occurred: {e}. Make sure your Azure Service Principal details are provided correctly.", exc_info=True, stack_info=True)
@@ -291,7 +308,6 @@ def start_azure_ingestion(
         requested_syncs = parse_and_validate_azure_requested_syncs(azure_requested_syncs_string[:-1])
 
     tenant_obj = tenant.get_active_tenant(credentials)
-    print(tenant_obj)
     common_job_parameters['Azure_Primary_AD_Domain_Name'] = tenant_obj['defaultDomain']
 
     _sync_tenant(

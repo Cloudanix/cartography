@@ -970,8 +970,7 @@ def _load_roles_tx(
     )
 
     attach_role = """
-    UNWIND $principal_ids AS principal_id
-    MATCH (principal:AzurePrincipal{object_id: principal_id})
+    MATCH (principal:AzurePrincipal{object_id: $principal_id})
     WITH principal
     MATCH (i:AzureRole{id: $role})
     WITH i,principal
@@ -982,8 +981,8 @@ def _load_roles_tx(
     for role_assignment in role_assignments_list:
         tx.run(
             attach_role,
-            role=role_assignment['role_definition_id'],
-            principal_ids=role_assignment['principal_id'],
+            role=role_assignment.get('role_definition_id', role_assignment.get('properties', {}).get('role_definition_id')),
+            principal_id=role_assignment.get('principal_id', role_assignment.get('properties', {}).get('principal_id')),
             update_tag=update_tag,
         )
 

@@ -203,6 +203,7 @@ def process_request(context, args, retry=0):
                     "partial": args.get("partial"),
                     "services": args.get("services"),
                     "defaultSubscription": args.get("defaultSubscription"),
+                    "authMode": args.get("authMode", "user_impersonation"),
                 },
                 "services": svcs,
                 "updateTag": args.get("runTimestamp"),
