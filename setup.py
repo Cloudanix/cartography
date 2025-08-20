@@ -51,6 +51,7 @@ setup(
         "packaging",
         "python-digitalocean>=1.16.0",
         "adal>=1.2.4",
+        "msal>=1.16.0",
         "azure-cli-core>=2.26.0",
         "azure-mgmt-compute>=5.0.0",
         "azure-mgmt-resource>=10.2.0",
