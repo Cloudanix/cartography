@@ -4,6 +4,7 @@ import time
 from typing import Any
 from typing import Dict
 from typing import Optional
+from typing import List
 
 import requests
 
@@ -18,7 +19,6 @@ def get_access_token(
 ) -> str:
     """
     Exchanges client credentials for an OAuth 2.0 access token using Microsoft Entra ID.
-    This implementation uses the client credentials grant type.
     """
     token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     data = {
@@ -142,6 +142,63 @@ def call_azure_devops_api(
                 return None
 
     return None
+
+
+def call_azure_devops_api_pagination(
+    url: str,
+    access_token: str,
+    params: Optional[Dict] = None,
+) -> List[Dict]:
+    """
+    Calls the Azure DevOps REST API and handles pagination for list endpoints.
+    """
+    results: List[Dict] = []
+    current_url = url
+    current_params = params.copy() if params else {}
+
+    while current_url:
+        response = call_azure_devops_api(
+            current_url, access_token, params=current_params
+        )
+        if not response:
+            break
+
+        page_results = response.get("value", response.get("items", []))
+        if not isinstance(page_results, list):
+            logger.warning(
+                f"Pagination call did not return a list for URL {current_url}. Stopping pagination."
+            )
+            if page_results:  # If it's a single dict, wrap it in a list
+                results.append(page_results)
+            break
+
+        results.extend(page_results)
+
+        # Check for continuation token in the headers
+        continuation_token = response.headers.get("x-ms-continuationtoken")
+        if continuation_token:
+            from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
+
+            parsed_url = urlparse(current_url)
+            query_params = parse_qs(parsed_url.query)
+            query_params["continuationToken"] = [continuation_token]
+
+            # Ensure api-version is preserved
+            if (
+                "api-version" not in query_params
+                and current_params
+                and current_params.get("api-version")
+            ):
+                query_params["api-version"] = [current_params["api-version"]]
+
+            new_query = urlencode(query_params, doseq=True)
+            current_url = urlunparse(parsed_url._replace(query=new_query))
+            current_params = None  # Params are now embedded in the URL
+        else:
+            # If no continuation token, assume the API returned all results.
+            current_url = None
+
+    return results
 
 
 def validate_organization_data(data: Dict) -> bool:
