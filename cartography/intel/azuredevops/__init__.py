@@ -7,12 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from neo4j import GraphDatabase
 from requests import exceptions
 
-from . import organization
+from . import members, organization, projects, repos
 from .resources import RESOURCE_FUNCTIONS
 from .util import get_access_token
 from cartography.config import Config
@@ -24,22 +25,16 @@ logger = logging.getLogger(__name__)
 
 @timeit
 def concurrent_execution(
-    service: str,
     service_func: Any,
     config: Config,
-    org_name: str,
-    url: str,
-    access_token: str,
     common_job_parameters: Dict,
+    *args,
 ):
     """
     Execute a service sync function concurrently with proper error handling.
-
     This function creates a new Neo4j session for each concurrent execution
     to ensure thread safety and proper connection management.
     """
-    logger.info(f"BEGIN processing for service: {service} for organization {org_name}")
-
     try:
         neo4j_auth = (config.neo4j_user, config.neo4j_password)
         neo4j_driver = GraphDatabase.driver(
@@ -48,21 +43,16 @@ def concurrent_execution(
             max_connection_lifetime=config.neo4j_max_connection_lifetime,
         )
 
-        service_func(
-            Session(neo4j_driver),
-            common_job_parameters,
-            access_token,
-            url,
-            org_name,
-        )
-
-        logger.info(
-            f"END processing for service: {service} for organization {org_name}"
-        )
+        with neo4j_driver.session() as neo4j_session:
+            service_func(
+                neo4j_session,
+                common_job_parameters,
+                *args,
+            )
 
     except Exception as e:
         logger.error(
-            f"Error in concurrent execution of {service} for {org_name}: {e}",
+            f"Error in concurrent execution of {service_func.__module__}: {e}",
             exc_info=True,
         )
         raise
@@ -82,7 +72,7 @@ def sync_organization(
 
     The sync of:
     1. Organization details
-    2. Projects (concurrently)
+    2. Projects
     3. Repositories (concurrently)
     4. Members (concurrently)
 
@@ -97,7 +87,7 @@ def sync_organization(
     try:
         logger.info(f"Syncing Azure DevOps Organization: {org_name}")
 
-        # First, sync the organization details
+        # sync the organization details
         organization.sync(
             neo4j_session,
             common_job_parameters,
@@ -106,43 +96,53 @@ def sync_organization(
             org_name,
         )
 
-        requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
-        failed_syncs = []
+        # Sync all projects for the organization and get the data back
+        projects_data = projects.sync(
+            neo4j_session,
+            common_job_parameters,
+            access_token,
+            url,
+            org_name,
+        )
 
-        with ThreadPoolExecutor(max_workers=len(requested_syncs)) as executor:
-            futures = []
-            for func_name in requested_syncs:
-                logger.info(f"Queueing {func_name} sync for {org_name}")
-                futures.append(
-                    executor.submit(
-                        concurrent_execution,
-                        func_name,
-                        RESOURCE_FUNCTIONS[func_name],
-                        config,
-                        org_name,
-                        url,
-                        access_token,
-                        common_job_parameters,
-                    ),
-                )
+        # Concurrently sync other resources that depend on projects
+        with ThreadPoolExecutor(
+            max_workers=config.azure_devops_concurrent_requests or 2
+        ) as executor:
+            futures = {
+                executor.submit(
+                    concurrent_execution,
+                    repos.sync,
+                    config,
+                    common_job_parameters,
+                    access_token,
+                    url,
+                    org_name,
+                    projects_data,
+                ): "repos",
+                executor.submit(
+                    concurrent_execution,
+                    members.sync,
+                    config,
+                    common_job_parameters,
+                    access_token,
+                    url,
+                    org_name,
+                ): "members",
+            }
 
-            # Wait for all futures to complete and handle results
             for future in as_completed(futures):
+                resource_type = futures[future]
                 try:
-                    result = future.result()
-                    logger.info(f"Service processing completed: {result}")
-                except Exception as e:
-                    logger.error(f"Service processing failed: {e}", exc_info=True)
-                    failed_syncs.append(str(e))
-
-        if failed_syncs:
-            logger.warning(
-                f"Some sync operations failed for organization {org_name}: {failed_syncs}"
-            )
-        else:
-            logger.info(
-                f"All sync operations completed successfully for organization {org_name}"
-            )
+                    future.result()
+                    logger.info(
+                        f"Successfully synced {resource_type} for organization {org_name}"
+                    )
+                except Exception:
+                    logger.exception(
+                        f"Failed to sync {resource_type} for organization {org_name}",
+                        exc_info=True,
+                    )
 
     except exceptions.RequestException as e:
         logger.error(
