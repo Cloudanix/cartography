@@ -2,10 +2,11 @@ import logging
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 
-from .util import call_azure_devops_api, validate_repository_data
+from .util import call_azure_devops_api_pagination, validate_repository_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -28,16 +29,16 @@ def get_repositories_for_project(
     Returns:
         List of repository dictionaries or empty list if failed
     """
-    url = f"{api_url}/{organization_name}/{project_id}/_apis/git/repositories?api-version=7.1-preview.1"
+    url = f"{api_url}/{organization_name}/{project_id}/_apis/git/repositories"
+    params = {"api-version": "7.1"}
 
-    logger.debug(f"Fetching repositories for project {project_id} from: {url}")
-    response = call_azure_devops_api(url, access_token)
+    logger.debug(f"Fetching all repositories for project {project_id} from: {url}")
+    repos = call_azure_devops_api_pagination(url, access_token, params)
 
-    if not response:
+    if not repos:
         logger.warning(f"No response received for repositories in project {project_id}")
         return []
 
-    repos = response.get("value", [])
     # Filter out invalid repositories
     valid_repos = [r for r in repos if validate_repository_data(r)]
 
@@ -118,15 +119,14 @@ def sync(
     access_token: str,
     azure_devops_url: str,
     organization_name: str,
+    projects: List[Dict],
 ) -> None:
     """
-    Syncs the repositories for the given Azure DevOps organization.
-    This function will iterate over all projects to get their repos.
+    Syncs the repositories for the given list of projects.
     """
-    logger.info(f"Syncing repositories for organization '{organization_name}'")
-    from .projects import get_projects
-
-    projects = get_projects(azure_devops_url, organization_name, access_token)
+    logger.info(
+        f"Syncing repositories for {len(projects)} projects in organization '{organization_name}'"
+    )
 
     for project in projects:
         project_id = project["id"]

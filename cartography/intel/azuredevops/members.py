@@ -2,10 +2,12 @@ import logging
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 
 from .util import call_azure_devops_api, validate_user_data
+from .util import call_azure_devops_api_pagination
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -49,18 +51,23 @@ def get_users(api_url: str, organization_name: str, access_token: str) -> List[D
         List of user dictionaries or empty list if failed
     """
     # Note: The User Entitlements API is on a different subdomain `vsaex.dev.azure.com`
-    url = f"https://vsaex.dev.azure.com/{organization_name}/_apis/userentitlements?api-version=7.1-preview.3"
+    url = f"https://vsaex.dev.azure.com/{organization_name}/_apis/userentitlements"
+    params = {"api-version": "7.1-preview.3"}
 
-    logger.debug(f"Fetching users from: {url}")
-    response = call_azure_devops_api(url, access_token)
+    logger.debug(f"Fetching all users from: {url}")
+    users_response = call_azure_devops_api_pagination(url, access_token, params)
 
-    if not response:
+    if not users_response:
         logger.warning(
             f"No response received for users in organization {organization_name}"
         )
         return []
 
-    users = response.get("items", [])
+    users = (
+        users_response.get("items", [])
+        if isinstance(users_response, dict)
+        else users_response
+    )
     # Filter out invalid users
     valid_users = [u for u in users if validate_user_data(u)]
 

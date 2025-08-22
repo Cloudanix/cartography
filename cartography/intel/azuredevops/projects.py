@@ -2,10 +2,11 @@ import logging
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 
-from .util import call_azure_devops_api, validate_project_data
+from .util import call_azure_devops_api_pagination, validate_project_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -25,18 +26,18 @@ def get_projects(api_url: str, organization_name: str, access_token: str) -> Lis
     Returns:
         List of project dictionaries or empty list if failed
     """
-    url = f"{api_url}/{organization_name}/_apis/projects?api-version=7.1-preview.4"
+    url = f"{api_url}/{organization_name}/_apis/projects"
+    params = {"api-version": "7.1"}
 
-    logger.debug(f"Fetching projects from: {url}")
-    response = call_azure_devops_api(url, access_token)
+    logger.debug(f"Fetching all projects from: {url}")
+    projects = call_azure_devops_api_pagination(url, access_token, params)
 
-    if not response:
+    if not projects:
         logger.warning(
             f"No response received for projects in organization {organization_name}"
         )
         return []
 
-    projects = response.get("value", [])
     # Filter out invalid projects
     valid_projects = [p for p in projects if validate_project_data(p)]
 
@@ -114,12 +115,13 @@ def sync(
     access_token: str,
     azure_devops_url: str,
     organization_name: str,
-) -> None:
+) -> List[Dict]:
     """
-    Syncs the projects for the given Azure DevOps organization.
+    Syncs the projects for the given Azure DevOps organization and returns the data.
     """
     logger.info(f"Syncing projects for organization '{organization_name}'")
     projects = get_projects(azure_devops_url, organization_name, access_token)
     if projects:
         load_projects(neo4j_session, projects, organization_name, common_job_parameters)
         cleanup(neo4j_session, common_job_parameters)
+    return projects
