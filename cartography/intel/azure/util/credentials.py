@@ -282,3 +282,60 @@ class Authenticator:
             'name': decoded['name'],
             'email': decoded['preferred_username'],
         }
+
+    def authenticate_service_principal(
+        self,
+        tenant_id: str,
+        subscription_id: str,
+        client_id: str,
+        client_secret: str,
+    ) -> Credentials:
+        """
+        Implements authentication for the Azure provider
+        """
+        try:
+            # Set logging level to error for libraries as otherwise generates a lot of warnings
+            logging.getLogger("adal-python").setLevel(logging.ERROR)
+            logging.getLogger("msrest").setLevel(logging.ERROR)
+            logging.getLogger("msrestazure.azure_active_directory").setLevel(logging.ERROR)
+            logging.getLogger("urllib3").setLevel(logging.ERROR)
+            logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.ERROR)
+
+            arm_credentials = ClientSecretCredential(
+                client_id=client_id,
+                client_secret=client_secret,
+                tenant_id=tenant_id
+            )
+
+            aad_graph_credentials = ClientSecretCredential(
+                client_id=client_id,
+                client_secret=client_secret,
+                tenant_id=tenant_id
+            )
+
+            default_graph_credentials = ClientSecretCredential(
+                client_id=client_id,
+                client_secret=client_secret,
+                tenant_id=tenant_id
+            )
+
+            vault_credentials = ClientSecretCredential(
+                client_id=client_id,
+                client_secret=client_secret,
+                tenant_id=tenant_id
+            )
+
+            return Credentials(arm_credentials, aad_graph_credentials, default_graph_credentials, vault_credentials, subscription_id=subscription_id, tenant_id=tenant_id, current_user={'email': client_id, 'id': client_id})
+
+        except HttpResponseError as e:
+            if (
+                ", AdalError: Unsupported wstrust endpoint version. "
+                "Current supported version is wstrust2005 or wstrust13." in e.args
+            ):
+                logger.error(
+                    f"You are likely authenticating with a Microsoft Account. \
+                    This authentication mode only supports Azure Active Directory principal authentication.\
+                    {e}",
+                )
+
+            raise e
