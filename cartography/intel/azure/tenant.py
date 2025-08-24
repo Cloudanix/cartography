@@ -3,9 +3,9 @@ from typing import Dict
 from typing import List
 
 import neo4j
+import requests
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.resource import SubscriptionClient
-import requests
 
 from .util.credentials import Credentials
 from cartography.util import run_cleanup_job

@@ -304,25 +304,25 @@ class Authenticator:
             arm_credentials = ClientSecretCredential(
                 client_id=client_id,
                 client_secret=client_secret,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
             )
 
             aad_graph_credentials = ClientSecretCredential(
                 client_id=client_id,
                 client_secret=client_secret,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
             )
 
             default_graph_credentials = ClientSecretCredential(
                 client_id=client_id,
                 client_secret=client_secret,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
             )
 
             vault_credentials = ClientSecretCredential(
                 client_id=client_id,
                 client_secret=client_secret,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
             )
 
             return Credentials(arm_credentials, aad_graph_credentials, default_graph_credentials, vault_credentials, subscription_id=subscription_id, tenant_id=tenant_id, current_user={'email': client_id, 'id': client_id})
