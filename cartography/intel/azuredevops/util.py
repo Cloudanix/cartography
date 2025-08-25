@@ -7,6 +7,7 @@ from typing import Optional
 from typing import List
 
 import requests
+from azure.identity import ClientSecretCredential
 
 logger = logging.getLogger(__name__)
 TIMEOUT = (60, 60)
@@ -20,52 +21,13 @@ def get_access_token(
     """
     Exchanges client credentials for an OAuth 2.0 access token using Microsoft Entra ID.
     """
-    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-    data = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "grant_type": "client_credentials",
-        "scope": "499b84ac-1321-427f-aa17-267ca6975798/.default",  # Azure DevOps resource ID
-    }
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.post(token_url, data=data, timeout=TIMEOUT)
-            response.raise_for_status()
-
-            token_response = response.json()
-            if "access_token" not in token_response:
-                logger.error("Access token not found in response")
-                raise ValueError("Access token not found in response")
-
-            # Log token expiry for debugging
-            if "expires_in" in token_response:
-                logger.debug(
-                    f"Access token expires in {token_response['expires_in']} seconds"
-                )
-
-            return token_response["access_token"]
-
-        except requests.exceptions.RequestException as e:
-            if attempt == MAX_RETRIES - 1:
-                logger.error(
-                    f"Failed to get access token after {MAX_RETRIES} attempts: {e}"
-                )
-                raise
-            logger.warning(
-                f"Attempt {attempt + 1} failed, retrying in {RETRY_DELAY} seconds: {e}"
-            )
-            time.sleep(RETRY_DELAY)
-        except (KeyError, ValueError) as e:
-            if attempt == MAX_RETRIES - 1:
-                logger.error(
-                    f"Failed to parse token response after {MAX_RETRIES} attempts: {e}"
-                )
-                raise
-            logger.warning(
-                f"Attempt {attempt + 1} failed to parse response, retrying: {e}"
-            )
-            time.sleep(RETRY_DELAY)
+    credential = ClientSecretCredential(
+        tenant_id=tenant_id,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    access_token = credential.get_token("499b84ac-1321-427f-aa17-267ca6975798/.default")
+    return access_token.token
 
 
 def call_azure_devops_api(

@@ -170,10 +170,12 @@ def validate_auth_config(auth_details: Dict) -> bool:
         logger.error("Auth details must be a dictionary")
         return False
 
-    if "organization" not in auth_details or not isinstance(
-        auth_details["organization"], list
+    if (
+        "organization" not in auth_details
+        or not isinstance(auth_details["organization"], list)
+        or not auth_details["organization"]
     ):
-        logger.error("Auth details must contain 'organization' as a list")
+        logger.error("Auth details must contain 'organization' as a non-empty list")
         return False
 
     for i, org in enumerate(auth_details["organization"]):

@@ -25,10 +25,11 @@ def get_organization(api_url: str, organization_name: str, access_token: str) ->
     Returns:
         Dict containing organization data or empty dict if failed
     """
-    url = f"{api_url}/_apis/organizations/{organization_name}?api-version=7.1-preview.1"
+    url = f"{api_url}/_apis/organizations/{organization_name}"
+    params = {"api-version": "7.1"}
 
     logger.debug(f"Fetching organization data from: {url}")
-    response = call_azure_devops_api(url, access_token)
+    response = call_azure_devops_api(url, access_token, params=params)
 
     if response and validate_organization_data(response):
         logger.debug(

@@ -52,7 +52,7 @@ def get_users(api_url: str, organization_name: str, access_token: str) -> List[D
     """
     # Note: The User Entitlements API is on a different subdomain `vsaex.dev.azure.com`
     url = f"https://vsaex.dev.azure.com/{organization_name}/_apis/userentitlements"
-    params = {"api-version": "7.1-preview.3"}
+    params = {"api-version": "7.1"}
 
     logger.debug(f"Fetching all users from: {url}")
     users_response = call_azure_devops_api_pagination(url, access_token, params)
