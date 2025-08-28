@@ -382,11 +382,11 @@ def _load_tenant_groups_tx(
     MERGE (i:AzureGroup{id: group.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.object_id = group.id,
     i.region = $region,
     i.name = group.display_name
     SET i.lastupdated = $update_tag,
     i.mail = group.mail,
+    i.object_id = group.object_id,
     i.visibility = group.visibility,
     i.classification = group.classification,
     i.created_date_time = group.created_date_time,
@@ -431,6 +431,21 @@ async def get_group_members(credentials: Credentials, group_id: str) -> List[Dic
 
         if members:
             for member in members:
+                if member.odata_type == "#microsoft.graph.group":
+                    inherited_members: List[Dict] = []
+                    response = await client.groups.by_group_id(member.id).members.get()
+                    inherited_members.extend(response.value)
+
+                    while response.odata_next_link:
+                        response = await client.groups.by_group_id(member.id).members.with_url(response.odata_next_link).get()
+                        inherited_members.extend(response.value)
+                    for inherited_member in inherited_members:
+                        members_data.append({
+                            "id": inherited_member.id,
+                            "display_name": inherited_member.display_name,
+                            "mail": inherited_member.mail,
+                            "group_id": group_id,
+                        })
                 members_data.append({
                     "id": member.id,
                     "display_name": member.display_name,
@@ -955,8 +970,7 @@ def _load_roles_tx(
     )
 
     attach_role = """
-    UNWIND $principal_ids AS principal_id
-    MATCH (principal:AzurePrincipal{object_id: principal_id})
+    MATCH (principal:AzurePrincipal{object_id: $principal_id})
     WITH principal
     MATCH (i:AzureRole{id: $role})
     WITH i,principal
@@ -967,8 +981,8 @@ def _load_roles_tx(
     for role_assignment in role_assignments_list:
         tx.run(
             attach_role,
-            role=role_assignment['role_definition_id'],
-            principal_ids=role_assignment['principal_id'],
+            role=role_assignment.get('role_definition_id', role_assignment.get('properties', {}).get('role_definition_id')),
+            principal_id=role_assignment.get('principal_id', role_assignment.get('properties', {}).get('principal_id')),
             update_tag=update_tag,
         )
 
@@ -1149,7 +1163,7 @@ async def async_sync(
     scoped_group_ids = common_job_parameters.get('GROUPS', [])
     ingested_principal_ids: Optional[set] = None
     try:
-        if common_job_parameters.get("IAM_REFRASH"):
+        if common_job_parameters.get("DEFAULT_SUBSCRIPTION") == credentials.subscription_id or not common_job_parameters.get("DEFAULT_SUBSCRIPTION"):
             if scoped_group_ids:
                 # Only sync specified groups and their users
                 ingested_principal_ids = await sync_scoped_users_and_groups(

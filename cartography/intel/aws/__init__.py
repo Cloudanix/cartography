@@ -64,39 +64,41 @@ def concurrent_execution(
     common_job_parameters: Dict,
 ):
     logger.info(f"BEGIN processing for service: {service}")
+    try:
+        if creds["type"] == "self":
+            boto3_session = boto3.Session(
+                aws_access_key_id=creds["aws_access_key_id"],
+                aws_secret_access_key=creds["aws_secret_access_key"],
+            )
 
-    if creds["type"] == "self":
-        boto3_session = boto3.Session(
-            aws_access_key_id=creds["aws_access_key_id"],
-            aws_secret_access_key=creds["aws_secret_access_key"],
+        elif creds["type"] == "assumerole":
+            boto3_session = boto3.Session(
+                aws_access_key_id=creds["aws_access_key_id"],
+                aws_secret_access_key=creds["aws_secret_access_key"],
+                aws_session_token=creds["session_token"],
+            )
+
+        neo4j_auth = (config.neo4j_user, config.neo4j_password)
+        neo4j_driver = GraphDatabase.driver(
+            config.neo4j_uri,
+            auth=neo4j_auth,
+            max_connection_lifetime=config.neo4j_max_connection_lifetime,
         )
 
-    elif creds["type"] == "assumerole":
-        boto3_session = boto3.Session(
-            aws_access_key_id=creds["aws_access_key_id"],
-            aws_secret_access_key=creds["aws_secret_access_key"],
-            aws_session_token=creds["session_token"],
+        sync_args = _build_aws_sync_kwargs(
+            Session(neo4j_driver),
+            boto3_session,
+            regions,
+            current_aws_account_id,
+            update_tag,
+            common_job_parameters,
         )
 
-    neo4j_auth = (config.neo4j_user, config.neo4j_password)
-    neo4j_driver = GraphDatabase.driver(
-        config.neo4j_uri,
-        auth=neo4j_auth,
-        max_connection_lifetime=config.neo4j_max_connection_lifetime,
-    )
+        service_func(**sync_args)
 
-    sync_args = _build_aws_sync_kwargs(
-        Session(neo4j_driver),
-        boto3_session,
-        regions,
-        current_aws_account_id,
-        update_tag,
-        common_job_parameters,
-    )
-
-    service_func(**sync_args)
-
-    logger.info(f"END processing for service: {service}")
+        logger.info(f"END processing for service: {service}")
+    except Exception as e:
+        logger.warning(f"error to process service {service} - {e}")
 
 
 def _sync_one_account(
@@ -131,39 +133,9 @@ def _sync_one_account(
     )
 
     if os.environ.get("LOCAL_RUN", "0") == "1" or os.environ.get("CDX_RUN_AS") == "EKS":
-        # BEGIN Parallel Run for Identitystore and IAM
-        with ThreadPoolExecutor(max_workers=len(PARALLEL_PROCESSING_SERVICES)) as executor:
-            futures = []
-
-            for func_name in aws_requested_syncs:
-                if func_name not in PARALLEL_PROCESSING_SERVICES:
-                    continue
-
-                if func_name == "identitystore" and not config.params["workspace"].get("is_identity_sso_used"):
-                    continue
-
-                futures.append(
-                    executor.submit(
-                        concurrent_execution,
-                        func_name,
-                        RESOURCE_FUNCTIONS[func_name],
-                        creds,
-                        config,
-                        **sync_args,
-                    ),
-                )
-
-            for future in as_completed(futures):
-                logger.info(f"Result from Future - Service Processing: {future.result()}")
-
-            # END - Parallel Run for Identitystore and IAM
-
         # BEGIN - Sequential Run
-
         for func_name in aws_requested_syncs:
             if func_name in RESOURCE_FUNCTIONS:
-                if func_name in PARALLEL_PROCESSING_SERVICES:
-                    continue
 
                 if func_name == "identitystore" and not config.params["workspace"].get("is_identity_sso_used"):
                     continue
@@ -171,21 +143,21 @@ def _sync_one_account(
                 # Skip permission relationships and tags for now because they rely on data already being in the graph
                 if func_name not in ["permission_relationships", "resourcegroupstaggingapi"]:
                     logger.info(f"Processing {func_name}")
-                    RESOURCE_FUNCTIONS[func_name](**sync_args)
+                    try:
+                        RESOURCE_FUNCTIONS[func_name](**sync_args)
+                    except Exception as e:
+                        logger.warning(f"error to process service {func_name} - {e}")
 
                 else:
                     continue
 
             else:
-                raise ValueError(
-                    f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?',
-                )
+                logger.warning(f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?')
 
         # END - Sequential Run
 
     else:
         # BEGIN - Parallel Run
-
         # Process each service in parallel.
         with ThreadPoolExecutor(max_workers=len(RESOURCE_FUNCTIONS) - 2) as executor:
             futures = []
@@ -197,33 +169,30 @@ def _sync_one_account(
 
                     # Skip permission relationships and tags for now because they rely on data already being in the graph
                     if func_name not in ["permission_relationships", "resourcegroupstaggingapi"]:
-                        futures.append(
-                            executor.submit(
-                                concurrent_execution,
-                                func_name,
-                                RESOURCE_FUNCTIONS[func_name],
-                                creds,
-                                config,
-                                **sync_args,
-                            ),
-                        )
+                        try:
+                            futures.append(
+                                executor.submit(
+                                    concurrent_execution,
+                                    func_name,
+                                    RESOURCE_FUNCTIONS[func_name],
+                                    creds,
+                                    config,
+                                    **sync_args,
+                                ),
+                            )
+                        except Exception as e:
+                            logger.warning(f"error to append service {func_name} in futures - {e}")
 
                     else:
                         continue
 
                 else:
-                    raise ValueError(
-                        f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?',
-                    )
+                    logger.warning(f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?')
 
             for future in as_completed(futures):
                 logger.info(f"Result from Future - Service Processing: {future.result()}")
 
         # END - Parallel Run
-
-    # INFO: This is a temporary solution to skip Loading Tags & Analysis Jobs for partial run particularly for IN DC.
-    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
-        return
 
     # MAP IAM permissions
     if "permission_relationships" in aws_requested_syncs:

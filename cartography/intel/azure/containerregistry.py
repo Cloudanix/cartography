@@ -59,7 +59,10 @@ def get_registry_list(
                 if registry.policies and registry.policies.retention_policy
                 else None,
                 "creation_date": registry.creation_date.isoformat() if registry.creation_date else None,
-                "console_link": azure_console_link.get_console_link("azure_container_registry", registry.id),
+                "console_link": azure_console_link.get_console_link(
+                    id=registry["id"],
+                    primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
+                ),
                 "subscription_id": subscription_id,
                 "type": registry.type,
                 "tags": registry.tags or {},

@@ -3,6 +3,7 @@ from typing import Dict
 from typing import List
 
 import neo4j
+import requests
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.resource import SubscriptionClient
 
@@ -46,10 +47,34 @@ def list_tenants(credentials: Credentials) -> List[Dict]:
     return tenants
 
 
+def get_tenent_object_by_graph(credentials: Credentials):
+    tenant = {}
+    token = credentials.arm_credentials.get_token("https://graph.microsoft.com/.default")
+
+    headers = {"Authorization": f"Bearer {token.token}"}
+    resp = requests.get("https://graph.microsoft.com/v1.0/organization", headers=headers)
+    resp.raise_for_status()
+
+    data = resp.json()
+    for org in data["value"]:
+        for domain in org["verifiedDomains"]:
+            if domain.get("isDefault", False):
+                tenant["defaultDomain"] = domain["name"]
+                break
+        tenant["displayName"] = org["displayName"]
+        tenant["tenantType"] = org["tenantType"]
+    return tenant
+
+
 def get_active_tenant(credentials: Credentials) -> Dict:
     # Fetch current tenant
     tenants = list_tenants(credentials)
     tenant_obj = list(filter(lambda t: t['tenantId'] == credentials.get_tenant_id(), tenants))
+    if not tenant_obj[0].get("defaultDomain"):
+        tenant = get_tenent_object_by_graph(credentials)
+        tenant_obj[0]["defaultDomain"] = tenant.get("defaultDomain")
+        tenant_obj[0]["displayName"] = tenant.get("displayName")
+        tenant_obj[0]["tenantType"] = tenant.get("tenantType")
 
     return tenant_obj[0]
 
@@ -100,7 +125,7 @@ def load_azure_tenant(
         country=tenant_obj['country'],
         countryCode=tenant_obj['countryCode'],
         defaultDomain=tenant_obj['defaultDomain'],
-        userEmail=current_user['email'],
+        userEmail=current_user.get('email'),
         userId=current_user.get('id'),
         userName=current_user.get('name'),
         update_tag=update_tag,

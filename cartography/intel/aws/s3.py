@@ -35,14 +35,28 @@ def get_s3_bucket_list(boto3_session: boto3.session.Session) -> List[Dict]:
     buckets = client.list_buckets()
     for bucket in buckets["Buckets"]:
         try:
-            bucket["Region"] = client.get_bucket_location(Bucket=bucket["Name"])["LocationConstraint"]
+            response = client.get_bucket_location(Bucket=bucket["Name"])
+
+            if response["LocationConstraint"] is None:
+                # According to AWS docs, LocationConstraint is null for us-east-1
+                # Reference: https://aws.amazon.com/blogs/developer/leveraging-the-s3-and-s3api-commands/
+                bucket["Region"] = "us-east-1"
+
+            else:
+                bucket["Region"] = response["LocationConstraint"]
+
+            # For some buckets, LocationConstraint can be an empty string
+            if bucket["Region"] == "":
+                bucket["Region"] = "us-east-1"
+
         except ClientError as e:
             if _is_common_exception(e, bucket):
-                bucket["Region"] = None
+                bucket["Region"] = "us-east-1"
                 logger.warning("skipping bucket='{}' due to exception.".format(bucket["Name"]))
                 continue
             else:
                 raise
+
     return buckets
 
 

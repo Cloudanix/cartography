@@ -7,7 +7,6 @@ from typing import List
 import neo4j
 
 from cartography.intel.gitlab.pagination import paginate_request
-from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -17,8 +16,8 @@ logger = logging.getLogger(__name__)
 @timeit
 def get_group_projects(access_token: str, group_id: int):
     """
-    As per the rest api docs:https://docs.gitlab.com/ee/api/groups.html#list-a-groups-projects
-    Pagination: https://docs.gitlab.com/ee/api/rest/index.html#pagination
+    As per the rest api docs:https://docs.gitlab.com/api/groups.html#list-a-groups-projects
+    Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
     """
     url = f"https://gitlab.com/api/v4/groups/{group_id}/projects?per_page=100"
     projects = paginate_request(url, access_token)

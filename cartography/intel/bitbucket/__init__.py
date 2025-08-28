@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def concurrent_execution(
-    service: str, service_func: Any, config:Config,workspace_name:str, access_token: str, common_job_parameters: Dict,
+    service: str, service_func: Any, config: Config, workspace_name: str, access_token: str, common_job_parameters: Dict,
 ) -> None:
     logger.info(f"BEGIN processing for service: {service}")
     neo4j_auth = (config.neo4j_user, config.neo4j_password)
@@ -28,7 +28,7 @@ def concurrent_execution(
         max_connection_lifetime=config.neo4j_max_connection_lifetime,
     )
     service_func(
-        Session(neo4j_driver), workspace_name,access_token,
+        Session(neo4j_driver), workspace_name, access_token,
         common_job_parameters,
     )
     logger.info(f"END processing for service: {service}")
@@ -36,10 +36,10 @@ def concurrent_execution(
 
 def _sync_one_workspace(
     neo4j_session: neo4j.Session,
-    workspace_name:str,
-    access_token:str,
+    workspace_name: str,
+    access_token: str,
     common_job_parameters: Dict[str, Any],
-    config:Config,
+    config: Config,
 ) -> None:
     requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
 
@@ -55,11 +55,14 @@ def _sync_one_workspace(
 
     for func_name in requested_syncs:
         if func_name in RESOURCE_FUNCTIONS:
-            logger.info(f"Processing {func_name}")
-            RESOURCE_FUNCTIONS[func_name](**sync_args)
+            try:
+                logger.info(f"Processing {func_name}")
+                RESOURCE_FUNCTIONS[func_name](**sync_args)
+            except Exception as e:
+                logger.warning(f"error to process service {func_name} - {e}")
 
         else:
-            raise ValueError(f'BITBUCKET sync function "{func_name}" was specified but does not exist. Did you misspell it?')
+            logger.warning(f'BITBUCKET sync function "{func_name}" was specified but does not exist. Did you misspell it?')
 
     # END - Sequential Run
 
@@ -93,21 +96,20 @@ def _sync_one_workspace(
     #     # END - Parallel Run
 
 
-
 def _sync_multiple_workspaces(
     neo4j_session: neo4j.Session,
     access_token: str,
-    workspaces:List[Dict],
+    workspaces: List[Dict],
     common_job_parameters: Dict[str, Any],
     config: Config,
-) ->bool:
+) -> bool:
     for ws in workspaces:
         if config.params['workspace']['account_id'] != ws.get('slug'):
             continue
 
         logger.info(f'processing workspace: {ws.get("slug")}')
-        common_job_parameters['WORKSPACE_UUID']=ws.get('uuid')
-        _sync_one_workspace(neo4j_session,ws['slug'],access_token,common_job_parameters,config)
+        common_job_parameters['WORKSPACE_UUID'] = ws.get('uuid')
+        _sync_one_workspace(neo4j_session, ws['slug'], access_token, common_job_parameters, config)
         run_cleanup_job('bitbucket_workspace_cleanup.json', neo4j_session, common_job_parameters)
 
         del common_job_parameters['WORKSPACE_UUID']
@@ -140,7 +142,7 @@ def start_bitbucket_ingestion(neo4j_session: neo4j.Session, config: Config) -> d
         has_workspace_data = False
         if len(workspaces_list) > 0:
             for ws in workspaces_list:
-                if ws.get('slug',"").lower() == config.params['workspace']['account_id'].lower():
+                if ws.get('slug', "") == config.params['workspace']['account_id']:
                     has_workspace_data = True
 
         if has_workspace_data is False:
@@ -154,9 +156,9 @@ def start_bitbucket_ingestion(neo4j_session: neo4j.Session, config: Config) -> d
             return common_job_parameters
 
         workspace.sync(
-                neo4j_session,
-                workspaces_list,
-                common_job_parameters,
+            neo4j_session,
+            workspaces_list,
+            common_job_parameters,
         )
 
         _sync_multiple_workspaces(
@@ -168,6 +170,6 @@ def start_bitbucket_ingestion(neo4j_session: neo4j.Session, config: Config) -> d
         )
 
     except exceptions.RequestException as e:
-            logger.error("Could not complete request to the Bitbucket API: %s", e)
+        logger.error("Could not complete request to the Bitbucket API: %s", e)
 
     return common_job_parameters

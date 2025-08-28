@@ -25,9 +25,15 @@ def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session, regi
     """
     web_acls = []
     client = boto3_session.client('waf-regional', region_name=region)
-    paginator = client.get_paginator('list_web_acls')
-    for page in paginator.paginate():
-        for acl in page.get('WebACLs', []):
+    resp = client.list_web_acls()
+    for acl in resp.get('WebACLs', []):
+        acl['region'] = region
+        web_acls.append(acl)
+    while resp.get("NextMarker"):
+        resp = client.list_web_acls(
+            NextMarker=resp.get("NextMarker"),
+        )
+        for acl in resp.get('WebACLs', []):
             acl['region'] = region
             web_acls.append(acl)
     return web_acls
@@ -210,6 +216,7 @@ def get_waf_v2_global_acls(boto3_session: boto3.session.Session) -> List[Dict]:
     client = boto3_session.client("wafv2", region_name="us-east-1")
     return get_waf_v2_web_acls_for_scope(client, "CLOUDFRONT", "global")
 
+
 @timeit
 def get_waf_v2_regional_acls(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     """
@@ -228,9 +235,17 @@ def get_waf_v2_web_acls_for_scope(
 ) -> List[Dict]:
     web_acls = []
     try:
-        paginator = client.get_paginator('list_web_acls')
-        for page in paginator.paginate(Scope=scope):
-            for acl in page.get("WebACLs", []):
+        resp = client.list_web_acls(Scope=scope)
+        for acl in resp.get("WebACLs", []):
+            acl_with_details = get_waf_v2_web_acl_details(client, acl, scope, region)
+            if acl_with_details:
+                web_acls.append(acl_with_details)
+        while resp.get("NextMarker"):
+            resp = client.list_web_acls(
+                Scope=scope,
+                NextMarker=resp.get("NextMarker"),
+            )
+            for acl in resp.get("WebACLs", []):
                 acl_with_details = get_waf_v2_web_acl_details(client, acl, scope, region)
                 if acl_with_details:
                     web_acls.append(acl_with_details)
@@ -326,7 +341,7 @@ def sync(
         sync_waf_v2(neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters)
 
     except Exception as ex:
-        logger.error("failed to process waf", ex)
+        logger.error("failed to process waf - %s", ex)
 
     toc = time.perf_counter()
     logger.info(f"Time to process WAF: {toc - tic:0.4f} seconds")

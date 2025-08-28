@@ -26,4 +26,5 @@ node_modules
 .venv
 
 build.log
+azure.build.log
 */venv_cartography_test/

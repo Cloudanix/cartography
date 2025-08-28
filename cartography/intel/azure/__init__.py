@@ -24,33 +24,39 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+AZURE_AUTH_MODE_USER_IMPERSONATION = "user_impersonation"
+AZURE_AUTH_MODE_SERVICE_PRINCIPAL = "service_principal"
+
 
 def concurrent_execution(
     service: str, service_func: Any, config: Config, credentials: Credentials, common_job_parameters: Dict, update_tag: int, subscription_id: str,
 ):
-    logger.info(f"BEGIN processing for service: {service}")
+    try:
+        logger.info(f"BEGIN processing for service: {service}")
 
-    regions = config.params.get('regions', None)
+        regions = config.params.get('regions', None)
 
-    neo4j_auth = (config.neo4j_user, config.neo4j_password)
-    neo4j_driver = GraphDatabase.driver(
-        config.neo4j_uri,
-        auth=neo4j_auth,
-        max_connection_lifetime=config.neo4j_max_connection_lifetime,
-    )
-    if service == 'iam':
-        service_func(Session(neo4j_driver), credentials, credentials.tenant_id, update_tag, common_job_parameters)
-    elif service == 'key_vaults':
-        service_func(
-            Session(neo4j_driver), credentials,
-            subscription_id, update_tag, common_job_parameters, regions,
+        neo4j_auth = (config.neo4j_user, config.neo4j_password)
+        neo4j_driver = GraphDatabase.driver(
+            config.neo4j_uri,
+            auth=neo4j_auth,
+            max_connection_lifetime=config.neo4j_max_connection_lifetime,
         )
-    else:
-        service_func(
-            Session(neo4j_driver), credentials.arm_credentials,
-            subscription_id, update_tag, common_job_parameters, regions,
-        )
-    logger.info(f"END processing for service: {service}")
+        if service == 'iam':
+            service_func(Session(neo4j_driver), credentials, credentials.tenant_id, update_tag, common_job_parameters)
+        elif service == 'key_vaults':
+            service_func(
+                Session(neo4j_driver), credentials,
+                subscription_id, update_tag, common_job_parameters, regions,
+            )
+        else:
+            service_func(
+                Session(neo4j_driver), credentials.arm_credentials,
+                subscription_id, update_tag, common_job_parameters, regions,
+            )
+        logger.info(f"END processing for service: {service}")
+    except Exception as e:
+        logger.warning(f"error to process service {service} - {e}")
 
 
 def _sync_one_subscription(
@@ -71,18 +77,20 @@ def _sync_one_subscription(
 
         for func_name in requested_syncs:
             if func_name in RESOURCE_FUNCTIONS:
-                logger.info(f"Processing {func_name}")
-                if func_name == 'iam':
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, credentials.tenant_id, update_tag, common_job_parameters)
+                try:
+                    logger.info(f"Processing {func_name}")
+                    if func_name == 'iam':
+                        RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, credentials.tenant_id, update_tag, common_job_parameters)
 
-                elif func_name == 'key_vaults':
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
+                    elif func_name == 'key_vaults':
+                        RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
 
-                else:
-                    RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials.arm_credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
-
+                    else:
+                        RESOURCE_FUNCTIONS[func_name](neo4j_session, credentials.arm_credentials, subscription_id, update_tag, common_job_parameters, config.params.get('regions', None))
+                except Exception as e:
+                    logger.warning(f"error to process service {func_name} - {e}")
             else:
-                raise ValueError(f'AZURE sync function "{func_name}" was specified but does not exist. Did you misspell it?')
+                logger.warning(f'AZURE sync function "{func_name}" was specified but does not exist. Did you misspell it?')
 
         # END - Sequential Run
 
@@ -93,23 +101,23 @@ def _sync_one_subscription(
             futures = []
             for request in requested_syncs:
                 if request in RESOURCE_FUNCTIONS:
-                    futures.append(
-                        executor.submit(
-                            concurrent_execution,
-                            request,
-                            RESOURCE_FUNCTIONS[request],
-                            config,
-                            credentials,
-                            common_job_parameters,
-                            update_tag,
-                            subscription_id,
-                        ),
-                    )
-
+                    try:
+                        futures.append(
+                            executor.submit(
+                                concurrent_execution,
+                                request,
+                                RESOURCE_FUNCTIONS[request],
+                                config,
+                                credentials,
+                                common_job_parameters,
+                                update_tag,
+                                subscription_id,
+                            ),
+                        )
+                    except Exception as e:
+                        logger.warning(f"error to append service {request} in futures - {e}")
                 else:
-                    raise ValueError(
-                        f'Azure sync function "{request}" was specified but does not exist. Did you misspell it?',
-                    )
+                    logger.warning(f'Azure sync function "{request}" was specified but does not exist. Did you misspell it?')
 
             for future in as_completed(futures):
                 logger.info(f'Result from Future - Service Processing: {future.result()}')
@@ -240,7 +248,7 @@ def start_azure_ingestion(
 ) -> None:
     common_job_parameters = {
         "WORKSPACE_ID": config.params['workspace']['id_string'],
-        "IAM_REFRASH": config.params.get('workspace', {}).get('iam_refrash', True),
+        "DEFAULT_SUBSCRIPTION": config.params.get('defaultSubscription'),
         "GROUPS": config.params.get('groups', []),
         "UPDATE_TAG": config.update_tag,
         "permission_relationships_file": config.permission_relationships_file,
@@ -257,18 +265,32 @@ def start_azure_ingestion(
         # else:
         #     credentials = Authenticator().authenticate_cli()
 
-        credentials = Authenticator().impersonate_user(
-            config.azure_client_id,
-            config.azure_client_secret,
-            config.azure_redirect_uri,
-            config.azure_refresh_token,
-            config.azure_graph_scope,
-            config.azure_default_graph_scope,
-            config.azure_azure_scope,
-            config.azure_vault_scope,
-            config.azure_subscription_id,
-            config.azure_tenant_id,
-        )
+        auth_mode = config.params.get('authMode', AZURE_AUTH_MODE_USER_IMPERSONATION)
+        if auth_mode == AZURE_AUTH_MODE_USER_IMPERSONATION:
+            logger.info("Using user impersonation for Azure authentication")
+            credentials = Authenticator().impersonate_user(
+                config.azure_client_id,
+                config.azure_client_secret,
+                config.azure_redirect_uri,
+                config.azure_refresh_token,
+                config.azure_graph_scope,
+                config.azure_default_graph_scope,
+                config.azure_azure_scope,
+                config.azure_vault_scope,
+                config.azure_subscription_id,
+                config.azure_tenant_id,
+            )
+        elif auth_mode == AZURE_AUTH_MODE_SERVICE_PRINCIPAL:
+            logger.info("Using service principal for Azure authentication")
+            credentials = Authenticator().authenticate_service_principal(
+                config.azure_tenant_id,
+                config.azure_subscription_id,
+                config.azure_client_id,
+                config.azure_client_secret,
+            )
+        else:
+            logger.error(f"Unsupported Azure authentication mode: {auth_mode}")
+            raise ValueError(f"Unsupported Azure authentication mode: {auth_mode}")
 
     except Exception as e:
         logger.error(f"Unable to authenticate with Azure Service Principal, an error occurred: {e}. Make sure your Azure Service Principal details are provided correctly.", exc_info=True, stack_info=True)
@@ -286,7 +308,6 @@ def start_azure_ingestion(
         requested_syncs = parse_and_validate_azure_requested_syncs(azure_requested_syncs_string[:-1])
 
     tenant_obj = tenant.get_active_tenant(credentials)
-    print(tenant_obj)
     common_job_parameters['Azure_Primary_AD_Domain_Name'] = tenant_obj['defaultDomain']
 
     _sync_tenant(
