@@ -58,6 +58,7 @@ def _load_projects_data(
         pro.description = project.description,
         pro.name_with_namespace = project.name_with_namespace,
         pro.visibility = project.visibility,
+        pro.is_private = project.visibility == 'private',
         pro.namespace= project.namespace.path,
         pro.last_activity_at = project.last_activity_at,
         pro.default_branch = project.default_branch,
