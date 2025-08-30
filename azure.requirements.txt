@@ -29,6 +29,7 @@ azure-functions~=1.6.0
 adal>=1.2.4
 azure-core<2.0.0,>=1.15.0
 azure-cli-core>=2.33.0
+azure-devops~=7.1.0
 azure-keyvault~=4.2.0
 azure-keyvault-certificates~=4.6.0
 azure-mgmt-compute>=5.0.0
