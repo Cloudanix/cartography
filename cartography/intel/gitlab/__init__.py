@@ -37,6 +37,7 @@ def concurrent_execution(
 def _sync_one_gitlab_group(
     neo4j_session: neo4j.Session,
     group_name: str,
+    hosted_domain: str,
     access_token: str,
     common_job_parameters: Dict[str, Any],
     config: Config,
@@ -51,6 +52,7 @@ def _sync_one_gitlab_group(
         "group_id": common_job_parameters["GITLAB_GROUP_ID"],
         "group_name": group_name,
         "access_token": access_token,
+        "hosted_domain": hosted_domain,
     }
 
     for func_name in sync_order:
@@ -68,6 +70,7 @@ def _sync_one_gitlab_group(
 
 def _sync_multiple_groups(
     neo4j_session: neo4j.Session,
+    hosted_domain: str,
     access_token: str,
     groups: List[Dict],
     common_job_parameters: Dict[str, Any],
@@ -77,7 +80,9 @@ def _sync_multiple_groups(
         if common_job_parameters["GITLAB_GROUP_ID"] != group.get("name"):
             continue
 
-        _sync_one_gitlab_group(neo4j_session, group.get("name"), access_token, common_job_parameters, config)
+        _sync_one_gitlab_group(
+            neo4j_session, group.get("name"), hosted_domain, access_token, common_job_parameters, config,
+        )
         run_cleanup_job("gitlab_group_cleanup.json", neo4j_session, common_job_parameters)
 
     return True
@@ -96,6 +101,7 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
         return
 
     access_token = config.gitlab_access_token
+    hosted_domain = config.gitlab_hosted_domain
     workspace_id = config.params.get("workspace", {}).get("id_string", "")
     group_id = config.params.get("workspace", {}).get("account_id", "")
 
@@ -111,7 +117,11 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
 
     try:
         # groups_list =cartography.intel.gitlab.group.get_groups(access_token)
-        group_info = cartography.intel.gitlab.group.get_group(access_token, common_job_parameters["GITLAB_GROUP_ID"])
+        group_info = cartography.intel.gitlab.group.get_group(
+            hosted_domain,
+            access_token,
+            common_job_parameters["GITLAB_GROUP_ID"],
+        )
         groups_list = [group_info]
 
         if not groups_list or not isinstance(groups_list, list) or not groups_list[0]:
@@ -126,6 +136,7 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
 
         _sync_multiple_groups(
             neo4j_session,
+            hosted_domain,
             access_token,
             groups_list,
             common_job_parameters,

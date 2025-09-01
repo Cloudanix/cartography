@@ -14,12 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def get_group_projects(access_token: str, group_id: int):
+def get_group_projects(hosted_domain: str, access_token: str, group_id: int):
     """
     As per the rest api docs:https://docs.gitlab.com/api/groups.html#list-a-groups-projects
     Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
     """
-    url = f"https://gitlab.com/api/v4/groups/{group_id}/projects?per_page=100"
+    url = f"{hosted_domain}/api/v4/groups/{group_id}/projects?per_page=100"
     projects = paginate_request(url, access_token)
 
     return projects
@@ -86,6 +86,7 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 def sync(
     neo4j_session: neo4j.Session,
     group_id: int,
+    hosted_domain: str,
     access_token: str,
     common_job_parameters: Dict[str, Any],
     group_name: str,
