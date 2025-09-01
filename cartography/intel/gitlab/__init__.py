@@ -81,7 +81,12 @@ def _sync_multiple_groups(
             continue
 
         _sync_one_gitlab_group(
-            neo4j_session, group.get("name"), hosted_domain, access_token, common_job_parameters, config,
+            neo4j_session,
+            group.get("name"),
+            hosted_domain,
+            access_token,
+            common_job_parameters,
+            config,
         )
         run_cleanup_job("gitlab_group_cleanup.json", neo4j_session, common_job_parameters)
 
@@ -131,6 +136,8 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
         cartography.intel.gitlab.group.sync(
             neo4j_session,
             groups_list,
+            hosted_domain,
+            access_token,
             common_job_parameters,
         )
 
