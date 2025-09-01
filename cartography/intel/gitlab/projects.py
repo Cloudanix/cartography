@@ -25,6 +25,13 @@ def get_group_projects(hosted_domain: str, access_token: str, group_id: int):
     return projects
 
 
+def transform_projects_data(projects: List[Dict]) -> List[Dict]:
+    for project in projects:
+        project["is_private"] = project["visibility"] == "private"
+
+    return projects
+
+
 def load_projects_data(
     session: neo4j.Session,
     project_data: List[Dict],
@@ -58,7 +65,7 @@ def _load_projects_data(
         pro.description = project.description,
         pro.name_with_namespace = project.name_with_namespace,
         pro.visibility = project.visibility,
-        pro.is_private = project.visibility == 'private',
+        pro.is_private = project.is_private,
         pro.namespace= project.namespace.path,
         pro.last_activity_at = project.last_activity_at,
         pro.default_branch = project.default_branch,
@@ -101,7 +108,9 @@ def sync(
 
     logger.info("Syncing Projects for Gitlab Group '%s', at %s.", group_name, tic)
 
-    group_projects = get_group_projects(access_token, group_id)
+    group_projects = get_group_projects(hosted_domain, access_token, group_id)
+
+    group_projects = transform_projects_data(group_projects)
 
     load_projects_data(neo4j_session, group_projects, common_job_parameters, group_id)
     cleanup(neo4j_session, common_job_parameters)
