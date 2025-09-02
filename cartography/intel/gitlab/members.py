@@ -44,7 +44,7 @@ def load_members_data(
 def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict, group_id: int):
     ingest_group_query = """
     UNWIND $membersData as member
-    MERGE (mem:GitLabMember {id: member.id})
+    MERGE (mem:GitLabMember {id: member.username})
     ON CREATE SET
         mem.firstseen = timestamp(),
         mem.created_at = member.created_at

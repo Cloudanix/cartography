@@ -24,14 +24,18 @@ def get_dependencies(hosted_domain: str, access_token: str, project: str):
     return dependencies
 
 
-def load_dependencies_data(session: neo4j.Session, dependencies_data: List[Dict], common_job_parameters: Dict) -> None:
-    session.write_transaction(_load_dependencies_data, dependencies_data, common_job_parameters)
+def load_dependencies_data(
+    session: neo4j.Session, dependencies_data: List[Dict], project_id: str, common_job_parameters: Dict,
+) -> None:
+    session.write_transaction(_load_dependencies_data, dependencies_data, project_id, common_job_parameters)
 
 
-def _load_dependencies_data(tx: neo4j.Transaction, dependencies_data: List[Dict], common_job_parameters: Dict):
+def _load_dependencies_data(
+    tx: neo4j.Transaction, dependencies_data: List[Dict], project_id: str, common_job_parameters: Dict,
+):
     ingest_dependencies = """
     UNWIND $dependenciesData AS dependency
-    MERGE (dep:GitLabDependency {id: dependency.id})
+    MERGE (dep:GitLabDependency {id: dependency.name})
     ON CREATE SET dep.firstseen = timestamp()
     dep.created_at = dependency.created_at
 
@@ -44,7 +48,7 @@ def _load_dependencies_data(tx: neo4j.Transaction, dependencies_data: List[Dict]
     dep.lastupdated = $UpdateTag
 
     WITH dep, dependency
-    MATCH (repo:GitLabRepository {id: dependency.repository_id})
+    MATCH (repo:GitLabProject {id: $ProjectID})
     MERGE (dep)-[r:HAS]->(repo)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -53,6 +57,7 @@ def _load_dependencies_data(tx: neo4j.Transaction, dependencies_data: List[Dict]
     tx.run(
         ingest_dependencies,
         dependenciesData=dependencies_data,
+        ProjectID=project_id,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
@@ -76,5 +81,5 @@ def sync(
     """
     logger.info("Syncing Gitlab All Dependencies")
     project_dependencies = get_dependencies(hosted_domain, access_token, project_id)
-    load_dependencies_data(neo4j_session, project_dependencies, common_job_parameters)
+    load_dependencies_data(neo4j_session, project_dependencies, project_id, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)

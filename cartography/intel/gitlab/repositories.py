@@ -25,14 +25,18 @@ def get_repos(hosted_domain: str, access_token: str, project: str):
     return repositories
 
 
-def load_repositories_data(session: neo4j.Session, repos_data: List[Dict], common_job_parameters: Dict) -> None:
-    session.write_transaction(_load_repositories_data, repos_data, common_job_parameters)
+def load_repositories_data(
+    session: neo4j.Session, repos_data: List[Dict], project_id: str, common_job_parameters: Dict,
+) -> None:
+    session.write_transaction(_load_repositories_data, repos_data, project_id, common_job_parameters)
 
 
-def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], common_job_parameters: Dict):
+def _load_repositories_data(
+    tx: neo4j.Transaction, repos_data: List[Dict], project_id: str, common_job_parameters: Dict,
+):
     ingest_repositories = """
     UNWIND $reposData as repo
-    MERGE (re:GitLabRepository{id: repo.id})
+    MERGE (re:GitLabRepository{id: repo.path})
     ON CREATE SET re.firstseen = timestamp(),
     re.created_at = repo.created_at
 
@@ -44,7 +48,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     re.lastupdated = $UpdateTag
 
     WITH re, repo
-    MATCH (project:GitLabProject{id: repo.namespace.id})
+    MATCH (project:GitLabProject{id: $ProjectID})
     MERGE (project)<-[o:HAS]-(re)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
@@ -53,6 +57,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     tx.run(
         ingest_repositories,
         reposData=repos_data,
+        ProjectID=project_id,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
@@ -79,7 +84,7 @@ def sync(
     logger.info("Syncing Repositories for Gitlab Project '%s', at %s.", project_id, tic)
 
     project_repos = get_repos(hosted_domain, access_token, project_id)
-    load_repositories_data(neo4j_session, project_repos, common_job_parameters)
+    load_repositories_data(neo4j_session, project_repos, project_id, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

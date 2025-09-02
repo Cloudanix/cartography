@@ -49,7 +49,7 @@ def _load_projects_data(
 ) -> None:
     ingest_group = """
     UNWIND $projectData as project
-    MERGE (pro:GitLabProject {id: project.id})
+    MERGE (pro:GitLabProject {id: project.path})
     ON CREATE SET
         pro.firstseen = timestamp(),
         pro.created_at = project.created_at
@@ -61,6 +61,7 @@ def _load_projects_data(
         pro.creator_id = project.creator_id,
         pro.web_url = project.web_url,
         pro.path = project.path,
+        pro.id = project.id,
         pro.path_with_namespace = project.path_with_namespace,
         pro.description = project.description,
         pro.name_with_namespace = project.name_with_namespace,

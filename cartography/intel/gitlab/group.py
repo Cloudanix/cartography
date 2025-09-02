@@ -48,7 +48,7 @@ def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_p
     UNWIND $groups AS grp
     WITH grp
     WHERE grp.id IS NOT NULL AND grp.name IS NOT NULL
-    MERGE (group:GitLabGroup{id: grp.name})
+    MERGE (group:GitLabGroup{id: grp.path})
     ON CREATE SET
         group.firstseen = timestamp(),
         group.created_at = grp.created_at,
