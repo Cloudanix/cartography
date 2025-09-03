@@ -157,6 +157,7 @@ def process_request(context, args, retry=0):
                     "inventoryReturn": args.get("inventoryReturn", False),
                     "services": args.get("services"),
                     "dc": args.get("dc"),
+                    "defaultRegion": args.get("defaultRegion", None),
                 },
                 "services": svcs,
                 "updateTag": args.get("runTimestamp"),
