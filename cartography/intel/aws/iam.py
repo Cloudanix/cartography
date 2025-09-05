@@ -303,9 +303,9 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
 
 
 @timeit
-def get_external_access_roles(boto3_session: boto3.session.Session) -> List[Dict]:
+def get_external_access_roles(boto3_session: boto3.session.Session, common_job_parameters: Dict) -> List[Dict]:
     try:
-        analyzer_client = boto3_session.client("accessanalyzer")
+        analyzer_client = boto3_session.client("accessanalyzer", region_name=common_job_parameters.get("DEFAULT_REGION", None))
         # AWS allow to create only one analyzer per account per region with type (ACCOUNT, ORGANIZATION, ACCOUNT_UNUSED_ACCESS, and ORGANIZTAION_UNUSED_ACCESS) thats why uses analyzers_list index 0
         analyzers_list = analyzer_client.list_analyzers(type="ACCOUNT").get("analyzers", [])
         findings: List = []
@@ -365,8 +365,8 @@ def transform_roles(
                         internal_principal = True
 
                     if (
-                        common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
-                        and account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
+                        common_job_parameters["AWS_INTERNAL_ACCOUNTS"] and
+                        account_id in common_job_parameters["AWS_INTERNAL_ACCOUNTS"]
                     ):
                         internal_principal = True
 
@@ -1077,7 +1077,7 @@ def sync_roles(
 ) -> None:
     logger.info("Syncing IAM roles for account '%s'.", current_aws_account_id)
     data = get_role_list_data(boto3_session)
-    external_access_roles = get_external_access_roles(boto3_session)
+    external_access_roles = get_external_access_roles(boto3_session, common_job_parameters)
     data = transform_roles(boto3_session, data["Roles"], external_access_roles, common_job_parameters)
 
     logger.info(f"Total Roles: {len(data['Roles'])}")
