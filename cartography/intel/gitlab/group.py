@@ -39,11 +39,27 @@ def get_group(hosted_domain: str, access_token: str, group_id: int) -> Dict:
     return response
 
 
-def load_group_data(session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict) -> None:
+@timeit
+def get_namespace(hosted_domain: str, access_token: str, group_id: int) -> Dict:
+    """
+    Fetch information about a particular group.
+    Group Details: https://docs.gitlab.com/api/namespaces/#get-namespace-by-id
+    """
+    url = f"{hosted_domain}/api/v4/namespaces/{group_id}"
+    response = make_requests_url(url, access_token)
+
+    return response
+
+
+def load_group_data(
+    session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict
+) -> None:
     session.write_transaction(_load_group_data, group_data, common_job_parameters)
 
 
-def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_parameters: Dict):
+def _load_group_data(
+    tx: neo4j.Transaction, group_data: List[Dict], common_job_parameters: Dict
+):
     ingest_group_query = """
     UNWIND $groups AS grp
     WITH grp
@@ -66,6 +82,9 @@ def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_p
         group.full_path = grp.full_path,
         group.organization_id = grp.organization_id,
         group.parent_id = grp.parent_id,
+        group.plan = grp.plan,
+        group.trial = grp.trial,
+        group.projects_count = grp.projects_count,
         group.lastupdated = $UpdateTag
 
     WITH group
