@@ -63,7 +63,9 @@ def _sync_one_gitlab_group(
             except Exception as e:
                 logger.warning(f"error to process service {func_name} - {e}")
         else:
-            logger.warning(f'Gitlab sync function "{func_name}" was specified but is not available.')
+            logger.warning(
+                f'Gitlab sync function "{func_name}" was specified but is not available.'
+            )
 
     return True
 
@@ -88,7 +90,9 @@ def _sync_multiple_groups(
             common_job_parameters,
             config,
         )
-        run_cleanup_job("gitlab_group_cleanup.json", neo4j_session, common_job_parameters)
+        run_cleanup_job(
+            "gitlab_group_cleanup.json", neo4j_session, common_job_parameters
+        )
 
     return True
 
@@ -102,7 +106,9 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     :return: None
     """
     if not config.gitlab_access_token:
-        logger.info("gitlab import is not configured - skipping this module. See docs to configure.")
+        logger.info(
+            "gitlab import is not configured - skipping this module. See docs to configure."
+        )
         return
 
     access_token = config.gitlab_access_token
@@ -127,10 +133,23 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
             access_token,
             common_job_parameters["GITLAB_GROUP_ID"],
         )
+        namespace_info = cartography.intel.gitlab.group.get_namespace(
+            hosted_domain,
+            access_token,
+            common_job_parameters["GITLAB_GROUP_ID"],
+        )
+
+        if namespace_info:
+            group_info["plan"] = namespace_info.get("plan")
+            group_info["trial"] = namespace_info.get("trial")  # bool
+            group_info["projects_count"] = namespace_info.get("projects_count")
+
         groups_list = [group_info]
 
         if not groups_list or not isinstance(groups_list, list) or not groups_list[0]:
-            logger.error(f"No valid groups found for the id '{common_job_parameters['GITLAB_GROUP_ID']}'.")
+            logger.error(
+                f"No valid groups found for the id '{common_job_parameters['GITLAB_GROUP_ID']}'."
+            )
             return
 
         cartography.intel.gitlab.group.sync(
