@@ -268,19 +268,19 @@ def _get_iam_resource(credentials: GoogleCredentials) -> Resource:
     return googleapiclient.discovery.build('iam', 'v1', credentials=credentials, cache_discovery=False)
 
 
-def _get_admin_resource(google_workspace_credentials: GoogleCredentials, config: Config) -> Resource:
+def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resource:
     """
     Instantiates a Admin resource object
     See: https://developers.google.com/admin-sdk/directory/reference/rest
     :param credentails: The GoogleCredentails object
     :return: A admin resource object
     """
-    if not config.credentials.get('google_workspace_account_email') or not config.credentials.get('google_workspace_user_email'):
-        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=google_workspace_credentials, cache_discovery=False)
+    if not config.credentials.get('account_email') or not config.credentials.get('google_workspace_user_email'):
+        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=credentials, cache_discovery=False)
 
     now = int(time.time())
     payload = {
-        "iss": config.credentials.get('google_workspace_account_email'),
+        "iss": config.credentials.get('account_email'),
         "sub": config.credentials.get('google_workspace_user_email', ''),
         "aud": "https://oauth2.googleapis.com/token",
         "iat": now,
@@ -293,11 +293,11 @@ def _get_admin_resource(google_workspace_credentials: GoogleCredentials, config:
     }
 
     try:
-        iamcredentials = build('iamcredentials', 'v1', credentials=google_workspace_credentials)
-        signed_jwt = iamcredentials.projects().serviceAccounts().signJwt(name=f"projects/-/serviceAccounts/{config.credentials.get('google_workspace_account_email')}", body=body).execute()
+        iamcredentials = build('iamcredentials', 'v1', credentials=credentials)
+        signed_jwt = iamcredentials.projects().serviceAccounts().signJwt(name=f"projects/-/serviceAccounts/{config.credentials.get('account_email')}", body=body).execute()
     except Exception as e:
-        logger.debug(f"couldn't get signed jwt for {config.credentials.get('google_workspace_account_email')} - {e}")
-        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=google_workspace_credentials, cache_discovery=False)
+        logger.debug(f"couldn't get signed jwt for {config.credentials.get('account_email')} - {e}")
+        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=credentials, cache_discovery=False)
 
     token_url = "https://oauth2.googleapis.com/token"
     token_data = {
@@ -310,8 +310,8 @@ def _get_admin_resource(google_workspace_credentials: GoogleCredentials, config:
     if response.status_code == 200:
         delegated_access_token = response.json()["access_token"]
     else:
-        logger.debug(f"couldn't get delegated access token for {config.credentials.get('google_workspace_account_email')} - {response.json()}")
-        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=google_workspace_credentials, cache_discovery=False)
+        logger.debug(f"couldn't get delegated access token for {config.credentials.get('account_email')} - {response.json()}")
+        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=credentials, cache_discovery=False)
 
     delegated_credentials = creds.Credentials(delegated_access_token)
 
@@ -408,7 +408,7 @@ def _get_pubsublite_resource(credentials: GoogleCredentials) -> Resource:
     return googleapiclient.discovery.build('pubsublite', 'v1', credentials=credentials, cache_discovery=False)
 
 
-def _initialize_resources(credentials: GoogleCredentials, google_workspace_credentials: GoogleCredentials, config: Config) -> Resource:
+def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Resource:
     """
     Create namedtuple of all resource objects necessary for GCP data gathering.
     :param credentials: The GoogleCredentials object
@@ -428,7 +428,7 @@ def _initialize_resources(credentials: GoogleCredentials, google_workspace_crede
         cloudkms=_get_cloudkms_resource(credentials),
         cloudrun=_get_cloudrun_resource(credentials),
         iam=_get_iam_resource(credentials),
-        admin=_get_admin_resource(google_workspace_credentials, config),
+        admin=_get_admin_resource(credentials, config),
         apigateway=_get_apigateway_resource(credentials),
         cloudfunction=_get_cloudfunction_resource(credentials),
         pubsub=_get_pubsub_resource(credentials),
@@ -699,6 +699,8 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "UPDATE_TAG": config.update_tag,
         "WORKSPACE_ID": config.params['workspace']['id_string'],
         "GCP_PROJECT_ID": config.params['workspace']['account_id'],
+        "GOOGLE_WORKSPACE_USER_EMAIL": config.credentials.get('google_workspace_user_email', ''),
+        "GROUPS": config.params.get('groups', []),
         "service_labels": [],
         "pagination": {},
     }
@@ -711,9 +713,6 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
 
         auth_helper = AuthHelper()
         credentials = auth_helper.get_credentials(config.credentials['token_uri'], config.credentials['account_email'])
-        google_workspace_credentials = credentials
-        if config.credentials.get('google_workspace_account_email'):
-            google_workspace_credentials = auth_helper.get_credentials(config.credentials['token_uri'], config.credentials['google_workspace_account_email'])
         # credentials = GoogleCredentials.get_application_default()
 
     except ApplicationDefaultCredentialsError as e:
@@ -740,7 +739,7 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
                 common_job_parameters['pagination'][service.get('name', None)] = pagination
         requested_syncs = parse_and_validate_gcp_requested_syncs(gcp_requested_syncs_string[:-1])
 
-    resources = _initialize_resources(credentials, google_workspace_credentials, config)
+    resources = _initialize_resources(credentials, config)
 
     # If we don't have perms to pull Orgs or Folders from GCP, we will skip safely
     crm.sync_gcp_organizations(neo4j_session, resources.crm_v1, config.update_tag, common_job_parameters)
