@@ -52,13 +52,13 @@ def get_namespace(hosted_domain: str, access_token: str, group_id: int) -> Dict:
 
 
 def load_group_data(
-    session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict
+    session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict,
 ) -> None:
     session.write_transaction(_load_group_data, group_data, common_job_parameters)
 
 
 def _load_group_data(
-    tx: neo4j.Transaction, group_data: List[Dict], common_job_parameters: Dict
+    tx: neo4j.Transaction, group_data: List[Dict], common_job_parameters: Dict,
 ):
     ingest_group_query = """
     UNWIND $groups AS grp

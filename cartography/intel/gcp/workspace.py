@@ -308,7 +308,7 @@ def cleanup_groups(neo4j_session: neo4j.Session, common_job_parameters: Dict) ->
 
 @timeit
 def sync_groups_members(
-    groups: List[Dict], neo4j_session: neo4j.Session, admin: Resource, gsuite_update_tag: int, common_job_parameters: Dict
+    groups: List[Dict], neo4j_session: neo4j.Session, admin: Resource, gsuite_update_tag: int, common_job_parameters: Dict,
 ) -> None:
     group_id_list = [group["id"] for group in common_job_parameters.get("GROUPS", [])]
     total_members = []
@@ -336,7 +336,7 @@ def sync(
         groups = transform_groups(response_objects=groups_response_objects, common_job_parameters=common_job_parameters)
         load_groups(neo4j_session, groups, gcp_organization_id, gcp_update_tag)
         total_members = sync_groups_members(groups, neo4j_session, admin, gcp_update_tag, common_job_parameters)
-        total_members = set([member["id"] for member in total_members])
+        total_members = {member["id"] for member in total_members}
 
         users_response_objects = get_all_users(admin, project_id)
         users = transform_users(response_objects=users_response_objects, total_members=total_members, common_job_parameters=common_job_parameters)

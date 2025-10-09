@@ -51,7 +51,7 @@ def load_projects_data(
     group_id: int,
 ) -> None:
     session.write_transaction(
-        _load_projects_data, project_data, common_job_parameters, group_id
+        _load_projects_data, project_data, common_job_parameters, group_id,
     )
 
 
@@ -104,7 +104,7 @@ def _load_projects_data(
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job(
-        "gitlab_group_project_cleanup.json", neo4j_session, common_job_parameters
+        "gitlab_group_project_cleanup.json", neo4j_session, common_job_parameters,
     )
 
 
@@ -130,7 +130,7 @@ def sync(
 
     for project in group_projects:
         project_languages = get_project_languages(
-            hosted_domain, access_token, project["id"]
+            hosted_domain, access_token, project["id"],
         )
         if project_languages:
             primary_language = max(project_languages, key=project_languages.get)
@@ -143,5 +143,5 @@ def sync(
 
     toc = time.perf_counter()
     logger.info(
-        f"Time to process Projects for Gitlab Group '{group_name}': {toc - tic:0.4f} seconds"
+        f"Time to process Projects for Gitlab Group '{group_name}': {toc - tic:0.4f} seconds",
     )

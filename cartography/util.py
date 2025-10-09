@@ -155,7 +155,10 @@ def run_cleanup_job(
         if retry < 2:
             retry += 1
             run_cleanup_job(
-                filename=filename, neo4j_session=neo4j_session, common_job_parameters=common_job_parameters, retry=retry,
+                filename=filename,
+                neo4j_session=neo4j_session,
+                common_job_parameters=common_job_parameters,
+                retry=retry,
             )
 
 

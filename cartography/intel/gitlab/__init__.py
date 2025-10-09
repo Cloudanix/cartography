@@ -64,7 +64,7 @@ def _sync_one_gitlab_group(
                 logger.warning(f"error to process service {func_name} - {e}")
         else:
             logger.warning(
-                f'Gitlab sync function "{func_name}" was specified but is not available.'
+                f'Gitlab sync function "{func_name}" was specified but is not available.',
             )
 
     return True
@@ -91,7 +91,7 @@ def _sync_multiple_groups(
             config,
         )
         run_cleanup_job(
-            "gitlab_group_cleanup.json", neo4j_session, common_job_parameters
+            "gitlab_group_cleanup.json", neo4j_session, common_job_parameters,
         )
 
     return True
@@ -107,7 +107,7 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     """
     if not config.gitlab_access_token:
         logger.info(
-            "gitlab import is not configured - skipping this module. See docs to configure."
+            "gitlab import is not configured - skipping this module. See docs to configure.",
         )
         return
 
@@ -148,7 +148,7 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
 
         if not groups_list or not isinstance(groups_list, list) or not groups_list[0]:
             logger.error(
-                f"No valid groups found for the id '{common_job_parameters['GITLAB_GROUP_ID']}'."
+                f"No valid groups found for the id '{common_job_parameters['GITLAB_GROUP_ID']}'.",
             )
             return
 
