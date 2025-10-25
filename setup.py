@@ -75,6 +75,7 @@ setup(
         "python-dateutil",
         "xmltodict",
         "duo-client",
+        "azure-devops>=7.0.0,<8.0.0",
     ],
     extras_require={
         ':python_version<"3.7"': [

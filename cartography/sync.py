@@ -13,6 +13,7 @@ from neo4j import GraphDatabase
 from statsd import StatsClient
 
 import cartography.intel.analysis
+import cartography.intel.azuredevops
 import cartography.intel.create_indexes
 import cloudanix
 from cartography.config import Config
@@ -32,29 +33,32 @@ from cartography.util import STATUS_FAILURE
 logger = logging.getLogger(__name__)
 
 
-TOP_LEVEL_MODULES = OrderedDict({  # preserve order so that the default sync always runs `analysis` at the very end
-    'create-indexes': cartography.intel.create_indexes.run,
-    'cloudanix': cloudanix.run,
-    # 'aws': cartography. intel.aws.start_aws_ingestion,
-    # 'azure': cartography.intel.azure.start_azure_ingestion,
-    # 'crowdstrike': cartography.intel.crowdstrike.start_crowdstrike_ingestion,
-    # 'gcp': cartography.intel.gcp.start_gcp_ingestion,
-    # 'gsuite': cartography.intel.gsuite.start_gsuite_ingestion,
-    # 'crxcavator': cartography.intel.crxcavator.start_extension_ingestion,
-    # 'cve': cartography.intel.cve.start_cve_ingestion,
-    # 'oci': cartography.intel.oci.start_oci_ingestion,
-    # 'okta': cartography.intel.okta.start_okta_ingestion,
-    # 'github': cartography.intel.github.start_github_ingestion,
-    # 'gitlab': cartography.intel.gitlab.start_gitlab_ingestion,
-    # 'bitbucket': cartography.intel.bitbucket.start_bitbucket_ingestion,
-    # 'digitalocean': cartography.intel.digitalocean.start_digitalocean_ingestion,
-    # 'kubernetes': cartography.intel.kubernetes.start_k8s_ingestion,
-    # 'lastpass': cartography.intel.lastpass.start_lastpass_ingestion,
-    # 'bigfix': cartography.intel.bigfix.start_bigfix_ingestion,
-    # 'duo': cartography.intel.duo.start_duo_ingestion,
-    # 'semgrep': cartography.intel.semgrep.start_semgrep_ingestion,
-    'analysis': cartography.intel.analysis.run,
-})
+TOP_LEVEL_MODULES = OrderedDict(
+    {  # preserve order so that the default sync always runs `analysis` at the very end
+        "create-indexes": cartography.intel.create_indexes.run,
+        "cloudanix": cloudanix.run,
+        # 'aws': cartography. intel.aws.start_aws_ingestion,
+        # 'azure': cartography.intel.azure.start_azure_ingestion,
+        # 'crowdstrike': cartography.intel.crowdstrike.start_crowdstrike_ingestion,
+        # 'gcp': cartography.intel.gcp.start_gcp_ingestion,
+        # 'gsuite': cartography.intel.gsuite.start_gsuite_ingestion,
+        # 'crxcavator': cartography.intel.crxcavator.start_extension_ingestion,
+        # 'cve': cartography.intel.cve.start_cve_ingestion,
+        # 'oci': cartography.intel.oci.start_oci_ingestion,
+        # 'okta': cartography.intel.okta.start_okta_ingestion,
+        # 'github': cartography.intel.github.start_github_ingestion,
+        # 'azuredevops': cartography.intel.azuredevops.start_azure_devops_ingestion,
+        # 'gitlab': cartography.intel.gitlab.start_gitlab_ingestion,
+        # 'bitbucket': cartography.intel.bitbucket.start_bitbucket_ingestion,
+        # 'digitalocean': cartography.intel.digitalocean.start_digitalocean_ingestion,
+        # 'kubernetes': cartography.intel.kubernetes.start_k8s_ingestion,
+        # 'lastpass': cartography.intel.lastpass.start_lastpass_ingestion,
+        # 'bigfix': cartography.intel.bigfix.start_bigfix_ingestion,
+        # 'duo': cartography.intel.duo.start_duo_ingestion,
+        # 'semgrep': cartography.intel.semgrep.start_semgrep_ingestion,
+        "analysis": cartography.intel.analysis.run,
+    }
+)
 
 
 class Sync:
@@ -92,7 +96,9 @@ class Sync:
         for name, func in stages:
             self.add_stage(name, func)
 
-    def run(self, neo4j_driver: neo4j.Driver, config: Union[Config, argparse.Namespace]) -> int:
+    def run(
+        self, neo4j_driver: neo4j.Driver, config: Union[Config, argparse.Namespace]
+    ) -> int:
         """
         Execute all stages in the sync task in sequence.
 
@@ -106,8 +112,14 @@ class Sync:
             for stage_name, stage_func in self._stages.items():
                 logger.info("Starting sync stage '%s'", stage_name)
                 try:
-                    if stage_name in ['aws', 'azure', 'gcp', 'github', 'bitbucket', 'gitlab']:
-
+                    if stage_name in [
+                        "aws",
+                        "azure",
+                        "gcp",
+                        "github",
+                        "bitbucket",
+                        "gitlab",
+                    ]:
                         response = stage_func(neo4j_session, config)
                     else:
                         stage_func(neo4j_session, config)
@@ -118,7 +130,9 @@ class Sync:
                     raise
 
                 except Exception as ex:
-                    logger.exception("Unhandled exception during sync stage '%s'", stage_name)
+                    logger.exception(
+                        "Unhandled exception during sync stage '%s'", stage_name
+                    )
 
                     traceback.print_exception(type(ex), ex, ex.__traceback__)
                     raise  # TODO this should be configurable
@@ -205,9 +219,12 @@ def build_default_sync() -> Sync:
     :return: The default cartography sync object.
     """
     sync = Sync()
-    sync.add_stages([
-        (stage_name, stage_func) for stage_name, stage_func in TOP_LEVEL_MODULES.items()
-    ])
+    sync.add_stages(
+        [
+            (stage_name, stage_func)
+            for stage_name, stage_func in TOP_LEVEL_MODULES.items()
+        ]
+    )
 
     return sync
 
@@ -224,9 +241,9 @@ def build_aws_sync():
     sync = Sync()
 
     stages = []
-    stages.append(('cloudanix-workspace', cloudanix.run))
-    stages.append(('aws', cartography.intel.aws.start_aws_ingestion))
-    stages.append(('analysis', cartography.intel.analysis.run))
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("aws", cartography.intel.aws.start_aws_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
 
     sync.add_stages(stages)
 
@@ -245,9 +262,9 @@ def build_azure_sync():
     sync = Sync()
 
     stages = []
-    stages.append(('cloudanix-workspace', cloudanix.run))
-    stages.append(('azure', cartography.intel.azure.start_azure_ingestion))
-    stages.append(('analysis', cartography.intel.analysis.run))
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("azure", cartography.intel.azure.start_azure_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
 
     sync.add_stages(stages)
 
@@ -266,9 +283,9 @@ def build_gcp_sync():
     sync = Sync()
 
     stages = []
-    stages.append(('cloudanix-workspace', cloudanix.run))
-    stages.append(('gcp', cartography.intel.gcp.start_gcp_ingestion))
-    stages.append(('analysis', cartography.intel.analysis.run))
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("gcp", cartography.intel.gcp.start_gcp_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
 
     sync.add_stages(stages)
 
@@ -282,18 +299,18 @@ def parse_and_validate_selected_modules(selected_modules: str) -> List[str]:
     :return: A validated list of module names that we will run
     """
     validated_modules: List[str] = []
-    for module in selected_modules.split(','):
+    for module in selected_modules.split(","):
         module = module.strip()
 
         if module in TOP_LEVEL_MODULES.keys():
             validated_modules.append(module)
         else:
-            valid_modules = ', '.join(TOP_LEVEL_MODULES.keys())
+            valid_modules = ", ".join(TOP_LEVEL_MODULES.keys())
             raise ValueError(
                 f'Error parsing `selected_modules`. You specified "{selected_modules}". '
-                f'Please check that your string is formatted properly. '
+                f"Please check that your string is formatted properly. "
                 f'Example valid input looks like "aws,gcp,analysis" or "azure, oci, crowdstrike". '
-                f'Our full list of valid values is: {valid_modules}.',
+                f"Our full list of valid values is: {valid_modules}.",
             )
     return validated_modules
 
@@ -322,9 +339,9 @@ def build_github_sync():
     sync = Sync()
 
     stages = []
-    stages.append(('cloudanix-workspace', cloudanix.run))
-    stages.append(('github', cartography.intel.github.start_github_ingestion))
-    stages.append(('analysis', cartography.intel.analysis.run))
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("github", cartography.intel.github.start_github_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
 
     sync.add_stages(stages)
 
@@ -342,9 +359,9 @@ def build_bitbucket_sync():
     sync = Sync()
 
     stages = []
-    stages.append(('cloudanix-workspace', cloudanix.run))
-    stages.append(('bitbucket', cartography.intel.bitbucket.start_bitbucket_ingestion))
-    stages.append(('analysis', cartography.intel.analysis.run))
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("bitbucket", cartography.intel.bitbucket.start_bitbucket_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
 
     sync.add_stages(stages)
 
@@ -362,9 +379,31 @@ def build_gitlab_sync():
     sync = Sync()
 
     stages = []
-    stages.append(('cloudanix-workspace', cloudanix.run))
-    stages.append(('gitlab', cartography.intel.gitlab.start_gitlab_ingestion))
-    stages.append(('analysis', cartography.intel.analysis.run))
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("gitlab", cartography.intel.gitlab.start_gitlab_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
+
+    sync.add_stages(stages)
+
+    return sync
+
+
+def build_azure_devops_sync():
+    """
+    Build the Azure DevOps cartography sync.
+    :rtype: cartography.sync.Sync
+    :return: The Azure DevOps cartography sync object.
+    """
+    import cartography.intel.azuredevops
+
+    sync = Sync()
+
+    stages = []
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(
+        ("azuredevops", cartography.intel.azuredevops.start_azure_devops_ingestion)
+    )
+    stages.append(("analysis", cartography.intel.analysis.run))
 
     sync.add_stages(stages)
 

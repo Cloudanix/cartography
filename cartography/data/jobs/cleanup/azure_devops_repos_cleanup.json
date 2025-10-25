@@ -1,0 +1,9 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (n:AzureDevOpsRepo) WHERE n.lastupdated <> $UPDATE_TAG DETACH DELETE n",
+      "iterative": false,
+      "iterationsize": 100
+    }
+  ]
+}

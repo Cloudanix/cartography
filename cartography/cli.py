@@ -25,7 +25,9 @@ class CLI:
     :param prog: The name of the command line program. This will be displayed in usage and help output.
     """
 
-    def __init__(self, sync: Optional[cartography.sync.Sync] = None, prog: Optional[str] = None):
+    def __init__(
+        self, sync: Optional[cartography.sync.Sync] = None, prog: Optional[str] = None
+    ):
         self.sync = sync if sync else cartography.sync.build_default_sync()
         self.prog = prog
         self.parser = self._build_parser()
@@ -302,6 +304,24 @@ class CLI:
             ),
         )
         parser.add_argument(
+            "--azure-devops-config-env-var",
+            type=str,
+            default=None,
+            help=(
+                "The name of environment variable containing a Base64 encoded Azure DevOps config object. "
+                "Required if you are using the Azure DevOps intel module. Ignored otherwise."
+            ),
+        )
+        parser.add_argument(
+            "--github-config-env-var",
+            type=str,
+            default=None,
+            help=(
+                "The name of an environment variable containing a Base64 encoded GitHub config object."
+                "Required if you are using the GitHub intel module. Ignored otherwise."
+            ),
+        )
+        parser.add_argument(
             "--digitalocean-token-env-var",
             type=str,
             default=None,
@@ -344,13 +364,17 @@ class CLI:
             "--k8s-kubeconfig",
             default=None,
             type=str,
-            help=("The path to kubeconfig file specifying context to access K8s cluster(s)."),
+            help=(
+                "The path to kubeconfig file specifying context to access K8s cluster(s)."
+            ),
         )
         parser.add_argument(
             "--nist-cve-url",
             type=str,
             default="https://nvd.nist.gov/feeds/json/cve/1.1",
-            help=("The base url for the NIST CVE data. Default = https://nvd.nist.gov/feeds/json/cve/1.1"),
+            help=(
+                "The base url for the NIST CVE data. Default = https://nvd.nist.gov/feeds/json/cve/1.1"
+            ),
         )
         parser.add_argument(
             "--cve-enabled",
@@ -360,7 +384,9 @@ class CLI:
         parser.add_argument(
             "--statsd-enabled",
             action="store_true",
-            help=("If set, enables sending metrics using statsd to a server of your choice."),
+            help=(
+                "If set, enables sending metrics using statsd to a server of your choice."
+            ),
         )
         parser.add_argument(
             "--statsd-prefix",
@@ -374,19 +400,25 @@ class CLI:
             "--statsd-host",
             type=str,
             default="127.0.0.1",
-            help=("The IP address of your statsd server. Only used if --statsd-enabled is on. Default = 127.0.0.1."),
+            help=(
+                "The IP address of your statsd server. Only used if --statsd-enabled is on. Default = 127.0.0.1."
+            ),
         )
         parser.add_argument(
             "--statsd-port",
             type=int,
             default=8125,
-            help=("The port of your statsd server. Only used if --statsd-enabled is on. Default = UDP 8125."),
+            help=(
+                "The port of your statsd server. Only used if --statsd-enabled is on. Default = UDP 8125."
+            ),
         )
         parser.add_argument(
             "--pagerduty-api-key-env-var",
             type=str,
             default=None,
-            help=("The name of environment variable containing the pagerduty API key for authentication."),
+            help=(
+                "The name of environment variable containing the pagerduty API key for authentication."
+            ),
         )
         parser.add_argument(
             "--pagerduty-request-timeout",
@@ -398,44 +430,58 @@ class CLI:
             "--crowdstrike-client-id-env-var",
             type=str,
             default=None,
-            help=("The name of environment variable containing the crowdstrike client id for authentication."),
+            help=(
+                "The name of environment variable containing the crowdstrike client id for authentication."
+            ),
         )
         parser.add_argument(
             "--crowdstrike-client-secret-env-var",
             type=str,
             default=None,
-            help=("The name of environment variable containing the crowdstrike secret key for authentication."),
+            help=(
+                "The name of environment variable containing the crowdstrike secret key for authentication."
+            ),
         )
         parser.add_argument(
             "--crowdstrike-api-url",
             type=str,
             default=None,
-            help=("The crowdstrike URL, if using self-hosted. Defaults to the public crowdstrike API URL otherwise."),
+            help=(
+                "The crowdstrike URL, if using self-hosted. Defaults to the public crowdstrike API URL otherwise."
+            ),
         )
         parser.add_argument(
             "--gsuite-auth-method",
             type=str,
             default="delegated",
             choices=["delegated", "oauth"],
-            help=("The method used by GSuite to authenticate. delegated is the legacy one."),
+            help=(
+                "The method used by GSuite to authenticate. delegated is the legacy one."
+            ),
         )
         parser.add_argument(
             "--gsuite-tokens-env-var",
             type=str,
             default="GSUITE_GOOGLE_APPLICATION_CREDENTIALS",
-            help=("The name of environment variable containing secrets for GSuite authentication."),
+            help=(
+                "The name of environment variable containing secrets for GSuite authentication."
+            ),
         )
         parser.add_argument(
             "--lastpass-cid-env-var",
             type=str,
             default=None,
-            help=("The name of environment variable containing the Lastpass CID for authentication."),
+            help=(
+                "The name of environment variable containing the Lastpass CID for authentication."
+            ),
         )
         parser.add_argument(
             "--lastpass-provhash-env-var",
             type=str,
             default=None,
-            help=("The name of environment variable containing the Lastpass provhash for authentication."),
+            help=(
+                "The name of environment variable containing the Lastpass provhash for authentication."
+            ),
         )
         parser.add_argument(
             "--bigfix-username",
@@ -447,7 +493,9 @@ class CLI:
             "--bigfix-password-env-var",
             type=str,
             default=None,
-            help=("The name of environment variable containing the BigFix password for authentication."),
+            help=(
+                "The name of environment variable containing the BigFix password for authentication."
+            ),
         )
         parser.add_argument(
             "--bigfix-root-url",
@@ -505,7 +553,10 @@ class CLI:
         if config.neo4j_user:
             config.neo4j_password = None
             if config.neo4j_password_prompt:
-                logger.info("Reading password for Neo4j user '%s' interactively.", config.neo4j_user)
+                logger.info(
+                    "Reading password for Neo4j user '%s' interactively.",
+                    config.neo4j_user,
+                )
                 config.neo4j_password = getpass.getpass()
             elif config.neo4j_password_env_var:
                 logger.debug(
@@ -515,7 +566,9 @@ class CLI:
                 )
                 config.neo4j_password = os.environ.get(config.neo4j_password_env_var)
             if not config.neo4j_password:
-                logger.warning("Neo4j username was provided but a password could not be found.")
+                logger.warning(
+                    "Neo4j username was provided but a password could not be found."
+                )
         else:
             config.neo4j_password = None
 
@@ -534,35 +587,60 @@ class CLI:
                 "Reading Client Secret for Azure Service Principal Authentication from environment variable %s",
                 config.azure_client_secret_env_var,
             )
-            config.azure_client_secret = os.environ.get(config.azure_client_secret_env_var)
+            config.azure_client_secret = os.environ.get(
+                config.azure_client_secret_env_var
+            )
         else:
             config.azure_client_secret = None
 
         # Okta config
         if config.okta_org_id and config.okta_api_key_env_var:
-            logger.debug(f"Reading API key for Okta from environment variable {config.okta_api_key_env_var}")
+            logger.debug(
+                f"Reading API key for Okta from environment variable {config.okta_api_key_env_var}"
+            )
             config.okta_api_key = os.environ.get(config.okta_api_key_env_var)
         else:
             config.okta_api_key = None
 
         # CRXcavator config
         if config.crxcavator_api_base_uri and config.crxcavator_api_key_env_var:
-            logger.debug(f"Reading API key for CRXcavator from env variable {config.crxcavator_api_key_env_var}.")
-            config.crxcavator_api_key = os.environ.get(config.crxcavator_api_key_env_var)
+            logger.debug(
+                f"Reading API key for CRXcavator from env variable {config.crxcavator_api_key_env_var}."
+            )
+            config.crxcavator_api_key = os.environ.get(
+                config.crxcavator_api_key_env_var
+            )
         else:
             config.crxcavator_api_key = None
 
         # GitHub config
         if config.github_config_env_var:
-            logger.debug(f"Reading config string for GitHub from environment variable {config.github_config_env_var}")
+            logger.debug(
+                f"Reading config string for GitHub from environment variable {config.github_config_env_var}"
+            )
             config.github_config = os.environ.get(config.github_config_env_var)
         else:
             config.github_config = None
 
+        # Azure DevOps config
+        if config.azure_devops_config_env_var:
+            logger.debug(
+                f"Reading config string for Azure DevOps from environment variable {config.azure_devops_config_env_var}"
+            )
+            config.azure_devops_config = os.environ.get(
+                config.azure_devops_config_env_var
+            )
+        else:
+            config.azure_devops_config = None
+
         # DigitalOcean config
         if config.digitalocean_token_env_var:
-            logger.debug(f"Reading token for DigitalOcean from env variable {config.digitalocean_token_env_var}")
-            config.digitalocean_token = os.environ.get(config.digitalocean_token_env_var)
+            logger.debug(
+                f"Reading token for DigitalOcean from env variable {config.digitalocean_token_env_var}"
+            )
+            config.digitalocean_token = os.environ.get(
+                config.digitalocean_token_env_var
+            )
         else:
             config.digitalocean_token = None
 
@@ -593,7 +671,9 @@ class CLI:
 
         # Pagerduty config
         if config.pagerduty_api_key_env_var:
-            logger.debug(f"Reading API key for PagerDuty from environment variable {config.pagerduty_api_key_env_var}")
+            logger.debug(
+                f"Reading API key for PagerDuty from environment variable {config.pagerduty_api_key_env_var}"
+            )
             config.pagerduty_api_key = os.environ.get(config.pagerduty_api_key_env_var)
         else:
             config.pagerduty_api_key = None
@@ -603,7 +683,9 @@ class CLI:
             logger.debug(
                 f"Reading API key for Crowdstrike from environment variable {config.crowdstrike_client_id_env_var}",
             )
-            config.crowdstrike_client_id = os.environ.get(config.crowdstrike_client_id_env_var)
+            config.crowdstrike_client_id = os.environ.get(
+                config.crowdstrike_client_id_env_var
+            )
         else:
             config.crowdstrike_client_id = None
 
@@ -611,36 +693,54 @@ class CLI:
             logger.debug(
                 f"Reading API key for Crowdstrike from environment variable {config.crowdstrike_client_secret_env_var}",
             )
-            config.crowdstrike_client_secret = os.environ.get(config.crowdstrike_client_secret_env_var)
+            config.crowdstrike_client_secret = os.environ.get(
+                config.crowdstrike_client_secret_env_var
+            )
         else:
             config.crowdstrike_client_secret = None
 
         # GSuite config
         if config.gsuite_tokens_env_var:
-            logger.debug(f"Reading config string for GSuite from environment variable {config.gsuite_tokens_env_var}")
+            logger.debug(
+                f"Reading config string for GSuite from environment variable {config.gsuite_tokens_env_var}"
+            )
             config.gsuite_config = os.environ.get(config.gsuite_tokens_env_var)
         else:
             config.gsuite_tokens_env_var = None
 
         # Lastpass config
         if config.lastpass_cid_env_var:
-            logger.debug(f"Reading CID for Lastpass from environment variable {config.lastpass_cid_env_var}")
+            logger.debug(
+                f"Reading CID for Lastpass from environment variable {config.lastpass_cid_env_var}"
+            )
             config.lastpass_cid = os.environ.get(config.lastpass_cid_env_var)
         else:
             config.lastpass_cid = None
         if config.lastpass_provhash_env_var:
-            logger.debug(f"Reading provhash for Lastpass from environment variable {config.lastpass_provhash_env_var}")
+            logger.debug(
+                f"Reading provhash for Lastpass from environment variable {config.lastpass_provhash_env_var}"
+            )
             config.lastpass_provhash = os.environ.get(config.lastpass_provhash_env_var)
         else:
             config.lastpass_provhash = None
 
         # BigFix config
-        if config.bigfix_username and config.bigfix_password_env_var and config.bigfix_root_url:
-            logger.debug(f"Reading BigFix password from environment variable {config.bigfix_password_env_var}")
+        if (
+            config.bigfix_username
+            and config.bigfix_password_env_var
+            and config.bigfix_root_url
+        ):
+            logger.debug(
+                f"Reading BigFix password from environment variable {config.bigfix_password_env_var}"
+            )
             config.bigfix_password = os.environ.get(config.bigfix_password_env_var)
 
         # Duo config
-        if config.duo_api_key_env_var and config.duo_api_secret_env_var and config.duo_api_hostname:
+        if (
+            config.duo_api_key_env_var
+            and config.duo_api_secret_env_var
+            and config.duo_api_hostname
+        ):
             logger.debug(
                 f"Reading Duo api key and secret from environment variables {config.duo_api_key_env_var}"
                 f", {config.duo_api_secret_env_var}",
@@ -653,7 +753,9 @@ class CLI:
 
         # Semgrep config
         if config.semgrep_app_token_env_var:
-            logger.debug(f"Reading Semgrep App Token from environment variable {config.semgrep_app_token_env_var}")
+            logger.debug(
+                f"Reading Semgrep App Token from environment variable {config.semgrep_app_token_env_var}"
+            )
             config.semgrep_app_token = os.environ.get(config.semgrep_app_token_env_var)
         else:
             config.semgrep_app_token = None
@@ -875,6 +977,30 @@ def run_gitlab(request):
         params=request["params"],
         gitlab_access_token=request["gitlab"]["access_token"],
         gitlab_hosted_domain=request["gitlab"].get("hosted_domain"),
+        update_tag=request.get("updateTag", None),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_azure_devops(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_azure_devops_sync()
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        params=request["params"],
+        azure_devops_config=request.get("azure_devops_config", None),
         update_tag=request.get("updateTag", None),
     )
 
