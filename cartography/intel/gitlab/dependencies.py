@@ -13,25 +13,29 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def get_dependencies(access_token: str, project: str):
+def get_dependencies(hosted_domain: str, access_token: str, project: str):
     """
     As per the rest api docs:https://docs.gitlab.com/api/dependencies.html#list-project-dependencies
     Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
     """
-    url = f"https://gitlab.com/api/v4/projects/{project}/dependencies?per_page=100"
+    url = f"{hosted_domain}/api/v4/projects/{project}/dependencies?per_page=100"
     dependencies = paginate_request(url, access_token)
 
     return dependencies
 
 
-def load_dependencies_data(session: neo4j.Session, dependencies_data: List[Dict], common_job_parameters: Dict) -> None:
-    session.write_transaction(_load_dependencies_data, dependencies_data, common_job_parameters)
+def load_dependencies_data(
+    session: neo4j.Session, dependencies_data: List[Dict], project_id: str, common_job_parameters: Dict,
+) -> None:
+    session.write_transaction(_load_dependencies_data, dependencies_data, project_id, common_job_parameters)
 
 
-def _load_dependencies_data(tx: neo4j.Transaction, dependencies_data: List[Dict], common_job_parameters: Dict):
+def _load_dependencies_data(
+    tx: neo4j.Transaction, dependencies_data: List[Dict], project_id: str, common_job_parameters: Dict,
+):
     ingest_dependencies = """
     UNWIND $dependenciesData AS dependency
-    MERGE (dep:GitLabDependency {id: dependency.id})
+    MERGE (dep:GitLabDependency {id: dependency.name})
     ON CREATE SET dep.firstseen = timestamp()
     dep.created_at = dependency.created_at
 
@@ -44,7 +48,7 @@ def _load_dependencies_data(tx: neo4j.Transaction, dependencies_data: List[Dict]
     dep.lastupdated = $UpdateTag
 
     WITH dep, dependency
-    MATCH (repo:GitLabRepository {id: dependency.repository_id})
+    MATCH (repo:GitLabProject {id: $ProjectID})
     MERGE (dep)-[r:HAS]->(repo)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -53,6 +57,7 @@ def _load_dependencies_data(tx: neo4j.Transaction, dependencies_data: List[Dict]
     tx.run(
         ingest_dependencies,
         dependenciesData=dependencies_data,
+        ProjectID=project_id,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
@@ -64,6 +69,7 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 def sync(
     neo4j_session: neo4j.Session,
     project_id: str,
+    hosted_domain: str,
     access_token: str,
     common_job_parameters: Dict[str, Any],
 ) -> None:
@@ -74,6 +80,6 @@ def sync(
     :return: Nothing
     """
     logger.info("Syncing Gitlab All Dependencies")
-    project_dependencies = get_dependencies(access_token, project_id)
-    load_dependencies_data(neo4j_session, project_dependencies, common_job_parameters)
+    project_dependencies = get_dependencies(hosted_domain, access_token, project_id)
+    load_dependencies_data(neo4j_session, project_dependencies, project_id, common_job_parameters)
     cleanup(neo4j_session, common_job_parameters)

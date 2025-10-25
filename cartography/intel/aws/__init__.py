@@ -529,6 +529,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "NULL_STRINGS": ['NONE', 'none', 'None', ''],
         "PARTIAL": config.partial,
         "DC": config.dc,
+        "DEFAULT_REGION": config.params.get("defaultRegion", None),
     }
 
     try:

@@ -7,6 +7,7 @@ from typing import List
 
 import boto3
 import neo4j
+import base64
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
@@ -49,7 +50,7 @@ def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], r
     image_details = {}
 
     for i in range(0, len(image_ids), 1000):
-        batch = image_ids[i : i + 1000]
+        batch = image_ids[i: i + 1000]
 
         try:
             response = client.describe_images(ImageIds=batch)
@@ -90,8 +91,8 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
 
     except ClientError as e:
         if (
-            e.response["Error"]["Code"] == "AccessDeniedException"
-            or e.response["Error"]["Code"] == "UnauthorizedOperation"
+            e.response["Error"]["Code"] == "AccessDeniedException" or
+            e.response["Error"]["Code"] == "UnauthorizedOperation"
         ):
             logger.warning(
                 "ec2:describe_security_groups failed with AccessDeniedException; continuing sync.",
@@ -118,6 +119,27 @@ def get_roles_from_instance_profile(
     except Exception as e:
         print(f"Error fetching roles: {e}")
         return []
+
+
+@timeit
+@aws_handle_regions
+def get_instance_user_data(
+    boto3_session: boto3.session.Session,
+    region: str,
+    instance_id,
+) -> str:
+    user_data = None
+    ec2_client = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
+    try:
+        response = ec2_client.describe_instance_attribute(InstanceId=instance_id, Attribute='userData')
+        if 'UserData' in response and 'Value' in response.get('UserData', {}):
+            user_data = base64.b64decode(response['UserData']['Value']).decode('utf-8')
+            return user_data
+        else:
+            return None
+    except Exception as e:
+        print(f"Error fetching instance user data: {e}")
+        return None
 
 
 def transform_ec2_instances(
@@ -149,6 +171,7 @@ def transform_ec2_instances(
             InstanceArn = f"arn:aws:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
             launch_time = instance.get("LaunchTime")
             launch_time_unix = str(time.mktime(launch_time.timetuple())) if launch_time else None
+            user_data = get_instance_user_data(boto3_session, region, instance_id)
 
             iam_roles = []
             if "IamInstanceProfile" in instance:
@@ -205,6 +228,7 @@ def transform_ec2_instances(
                     "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
                     "IamRoles": iam_roles,
+                    "UserData": user_data
                 },
             )
 

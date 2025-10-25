@@ -14,13 +14,32 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def get_group_projects(access_token: str, group_id: int):
+def get_group_projects(hosted_domain: str, access_token: str, group_id: int):
     """
     As per the rest api docs:https://docs.gitlab.com/api/groups.html#list-a-groups-projects
     Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
     """
-    url = f"https://gitlab.com/api/v4/groups/{group_id}/projects?per_page=100"
+    url = f"{hosted_domain}/api/v4/groups/{group_id}/projects?per_page=100"
     projects = paginate_request(url, access_token)
+
+    return projects
+
+
+@timeit
+def get_project_languages(hosted_domain: str, access_token: str, project_id: int):
+    """
+    As per the rest api docs:https://docs.gitlab.com/api/projects.html#list-a-groups-projects
+    Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
+    """
+    url = f"{hosted_domain}/api/v4/projects/{project_id}/languages"
+    languages = paginate_request(url, access_token)
+
+    return languages
+
+
+def transform_projects_data(projects: List[Dict]) -> List[Dict]:
+    for project in projects:
+        project["is_private"] = project["visibility"] == "private"
 
     return projects
 
@@ -31,7 +50,9 @@ def load_projects_data(
     common_job_parameters: Dict,
     group_id: int,
 ) -> None:
-    session.write_transaction(_load_projects_data, project_data, common_job_parameters, group_id)
+    session.write_transaction(
+        _load_projects_data, project_data, common_job_parameters, group_id,
+    )
 
 
 def _load_projects_data(
@@ -42,7 +63,7 @@ def _load_projects_data(
 ) -> None:
     ingest_group = """
     UNWIND $projectData as project
-    MERGE (pro:GitLabProject {id: project.id})
+    MERGE (pro:GitLabProject {id: project.path})
     ON CREATE SET
         pro.firstseen = timestamp(),
         pro.created_at = project.created_at
@@ -54,13 +75,16 @@ def _load_projects_data(
         pro.creator_id = project.creator_id,
         pro.web_url = project.web_url,
         pro.path = project.path,
+        pro.id = project.id,
         pro.path_with_namespace = project.path_with_namespace,
         pro.description = project.description,
         pro.name_with_namespace = project.name_with_namespace,
         pro.visibility = project.visibility,
+        pro.is_private = project.is_private,
         pro.namespace= project.namespace.path,
         pro.last_activity_at = project.last_activity_at,
         pro.default_branch = project.default_branch,
+        pro.language = project.language,
         pro.lastupdated = $UpdateTag
 
     WITH pro, project
@@ -79,12 +103,15 @@ def _load_projects_data(
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("gitlab_group_project_cleanup.json", neo4j_session, common_job_parameters)
+    run_cleanup_job(
+        "gitlab_group_project_cleanup.json", neo4j_session, common_job_parameters,
+    )
 
 
 def sync(
     neo4j_session: neo4j.Session,
     group_id: int,
+    hosted_domain: str,
     access_token: str,
     common_job_parameters: Dict[str, Any],
     group_name: str,
@@ -99,10 +126,22 @@ def sync(
 
     logger.info("Syncing Projects for Gitlab Group '%s', at %s.", group_name, tic)
 
-    group_projects = get_group_projects(access_token, group_id)
+    group_projects = get_group_projects(hosted_domain, access_token, group_id)
+
+    for project in group_projects:
+        project_languages = get_project_languages(
+            hosted_domain, access_token, project["id"],
+        )
+        if project_languages:
+            primary_language = max(project_languages, key=project_languages.get)
+            project["language"] = primary_language
+
+    group_projects = transform_projects_data(group_projects)
 
     load_projects_data(neo4j_session, group_projects, common_job_parameters, group_id)
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
-    logger.info(f"Time to process Projects for Gitlab Group '{group_name}': {toc - tic:0.4f} seconds")
+    logger.info(
+        f"Time to process Projects for Gitlab Group '{group_name}': {toc - tic:0.4f} seconds",
+    )

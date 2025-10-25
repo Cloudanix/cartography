@@ -37,6 +37,7 @@ def concurrent_execution(
 def _sync_one_gitlab_group(
     neo4j_session: neo4j.Session,
     group_name: str,
+    hosted_domain: str,
     access_token: str,
     common_job_parameters: Dict[str, Any],
     config: Config,
@@ -51,6 +52,7 @@ def _sync_one_gitlab_group(
         "group_id": common_job_parameters["GITLAB_GROUP_ID"],
         "group_name": group_name,
         "access_token": access_token,
+        "hosted_domain": hosted_domain,
     }
 
     for func_name in sync_order:
@@ -61,24 +63,36 @@ def _sync_one_gitlab_group(
             except Exception as e:
                 logger.warning(f"error to process service {func_name} - {e}")
         else:
-            logger.warning(f'Gitlab sync function "{func_name}" was specified but is not available.')
+            logger.warning(
+                f'Gitlab sync function "{func_name}" was specified but is not available.',
+            )
 
     return True
 
 
 def _sync_multiple_groups(
     neo4j_session: neo4j.Session,
+    hosted_domain: str,
     access_token: str,
     groups: List[Dict],
     common_job_parameters: Dict[str, Any],
     config: Config,
 ) -> bool:
     for group in groups:
-        if common_job_parameters["GITLAB_GROUP_ID"] != group.get("name"):
+        if common_job_parameters["GITLAB_GROUP_ID"] != group.get("path"):
             continue
 
-        _sync_one_gitlab_group(neo4j_session, group.get("name"), access_token, common_job_parameters, config)
-        run_cleanup_job("gitlab_group_cleanup.json", neo4j_session, common_job_parameters)
+        _sync_one_gitlab_group(
+            neo4j_session,
+            group.get("path"),
+            hosted_domain,
+            access_token,
+            common_job_parameters,
+            config,
+        )
+        run_cleanup_job(
+            "gitlab_group_cleanup.json", neo4j_session, common_job_parameters,
+        )
 
     return True
 
@@ -92,10 +106,13 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     :return: None
     """
     if not config.gitlab_access_token:
-        logger.info("gitlab import is not configured - skipping this module. See docs to configure.")
+        logger.info(
+            "gitlab import is not configured - skipping this module. See docs to configure.",
+        )
         return
 
     access_token = config.gitlab_access_token
+    hosted_domain = config.gitlab_hosted_domain
     workspace_id = config.params.get("workspace", {}).get("id_string", "")
     group_id = config.params.get("workspace", {}).get("account_id", "")
 
@@ -111,21 +128,41 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
 
     try:
         # groups_list =cartography.intel.gitlab.group.get_groups(access_token)
-        group_info = cartography.intel.gitlab.group.get_group(access_token, common_job_parameters["GITLAB_GROUP_ID"])
+        group_info = cartography.intel.gitlab.group.get_group(
+            hosted_domain,
+            access_token,
+            common_job_parameters["GITLAB_GROUP_ID"],
+        )
+        namespace_info = cartography.intel.gitlab.group.get_namespace(
+            hosted_domain,
+            access_token,
+            common_job_parameters["GITLAB_GROUP_ID"],
+        )
+
+        if namespace_info:
+            group_info["plan"] = namespace_info.get("plan")
+            group_info["trial"] = namespace_info.get("trial")  # bool
+            group_info["projects_count"] = namespace_info.get("projects_count")
+
         groups_list = [group_info]
 
         if not groups_list or not isinstance(groups_list, list) or not groups_list[0]:
-            logger.error(f"No valid groups found for the id '{common_job_parameters['GITLAB_GROUP_ID']}'.")
+            logger.error(
+                f"No valid groups found for the id '{common_job_parameters['GITLAB_GROUP_ID']}'.",
+            )
             return
 
         cartography.intel.gitlab.group.sync(
             neo4j_session,
             groups_list,
+            hosted_domain,
+            access_token,
             common_job_parameters,
         )
 
         _sync_multiple_groups(
             neo4j_session,
+            hosted_domain,
             access_token,
             groups_list,
             common_job_parameters,

@@ -16,7 +16,7 @@ maya~=0.6.1
 pytz~=2022.6
 
 cloudconsolelink~=1.0.24
-sentry_sdk~=2.19.0
+sentry_sdk~=2.35.0
 clouduniqueid~=1.0.3
 
 # GCP Cloud Function specific packages

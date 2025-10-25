@@ -46,7 +46,7 @@ def get_all_users(admin: Resource, project_id: str) -> List[Dict]:
 
 
 @timeit
-def transform_users(response_objects: List[Dict]) -> List[Dict]:
+def transform_users(response_objects: List[Dict], total_members: set, common_job_parameters: Dict) -> List[Dict]:
     """  Strips list of API response objects to return list of group objects only
     :param response_objects:
     :return: list of dictionary objects as defined in /docs/schema/gsuite.md
@@ -54,6 +54,9 @@ def transform_users(response_objects: List[Dict]) -> List[Dict]:
     users: List[Dict] = []
     for response_object in response_objects:
         for user in response_object['users']:
+            if common_job_parameters.get("GROUPS"):
+                if not user.get("id") in total_members:
+                    continue
             users.append(user)
     return users
 
@@ -88,15 +91,19 @@ def get_all_groups(admin: Resource, project_id: str) -> List[Dict]:
 
 
 @timeit
-def transform_groups(response_objects: List[Dict]) -> List[Dict]:
+def transform_groups(response_objects: List[Dict], common_job_parameters: Dict) -> List[Dict]:
     """  Strips list of API response objects to return list of group objects only
 
     :param response_objects:
     :return: list of dictionary objects as defined in /docs/schema/gsuite.md
     """
     groups: List[Dict] = []
+    group_id_list = [group["id"] for group in common_job_parameters.get("GROUPS", [])]
     for response_object in response_objects:
         for group in response_object['groups']:
+            if common_job_parameters.get("GROUPS"):
+                if not group.get("id") in group_id_list:
+                    continue
             groups.append(group)
     return groups
 
@@ -179,12 +186,12 @@ def load_users(session: neo4j.Session, data_list: List[Dict], organization_id: s
 def _load_users_tx(tx: neo4j.Transaction, users: List[Dict], organization_id: str, gcp_update_tag: int) -> None:
     ingest_users = """
     UNWIND $users as usr
-    MERGE (user:GCPUser{id:usr.primaryEmail})
+    MERGE (user:GCPUser{userId:usr.id})
     ON CREATE SET
         user:GCPPrincipal,
         user.firstseen = timestamp()
     SET
-        user.userId = usr.id,
+        user.id = usr.primaryEmail,
         user.email = usr.primaryEmail,
         user.isAdmin = usr.isAdmin,
         user.isDelegatedAdmin = usr.isDelegatedAdmin,
@@ -263,7 +270,13 @@ def _load_groups_tx(tx: neo4j.Transaction, groups: List[Dict], organization_id: 
 def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List[Dict], gsuite_update_tag: int) -> None:
     ingestion_qry = """
         UNWIND $MemberData as member
-        MATCH (user:GCPUser {userId: member.id}),(group:GCPGroup {groupId: $GroupID })
+        MERGE (user:GCPUser {userId: member.id})
+        ON CREATE SET
+        user.firstseen = $UpdateTag
+        SET
+        user.lastupdated = $UpdateTag
+        WITH user
+        MATCH (group:GCPGroup {groupId: $GroupID })
         MERGE (user)-[r:MEMBER_GROUP]->(group)
         ON CREATE SET
         r.firstseen = $UpdateTag
@@ -295,11 +308,18 @@ def cleanup_groups(neo4j_session: neo4j.Session, common_job_parameters: Dict) ->
 
 @timeit
 def sync_groups_members(
-    groups: List[Dict], neo4j_session: neo4j.Session, admin: Resource, gsuite_update_tag: int,
+    groups: List[Dict], neo4j_session: neo4j.Session, admin: Resource, gsuite_update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    group_id_list = [group["id"] for group in common_job_parameters.get("GROUPS", [])]
+    total_members = []
     for group in groups:
         members = get_members_for_group(admin, group['email'])
         load_groups_members(neo4j_session, group, members, gsuite_update_tag)
+        if common_job_parameters.get("GROUPS"):
+            if not group.get("id") in group_id_list:
+                continue
+            total_members.extend(members)
+    return total_members
 
 
 @timeit
@@ -307,16 +327,20 @@ def sync(
     neo4j_session: neo4j.Session, admin: Resource,
     project_id: str, gcp_update_tag: int, common_job_parameters: Dict, regions: List,
 ) -> None:
-    logger.info("Syncing workspace objects for project %s.", project_id)
+    if common_job_parameters.get("GOOGLE_WORKSPACE_USER_EMAIL"):
+        logger.info("Syncing workspace objects for project %s.", project_id)
 
-    users_response_objects = get_all_users(admin, project_id)
-    users = transform_users(response_objects=users_response_objects)
-    gcp_organization_id = common_job_parameters['GCP_ORGANIZATION_ID']
-    load_users(neo4j_session, users, gcp_organization_id, gcp_update_tag)
-    cleanup_users(neo4j_session, common_job_parameters)
+        gcp_organization_id = common_job_parameters['GCP_ORGANIZATION_ID']
 
-    groups_response_objects = get_all_groups(admin, project_id)
-    groups = transform_groups(response_objects=groups_response_objects)
-    load_groups(neo4j_session, groups, gcp_organization_id, gcp_update_tag)
-    sync_groups_members(groups, neo4j_session, admin, gcp_update_tag)
-    cleanup_groups(neo4j_session, common_job_parameters)
+        groups_response_objects = get_all_groups(admin, project_id)
+        groups = transform_groups(response_objects=groups_response_objects, common_job_parameters=common_job_parameters)
+        load_groups(neo4j_session, groups, gcp_organization_id, gcp_update_tag)
+        total_members = sync_groups_members(groups, neo4j_session, admin, gcp_update_tag, common_job_parameters)
+        total_members = {member["id"] for member in total_members}
+
+        users_response_objects = get_all_users(admin, project_id)
+        users = transform_users(response_objects=users_response_objects, total_members=total_members, common_job_parameters=common_job_parameters)
+
+        load_users(neo4j_session, users, gcp_organization_id, gcp_update_tag)
+        cleanup_users(neo4j_session, common_job_parameters)
+        cleanup_groups(neo4j_session, common_job_parameters)

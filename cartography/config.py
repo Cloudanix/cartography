@@ -148,6 +148,7 @@ class Config:
         identity_store_region=None,
         bitbucket_access_token=None,
         gitlab_access_token=None,
+        gitlab_hosted_domain=None,
         aws_internal_accounts=None,
         partial=None,
         dc=None,
@@ -186,6 +187,7 @@ class Config:
         self.azure_devops_config = azure_devops_config
         self.bitbucket_access_token = bitbucket_access_token
         self.gitlab_access_token = gitlab_access_token
+        self.gitlab_hosted_domain = gitlab_hosted_domain
         self.digitalocean_token = digitalocean_token
         self.permission_relationships_file = permission_relationships_file
         self.jamf_base_uri = jamf_base_uri

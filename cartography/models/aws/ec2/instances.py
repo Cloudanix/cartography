@@ -41,6 +41,7 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     hibernationoptions: PropertyRef = PropertyRef("HibernationOption")
     consolelink: PropertyRef = PropertyRef("consolelink")
     arn: PropertyRef = PropertyRef("arn")
+    userdata: PropertyRef = PropertyRef("UserData")
 
 
 #    roleArn: PropertyRef = PropertyRef('RoleArn')

@@ -24,7 +24,8 @@ tmp
 node_modules
 .serverless
 .venv
+*/venv_cartography_test/
 
 build.log
 azure.build.log
-*/venv_cartography_test/
+git.worker.log

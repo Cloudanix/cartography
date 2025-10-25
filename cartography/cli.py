@@ -313,6 +313,15 @@ class CLI:
             ),
         )
         parser.add_argument(
+            "--github-config-env-var",
+            type=str,
+            default=None,
+            help=(
+                "The name of an environment variable containing a Base64 encoded GitHub config object."
+                "Required if you are using the GitHub intel module. Ignored otherwise."
+            ),
+        )
+        parser.add_argument(
             "--digitalocean-token-env-var",
             type=str,
             default=None,
@@ -850,23 +859,23 @@ def run_azure(request):
 
     # TODO: Define config and pass it forward
     config = Config(
-        request['neo4j']['uri'],
-        neo4j_user=request['neo4j']['user'],
-        neo4j_password=request['neo4j']['pwd'],
-        neo4j_max_connection_lifetime=request['neo4j']['connection_lifetime'],
-        azure_client_id=request['azure']['client_id'],
-        azure_client_secret=request['azure']['client_secret'],
-        azure_redirect_uri=request['azure']['redirect_uri'],
-        azure_subscription_id=request['azure']['subscription_id'],
-        azure_tenant_id=request['azure']['tenant_id'],
-        azure_refresh_token=request.get('azure', {}).get('refresh_token'),
-        azure_vault_scope=request['azure']['vault_scope'],
-        azure_graph_scope=request['azure']['graph_scope'],
-        azure_default_graph_scope=request.get('azure', {}).get('default_graph_scope'),
-        azure_azure_scope=request['azure']['azure_scope'],
-        params=request['params'],
-        azure_requested_syncs=request.get('services', None),
-        update_tag=request.get('updateTag', None),
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        azure_client_id=request["azure"]["client_id"],
+        azure_client_secret=request["azure"]["client_secret"],
+        azure_redirect_uri=request["azure"]["redirect_uri"],
+        azure_subscription_id=request["azure"]["subscription_id"],
+        azure_tenant_id=request["azure"]["tenant_id"],
+        azure_refresh_token=request.get("azure", {}).get("refresh_token"),
+        azure_vault_scope=request["azure"]["vault_scope"],
+        azure_graph_scope=request["azure"]["graph_scope"],
+        azure_default_graph_scope=request.get("azure", {}).get("default_graph_scope"),
+        azure_azure_scope=request["azure"]["azure_scope"],
+        params=request["params"],
+        azure_requested_syncs=request.get("services", None),
+        update_tag=request.get("updateTag", None),
     )
 
     if request["logging"]["mode"] == "verbose":
@@ -967,6 +976,7 @@ def run_gitlab(request):
         neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
         params=request["params"],
         gitlab_access_token=request["gitlab"]["access_token"],
+        gitlab_hosted_domain=request["gitlab"].get("hosted_domain"),
         update_tag=request.get("updateTag", None),
     )
 

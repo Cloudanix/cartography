@@ -20,7 +20,7 @@ pyparsing==2.4.7
 markupsafe==2.0.1
 
 cloudconsolelink~=1.0.24
-sentry_sdk~=2.19.0
+sentry_sdk~=2.35.0
 clouduniqueid~=1.0.3
 
 # Azure specific packages

@@ -15,40 +15,56 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def get_groups(access_token: str):
+def get_groups(hosted_domain: str, access_token: str):
     """
     As per the rest api docs:https://docs.gitlab.com/api/api_resources.html
     List Groups: https://docs.gitlab.com/api/groups/#list-all-groups
     Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
     """
-    url = "https://gitlab.com/api/v4/groups?per_page=100"
+    url = f"{hosted_domain}/api/v4/groups?per_page=100"
     groups = paginate_request(url, access_token)
 
     return groups
 
 
 @timeit
-def get_group(access_token: str, group_id: int) -> Dict:
+def get_group(hosted_domain: str, access_token: str, group_id: int) -> Dict:
     """
     Fetch information about a particular group.
     Group Details: https://docs.gitlab.com/api/groups/#details-of-a-group
     """
-    url = f"https://gitlab.com/api/v4/groups/{group_id}"
+    url = f"{hosted_domain}/api/v4/groups/{group_id}"
     response = make_requests_url(url, access_token)
 
     return response
 
 
-def load_group_data(session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict) -> None:
+@timeit
+def get_namespace(hosted_domain: str, access_token: str, group_id: int) -> Dict:
+    """
+    Fetch information about a particular group.
+    Group Details: https://docs.gitlab.com/api/namespaces/#get-namespace-by-id
+    """
+    url = f"{hosted_domain}/api/v4/namespaces/{group_id}"
+    response = make_requests_url(url, access_token)
+
+    return response
+
+
+def load_group_data(
+    session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict,
+) -> None:
     session.write_transaction(_load_group_data, group_data, common_job_parameters)
 
 
-def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_parameters: Dict):
+def _load_group_data(
+    tx: neo4j.Transaction, group_data: List[Dict], common_job_parameters: Dict,
+):
     ingest_group_query = """
     UNWIND $groups AS grp
     WITH grp
     WHERE grp.id IS NOT NULL AND grp.name IS NOT NULL
-    MERGE (group:GitLabGroup{id: grp.name})
+    MERGE (group:GitLabGroup{id: grp.path})
     ON CREATE SET
         group.firstseen = timestamp(),
         group.created_at = grp.created_at,
@@ -66,6 +82,9 @@ def _load_group_data(tx: neo4j.Transaction, group_data: List[Dict], common_job_p
         group.full_path = grp.full_path,
         group.organization_id = grp.organization_id,
         group.parent_id = grp.parent_id,
+        group.plan = grp.plan,
+        group.trial = grp.trial,
+        group.projects_count = grp.projects_count,
         group.lastupdated = $UpdateTag
 
     WITH group
@@ -93,6 +112,8 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 def sync(
     neo4j_session: neo4j.Session,
     groups: List[Dict],
+    hosted_domain: str,
+    access_token: str,
     common_job_parameters: Dict[str, Any],
 ) -> None:
     """
