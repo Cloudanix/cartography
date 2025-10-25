@@ -178,10 +178,10 @@ def fetch_all(
             raise exc
 
         if not (
-            resp
-            and resp.get("data")
-            and resp["data"].get("organization")
-            and resp["data"]["organization"].get(resource_type)
+            resp and
+            resp.get("data") and
+            resp["data"].get("organization") and
+            resp["data"]["organization"].get(resource_type)
         ):
             logger.error(
                 f"GitHub: Could not retrieve page of resource `{resource_type}` due to missing organization data.",

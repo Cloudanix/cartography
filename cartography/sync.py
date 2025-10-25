@@ -57,7 +57,7 @@ TOP_LEVEL_MODULES = OrderedDict(
         # 'duo': cartography.intel.duo.start_duo_ingestion,
         # 'semgrep': cartography.intel.semgrep.start_semgrep_ingestion,
         "analysis": cartography.intel.analysis.run,
-    }
+    },
 )
 
 
@@ -97,7 +97,7 @@ class Sync:
             self.add_stage(name, func)
 
     def run(
-        self, neo4j_driver: neo4j.Driver, config: Union[Config, argparse.Namespace]
+        self, neo4j_driver: neo4j.Driver, config: Union[Config, argparse.Namespace],
     ) -> int:
         """
         Execute all stages in the sync task in sequence.
@@ -131,7 +131,7 @@ class Sync:
 
                 except Exception as ex:
                     logger.exception(
-                        "Unhandled exception during sync stage '%s'", stage_name
+                        "Unhandled exception during sync stage '%s'", stage_name,
                     )
 
                     traceback.print_exception(type(ex), ex, ex.__traceback__)
@@ -223,7 +223,7 @@ def build_default_sync() -> Sync:
         [
             (stage_name, stage_func)
             for stage_name, stage_func in TOP_LEVEL_MODULES.items()
-        ]
+        ],
     )
 
     return sync
@@ -401,7 +401,7 @@ def build_azure_devops_sync():
     stages = []
     stages.append(("cloudanix-workspace", cloudanix.run))
     stages.append(
-        ("azuredevops", cartography.intel.azuredevops.start_azure_devops_ingestion)
+        ("azuredevops", cartography.intel.azuredevops.start_azure_devops_ingestion),
     )
     stages.append(("analysis", cartography.intel.analysis.run))
 

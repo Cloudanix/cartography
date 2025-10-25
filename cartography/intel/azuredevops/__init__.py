@@ -13,7 +13,10 @@ import neo4j
 from neo4j import GraphDatabase
 from requests import exceptions
 
-from . import members, organization, projects, repos
+from . import members
+from . import organization
+from . import projects
+from . import repos
 from .resources import RESOURCE_FUNCTIONS
 from .util import get_access_token
 from cartography.config import Config
@@ -107,7 +110,7 @@ def sync_organization(
 
         # Concurrently sync other resources that depend on projects
         with ThreadPoolExecutor(
-            max_workers=config.azure_devops_concurrent_requests or 2
+            max_workers=config.azure_devops_concurrent_requests or 2,
         ) as executor:
             futures = {
                 executor.submit(
@@ -136,7 +139,7 @@ def sync_organization(
                 try:
                     future.result()
                     logger.info(
-                        f"Successfully synced {resource_type} for organization {org_name}"
+                        f"Successfully synced {resource_type} for organization {org_name}",
                     )
                 except Exception:
                     logger.exception(
@@ -146,7 +149,7 @@ def sync_organization(
 
     except exceptions.RequestException as e:
         logger.error(
-            f"Could not complete request to the Azure DevOps API for {org_name}: {e}"
+            f"Could not complete request to the Azure DevOps API for {org_name}: {e}",
         )
     except Exception as e:
         logger.error(
@@ -171,9 +174,9 @@ def validate_auth_config(auth_details: Dict) -> bool:
         return False
 
     if (
-        "organization" not in auth_details
-        or not isinstance(auth_details["organization"], list)
-        or not auth_details["organization"]
+        "organization" not in auth_details or
+        not isinstance(auth_details["organization"], list) or
+        not auth_details["organization"]
     ):
         logger.error("Auth details must contain 'organization' as a non-empty list")
         return False
@@ -211,7 +214,7 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
     """
     if not config.azure_devops_config:
         logger.info(
-            "Azure DevOps import is not configured - skipping this module. See docs to configure."
+            "Azure DevOps import is not configured - skipping this module. See docs to configure.",
         )
         return
 
@@ -236,7 +239,7 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
     }
 
     logger.info(
-        f"Starting Azure DevOps sync for {len(auth_details['organization'])} organization(s)"
+        f"Starting Azure DevOps sync for {len(auth_details['organization'])} organization(s)",
     )
 
     # Process each organization configuration
@@ -253,18 +256,18 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
 
             if not access_token:
                 logger.error(
-                    f"Failed to retrieve Azure DevOps access token for organization {org.get('name')}"
+                    f"Failed to retrieve Azure DevOps access token for organization {org.get('name')}",
                 )
                 continue
 
             logger.info(
-                f"Successfully obtained access token for organization {org.get('name')}"
+                f"Successfully obtained access token for organization {org.get('name')}",
             )
 
             # Filter organizations based on workspace account_id (similar to GitHub pattern)
             if common_job_parameters["ORGANIZATION_ID"] != org["name"]:
                 logger.debug(
-                    f"Skipping organization {org['name']} - not matching workspace account_id {common_job_parameters['ORGANIZATION_ID']}"
+                    f"Skipping organization {org['name']} - not matching workspace account_id {common_job_parameters['ORGANIZATION_ID']}",
                 )
                 continue
 

@@ -91,7 +91,9 @@ def _sync_multiple_groups(
             config,
         )
         run_cleanup_job(
-            "gitlab_group_cleanup.json", neo4j_session, common_job_parameters,
+            "gitlab_group_cleanup.json",
+            neo4j_session,
+            common_job_parameters,
         )
 
     return True

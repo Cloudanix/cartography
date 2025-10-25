@@ -1,3 +1,4 @@
+import base64
 import logging
 import time
 from collections import namedtuple
@@ -7,7 +8,6 @@ from typing import List
 
 import boto3
 import neo4j
-import base64
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
@@ -228,7 +228,7 @@ def transform_ec2_instances(
                     "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
                     "IamRoles": iam_roles,
-                    "UserData": user_data
+                    "UserData": user_data,
                 },
             )
 

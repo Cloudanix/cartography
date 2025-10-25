@@ -6,7 +6,8 @@ from typing import Optional
 
 import neo4j
 
-from .util import call_azure_devops_api, validate_organization_data
+from .util import call_azure_devops_api
+from .util import validate_organization_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -33,7 +34,7 @@ def get_organization(api_url: str, organization_name: str, access_token: str) ->
 
     if response and validate_organization_data(response):
         logger.debug(
-            f"Successfully retrieved organization data for: {organization_name}"
+            f"Successfully retrieved organization data for: {organization_name}",
         )
         return response
 
@@ -91,7 +92,7 @@ def load_organization(
 @timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job(
-        "azure_devops_organization_cleanup.json", neo4j_session, common_job_parameters
+        "azure_devops_organization_cleanup.json", neo4j_session, common_job_parameters,
     )
 
 

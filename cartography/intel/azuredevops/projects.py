@@ -6,7 +6,8 @@ from typing import Optional
 
 import neo4j
 
-from .util import call_azure_devops_api_pagination, validate_project_data
+from .util import call_azure_devops_api_pagination
+from .util import validate_project_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -34,7 +35,7 @@ def get_projects(api_url: str, organization_name: str, access_token: str) -> Lis
 
     if not projects:
         logger.warning(
-            f"No response received for projects in organization {organization_name}"
+            f"No response received for projects in organization {organization_name}",
         )
         return []
 
@@ -43,11 +44,11 @@ def get_projects(api_url: str, organization_name: str, access_token: str) -> Lis
 
     if len(valid_projects) != len(projects):
         logger.warning(
-            f"Filtered out {len(projects) - len(valid_projects)} invalid projects for organization {organization_name}"
+            f"Filtered out {len(projects) - len(valid_projects)} invalid projects for organization {organization_name}",
         )
 
     logger.debug(
-        f"Retrieved {len(valid_projects)} valid projects for organization {organization_name}"
+        f"Retrieved {len(valid_projects)} valid projects for organization {organization_name}",
     )
     return valid_projects
 
@@ -104,7 +105,7 @@ def load_projects(
 @timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job(
-        "azure_devops_projects_cleanup.json", neo4j_session, common_job_parameters
+        "azure_devops_projects_cleanup.json", neo4j_session, common_job_parameters,
     )
 
 

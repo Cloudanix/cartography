@@ -6,8 +6,9 @@ from typing import Optional
 
 import neo4j
 
-from .util import call_azure_devops_api, validate_user_data
+from .util import call_azure_devops_api
 from .util import call_azure_devops_api_pagination
+from .util import validate_user_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -59,7 +60,7 @@ def get_users(api_url: str, organization_name: str, access_token: str) -> List[D
 
     if not users_response:
         logger.warning(
-            f"No response received for users in organization {organization_name}"
+            f"No response received for users in organization {organization_name}",
         )
         return []
 
@@ -73,11 +74,11 @@ def get_users(api_url: str, organization_name: str, access_token: str) -> List[D
 
     if len(valid_users) != len(users):
         logger.warning(
-            f"Filtered out {len(users) - len(valid_users)} invalid users for organization {organization_name}"
+            f"Filtered out {len(users) - len(valid_users)} invalid users for organization {organization_name}",
         )
 
     logger.debug(
-        f"Retrieved {len(valid_users)} valid users for organization {organization_name}"
+        f"Retrieved {len(valid_users)} valid users for organization {organization_name}",
     )
     return valid_users
 
@@ -135,7 +136,7 @@ def load_users(
 @timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job(
-        "azure_devops_members_cleanup.json", neo4j_session, common_job_parameters
+        "azure_devops_members_cleanup.json", neo4j_session, common_job_parameters,
     )
 
 

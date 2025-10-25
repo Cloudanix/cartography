@@ -1,13 +1,15 @@
 import base64
 import json
+from unittest.mock import MagicMock
+from unittest.mock import Mock
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from cartography.intel.azuredevops import (
-    start_azure_devops_ingestion,
-    sync_organization,
-    validate_auth_config,
-)
+
 from cartography.config import Config
+from cartography.intel.azuredevops import start_azure_devops_ingestion
+from cartography.intel.azuredevops import sync_organization
+from cartography.intel.azuredevops import validate_auth_config
 
 
 class TestAuthConfigValidation:
@@ -25,8 +27,8 @@ class TestAuthConfigValidation:
                             "client_secret": "secret1",
                             "url": "https://dev.azure.com",
                             "name": "org1",
-                        }
-                    ]
+                        },
+                    ],
                 },
                 True,
             ),
@@ -42,8 +44,8 @@ class TestAuthConfigValidation:
                             "client_secret": "secret1",
                             "url": "http://example.com",  # Invalid URL
                             "name": "org1",
-                        }
-                    ]
+                        },
+                    ],
                 },
                 False,
             ),
@@ -61,7 +63,7 @@ class TestSyncOrganization:
     @patch("cartography.intel.azuredevops.projects.sync")
     @patch("cartography.intel.azuredevops.organization.sync")
     def test_sync_organization_success(
-        self, mock_org_sync, mock_projects_sync, mock_concurrent_exec
+        self, mock_org_sync, mock_projects_sync, mock_concurrent_exec,
     ):
         """Test successful and complete synchronization of an organization."""
         mock_session = MagicMock()
@@ -111,11 +113,11 @@ class TestStartAzureDevOpsIngestion:
                     "client_secret": "secret1",
                     "url": "https://dev.azure.com",
                     "name": "org1",
-                }
-            ]
+                },
+            ],
         }
         mock_config.azure_devops_config = base64.b64encode(
-            json.dumps(org_config).encode()
+            json.dumps(org_config).encode(),
         ).decode()
         mock_config.params = {"workspace": {"id_string": "ws1", "account_id": "org1"}}
         mock_config.update_tag = "update_tag"
@@ -145,7 +147,7 @@ class TestStartAzureDevOpsIngestion:
     @patch("cartography.intel.azuredevops.get_access_token")
     @patch("cartography.intel.azuredevops.sync_organization")
     def test_start_azure_devops_ingestion_token_failure(
-        self, mock_sync_org, mock_get_token
+        self, mock_sync_org, mock_get_token,
     ):
         """Test that ingestion continues to the next organization if one fails to get a token."""
         mock_session = MagicMock()
@@ -166,10 +168,10 @@ class TestStartAzureDevOpsIngestion:
                     "url": "https://dev.azure.com",
                     "name": "org2",
                 },
-            ]
+            ],
         }
         mock_config.azure_devops_config = base64.b64encode(
-            json.dumps(org_config).encode()
+            json.dumps(org_config).encode(),
         ).decode()
         mock_config.params = {"workspace": {"id_string": "ws1", "account_id": "org2"}}
         mock_config.update_tag = "update_tag"

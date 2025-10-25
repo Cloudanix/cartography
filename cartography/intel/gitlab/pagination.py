@@ -7,6 +7,7 @@ from cartography.util import make_requests_url
 
 logger = logging.getLogger(__name__)
 
+
 def paginate_request(url: str, access_token: str):
     items = []
     while url:

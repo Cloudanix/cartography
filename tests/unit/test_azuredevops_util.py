@@ -1,15 +1,17 @@
+from unittest.mock import MagicMock
+from unittest.mock import Mock
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from cartography.intel.azuredevops.util import (
-    validate_organization_data,
-    validate_project_data,
-    validate_repository_data,
-    validate_user_data,
-    get_access_token,
-    call_azure_devops_api,
-    call_azure_devops_api_pagination,
-)
 import requests
+
+from cartography.intel.azuredevops.util import call_azure_devops_api
+from cartography.intel.azuredevops.util import call_azure_devops_api_pagination
+from cartography.intel.azuredevops.util import get_access_token
+from cartography.intel.azuredevops.util import validate_organization_data
+from cartography.intel.azuredevops.util import validate_project_data
+from cartography.intel.azuredevops.util import validate_repository_data
+from cartography.intel.azuredevops.util import validate_user_data
 
 
 class TestDataValidation:
@@ -206,8 +208,8 @@ class TestAPICalls:
                 text="Server Error",
                 raise_for_status=MagicMock(
                     side_effect=requests.exceptions.HTTPError(
-                        response=MagicMock(status_code=500, headers={})
-                    )
+                        response=MagicMock(status_code=500, headers={}),
+                    ),
                 ),
             ),
             MagicMock(

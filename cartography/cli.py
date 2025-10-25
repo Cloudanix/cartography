@@ -26,7 +26,7 @@ class CLI:
     """
 
     def __init__(
-        self, sync: Optional[cartography.sync.Sync] = None, prog: Optional[str] = None
+        self, sync: Optional[cartography.sync.Sync] = None, prog: Optional[str] = None,
     ):
         self.sync = sync if sync else cartography.sync.build_default_sync()
         self.prog = prog
@@ -567,7 +567,7 @@ class CLI:
                 config.neo4j_password = os.environ.get(config.neo4j_password_env_var)
             if not config.neo4j_password:
                 logger.warning(
-                    "Neo4j username was provided but a password could not be found."
+                    "Neo4j username was provided but a password could not be found.",
                 )
         else:
             config.neo4j_password = None
@@ -588,7 +588,7 @@ class CLI:
                 config.azure_client_secret_env_var,
             )
             config.azure_client_secret = os.environ.get(
-                config.azure_client_secret_env_var
+                config.azure_client_secret_env_var,
             )
         else:
             config.azure_client_secret = None
@@ -596,7 +596,7 @@ class CLI:
         # Okta config
         if config.okta_org_id and config.okta_api_key_env_var:
             logger.debug(
-                f"Reading API key for Okta from environment variable {config.okta_api_key_env_var}"
+                f"Reading API key for Okta from environment variable {config.okta_api_key_env_var}",
             )
             config.okta_api_key = os.environ.get(config.okta_api_key_env_var)
         else:
@@ -605,10 +605,10 @@ class CLI:
         # CRXcavator config
         if config.crxcavator_api_base_uri and config.crxcavator_api_key_env_var:
             logger.debug(
-                f"Reading API key for CRXcavator from env variable {config.crxcavator_api_key_env_var}."
+                f"Reading API key for CRXcavator from env variable {config.crxcavator_api_key_env_var}.",
             )
             config.crxcavator_api_key = os.environ.get(
-                config.crxcavator_api_key_env_var
+                config.crxcavator_api_key_env_var,
             )
         else:
             config.crxcavator_api_key = None
@@ -616,7 +616,7 @@ class CLI:
         # GitHub config
         if config.github_config_env_var:
             logger.debug(
-                f"Reading config string for GitHub from environment variable {config.github_config_env_var}"
+                f"Reading config string for GitHub from environment variable {config.github_config_env_var}",
             )
             config.github_config = os.environ.get(config.github_config_env_var)
         else:
@@ -625,10 +625,10 @@ class CLI:
         # Azure DevOps config
         if config.azure_devops_config_env_var:
             logger.debug(
-                f"Reading config string for Azure DevOps from environment variable {config.azure_devops_config_env_var}"
+                f"Reading config string for Azure DevOps from environment variable {config.azure_devops_config_env_var}",
             )
             config.azure_devops_config = os.environ.get(
-                config.azure_devops_config_env_var
+                config.azure_devops_config_env_var,
             )
         else:
             config.azure_devops_config = None
@@ -636,10 +636,10 @@ class CLI:
         # DigitalOcean config
         if config.digitalocean_token_env_var:
             logger.debug(
-                f"Reading token for DigitalOcean from env variable {config.digitalocean_token_env_var}"
+                f"Reading token for DigitalOcean from env variable {config.digitalocean_token_env_var}",
             )
             config.digitalocean_token = os.environ.get(
-                config.digitalocean_token_env_var
+                config.digitalocean_token_env_var,
             )
         else:
             config.digitalocean_token = None
@@ -672,7 +672,7 @@ class CLI:
         # Pagerduty config
         if config.pagerduty_api_key_env_var:
             logger.debug(
-                f"Reading API key for PagerDuty from environment variable {config.pagerduty_api_key_env_var}"
+                f"Reading API key for PagerDuty from environment variable {config.pagerduty_api_key_env_var}",
             )
             config.pagerduty_api_key = os.environ.get(config.pagerduty_api_key_env_var)
         else:
@@ -684,7 +684,7 @@ class CLI:
                 f"Reading API key for Crowdstrike from environment variable {config.crowdstrike_client_id_env_var}",
             )
             config.crowdstrike_client_id = os.environ.get(
-                config.crowdstrike_client_id_env_var
+                config.crowdstrike_client_id_env_var,
             )
         else:
             config.crowdstrike_client_id = None
@@ -694,7 +694,7 @@ class CLI:
                 f"Reading API key for Crowdstrike from environment variable {config.crowdstrike_client_secret_env_var}",
             )
             config.crowdstrike_client_secret = os.environ.get(
-                config.crowdstrike_client_secret_env_var
+                config.crowdstrike_client_secret_env_var,
             )
         else:
             config.crowdstrike_client_secret = None
@@ -702,7 +702,7 @@ class CLI:
         # GSuite config
         if config.gsuite_tokens_env_var:
             logger.debug(
-                f"Reading config string for GSuite from environment variable {config.gsuite_tokens_env_var}"
+                f"Reading config string for GSuite from environment variable {config.gsuite_tokens_env_var}",
             )
             config.gsuite_config = os.environ.get(config.gsuite_tokens_env_var)
         else:
@@ -711,14 +711,14 @@ class CLI:
         # Lastpass config
         if config.lastpass_cid_env_var:
             logger.debug(
-                f"Reading CID for Lastpass from environment variable {config.lastpass_cid_env_var}"
+                f"Reading CID for Lastpass from environment variable {config.lastpass_cid_env_var}",
             )
             config.lastpass_cid = os.environ.get(config.lastpass_cid_env_var)
         else:
             config.lastpass_cid = None
         if config.lastpass_provhash_env_var:
             logger.debug(
-                f"Reading provhash for Lastpass from environment variable {config.lastpass_provhash_env_var}"
+                f"Reading provhash for Lastpass from environment variable {config.lastpass_provhash_env_var}",
             )
             config.lastpass_provhash = os.environ.get(config.lastpass_provhash_env_var)
         else:
@@ -731,7 +731,7 @@ class CLI:
             and config.bigfix_root_url
         ):
             logger.debug(
-                f"Reading BigFix password from environment variable {config.bigfix_password_env_var}"
+                f"Reading BigFix password from environment variable {config.bigfix_password_env_var}",
             )
             config.bigfix_password = os.environ.get(config.bigfix_password_env_var)
 
@@ -754,7 +754,7 @@ class CLI:
         # Semgrep config
         if config.semgrep_app_token_env_var:
             logger.debug(
-                f"Reading Semgrep App Token from environment variable {config.semgrep_app_token_env_var}"
+                f"Reading Semgrep App Token from environment variable {config.semgrep_app_token_env_var}",
             )
             config.semgrep_app_token = os.environ.get(config.semgrep_app_token_env_var)
         else:

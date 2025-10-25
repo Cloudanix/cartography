@@ -3,8 +3,8 @@ import logging
 import time
 from typing import Any
 from typing import Dict
-from typing import Optional
 from typing import List
+from typing import Optional
 
 import requests
 from azure.identity import ClientSecretCredential
@@ -16,7 +16,7 @@ RETRY_DELAY = 1
 
 
 def get_access_token(
-    tenant_id: str, client_id: str, client_secret: str, refresh_token: str = None
+    tenant_id: str, client_id: str, client_secret: str, refresh_token: str = None,
 ) -> str:
     """
     Exchanges client credentials for an OAuth 2.0 access token using Microsoft Entra ID.
@@ -64,13 +64,13 @@ def call_azure_devops_api(
 
         except requests.exceptions.HTTPError as e:
             if (
-                e.response.status_code in [429, 500, 502, 503, 504]
-                and attempt < MAX_RETRIES - 1
+                e.response.status_code in [429, 500, 502, 503, 504] and
+                attempt < MAX_RETRIES - 1
             ):
                 # Retry on rate limiting and server errors
                 retry_after = int(e.response.headers.get("Retry-After", RETRY_DELAY))
                 logger.warning(
-                    f"HTTP {e.response.status_code} error, retrying in {retry_after} seconds (attempt {attempt + 1}/{MAX_RETRIES})"
+                    f"HTTP {e.response.status_code} error, retrying in {retry_after} seconds (attempt {attempt + 1}/{MAX_RETRIES})",
                 )
                 time.sleep(retry_after)
                 continue
@@ -93,13 +93,13 @@ def call_azure_devops_api(
         except requests.exceptions.RequestException as e:
             if attempt < MAX_RETRIES - 1:
                 logger.warning(
-                    f"Request error, retrying in {RETRY_DELAY} seconds (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
+                    f"Request error, retrying in {RETRY_DELAY} seconds (attempt {attempt + 1}/{MAX_RETRIES}): {e}",
                 )
                 time.sleep(RETRY_DELAY)
                 continue
             else:
                 logger.error(
-                    f"Failed to call Azure DevOps API at {url} after {MAX_RETRIES} attempts: {e}"
+                    f"Failed to call Azure DevOps API at {url} after {MAX_RETRIES} attempts: {e}",
                 )
                 return None
 
@@ -120,7 +120,7 @@ def call_azure_devops_api_pagination(
 
     while current_url:
         response = call_azure_devops_api(
-            current_url, access_token, params=current_params
+            current_url, access_token, params=current_params,
         )
         if not response:
             break
@@ -128,7 +128,7 @@ def call_azure_devops_api_pagination(
         page_results = response.get("value", response.get("items", []))
         if not isinstance(page_results, list):
             logger.warning(
-                f"Pagination call did not return a list for URL {current_url}. Stopping pagination."
+                f"Pagination call did not return a list for URL {current_url}. Stopping pagination.",
             )
             if page_results:  # If it's a single dict, wrap it in a list
                 results.append(page_results)
@@ -147,9 +147,9 @@ def call_azure_devops_api_pagination(
 
             # Ensure api-version is preserved
             if (
-                "api-version" not in query_params
-                and current_params
-                and current_params.get("api-version")
+                "api-version" not in query_params and
+                current_params and
+                current_params.get("api-version")
             ):
                 query_params["api-version"] = [current_params["api-version"]]
 

@@ -52,7 +52,7 @@ def transform_identities(boto3_session: boto3.session.Session, ids_names: List[D
 
             identity_verifications.update(
                 client.get_identity_verification_attributes(
-                Identities=batch,
+                    Identities=batch,
                 ).get('VerificationAttributes', {}),
             )
 
@@ -60,12 +60,12 @@ def transform_identities(boto3_session: boto3.session.Session, ids_names: List[D
 
         for identity_name in ids_names:
             identity = {
-            'name': identity_name,
-            'arn': f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}",
-            'consolelink': aws_console_link.get_console_link(arn=f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}"),
-            'region': region,
-            'dkim': dkim_attributes.get(identity_name, {}),
-            'verification': identity_verifications.get(identity_name, {}),
+                'name': identity_name,
+                'arn': f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}",
+                'consolelink': aws_console_link.get_console_link(arn=f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}"),
+                'region': region,
+                'dkim': dkim_attributes.get(identity_name, {}),
+                'verification': identity_verifications.get(identity_name, {}),
             }
             resources.append(identity)
 

@@ -357,7 +357,7 @@ def batch(items: Iterable, size: int = DEFAULT_BATCH_SIZE) -> List[List]:
     batch(x, size=3) -> [[1, 2, 3], [4, 5, 6], [7, 8]]
     """
     items = list(items)
-    return [items[i : i + size] for i in range(0, len(items), size)]
+    return [items[i: i + size] for i in range(0, len(items), size)]
 
 
 def is_throttling_exception(exc: Exception) -> bool:
