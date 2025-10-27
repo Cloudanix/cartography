@@ -129,17 +129,45 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     }
 
     try:
-        # groups_list =cartography.intel.gitlab.group.get_groups(access_token)
         group_info = cartography.intel.gitlab.group.get_group(
             hosted_domain,
             access_token,
             common_job_parameters["GITLAB_GROUP_ID"],
         )
+
+        if not group_info:
+            logger.debug("No group info found, will list out groups to find the correct one.")
+
+            all_groups = cartography.intel.gitlab.group.get_groups(hosted_domain, access_token)
+
+            matching_groups = [
+                grp for grp in all_groups if grp.get("full_path") == common_job_parameters["GITLAB_GROUP_ID"]
+            ]
+            if matching_groups:
+                group_info = matching_groups[0]
+
+                group_info_new = cartography.intel.gitlab.group.get_group(
+                    hosted_domain,
+                    access_token,
+                    group_info.get("id"),
+                )
+
+            else:
+                logger.warning(f"No matching group found for ID: {common_job_parameters['GITLAB_GROUP_ID']}")
+
+        # TODO: namespace should always be for the root group only
         namespace_info = cartography.intel.gitlab.group.get_namespace(
             hosted_domain,
             access_token,
             common_job_parameters["GITLAB_GROUP_ID"],
         )
+
+        # namespace_info = cartography.intel.gitlab.group.get_namespace(
+        #     hosted_domain,
+        #     access_token,
+        #     group_info.get("id"),
+        # )
+        # logger.debug(f"Fetched namespace info with group id: {namespace_info}")
 
         if namespace_info:
             group_info["plan"] = namespace_info.get("plan")
