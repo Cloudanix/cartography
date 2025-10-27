@@ -26,7 +26,9 @@ class CLI:
     """
 
     def __init__(
-        self, sync: Optional[cartography.sync.Sync] = None, prog: Optional[str] = None,
+        self,
+        sync: Optional[cartography.sync.Sync] = None,
+        prog: Optional[str] = None,
     ):
         self.sync = sync if sync else cartography.sync.build_default_sync()
         self.prog = prog
@@ -313,15 +315,6 @@ class CLI:
             ),
         )
         parser.add_argument(
-            "--github-config-env-var",
-            type=str,
-            default=None,
-            help=(
-                "The name of an environment variable containing a Base64 encoded GitHub config object."
-                "Required if you are using the GitHub intel module. Ignored otherwise."
-            ),
-        )
-        parser.add_argument(
             "--digitalocean-token-env-var",
             type=str,
             default=None,
@@ -364,17 +357,13 @@ class CLI:
             "--k8s-kubeconfig",
             default=None,
             type=str,
-            help=(
-                "The path to kubeconfig file specifying context to access K8s cluster(s)."
-            ),
+            help=("The path to kubeconfig file specifying context to access K8s cluster(s)."),
         )
         parser.add_argument(
             "--nist-cve-url",
             type=str,
             default="https://nvd.nist.gov/feeds/json/cve/1.1",
-            help=(
-                "The base url for the NIST CVE data. Default = https://nvd.nist.gov/feeds/json/cve/1.1"
-            ),
+            help=("The base url for the NIST CVE data. Default = https://nvd.nist.gov/feeds/json/cve/1.1"),
         )
         parser.add_argument(
             "--cve-enabled",
@@ -384,9 +373,7 @@ class CLI:
         parser.add_argument(
             "--statsd-enabled",
             action="store_true",
-            help=(
-                "If set, enables sending metrics using statsd to a server of your choice."
-            ),
+            help=("If set, enables sending metrics using statsd to a server of your choice."),
         )
         parser.add_argument(
             "--statsd-prefix",
@@ -400,25 +387,19 @@ class CLI:
             "--statsd-host",
             type=str,
             default="127.0.0.1",
-            help=(
-                "The IP address of your statsd server. Only used if --statsd-enabled is on. Default = 127.0.0.1."
-            ),
+            help=("The IP address of your statsd server. Only used if --statsd-enabled is on. Default = 127.0.0.1."),
         )
         parser.add_argument(
             "--statsd-port",
             type=int,
             default=8125,
-            help=(
-                "The port of your statsd server. Only used if --statsd-enabled is on. Default = UDP 8125."
-            ),
+            help=("The port of your statsd server. Only used if --statsd-enabled is on. Default = UDP 8125."),
         )
         parser.add_argument(
             "--pagerduty-api-key-env-var",
             type=str,
             default=None,
-            help=(
-                "The name of environment variable containing the pagerduty API key for authentication."
-            ),
+            help=("The name of environment variable containing the pagerduty API key for authentication."),
         )
         parser.add_argument(
             "--pagerduty-request-timeout",
@@ -430,58 +411,44 @@ class CLI:
             "--crowdstrike-client-id-env-var",
             type=str,
             default=None,
-            help=(
-                "The name of environment variable containing the crowdstrike client id for authentication."
-            ),
+            help=("The name of environment variable containing the crowdstrike client id for authentication."),
         )
         parser.add_argument(
             "--crowdstrike-client-secret-env-var",
             type=str,
             default=None,
-            help=(
-                "The name of environment variable containing the crowdstrike secret key for authentication."
-            ),
+            help=("The name of environment variable containing the crowdstrike secret key for authentication."),
         )
         parser.add_argument(
             "--crowdstrike-api-url",
             type=str,
             default=None,
-            help=(
-                "The crowdstrike URL, if using self-hosted. Defaults to the public crowdstrike API URL otherwise."
-            ),
+            help=("The crowdstrike URL, if using self-hosted. Defaults to the public crowdstrike API URL otherwise."),
         )
         parser.add_argument(
             "--gsuite-auth-method",
             type=str,
             default="delegated",
             choices=["delegated", "oauth"],
-            help=(
-                "The method used by GSuite to authenticate. delegated is the legacy one."
-            ),
+            help=("The method used by GSuite to authenticate. delegated is the legacy one."),
         )
         parser.add_argument(
             "--gsuite-tokens-env-var",
             type=str,
             default="GSUITE_GOOGLE_APPLICATION_CREDENTIALS",
-            help=(
-                "The name of environment variable containing secrets for GSuite authentication."
-            ),
+            help=("The name of environment variable containing secrets for GSuite authentication."),
         )
         parser.add_argument(
             "--lastpass-cid-env-var",
             type=str,
             default=None,
-            help=(
-                "The name of environment variable containing the Lastpass CID for authentication."
-            ),
+            help=("The name of environment variable containing the Lastpass CID for authentication."),
         )
         parser.add_argument(
             "--lastpass-provhash-env-var",
             type=str,
             default=None,
-            help=(
-                "The name of environment variable containing the Lastpass provhash for authentication."
-            ),
+            help=("The name of environment variable containing the Lastpass provhash for authentication."),
         )
         parser.add_argument(
             "--bigfix-username",
@@ -493,9 +460,7 @@ class CLI:
             "--bigfix-password-env-var",
             type=str,
             default=None,
-            help=(
-                "The name of environment variable containing the BigFix password for authentication."
-            ),
+            help=("The name of environment variable containing the BigFix password for authentication."),
         )
         parser.add_argument(
             "--bigfix-root-url",
@@ -725,22 +690,14 @@ class CLI:
             config.lastpass_provhash = None
 
         # BigFix config
-        if (
-            config.bigfix_username
-            and config.bigfix_password_env_var
-            and config.bigfix_root_url
-        ):
+        if config.bigfix_username and config.bigfix_password_env_var and config.bigfix_root_url:
             logger.debug(
                 f"Reading BigFix password from environment variable {config.bigfix_password_env_var}",
             )
             config.bigfix_password = os.environ.get(config.bigfix_password_env_var)
 
         # Duo config
-        if (
-            config.duo_api_key_env_var
-            and config.duo_api_secret_env_var
-            and config.duo_api_hostname
-        ):
+        if config.duo_api_key_env_var and config.duo_api_secret_env_var and config.duo_api_hostname:
             logger.debug(
                 f"Reading Duo api key and secret from environment variables {config.duo_api_key_env_var}"
                 f", {config.duo_api_secret_env_var}",
