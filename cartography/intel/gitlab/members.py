@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 @timeit
 def get_group_members(hosted_domain: str, access_token: str, group_id: int):
     """
-    As per the rest api docs:https://docs.gitlab.com/api/members.html
-    Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
+    As per the rest api docs: https://docs.gitlab.com/api/members.html
+    Pagination: https://docs.gitlab.com/api/rest/#pagination
     """
-    url = f"{hosted_domain}/api/v4/groups/{group_id}/members?per_page=100"
+    url_encoded_group_id = str(group_id).replace("/", "%2F")
+    url = f"{hosted_domain}/api/v4/groups/{url_encoded_group_id}/members?per_page=100"
     members = paginate_request(url, access_token)
 
     return members

@@ -79,12 +79,12 @@ def _sync_multiple_groups(
     config: Config,
 ) -> bool:
     for group in groups:
-        if common_job_parameters["GITLAB_GROUP_ID"] != group.get("path"):
+        if common_job_parameters["GITLAB_GROUP_ID"] != group.get("full_path"):
             continue
 
         _sync_one_gitlab_group(
             neo4j_session,
-            group.get("path"),
+            group.get("full_path"),
             hosted_domain,
             access_token,
             common_job_parameters,

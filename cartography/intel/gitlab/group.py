@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 @timeit
 def get_groups(hosted_domain: str, access_token: str):
     """
-    As per the rest api docs:https://docs.gitlab.com/api/api_resources.html
+    As per the rest api docs: https://docs.gitlab.com/api/api_resources.html
     List Groups: https://docs.gitlab.com/api/groups/#list-all-groups
-    Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
+    Pagination: https://docs.gitlab.com/api/rest/#pagination
     """
     url = f"{hosted_domain}/api/v4/groups?per_page=100"
     groups = paginate_request(url, access_token)
@@ -33,7 +33,8 @@ def get_group(hosted_domain: str, access_token: str, group_id: int) -> Dict:
     Fetch information about a particular group.
     Group Details: https://docs.gitlab.com/api/groups/#details-of-a-group
     """
-    url = f"{hosted_domain}/api/v4/groups/{group_id}"
+    url_encoded_group_id = str(group_id).replace("/", "%2F")
+    url = f"{hosted_domain}/api/v4/groups/{url_encoded_group_id}"
     response = make_requests_url(url, access_token)
 
     return response
@@ -45,26 +46,31 @@ def get_namespace(hosted_domain: str, access_token: str, group_id: int) -> Dict:
     Fetch information about a particular group.
     Group Details: https://docs.gitlab.com/api/namespaces/#get-namespace-by-id
     """
-    url = f"{hosted_domain}/api/v4/namespaces/{group_id}"
+    url_encoded_group_id = str(group_id).replace("/", "%2F")
+    url = f"{hosted_domain}/api/v4/namespaces/{url_encoded_group_id}"
     response = make_requests_url(url, access_token)
 
     return response
 
 
 def load_group_data(
-    session: neo4j.Session, group_data: List[Dict], common_job_parameters: Dict,
+    session: neo4j.Session,
+    group_data: List[Dict],
+    common_job_parameters: Dict,
 ) -> None:
     session.write_transaction(_load_group_data, group_data, common_job_parameters)
 
 
 def _load_group_data(
-    tx: neo4j.Transaction, group_data: List[Dict], common_job_parameters: Dict,
+    tx: neo4j.Transaction,
+    group_data: List[Dict],
+    common_job_parameters: Dict,
 ):
     ingest_group_query = """
     UNWIND $groups AS grp
     WITH grp
     WHERE grp.id IS NOT NULL AND grp.name IS NOT NULL
-    MERGE (group:GitLabGroup{id: grp.path})
+    MERGE (group:GitLabGroup{id: grp.full_path})
     ON CREATE SET
         group.firstseen = timestamp(),
         group.created_at = grp.created_at,

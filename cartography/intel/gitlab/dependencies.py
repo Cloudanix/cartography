@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 @timeit
 def get_dependencies(hosted_domain: str, access_token: str, project: str):
     """
-    As per the rest api docs:https://docs.gitlab.com/api/dependencies.html#list-project-dependencies
-    Pagination: https://docs.gitlab.com/api/rest/index.html#pagination
+    As per the rest api docs: https://docs.gitlab.com/api/dependencies.html#list-project-dependencies
+    Pagination: https://docs.gitlab.com/api/rest/#pagination
     """
     url = f"{hosted_domain}/api/v4/projects/{project}/dependencies?per_page=100"
     dependencies = paginate_request(url, access_token)
@@ -25,13 +25,19 @@ def get_dependencies(hosted_domain: str, access_token: str, project: str):
 
 
 def load_dependencies_data(
-    session: neo4j.Session, dependencies_data: List[Dict], project_id: str, common_job_parameters: Dict,
+    session: neo4j.Session,
+    dependencies_data: List[Dict],
+    project_id: str,
+    common_job_parameters: Dict,
 ) -> None:
     session.write_transaction(_load_dependencies_data, dependencies_data, project_id, common_job_parameters)
 
 
 def _load_dependencies_data(
-    tx: neo4j.Transaction, dependencies_data: List[Dict], project_id: str, common_job_parameters: Dict,
+    tx: neo4j.Transaction,
+    dependencies_data: List[Dict],
+    project_id: str,
+    common_job_parameters: Dict,
 ):
     ingest_dependencies = """
     UNWIND $dependenciesData AS dependency
