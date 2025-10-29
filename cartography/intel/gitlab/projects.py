@@ -3,6 +3,7 @@ import time
 from typing import Any
 from typing import Dict
 from typing import List
+from urllib.parse import quote
 
 import neo4j
 
@@ -20,7 +21,7 @@ def get_group_projects(hosted_domain: str, access_token: str, group_id: int):
     As per the rest api docs: https://docs.gitlab.com/api/groups/#list-projects
     Pagination: https://docs.gitlab.com/api/rest/#pagination
     """
-    url_encoded_group_id = str(group_id).replace("/", "%2F")
+    url_encoded_group_id = quote(str(group_id), safe="")
     url = f"{hosted_domain}/api/v4/groups/{url_encoded_group_id}/projects?include_subgroups=true&per_page=100"
     projects = paginate_request(url, access_token)
 
