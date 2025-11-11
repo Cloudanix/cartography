@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import re
 from typing import Dict
 from typing import List
 
@@ -122,6 +123,7 @@ def get_global_backend_services(compute: Resource, project_id: str) -> List[Dict
                         project_id=project_id,
                         backend_service_name=backend_service['name'], resource_name='global_backend_service',
                     )
+                    backend_service['isUserCreated'] = is_user_created_backend_service(backend_service)
                     global_backend_services.append(backend_service)
             req = compute.backendServices().list_next(previous_request=req, previous_response=res)
 
@@ -137,6 +139,102 @@ def get_global_backend_services(compute: Resource, project_id: str) -> List[Dict
             return []
         else:
             raise
+
+
+@timeit
+def is_user_created_backend_service(service):
+    name: str = service.get("name", "").lower()
+    description: str = service.get("description", "").lower()
+    scheme: str = service.get("loadBalancingScheme", "")
+    backends: list = service.get("backends", [])
+    usedBy: list = service.get("usedBy", [])
+    tags: dict = service.get("params", {}).get("resourceManagerTags", {}) or service.get("labels", {})
+
+    # List to keep all the failed checks
+    gcp_managed_signals: list = []
+
+    # A. Check for GCP managed tags or labels
+    gcp_tag_prefixes = [k for k in tags.keys() if str(k).startswith(("goog-", "gcp-"))]
+    if gcp_tag_prefixes:
+        gcp_managed_signals.append(f"GCP-managed tag/label: {gcp_tag_prefixes[0]}")
+
+    # B. Check for known GCP naming patterns
+    gcp_managed_patterns = [
+        (r'^k8s\d*-[a-f0-9]+-', "GKE Ingress/NEG pattern"),
+        (r'^agg-', "Aggregated backend service"),
+        (r'^goog-', "Google-managed prefix"),
+        (r'^gcp-', "GCP prefix"),
+        (r'^gcf-', "Cloud Functions"),
+        (r'^espv2-', "ESPv2 API Gateway"),
+        (r'^gae-', "App Engine"),
+        (r'^cloud[-_]?run', "Cloud Run"),
+        (r'^internal-backend', "Auto internal naming"),
+    ]
+
+    for pattern, reason in gcp_managed_patterns:
+        if re.match(pattern, name):
+            gcp_managed_signals.append(f"Name pattern match: {reason}")
+
+    # C. Description hints
+    managed_desc_hints = [
+        ("managed by gke", "GKE-managed description"),
+        ("managed by google", "Google-managed description"),
+        ("automatically created", "Auto-created indicator"),
+        ("system-generated", "System-generated indicator"),
+        ("do not delete", "Protected resource warning"),
+        ("auto-created", "Auto-created indicator"),
+        ("gke cluster", "GKE cluster reference"),
+        ("kubernetes ingress", "Kubernetes ingress reference"),
+        ("google cloud", "Google Cloud service reference"),
+    ]
+
+    for keyword, reason in managed_desc_hints:
+        if keyword in description:
+            gcp_managed_signals.append(f"Description: {reason}")
+
+    # D. Load Balancing Check
+    if scheme == "INTERNAL_SELF_MANAGED":
+        gcp_managed_signals.append("Load balancing scheme: INTERNAL_SELF_MANAGED")
+
+    # E. Check backend groups for GCP managed NEGs
+    for idx, backend in enumerate(backends):
+        group = backend.get("group", "").lower()
+
+    if "/networkendpointgroups/" in group:
+
+        # Check for serverless NEGs
+        serverless_indicators = [
+            ("serverless-neg", "Serverless NEG"),
+            ("cloudrun", "Cloud Run NEG"),
+            ("cloud-run", "Cloud Run NEG"),
+            ("gae-", "App Engine NEG"),
+            ("gcf-", "Cloud Functions NEG"),
+        ]
+
+        for indicator, reason in serverless_indicators:
+            if indicator in group:
+                gcp_managed_signals.append(f"Backend[{idx}]: {reason}")
+
+        # Check for GKE NEG pattern
+        if re.search(r'k8s\d*-[a-f0-9]+-', group):
+            gcp_managed_signals.append(f"Backend[{idx}]: GKE NEG pattern in group")
+
+    # F. Check Used By references
+    gcp_ref_patterns = [
+        (r'k8s\d*-[a-f0-9]+-', "GKE resource"),
+        (r'espv2-', "ESPv2 API Gateway"),
+        (r'goog-', "Google-managed resource"),
+        (r'gcp-', "GCP-managed resource"),
+    ]
+
+    for ref in usedBy:
+        reference = ref.get("reference", "").lower()
+        for pattern, reason in gcp_ref_patterns:
+            if re.search(pattern, reference):
+                gcp_managed_signals.append(f"UsedBy: Referenced by {reason}")
+
+    is_user_created = len(gcp_managed_signals) == 0
+    return is_user_created
 
 
 @timeit
@@ -162,6 +260,7 @@ def load_backend_services_tx(
         service.uniqueId = s.id,
         service.name = s.name,
         service.consolelink = s.consolelink,
+        service.isUserCreated = s.isUserCreated,
         service.enableCDN = s.enableCDN,
         service.sessionAffinity = s.sessionAffinity,
         service.loadBalancingScheme = s.loadBalancingScheme,
