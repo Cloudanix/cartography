@@ -82,7 +82,7 @@ def gcp_process_request(logger, params):
     body = {
         "credentials": {
             "account_email": params["accountEmail"],
-            "google_workspace_user_email": params.get("googleWorkspaceUserEmail"),
+            "google_workspace_user_email": params.get("workspaceUser"),
             "token_uri": os.environ["CDX_TOKEN_URI"],
         },
         "neo4j": {
@@ -99,7 +99,7 @@ def gcp_process_request(logger, params):
             "eventId": params.get("eventId"),
             "templateType": params.get("templateType"),
             "workspace": params.get("workspace"),
-            "groups": params.get("groups"),
+            "groups": params.get("groups", []),
             "actions": params.get("actions"),
             "resultTopic": params.get("resultTopic"),
             "requestTopic": params.get("requestTopic"),

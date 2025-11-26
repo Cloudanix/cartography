@@ -13,7 +13,6 @@ from neo4j import GraphDatabase
 from statsd import StatsClient
 
 import cartography.intel.analysis
-import cartography.intel.azuredevops
 import cartography.intel.create_indexes
 import cloudanix
 from cartography.config import Config
