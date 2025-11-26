@@ -247,6 +247,7 @@ def _load_groups_tx(tx: neo4j.Transaction, groups: List[Dict], organization_id: 
     SET
         group.groupId = grp.id,
         group.email = grp.email,
+        group.name = grp.name,
         group.adminCreated = grp.adminCreated,
         group.directMembersCount = grp.directMembersCount,
         group.lastupdated = $gcp_update_tag
