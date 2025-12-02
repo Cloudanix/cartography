@@ -29,3 +29,8 @@ node_modules
 build.log
 azure.build.log
 git.worker.log
+scripts
+dev.py
+Dockerfile.aws.worker
+Dockerfile.azure.worker
+config
