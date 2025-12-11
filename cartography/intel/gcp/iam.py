@@ -200,15 +200,17 @@ def get_project_custom_roles(iam: Resource, project_id: str) -> List[Dict]:
 
 
 @timeit
-def transform_roles(roles_list: List[Dict], project_id: str, type: str) -> List[Dict]:
+def transform_roles(roles_list: List[Dict], project_id: str, type: str, common_job_parameters: Dict) -> List[Dict]:
     for role in roles_list:
-        role['id'] = get_role_id(role['name'], project_id)
+        role['id'] = get_role_id(role['name'], project_id, common_job_parameters)
         role['type'] = type
-        role['parent'] = ['project']
-        role['parent_id'] = [f"projects/{project_id}"]
+        role['parent'] = ['project', 'organization']
+        role['is_sso'] = True
+        if role['name'].startswith('projects/'):
+            role['parent'] = ['project']
+            del role['is_sso']
         if role['name'].startswith('organizations/'):
-            role['parent'] += ['organization']
-            role['parent_id'] += [f"organizations/{role['name'].split('/')[1]}"]
+            role['parent'] = ['organization']
         role['consolelink'] = gcp_console_link.get_console_link(
             resource_name='iam_role', project_id=project_id, role_id=role['name'],
         )
@@ -216,7 +218,7 @@ def transform_roles(roles_list: List[Dict], project_id: str, type: str) -> List[
 
 
 @timeit
-def get_role_id(role_name: str, project_id: str) -> str:
+def get_role_id(role_name: str, project_id: str, common_job_parameters: Dict) -> str:
     if role_name.startswith('organizations/'):
         return role_name
 
@@ -224,7 +226,7 @@ def get_role_id(role_name: str, project_id: str) -> str:
         return role_name
 
     elif role_name.startswith('roles/'):
-        return f'projects/{project_id}/{role_name}'
+        return f'organizations/{common_job_parameters["GCP_ORGANIZATION_ID"]}/{role_name}'
     return ''
 
 
@@ -521,7 +523,7 @@ def cleanup_service_account_keys(neo4j_session: neo4j.Session, common_job_parame
 
 
 @timeit
-def load_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def load_project_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     ingest_roles = """
     UNWIND $roles_list AS d
     MERGE (u:GCPRole{id: d.id})
@@ -530,12 +532,12 @@ def load_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_id: str,
     u.title = d.title,
     u.region = $region,
     u.create_date = $createDate,
+    u.is_sso = d.is_sso,
     u.description = d.description,
     u.deleted = d.deleted,
     u.consolelink = d.consolelink,
     u.type = d.type,
     u.parent = d.parent,
-    u.parent_id = d.parent_id,
     u.permissions = d.includedPermissions,
     u.roleid = d.id,
     u.lastupdated = $gcp_update_tag
@@ -557,14 +559,50 @@ def load_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_id: str,
 
 
 @timeit
+def load_sso_roles(neo4j_session: neo4j.Session, roles: List[Dict], org_id: str, gcp_update_tag: int) -> None:
+    ingest_roles = """
+    UNWIND $roles_list AS d
+    MERGE (u:GCPRole{id: d.id})
+    ON CREATE SET u.firstseen = timestamp()
+    SET u.name = d.name,
+    u.title = d.title,
+    u.region = $region,
+    u.create_date = $createDate,
+    u.description = d.description,
+    u.is_sso = d.is_sso,
+    u.deleted = d.deleted,
+    u.consolelink = d.consolelink,
+    u.type = d.type,
+    u.parent = d.parent,
+    u.permissions = d.includedPermissions,
+    u.roleid = d.id,
+    u.lastupdated = $gcp_update_tag
+    WITH u
+    MATCH (o:GCPOrganization{id: $org_id})
+    MERGE (o)-[r:RESOURCE]->(u)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $gcp_update_tag
+    """
+
+    neo4j_session.run(
+        ingest_roles,
+        roles_list=roles,
+        region="global",
+        createDate=datetime.utcnow(),
+        org_id=org_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+@timeit
 def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('gcp_iam_roles_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit
-def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id: str, organization_id: str, gcp_update_tag: int) -> None:
+def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id: str, organization_id: str, gcp_update_tag: int, common_job_parameters: Dict) -> None:
     for binding in bindings:
-        role_id = get_role_id(binding['role'], project_id)
+        role_id = get_role_id(binding['role'], project_id, common_job_parameters)
 
         for member in binding['members']:
             if member.startswith('user:'):
@@ -578,10 +616,16 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                     "consolelink": gcp_console_link.get_console_link(project_id=project_id, resource_name='iam_user'),
 
                 }
-                attach_role_to_user(
-                    neo4j_session, role_id, user,
-                    project_id, organization_id, gcp_update_tag,
-                )
+                if role_id.startswith("projects/"):
+                    attach_project_role_to_user(
+                        neo4j_session, role_id, user,
+                        project_id, organization_id, gcp_update_tag,
+                    )
+                else:
+                    attach_sso_role_to_user(
+                        neo4j_session, role_id, user,
+                        project_id, organization_id, gcp_update_tag,
+                    )
 
             elif member.startswith('serviceAccount:'):
                 serviceAccount = {
@@ -589,12 +633,21 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                     "parent": binding['parent'],
                     "parent_id": binding['parent_id'],
                 }
-                attach_role_to_service_account(
-                    neo4j_session,
-                    role_id, serviceAccount,
-                    project_id,
-                    gcp_update_tag,
-                )
+                if role_id.startswith("projects/"):
+                    attach_project_role_to_service_account(
+                        neo4j_session,
+                        role_id, serviceAccount,
+                        project_id,
+                        gcp_update_tag,
+                    )
+                else:
+                    attach_sso_role_to_service_account(
+                        neo4j_session,
+                        role_id, serviceAccount,
+                        project_id,
+                        organization_id,
+                        gcp_update_tag,
+                    )
 
             elif member.startswith('group:'):
                 grp = member[len('group:'):]
@@ -606,13 +659,22 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                     "parent_id": binding['parent_id'],
                     "consolelink": gcp_console_link.get_console_link(project_id=project_id, resource_name='iam_group'),
                 }
-                attach_role_to_group(
-                    neo4j_session, role_id,
-                    group,
-                    project_id,
-                    organization_id,
-                    gcp_update_tag,
-                )
+                if role_id.startswith("projects/"):
+                    attach_project_role_to_group(
+                        neo4j_session, role_id,
+                        group,
+                        project_id,
+                        organization_id,
+                        gcp_update_tag,
+                    )
+                else:
+                    attach_sso_role_to_group(
+                        neo4j_session, role_id,
+                        group,
+                        project_id,
+                        organization_id,
+                        gcp_update_tag,
+                    )
 
             elif member.startswith('domain:'):
                 dmn = member[len('domain:'):]
@@ -624,12 +686,21 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                     "parent_id": binding['parent_id'],
                     "consolelink": gcp_console_link.get_console_link(project_id=project_id, resource_name='iam_domain'),
                 }
-                attach_role_to_domain(
-                    neo4j_session, role_id,
-                    domain,
-                    project_id,
-                    gcp_update_tag,
-                )
+                if role_id.startswith("projects/"):
+                    attach_project_role_to_domain(
+                        neo4j_session, role_id,
+                        domain,
+                        project_id,
+                        gcp_update_tag,
+                    )
+                else:
+                    attach_sso_role_to_domain(
+                        neo4j_session, role_id,
+                        domain,
+                        project_id,
+                        organization_id,
+                        gcp_update_tag,
+                    )
 
             elif member.startswith('deleted:'):
                 member = member[len('deleted:'):]
@@ -644,14 +715,24 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         "parent_id": binding['parent_id'],
 
                     }
-                    attach_role_to_user(
-                        neo4j_session,
-                        role_id,
-                        user,
-                        project_id,
-                        organization_id,
-                        gcp_update_tag,
-                    )
+                    if role_id.startswith("projects/"):
+                        attach_project_role_to_user(
+                            neo4j_session,
+                            role_id,
+                            user,
+                            project_id,
+                            organization_id,
+                            gcp_update_tag,
+                        )
+                    else:
+                        attach_sso_role_to_user(
+                            neo4j_session,
+                            role_id,
+                            user,
+                            project_id,
+                            organization_id,
+                            gcp_update_tag,
+                        )
 
                 elif member.startswith('serviceAccount:'):
                     serviceAccount = {
@@ -662,12 +743,21 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         "parent_id": binding['parent_id'],
 
                     }
-                    attach_role_to_service_account(
-                        neo4j_session,
-                        role_id, serviceAccount,
-                        project_id,
-                        gcp_update_tag,
-                    )
+                    if role_id.startswith("projects/"):
+                        attach_project_role_to_service_account(
+                            neo4j_session,
+                            role_id, serviceAccount,
+                            project_id,
+                            gcp_update_tag,
+                        )
+                    else:
+                        attach_sso_role_to_service_account(
+                            neo4j_session,
+                            role_id, serviceAccount,
+                            project_id,
+                            organization_id,
+                            gcp_update_tag,
+                        )
 
                 elif member.startswith('group:'):
                     grp = member[len('group:'):]
@@ -679,13 +769,22 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         "parent": binding['parent'],
                         "parent_id": binding['parent_id'],
                     }
-                    attach_role_to_group(
-                        neo4j_session, role_id,
-                        group,
-                        project_id,
-                        organization_id,
-                        gcp_update_tag,
-                    )
+                    if role_id.startswith("projects/"):
+                        attach_project_role_to_group(
+                            neo4j_session, role_id,
+                            group,
+                            project_id,
+                            organization_id,
+                            gcp_update_tag,
+                        )
+                    else:
+                        attach_sso_role_to_group(
+                            neo4j_session, role_id,
+                            group,
+                            project_id,
+                            organization_id,
+                            gcp_update_tag,
+                        )
 
                 elif member.startswith('domain:'):
                     dmn = member[len('domain:'):]
@@ -697,17 +796,21 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         "parent": binding['parent'],
                         "parent_id": binding['parent_id'],
                     }
-                    attach_role_to_domain(
-                        neo4j_session, role_id,
-                        domain,
-                        project_id,
-                        gcp_update_tag,
-                    )
-
-
-@timeit
-def cleanup_users(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_iam_users_cleanup.json', neo4j_session, common_job_parameters)
+                    if role_id.startswith("projects/"):
+                        attach_project_role_to_domain(
+                            neo4j_session, role_id,
+                            domain,
+                            project_id,
+                            gcp_update_tag,
+                        )
+                    else:
+                        attach_sso_role_to_domain(
+                            neo4j_session, role_id,
+                            domain,
+                            project_id,
+                            organization_id,
+                            gcp_update_tag,
+                        )
 
 
 @timeit
@@ -716,7 +819,7 @@ def cleanup_policy_binding(neo4j_session: neo4j.Session, common_job_parameters: 
 
 
 @timeit
-def attach_role_to_user(
+def attach_project_role_to_user(
     neo4j_session: neo4j.Session, role_id: str, user: Dict,
     project_id: str, organization_id: str, gcp_update_tag: int,
 ) -> None:
@@ -743,14 +846,6 @@ def attach_role_to_user(
     ON CREATE SET
     pr.firstseen = timestamp()
     SET pr.lastupdated = $gcp_update_tag
-    WITH user,role
-    SET
-    (CASE WHEN NOT $Parent IN coalesce(role.parent, []) THEN role END).parent = coalesce(role.parent, []) + $Parent,
-    (CASE WHEN NOT $ParentId IN coalesce(role.parent_id, []) THEN role END).parent_id = coalesce(role.parent_id, []) + $ParentId
-    WITH user
-    SET
-    (CASE WHEN NOT $Parent IN coalesce(user.parent, []) THEN user END).parent = coalesce(user.parent, []) + $Parent,
-    (CASE WHEN NOT $ParentId IN coalesce(user.parent_id, []) THEN user END).parent_id = coalesce(user.parent_id, []) + $ParentId
     """
 
     neo4j_session.run(
@@ -771,7 +866,57 @@ def attach_role_to_user(
 
 
 @timeit
-def attach_role_to_service_account(
+def attach_sso_role_to_user(
+    neo4j_session: neo4j.Session, role_id: str, user: Dict,
+    project_id: str, organization_id: str, gcp_update_tag: int,
+) -> None:
+    ingest_script = """
+    MERGE (user:GCPUser{id: $UserId})
+    ON CREATE SET
+    user:GCPPrincipal,
+    user.firstseen = timestamp()
+    SET
+    user.email = $UserEmail,
+    user.name = $UserName,
+    user.create_date = $createDate,
+    user.lastupdated = $gcp_update_tag,
+    user.isDeleted = $isDeleted,
+    user.consolelink = $ConsoleLink
+    WITH user
+    MATCH (:GCPOrganization{id: $organization_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
+    MATCH (:GCPOrganization{id: $organization_id})-[:OWNER]->(project:GCPProject{id: $project_id})
+    MERGE (user)-[r1:ASSUME_ROLE{project_id:$project_id}]->(role)-[r2:HAS_ACCESS_TO{email:$UserId}]->(project)
+    ON CREATE SET r1.firstseen = timestamp(),
+    r2.firstseen = timestamp()
+    SET r1.lastupdated = $gcp_update_tag,
+    r2.lastupdated = $gcp_update_tag
+    WITH user,role
+    MATCH (p:GCPOrganization{id: $organization_id})
+    MERGE (p)-[pr:RESOURCE]->(user)
+    ON CREATE SET
+    pr.firstseen = timestamp()
+    SET pr.lastupdated = $gcp_update_tag
+    """
+
+    neo4j_session.run(
+        ingest_script,
+        RoleId=role_id,
+        UserId=user['id'],
+        UserEmail=user['email'],
+        UserName=user['name'],
+        ConsoleLink=user.get('consolelink'),
+        createDate=datetime.utcnow(),
+        Parent=user['parent'],
+        ParentId=user['parent_id'],
+        isDeleted=user.get('is_deleted', False),
+        project_id=project_id,
+        organization_id=organization_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+@timeit
+def attach_project_role_to_service_account(
     neo4j_session: neo4j.Session, role_id: str,
     serviceAccount: Dict, project_id: str, gcp_update_tag: int,
 ) -> None:
@@ -784,14 +929,6 @@ def attach_role_to_service_account(
     MERGE (sa)-[r:ASSUME_ROLE]->(role)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
-    WITH sa,role
-    SET
-    (CASE WHEN NOT $Parent IN coalesce(role.parent, []) THEN role END).parent = coalesce(role.parent, []) + $Parent,
-    (CASE WHEN NOT $ParentId IN coalesce(role.parent_id, []) THEN role END).parent_id = coalesce(role.parent_id, []) + $ParentId
-    WITH sa
-    SET
-    (CASE WHEN NOT $Parent IN coalesce(sa.parent, []) THEN sa END).parent = coalesce(sa.parent, []) + $Parent,
-    (CASE WHEN NOT $ParentId IN coalesce(sa.parent_id, []) THEN sa END).parent_id = coalesce(sa.parent_id, []) + $ParentId
     """
 
     neo4j_session.run(
@@ -807,7 +944,39 @@ def attach_role_to_service_account(
 
 
 @timeit
-def attach_role_to_group(
+def attach_sso_role_to_service_account(
+    neo4j_session: neo4j.Session, role_id: str,
+    serviceAccount: Dict, project_id: str, organization_id: str, gcp_update_tag: int,
+) -> None:
+    ingest_script = """
+    MATCH (sa:GCPServiceAccount{id: $saId})
+    SET
+    sa.isDeleted = $isDeleted
+    WITH sa
+    MATCH (:GCPOrganization{id: $organization_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
+    MATCH (:GCPOrganization{id: $organization_id})-[:OWNER]->(project:GCPProject{id: $project_id})
+    MERGE (sa)-[r1:ASSUME_ROLE{project_id:$project_id}]->(role)-[r2:HAS_ACCESS_TO{email:$saId}]->(project)
+    ON CREATE SET r1.firstseen = timestamp(),
+    r2.firstseen = timestamp()
+    SET r1.lastupdated = $gcp_update_tag,
+    r2.lastupdated = $gcp_update_tag
+    """
+
+    neo4j_session.run(
+        ingest_script,
+        RoleId=role_id,
+        isDeleted=serviceAccount.get('is_deleted', False),
+        Parent=serviceAccount['parent'],
+        ParentId=serviceAccount['parent_id'],
+        saId=serviceAccount['id'],
+        project_id=project_id,
+        organization_id=organization_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+@timeit
+def attach_project_role_to_group(
     neo4j_session: neo4j.Session, role_id: str, group: Dict,
     project_id: str, organization_id: str, gcp_update_tag: int,
 ) -> None:
@@ -834,14 +1003,6 @@ def attach_role_to_group(
     ON CREATE SET
     pr.firstseen = timestamp()
     SET pr.lastupdated = $gcp_update_tag
-    WITH group,role
-    SET
-    (CASE WHEN NOT $Parent IN coalesce(role.parent, []) THEN role END).parent = coalesce(role.parent, []) + $Parent,
-    (CASE WHEN NOT $ParentId IN coalesce(role.parent_id, []) THEN role END).parent_id = coalesce(role.parent_id, []) + $ParentId
-    WITH group
-    SET
-    (CASE WHEN NOT $Parent IN coalesce(group.parent, []) THEN group END).parent = coalesce(group.parent, []) + $Parent,
-    (CASE WHEN NOT $ParentId IN coalesce(group.parent_id, []) THEN group END).parent_id = coalesce(group.parent_id, []) + $ParentId
     """
 
     neo4j_session.run(
@@ -862,7 +1023,57 @@ def attach_role_to_group(
 
 
 @timeit
-def attach_role_to_domain(
+def attach_sso_role_to_group(
+    neo4j_session: neo4j.Session, role_id: str, group: Dict,
+    project_id: str, organization_id: str, gcp_update_tag: int,
+) -> None:
+    ingest_script = """
+    MERGE (group:GCPGroup{id: $GroupId})
+    ON CREATE SET
+    group:GCPPrincipal,
+    group.firstseen = timestamp()
+    SET
+    group.email = $GroupEmail,
+    group.name = $GroupName,
+    group.create_date = $createDate,
+    group.consolelink = $ConsoleLink,
+    group.lastupdated = $gcp_update_tag,
+    group.isDeleted = $isDeleted
+    WITH group
+    MATCH (:GCPOrganization{id: $organization_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
+    MATCH (:GCPOrganization{id: $organization_id})-[:OWNER]->(project:GCPProject{id: $project_id})
+    MERGE (group)-[r1:ASSUME_ROLE{project_id:$project_id}]->(role)-[r2:HAS_ACCESS_TO{email:$GroupId}]->(project)
+    ON CREATE SET r1.firstseen = timestamp(),
+    r2.firstseen = timestamp()
+    SET r1.lastupdated = $gcp_update_tag,
+    r2.lastupdated = $gcp_update_tag
+    WITH group,role
+    MATCH (p:GCPOrganization{id: $organization_id})
+    MERGE (p)-[pr:RESOURCE]->(group)
+    ON CREATE SET
+    pr.firstseen = timestamp()
+    SET pr.lastupdated = $gcp_update_tag
+    """
+
+    neo4j_session.run(
+        ingest_script,
+        RoleId=role_id,
+        GroupId=group['id'],
+        GroupName=group['name'],
+        createDate=datetime.utcnow(),
+        GroupEmail=group['email'],
+        ConsoleLink=group['consolelink'],
+        Parent=group['parent'],
+        ParentId=group['parent_id'],
+        isDeleted=group.get('is_deleted', False),
+        project_id=project_id,
+        organization_id=organization_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+@timeit
+def attach_project_role_to_domain(
     neo4j_session: neo4j.Session, role_id: str, domain: Dict,
     project_id: str, gcp_update_tag: int,
 ) -> None:
@@ -889,14 +1100,6 @@ def attach_role_to_domain(
     ON CREATE SET
     pr.firstseen = timestamp()
     SET pr.lastupdated = $gcp_update_tag
-    WITH domain,role
-    SET
-    (CASE WHEN NOT $Parent IN coalesce(role.parent, []) THEN role END).parent = coalesce(role.parent, []) + $Parent,
-    (CASE WHEN NOT $ParentId IN coalesce(role.parent_id, []) THEN role END).parent_id = coalesce(role.parent_id, []) + $ParentId
-    WITH domain
-    SET
-    (CASE WHEN NOT $Parent IN coalesce(domain.parent, []) THEN domain END).parent = coalesce(domain.parent, []) + $Parent,
-    (CASE WHEN NOT $ParentId IN coalesce(domain.parent_id, []) THEN domain END).parent_id = coalesce(domain.parent_id, []) + $ParentId
     """
 
     neo4j_session.run(
@@ -911,6 +1114,56 @@ def attach_role_to_domain(
         DomainName=domain['name'],
         isDeleted=domain.get('is_deleted', False),
         project_id=project_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+@timeit
+def attach_sso_role_to_domain(
+    neo4j_session: neo4j.Session, role_id: str, domain: Dict,
+    project_id: str, organization_id: str, gcp_update_tag: int,
+) -> None:
+    ingest_script = """
+    MERGE (domain:GCPDomain{id: $DomainId})
+    ON CREATE SET
+    domain:GCPPrincipal,
+    domain.firstseen = timestamp()
+    SET
+    domain.email = $DomainEmail,
+    domain.name = $DomainName,
+    domain.create_date = $createDate,
+    domain.consolelink = $ConsoleLink,
+    domain.lastupdated = $gcp_update_tag,
+    domain.isDeleted = $isDeleted
+    WITH domain
+    MATCH (:GCPOrganization{id: $organization_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
+    MATCH (:GCPOrganization{id: $organization_id})-[:OWNER]->(project:GCPProject{id: $project_id})
+    MERGE (domain)-[r1:ASSUME_ROLE{project_id:$project_id}]->(role)-[r2:HAS_ACCESS_TO{email:$DomainId}]->(project)
+    ON CREATE SET r1.firstseen = timestamp(),
+    r2.firstseen = timestamp()
+    SET r1.lastupdated = $gcp_update_tag,
+    r2.lastupdated = $gcp_update_tag
+    WITH domain,role
+    MATCH (p:GCPProject{id: $project_id})
+    MERGE (p)-[pr:RESOURCE]->(domain)
+    ON CREATE SET
+    pr.firstseen = timestamp()
+    SET pr.lastupdated = $gcp_update_tag
+    """
+
+    neo4j_session.run(
+        ingest_script,
+        RoleId=role_id,
+        DomainId=domain['id'],
+        Parent=domain['parent'],
+        createDate=datetime.utcnow(),
+        ParentId=domain['parent_id'],
+        DomainEmail=domain['email'],
+        ConsoleLink=domain['consolelink'],
+        DomainName=domain['name'],
+        isDeleted=domain.get('is_deleted', False),
+        project_id=project_id,
+        organization_id=organization_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -994,17 +1247,16 @@ def sync(
     project_custom_roles_list = get_project_custom_roles(iam, project_id)
     organization_custom_roles_list = get_organization_custom_roles(iam, crm_v1, project_id)
 
-    predefined_roles_list = transform_roles(predefined_roles_list, project_id, 'predefined')
-    project_custom_roles_list = transform_roles(project_custom_roles_list, project_id, 'custom')
-    organization_custom_roles_list = transform_roles(organization_custom_roles_list, project_id, 'custom')
+    predefined_roles_list = transform_roles(predefined_roles_list, project_id, 'predefined', common_job_parameters)
+    project_custom_roles_list = transform_roles(project_custom_roles_list, project_id, 'custom', common_job_parameters)
+    organization_custom_roles_list = transform_roles(organization_custom_roles_list, project_id, 'custom', common_job_parameters)
 
-    roles_list = []
-    roles_list.extend(predefined_roles_list)
-    roles_list.extend(project_custom_roles_list)
-    roles_list.extend(organization_custom_roles_list)
-    load_roles(neo4j_session, roles_list, project_id, gcp_update_tag)
+    load_project_roles(neo4j_session, project_custom_roles_list, project_id, gcp_update_tag)
+    load_sso_roles(neo4j_session, predefined_roles_list, common_job_parameters["GCP_ORGANIZATION_ID"], gcp_update_tag)
+    load_sso_roles(neo4j_session, organization_custom_roles_list, common_job_parameters["GCP_ORGANIZATION_ID"], gcp_update_tag)
+
     cleanup_roles(neo4j_session, common_job_parameters)
-    label.sync_labels(neo4j_session, roles_list, gcp_update_tag, common_job_parameters, 'roles', 'GCPRole')
+    label.sync_labels(neo4j_session, project_custom_roles_list, gcp_update_tag, common_job_parameters, 'roles', 'GCPRole')
 
     keys = get_apikeys_keys(apikey, project_id)
     api_keys = transform_api_keys(keys, project_id)
@@ -1013,11 +1265,10 @@ def sync(
 
     bindings = get_policy_bindings(crm_v1, crm_v2, project_id)
     # users_from_bindings, groups_from_bindings, domains_from_bindings = transform_bindings(bindings, project_id)
-    load_bindings(neo4j_session, bindings, project_id, organization_id, gcp_update_tag)
-    set_used_state(neo4j_session, project_id, common_job_parameters, gcp_update_tag)
+    load_bindings(neo4j_session, bindings, project_id, organization_id, gcp_update_tag, common_job_parameters)
+    # set_used_state(neo4j_session, project_id, common_job_parameters, gcp_update_tag)
 
     cleanup_policy_binding(neo4j_session, common_job_parameters)
-    cleanup_users(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process IAM: {toc - tic:0.4f} seconds")
