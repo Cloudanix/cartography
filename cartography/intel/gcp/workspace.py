@@ -194,6 +194,7 @@ def _load_users_tx(tx: neo4j.Transaction, users: List[Dict], organization_id: st
         user.id = usr.primaryEmail,
         user.email = usr.primaryEmail,
         user.isAdmin = usr.isAdmin,
+        user.is_sso = true,
         user.isDelegatedAdmin = usr.isDelegatedAdmin,
         user.agreedToTerms = usr.agreedToTerms,
         user.suspended = usr.suspended,
@@ -228,7 +229,7 @@ def _load_users_tx(tx: neo4j.Transaction, users: List[Dict], organization_id: st
 
 @timeit
 def cleanup_users(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_iam_users_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job('gcp_workspace_users_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit
@@ -248,6 +249,7 @@ def _load_groups_tx(tx: neo4j.Transaction, groups: List[Dict], organization_id: 
         group.groupId = grp.id,
         group.email = grp.email,
         group.name = grp.name,
+        group.is_sso = true,
         group.adminCreated = grp.adminCreated,
         group.directMembersCount = grp.directMembersCount,
         group.lastupdated = $gcp_update_tag
@@ -273,6 +275,7 @@ def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List
         UNWIND $MemberData as member
         MERGE (user:GCPUser {userId: member.id})
         ON CREATE SET
+        user:GCPPrincipal,
         user.firstseen = $UpdateTag
         SET
         user.lastupdated = $UpdateTag
@@ -304,7 +307,7 @@ def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List
 
 @timeit
 def cleanup_groups(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_iam_groups_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job('gcp_workspace_groups_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit

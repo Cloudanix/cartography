@@ -193,6 +193,8 @@ def load_gcp_projects(
     """
 
     for project in data:
+        if project['projectId'] != common_job_parameters['GCP_PROJECT_ID']:
+            continue
         neo4j_session.run(
             query,
             OrganizationId=common_job_parameters['GCP_ORGANIZATION_ID'],
