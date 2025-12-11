@@ -226,7 +226,7 @@ def get_role_id(role_name: str, project_id: str, common_job_parameters: Dict) ->
         return role_name
 
     elif role_name.startswith('roles/'):
-        return f'organizations/{common_job_parameters["GCP_ORGANIZATION_ID"]}/{role_name}'
+        return f'{common_job_parameters["GCP_ORGANIZATION_ID"]}/{role_name}'
     return ''
 
 
