@@ -16,6 +16,12 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
+PORT_MAP = {
+    "mysql": 3306,
+    "postgres": 5432,
+    "sqlserver": 1433
+}
+
 
 @timeit
 def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_parameters) -> List[Dict]:
@@ -45,6 +51,23 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
                     item['ipV4Enabled'] = item.get('settings', {}).get('ipConfiguration', {}).get('ipV4Enabled', False)
                     item['consolelink'] = gcp_console_link.get_console_link(
                         resource_name='sql_instance', project_id=project_id, sql_instance_name=item['name'],
+                    )
+                    parts = item['databaseVersion'].split("_")
+
+                    db_type = parts[0].lower()
+                    item['engine'] = db_type
+                    item['port'] = PORT_MAP[db_type]
+
+                    version = ""
+                    for i in parts[1:]:
+                        version += f".{i}"
+
+                    item['engineVersion'] = version[1:]
+
+                    item['endpoint'] = next(
+                        (ip["ipAddress"] for ip in item.get("ipAddresses", [])
+                         if ip["type"] == "PRIMARY"),
+                        None
                     )
                     if regions is None or len(regions) == 0:
                         sql_instances.append(item)
@@ -224,6 +247,10 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
         i.currentDiskSize = instance.currentDiskSize,
         i.instanceType = instance.instanceType,
         i.connectionName = instance.connectionName,
+        i.engine = instance.engine,
+        i.engineVersion = instance.engineVersion,
+        i.endpoint = instance.endpoint,
+        i.port = instance.port,
         i.name = instance.name,
         i.ipV4Enabled = instance.ipV4Enabled,
         i.region = instance.region,
