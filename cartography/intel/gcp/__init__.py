@@ -33,45 +33,47 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 Resources = namedtuple(
-    'Resources', 'compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun  \
-        iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer',
+    "Resources",
+    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun  \
+        iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer",
 )
 
 # Mapping of service short names to their full names as in docs. See https://developers.google.com/apis-explorer,
 # and https://cloud.google.com/service-usage/docs/reference/rest/v1/services#ServiceConfig
 Services = namedtuple(
-    'Services', 'compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer',
+    "Services",
+    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer",
 )
 service_names = Services(
-    compute='compute.googleapis.com',
-    storage='storage.googleapis.com',
-    gke='container.googleapis.com',
-    dns='dns.googleapis.com',
-    cloudfunction='cloudfunctions.googleapis.com',
-    crm_v1='cloudresourcemanager.googleapis.com',
-    crm_v2='cloudresourcemanager.googleapis.com',
-    cloudkms='cloudkms.googleapis.com',
-    cloudrun='run.googleapis.com',
-    iam='iam.googleapis.com',
-    admin='admin.googleapis.com',
-    apigateway='apigateway.googleapis.com',
-    sql='sqladmin.googleapis.com',
-    bigtable='bigtableadmin.googleapis.com',
-    firestore='firestore.googleapis.com',
-    apikey='apikeys.googleapis.com',
-    pubsub='pubsub.googleapis.com',
-    dataproc='dataproc.googleapis.com',
-    cloudmonitoring='cloudmonitoring.googleapis.com',
-    cloud_logging='cloud_logging.googleapis.com',
-    cloudcdn='cloudcdn.googleapis.com',
-    loadbalancer='loadbalancer.googleapis.com',
-    bigquery='bigquery.googleapis.com',
-    dataflow='dataflow.googleapis.com',
-    spanner='spanner.googleapis.com',
-    pubsublite='pubsublite.googleapis.com',
-    cloudtasks='cloudtasks.googleapis.com',
-    serviceusage='serviceusage.googleapis.com',
-    policyanalyzer='policyanalyzer.googleapis.com',
+    compute="compute.googleapis.com",
+    storage="storage.googleapis.com",
+    gke="container.googleapis.com",
+    dns="dns.googleapis.com",
+    cloudfunction="cloudfunctions.googleapis.com",
+    crm_v1="cloudresourcemanager.googleapis.com",
+    crm_v2="cloudresourcemanager.googleapis.com",
+    cloudkms="cloudkms.googleapis.com",
+    cloudrun="run.googleapis.com",
+    iam="iam.googleapis.com",
+    admin="admin.googleapis.com",
+    apigateway="apigateway.googleapis.com",
+    sql="sqladmin.googleapis.com",
+    bigtable="bigtableadmin.googleapis.com",
+    firestore="firestore.googleapis.com",
+    apikey="apikeys.googleapis.com",
+    pubsub="pubsub.googleapis.com",
+    dataproc="dataproc.googleapis.com",
+    cloudmonitoring="cloudmonitoring.googleapis.com",
+    cloud_logging="cloud_logging.googleapis.com",
+    cloudcdn="cloudcdn.googleapis.com",
+    loadbalancer="loadbalancer.googleapis.com",
+    bigquery="bigquery.googleapis.com",
+    dataflow="dataflow.googleapis.com",
+    spanner="spanner.googleapis.com",
+    pubsublite="pubsublite.googleapis.com",
+    cloudtasks="cloudtasks.googleapis.com",
+    serviceusage="serviceusage.googleapis.com",
+    policyanalyzer="policyanalyzer.googleapis.com",
 )
 
 
@@ -83,7 +85,7 @@ def _get_iam_resource_v1(credentials: GoogleCredentials) -> Resource:
     :return: A IAM v1 resource object
     """
     # cache_discovery=False to suppress extra warnings.
-    return googleapiclient.discovery.build('iam', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("iam", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_crm_resource_v1(credentials: GoogleCredentials) -> Resource:
@@ -95,7 +97,7 @@ def _get_crm_resource_v1(credentials: GoogleCredentials) -> Resource:
     """
     # cache_discovery=False to suppress extra warnings.
     # See https://github.com/googleapis/google-api-python-client/issues/299#issuecomment-268915510 and related issues
-    return googleapiclient.discovery.build('cloudresourcemanager', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("cloudresourcemanager", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_policyanalyzer_resource(credentials: GoogleCredentials) -> Resource:
@@ -104,7 +106,7 @@ def _get_policyanalyzer_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('policyanalyzer', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("policyanalyzer", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_policyanalyzer_resource(credentials: GoogleCredentials) -> Resource:
@@ -113,7 +115,7 @@ def _get_policyanalyzer_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('policyanalyzer', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("policyanalyzer", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_crm_resource_v2(credentials: GoogleCredentials) -> Resource:
@@ -123,7 +125,7 @@ def _get_crm_resource_v2(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A CRM v2 resource object
     """
-    return googleapiclient.discovery.build('cloudresourcemanager', 'v2', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("cloudresourcemanager", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudfunction_resource(credentials: GoogleCredentials) -> Resource:
@@ -133,7 +135,7 @@ def _get_cloudfunction_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('cloudfunctions', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("cloudfunctions", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_pubsub_resource(credentials: GoogleCredentials) -> Resource:
@@ -143,7 +145,7 @@ def _get_pubsub_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('pubsub', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("pubsub", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloud_logging_resource(credentials: GoogleCredentials) -> Resource:
@@ -153,7 +155,7 @@ def _get_cloud_logging_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('logging', 'v2', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("logging", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudmonitoring_resource(credentials: GoogleCredentials) -> Resource:
@@ -163,7 +165,7 @@ def _get_cloudmonitoring_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('monitoring', 'v3', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("monitoring", "v3", credentials=credentials, cache_discovery=False)
 
 
 def _get_dataproc_resource(credentials: GoogleCredentials) -> Resource:
@@ -173,7 +175,7 @@ def _get_dataproc_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('dataproc', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("dataproc", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_compute_resource(credentials: GoogleCredentials) -> Resource:
@@ -183,7 +185,7 @@ def _get_compute_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A Compute resource object
     """
-    return googleapiclient.discovery.build('compute', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("compute", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_storage_resource(credentials: GoogleCredentials) -> Resource:
@@ -195,7 +197,7 @@ def _get_storage_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A Storage resource object
     """
-    return googleapiclient.discovery.build('storage', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("storage", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_container_resource(credentials: GoogleCredentials) -> Resource:
@@ -205,7 +207,7 @@ def _get_container_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A Container resource object
     """
-    return googleapiclient.discovery.build('container', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("container", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_dns_resource(credentials: GoogleCredentials) -> Resource:
@@ -215,7 +217,7 @@ def _get_dns_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A DNS resource object
     """
-    return googleapiclient.discovery.build('dns', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("dns", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_serviceusage_resource(credentials: GoogleCredentials) -> Resource:
@@ -225,7 +227,7 @@ def _get_serviceusage_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('serviceusage', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("serviceusage", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudkms_resource(credentials: GoogleCredentials) -> Resource:
@@ -235,7 +237,7 @@ def _get_cloudkms_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('cloudkms', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("cloudkms", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudsql_resource(credentials: GoogleCredentials) -> Resource:
@@ -245,7 +247,7 @@ def _get_cloudsql_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('sqladmin', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("sqladmin", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudrun_resource(credentials: GoogleCredentials) -> Resource:
@@ -255,7 +257,7 @@ def _get_cloudrun_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('run', 'v1', credentials=credentials, cache_discovery=None)
+    return googleapiclient.discovery.build("run", "v1", credentials=credentials, cache_discovery=None)
 
 
 def _get_iam_resource(credentials: GoogleCredentials) -> Resource:
@@ -265,7 +267,7 @@ def _get_iam_resource(credentials: GoogleCredentials) -> Resource:
     :param credentails: The GoogleCredentails object
     :return: A IAM resource object
     """
-    return googleapiclient.discovery.build('iam', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("iam", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resource:
@@ -275,13 +277,13 @@ def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resou
     :param credentails: The GoogleCredentails object
     :return: A admin resource object
     """
-    if not config.credentials.get('account_email') or not config.credentials.get('google_workspace_user_email'):
-        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=credentials, cache_discovery=False)
+    if not config.credentials.get("account_email") or not config.credentials.get("google_workspace_user_email"):
+        return googleapiclient.discovery.build("admin", "directory_v1", credentials=credentials, cache_discovery=False)
 
     now = int(time.time())
     payload = {
-        "iss": config.credentials.get('account_email'),
-        "sub": config.credentials.get('google_workspace_user_email', ''),
+        "iss": config.credentials.get("account_email"),
+        "sub": config.credentials.get("google_workspace_user_email", ""),
         "aud": "https://oauth2.googleapis.com/token",
         "iat": now,
         "exp": now + 3600,
@@ -293,16 +295,21 @@ def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resou
     }
 
     try:
-        iamcredentials = build('iamcredentials', 'v1', credentials=credentials)
-        signed_jwt = iamcredentials.projects().serviceAccounts().signJwt(name=f"projects/-/serviceAccounts/{config.credentials.get('account_email')}", body=body).execute()
+        iamcredentials = build("iamcredentials", "v1", credentials=credentials)
+        signed_jwt = (
+            iamcredentials.projects()
+            .serviceAccounts()
+            .signJwt(name=f"projects/-/serviceAccounts/{config.credentials.get('account_email')}", body=body)
+            .execute()
+        )
     except Exception as e:
         logger.debug(f"couldn't get signed jwt for {config.credentials.get('account_email')} - {e}")
-        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=credentials, cache_discovery=False)
+        return googleapiclient.discovery.build("admin", "directory_v1", credentials=credentials, cache_discovery=False)
 
     token_url = "https://oauth2.googleapis.com/token"
     token_data = {
         "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        "assertion": signed_jwt.get('signedJwt'),
+        "assertion": signed_jwt.get("signedJwt"),
     }
 
     response = requests.post(token_url, data=token_data)
@@ -310,12 +317,16 @@ def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resou
     if response.status_code == 200:
         delegated_access_token = response.json()["access_token"]
     else:
-        logger.debug(f"couldn't get delegated access token for {config.credentials.get('account_email')} - {response.json()}")
-        return googleapiclient.discovery.build('admin', 'directory_v1', credentials=credentials, cache_discovery=False)
+        logger.debug(
+            f"couldn't get delegated access token for {config.credentials.get('account_email')} - {response.json()}",
+        )
+        return googleapiclient.discovery.build("admin", "directory_v1", credentials=credentials, cache_discovery=False)
 
     delegated_credentials = creds.Credentials(delegated_access_token)
 
-    return googleapiclient.discovery.build('admin', 'directory_v1', credentials=delegated_credentials, cache_discovery=False)
+    return googleapiclient.discovery.build(
+        "admin", "directory_v1", credentials=delegated_credentials, cache_discovery=False,
+    )
 
 
 def _get_apigateway_resource(credentials: GoogleCredentials) -> Resource:
@@ -325,7 +336,7 @@ def _get_apigateway_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('apigateway', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("apigateway", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudbigtable_resource(credentials: GoogleCredentials) -> Resource:
@@ -335,7 +346,7 @@ def _get_cloudbigtable_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('bigtableadmin', 'v2', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("bigtableadmin", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_firestore_resource(credentials: GoogleCredentials) -> Resource:
@@ -345,7 +356,7 @@ def _get_firestore_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('firestore', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("firestore", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_apikey_resource(credentials: GoogleCredentials) -> Resource:
@@ -355,7 +366,7 @@ def _get_apikey_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('apikeys', 'v2', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("apikeys", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_bigquery_resource(credentials: GoogleCredentials) -> Resource:
@@ -365,7 +376,7 @@ def _get_bigquery_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('bigquery', 'v2', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("bigquery", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_dataflow_resource(credentials: GoogleCredentials) -> Resource:
@@ -375,7 +386,7 @@ def _get_dataflow_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('dataflow', 'v1b3', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("dataflow", "v1b3", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudtasks_resource(credentials: GoogleCredentials) -> Resource:
@@ -385,7 +396,7 @@ def _get_cloudtasks_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('cloudtasks', 'v2', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("cloudtasks", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_spanner_resource(credentials: GoogleCredentials) -> Resource:
@@ -395,7 +406,7 @@ def _get_spanner_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('spanner', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("spanner", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_pubsublite_resource(credentials: GoogleCredentials) -> Resource:
@@ -405,7 +416,7 @@ def _get_pubsublite_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build('pubsublite', 'v1', credentials=credentials, cache_discovery=False)
+    return googleapiclient.discovery.build("pubsublite", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Resource:
@@ -457,16 +468,16 @@ def _services_enabled_on_project(serviceusage: Resource, project_id: str) -> Set
     :return: A set of services that are enabled on the project
     """
     try:
-        req = serviceusage.services().list(parent=f'projects/{project_id}', filter='state:ENABLED')
+        req = serviceusage.services().list(parent=f"projects/{project_id}", filter="state:ENABLED")
         services = set()
         while req is not None:
             res = req.execute()
-            if 'services' in res:
-                services.update({svc['config']['name'] for svc in res['services']})
+            if "services" in res:
+                services.update({svc["config"]["name"] for svc in res["services"]})
             req = serviceusage.services().list_next(previous_request=req, previous_response=res)
         return services
     except googleapiclient.discovery.HttpError as http_error:
-        http_error = json.loads(http_error.content.decode('utf-8'))
+        http_error = json.loads(http_error.content.decode("utf-8"))
         # This is set to log-level `info` because Google creates many projects under the hood that cartography cannot
         # audit (e.g. adding a script to a Google spreadsheet causes a project to get created) and we don't need to emit
         # a warning for these projects.
@@ -479,9 +490,18 @@ def _services_enabled_on_project(serviceusage: Resource, project_id: str) -> Set
 
 
 def concurrent_execution(
-    service: str, service_func: Any, config: Config, resource: Resource,
-    common_job_parameters: Dict, gcp_update_tag: int, project_id: str, policyanalyzer: Resource, crm_v1: Resource,
-    crm_v2: Resource, apikey: Resource, regions: list,
+    service: str,
+    service_func: Any,
+    config: Config,
+    resource: Resource,
+    common_job_parameters: Dict,
+    gcp_update_tag: int,
+    project_id: str,
+    policyanalyzer: Resource,
+    crm_v1: Resource,
+    crm_v2: Resource,
+    apikey: Resource,
+    regions: list,
 ):
     logger.info(f"BEGIN processing for service: {service}")
 
@@ -492,16 +512,27 @@ def concurrent_execution(
         max_connection_lifetime=config.neo4j_max_connection_lifetime,
     )
     try:
-        if service == 'iam':
+        if service == "iam":
             service_func(
-                Session(neo4j_driver), resource, policyanalyzer, crm_v1, crm_v2, apikey, project_id,
-                gcp_update_tag, common_job_parameters,
+                Session(neo4j_driver),
+                resource,
+                policyanalyzer,
+                crm_v1,
+                crm_v2,
+                apikey,
+                project_id,
+                gcp_update_tag,
+                common_job_parameters,
             )
 
         else:
             service_func(
-                Session(neo4j_driver), resource, project_id, gcp_update_tag,
-                common_job_parameters, regions,
+                Session(neo4j_driver),
+                resource,
+                project_id,
+                gcp_update_tag,
+                common_job_parameters,
+                regions,
             )
     except Exception as e:
         logger.warning(f"error to process service {service} - {e}")
@@ -509,8 +540,13 @@ def concurrent_execution(
 
 
 def _sync_single_project(
-    neo4j_session: neo4j.Session, resources: Resource, requested_syncs: List[str], project_id: str, gcp_update_tag: int,
-    common_job_parameters: Dict, config: Config,
+    neo4j_session: neo4j.Session,
+    resources: Resource,
+    requested_syncs: List[str],
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
+    config: Config,
 ) -> None:
     """
     Handles graph sync for a single GCP project.
@@ -526,8 +562,8 @@ def _sync_single_project(
     all_regions = get_all_regions(resources.compute, project_id)
 
     regions = []
-    if len(config.params.get('regions', [])) > 0:
-        input_regions = config.params.get('regions', [])
+    if len(config.params.get("regions", [])) > 0:
+        input_regions = config.params.get("regions", [])
 
         # INFO: if it's an invalid region in input parameters, ignore those
         for region in input_regions:
@@ -544,15 +580,45 @@ def _sync_single_project(
             if func_name in RESOURCE_FUNCTIONS:
                 logger.info(f"Processing {func_name}")
                 try:
-                    if func_name == 'iam':
-                        RESOURCE_FUNCTIONS[func_name](neo4j_session, resources.iam, resources.policyanalyzer, resources.crm_v1, resources.crm_v2, resources.apikey, project_id, gcp_update_tag, common_job_parameters)
+                    if func_name == "iam":
+                        RESOURCE_FUNCTIONS[func_name](
+                            neo4j_session,
+                            resources.iam,
+                            resources.policyanalyzer,
+                            resources.crm_v1,
+                            resources.crm_v2,
+                            resources.apikey,
+                            project_id,
+                            gcp_update_tag,
+                            common_job_parameters,
+                        )
+
+                    elif func_name == "sql":
+                        RESOURCE_FUNCTIONS[func_name](
+                            neo4j_session,
+                            resources.sql,
+                            resources.compute,
+                            project_id,
+                            gcp_update_tag,
+                            common_job_parameters,
+                            regions,
+                        )
 
                     else:
-                        RESOURCE_FUNCTIONS[func_name](neo4j_session, getattr(resources, func_name), project_id, gcp_update_tag, common_job_parameters, regions)
+                        RESOURCE_FUNCTIONS[func_name](
+                            neo4j_session,
+                            getattr(resources, func_name),
+                            project_id,
+                            gcp_update_tag,
+                            common_job_parameters,
+                            regions,
+                        )
                 except Exception as e:
                     logger.warning(f"error to process service {func_name} - {e}")
             else:
-                logger.warning(f'GCP sync function "{func_name}" was specified but does not exist. Did you misspell it?')
+                logger.warning(
+                    f'GCP sync function "{func_name}" was specified but does not exist. Did you misspell it?',
+                )
 
         # END - Sequential Run
 
@@ -569,27 +635,42 @@ def _sync_single_project(
                     try:
                         futures.append(
                             executor.submit(
-                                concurrent_execution, request, RESOURCE_FUNCTIONS[request], config, getattr(
-                                    resources, request,
-                                ), common_job_parameters, gcp_update_tag, project_id, resources.policyanalyzer, resources.crm_v1, resources.crm_v2, resources.apikey, regions,
+                                concurrent_execution,
+                                request,
+                                RESOURCE_FUNCTIONS[request],
+                                config,
+                                getattr(
+                                    resources,
+                                    request,
+                                ),
+                                common_job_parameters,
+                                gcp_update_tag,
+                                project_id,
+                                resources.policyanalyzer,
+                                resources.crm_v1,
+                                resources.crm_v2,
+                                resources.apikey,
+                                regions,
                             ),
                         )
                     except Exception as e:
                         logger.warning(f"error to append service {request} in futures - {e}")
                 else:
-                    logger.warning(f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?')
+                    logger.warning(
+                        f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?',
+                    )
 
             for future in as_completed(futures):
-                logger.info(f'Result from Future - Service Processing: {future.result()}')
+                logger.info(f"Result from Future - Service Processing: {future.result()}")
 
         # END - Parallel Run
 
-    for service_name in common_job_parameters['service_labels']:
-        common_job_parameters['service_label'] = service_name
+    for service_name in common_job_parameters["service_labels"]:
+        common_job_parameters["service_label"] = service_name
 
         label.cleanup_labels(neo4j_session, common_job_parameters, service_name)
 
-        del common_job_parameters['service_label']
+        del common_job_parameters["service_label"]
 
 
 def get_all_regions(compute: Resource, project_id: str):
@@ -598,8 +679,8 @@ def get_all_regions(compute: Resource, project_id: str):
     req = compute.regions().list(project=project_id)
     while req is not None:
         res = req.execute()
-        for rg in res.get('items', []):
-            regions.append(rg['name'])
+        for rg in res.get("items", []):
+            regions.append(rg["name"])
 
         req = compute.regions().list_next(previous_request=req, previous_response=res)
 
@@ -607,8 +688,13 @@ def get_all_regions(compute: Resource, project_id: str):
 
 
 def _sync_multiple_projects(
-    neo4j_session: neo4j.Session, resources: Resource, requested_syncs: List[str], projects: List[Dict],
-    gcp_update_tag: int, common_job_parameters: Dict, config: Config,
+    neo4j_session: neo4j.Session,
+    resources: Resource,
+    requested_syncs: List[str],
+    projects: List[Dict],
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
+    config: Config,
 ) -> None:
     """
     Handles graph sync for multiple GCP projects.
@@ -626,58 +712,63 @@ def _sync_multiple_projects(
     crm.sync_gcp_projects(neo4j_session, projects, gcp_update_tag, common_job_parameters, resources.crm_v2)
 
     for project in projects:
-        if common_job_parameters["GCP_PROJECT_ID"] != project['projectId']:
+        if common_job_parameters["GCP_PROJECT_ID"] != project["projectId"]:
             continue
 
         logger.info("Syncing GCP project %s.", common_job_parameters["GCP_PROJECT_ID"])
         _sync_single_project(
-            neo4j_session, resources, requested_syncs,
-            common_job_parameters["GCP_PROJECT_ID"], gcp_update_tag, common_job_parameters, config,
+            neo4j_session,
+            resources,
+            requested_syncs,
+            common_job_parameters["GCP_PROJECT_ID"],
+            gcp_update_tag,
+            common_job_parameters,
+            config,
         )
         if config.refresh_entitlements:
-            run_cleanup_job('gcp_unused_cleanup.json', neo4j_session, common_job_parameters)
+            run_cleanup_job("gcp_unused_cleanup.json", neo4j_session, common_job_parameters)
         run_analysis_job(
-            'gcp_storage_bucket_policy_analysis.json',
+            "gcp_storage_bucket_policy_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
         run_analysis_job(
-            'gcp_bigquery_dataset_analysis.json',
+            "gcp_bigquery_dataset_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
         run_analysis_job(
-            'gcp_compute_firewall_analysis.json',
+            "gcp_compute_firewall_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
         run_analysis_job(
-            'gcp_cloud_function_analysis.json',
+            "gcp_cloud_function_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
         run_analysis_job(
-            'gcp_compute_instance_analysis.json',
+            "gcp_compute_instance_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
         run_analysis_job(
-            'gcp_kms_keyring_analysis.json',
+            "gcp_kms_keyring_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
         run_analysis_job(
-            'gcp_cloud_function_analysis.json',
+            "gcp_cloud_function_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
         run_analysis_job(
-            'gcp_sql_instance_analysis.json',
+            "gcp_sql_instance_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
         run_analysis_job(
-            'gcp_kubernetes_engine_analysis.json',
+            "gcp_kubernetes_engine_analysis.json",
             neo4j_session,
             common_job_parameters,
         )
@@ -697,10 +788,10 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     """
     common_job_parameters: Dict = {
         "UPDATE_TAG": config.update_tag,
-        "WORKSPACE_ID": config.params['workspace']['id_string'],
-        "GCP_PROJECT_ID": config.params['workspace']['account_id'],
-        "GOOGLE_WORKSPACE_USER_EMAIL": config.credentials.get('google_workspace_user_email', ''),
-        "GROUPS": config.params.get('groups', []),
+        "WORKSPACE_ID": config.params["workspace"]["id_string"],
+        "GCP_PROJECT_ID": config.params["workspace"]["account_id"],
+        "GOOGLE_WORKSPACE_USER_EMAIL": config.credentials.get("google_workspace_user_email", ""),
+        "GROUPS": config.params.get("groups", []),
         "service_labels": [],
         "pagination": {},
     }
@@ -712,7 +803,7 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         # credentials = GoogleCredentials.get_application_default()
 
         auth_helper = AuthHelper()
-        credentials = auth_helper.get_credentials(config.credentials['token_uri'], config.credentials['account_email'])
+        credentials = auth_helper.get_credentials(config.credentials["token_uri"], config.credentials["account_email"])
         # credentials = GoogleCredentials.get_application_default()
 
     except ApplicationDefaultCredentialsError as e:
@@ -733,10 +824,10 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         gcp_requested_syncs_string = ""
         for service in config.gcp_requested_syncs:
             gcp_requested_syncs_string += f"{service.get('name', ' ')},"
-            if service.get('pagination', None):
-                pagination = service.get('pagination', {})
-                pagination['hasNextPage'] = False
-                common_job_parameters['pagination'][service.get('name', None)] = pagination
+            if service.get("pagination", None):
+                pagination = service.get("pagination", {})
+                pagination["hasNextPage"] = False
+                common_job_parameters["pagination"][service.get("name", None)] = pagination
         requested_syncs = parse_and_validate_gcp_requested_syncs(gcp_requested_syncs_string[:-1])
 
     resources = _initialize_resources(credentials, config)
@@ -748,77 +839,82 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     projects = crm.get_gcp_projects(resources.crm_v1)
 
     _sync_multiple_projects(
-        neo4j_session, resources, requested_syncs,
-        projects, config.update_tag, common_job_parameters, config,
+        neo4j_session,
+        resources,
+        requested_syncs,
+        projects,
+        config.update_tag,
+        common_job_parameters,
+        config,
     )
 
-    common_job_parameters["GCP_PROJECT_ID"] = config.params['workspace']['account_id']
+    common_job_parameters["GCP_PROJECT_ID"] = config.params["workspace"]["account_id"]
 
     run_analysis_job(
-        'gcp_bigquery_dataset_analysis.json',
+        "gcp_bigquery_dataset_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_cloud_function_analysis.json',
+        "gcp_cloud_function_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_compute_asset_inet_exposure.json',
+        "gcp_compute_asset_inet_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_compute_firewall_analysis.json',
+        "gcp_compute_firewall_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_compute_instance_analysis.json',
+        "gcp_compute_instance_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_gke_asset_exposure.json',
+        "gcp_gke_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_gke_basic_auth.json',
+        "gcp_gke_basic_auth.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_kms_keyring_analysis.json',
+        "gcp_kms_keyring_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_kubernetes_engine_analysis.json',
+        "gcp_kubernetes_engine_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_sql_instance_analysis.json',
+        "gcp_sql_instance_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
     run_analysis_job(
-        'gcp_storage_bucket_policy_analysis.json',
+        "gcp_storage_bucket_policy_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
 
-    del common_job_parameters['service_labels']
+    del common_job_parameters["service_labels"]
     return common_job_parameters

@@ -49,6 +49,33 @@ def gcp_cartography_worker(event, ctx):
             "status": "failure",
             "message": "unable to parse request",
         }
+
+    neo4j_config = params.get("neo4j", {})
+
+    neo4j_config.setdefault("uri", os.environ["CDX_APP_NEO4J_URI"])
+    neo4j_config.setdefault("user", os.environ["CDX_APP_NEO4J_USER"])
+    neo4j_config.setdefault("pwd", os.environ["CDX_APP_NEO4J_PWD"])
+    neo4j_config.setdefault("connection_lifetime", 200)
+
+    # Connect to Data Center Specific database
+    request_data_center = params.get("dc", "US")
+    if request_data_center == "US":
+        neo4j_config["uri"] = os.environ["CDX_APP_NEO4J_URI"]
+        neo4j_config["user"] = os.environ["CDX_APP_NEO4J_USER"]
+        neo4j_config["pwd"] = os.environ["CDX_APP_NEO4J_PWD"]
+
+    elif request_data_center == "IN":
+        neo4j_config["uri"] = os.environ["CDX_IN_APP_NEO4J_URI"]
+        neo4j_config["user"] = os.environ["CDX_IN_APP_NEO4J_USER"]
+        neo4j_config["pwd"] = os.environ["CDX_IN_APP_NEO4J_PWD"]
+
+    else:
+        neo4j_config["uri"] = os.environ["CDX_APP_NEO4J_URI"]
+        neo4j_config["user"] = os.environ["CDX_APP_NEO4J_USER"]
+        neo4j_config["pwd"] = os.environ["CDX_APP_NEO4J_PWD"]
+
+    params["neo4j"] = neo4j_config
+
     if params.get("templateType") == "GCPINVENTORYVIEWS":
         gcp_process_request(logger, params)
     elif params.get("templateType") == "GITHUBINVENTORYVIEWS":
@@ -86,9 +113,9 @@ def gcp_process_request(logger, params):
             "token_uri": os.environ["CDX_TOKEN_URI"],
         },
         "neo4j": {
-            "uri": os.environ["CDX_APP_NEO4J_URI"],
-            "user": os.environ["CDX_APP_NEO4J_USER"],
-            "pwd": os.environ["CDX_APP_NEO4J_PWD"],
+            "uri": params.get("neo4j", {}).get("uri", ""),
+            "user": params.get("neo4j", {}).get("user", ""),
+            "pwd": params.get("neo4j", {}).get("pwd", ""),
             "connection_lifetime": 200,
         },
         "logging": {
@@ -129,9 +156,12 @@ def gcp_process_request(logger, params):
                     )
             if len(services) > 0:
                 resp["services"] = services
+
             else:
                 del resp["updateTag"]
+
             del resp["pagination"]
+
         logger.info(f"successfully processed cartography: {resp}")
 
     else:
@@ -172,9 +202,9 @@ def github_process_request(logger, params):
     body = {
         "credentials": {},
         "neo4j": {
-            "uri": os.environ["CDX_APP_NEO4J_URI"],
-            "user": os.environ["CDX_APP_NEO4J_USER"],
-            "pwd": os.environ["CDX_APP_NEO4J_PWD"],
+            "uri": params.get("neo4j", {}).get("uri", ""),
+            "user": params.get("neo4j", {}).get("user", ""),
+            "pwd": params.get("neo4j", {}).get("pwd", ""),
             "connection_lifetime": 200,
         },
         "logging": {
@@ -214,9 +244,12 @@ def github_process_request(logger, params):
                     )
             if len(services) > 0:
                 resp["services"] = services
+
             else:
                 del resp["updateTag"]
+
             del resp["pagination"]
+
         logger.info(f"successfully processed cartography: {resp}")
 
     else:
@@ -243,9 +276,9 @@ def bitbucket_process_request(logger, params):
     body = {
         "credentials": {},
         "neo4j": {
-            "uri": os.environ["CDX_APP_NEO4J_URI"],
-            "user": os.environ["CDX_APP_NEO4J_USER"],
-            "pwd": os.environ["CDX_APP_NEO4J_PWD"],
+            "uri": params.get("neo4j", {}).get("uri", ""),
+            "user": params.get("neo4j", {}).get("user", ""),
+            "pwd": params.get("neo4j", {}).get("pwd", ""),
             "connection_lifetime": 200,
         },
         "logging": {
@@ -295,9 +328,12 @@ def bitbucket_process_request(logger, params):
                     )
             if len(services) > 0:
                 resp["services"] = services
+
             else:
                 del resp["updateTag"]
+
             del resp["pagination"]
+
         logger.info(f"successfully processed cartography: {resp}")
 
     else:
@@ -333,9 +369,9 @@ def gitlab_process_request(logger, params):
     body = {
         "credentials": {},
         "neo4j": {
-            "uri": os.environ["CDX_APP_NEO4J_URI"],
-            "user": os.environ["CDX_APP_NEO4J_USER"],
-            "pwd": os.environ["CDX_APP_NEO4J_PWD"],
+            "uri": params.get("neo4j", {}).get("uri", ""),
+            "user": params.get("neo4j", {}).get("user", ""),
+            "pwd": params.get("neo4j", {}).get("pwd", ""),
             "connection_lifetime": 200,
         },
         "logging": {
@@ -381,6 +417,7 @@ def gitlab_process_request(logger, params):
             else:
                 del resp["updateTag"]
             del resp["pagination"]
+
         logger.info(f"successfully processed cartography: {resp}")
 
     else:
