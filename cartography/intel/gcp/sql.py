@@ -212,13 +212,19 @@ def load_sql_instances(session: neo4j.Session, data_list: List[Dict], project_id
 
 
 def load_sql_instances_vpc_network(
-    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int,
+    session: neo4j.Session,
+    data_list: List[Dict],
+    project_id: str,
+    update_tag: int,
 ) -> None:
     session.write_transaction(_load_sql_instances_vpc_network_tx, data_list, project_id, update_tag)
 
 
 def _load_sql_instances_vpc_network_tx(
-    tx: neo4j.Transaction, instances: List[Dict], project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    instances: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     ingest_sql_instances_vpc_network = """
     UNWIND $instances as instance
@@ -389,7 +395,10 @@ def _load_public_ip_address_tx(tx: neo4j.Transaction, instance: Dict, project_id
 
 @timeit
 def _load_sql_databases_tx(
-    tx: neo4j.Transaction, sql_databases: List[Dict], project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    sql_databases: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     """
     :type neo4j_transaction: Neo4j transaction object
@@ -505,6 +514,26 @@ def transform_sql_instances(sql_instances: List[Dict], forwarding_rules: list[di
             transformed_instances.append(transformed_instance)
             continue
 
+        # If Private Service Connect is enabled, read endpoint from labels
+        # There will be 3 labels created when PSC is enabled:
+        # psc_primary_ip: "ip-address"
+        # psc_consumer_project: "gcp-project-id-with-psc"
+        # psc_region: "region"
+        if instance.get("settings", {}).get("ipConfiguration", {}).get("pscConfig", {}).get("pscEnabled"):
+            labels = instance.get("settings", {}).get("userLabels", {})
+            psc_ip = labels.get("psc_primary_ip")
+            if psc_ip:
+                transformed_instance["endpoint"] = psc_ip.replace("_", ".")
+                transformed_instance["pscEnabled"] = True
+                transformed_instances.append(transformed_instance)
+                continue
+
+        if instance.get("settings", {}).get("userLabels", {}).get("psc_primary_ip"):
+            transformed_instance["endpoint"] = instance["settings"]["userLabels"]["psc_primary_ip"].replace("_", ".")
+            transformed_instance["pscEnabled"] = True
+            transformed_instances.append(transformed_instance)
+            continue
+
         # Find matching forwarding rule for the instance
         matching_rule = next(
             (
@@ -573,10 +602,13 @@ def sync(
 
     # SQL INSTANCES
     sql_instances = get_sql_instances(sql, project_id, regions, common_job_parameters)
+    # logger.info("Retrieved Cloud SQL Instances for project %s.", sql_instances)
 
     forwarding_rules = list_regional_forwarding_rules(compute, project_id, regions)
+    # logger.info("Retrieved Forwarding Rules for project %s.", forwarding_rules)
 
     sql_instances = transform_sql_instances(sql_instances, forwarding_rules)
+    # logger.info("Transformed Cloud SQL Instances for project %s.", sql_instances)
 
     load_sql_instances(neo4j_session, sql_instances, project_id, gcp_update_tag)
     load_sql_instances_vpc_network(neo4j_session, sql_instances, project_id, gcp_update_tag)

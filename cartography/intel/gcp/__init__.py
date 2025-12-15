@@ -325,7 +325,10 @@ def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resou
     delegated_credentials = creds.Credentials(delegated_access_token)
 
     return googleapiclient.discovery.build(
-        "admin", "directory_v1", credentials=delegated_credentials, cache_discovery=False,
+        "admin",
+        "directory_v1",
+        credentials=delegated_credentials,
+        cache_discovery=False,
     )
 
 
@@ -501,6 +504,7 @@ def concurrent_execution(
     crm_v1: Resource,
     crm_v2: Resource,
     apikey: Resource,
+    compute: Resource,
     regions: list,
 ):
     logger.info(f"BEGIN processing for service: {service}")
@@ -523,6 +527,17 @@ def concurrent_execution(
                 project_id,
                 gcp_update_tag,
                 common_job_parameters,
+            )
+
+        elif service == "sql":
+            service_func(
+                Session(neo4j_driver),
+                resource,
+                compute,
+                project_id,
+                gcp_update_tag,
+                common_job_parameters,
+                regions,
             )
 
         else:
@@ -650,6 +665,7 @@ def _sync_single_project(
                                 resources.crm_v1,
                                 resources.crm_v2,
                                 resources.apikey,
+                                resources.compute,
                                 regions,
                             ),
                         )
