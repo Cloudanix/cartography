@@ -529,17 +529,6 @@ def concurrent_execution(
                 common_job_parameters,
             )
 
-        elif service == "sql":
-            service_func(
-                Session(neo4j_driver),
-                resource,
-                compute,
-                project_id,
-                gcp_update_tag,
-                common_job_parameters,
-                regions,
-            )
-
         else:
             service_func(
                 Session(neo4j_driver),
@@ -606,17 +595,6 @@ def _sync_single_project(
                             project_id,
                             gcp_update_tag,
                             common_job_parameters,
-                        )
-
-                    elif func_name == "sql":
-                        RESOURCE_FUNCTIONS[func_name](
-                            neo4j_session,
-                            resources.sql,
-                            resources.compute,
-                            project_id,
-                            gcp_update_tag,
-                            common_job_parameters,
-                            regions,
                         )
 
                     else:

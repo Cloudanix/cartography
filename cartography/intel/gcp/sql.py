@@ -462,69 +462,27 @@ def cleanup_sql(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> No
     run_cleanup_job("gcp_sql_cleanup.json", neo4j_session, common_job_parameters)
 
 
-def list_regional_forwarding_rules(compute: Resource, project_id: str, regions: list[str]) -> List[Dict]:
-    """
-    Returns a list of regional forwarding rules for a given project and region.
-
-    :type forwarding_rules: Resource
-    :param forwarding_rules: The forwarding rules resource created by googleapiclient.discovery.build()
-
-    :type project_id: str
-    :param project_id: Current Google Project Id
-
-    :type region: str
-    :param region: The region to list forwarding rules from
-
-    :rtype: list
-    :return: List of Forwarding Rules
-    """
-
-    rules = []
-    for region in regions:
-        try:
-            req = compute.forwardingRules().list(project=project_id, region=region)
-            rules.extend(req.execute().get("items", []))
-
-        except HttpError as e:
-            err = json.loads(e.content.decode("utf-8"))["error"]
-            if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
-                logger.warning(
-                    (
-                        "Could not retrieve Forwarding Rules on project %s due to permissions issues. Code: %s, Message: %s"
-                    ),
-                    project_id,
-                    err["code"],
-                    err["message"],
-                )
-                return []
-            else:
-                raise
-
-    return rules
-
-
-def transform_sql_instances(sql_instances: List[Dict], forwarding_rules: list[dict]) -> List[Dict]:
+def transform_sql_instances(sql_instances: List[Dict]) -> List[Dict]:
     transformed_instances = []
     for instance in sql_instances:
         transformed_instance = instance.copy()
 
         if not instance.get("pscServiceAttachmentLink"):
-            transformed_instance["forwardingRule"] = None
             transformed_instance["pscEnabled"] = False
             transformed_instances.append(transformed_instance)
             continue
 
-        # If Private Service Connect is enabled, read endpoint from labels
+        # If Private Service Connect is enabled for Cloudanix IAM JIT, read endpoint from labels
         # There will be 3 labels created when PSC is enabled:
         # psc_primary_ip: "ip-address"
         # psc_consumer_project: "gcp-project-id-with-psc"
         # psc_region: "region"
         if instance.get("settings", {}).get("ipConfiguration", {}).get("pscConfig", {}).get("pscEnabled"):
+            transformed_instance["pscEnabled"] = True
             labels = instance.get("settings", {}).get("userLabels", {})
             psc_ip = labels.get("psc_primary_ip")
             if psc_ip:
                 transformed_instance["endpoint"] = psc_ip.replace("_", ".")
-                transformed_instance["pscEnabled"] = True
                 transformed_instances.append(transformed_instance)
                 continue
 
@@ -534,26 +492,7 @@ def transform_sql_instances(sql_instances: List[Dict], forwarding_rules: list[di
             transformed_instances.append(transformed_instance)
             continue
 
-        # Find matching forwarding rule for the instance
-        matching_rule = next(
-            (
-                rule
-                for rule in forwarding_rules
-                if rule.get("target") and rule["target"].endswith(instance["pscServiceAttachmentLink"].split("/")[-1])
-            ),
-            None,
-        )
-
-        # Capture the forwarding rule details if found
-        # Also, use the IP address from the forwarding rule if available
-        if matching_rule:
-            transformed_instance["forwardingRule"] = matching_rule
-            if matching_rule.get("IPAddress"):
-                transformed_instance["endpoint"] = matching_rule["IPAddress"]
-                transformed_instance["pscEnabled"] = True
-
         else:
-            transformed_instance["forwardingRule"] = None
             transformed_instance["pscEnabled"] = False
 
         transformed_instances.append(transformed_instance)
@@ -565,7 +504,6 @@ def transform_sql_instances(sql_instances: List[Dict], forwarding_rules: list[di
 def sync(
     neo4j_session: neo4j.Session,
     sql: Resource,
-    compute: Resource,
     project_id: str,
     gcp_update_tag: int,
     common_job_parameters: Dict,
@@ -604,10 +542,7 @@ def sync(
     sql_instances = get_sql_instances(sql, project_id, regions, common_job_parameters)
     # logger.info("Retrieved Cloud SQL Instances for project %s.", sql_instances)
 
-    forwarding_rules = list_regional_forwarding_rules(compute, project_id, regions)
-    # logger.info("Retrieved Forwarding Rules for project %s.", forwarding_rules)
-
-    sql_instances = transform_sql_instances(sql_instances, forwarding_rules)
+    sql_instances = transform_sql_instances(sql_instances)
     # logger.info("Transformed Cloud SQL Instances for project %s.", sql_instances)
 
     load_sql_instances(neo4j_session, sql_instances, project_id, gcp_update_tag)
