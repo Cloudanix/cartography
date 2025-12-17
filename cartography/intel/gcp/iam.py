@@ -214,6 +214,8 @@ def transform_roles(roles_list: List[Dict], project_id: str, type: str, common_j
         role['consolelink'] = gcp_console_link.get_console_link(
             resource_name='iam_role', project_id=project_id, role_id=role['name'],
         )
+        if role.get("stage") == "BETA":
+            role["title"] = f'{role["title"]} Beta'
     return roles_list
 
 
