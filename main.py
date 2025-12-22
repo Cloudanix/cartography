@@ -133,6 +133,7 @@ def gcp_process_request(logger, params):
             "partial": params.get("partial"),
             "services": params.get("services"),
             "iamEntitlementRequestTopic": params.get("iamEntitlementRequestTopic"),
+            "externalIdp": params.get("externalIdp"),
         },
         "services": svcs,
         "updateTag": params.get("runTimestamp"),
