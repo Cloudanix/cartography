@@ -539,7 +539,9 @@ def concurrent_execution(
                 regions,
             )
     except Exception as e:
-        logger.warning(f"error to process service {service} - {e}")
+        logger.error(f"error to process service {service} - {e}",
+                     exc_info=True,
+                     stack_info=True,)
     logger.info(f"END processing for service: {service}")
 
 
@@ -785,6 +787,7 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "WORKSPACE_ID": config.params["workspace"]["id_string"],
         "GCP_PROJECT_ID": config.params["workspace"]["account_id"],
         "GOOGLE_WORKSPACE_USER_EMAIL": config.credentials.get("google_workspace_user_email", ""),
+        "EXTERNAL_IDP": config.params.get("externalIdp", None),
         "GROUPS": config.params.get("groups", []),
         "service_labels": [],
         "pagination": {},

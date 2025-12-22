@@ -186,12 +186,12 @@ def load_users(session: neo4j.Session, data_list: List[Dict], organization_id: s
 def _load_users_tx(tx: neo4j.Transaction, users: List[Dict], organization_id: str, gcp_update_tag: int) -> None:
     ingest_users = """
     UNWIND $users as usr
-    MERGE (user:GCPUser{userId:usr.id})
+    MERGE (user:GCPUser{id:usr.primaryEmail})
     ON CREATE SET
         user:GCPPrincipal,
         user.firstseen = timestamp()
     SET
-        user.id = usr.primaryEmail,
+        user.userId = usr.id,
         user.email = usr.primaryEmail,
         user.isAdmin = usr.isAdmin,
         user.is_sso = true,
@@ -318,7 +318,7 @@ def sync_groups_members(
     total_members = []
     for group in groups:
         members = get_members_for_group(admin, group['email'])
-        load_groups_members(neo4j_session, group, members, gsuite_update_tag)
+        group['members'] = members
         if common_job_parameters.get("GROUPS"):
             if not group.get("id") in group_id_list:
                 continue
@@ -346,5 +346,7 @@ def sync(
         users = transform_users(response_objects=users_response_objects, total_members=total_members, common_job_parameters=common_job_parameters)
 
         load_users(neo4j_session, users, gcp_organization_id, gcp_update_tag)
+        for group in groups:
+            load_groups_members(neo4j_session, group, group.get("members", []), gcp_update_tag)
         cleanup_users(neo4j_session, common_job_parameters)
         cleanup_groups(neo4j_session, common_job_parameters)

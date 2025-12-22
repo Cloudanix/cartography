@@ -13,6 +13,7 @@ from googleapiclient.discovery import Resource
 from . import label
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
+from cartography.intel.gcp import external_idp
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
@@ -1227,6 +1228,9 @@ def sync(
     tic = time.perf_counter()
 
     logger.info("Syncing IAM for project '%s', at %s.", project_id, tic)
+
+    if common_job_parameters.get("EXTERNAL_IDP"):
+        external_idp.sync(neo4j_session, common_job_parameters.get("EXTERNAL_IDP"), project_id, gcp_update_tag, common_job_parameters)
 
     organization_id = common_job_parameters['GCP_ORGANIZATION_ID']
 
