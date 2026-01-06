@@ -1,3 +1,6 @@
+from typing import List, Dict
+import ipaddress
+import socket
 import logging
 import time
 from typing import Any
@@ -22,6 +25,43 @@ logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)
 
 aws_console_link = AWSLinker()
+
+
+def resolve_dns(hostname: str) -> List[str]:
+    """
+    Resolve a hostname to all IP addresses (IPv4 + IPv6).
+    """
+    ip_addresses = set()
+    try:
+        results = socket.getaddrinfo(hostname, None)
+        for result in results:
+            ip = result[4][0]
+            ip_addresses.add(ip)
+    except socket.gaierror as e:
+        return []
+
+    return list(ip_addresses)
+
+
+def check_ip_type(ip: str) -> Dict[str, bool]:
+    """
+    Check whether an IP is private or public.
+    """
+    ip_obj = ipaddress.ip_address(ip)
+    return {
+        "ip": ip,
+        "is_private": ip_obj.is_private,
+        "is_public": not ip_obj.is_private,
+        "version": ip_obj.version
+    }
+
+
+def dns_lookup_with_ip_type(hostname: str) -> List[Dict[str, bool]]:
+    """
+    Resolve DNS and classify each IP.
+    """
+    ips = resolve_dns(hostname)
+    return [check_ip_type(ip) for ip in ips]
 
 
 @timeit
@@ -310,6 +350,16 @@ def transform_clusters(cls: List[Dict], region: str) -> List[Dict]:
         cluster['region'] = region
         cluster['name'] = cluster['DBClusterArn'].split(':')[-1]
         cluster['consolelink'] = aws_console_link.get_console_link(arn=cluster['DBClusterArn'])
+        ips = dns_lookup_with_ip_type(cluster.get("Endpoint"))
+        privateIp = None
+        publicIp = None
+        for ip in ips:
+            if ip.get("is_private") and not privateIp:
+                privateIp = ip.get("ip")
+            if ip.get("is_public") and not publicIp:
+                publicIp = ip.get("ip")
+        cluster['privateIp'] = privateIp
+        cluster['publicIp'] = publicIp
         clusters.append(cluster)
 
     return clusters
@@ -340,6 +390,8 @@ def load_rds_clusters(
             cluster.status = rds_cluster.Status,
             cluster.earliest_restorable_time = rds_cluster.EarliestRestorableTime,
             cluster.endpoint = rds_cluster.Endpoint,
+            cluster.privateIp = rds_cluster.privateIp,
+            cluster.publicIp = rds_cluster.publicIp,
             cluster.reader_endpoint = rds_cluster.ReaderEndpoint,
             cluster.multi_az = rds_cluster.MultiAZ,
             cluster.engine = rds_cluster.Engine,
@@ -510,6 +562,8 @@ def load_rds_instances(
             rds.latest_restorable_time = rds_instance.LatestRestorableTime,
             rds.preferred_maintenance_window = rds_instance.PreferredMaintenanceWindow,
             rds.backup_retention_period = rds_instance.BackupRetentionPeriod,
+            rds.privateIp = rds_instance.privateIp,
+            rds.publicIp = rds_instance.publicIp,
             rds.endpoint_address = rds_instance.EndpointAddress,
             rds.endpoint_hostedzoneid = rds_instance.EndpointHostedZoneId,
             rds.endpoint_port = rds_instance.EndpointPort,
@@ -555,6 +609,16 @@ def load_rds_instances(
         rds['EndpointHostedZoneId'] = ep.get('HostedZoneId')
         rds['EndpointPort'] = ep.get('Port')
         rds['consolelink'] = aws_console_link.get_console_link(arn=rds['DBInstanceArn'])
+        ips = dns_lookup_with_ip_type(rds.get("EndpointAddress"))
+        privateIp = None
+        publicIp = None
+        for ip in ips:
+            if ip.get("is_private") and not privateIp:
+                privateIp = ip.get("ip")
+            if ip.get("is_public") and not publicIp:
+                publicIp = ip.get("ip")
+        rds['privateIp'] = privateIp
+        rds['publicIp'] = publicIp
     neo4j_session.run(
         ingest_rds_instance,
         Instances=data,
