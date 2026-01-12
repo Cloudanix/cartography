@@ -24,17 +24,24 @@ def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dic
     snapshots = []
     try:
         paginator = client.get_paginator('describe_snapshots')
-        query_params = {'OwnerIds': ['self']}
 
         snapshots: List[Dict] = []
-        for page in paginator.paginate(**query_params):
+
+        page_iterator = paginator.paginate(
+            Filters=[
+                {
+                    "Name": "owner-alias",
+                    "Values": ["self"],
+                },
+            ],
+        )
+        for page in page_iterator:
             snapshots.extend(page['Snapshots'])
         for snapshot in snapshots:
             snapshot['region'] = region
-            volume_permissions=get_snapshot_attribute(client=client,attribute_name='createVolumePermissions', snapshot_id=snapshot['SnapshotId'])
+            volume_permissions = get_snapshot_attribute(client=client, attribute_name='createVolumePermissions', snapshot_id=snapshot['SnapshotId'])
             for volume_permission in volume_permissions:
-               snapshot['volume_permissions']=volume_permission.get("Group",'')
-
+                snapshot['volume_permissions'] = volume_permission.get("Group", '')
 
     except ClientError as e:
         if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
@@ -47,21 +54,22 @@ def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dic
 
     return snapshots
 
+
 def get_snapshot_attribute(client, snapshot_id, attribute_name):
-        response = {}
-        try:
-            response = client.describe_snapshot_attribute(Attribute=attribute_name, SnapshotId=snapshot_id)
+    response = {}
+    try:
+        response = client.describe_snapshot_attribute(Attribute=attribute_name, SnapshotId=snapshot_id)
 
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
-                logger.warning(
-                    'ec2:describe_snapshot_attribute failed with AccessDeniedException; continuing sync.',
-                    exc_info=True,
-                )
-        else:
-            raise
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
+            logger.warning(
+                'ec2:describe_snapshot_attribute failed with AccessDeniedException; continuing sync.',
+                exc_info=True,
+            )
+    else:
+        raise
 
-        return response
+    return response
 
 
 @timeit
