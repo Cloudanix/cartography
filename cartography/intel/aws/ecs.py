@@ -575,17 +575,18 @@ def sync(
         logger.info("Syncing ECS for region '%s' in account '%s'.", region, current_aws_account_id)
         cluster_arns.extend(get_ecs_clusters(boto3_session, region))
 
-        task_definitions = get_ecs_task_definitions(
-            boto3_session,
-            region,
-        )
-        load_ecs_task_definitions(
-            neo4j_session,
-            task_definitions,
-            region,
-            current_aws_account_id,
-            update_tag,
-        )
+        # Skipped becuase it takes time to load
+        # task_definitions = get_ecs_task_definitions(
+        #     boto3_session,
+        #     region,
+        # )
+        # load_ecs_task_definitions(
+        #     neo4j_session,
+        #     task_definitions,
+        #     region,
+        #     current_aws_account_id,
+        #     update_tag,
+        # )
 
     logger.info(f"Total ECS Clusters: {len(cluster_arns)}")
 
