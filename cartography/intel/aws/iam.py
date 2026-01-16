@@ -965,7 +965,7 @@ def sync_users(
     load_users(neo4j_session, data["Users"], current_aws_account_id, aws_update_tag)
 
     # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
-    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False) or current_aws_account_id == "934101271236":
         pass
 
     else:
@@ -1024,7 +1024,7 @@ def sync_groups(
     load_groups(neo4j_session, data["Groups"], current_aws_account_id, aws_update_tag)
 
     # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
-    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False) or current_aws_account_id == "934101271236":
         pass
 
     else:
@@ -1085,7 +1085,7 @@ def sync_roles(
     load_roles(neo4j_session, data["Roles"], current_aws_account_id, aws_update_tag)
 
     # INFO: This is a temporary solution to skip Loading Policies for partial run particularly for IN DC.
-    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False) or current_aws_account_id == "934101271236":
         pass
 
     else:
@@ -1255,7 +1255,7 @@ def sync(
     sync_group_memberships(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
 
     # INFO: This is a temporary solution to skip Loading Assume Role relationships, Access Keys and Analysis Jobs for partial run particularly for IN DC.
-    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False):
+    if common_job_parameters.get("DC", "US") == "IN" and common_job_parameters.get("PARTIAL", False) or current_aws_account_id == "934101271236":
         pass
 
     else:
