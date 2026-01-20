@@ -11,9 +11,9 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp import external_idp
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
-from cartography.intel.gcp import external_idp
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()

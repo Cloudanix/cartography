@@ -25,11 +25,13 @@ def current_config(env):
 
 
 def set_assume_role_keys(context):
-    context.assume_role_access_key_key_id = context.assume_role_access_secret_key_id = os.environ[
-        "CDX_APP_ASSUME_ROLE_KMS_KEY_ID"
-    ]
+    context.assume_role_access_key_key_id = context.assume_role_access_secret_key_id = (
+        os.environ["CDX_APP_ASSUME_ROLE_KMS_KEY_ID"]
+    )
     context.assume_role_access_key_cipher = os.environ["CDX_APP_ASSUME_ROLE_ACCESS_KEY"]
-    context.assume_role_access_secret_cipher = os.environ["CDX_APP_ASSUME_ROLE_ACCESS_SECRET"]
+    context.assume_role_access_secret_cipher = os.environ[
+        "CDX_APP_ASSUME_ROLE_ACCESS_SECRET"
+    ]
     context.neo4j_uri = os.environ["CDX_APP_NEO4J_URI"]
     context.neo4j_user = os.environ["CDX_APP_NEO4J_USER"]
     context.neo4j_pwd = os.environ["CDX_APP_NEO4J_PWD"]
@@ -126,8 +128,12 @@ def process_request(context, args, retry=0):
                         "dc": args.get("dc"),
                         "error": str(e),
                     }
-                    status = sns_helper.publish(json.dumps(payload), args["params"]["resultTopic"])
-                    context.logger.debug(f"result published to SNS with status: {status}")
+                    status = sns_helper.publish(
+                        json.dumps(payload), args["params"]["resultTopic"],
+                    )
+                    context.logger.debug(
+                        f"result published to SNS with status: {status}",
+                    )
 
                 return
 
@@ -151,7 +157,9 @@ def process_request(context, args, retry=0):
                     "actions": args.get("actions"),
                     "resultTopic": args.get("resultTopic"),
                     "requestTopic": args.get("requestTopic"),
-                    "iamEntitlementRequestTopic": args.get("iamEntitlementRequestTopic"),
+                    "iamEntitlementRequestTopic": args.get(
+                        "iamEntitlementRequestTopic",
+                    ),
                     "identityStoreIdentifier": args.get("identityStoreIdentifier"),
                     "partial": args.get("partial", False),
                     "inventoryReturn": args.get("inventoryReturn", False),
@@ -179,7 +187,9 @@ def process_request(context, args, retry=0):
                     "refresh_token": args.get("refreshToken"),
                     "graph_scope": os.environ.get("CDX_AZURE_GRAPH_SCOPE"),
                     "azure_scope": os.environ.get("CDX_AZURE_AZURE_SCOPE"),
-                    "default_graph_scope": os.environ.get("CDX_AZURE_DEFAULT_GRAPH_SCOPE"),
+                    "default_graph_scope": os.environ.get(
+                        "CDX_AZURE_DEFAULT_GRAPH_SCOPE",
+                    ),
                     "vault_scope": os.environ.get("CDX_AZURE_KEY_VAULT_SCOPE"),
                 },
                 "neo4j": {
@@ -204,7 +214,9 @@ def process_request(context, args, retry=0):
                     "partial": args.get("partial"),
                     "services": args.get("services"),
                     "defaultSubscription": args.get("defaultSubscription"),
-                    "authMode": args.get("headers", {}).get("x-cloudanix-azure-auth-mode", "user_impersonation"),
+                    "authMode": args.get("headers", {}).get(
+                        "x-cloudanix-azure-auth-mode", "user_impersonation",
+                    ),
                 },
                 "services": svcs,
                 "updateTag": args.get("runTimestamp"),
@@ -239,7 +251,9 @@ def process_request(context, args, retry=0):
 
         publish_response(context, body, resp, args)
 
-        context.logger.debug(f"inventory sync aws response - {args['eventId']}: {json.dumps(resp)}")
+        context.logger.debug(
+            f"inventory sync aws response - {args['eventId']}: {json.dumps(resp)}",
+        )
     except Neo4jError as e:
         context.logger.error(
             f"Neo4j Error. Retry - {retry} ",
@@ -278,14 +292,18 @@ def publish_response(context, body, resp, args):
                 "actions": body.get("params", {}).get("actions"),
                 "resultTopic": body.get("params", {}).get("resultTopic"),
                 "requestTopic": body.get("params", {}).get("requestTopic"),
-                "identityStoreIdentifier": body.get("params", {}).get("identityStoreIdentifier"),
+                "identityStoreIdentifier": body.get("params", {}).get(
+                    "identityStoreIdentifier",
+                ),
                 "partial": body.get("params", {}).get("partial"),
                 "externalRoleArn": body.get("externalRoleArn"),
                 "externalId": body.get("externalId"),
                 "response": resp,
                 "services": body.get("params", {}).get("services"),
                 "runTimestamp": resp.get("updateTag", None),
-                "iamEntitlementRequestTopic": body.get("params", {}).get("iamEntitlementRequestTopic"),
+                "iamEntitlementRequestTopic": body.get("params", {}).get(
+                    "iamEntitlementRequestTopic",
+                ),
                 "dc": args.get("dc"),
             }
 
@@ -313,12 +331,18 @@ def publish_response(context, body, resp, args):
         # If cartography processing response object contains `services` object that means pagination is in progress. push the message back to the same queue for continuation.
         if resp.get("services", None):
             if body.get("params", {}).get("requestTopic"):
-                status = sns_helper.publish(json.dumps(payload), body["params"]["requestTopic"])
+                status = sns_helper.publish(
+                    json.dumps(payload), body["params"]["requestTopic"],
+                )
 
         elif body.get("params", {}).get("resultTopic"):
-            if body.get("params", {}).get("partial") or body.get("params", {}).get("inventoryReturn"):
+            if body.get("params", {}).get("partial") or body.get("params", {}).get(
+                "inventoryReturn",
+            ):
                 # In case of a partial request processing, result should be pushed to "resultTopic" passed in the request
-                status = sns_helper.publish(json.dumps(payload), body["params"]["resultTopic"])
+                status = sns_helper.publish(
+                    json.dumps(payload), body["params"]["resultTopic"],
+                )
 
             else:
                 context.logger.info(
@@ -331,7 +355,9 @@ def publish_response(context, body, resp, args):
 
         else:
             context.logger.debug("publishing results to CDX_CARTOGRAPHY_RESULT_TOPIC")
-            status = sns_helper.publish(json.dumps(payload), context.aws_inventory_sync_response_topic)
+            status = sns_helper.publish(
+                json.dumps(payload), context.aws_inventory_sync_response_topic,
+            )
             if template_type == "AWSINVENTORYVIEWS":
                 publish_request_iam_entitlement(context, args, body)
 
@@ -383,8 +409,12 @@ def get_auth_creds(context, args):
     else:
         auth_creds = {
             "type": "self",
-            "aws_access_key_id": args.get("credentials", {}).get("awsAccessKeyID") if "credentials" in args else None,
-            "aws_secret_access_key": args.get("credentials", {}).get("awsSecretAccessKey")
+            "aws_access_key_id": args.get("credentials", {}).get("awsAccessKeyID")
+            if "credentials" in args
+            else None,
+            "aws_secret_access_key": args.get("credentials", {}).get(
+                "awsSecretAccessKey",
+            )
             if "credentials" in args
             else None,
         }
@@ -414,8 +444,12 @@ def get_logging_account_auth_creds(context, args):
     else:
         auth_creds = {
             "type": "self",
-            "aws_access_key_id": args.get("credentials", {}).get("awsAccessKeyID") if "credentials" in args else None,
-            "aws_secret_access_key": args.get("credentials", {}).get("awsSecretAccessKey")
+            "aws_access_key_id": args.get("credentials", {}).get("awsAccessKeyID")
+            if "credentials" in args
+            else None,
+            "aws_secret_access_key": args.get("credentials", {}).get(
+                "awsSecretAccessKey",
+            )
             if "credentials" in args
             else None,
         }
@@ -434,8 +468,12 @@ def aws_process_cartography(event, ctx):
     logging.getLogger("cartography.graph").setLevel(os.environ.get("CDX_LOG_LEVEL"))
     logging.getLogger("cartography.intel").setLevel(os.environ.get("CDX_LOG_LEVEL"))
     logging.getLogger("cartography.sync").setLevel(os.environ.get("CDX_LOG_LEVEL"))
-    logging.getLogger("cartography.cartography").setLevel(os.environ.get("CDX_LOG_LEVEL"))
-    logging.getLogger("cloudconsolelink.clouds").setLevel(os.environ.get("CDX_LOG_LEVEL"))
+    logging.getLogger("cartography.cartography").setLevel(
+        os.environ.get("CDX_LOG_LEVEL"),
+    )
+    logging.getLogger("cloudconsolelink.clouds").setLevel(
+        os.environ.get("CDX_LOG_LEVEL"),
+    )
 
     record = event["Records"][0]
     message = record["Sns"]["Message"]
@@ -497,7 +535,11 @@ def extend_visibility_timeout(message, receipt_handle, timeout_duration, stop_ev
                 if status:
                     context.logger.warning(
                         f"Maximum runtime has been reached. Deleted message from queue - {json.loads(message['Body'])}",
-                        extra={"message": message["Body"], "handle": receipt_handle, "status": status},
+                        extra={
+                            "message": message["Body"],
+                            "handle": receipt_handle,
+                            "status": status,
+                        },
                     )
                 break
 
@@ -506,16 +548,24 @@ def extend_visibility_timeout(message, receipt_handle, timeout_duration, stop_ev
 
             logging.debug(f"Extending visibilityTimeout for message: {receipt_handle}")
 
-            status = sqs_library.change_message_visibility(receipt_handle, timeout_duration)
+            status = sqs_library.change_message_visibility(
+                receipt_handle, timeout_duration,
+            )
             if status:
                 context.logger.debug(
                     "Successfully Extended message visibility",
-                    extra={"message_handle": receipt_handle, "duration": timeout_duration},
+                    extra={
+                        "message_handle": receipt_handle,
+                        "duration": timeout_duration,
+                    },
                 )
             else:
                 context.logger.debug(
                     "Failed to Extend message visibility",
-                    extra={"message_handle": receipt_handle, "duration": timeout_duration},
+                    extra={
+                        "message_handle": receipt_handle,
+                        "duration": timeout_duration,
+                    },
                 )
 
     except Exception as e:
@@ -541,7 +591,9 @@ def process_message(context: AppContext, message: dict):
         visibility_extension_thread.start()
 
         params = json.loads(message["Body"])
-        context.logger.debug("Received", extra={"message": params, "handle": receipt_handle})
+        context.logger.debug(
+            "Received", extra={"message": params, "handle": receipt_handle},
+        )
 
         process_request(context, params)
 
@@ -549,7 +601,11 @@ def process_message(context: AppContext, message: dict):
 
         context.logger.debug(
             "Message processed successfully",
-            extra={"message": message["Body"], "handle": receipt_handle, "success": is_success},
+            extra={
+                "message": message["Body"],
+                "handle": receipt_handle,
+                "success": is_success,
+            },
         )
 
     except Exception as e:
@@ -575,13 +631,21 @@ def process_message(context: AppContext, message: dict):
         if status:
             context.logger.debug(
                 "Successfully deleted message from queue",
-                extra={"message": message["Body"], "handle": receipt_handle, "status": status},
+                extra={
+                    "message": message["Body"],
+                    "handle": receipt_handle,
+                    "status": status,
+                },
             )
             is_success = True
         else:
             context.logger.debug(
                 "Failed to delete message from queue",
-                extra={"message": message["Body"], "handle": receipt_handle, "status": status},
+                extra={
+                    "message": message["Body"],
+                    "handle": receipt_handle,
+                    "status": status,
+                },
             )
             is_success = False
 
@@ -605,7 +669,9 @@ def poll_messages(context: AppContext):
 
             # Pull messages from SQS
             messages = sqs_library.fetch_messages()
-            context.logger.debug("Messages fetched from Queue", extra={"count": len(messages)})
+            context.logger.debug(
+                "Messages fetched from Queue", extra={"count": len(messages)},
+            )
 
             if len(messages) > 0:
                 for message in messages:

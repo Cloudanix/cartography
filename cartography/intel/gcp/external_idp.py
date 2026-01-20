@@ -1,19 +1,19 @@
-import yaml
 import logging
 import os
 from datetime import datetime
 from typing import Dict
 
 import neo4j
-from google.cloud.exceptions import NotFound
+import yaml
 from google.cloud import storage
+from google.cloud.exceptions import NotFound
 
-from cartography.util import timeit
-from cartography.intel.gcp.workspace import load_users
+from cartography.intel.gcp.workspace import cleanup_groups
+from cartography.intel.gcp.workspace import cleanup_users
 from cartography.intel.gcp.workspace import load_groups
 from cartography.intel.gcp.workspace import load_groups_members
-from cartography.intel.gcp.workspace import cleanup_users
-from cartography.intel.gcp.workspace import cleanup_groups
+from cartography.intel.gcp.workspace import load_users
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def transform_bucket_file_users(data: str) -> None:
         user["name"] = {
             "fullName": f'{user["firstName"]} {user["lastName"]}',
             "familyName": user["lastName"],
-            "givenName": user["firstName"]
+            "givenName": user["firstName"],
         }
         user["creationTime"] = datetime.utcnow()
 
@@ -70,8 +70,8 @@ def transform_bucket_file_memberships(data: str) -> None:
         members = memberships.get(membership["groupEmail"], [])
         members.append(
             {
-                "id": membership["userEmail"]
-            }
+                "id": membership["userEmail"],
+            },
         )
         memberships[membership["groupEmail"]] = members
     data["Memberships"] = memberships
@@ -79,7 +79,7 @@ def transform_bucket_file_memberships(data: str) -> None:
 
 @timeit
 def sync_identites_from_bucket(
-    neo4j_session: neo4j.Session, project_id: str, gcp_update_tag: int, common_job_parameters: Dict
+    neo4j_session: neo4j.Session, project_id: str, gcp_update_tag: int, common_job_parameters: Dict,
 ) -> None:
     bucket_name = os.environ.get("CDX_CUSTOMERS_IDP_BUCKET_NAME")
     file_name = f"{common_job_parameters['WORKSPACE_ID']}/{common_job_parameters['GCP_PROJECT_ID']}/identity.yml"
@@ -106,7 +106,7 @@ def sync_identites_from_bucket(
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, external_idp: Dict, project_id: str, gcp_update_tag: int, common_job_parameters: Dict
+    neo4j_session: neo4j.Session, external_idp: Dict, project_id: str, gcp_update_tag: int, common_job_parameters: Dict,
 ) -> None:
     logger.info("Syncing Identity data for project '%s' from external Identity '%s'", project_id, external_idp.get("type"))
     if external_idp.get("type") == "BUCKET":

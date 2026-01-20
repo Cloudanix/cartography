@@ -539,9 +539,11 @@ def concurrent_execution(
                 regions,
             )
     except Exception as e:
-        logger.error(f"error to process service {service} - {e}",
-                     exc_info=True,
-                     stack_info=True,)
+        logger.error(
+            f"error to process service {service} - {e}",
+            exc_info=True,
+            stack_info=True,
+        )
     logger.info(f"END processing for service: {service}")
 
 

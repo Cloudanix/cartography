@@ -1,7 +1,6 @@
-from typing import List, Dict
 import ipaddress
-import socket
 import logging
+import socket
 import time
 from typing import Any
 from typing import Dict
@@ -52,7 +51,7 @@ def check_ip_type(ip: str) -> Dict[str, bool]:
         "ip": ip,
         "is_private": ip_obj.is_private,
         "is_public": not ip_obj.is_private,
-        "version": ip_obj.version
+        "version": ip_obj.version,
     }
 
 
