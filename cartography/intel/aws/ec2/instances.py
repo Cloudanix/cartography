@@ -57,7 +57,7 @@ def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], r
             images = response.get("Image", [])
             image_details.update({image["ImageId"]: image for image in images})
         except ClientError as e:
-            logger.error(f"Error fetching image details for batch {i//1000 + 1}: {e}")
+            logger.error(f"Error fetching image details for batch {i // 1000 + 1}: {e}")
             continue
 
     return image_details
@@ -168,6 +168,8 @@ def transform_ec2_instances(
 
         for instance in reservation["Instances"]:
             instance_id = instance["InstanceId"]
+            ip_owner_id = instance.get("NetworkInterfaces", [{}])[0].get("Association").get("IpOwnerId")
+            is_static_ip = False if ip_owner_id == "amazon" else True if ip_owner_id else None
             InstanceArn = f"arn:aws:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
             launch_time = instance.get("LaunchTime")
             launch_time_unix = str(time.mktime(launch_time.timetuple())) if launch_time else None
@@ -203,6 +205,8 @@ def transform_ec2_instances(
                     "ReservationId": reservation_id,
                     "PublicDnsName": instance.get("PublicDnsName"),
                     "PublicIpAddress": instance.get("PublicIpAddress"),
+                    "PublicIpOwnerId": ip_owner_id,
+                    "IsStaticIp": is_static_ip,
                     "PrivateIpAddress": instance.get("PrivateIpAddress"),
                     "ImageId": instance.get("ImageId"),
                     "InstanceType": instance.get("InstanceType"),

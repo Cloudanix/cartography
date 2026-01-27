@@ -1109,6 +1109,9 @@ def get_public_ip_addresses_list(client: NetworkManagementClient, regions: list,
             ip['consolelink'] = azure_console_link.get_console_link(
                 id=ip['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
+            ip["is_static_ip"] = False
+            if ip.get("public_ip_allocation_method") == "Static":
+                ip["is_static_ip"] = True
             if regions is None:
                 publicip_list.append(ip)
             else:
@@ -1139,6 +1142,8 @@ def _load_public_ip_addresses_tx(
     SET n.lastupdated = $update_tag,
     n.name = address.name,
     n.ipAddress = address.ip_address,
+    n.publicIpAllocationMethod = address.public_ip_allocation_method,
+    n.isStaticIp = address.is_static_ip,
     n.etag=address.etag
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})

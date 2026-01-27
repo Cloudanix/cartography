@@ -163,6 +163,7 @@ def _attach_vm_properties_public_ip(tx: neo4j.Transaction, vm_id: str, update_ta
     ingest_vm_properties = """
     MATCH (vm:AzureVirtualMachine{id: $vm_id})-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)-[:MEMBER_PUBLIC_IP_ADDRESS]->(ip:AzurePublicIPAddress)
     SET vm.public_ip=ip.ipAddress,
+    vm.is_static_ip=ip.isStaticIp,
     vm.lastupdated= $update_tag
     """
     tx.run(
