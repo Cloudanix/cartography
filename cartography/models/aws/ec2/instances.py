@@ -19,6 +19,8 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     publicdnsname: PropertyRef = PropertyRef("PublicDnsName", extra_index=True)
     privateipaddress: PropertyRef = PropertyRef("PrivateIpAddress")
     publicipaddress: PropertyRef = PropertyRef("PublicIpAddress")
+    publicipownerid: PropertyRef = PropertyRef("PublicIpOwnerId")
+    isstaticip: PropertyRef = PropertyRef("IsStaticIp")
     imageid: PropertyRef = PropertyRef("ImageId")
     instancetype: PropertyRef = PropertyRef("InstanceType")
     monitoringstate: PropertyRef = PropertyRef("MonitoringState")
