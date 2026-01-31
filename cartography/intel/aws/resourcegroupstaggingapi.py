@@ -328,6 +328,20 @@ def sync(
                 sync_tags(neo4j_session, boto3_session, region, resource_type, current_aws_account_id, update_tag)
 
     else:
+        if len(regions) == 0:
+            logger.info("No regions to sync tags for.")
+            logger.warning(
+                "Skipping tags sync.",
+                extra={
+                    "aws_account": current_aws_account_id,
+                    "regions": regions,
+                    "update_tag": update_tag,
+                    "config": config,
+                    "common_job_parameters": common_job_parameters,
+                },
+            )
+            return
+
         # Process each region in parallel.
         with ThreadPoolExecutor(max_workers=len(regions)) as executor:
             futures = []
