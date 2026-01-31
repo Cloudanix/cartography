@@ -7,6 +7,8 @@ from typing import List
 import boto3
 import neo4j
 from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import EndpointConnectionError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.util import aws_handle_regions
@@ -24,18 +26,30 @@ def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session, regi
     Get WAF Classic Web ACLs for a specific region (for ALBs, etc.).
     """
     web_acls = []
-    client = boto3_session.client('waf-regional', region_name=region)
-    resp = client.list_web_acls()
-    for acl in resp.get('WebACLs', []):
-        acl['region'] = region
-        web_acls.append(acl)
-    while resp.get("NextMarker"):
-        resp = client.list_web_acls(
-            NextMarker=resp.get("NextMarker"),
-        )
+    try:
+        client = boto3_session.client('waf-regional', region_name=region)
+        resp = client.list_web_acls()
         for acl in resp.get('WebACLs', []):
             acl['region'] = region
             web_acls.append(acl)
+
+        while resp.get("NextMarker"):
+            resp = client.list_web_acls(
+                NextMarker=resp.get("NextMarker"),
+            )
+            for acl in resp.get('WebACLs', []):
+                acl['region'] = region
+                web_acls.append(acl)
+
+    except EndpointConnectionError as e:
+        logger.debug(f"WAF Regional is not supported in {region}: {e}")
+
+    except ConnectTimeoutError as e:
+        logger.debug(f"Connection to WAF Regional timed out in {region}: {e}")
+
+    except ClientError as e:
+        logger.error(f"Failed to list WAF Classic regional Web ACLs in {region}: {e}")
+
     return web_acls
 
 
@@ -90,6 +104,12 @@ def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl: Dict)
         web_acl['metric_name'] = details.get("MetricName")
         web_acl['scope'] = scope
         return web_acl
+
+    except EndpointConnectionError as e:
+        logger.debug(f"WAF Regional is not supported in {region}: {e}")
+
+    except ConnectTimeoutError as e:
+        logger.debug(f"Connection to WAF Regional timed out in {region}: {e}")
 
     except ClientError as e:
         logger.error(f"Error retrieving Web ACL details for {web_acl_id} in region {region}: {e}")
