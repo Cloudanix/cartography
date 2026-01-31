@@ -196,28 +196,28 @@ def is_user_created_backend_service(service):
     if scheme == "INTERNAL_SELF_MANAGED":
         gcp_managed_signals.append("Load balancing scheme: INTERNAL_SELF_MANAGED")
 
+    # Check for serverless NEGs
+    serverless_indicators = [
+        ("serverless-neg", "Serverless NEG"),
+        ("cloudrun", "Cloud Run NEG"),
+        ("cloud-run", "Cloud Run NEG"),
+        ("gae-", "App Engine NEG"),
+        ("gcf-", "Cloud Functions NEG"),
+    ]
+
+
     # E. Check backend groups for GCP managed NEGs
     for idx, backend in enumerate(backends):
         group = backend.get("group", "").lower()
 
-    if "/networkendpointgroups/" in group:
+        if "/networkendpointgroups/" in group:
+            for indicator, reason in serverless_indicators:
+                if indicator in group:
+                    gcp_managed_signals.append(f"Backend[{idx}]: {reason}")
 
-        # Check for serverless NEGs
-        serverless_indicators = [
-            ("serverless-neg", "Serverless NEG"),
-            ("cloudrun", "Cloud Run NEG"),
-            ("cloud-run", "Cloud Run NEG"),
-            ("gae-", "App Engine NEG"),
-            ("gcf-", "Cloud Functions NEG"),
-        ]
-
-        for indicator, reason in serverless_indicators:
-            if indicator in group:
-                gcp_managed_signals.append(f"Backend[{idx}]: {reason}")
-
-        # Check for GKE NEG pattern
-        if re.search(r'k8s\d*-[a-f0-9]+-', group):
-            gcp_managed_signals.append(f"Backend[{idx}]: GKE NEG pattern in group")
+            # Check for GKE NEG pattern
+            if re.search(r'k8s\d*-[a-f0-9]+-', group):
+                gcp_managed_signals.append(f"Backend[{idx}]: GKE NEG pattern in group")
 
     # F. Check Used By references
     gcp_ref_patterns = [
