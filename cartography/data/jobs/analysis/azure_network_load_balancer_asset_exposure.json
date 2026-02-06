@@ -1,14 +1,18 @@
 {
-	"statements": [
-		{
-			"query": "MATCH ((n:AzureNetworkLoadBalancer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) where EXISTS(n.exposed_internet) WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (:AzurePublicIPAddress)<-[:MEMBER_PUBLIC_IP_ADDRESS]-(:AzureLoadBalancerFrontendIPConfiguration)<-[:HAS]-(loadbalancer:AzureNetworkLoadBalancer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET loadbalancer.exposed_internet = true, (CASE WHEN NOT 'public_load_balancer' IN  coalesce(loadbalancer.exposed_internet_type , []) THEN loadbalancer END).exposed_internet_type = coalesce(loadbalancer.exposed_internet_type , []) + 'public_load_balancer';",
-			"iterative": false
-		}
-	],
-	"name": "Azure network load balancer asset internet exposure"
+  "statements": [
+    {
+      "query": "MATCH ((n:AzureNetworkLoadBalancer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) where EXISTS(n.exposed_internet) WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (:AzurePublicIPAddress)<-[:MEMBER_PUBLIC_IP_ADDRESS]-(:AzureLoadBalancerFrontendIPConfiguration)<-[:HAS]-(loadbalancer:AzureNetworkLoadBalancer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET loadbalancer.exposed_internet = true, (CASE WHEN NOT 'public_load_balancer' IN  coalesce(loadbalancer.exposed_internet_type , []) THEN loadbalancer END).exposed_internet_type = coalesce(loadbalancer.exposed_internet_type , []) + 'public_load_balancer';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (loadbalancer:AzureNetworkLoadBalancer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE loadbalancer.exposed_internet = true WITH loadbalancer OPTIONAL MATCH (pip:AzurePublicIPAddress)<-[:MEMBER_PUBLIC_IP_ADDRESS]-(frontend:AzureLoadBalancerFrontendIPConfiguration)<-[:HAS]-(loadbalancer) WITH loadbalancer, collect(DISTINCT {frontendIpId: frontend.id, publicIp: pip.ip_address, privateIp: frontend.private_ip_address}) as frontendConfigs SET loadbalancer.publicContext = apoc.convert.toJson([{resource: loadbalancer.id, resourceType: 'azure-networking-loadbalancer', context: [{loadBalancerId: loadbalancer.id, loadBalancerName: loadbalancer.name, sku: loadbalancer.sku_name, exposureTypes: loadbalancer.exposed_internet_type, frontendConfigs: frontendConfigs, location: loadbalancer.location}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "Azure network load balancer asset internet exposure"
 }

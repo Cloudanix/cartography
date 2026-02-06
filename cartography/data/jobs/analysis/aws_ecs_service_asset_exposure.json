@@ -1,14 +1,18 @@
 {
-	"statements": [
-		{
-			"query": "MATCH (service:ECSService)<-[:HAS_SERVICE]-(:ECSCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE EXISTS(service.exposed_internet) WITH service LIMIT $LIMIT_SIZE REMOVE service.exposed_internet, service.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (service:ECSService)<-[:HAS_SERVICE]-(:ECSCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE 'ENABLED' in service.assign_public_ip SET service.exposed_internet = true ,(CASE WHEN NOT 'assign_public_ip' IN coalesce(service.exposed_internet_type , []) THEN service END).exposed_internet_type = coalesce(service.exposed_internet_type , []) + 'assign_public_ip';",
-            "iterative": false
-		}
-	],
-	"name": "aws ECS Service asset internet exposure"
+  "statements": [
+    {
+      "query": "MATCH (service:ECSService)<-[:HAS_SERVICE]-(:ECSCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE EXISTS(service.exposed_internet) WITH service LIMIT $LIMIT_SIZE REMOVE service.exposed_internet, service.exposed_internet_type, service.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (service:ECSService)<-[:HAS_SERVICE]-(:ECSCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE 'ENABLED' in service.assign_public_ip SET service.exposed_internet = true ,(CASE WHEN NOT 'assign_public_ip' IN coalesce(service.exposed_internet_type , []) THEN service END).exposed_internet_type = coalesce(service.exposed_internet_type , []) + 'assign_public_ip';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (service:ECSService)<-[:HAS_SERVICE]-(cluster:ECSCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE service.exposed_internet = true WITH service, cluster SET service.publicContext = apoc.convert.toJson([{resource: service.id, resourceType: 'aws-compute-ecs-service', context: [{serviceArn: service.id, serviceName: service.name, clusterArn: cluster.arn, clusterName: cluster.name, launchType: service.launch_type, assignPublicIp: service.assign_public_ip, exposureTypes: service.exposed_internet_type, taskDefinition: service.task_definition, desiredCount: service.desiredcount}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws ECS Service asset internet exposure"
 }
