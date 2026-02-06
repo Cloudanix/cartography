@@ -1,14 +1,18 @@
 {
-	"statements": [
-		{
-			"query": "MATCH (emr:EMRCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE EXISTS(emr.exposed_internet) WITH emr LIMIT $LIMIT_SIZE REMOVE emr.exposed_internet, emr.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (emr:EMRCluster{public_access_configuration: false})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET emr.anonymous_access = true, (CASE WHEN NOT 'assign_public_ip' IN  coalesce(emr.anonymous_access_type , []) THEN emr END).anonymous_access_type = coalesce(emr.anonymous_access_type , []) + 'assign_public_ip';",
-			"iterative": false
-		}
-	],
-	"name": "aws EMR asset internet exposure"
+  "statements": [
+    {
+      "query": "MATCH (emr:EMRCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE EXISTS(emr.exposed_internet) WITH emr LIMIT $LIMIT_SIZE REMOVE emr.exposed_internet, emr.exposed_internet_type, emr.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (emr:EMRCluster{public_access_configuration: false})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET emr.anonymous_access = true, (CASE WHEN NOT 'assign_public_ip' IN  coalesce(emr.anonymous_access_type , []) THEN emr END).anonymous_access_type = coalesce(emr.anonymous_access_type , []) + 'assign_public_ip';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (emr:EMRCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE emr.anonymous_access = true WITH emr SET emr.publicContext = apoc.convert.toJson([{resource: emr.id, resourceType: 'aws-analytics-emr-cluster', context: [{clusterId: emr.id, clusterName: emr.name, state: emr.state, publicAccessConfiguration: emr.public_access_configuration, anonymousAccessType: coalesce(emr.anonymous_access_type, []), masterPublicDnsName: emr.master_public_dns_name}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws EMR asset internet exposure"
 }
