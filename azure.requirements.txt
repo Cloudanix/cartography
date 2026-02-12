@@ -48,6 +48,7 @@ azure-graphrbac==0.61.1
 azure-mgmt-authorization==1.0.0
 azure-mgmt-msi~=7.0.0
 azure-mgmt-resource>=10.2.0
+azure-mgmt-rdbms>=10.0.0
 azure-mgmt-monitor~=5.0.1
 azure-mgmt-security~=3.0.0
 azure-mgmt-network>=2.7.0

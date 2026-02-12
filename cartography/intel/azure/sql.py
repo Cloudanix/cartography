@@ -5,6 +5,7 @@ from typing import Dict
 from typing import Generator
 from typing import List
 from typing import Tuple
+from typing import Optional
 
 import neo4j
 from azure.core.exceptions import ClientAuthenticationError
@@ -13,6 +14,10 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.sql import SqlManagementClient
 from azure.mgmt.sql.models import SecurityAlertPolicyName
 from azure.mgmt.sql.models import TransparentDataEncryptionName
+from azure.mgmt.rdbms.postgresql_flexibleservers import PostgreSQLManagementClient as PostgreSQLFlexibleServersManagementClient
+from azure.mgmt.rdbms.mysql_flexibleservers import MySQLManagementClient as MySQLFlexibleServersManagementClient
+from azure.mgmt.rdbms.postgresql import PostgreSQLManagementClient
+from azure.mgmt.rdbms.mysql import MySQLManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 from msrestazure.azure_exceptions import CloudError
 from netaddr import *
@@ -26,6 +31,15 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 azure_console_link = AzureLinker()
 
+PORT_MAP = {
+    "microsoft.sql": 1433,
+    "microsoft.dbforpostgresql": 5432,
+    "microsoft.dbformysql": 3306,
+    "postgres": 5432,
+    "mysql": 3306,
+    "sqlserver": 1433,
+}
+
 
 @timeit
 def get_client(credentials: Credentials, subscription_id: str) -> SqlManagementClient:
@@ -36,25 +50,131 @@ def get_client(credentials: Credentials, subscription_id: str) -> SqlManagementC
     return client
 
 
+def _extract_engine_info(server: Dict) -> Tuple[str, str, int]:
+    version = server.get('version', '')
+
+    # Determine engine type from the resource ID
+    server_id = server.get('id', '').lower()
+
+    # Default values (Azure SQL Database)
+    engine = "sqlserver"
+    port = 1433
+
+    # Determine engine type from resource provider in the ID
+    if 'microsoft.dbforpostgresql' in server_id:
+        engine = "postgres"
+        port = PORT_MAP.get("microsoft.dbforpostgresql", 5432)
+    elif 'microsoft.dbformysql' in server_id:
+        engine = "mysql"
+        port = PORT_MAP.get("microsoft.dbformysql", 3306)
+    elif 'microsoft.sql' in server_id:
+        engine = "sqlserver"
+        port = PORT_MAP.get("microsoft.sql", 1433)
+
+    # Log the extraction for debugging
+    logger.debug(
+        f"Extracted engine info for {server.get('name')}: "
+        f"engine={engine}, version={version}, port={port}"
+    )
+
+    return engine, version, port
+
+
+def _extract_endpoint_info(
+    server: Dict,
+    credentials: Credentials,
+    subscription_id: str
+) -> Dict:
+    endpoint_info = {
+        'public_endpoint': None,
+    }
+
+    # Public endpoint - fully qualified domain name
+    endpoint_info['public_endpoint'] = server.get('fully_qualified_domain_name')
+
+    return endpoint_info
+
+
 @timeit
 def get_server_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
     """
-    Returning the list of Azure SQL servers.
+    Returning the list of Azure SQL servers, PostgreSQL servers, and MySQL servers.
     """
+    server_list = []
+
+    # Get Azure SQL Database servers
     try:
         client = get_client(credentials, subscription_id)
-        server_list = list(map(lambda x: x.as_dict(), client.servers.list()))
-
-    # ClientAuthenticationError and ResourceNotFoundError are subclasses under HttpResponseError
+        sql_servers = list(map(lambda x: x.as_dict(), client.servers.list()))
+        server_list.extend(sql_servers)
+        logger.debug(f"Retrieved {len(sql_servers)} SQL Database servers")
     except ClientAuthenticationError as e:
-        logger.warning(f"Client Authentication Error while retrieving servers - {e}")
-        return []
+        logger.warning(f"Client Authentication Error while retrieving SQL servers - {e}")
     except ResourceNotFoundError as e:
-        logger.warning(f"Server resource not found error - {e}")
-        return []
+        logger.warning(f"SQL Server resource not found error - {e}")
     except HttpResponseError as e:
-        logger.warning(f"Error while retrieving servers - {e}")
-        return []
+        logger.warning(f"Error while retrieving SQL servers - {e}")
+
+    # Get Azure Database for PostgreSQL Flexible Servers
+    try:
+        pg_flex_client = PostgreSQLFlexibleServersManagementClient(credentials, subscription_id)
+        pg_flex_servers = list(map(lambda x: x.as_dict(), pg_flex_client.servers.list()))
+        server_list.extend(pg_flex_servers)
+        logger.debug(f"Retrieved {len(pg_flex_servers)} PostgreSQL Flexible Servers")
+    except ClientAuthenticationError as e:
+        logger.warning(f"Client Authentication Error while retrieving PostgreSQL Flexible Servers - {e}")
+    except ResourceNotFoundError as e:
+        logger.warning(f"PostgreSQL Flexible Server resource not found error - {e}")
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving PostgreSQL Flexible Servers - {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected error while retrieving PostgreSQL Flexible Servers - {e}")
+
+    # Get Azure Database for MySQL Flexible Servers
+    try:
+        mysql_flex_client = MySQLFlexibleServersManagementClient(credentials, subscription_id)
+        mysql_flex_servers = list(map(lambda x: x.as_dict(), mysql_flex_client.servers.list()))
+        server_list.extend(mysql_flex_servers)
+        logger.debug(f"Retrieved {len(mysql_flex_servers)} MySQL Flexible Servers")
+    except ClientAuthenticationError as e:
+        logger.warning(f"Client Authentication Error while retrieving MySQL Flexible Servers - {e}")
+    except ResourceNotFoundError as e:
+        logger.warning(f"MySQL Flexible Server resource not found error - {e}")
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving MySQL Flexible Servers - {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected error while retrieving MySQL Flexible Servers - {e}")
+
+    # Get Azure Database for PostgreSQL (Regular RDBMS)
+    try:
+        pg_rdbms_client = PostgreSQLManagementClient(credentials, subscription_id)
+        pg_rdbms_servers = list(map(lambda x: x.as_dict(), pg_rdbms_client.servers.list()))
+        server_list.extend(pg_rdbms_servers)
+        logger.debug(f"Retrieved {len(pg_rdbms_servers)} PostgreSQL RDBMS Servers")
+    except ClientAuthenticationError as e:
+        logger.warning(f"Client Authentication Error while retrieving PostgreSQL RDBMS Servers - {e}")
+    except ResourceNotFoundError as e:
+        logger.warning(f"PostgreSQL RDBMS Server resource not found error - {e}")
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving PostgreSQL RDBMS Servers - {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected error while retrieving PostgreSQL RDBMS Servers - {e}")
+
+    # Get Azure Database for MySQL (Regular RDBMS)
+    try:
+        mysql_rdbms_client = MySQLManagementClient(credentials, subscription_id)
+        mysql_rdbms_servers = list(map(lambda x: x.as_dict(), mysql_rdbms_client.servers.list()))
+        server_list.extend(mysql_rdbms_servers)
+        logger.debug(f"Retrieved {len(mysql_rdbms_servers)} MySQL RDBMS Servers")
+    except ClientAuthenticationError as e:
+        logger.warning(f"Client Authentication Error while retrieving MySQL RDBMS Servers - {e}")
+    except ResourceNotFoundError as e:
+        logger.warning(f"MySQL RDBMS Server resource not found error - {e}")
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving MySQL RDBMS Servers - {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected error while retrieving MySQL RDBMS Servers - {e}")
+
     server_data = []
     for server in server_list:
         server['resourceGroup'] = get_azure_resource_group_name(server.get('id'))
@@ -62,6 +182,15 @@ def get_server_list(credentials: Credentials, subscription_id: str, regions: lis
         server['consolelink'] = azure_console_link.get_console_link(
             id=server['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
         )
+
+        engine, engine_version, port = _extract_engine_info(server)
+        server['engine'] = engine
+        server['engineVersion'] = engine_version
+        server['port'] = port
+
+        endpoint_info = _extract_endpoint_info(server, credentials, subscription_id)
+        server['endpoint'] = endpoint_info['public_endpoint']
+
         if regions is None:
             server_data.append(server)
         else:
@@ -91,7 +220,11 @@ def load_server_data(
     s.consolelink = server.consolelink,
     s.kind = server.kind,
     s.state = server.state,
-    s.version = server.version
+    s.version = server.version,
+    s.engine = server.engine,
+    s.engineVersion = server.engineVersion,
+    s.endpoint = server.endpoint,
+    s.port = server.port
     WITH s
     MATCH (owner:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(s)
@@ -106,10 +239,11 @@ def load_server_data(
         azure_update_tag=azure_update_tag,
     )
     for server in server_list:
-        resource_group=get_azure_resource_group_name(server.get('id'))
-        _attach_resource_group_server(neo4j_session,server.get('id'),resource_group,azure_update_tag)
+        resource_group = get_azure_resource_group_name(server.get('id'))
+        _attach_resource_group_server(neo4j_session, server.get('id'), resource_group, azure_update_tag)
 
-def _attach_resource_group_server( neo4j_session: neo4j.Session,  server_id: str,server_resource_group:str,azure_update_tag: int) -> None:
+
+def _attach_resource_group_server(neo4j_session: neo4j.Session, server_id: str, server_resource_group: str, azure_update_tag: int) -> None:
     ingest_server = """
     MATCH (s:AzureSQLServer{id: $server_id})
     WITH s
@@ -150,11 +284,11 @@ def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server
             azure_update_tag=azure_update_tag,
         )
         for private_endpoint_connection in server.get('private_endpoint_connections', []):
-            resource_group=get_azure_resource_group_name(private_endpoint_connection.get('id'))
-            _attach_resource_group_server_private_endpoint_connections(neo4j_session,private_endpoint_connection['id'],resource_group,azure_update_tag)
+            resource_group = get_azure_resource_group_name(private_endpoint_connection.get('id'))
+            _attach_resource_group_server_private_endpoint_connections(neo4j_session, private_endpoint_connection['id'], resource_group, azure_update_tag)
 
 
-def _attach_resource_group_server_private_endpoint_connections(neo4j_session: neo4j.Session,private_endpoint_connection_id:str, resource_group:str,azure_update_tag: int) -> None:
+def _attach_resource_group_server_private_endpoint_connections(neo4j_session: neo4j.Session, private_endpoint_connection_id: str, resource_group: str, azure_update_tag: int) -> None:
     ingest_attach_private_endpoint_connection = """
     MATCH (aspec:AzureServerPrivateEndpointConnection{id: $aspec_id})
     WITH aspec,
@@ -169,6 +303,7 @@ def _attach_resource_group_server_private_endpoint_connections(neo4j_session: ne
         resource_group=resource_group,
         azure_update_tag=azure_update_tag,
     )
+
 
 @timeit
 def sync_server_details(
@@ -550,10 +685,11 @@ def _load_server_dns_aliases(
         azure_update_tag=update_tag,
     )
     for dns_aliases in dns_aliases:
-        resource_group=get_azure_resource_group_name(dns_aliases.get('id'))
-        _attach_resource_group_dns_alias(neo4j_session,dns_aliases['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(dns_aliases.get('id'))
+        _attach_resource_group_dns_alias(neo4j_session, dns_aliases['id'], resource_group, update_tag)
 
-def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id:str, resource_group:str,update_tag: int) -> None:
+
+def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id: str, resource_group: str, update_tag: int) -> None:
     ingest_dns_aliases = """
     MATCH (alias:AzureServerDNSAlias{id: $dns_alias_id})
     WITH alias
@@ -568,6 +704,7 @@ def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id:
         resource_group=resource_group,
         azure_update_tag=update_tag,
     )
+
 
 @timeit
 def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], update_tag: int) -> None:
@@ -596,10 +733,11 @@ def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], upd
         azure_update_tag=update_tag,
     )
     for fw_rule in fw_rules:
-        resource_group=get_azure_resource_group_name(fw_rule.get('id'))
-        _attach_resource_group_fw_rule(neo4j_session,fw_rule['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(fw_rule.get('id'))
+        _attach_resource_group_fw_rule(neo4j_session, fw_rule['id'], resource_group, update_tag)
 
-def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id:str,resource_group:str, update_tag: int) -> None:
+
+def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id: str, resource_group: str, update_tag: int) -> None:
     ingest_firewall_rules = """
     MATCH (rule:AzureFirewallRule{id: $fw_rule_id})
     WITH rule
@@ -614,6 +752,7 @@ def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id:str,
         resource_group=resource_group,
         azure_update_tag=update_tag,
     )
+
 
 def attach_firewall_rule_to_public_ip(session: neo4j.Session, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int) -> None:
     session.write_transaction(_attach_firewall_rule_to_public_ip_tx, fw_rule, public_ip, source, type, update_tag)
@@ -678,10 +817,11 @@ def _load_server_ad_admins(
         azure_update_tag=update_tag,
     )
     for ad_admin in ad_admins:
-        resource_group=get_azure_resource_group_name(ad_admin.get('id'))
-        _attach_resource_group_ad_admin(neo4j_session,ad_admin['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(ad_admin.get('id'))
+        _attach_resource_group_ad_admin(neo4j_session, ad_admin['id'], resource_group, update_tag)
 
-def _attach_resource_group_ad_admin(neo4j_session: neo4j.Session, ad_admin_id:str,resource_group:str, update_tag: int) -> None:
+
+def _attach_resource_group_ad_admin(neo4j_session: neo4j.Session, ad_admin_id: str, resource_group: str, update_tag: int) -> None:
     ingest_ad_admins = """
     MATCH (a:AzureServerADAdministrator{id: $ad_admin_id})
     WITH a
@@ -696,6 +836,7 @@ def _attach_resource_group_ad_admin(neo4j_session: neo4j.Session, ad_admin_id:st
         resource_group=resource_group,
         azure_update_tag=update_tag,
     )
+
 
 @timeit
 def _load_recoverable_databases(
@@ -729,10 +870,11 @@ def _load_recoverable_databases(
         azure_update_tag=update_tag,
     )
     for recoverable_database in recoverable_databases:
-        resource_group=get_azure_resource_group_name(recoverable_database.get('id'))
-        _attach_resource_group_recoverable_database(neo4j_session,recoverable_database['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(recoverable_database.get('id'))
+        _attach_resource_group_recoverable_database(neo4j_session, recoverable_database['id'], resource_group, update_tag)
 
-def _attach_resource_group_recoverable_database( neo4j_session: neo4j.Session, recoverable_database_id:str, resource_group:str,update_tag: int) -> None:
+
+def _attach_resource_group_recoverable_database(neo4j_session: neo4j.Session, recoverable_database_id: str, resource_group: str, update_tag: int) -> None:
     ingest_recoverable_databases = """
     MATCH (rd:AzureRecoverableDatabase{id: $rec_db_id})
     WITH rd
@@ -747,6 +889,7 @@ def _attach_resource_group_recoverable_database( neo4j_session: neo4j.Session, r
         resource_group=resource_group,
         azure_update_tag=update_tag,
     )
+
 
 @timeit
 def _load_restorable_dropped_databases(
@@ -783,11 +926,11 @@ def _load_restorable_dropped_databases(
         azure_update_tag=update_tag,
     )
     for restorable_dropped_database in restorable_dropped_databases:
-        resource_group=get_azure_resource_group_name(restorable_dropped_database.get('id'))
-        _attach_resource_group_restorable_dropped_database(neo4j_session,restorable_dropped_database['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(restorable_dropped_database.get('id'))
+        _attach_resource_group_restorable_dropped_database(neo4j_session, restorable_dropped_database['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_restorable_dropped_database(neo4j_session: neo4j.Session, restorable_dropped_database_id: str,resource_group:str, update_tag: int) -> None:
+def _attach_resource_group_restorable_dropped_database(neo4j_session: neo4j.Session, restorable_dropped_database_id: str, resource_group: str, update_tag: int) -> None:
     ingest_restorable_dropped_databases = """
     MATCH (rdd:AzureRestorableDroppedDatabase{id: $res_dropped_db_id})
     WITH rdd
@@ -802,6 +945,7 @@ def _attach_resource_group_restorable_dropped_database(neo4j_session: neo4j.Sess
         resource_group=resource_group,
         azure_update_tag=update_tag,
     )
+
 
 @timeit
 def _load_failover_groups(
@@ -832,10 +976,11 @@ def _load_failover_groups(
         azure_update_tag=update_tag,
     )
     for failover_group in failover_groups:
-        resource_group=get_azure_resource_group_name(failover_group.get('id'))
-        _attach_resource_group_restorable_failover_group(neo4j_session,failover_group['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(failover_group.get('id'))
+        _attach_resource_group_restorable_failover_group(neo4j_session, failover_group['id'], resource_group, update_tag)
 
-def _attach_resource_group_restorable_failover_group(neo4j_session: neo4j.Session, failover_group_id:str,resource_group:str, update_tag: int) -> None:
+
+def _attach_resource_group_restorable_failover_group(neo4j_session: neo4j.Session, failover_group_id: str, resource_group: str, update_tag: int) -> None:
     ingest_failover_groups = """
     MATCH (f:AzureFailoverGroup{id: $fg_id})
     WITH f
@@ -850,6 +995,7 @@ def _attach_resource_group_restorable_failover_group(neo4j_session: neo4j.Sessio
         resource_group=resource_group,
         azure_update_tag=update_tag,
     )
+
 
 @timeit
 def _load_elastic_pools(
@@ -885,10 +1031,11 @@ def _load_elastic_pools(
         azure_update_tag=update_tag,
     )
     for elastic_pool in elastic_pools:
-        resource_group=get_azure_resource_group_name(elastic_pool.get('id'))
-        _attach_resource_group_restorable_elastic_pool(neo4j_session,elastic_pool['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(elastic_pool.get('id'))
+        _attach_resource_group_restorable_elastic_pool(neo4j_session, elastic_pool['id'], resource_group, update_tag)
 
-def _attach_resource_group_restorable_elastic_pool(neo4j_session: neo4j.Session, elastic_pool_id:str,resource_group:str,update_tag: int) -> None:
+
+def _attach_resource_group_restorable_elastic_pool(neo4j_session: neo4j.Session, elastic_pool_id: str, resource_group: str, update_tag: int) -> None:
     ingest_elastic_pools = """
     MATCH (e:AzureElasticPool{id: $ep_id})
     WITH e
@@ -945,10 +1092,11 @@ def _load_databases(
         azure_update_tag=update_tag,
     )
     for database in databases:
-        resource_group=get_azure_resource_group_name(database.get('id'))
-        _attach_resource_group_restorable_database(neo4j_session,database['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(database.get('id'))
+        _attach_resource_group_restorable_database(neo4j_session, database['id'], resource_group, update_tag)
 
-def _attach_resource_group_restorable_database(neo4j_session: neo4j.Session, database_id:str,resource_group:str ,update_tag: int) -> None:
+
+def _attach_resource_group_restorable_database(neo4j_session: neo4j.Session, database_id: str, resource_group: str, update_tag: int) -> None:
     ingest_databases = """
     MATCH (d:AzureSQLDatabase{id: $database_id})
     WITH d
@@ -1219,10 +1367,11 @@ def _load_replication_links(
         azure_update_tag=update_tag,
     )
     for replication_link in replication_links:
-        resource_group=get_azure_resource_group_name(replication_link.get('id'))
-        _attach_resource_group_replication_link(neo4j_session,replication_link['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(replication_link.get('id'))
+        _attach_resource_group_replication_link(neo4j_session, replication_link['id'], resource_group, update_tag)
 
-def _attach_resource_group_replication_link(neo4j_session: neo4j.Session, replication_link_id:str,resource_group:str ,update_tag: int) -> None:
+
+def _attach_resource_group_replication_link(neo4j_session: neo4j.Session, replication_link_id: str, resource_group: str, update_tag: int) -> None:
     ingest_replication_links = """
     MATCH (rl:AzureReplicationLink{id: $replication_link_id})
     WITH rl
@@ -1277,10 +1426,11 @@ def _load_db_threat_detection_policies(
         azure_update_tag=update_tag,
     )
     for threat_detection in threat_detection_policies:
-        resource_group=get_azure_resource_group_name(threat_detection.get('id'))
-        _attach_resource_group_threat_detection(neo4j_session,threat_detection['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(threat_detection.get('id'))
+        _attach_resource_group_threat_detection(neo4j_session, threat_detection['id'], resource_group, update_tag)
 
-def _attach_resource_group_threat_detection(neo4j_session: neo4j.Session, threat_detection_id:str, resource_group:str,update_tag: int) -> None:
+
+def _attach_resource_group_threat_detection(neo4j_session: neo4j.Session, threat_detection_id: str, resource_group: str, update_tag: int) -> None:
     ingest_threat_detection_policies = """
     MATCH (policy:AzureDatabaseThreatDetectionPolicy{id: $threat_detection_id})
     WITH policy
@@ -1295,6 +1445,7 @@ def _attach_resource_group_threat_detection(neo4j_session: neo4j.Session, threat
         resource_group=resource_group,
         azure_update_tag=update_tag,
     )
+
 
 @timeit
 def _load_restore_points(
@@ -1328,10 +1479,11 @@ def _load_restore_points(
         azure_update_tag=update_tag,
     )
     for restore_point in restore_points:
-        resource_group=get_azure_resource_group_name(restore_point.get('id'))
-        _attach_resource_group_restore_point(neo4j_session,restore_point['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(restore_point.get('id'))
+        _attach_resource_group_restore_point(neo4j_session, restore_point['id'], resource_group, update_tag)
 
-def _attach_resource_group_restore_point(neo4j_session: neo4j.Session, restore_point_id:str, resource_group:str,update_tag: int) -> None:
+
+def _attach_resource_group_restore_point(neo4j_session: neo4j.Session, restore_point_id: str, resource_group: str, update_tag: int) -> None:
     ingest_restore_points = """
     MATCH (point:AzureRestorePoint{id: $restore_point_id})
     WITH point
@@ -1378,10 +1530,11 @@ def _load_transparent_data_encryptions(
         azure_update_tag=update_tag,
     )
     for encryption in encryptions_list:
-        resource_group=get_azure_resource_group_name(encryption.get('id'))
-        _attach_resource_group_encryption(neo4j_session,encryption['id'],resource_group,update_tag)
+        resource_group = get_azure_resource_group_name(encryption.get('id'))
+        _attach_resource_group_encryption(neo4j_session, encryption['id'], resource_group, update_tag)
 
-def _attach_resource_group_encryption( neo4j_session: neo4j.Session, encryption_id: str,resource_group:str, update_tag: int)-> None:
+
+def _attach_resource_group_encryption(neo4j_session: neo4j.Session, encryption_id: str, resource_group: str, update_tag: int) -> None:
     ingest_data_encryptions = """
     MATCH (tae:AzureTransparentDataEncryption{id: $encryption_id})
     WITH tae
