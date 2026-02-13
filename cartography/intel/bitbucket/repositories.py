@@ -51,11 +51,14 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
             repo["default_branch"] = repo.get("mainbranch", {}).get("name", None)
 
         if repo.get("language"):
-            transformed_repo_languages.append({
-                "repo_id": repo["uuid"],
-                "primary_language": repo["primary_language"],
-            })
+            transformed_repo_languages.append(
+                {
+                    "repo_id": repo["uuid"],
+                    "primary_language": repo["primary_language"],
+                }
+            )
 
+        repo["archived"] = repo.get("is_archived", repo.get("archived", False))
         data = {
             "workspace": workspace,
             "project": cleanse_string(repo["project"]["name"]),
@@ -124,6 +127,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     re.owner = repo.owner.display_name,
     re.parent = repo.parent.name,
     re.default_branch = repo.default_branch,
+    re.archived = repo.archived,
     re.lastupdated = $UpdateTag,
     re.console_link = repo.console_link
 
