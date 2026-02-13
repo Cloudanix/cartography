@@ -5,7 +5,6 @@ from typing import Dict
 from typing import Generator
 from typing import List
 from typing import Tuple
-from typing import Optional
 
 import neo4j
 from azure.core.exceptions import ClientAuthenticationError
@@ -35,9 +34,6 @@ PORT_MAP = {
     "microsoft.sql": 1433,
     "microsoft.dbforpostgresql": 5432,
     "microsoft.dbformysql": 3306,
-    "postgres": 5432,
-    "mysql": 3306,
-    "sqlserver": 1433,
 }
 
 
@@ -63,13 +59,13 @@ def _extract_engine_info(server: Dict) -> Tuple[str, str, int]:
     # Determine engine type from resource provider in the ID
     if 'microsoft.dbforpostgresql' in server_id:
         engine = "postgres"
-        port = PORT_MAP.get("microsoft.dbforpostgresql", 5432)
+        port = 5432
     elif 'microsoft.dbformysql' in server_id:
         engine = "mysql"
-        port = PORT_MAP.get("microsoft.dbformysql", 3306)
+        port = 3306
     elif 'microsoft.sql' in server_id:
         engine = "sqlserver"
-        port = PORT_MAP.get("microsoft.sql", 1433)
+        port = 1433
 
     # Log the extraction for debugging
     logger.debug(
@@ -95,32 +91,54 @@ def _extract_endpoint_info(
     return endpoint_info
 
 
-@timeit
 def get_server_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
     """
     Returning the list of Azure SQL servers, PostgreSQL servers, and MySQL servers.
     """
+    # Gather all server types
     server_list = []
+    server_list.extend(_get_sql_database_servers(credentials, subscription_id))
+    server_list.extend(_get_postgresql_flexible_servers(credentials, subscription_id))
+    server_list.extend(_get_mysql_flexible_servers(credentials, subscription_id))
+    server_list.extend(_get_postgresql_rdbms_servers(credentials, subscription_id))
+    server_list.extend(_get_mysql_rdbms_servers(credentials, subscription_id))
 
-    # Get Azure SQL Database servers
+    # Enrich server data with additional metadata
+    server_data = [
+        _enrich_server_data(server, credentials, subscription_id, common_job_parameters)
+        for server in server_list
+    ]
+
+    # Filter by region if specified
+    return _filter_servers_by_region(server_data, regions)
+
+def _get_sql_database_servers(credentials: Credentials, subscription_id: str) -> List[Dict]:
+    """
+    Get Azure SQL Database servers.
+    """
     try:
         client = get_client(credentials, subscription_id)
         sql_servers = list(map(lambda x: x.as_dict(), client.servers.list()))
-        server_list.extend(sql_servers)
         logger.debug(f"Retrieved {len(sql_servers)} SQL Database servers")
+        return sql_servers
     except ClientAuthenticationError as e:
         logger.warning(f"Client Authentication Error while retrieving SQL servers - {e}")
     except ResourceNotFoundError as e:
         logger.warning(f"SQL Server resource not found error - {e}")
     except HttpResponseError as e:
         logger.warning(f"Error while retrieving SQL servers - {e}")
+    return []
 
-    # Get Azure Database for PostgreSQL Flexible Servers
+
+def _get_postgresql_flexible_servers(credentials: Credentials, subscription_id: str) -> List[Dict]:
+    """
+    Get Azure Database for PostgreSQL Flexible Servers.
+    """
     try:
         pg_flex_client = PostgreSQLFlexibleServersManagementClient(credentials, subscription_id)
         pg_flex_servers = list(map(lambda x: x.as_dict(), pg_flex_client.servers.list()))
-        server_list.extend(pg_flex_servers)
         logger.debug(f"Retrieved {len(pg_flex_servers)} PostgreSQL Flexible Servers")
+        return pg_flex_servers
     except ClientAuthenticationError as e:
         logger.warning(f"Client Authentication Error while retrieving PostgreSQL Flexible Servers - {e}")
     except ResourceNotFoundError as e:
@@ -129,13 +147,18 @@ def get_server_list(credentials: Credentials, subscription_id: str, regions: lis
         logger.warning(f"Error while retrieving PostgreSQL Flexible Servers - {e}")
     except Exception as e:
         logger.warning(f"Unexpected error while retrieving PostgreSQL Flexible Servers - {e}")
+    return []
 
-    # Get Azure Database for MySQL Flexible Servers
+
+def _get_mysql_flexible_servers(credentials: Credentials, subscription_id: str) -> List[Dict]:
+    """
+    Get Azure Database for MySQL Flexible Servers.
+    """
     try:
         mysql_flex_client = MySQLFlexibleServersManagementClient(credentials, subscription_id)
         mysql_flex_servers = list(map(lambda x: x.as_dict(), mysql_flex_client.servers.list()))
-        server_list.extend(mysql_flex_servers)
         logger.debug(f"Retrieved {len(mysql_flex_servers)} MySQL Flexible Servers")
+        return mysql_flex_servers
     except ClientAuthenticationError as e:
         logger.warning(f"Client Authentication Error while retrieving MySQL Flexible Servers - {e}")
     except ResourceNotFoundError as e:
@@ -144,13 +167,18 @@ def get_server_list(credentials: Credentials, subscription_id: str, regions: lis
         logger.warning(f"Error while retrieving MySQL Flexible Servers - {e}")
     except Exception as e:
         logger.warning(f"Unexpected error while retrieving MySQL Flexible Servers - {e}")
+    return []
 
-    # Get Azure Database for PostgreSQL (Regular RDBMS)
+
+def _get_postgresql_rdbms_servers(credentials: Credentials, subscription_id: str) -> List[Dict]:
+    """
+    Get Azure Database for PostgreSQL (Regular RDBMS) servers.
+    """
     try:
         pg_rdbms_client = PostgreSQLManagementClient(credentials, subscription_id)
         pg_rdbms_servers = list(map(lambda x: x.as_dict(), pg_rdbms_client.servers.list()))
-        server_list.extend(pg_rdbms_servers)
         logger.debug(f"Retrieved {len(pg_rdbms_servers)} PostgreSQL RDBMS Servers")
+        return pg_rdbms_servers
     except ClientAuthenticationError as e:
         logger.warning(f"Client Authentication Error while retrieving PostgreSQL RDBMS Servers - {e}")
     except ResourceNotFoundError as e:
@@ -159,13 +187,18 @@ def get_server_list(credentials: Credentials, subscription_id: str, regions: lis
         logger.warning(f"Error while retrieving PostgreSQL RDBMS Servers - {e}")
     except Exception as e:
         logger.warning(f"Unexpected error while retrieving PostgreSQL RDBMS Servers - {e}")
+    return []
 
-    # Get Azure Database for MySQL (Regular RDBMS)
+
+def _get_mysql_rdbms_servers(credentials: Credentials, subscription_id: str) -> List[Dict]:
+    """
+    Get Azure Database for MySQL (Regular RDBMS) servers.
+    """
     try:
         mysql_rdbms_client = MySQLManagementClient(credentials, subscription_id)
         mysql_rdbms_servers = list(map(lambda x: x.as_dict(), mysql_rdbms_client.servers.list()))
-        server_list.extend(mysql_rdbms_servers)
         logger.debug(f"Retrieved {len(mysql_rdbms_servers)} MySQL RDBMS Servers")
+        return mysql_rdbms_servers
     except ClientAuthenticationError as e:
         logger.warning(f"Client Authentication Error while retrieving MySQL RDBMS Servers - {e}")
     except ResourceNotFoundError as e:
@@ -174,30 +207,45 @@ def get_server_list(credentials: Credentials, subscription_id: str, regions: lis
         logger.warning(f"Error while retrieving MySQL RDBMS Servers - {e}")
     except Exception as e:
         logger.warning(f"Unexpected error while retrieving MySQL RDBMS Servers - {e}")
+    return []
 
-    server_data = []
-    for server in server_list:
-        server['resourceGroup'] = get_azure_resource_group_name(server.get('id'))
-        server['publicNetworkAccess'] = server.get('properties', {}).get('public_network_access', 'Disabled')
-        server['consolelink'] = azure_console_link.get_console_link(
-            id=server['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
 
-        engine, engine_version, port = _extract_engine_info(server)
-        server['engine'] = engine
-        server['engineVersion'] = engine_version
-        server['port'] = port
+def _enrich_server_data(
+    server: Dict,
+    credentials: Credentials,
+    subscription_id: str,
+    common_job_parameters: Dict,
+) -> Dict:
+    """
+    Enrich server data with additional metadata.
+    """
+    server['resourceGroup'] = get_azure_resource_group_name(server.get('id'))
+    server['publicNetworkAccess'] = server.get('properties', {}).get('public_network_access', 'Disabled')
+    server['consolelink'] = azure_console_link.get_console_link(
+        id=server['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+    )
 
-        endpoint_info = _extract_endpoint_info(server, credentials, subscription_id)
-        server['endpoint'] = endpoint_info['public_endpoint']
+    engine, engine_version, port = _extract_engine_info(server)
+    server['engine'] = engine
+    server['engineVersion'] = engine_version
+    server['port'] = port
 
-        if regions is None:
-            server_data.append(server)
-        else:
-            if server.get('location') in regions or server.get('location') == 'global':
-                server_data.append(server)
+    endpoint_info = _extract_endpoint_info(server, credentials, subscription_id)
+    server['endpoint'] = endpoint_info['public_endpoint']
 
-    return server_data
+    return server
+
+
+def _filter_servers_by_region(servers: List[Dict], regions: list) -> List[Dict]:
+    """
+    Filter servers by region if regions list is provided.
+    """
+    if regions is None:
+        return servers
+    return [s for s in servers if s.get('location') in regions or s.get('location') == 'global']
+
+
+
 
 
 @timeit
