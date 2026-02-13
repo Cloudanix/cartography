@@ -40,12 +40,37 @@ def get_project_languages(hosted_domain: str, access_token: str, project_id: int
     return languages
 
 
+@timeit
+def get_project_branches(hosted_domain: str, access_token: str, project_id: int):
+    """
+    As per the rest api docs: https://docs.gitlab.com/api/branches/#list-repository-branches
+    Pagination: https://docs.gitlab.com/api/rest/#pagination
+    """
+    url = f"{hosted_domain}/api/v4/projects/{project_id}/repository/branches?per_page=100"
+    branches = paginate_request(url, access_token)
+
+    return branches
+
+
 def transform_projects_data(projects: List[Dict]) -> List[Dict]:
     for project in projects:
         project["is_private"] = project["visibility"] == "private"
         project["archived"] = project.get("archived", False)
 
     return projects
+
+
+def transform_branches_data(branches: List[Dict], project_id: int) -> List[Dict]:
+    transformed_branches = []
+    for branch in branches:
+        commit = branch.get("commit", {})
+        transformed_branches.append({
+            "project_id": project_id,
+            "id": f"{project_id}:{branch['name']}",
+            "name": branch["name"],
+            "committed_date": commit.get("committed_date"),
+        })
+    return transformed_branches
 
 
 def load_projects_data(
@@ -59,6 +84,45 @@ def load_projects_data(
         project_data,
         common_job_parameters,
         group_id,
+    )
+
+
+def load_branches_data(
+    session: neo4j.Session,
+    branches_data: List[Dict],
+    common_job_parameters: Dict,
+) -> None:
+    session.write_transaction(
+        _load_branches_data,
+        branches_data,
+        common_job_parameters,
+    )
+
+
+def _load_branches_data(
+    tx: neo4j.Transaction,
+    branches_data: List[Dict],
+    common_job_parameters: Dict,
+) -> None:
+    ingest_branches = """
+    UNWIND $branchesData as branch
+    MERGE (br:GitLabBranch{id:branch.id})
+    ON CREATE SET br.firstseen = timestamp()
+    SET br.name = branch.name,
+    br.committed_date = branch.committed_date,
+    br.lastupdated = $UpdateTag
+
+    WITH br, branch
+    MATCH (project:GitLabProject{id:branch.project_id})
+    MERGE (project)-[r:BRANCH]->(br)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+
+    tx.run(
+        ingest_branches,
+        branchesData=branches_data,
+        UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
 
@@ -150,6 +214,13 @@ def sync(
     group_projects = transform_projects_data(group_projects)
 
     load_projects_data(neo4j_session, group_projects, common_job_parameters, group_id)
+
+    # Sync branches for each project
+    for project in group_projects:
+        branches = get_project_branches(hosted_domain, access_token, project["id"])
+        transformed_branches = transform_branches_data(branches, project["id"])
+        load_branches_data(neo4j_session, transformed_branches, common_job_parameters)
+
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
