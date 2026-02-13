@@ -43,6 +43,7 @@ def get_project_languages(hosted_domain: str, access_token: str, project_id: int
 def transform_projects_data(projects: List[Dict]) -> List[Dict]:
     for project in projects:
         project["is_private"] = project["visibility"] == "private"
+        project["archived"] = project.get("archived", False)
 
     return projects
 
