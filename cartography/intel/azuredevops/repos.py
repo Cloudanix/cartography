@@ -2,7 +2,6 @@ import logging
 from typing import Any
 from typing import Dict
 from typing import List
-from typing import Optional
 
 import neo4j
 
@@ -88,6 +87,7 @@ def load_repositories(
         r.size = repo.size,
         r.defaultbranch = repo.defaultBranch,
         r.isdisabled = repo.isDisabled,
+        r.archived = repo.isDisabled,
         r.weburl = repo.webUrl,
         r.project = repo.project,
         r.lastupdated = $UpdateTag
