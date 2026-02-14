@@ -52,6 +52,19 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                         name
                         id
                     }
+                    refs(first: 100, refPrefix: "refs/heads/") {
+                        edges {
+                            node {
+                                name
+                                id
+                                target {
+                                    ... on Commit {
+                                        pushedDate
+                                    }
+                                }
+                            }
+                        }
+                    }
                     isPrivate
                     isArchived
                     isDisabled
@@ -133,11 +146,13 @@ def transform(repos_json: List[Dict]) -> Dict:
         "WRITE": [],
     }
     transformed_requirements_files: List[Dict] = []
+    transformed_branches: List[Dict] = []
     for repo_object in repos_json:
         _transform_repo_languages(repo_object["url"], repo_object, transformed_repo_languages)
         _transform_repo_objects(repo_object, transformed_repo_list)
         _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
         _transform_collaborators(repo_object["collaborators"], repo_object["url"], transformed_collaborators)
+        _transform_branches(repo_object["url"], repo_object, transformed_branches)
         # _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
         # _transform_setup_cfg_requirements(repo_object["setupCfg"], repo_object["url"], transformed_requirements_files)
     results = {
@@ -146,8 +161,23 @@ def transform(repos_json: List[Dict]) -> Dict:
         "repo_owners": transformed_repo_owners,
         "repo_collaborators": transformed_collaborators,
         "python_requirements": transformed_requirements_files,
+        "branches": transformed_branches,
     }
     return results
+
+
+def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Dict]) -> None:
+    if repo.get("refs"):
+        for edge in repo["refs"]["edges"]:
+            node = edge["node"]
+            target = node.get("target")
+            pushed_date = target.get("pushedDate") if target else None
+            transformed_branches.append({
+                "repo_id": repo_url,
+                "branch_id": f"{repo_url}:{node['id']}",
+                "name": node["name"],
+                "last_commit_timestamp": pushed_date,
+            })
 
 
 def _create_default_branch_id(repo_url: str, default_branch_ref_id: str) -> str:
@@ -423,7 +453,7 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
 
     MERGE (repo)-[r:BRANCH]->(branch)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = r.UpdateTag
+    SET r.lastupdated = $UpdateTag
     """
     neo4j_session.run(
         ingest_repo,
@@ -529,10 +559,41 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
 @timeit
 def load(neo4j_session: neo4j.Session, common_job_parameters: Dict, repo_data: Dict) -> None:
     load_github_repos(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repos"])
+    load_github_branches(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["branches"])
     load_github_owners(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_owners"])
     load_github_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_languages"])
     load_collaborators(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_collaborators"])
     load_python_requirements(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["python_requirements"])
+
+
+@timeit
+def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_data: List[Dict]) -> None:
+    """
+    Ingest the GitHub branch information
+    :param neo4j_session: Neo4J session object for server communication
+    :param update_tag: Timestamp used to determine data freshness
+    :param branch_data: branch data objects
+    :return: None
+    """
+    ingest_branches = """
+    UNWIND $BranchData as branch_info
+    MERGE (branch:GitHubBranch{id: branch_info.branch_id})
+    ON CREATE SET branch.firstseen = timestamp()
+    SET branch.name = branch_info.name,
+    branch.last_commit_timestamp = branch_info.last_commit_timestamp,
+    branch.lastupdated = $UpdateTag
+
+    WITH branch, branch_info
+    MATCH (repo:GitHubRepository{id: branch_info.repo_id})
+    MERGE (repo)-[r:BRANCH]->(branch)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+    neo4j_session.run(
+        ingest_branches,
+        BranchData=branch_data,
+        UpdateTag=update_tag,
+    )
 
 
 @timeit
