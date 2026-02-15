@@ -1,18 +1,22 @@
 {
-	"statements": [
-		{
-			"query": "MATCH (cluster:RedshiftCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) where EXISTS(cluster.exposed_internet) WITH cluster LIMIT $LIMIT_SIZE REMOVE cluster.exposed_internet, cluster.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (:IpRange{id: '0.0.0.0/0'})-[:MEMBER_OF_IP_RULE]->(:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(cluster:RedshiftCluster{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET cluster.exposed_internet = true,(CASE WHEN NOT 'direct_ipv4' IN coalesce(cluster.exposed_internet_type , []) THEN cluster END).exposed_internet_type = coalesce(cluster.exposed_internet_type , []) + 'direct_ipv4';",
-			"iterative": false
-		},
-		{
-			"query": "MATCH (:Ipv6Range{id: '::/0'})-[:MEMBER_OF_IP_RULE]->(:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(cluster:RedshiftCluster{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET cluster.exposed_internet = true,(CASE WHEN NOT 'direct_ipv6' IN coalesce(cluster.exposed_internet_type , []) THEN cluster END).exposed_internet_type = coalesce(cluster.exposed_internet_type , []) + 'direct_ipv6';",
-			"iterative": false
-		}
-	],
-	"name": "aws redshift cluster internet exposure"
+  "statements": [
+    {
+      "query": "MATCH (cluster:RedshiftCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) where EXISTS(cluster.exposed_internet) WITH cluster LIMIT $LIMIT_SIZE REMOVE cluster.exposed_internet, cluster.exposed_internet_type, cluster.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (:IpRange{id: '0.0.0.0/0'})-[:MEMBER_OF_IP_RULE]->(:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(cluster:RedshiftCluster{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET cluster.exposed_internet = true,(CASE WHEN NOT 'direct_ipv4' IN coalesce(cluster.exposed_internet_type , []) THEN cluster END).exposed_internet_type = coalesce(cluster.exposed_internet_type , []) + 'direct_ipv4';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (:Ipv6Range{id: '::/0'})-[:MEMBER_OF_IP_RULE]->(:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(cluster:RedshiftCluster{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET cluster.exposed_internet = true,(CASE WHEN NOT 'direct_ipv6' IN coalesce(cluster.exposed_internet_type , []) THEN cluster END).exposed_internet_type = coalesce(cluster.exposed_internet_type , []) + 'direct_ipv6';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (cluster:RedshiftCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE cluster.exposed_internet = true WITH cluster OPTIONAL MATCH (cidr)-[:MEMBER_OF_IP_RULE]->(rule:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(cluster) WHERE cluster.publicly_accessible = true AND ((cidr:IpRange AND cidr.id = '0.0.0.0/0') OR (cidr:Ipv6Range AND cidr.id = '::/0')) WITH cluster, collect(DISTINCT {securityGroupId: sg.id, port: toString(rule.fromport), protocol: rule.ipprotocol, ipRanges: CASE WHEN cidr:IpRange THEN [cidr.id] WHEN cidr:Ipv6Range THEN [cidr.id] ELSE [] END}) as securityRules SET cluster.publicContext = apoc.convert.toJson([{resource: cluster.id, resourceType: 'aws-database-redshift-cluster', context: [{clusterId: cluster.id, endpoint: cluster.endpoint_address, port: cluster.endpoint_port, nodeType: cluster.node_type, numberOfNodes: cluster.number_of_nodes, publiclyAccessible: cluster.publicly_accessible, exposureTypes: cluster.exposed_internet_type, securityRules: securityRules, encrypted: coalesce(cluster.encrypted, false)}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws redshift cluster internet exposure"
 }
