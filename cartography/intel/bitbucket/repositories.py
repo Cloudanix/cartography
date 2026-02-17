@@ -32,6 +32,21 @@ def get_repos(access_token: str, workspace: str) -> List[Dict]:
     return repositories
 
 
+@timeit
+def get_branches(access_token: str, workspace: str, repo_slug: str) -> List[Dict]:
+    # https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-repository-refs-branches-get
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/refs/branches?pagelen=100"
+
+    response = make_requests_url(url, access_token)
+    branches = response.get("values", [])
+
+    while "next" in response:
+        response = make_requests_url(response.get("next"), access_token)
+        branches.extend(response.get("values", []))
+
+    return branches
+
+
 def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
     """
     Transform the repos data including languages
@@ -51,11 +66,14 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
             repo["default_branch"] = repo.get("mainbranch", {}).get("name", None)
 
         if repo.get("language"):
-            transformed_repo_languages.append({
-                "repo_id": repo["uuid"],
-                "primary_language": repo["primary_language"],
-            })
+            transformed_repo_languages.append(
+                {
+                    "repo_id": repo["uuid"],
+                    "primary_language": repo["primary_language"],
+                }
+            )
 
+        repo["archived"] = repo.get("is_archived", repo.get("archived", False))
         data = {
             "workspace": workspace,
             "project": cleanse_string(repo["project"]["name"]),
@@ -71,8 +89,50 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
     }
 
 
+def transform_branches(branches: List[Dict], repo_id: str) -> List[Dict]:
+    transformed_branches = []
+    for branch in branches:
+        target = branch.get("target", {})
+        transformed_branches.append({
+            "repo_id": repo_id,
+            "id": f"{repo_id}:{branch['name']}",
+            "name": branch["name"],
+            "date": target.get("date"),
+        })
+    return transformed_branches
+
+
 def load_repositories_data(session: neo4j.Session, repos_data: List[Dict], common_job_parameters: Dict) -> None:
     session.write_transaction(_load_repositories_data, repos_data, common_job_parameters)
+
+
+@timeit
+def load_branches(session: neo4j.Session, branches_data: List[Dict], common_job_parameters: Dict) -> None:
+    session.write_transaction(_load_branches, branches_data, common_job_parameters)
+
+
+@timeit
+def _load_branches(tx: neo4j.Transaction, branches_data: List[Dict], common_job_parameters: Dict) -> None:
+    ingest_branches = """
+    UNWIND $branchesData as branch
+    MERGE (br:BitbucketBranch{id:branch.id})
+    ON CREATE SET br.firstseen = timestamp()
+    SET br.name = branch.name,
+    br.date = branch.date,
+    br.lastupdated = $UpdateTag
+
+    WITH br, branch
+    MATCH (repo:BitbucketRepository{id:branch.repo_id})
+    MERGE (repo)-[r:BRANCH]->(br)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+
+    tx.run(
+        ingest_branches,
+        branchesData=branches_data,
+        UpdateTag=common_job_parameters["UPDATE_TAG"],
+    )
 
 
 @timeit
@@ -124,6 +184,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     re.owner = repo.owner.display_name,
     re.parent = repo.parent.name,
     re.default_branch = repo.default_branch,
+    re.archived = repo.archived,
     re.lastupdated = $UpdateTag,
     re.console_link = repo.console_link
 
@@ -169,6 +230,14 @@ def sync(
 
     # Load repositories
     load_repositories_data(neo4j_session, transformed_data["repos"], common_job_parameters)
+
+    # Sync branches for each repository
+    for repo in transformed_data["repos"]:
+        repo_slug = repo.get("slug")
+        if repo_slug:
+            branches = get_branches(bitbucket_access_token, workspace_name, repo_slug)
+            transformed_branches = transform_branches(branches, repo["uuid"])
+            load_branches(neo4j_session, transformed_branches, common_job_parameters)
 
     # Load languages
     load_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"])
