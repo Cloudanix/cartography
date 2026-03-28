@@ -1,14 +1,18 @@
 {
-	"statements": [
-		{
-			"query": "MATCH (trail:AWSCloudTrailTrail)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE EXISTS(trail.exposed_internet) WITH trail LIMIT $LIMIT_SIZE REMOVE trail.exposed_internet, trail.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (bucket:S3Bucket{anonymous_access: true})-[:HAS_BUCKET]-(trail:AWSCloudTrailTrail)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET trail.anonymous_actions = bucket.anonymous_actions, trail.anonymous_access = true, (CASE WHEN NOT 'public_bucket' IN  coalesce(trail.anonymous_access_type , []) THEN trail END).anonymous_access_type = coalesce(trail.anonymous_access_type , []) + 'public_bucket';",
-			"iterative": false
-		}
-	],
-	"name": "aws cloudtrail asset internet exposure"
+  "statements": [
+    {
+      "query": "MATCH (trail:AWSCloudTrailTrail)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE EXISTS(trail.exposed_internet) WITH trail LIMIT $LIMIT_SIZE REMOVE trail.exposed_internet, trail.exposed_internet_type, trail.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (bucket:S3Bucket{anonymous_access: true})-[:HAS_BUCKET]-(trail:AWSCloudTrailTrail)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET trail.anonymous_actions = bucket.anonymous_actions, trail.anonymous_access = true, (CASE WHEN NOT 'public_bucket' IN  coalesce(trail.anonymous_access_type , []) THEN trail END).anonymous_access_type = coalesce(trail.anonymous_access_type , []) + 'public_bucket';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (bucket:S3Bucket{anonymous_access: true})-[:HAS_BUCKET]-(trail:AWSCloudTrailTrail)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE trail.anonymous_access = true WITH trail, bucket SET trail.publicContext = apoc.convert.toJson([{resource: trail.id, resourceType: 'aws-cloudtrail-trail', context: [{trailArn: trail.id, trailName: trail.name, bucketName: bucket.name, bucketAnonymousAccess: bucket.anonymous_access, anonymousActions: coalesce(trail.anonymous_actions, []), anonymousAccessType: coalesce(trail.anonymous_access_type, []), isMultiRegion: coalesce(trail.ismultiregiontrail, false)}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws cloudtrail asset internet exposure"
 }
