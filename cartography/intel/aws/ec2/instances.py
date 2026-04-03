@@ -168,7 +168,9 @@ def transform_ec2_instances(
 
         for instance in reservation["Instances"]:
             instance_id = instance["InstanceId"]
-            ip_owner_id = instance.get("NetworkInterfaces", [{}])[0].get("Association").get("IpOwnerId")
+            ip_owner_id = (
+                instance.get("NetworkInterfaces") or [{}]
+            )[0].get("Association", {}).get("IpOwnerId")
             is_static_ip = False if ip_owner_id == "amazon" else True if ip_owner_id else None
             InstanceArn = f"arn:aws:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
             launch_time = instance.get("LaunchTime")
@@ -205,6 +207,7 @@ def transform_ec2_instances(
                     "ReservationId": reservation_id,
                     "PublicDnsName": instance.get("PublicDnsName"),
                     "PublicIpAddress": instance.get("PublicIpAddress"),
+                    "Ipv6Address": instance.get("Ipv6Address"),
                     "PublicIpOwnerId": ip_owner_id,
                     "IsStaticIp": is_static_ip,
                     "PrivateIpAddress": instance.get("PrivateIpAddress"),

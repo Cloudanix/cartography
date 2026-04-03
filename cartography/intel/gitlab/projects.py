@@ -1,5 +1,8 @@
 import logging
 import time
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
@@ -9,6 +12,7 @@ import neo4j
 
 from cartography.intel.gitlab.pagination import paginate_request
 from cartography.util import make_requests_url
+from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -40,11 +44,75 @@ def get_project_languages(hosted_domain: str, access_token: str, project_id: int
     return languages
 
 
+@timeit
+def get_project_branches(hosted_domain: str, access_token: str, project_id: int):
+    """
+    As per the rest api docs: https://docs.gitlab.com/api/branches/#list-repository-branches
+    Pagination: https://docs.gitlab.com/api/rest/#pagination
+    """
+    url = f"{hosted_domain}/api/v4/projects/{project_id}/repository/branches?per_page=100"
+    branches = paginate_request(url, access_token)
+
+    return branches
+
+
 def transform_projects_data(projects: List[Dict]) -> List[Dict]:
     for project in projects:
         project["is_private"] = project["visibility"] == "private"
+        project["archived"] = project.get("archived", False)
+        iso_str, ts_ms = normalize_datetime(project.get("last_activity_at"))
+        project["last_activity_at"] = iso_str
+        project["last_activity_at_timestamp"] = ts_ms
 
     return projects
+
+
+def transform_branches_data(branches: List[Dict], project_id: int, project_path: str, default_branch: str = None) -> List[Dict]:
+    """
+    Transform branch data and filter to include only:
+    - Branches active in the last 90 days
+    - Default branch (always included)
+    """
+    transformed_branches = []
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=90)
+
+    for branch in branches:
+        branch_name = branch["name"]
+        commit = branch.get("commit", {})
+        committed_date_str = commit.get("committed_date")
+
+        # Always include default branch
+        if branch_name == default_branch:
+            transformed_branches.append({
+                "project_id": project_id,
+                "project_path": project_path,
+                "id": f"{project_id}:{branch_name}",
+                "name": branch_name,
+                "committed_date": committed_date_str,
+            })
+            continue
+
+        # Filter by activity date
+        if committed_date_str:
+            committed_date = datetime.fromisoformat(committed_date_str.replace('Z', '+00:00'))
+            if committed_date >= cutoff_date:
+                transformed_branches.append({
+                    "project_id": project_id,
+                    "project_path": project_path,
+                    "id": f"{project_id}:{branch_name}",
+                    "name": branch_name,
+                    "committed_date": committed_date_str,
+                })
+        else:
+            transformed_branches.append({
+                "project_id": project_id,
+                "project_path": project_path,
+                "id": f"{project_id}:{branch_name}",
+                "name": branch_name,
+                "committed_date": committed_date_str,
+            })
+
+    return transformed_branches
 
 
 def load_projects_data(
@@ -58,6 +126,46 @@ def load_projects_data(
         project_data,
         common_job_parameters,
         group_id,
+    )
+
+
+def load_branches_data(
+    session: neo4j.Session,
+    branches_data: List[Dict],
+    common_job_parameters: Dict,
+) -> None:
+    session.write_transaction(
+        _load_branches_data,
+        branches_data,
+        common_job_parameters,
+    )
+
+
+def _load_branches_data(
+    tx: neo4j.Transaction,
+    branches_data: List[Dict],
+    common_job_parameters: Dict,
+) -> None:
+    ingest_branches = """
+    UNWIND $branchesData as branch
+    MERGE (br:GitLabBranch{id:branch.id})
+    ON CREATE SET br.firstseen = timestamp()
+    SET br.name = branch.name,
+    br.committed_date = branch.committed_date,
+    br.projectid = branch.project_id,
+    br.lastupdated = $UpdateTag
+
+    WITH br, branch
+    MATCH (project:GitLabProject{path_with_namespace:branch.project_path})
+    MERGE (project)-[r:BRANCH]->(br)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+
+    tx.run(
+        ingest_branches,
+        branchesData=branches_data,
+        UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
 
@@ -82,6 +190,7 @@ def _load_projects_data(
         pro.web_url = project.web_url,
         pro.path = project.path,
         pro.id = project.id,
+        pro.projectid = project.id,
         pro.path_with_namespace = project.path_with_namespace,
         pro.description = project.description,
         pro.name_with_namespace = project.name_with_namespace,
@@ -89,8 +198,9 @@ def _load_projects_data(
         pro.is_private = project.is_private,
         pro.namespace= project.namespace.path,
         pro.last_activity_at = project.last_activity_at,
+        pro.last_activity_at_timestamp = project.last_activity_at_timestamp,
         pro.default_branch = project.default_branch,
-        pro.language = project.language,
+        pro.primary_language = project.primary_language,
         pro.lastupdated = $UpdateTag
 
     WITH pro, project
@@ -144,11 +254,23 @@ def sync(
         )
         if project_languages:
             primary_language = max(project_languages, key=project_languages.get)
-            project["language"] = primary_language
+            project["primary_language"] = primary_language.lower()
 
     group_projects = transform_projects_data(group_projects)
 
     load_projects_data(neo4j_session, group_projects, common_job_parameters, group_id)
+
+    # Sync branches for each project
+    for project in group_projects:
+        branches = get_project_branches(hosted_domain, access_token, project["id"])
+        transformed_branches = transform_branches_data(
+            branches,
+            project["id"],
+            project.get("path_with_namespace", project["path"]),
+            project.get("default_branch"),
+        )
+        load_branches_data(neo4j_session, transformed_branches, common_job_parameters)
+
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

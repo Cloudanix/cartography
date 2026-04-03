@@ -1,6 +1,9 @@
 import configparser
 import logging
 import time
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from string import Template
 from typing import Any
 from typing import Dict
@@ -13,7 +16,11 @@ from packaging.requirements import InvalidRequirement
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from cartography.intel.github.util import describe_request_error
 from cartography.intel.github.util import fetch_all
+from cartography.intel.github.util import get_retry_delay_seconds
+from cartography.intel.github.util import is_retryable_request_error
+from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -41,6 +48,7 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                     createdAt
                     description
                     updatedAt
+                    pushedAt
                     homepageUrl
                     languages(first: 25){
                         totalCount
@@ -52,7 +60,25 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                         name
                         id
                     }
+                    refs(first: 100, refPrefix: "refs/heads/", after: null) {
+                        pageInfo {
+                            hasNextPage
+                            endCursor
+                        }
+                        edges {
+                            node {
+                                name
+                                id
+                                target {
+                                    ... on Commit {
+                                        pushedDate
+                                    }
+                                }
+                            }
+                        }
+                    }
                     isPrivate
+                    visibility
                     isArchived
                     isDisabled
                     isLocked
@@ -102,15 +128,30 @@ def get(token: str, api_url: str, organization: str) -> List[Dict]:
     :param organization: The name of the target Github organization as string.
     :return: A list of dicts representing repos. See tests.data.github.repos for data shape.
     """
-    # TODO: link the Github organization to the repositories
-    repos, _ = fetch_all(
-        token,
-        api_url,
-        organization,
-        GITHUB_ORG_REPOS_PAGINATED_GRAPHQL,
-        "repositories",
-    )
-    return repos.nodes
+    # # TODO: link the Github organization to the repositories
+    # try:
+    #     repos, _ = fetch_all(
+    #         token,
+    #         api_url,
+    #         organization,
+    #         GITHUB_ORG_REPOS_PAGINATED_GRAPHQL,
+    #         "repositories",
+    #     )
+    #     return repos.nodes
+    # except requests.exceptions.RequestException as err:
+    #     if not is_retryable_request_error(err):
+    #         raise
+
+    #     logger.info(
+    #         (
+    #             f"GitHub GraphQL repository sync failed for org `{organization}` "
+    #             f"with {describe_request_error(err)}; falling back to REST repository listing."
+    #         ),
+    #         exc_info=True,
+    #     )
+
+    rest_repos = get_org_repos(organization, token, api_url)
+    return [_normalize_rest_repo(rest_repo) for rest_repo in rest_repos]
 
 
 def transform(repos_json: List[Dict]) -> Dict:
@@ -133,21 +174,102 @@ def transform(repos_json: List[Dict]) -> Dict:
         "WRITE": [],
     }
     transformed_requirements_files: List[Dict] = []
+    transformed_branches: List[Dict] = []
     for repo_object in repos_json:
         _transform_repo_languages(repo_object["url"], repo_object, transformed_repo_languages)
         _transform_repo_objects(repo_object, transformed_repo_list)
         _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
-        _transform_collaborators(repo_object["collaborators"], repo_object["url"], transformed_collaborators)
+        _transform_collaborators(repo_object.get("collaborators"), repo_object["url"], transformed_collaborators)
+        _transform_branches(repo_object["url"], repo_object, transformed_branches)
         # _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
         # _transform_setup_cfg_requirements(repo_object["setupCfg"], repo_object["url"], transformed_requirements_files)
+
+    # Compute last_activity_at per repo from branch commit timestamps
+    # Priority: (1) default branch commit date, (2) max across all branches
+    branches_by_repo: Dict[str, List[Dict]] = {}
+    for b in transformed_branches:
+        branches_by_repo.setdefault(b["repo_id"], []).append(b)
+
+    for repo in transformed_repo_list:
+        default_branch_name = repo.get("default_branch")
+        repo_branches = branches_by_repo.get(repo["id"], [])
+        last_activity_at = None
+        if default_branch_name:
+            for b in repo_branches:
+                if b["name"] == default_branch_name and b.get("last_commit_timestamp"):
+                    last_activity_at = b["last_commit_timestamp"]
+                    break
+
+        if last_activity_at is None:
+            all_dates = [b["last_commit_timestamp"] for b in repo_branches if b.get("last_commit_timestamp")]
+            last_activity_at = max(all_dates) if all_dates else None
+
+        # Fall back to repo's updatedAt when no branch commit timestamps are available
+        # (pushedDate is null for commits not created via a GitHub push event)
+        if last_activity_at is None:
+            last_activity_at = repo.get("pushedat") or repo.get("updatedat")
+
+        iso_str, ts_ms = normalize_datetime(last_activity_at)
+        repo["last_activity_at"] = iso_str
+        repo["last_activity_at_timestamp"] = ts_ms
+
     results = {
         "repos": transformed_repo_list,
         "repo_languages": transformed_repo_languages,
         "repo_owners": transformed_repo_owners,
         "repo_collaborators": transformed_collaborators,
         "python_requirements": transformed_requirements_files,
+        "branches": transformed_branches,
     }
     return results
+
+
+def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Dict]) -> None:
+    """
+    Transform branch data and filter to include only:
+    - Branches active in the last 90 days
+    - Default branch (always included)
+    """
+    if not repo.get("refs"):
+        return
+
+    default_branch = repo.get("defaultBranchRef", {}).get("name") if repo.get("defaultBranchRef") else None
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=90)
+
+    for edge in (repo["refs"].get("edges") or []):
+        node = edge["node"]
+        branch_name = node["name"]
+        target = node.get("target")
+        pushed_date_str = target.get("pushedDate") if target else None
+
+        # Always include default branch
+        if branch_name == default_branch:
+            transformed_branches.append({
+                "repo_id": repo_url,
+                "branch_id": f"{repo_url}:{node['id']}",
+                "name": branch_name,
+                "last_commit_timestamp": pushed_date_str,
+            })
+            continue
+
+        # Filter by activity date
+        if pushed_date_str:
+            pushed_date = datetime.fromisoformat(pushed_date_str.replace('Z', '+00:00'))
+            if pushed_date >= cutoff_date:
+                transformed_branches.append({
+                    "repo_id": repo_url,
+                    "branch_id": f"{repo_url}:{node['id']}",
+                    "name": branch_name,
+                    "last_commit_timestamp": pushed_date_str,
+                })
+        else:
+            # No date available, include the branch
+            transformed_branches.append({
+                "repo_id": repo_url,
+                "branch_id": f"{repo_url}:{node['id']}",
+                "name": branch_name,
+                "last_commit_timestamp": pushed_date_str,
+            })
 
 
 def _create_default_branch_id(repo_url: str, default_branch_ref_id: str) -> str:
@@ -176,11 +298,18 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
     # Create a unique ID for a GitHubBranch node representing the default branch of this repo object.
     dbr = input_repo_object["defaultBranchRef"]
     default_branch_name = dbr["name"] if dbr else None
-    default_branch_id = _create_default_branch_id(input_repo_object["url"], dbr["id"]) if dbr else None
+    default_branch_id = (
+        _create_default_branch_id(input_repo_object["url"], dbr["id"])
+        if dbr and dbr.get("id")
+        else None
+    )
 
     # Create a git:// URL from the given SSH URL, if it exists.
     ssh_url = input_repo_object.get("sshUrl")
     git_url = _create_git_url_from_ssh_url(ssh_url) if ssh_url else None
+    visibility = input_repo_object.get("visibility")
+    if visibility is None:
+        visibility = "private" if input_repo_object["isPrivate"] else "public"
 
     out_repo_list.append(
         {
@@ -189,11 +318,14 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
             "name": input_repo_object["name"],
             "fullname": input_repo_object["nameWithOwner"],
             "description": input_repo_object["description"],
-            "primarylanguage": input_repo_object["primaryLanguage"],
+            "primary_language": (
+                input_repo_object["primaryLanguage"]["name"] if input_repo_object.get("primaryLanguage") else ""
+            ).lower(),
             "homepage": input_repo_object["homepageUrl"],
-            "defaultbranch": default_branch_name,
+            "default_branch": default_branch_name,
             "defaultbranchid": default_branch_id,
-            "private": input_repo_object["isPrivate"],
+            "is_private": input_repo_object["isPrivate"],
+            "visibility": visibility,
             "disabled": input_repo_object["isDisabled"],
             "archived": input_repo_object["isArchived"],
             "locked": input_repo_object["isLocked"],
@@ -201,6 +333,7 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
             "url": input_repo_object["url"],
             "sshurl": ssh_url,
             "updatedat": input_repo_object["updatedAt"],
+            "pushedat": input_repo_object["pushedAt"],
         },
     )
 
@@ -231,7 +364,7 @@ def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Di
     :param repo_languages: Output array to append transformed results to.
     :return: Nothing.
     """
-    if repo["languages"]["totalCount"] > 0:
+    if repo.get("languages") and repo["languages"]["totalCount"] > 0:
         for language in repo["languages"]["nodes"]:
             repo_languages.append(
                 {
@@ -400,11 +533,12 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
     SET repo.name = repository.name,
     repo.fullname = repository.fullname,
     repo.description = repository.description,
-    repo.primarylanguage = repository.primarylanguage.name,
+    repo.primary_language = repository.primary_language,
     repo.homepage = repository.homepage,
-    repo.defaultbranch = repository.defaultbranch,
+    repo.default_branch = repository.default_branch,
     repo.defaultbranchid = repository.defaultbranchid,
-    repo.private = repository.private,
+    repo.is_private = repository.is_private,
+    repo.visibility = repository.visibility,
     repo.disabled = repository.disabled,
     repo.archived = repository.archived,
     repo.locked = repository.locked,
@@ -412,18 +546,20 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
     repo.url = repository.url,
     repo.sshurl = repository.sshurl,
     repo.updatedat = repository.updatedat,
+    repo.last_activity_at = repository.last_activity_at,
+    repo.last_activity_at_timestamp = repository.last_activity_at_timestamp,
     repo.lastupdated = $UpdateTag
 
     WITH repo
-    WHERE repo.defaultbranch IS NOT NULL AND repo.defaultbranchid IS NOT NULL
+    WHERE repo.default_branch IS NOT NULL AND repo.defaultbranchid IS NOT NULL
     MERGE (branch:GitHubBranch{id: repo.defaultbranchid})
     ON CREATE SET branch.firstseen = timestamp()
-    SET branch.name = repo.defaultbranch,
+    SET branch.name = repo.default_branch,
     branch.lastupdated = $UpdateTag
 
     MERGE (repo)-[r:BRANCH]->(branch)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = r.UpdateTag
+    SET r.lastupdated = $UpdateTag
     """
     neo4j_session.run(
         ingest_repo,
@@ -529,10 +665,41 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
 @timeit
 def load(neo4j_session: neo4j.Session, common_job_parameters: Dict, repo_data: Dict) -> None:
     load_github_repos(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repos"])
+    load_github_branches(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["branches"])
     load_github_owners(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_owners"])
     load_github_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_languages"])
     load_collaborators(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_collaborators"])
     load_python_requirements(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["python_requirements"])
+
+
+@timeit
+def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_data: List[Dict]) -> None:
+    """
+    Ingest the GitHub branch information
+    :param neo4j_session: Neo4J session object for server communication
+    :param update_tag: Timestamp used to determine data freshness
+    :param branch_data: branch data objects
+    :return: None
+    """
+    ingest_branches = """
+    UNWIND $BranchData as branch_info
+    MERGE (branch:GitHubBranch{id: branch_info.branch_id})
+    ON CREATE SET branch.firstseen = timestamp()
+    SET branch.name = branch_info.name,
+    branch.last_commit_timestamp = branch_info.last_commit_timestamp,
+    branch.lastupdated = $UpdateTag
+
+    WITH branch, branch_info
+    MATCH (repo:GitHubRepository{id: branch_info.repo_id})
+    MERGE (repo)-[r:BRANCH]->(branch)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+    neo4j_session.run(
+        ingest_branches,
+        BranchData=branch_data,
+        UpdateTag=update_tag,
+    )
 
 
 @timeit
@@ -559,9 +726,64 @@ def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requ
     )
 
 
-def get_org_repos(org_name, access_token):
+def _build_org_repos_url(api_url: str, org_name: str) -> str:
+    api_root = api_url.rstrip("/")
+    for suffix, replacement in (
+        ("/api/v3/graphql", "/api/v3"),
+        ("/api/graphql", "/api/v3"),
+        ("/graphql", ""),
+    ):
+        if api_root.endswith(suffix):
+            api_root = f"{api_root[:-len(suffix)]}{replacement}"
+            break
+
+    return f"{api_root}/orgs/{org_name}/repos"
+
+
+def _normalize_rest_repo(repo: Dict[str, Any]) -> Dict[str, Any]:
+    owner = repo.get("owner") or {}
+    owner_login = owner.get("login")
+    owner_url = owner.get("html_url") or (
+        f"https://github.com/{owner_login}" if owner_login else owner.get("url")
+    )
+    default_branch_name = repo.get("default_branch")
+
+    return {
+        "name": repo["name"],
+        "nameWithOwner": repo.get("full_name") or repo["name"],
+        "primaryLanguage": {"name": repo["language"]} if repo.get("language") else None,
+        "url": repo["html_url"],
+        "sshUrl": repo.get("ssh_url"),
+        "createdAt": repo["created_at"],
+        "description": repo.get("description"),
+        "updatedAt": repo["updated_at"],
+        "pushedAt": repo["pushed_at"],
+        "homepageUrl": repo.get("homepage"),
+        "languages": {"totalCount": 0, "nodes": []},
+        "defaultBranchRef": (
+            {"name": default_branch_name, "id": None}
+            if default_branch_name
+            else None
+        ),
+        "isPrivate": repo["private"],
+        "visibility": repo.get("visibility") or ("private" if repo["private"] else "public"),
+        "isArchived": repo.get("archived", False),
+        "isDisabled": repo.get("disabled", False),
+        "isLocked": repo.get("locked", False),
+        "owner": {
+            "url": owner_url,
+            "login": owner_login,
+            "__typename": owner.get("type", "Organization"),
+        },
+        "collaborators": None,
+        "requirements": None,
+        "setupCfg": None,
+    }
+
+
+def get_org_repos(org_name: str, access_token: str, api_url: str, retries: int = 5) -> List[Dict[str, Any]]:
     # GitHub API endpoint for listing organization repositories
-    url = f"https://api.github.com/orgs/{org_name}/repos"
+    url = _build_org_repos_url(api_url, org_name)
 
     # Headers for authentication and API version
     headers = {"Authorization": f"token {access_token}", "Accept": "application/vnd.github.v3+json"}
@@ -570,19 +792,48 @@ def get_org_repos(org_name, access_token):
     page = 1
 
     while True:
-        # Make the API request
-        response = requests.get(url, headers=headers, params={"page": page, "per_page": 100})
+        retry = 0
+        repos = None
+        while retry < retries:
+            try:
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    params={"page": page, "per_page": 100},
+                    timeout=(60, 60),
+                )
+                response.raise_for_status()
+                repos = response.json()
+                break
+            except (
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError,
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.ConnectionError,
+            ) as err:
+                retry += 1
+                if retry >= retries or not is_retryable_request_error(err):
+                    logger.error(
+                        (
+                            f"GitHub REST repository fallback failed for org `{org_name}` "
+                            f"after {retry} attempts ({describe_request_error(err)})."
+                        ),
+                        exc_info=True,
+                    )
+                    raise
+                logger.warning(
+                    (
+                        f"GitHub REST repository fallback retry for org `{org_name}` "
+                        f"after {describe_request_error(err)} ({retry}/{retries})."
+                    ),
+                )
+                time.sleep(get_retry_delay_seconds(err, retry))
 
-        # Check if the request was successful
-        if response.status_code == 200:
-            repos = response.json()
-            if not repos:
-                break  # No more repositories to fetch
-
-            all_repos.extend(repos)
-            page += 1
-        else:
+        if not repos:
             break
+
+        all_repos.extend(repos)
+        page += 1
 
     return all_repos
 

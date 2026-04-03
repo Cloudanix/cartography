@@ -8,6 +8,7 @@ import neo4j
 
 from .util import call_azure_devops_api_pagination
 from .util import validate_project_data
+from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -68,7 +69,10 @@ def load_projects(
     - state: Project state (active, deleted, etc.)
     - revision: Project revision number
     - visibility: Project visibility (private, public)
+    - is_private: Boolean indicating if the project is private
     - lastUpdateTime: Last update timestamp
+    - last_activity_at: Last activity timestamp
+    - last_activity_at_timestamp: Last activity timestamp in milliseconds
     - description: Project description (if available)
     - capabilities: Project capabilities (if available)
     """
@@ -77,14 +81,17 @@ def load_projects(
 
     MERGE (p:AzureDevOpsProject{id: project.id})
     ON CREATE SET p.firstseen = timestamp()
-    ON MATCH SET
+    SET
         p.lastupdated = $UPDATE_TAG,
         p.name = project.name,
         p.url = project.url,
         p.state = project.state,
         p.revision = project.revision,
         p.visibility = project.visibility,
+        p.is_private = CASE WHEN project.visibility = 'private' THEN true ELSE false END,
         p.lastupdatetime = project.lastUpdateTime,
+        p.last_activity_at = project.last_activity_at,
+        p.last_activity_at_timestamp = project.last_activity_at_timestamp,
         p.description = project.description,
         p.capabilities = project.capabilities
 
@@ -123,6 +130,10 @@ def sync(
     logger.info(f"Syncing projects for organization '{organization_name}'")
     projects = get_projects(azure_devops_url, organization_name, access_token)
     if projects:
+        for project in projects:
+            iso_str, ts_ms = normalize_datetime(project.get("lastUpdateTime"))
+            project["last_activity_at"] = iso_str
+            project["last_activity_at_timestamp"] = ts_ms
         load_projects(neo4j_session, projects, organization_name, common_job_parameters)
         cleanup(neo4j_session, common_job_parameters)
     return projects

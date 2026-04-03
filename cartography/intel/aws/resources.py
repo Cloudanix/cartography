@@ -1,6 +1,7 @@
 from typing import Dict
 
 from . import apigateway
+from . import bedrock
 from . import cloudformation
 from . import cloudfront
 from . import cloudtrail
@@ -24,6 +25,7 @@ from . import redshift
 from . import resourcegroupstaggingapi
 from . import route53
 from . import s3
+from . import sagemaker
 from . import secretsmanager
 from . import securityhub
 from . import ses
@@ -67,6 +69,8 @@ RESOURCE_FUNCTIONS: Dict = {
     'sqs': sqs.sync,
     'sns': sns.sync,
     'ses': ses.sync,
+    'sagemaker': sagemaker.sync,
+    'bedrock': bedrock.sync,
     'cloudwatch': cloudwatch.sync,
     'cloudfront': cloudfront.sync,
     'cloudformation': cloudformation.sync,
