@@ -98,7 +98,7 @@ def load_ec2_instances(
     instance.tenancy = {Tenancy}, instance.hostresourcegrouparn = {HostResourceGroupArn},
     instance.platform = {Platform}, instance.architecture = {Architecture}, instance.ebsoptimized = {EbsOptimized},
     instance.bootmode = {BootMode}, instance.instancelifecycle = {InstanceLifecycle},
-    instance.hibernationoptions = {HibernationOptions}
+    instance.hibernationoptions = {HibernationOptions}, instance.is_spot_instance = {IsSpotInstance}
     WITH instance
     MATCH (rez:EC2Reservation{reservationid: {ReservationId}})
     MERGE (instance)-[r:MEMBER_OF_EC2_RESERVATION]->(rez)
@@ -203,6 +203,7 @@ def load_ec2_instances(
                 EbsOptimized=instance.get("EbsOptimized"),
                 BootMode=instance.get("BootMode"),
                 InstanceLifecycle=instance.get("InstanceLifecycle"),
+                IsSpotInstance=instance.get("InstanceLifecycle") == 'spot',
                 HibernationOptions=instance.get("HibernationOptions", {}).get("Configured"),
                 AWS_ACCOUNT_ID=current_aws_account_id,
                 Region=region,
