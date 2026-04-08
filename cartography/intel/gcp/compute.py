@@ -545,6 +545,9 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
         x = res["zone_name"].split("-")
         res["region"] = f"{x[0]}-{x[1]}"
 
+        scheduling = res.get("scheduling", {})
+        res["is_spot_instance"] = scheduling.get("provisioningModel") == "SPOT" or scheduling.get("preemptible") is True
+
         for disk in res.get("disks", []):
             if disk.get("boot"):
                 res["diskName"] = disk.get("initializeParams", {}).get("diskName")
@@ -985,7 +988,8 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     i.machine_type = instance.machineType,
     i.source_image = instance.sourceImage,
     i.disk_name = instance.diskName,
-    i.os_features = instance.osFeatures
+    i.os_features = instance.osFeatures,
+    i.is_spot_instance = instance.is_spot_instance
     WITH i, p
 
     MERGE (p)-[r:RESOURCE]->(i)
