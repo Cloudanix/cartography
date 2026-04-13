@@ -69,6 +69,7 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
             os_disk = vm.get("storage_profile", {}).get("os_disk", {})
             vm['os_type'] = os_disk.get('os_type')
             vm['os_disk_name'] = os_disk.get('name')
+            vm['is_spot_instance'] = str(vm.get('priority', '')).lower() == 'spot'
             image_reference = vm.get("storage_profile", {}).get("image_reference", {})
             sku = image_reference.get('sku')
             offer = image_reference.get('offer')
@@ -117,6 +118,7 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.identity_type=vm.identity.type, v.zones=vm.zones,
     v.ultra_ssd_enabled=vm.additional_capabilities.ultra_ssd_enabled,
     v.priority=vm.priority, v.eviction_policy=vm.eviction_policy,
+    v.is_spot_instance=vm.is_spot_instance,
     v.vm_size=vm.hardware_profile.vm_size,
     v.publisher=vm.storage_profile.image_reference.publisher,
     v.offer=vm.storage_profile.image_reference.offer,
