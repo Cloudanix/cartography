@@ -546,7 +546,7 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
         res["region"] = f"{x[0]}-{x[1]}"
 
         scheduling = res.get("scheduling", {})
-        res["is_spot_instance"] = scheduling.get("provisioningModel") == "SPOT" or scheduling.get("preemptible") is True
+        res["is_spot_instance"] = str(scheduling.get("provisioningModel", "")).lower() == "spot" or scheduling.get("preemptible") is True
 
         for disk in res.get("disks", []):
             if disk.get("boot"):

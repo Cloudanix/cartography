@@ -201,7 +201,7 @@ def transform_ec2_instances(
 
             vm_os_version = os_details.get("Name", "Unknown")
 
-            is_spot_instance = instance.get("InstanceLifecycle") == "spot"
+            is_spot_instance = str(instance.get("InstanceLifecycle", "")).lower() == "spot"
 
             instance_list.append(
                 {

@@ -69,7 +69,7 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
             os_disk = vm.get("storage_profile", {}).get("os_disk", {})
             vm['os_type'] = os_disk.get('os_type')
             vm['os_disk_name'] = os_disk.get('name')
-            vm['is_spot_instance'] = True if vm.get('priority') == 'Spot' else False
+            vm['is_spot_instance'] = str(vm.get('priority', '')).lower() == 'spot'
             image_reference = vm.get("storage_profile", {}).get("image_reference", {})
             sku = image_reference.get('sku')
             offer = image_reference.get('offer')
