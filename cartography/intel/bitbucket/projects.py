@@ -34,10 +34,11 @@ def transform_projects(workspace_projects: List[Dict], workspace: str) -> List[D
     for project in workspace_projects:
         project['workspace']['uuid'] = project['workspace']['uuid'].replace('{', '').replace('}', '')
         project['uuid'] = project['uuid'].replace('{', '').replace('}', '')
+        project['slug'] = project['key']
 
         data = {
             "workspace": workspace,
-            "project": cleanse_string(project["name"]),
+            "project": cleanse_string(project["slug"]),
         }
         project['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="project")
 
@@ -62,6 +63,7 @@ def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_
     pro.is_private = project.is_private,
     pro.has_publicly_visible_repos=project.has_publicly_visible_repos,
     pro.key=project.key,
+    pro.slug=project.slug,
     pro.owner=project.owner.display_name,
     pro.type=project.type,
     pro.updated_on=project.updated_on,
