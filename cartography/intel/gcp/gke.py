@@ -53,6 +53,9 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
     :type cluster_resp: Dict
     :param cluster_resp: A cluster response object from the GKE API
 
+    :type project_id: str
+    :param project_id: The GCP project ID
+
     :type gcp_update_tag: timestamp
     :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
 
@@ -135,6 +138,79 @@ def load_gke_clusters(neo4j_session: neo4j.Session, cluster_resp: Dict, project_
         )
 
 
+@timeit
+def load_gke_node_pools(
+    neo4j_session: neo4j.Session, cluster_resp: Dict, project_id: str, gcp_update_tag: int,
+) -> None:
+    """
+    Ingest GKE Node Pools to Neo4j and create HAS_NODE_POOL relationships from GKECluster to GKENodePool.
+
+    Node pool IDs follow the pattern: project/{project_id}/clusters/{cluster_name}/nodePools/{pool_name}
+    This mirrors the cluster ID pattern and keeps identifiers self-describing and unique across projects.
+
+    :type neo4j_session: Neo4j session object
+    :param neo4j_session: The Neo4j session object
+
+    :type cluster_resp: Dict
+    :param cluster_resp: A cluster response object from the GKE API (same response used by load_gke_clusters)
+
+    :type project_id: str
+    :param project_id: The GCP project ID
+
+    :type gcp_update_tag: int
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+
+    :rtype: NoneType
+    :return: Nothing
+    """
+    query = """
+    MERGE (pool:GKENodePool{id:{NodePoolId}})
+    ON CREATE SET
+        pool.firstseen = timestamp()
+    SET
+        pool.name = {NodePoolName},
+        pool.cluster_id = {ClusterId},
+        pool.status = {NodePoolStatus},
+        pool.version = {NodePoolVersion},
+        pool.initial_node_count = {InitialNodeCount},
+        pool.machine_type = {MachineType},
+        pool.disk_size_gb = {DiskSizeGb},
+        pool.image_type = {ImageType},
+        pool.disk_type = {DiskType},
+        pool.auto_repair = {AutoRepair},
+        pool.max_pods_per_node = {MaxPodsPerNode},
+        pool.self_link = {SelfLink},
+        pool.lastupdated = {gcp_update_tag}
+    WITH pool
+    MATCH (cluster:GKECluster{id:{ClusterId}})
+    MERGE (cluster)-[r:HAS_NODE_POOL]->(pool)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = {gcp_update_tag}
+    """
+    for cluster in cluster_resp.get('clusters', []):
+        cluster_id = f"project/{project_id}/clusters/{cluster['name']}"
+        for pool in cluster.get('nodePools', []):
+            node_pool_id = f"{cluster_id}/nodePools/{pool['name']}"
+            config = pool.get('config', {})
+            neo4j_session.run(
+                query,
+                NodePoolId=node_pool_id,
+                ClusterId=cluster_id,
+                NodePoolName=pool['name'],
+                NodePoolStatus=pool.get('status'),
+                NodePoolVersion=pool.get('version'),
+                InitialNodeCount=pool.get('initialNodeCount'),
+                MachineType=config.get('machineType'),
+                DiskSizeGb=config.get('diskSizeGb'),
+                ImageType=config.get('imageType'),
+                DiskType=config.get('diskType'),
+                AutoRepair=pool.get('management', {}).get('autoRepair'),
+                MaxPodsPerNode=pool.get('maxPodsConstraint', {}).get('maxPodsPerNode'),
+                SelfLink=pool.get('selfLink'),
+                gcp_update_tag=gcp_update_tag,
+            )
+
+
 def _process_network_policy(cluster: Dict) -> bool:
     """
     Parse cluster.networkPolicy to verify if
@@ -165,12 +241,30 @@ def cleanup_gke_clusters(neo4j_session: neo4j.Session, common_job_parameters: Di
 
 
 @timeit
+def cleanup_gke_node_pools(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    Delete out-of-date GKE NodePool nodes and relationships.
+
+    :type neo4j_session: The Neo4j session object
+    :param neo4j_session: The Neo4j session
+
+    :type common_job_parameters: dict
+    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+
+    :rtype: NoneType
+    :return: Nothing
+    """
+    run_cleanup_job('gcp_gke_node_pool_cleanup.json', neo4j_session, common_job_parameters)
+
+
+@timeit
 def sync_gke_clusters(
     neo4j_session: neo4j.Session, container: Resource, project_id: str, gcp_update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
     """
     Get GCP GKE Clusters using the Container resource object, ingest to Neo4j, and clean up old data.
+    Also ingests NodePools belonging to each cluster.
 
     :type neo4j_session: The Neo4j session object
     :param neo4j_session: The Neo4j session
@@ -190,8 +284,10 @@ def sync_gke_clusters(
     :rtype: NoneType
     :return: Nothing
     """
-    logger.info("Syncing Compute objects for project %s.", project_id)
+    logger.info("Syncing GKE objects for project %s.", project_id)
     gke_res = get_gke_clusters(container, project_id)
     load_gke_clusters(neo4j_session, gke_res, project_id, gcp_update_tag)
+    load_gke_node_pools(neo4j_session, gke_res, project_id, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gke_clusters(neo4j_session, common_job_parameters)
+    cleanup_gke_node_pools(neo4j_session, common_job_parameters)

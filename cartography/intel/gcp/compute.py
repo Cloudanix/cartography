@@ -197,6 +197,12 @@ def transform_gcp_instances(response_objects: List[Dict]) -> List[Dict]:
             instance['project_id'] = prefix_fields.project_id
             instance['zone_name'] = prefix_fields.zone_name
 
+            # Extract GKE metadata labels if this instance is a Kubernetes node.
+            # GCP automatically attaches these labels to all GKE-managed instances.
+            labels = instance.get('labels', {})
+            instance['gke_cluster_name'] = labels.get('goog-gke-cluster-name')
+            instance['gke_node_pool_name'] = labels.get('goog-gke-nodepool')
+
             for nic in instance.get('networkInterfaces', []):
                 nic['subnet_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['subnetwork'])
                 nic['vpc_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['network'])
@@ -520,6 +526,8 @@ def load_gcp_instances(neo4j_session: neo4j.Session, data: List[Dict], gcp_updat
     i.zone_name = {ZoneName},
     i.project_id = {ProjectId},
     i.status = {Status},
+    i.gke_cluster_name = {GkeClusterName},
+    i.gke_node_pool_name = {GkeNodePoolName},
     i.lastupdated = {gcp_update_tag}
     WITH i, p
 
@@ -537,11 +545,102 @@ def load_gcp_instances(neo4j_session: neo4j.Session, data: List[Dict], gcp_updat
             ZoneName=instance['zone_name'],
             Hostname=instance.get('hostname', None),
             Status=instance['status'],
+            GkeClusterName=instance.get('gke_cluster_name'),
+            GkeNodePoolName=instance.get('gke_node_pool_name'),
             gcp_update_tag=gcp_update_tag,
         )
         _attach_instance_tags(neo4j_session, instance, gcp_update_tag)
         _attach_gcp_nics(neo4j_session, instance, gcp_update_tag)
         _attach_gcp_vpc(neo4j_session, instance['partial_uri'], gcp_update_tag)
+        # Link to GKE cluster and node pool if this instance is a Kubernetes node
+        if instance.get('gke_cluster_name'):
+            _link_instance_to_gke_cluster(neo4j_session, instance, gcp_update_tag)
+        if instance.get('gke_cluster_name') and instance.get('gke_node_pool_name'):
+            _link_instance_to_gke_node_pool(neo4j_session, instance, gcp_update_tag)
+
+
+def _link_instance_to_gke_cluster(
+    neo4j_session: neo4j.Session, instance: Dict, gcp_update_tag: int,
+) -> None:
+    """
+    Create a HAS_NODE relationship from a GKECluster to a GCPInstance.
+
+    This is only called when a GCPInstance carries the 'goog-gke-cluster-name' label, which GCP sets
+    automatically on all nodes that belong to a GKE cluster.  The cluster node must already exist in
+    Neo4j (i.e. load_gke_clusters must run before load_gcp_instances in the same sync).
+
+    The cluster ID is reconstructed using the same pattern used in load_gke_clusters:
+        project/{project_id}/clusters/{cluster_name}
+
+    :type neo4j_session: The Neo4j session object
+    :param neo4j_session: The Neo4j session
+
+    :type instance: Dict
+    :param instance: A single transformed GCP instance dict that includes 'gke_cluster_name' and 'project_id'
+
+    :type gcp_update_tag: int
+    :param gcp_update_tag: The timestamp value to set on the relationship
+
+    :rtype: NoneType
+    :return: Nothing
+    """
+    query = """
+    MATCH (cluster:GKECluster{id:{ClusterId}})
+    MATCH (i:GCPInstance{id:{PartialUri}})
+    MERGE (cluster)-[r:HAS_NODE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = {gcp_update_tag}
+    """
+    cluster_id = f"project/{instance['project_id']}/clusters/{instance['gke_cluster_name']}"
+    neo4j_session.run(
+        query,
+        ClusterId=cluster_id,
+        PartialUri=instance['partial_uri'],
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+def _link_instance_to_gke_node_pool(
+    neo4j_session: neo4j.Session, instance: Dict, gcp_update_tag: int,
+) -> None:
+    """
+    Create a HAS_NODE relationship from a GKENodePool to a GCPInstance.
+
+    This is only called when a GCPInstance carries both 'goog-gke-cluster-name' and 'goog-gke-nodepool'
+    labels.  The node pool node must already exist in Neo4j (i.e. load_gke_node_pools must run before
+    load_gcp_instances in the same sync).
+
+    The node pool ID is reconstructed using the pattern from load_gke_node_pools:
+        project/{project_id}/clusters/{cluster_name}/nodePools/{pool_name}
+
+    :type neo4j_session: The Neo4j session object
+    :param neo4j_session: The Neo4j session
+
+    :type instance: Dict
+    :param instance: A single transformed GCP instance dict that includes 'gke_cluster_name',
+                     'gke_node_pool_name', and 'project_id'
+
+    :type gcp_update_tag: int
+    :param gcp_update_tag: The timestamp value to set on the relationship
+
+    :rtype: NoneType
+    :return: Nothing
+    """
+    query = """
+    MATCH (pool:GKENodePool{id:{NodePoolId}})
+    MATCH (i:GCPInstance{id:{PartialUri}})
+    MERGE (pool)-[r:HAS_NODE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = {gcp_update_tag}
+    """
+    cluster_id = f"project/{instance['project_id']}/clusters/{instance['gke_cluster_name']}"
+    node_pool_id = f"{cluster_id}/nodePools/{instance['gke_node_pool_name']}"
+    neo4j_session.run(
+        query,
+        NodePoolId=node_pool_id,
+        PartialUri=instance['partial_uri'],
+        gcp_update_tag=gcp_update_tag,
+    )
 
 
 @timeit
