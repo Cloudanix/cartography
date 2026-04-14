@@ -462,28 +462,6 @@ def load_ec2_roles(
     )
 
 
-@timeit
-def load_ec2_instance_image_relations(
-    neo4j_session: neo4j.Session,
-    instance_list: List[Dict[str, Any]],
-    update_tag: int,
-) -> None:
-    ingest_image_relations = """
-    UNWIND $instances AS instance
-    MATCH (i:EC2Instance {id: instance.InstanceId})
-    MATCH (img:EC2Image {imageid: instance.ImageId})
-    MERGE (i)-[r:CHILDREN]->(img)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
-    """
-    instances_with_images = [inst for inst in instance_list if inst.get("ImageId")]
-    neo4j_session.run(
-        ingest_image_relations,
-        instances=instances_with_images,
-        aws_update_tag=update_tag,
-    )
-
-
 def load_ec2_instance_data(
     neo4j_session: neo4j.Session,
     region: str,
@@ -506,7 +484,8 @@ def load_ec2_instance_data(
     load_ec2_network_interfaces(neo4j_session, nic_list, region, current_aws_account_id, update_tag)
     load_ec2_instance_ebs_volumes(neo4j_session, ebs_volumes_list, region, current_aws_account_id, update_tag)
     load_ec2_roles(neo4j_session, role_data, region, current_aws_account_id, update_tag)
-    load_ec2_instance_image_relations(neo4j_session, instance_list, update_tag)
+    # Note: EC2Instance -[:CHILDREN]-> EC2Image relationship is created in images.py
+    # (sync_ec2_images -> link_ec2_instances_to_images) after EC2Image nodes exist.
 
 
 @timeit
