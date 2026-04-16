@@ -201,6 +201,8 @@ def transform_ec2_instances(
 
             vm_os_version = os_details.get("Name", "Unknown")
 
+            is_spot_instance = str(instance.get("InstanceLifecycle", "")).lower() == "spot"
+
             instance_list.append(
                 {
                     "InstanceId": instance_id,
@@ -236,6 +238,7 @@ def transform_ec2_instances(
                     "arn": InstanceArn,
                     "IamRoles": iam_roles,
                     "UserData": user_data,
+                    "IsSpotInstance": is_spot_instance,
                 },
             )
 

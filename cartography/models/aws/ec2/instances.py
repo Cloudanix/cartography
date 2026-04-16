@@ -45,6 +45,7 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     consolelink: PropertyRef = PropertyRef("consolelink")
     arn: PropertyRef = PropertyRef("arn")
     userdata: PropertyRef = PropertyRef("UserData")
+    is_spot_instance: PropertyRef = PropertyRef("IsSpotInstance")
 
 
 #    roleArn: PropertyRef = PropertyRef('RoleArn')

@@ -1,18 +1,22 @@
 {
-    "statements": [
-        {
-            "query": "MATCH ((n:AzureNetworkSubnet)<-[:CONTAIN]-(:AzureNetwork)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) where EXISTS(n.exposed_internet) WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type return COUNT(*) as TotalCompleted",
-            "iterative": true,
-            "iterationsize": 100
-        },
-        {
-            "query": "MATCH ((subnet:AzureNetworkSubnet)<-[:CONTAIN]-(n:AzureNetwork)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE NOT (subnet)-[:MEMBER_NETWORK_SECURITY_GROUP]->(:AzureNetworkSecurityGroup) SET subnet.exposed_internet = true, (CASE WHEN NOT 'no_nsg_attached' IN  coalesce(subnet.exposed_internet_type , []) THEN subnet END).exposed_internet_type = coalesce(subnet.exposed_internet_type , []) + 'no_nsg_attached';",
-            "iterative": false
-        },
-        {
-            "query": "MATCH ((rule:AzureNetworkSecurityRule)<-[:CONTAIN]-(group:AzureNetworkSecurityGroup)<-[:MEMBER_NETWORK_SECURITY_GROUP]-(subnet:AzureNetworkSubnet)<-[:CONTAIN]-(n:AzureNetwork)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE rule.access='Allow' AND rule.source_address_prefix IN ['0.0.0.0/0', '::/0', '*', 'Internet'] SET subnet.exposed_internet = true, (CASE WHEN NOT 'internet_exposed_rule' IN  coalesce(subnet.exposed_internet_type , []) THEN subnet END).exposed_internet_type = coalesce(subnet.exposed_internet_type , []) + 'internet_exposed_rule';",
-            "iterative": false
-        }
-    ],
-    "name": "Azure asset internet exposure"
+  "statements": [
+    {
+      "query": "MATCH ((n:AzureNetworkSubnet)<-[:CONTAIN]-(:AzureNetwork)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) where EXISTS(n.exposed_internet) WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH ((subnet:AzureNetworkSubnet)<-[:CONTAIN]-(n:AzureNetwork)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE NOT (subnet)-[:MEMBER_NETWORK_SECURITY_GROUP]->(:AzureNetworkSecurityGroup) SET subnet.exposed_internet = true, (CASE WHEN NOT 'no_nsg_attached' IN  coalesce(subnet.exposed_internet_type , []) THEN subnet END).exposed_internet_type = coalesce(subnet.exposed_internet_type , []) + 'no_nsg_attached';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH ((rule:AzureNetworkSecurityRule)<-[:CONTAIN]-(group:AzureNetworkSecurityGroup)<-[:MEMBER_NETWORK_SECURITY_GROUP]-(subnet:AzureNetworkSubnet)<-[:CONTAIN]-(n:AzureNetwork)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE rule.access='Allow' AND rule.source_address_prefix IN ['0.0.0.0/0', '::/0', '*', 'Internet'] SET subnet.exposed_internet = true, (CASE WHEN NOT 'internet_exposed_rule' IN  coalesce(subnet.exposed_internet_type , []) THEN subnet END).exposed_internet_type = coalesce(subnet.exposed_internet_type , []) + 'internet_exposed_rule';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (subnet:AzureNetworkSubnet)<-[:CONTAIN]-(vnet:AzureNetwork)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE subnet.exposed_internet = true WITH subnet, vnet OPTIONAL MATCH (rule:AzureNetworkSecurityRule)<-[:CONTAIN]-(nsg:AzureNetworkSecurityGroup)<-[:MEMBER_NETWORK_SECURITY_GROUP]-(subnet) WHERE rule.access='Allow' AND rule.source_address_prefix IN ['0.0.0.0/0', '::/0', '*', 'Internet'] WITH subnet, vnet, collect(DISTINCT {nsgId: nsg.id, ruleId: rule.id, port: rule.destination_port_range, protocol: rule.protocol, sourcePrefix: rule.source_address_prefix}) as nsgRules SET subnet.publicContext = apoc.convert.toJson([{resource: subnet.id, resourceType: 'azure-networking-subnet', context: [{subnetId: subnet.id, subnetName: subnet.name, addressPrefix: subnet.address_prefix, vnetId: vnet.id, vnetName: vnet.name, exposureTypes: subnet.exposed_internet_type, nsgRules: nsgRules}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "Azure asset internet exposure"
 }
