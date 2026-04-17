@@ -1,0 +1,10 @@
+{
+    "statements": [
+        {
+            "query": "MATCH (s)-[r:HAS_NODE]->(node) WHERE (s:AzureCluster OR s:AzureClusterAgentPool) AND (node:AzureVirtualMachine OR node:AzureVirtualMachineScaleSet) AND r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE r return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        }
+    ],
+    "name": "cleanup Azure AKS to Compute relationships"
+}
