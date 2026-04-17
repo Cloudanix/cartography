@@ -6,7 +6,7 @@
 			"iterationsize": 100
 		},
 		{
-			"query": "MATCH (instance:EC2Instance{exposed_internet: true})-[:MEMBER_AUTO_SCALE_GROUP]->(asg:AutoScalingGroup)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET asg.exposed_internet = true,asg.exposed_internet_type = coalesce(instance.exposed_internet_type , [])",
+			"query": "MATCH (instance:EC2Instance{exposed_internet: true})-[:PART_OF]->(asg:AutoScalingGroup)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET asg.exposed_internet = true,asg.exposed_internet_type = coalesce(instance.exposed_internet_type , [])",
 			"iterative": false
 		},
 		{

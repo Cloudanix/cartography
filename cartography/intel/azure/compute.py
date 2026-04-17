@@ -7,6 +7,7 @@ from azure.core.exceptions import HttpResponseError
 from azure.mgmt.compute import ComputeManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
+from . import vmss
 from .util.credentials import Credentials
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.util import get_azure_resource_group_name
@@ -120,6 +121,7 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.region = vm.location,
     v.consolelink = vm.consolelink,
     v.resourcegroup = vm.resource_group
+    SET v:VirtualMachine
     SET v.lastupdated = $update_tag, v.name = vm.name,
     v.vm_id = vm.vm_id,
     v.plan = vm.plan.product, v.size = vm.hardware_profile.vm_size,
@@ -186,9 +188,10 @@ def load_vm_image_relations(neo4j_session: neo4j.Session, vm_list: List[Dict], u
         img.version = vm.image_version
     WITH img, vm
     MATCH (v:AzureVirtualMachine {id: vm.id})
-    MERGE (v)-[r:CHILDREN]->(img)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    MERGE (v)-[:HAS]->(img)
+    MERGE (v)-[rel:HAS]->(img)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $update_tag
     """
     neo4j_session.run(
         ingest_vm_image,
@@ -485,7 +488,9 @@ def _load_vm_scale_sets_tx(
     a.region = set.location,
     a.consolelinke = set.consolelink,
     a.resourcegroup = set.resource_group
+    SET a:AzureVMScaleSet
     SET a.lastupdated = $update_tag,
+    a.subscription_id = $SUBSCRIPTION_ID,
     a.name = set.name
     WITH a
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -534,6 +539,13 @@ def sync_vm_scale_sets(
     vm_scale_sets_list = get_vm_scale_sets_list(credentials, subscription_id, regions, common_job_parameters)
 
     load_vm_scale_sets(neo4j_session, subscription_id, vm_scale_sets_list, update_tag)
+    vmss.sync_vm_scale_sets_vms_part_of_relationships(
+        neo4j_session,
+        client,
+        vm_scale_sets_list,
+        update_tag,
+        subscription_id,
+    )
     cleanup_vm_scale_sets(neo4j_session, common_job_parameters)
     sync_virtual_machine_scale_sets_extensions(
         neo4j_session, client, vm_scale_sets_list, update_tag, common_job_parameters,
