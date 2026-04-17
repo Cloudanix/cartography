@@ -81,8 +81,8 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
         repo["visibility"] = "private" if repo.get("is_private") else "public"
         data = {
             "workspace": workspace,
-            "project": cleanse_string(repo["project"]["name"]),
-            "repository": cleanse_string(repo["name"]),
+            "project": cleanse_string(repo["project"]["key"]),
+            "repository": cleanse_string(repo["slug"]),
         }
 
         repo["uniqueId"] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
@@ -207,6 +207,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     SET re.slug = repo.slug,
     re.type = repo.type,
     re.unique_id = repo.uniqueId,
+    re.slug = repo.slug,
     re.name = repo.name,
     re.is_private = repo.is_private,
     re.description = repo.description,
