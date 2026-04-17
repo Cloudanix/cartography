@@ -552,6 +552,9 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
         res["gke_cluster_name"] = labels.get("goog-gke-cluster-name")
         res["gke_node_pool_name"] = labels.get("goog-gke-nodepool")
 
+        scheduling = res.get("scheduling", {})
+        res["is_spot_instance"] = scheduling.get("provisioningModel") == "SPOT" or scheduling.get("preemptible") == True
+
         for disk in res.get("disks", []):
             if disk.get("boot"):
                 res["diskName"] = disk.get("initializeParams", {}).get("diskName")
@@ -1087,7 +1090,8 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     i.disk_name = instance.diskName,
     i.os_features = instance.osFeatures,
     i.gke_cluster_name = instance.gke_cluster_name,
-    i.gke_node_pool_name = instance.gke_node_pool_name
+    i.gke_node_pool_name = instance.gke_node_pool_name,
+    i.is_spot_instance = instance.is_spot_instance
     WITH i, p
 
     MERGE (p)-[r:RESOURCE]->(i)
@@ -1795,6 +1799,12 @@ def cleanup_gcp_instances(neo4j_session: neo4j.Session, common_job_parameters: D
 
 
 @timeit
+def cleanup_gke_compute_links(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """Removes stale HAS_NODE relationships between GKE resources and Compute instances."""
+    run_cleanup_job("gcp_gke_compute_links_cleanup.json", neo4j_session, common_job_parameters)
+
+
+@timeit
 def cleanup_gcp_vpcs(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """
     Delete out-of-date GCP VPC nodes and relationships
@@ -1947,6 +1957,7 @@ def sync_gcp_instances(
 
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_instances(neo4j_session, common_job_parameters)
+    cleanup_gke_compute_links(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, instance_list, gcp_update_tag, common_job_parameters, "instances", "GCPInstance")
 
 

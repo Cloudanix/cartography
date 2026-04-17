@@ -1,7 +1,7 @@
 {
     "statements": [
         {
-            "query": "MATCH (s)-[r:HAS_NODE]->(node) WHERE (s:AzureCluster OR s:AzureClusterAgentPool) AND (node:AzureVirtualMachine OR node:AzureVirtualMachineScaleSet) AND r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE r return COUNT(*) as TotalCompleted",
+            "query": "MATCH (node)<-[r:HAS_NODE]-(s)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE (s:AzureCluster OR s:AzureClusterAgentPool) AND (node:AzureVirtualMachine OR node:AzureVirtualMachineScaleSet) AND r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE r return COUNT(*) as TotalCompleted",
             "iterative": true,
             "iterationsize": 100
         }

@@ -535,11 +535,18 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
     GraphJob.from_node_schema(EC2ReservationSchema(), common_job_parameters).run(neo4j_session)
     GraphJob.from_node_schema(EC2InstanceSchema(), common_job_parameters).run(neo4j_session)
     cleanup_query = """
-    MATCH (s)-[r:HAS_NODE]->(:EC2Instance)
-    WHERE (s:EKSCluster OR s:EKSClusterNodeGroup) AND r.lastupdated <> $UPDATE_TAG
+    MATCH (node:EC2Instance)<-[r:HAS_NODE]-(s)
+    WHERE (s:EKSCluster OR s:EKSClusterNodeGroup)
+      AND (s)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
+      AND r.lastupdated <> $UPDATE_TAG
     DELETE r
     """
-    neo4j_session.run(cleanup_query, UPDATE_TAG=common_job_parameters['UPDATE_TAG'])
+    neo4j_session.run(
+        cleanup_query,
+        UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
+        AWS_ID=common_job_parameters['AWS_ID'],
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+    )
 
 
 @timeit
