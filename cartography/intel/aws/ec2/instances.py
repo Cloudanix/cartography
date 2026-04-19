@@ -484,6 +484,8 @@ def load_ec2_instance_data(
     load_ec2_network_interfaces(neo4j_session, nic_list, region, current_aws_account_id, update_tag)
     load_ec2_instance_ebs_volumes(neo4j_session, ebs_volumes_list, region, current_aws_account_id, update_tag)
     load_ec2_roles(neo4j_session, role_data, region, current_aws_account_id, update_tag)
+    # Note: EC2Instance -[:CHILDREN]-> EC2Image relationship is created in images.py
+    # (sync_ec2_images -> link_ec2_instances_to_images) after EC2Image nodes exist.
 
 
 @timeit

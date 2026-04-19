@@ -7,6 +7,7 @@ from azure.core.exceptions import HttpResponseError
 from azure.mgmt.compute import ComputeManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
+from . import vmss
 from .util.credentials import Credentials
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.util import get_azure_resource_group_name
@@ -73,6 +74,15 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
             image_reference = vm.get("storage_profile", {}).get("image_reference", {})
             sku = image_reference.get('sku')
             offer = image_reference.get('offer')
+            publisher = image_reference.get('publisher', '')
+            version = image_reference.get('exact_version') or image_reference.get('version', '')
+            vm['image_publisher'] = publisher
+            vm['image_offer'] = offer or ''
+            vm['image_sku'] = sku or ''
+            vm['image_version'] = version
+            vm['image_reference_id'] = (
+                f"{publisher}:{offer}:{sku}:{version}" if publisher and offer and sku else None
+            )
             vm['os_version'] = sku
             vm['os'] = 'unknown'
 
@@ -111,6 +121,7 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.region = vm.location,
     v.consolelink = vm.consolelink,
     v.resourcegroup = vm.resource_group
+    SET v:VirtualMachine
     SET v.lastupdated = $update_tag, v.name = vm.name,
     v.vm_id = vm.vm_id,
     v.plan = vm.plan.product, v.size = vm.hardware_profile.vm_size,
@@ -159,6 +170,34 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
         _attach_vm_resource_group(neo4j_session, vm['id'], resource_group, update_tag)
         _attach_vm_properties_public_ip(neo4j_session, vm['id'], update_tag)
         _attach_vm_properties_private_ip(neo4j_session, vm['id'], update_tag)
+
+    load_vm_image_relations(neo4j_session, vm_list, update_tag)
+
+
+def load_vm_image_relations(neo4j_session: neo4j.Session, vm_list: List[Dict], update_tag: int) -> None:
+    ingest_vm_image = """
+    UNWIND $vms AS vm
+    WITH vm
+    WHERE vm.image_reference_id IS NOT NULL
+    MERGE (img:AzureImage {id: vm.image_reference_id})
+    ON CREATE SET img.firstseen = timestamp()
+    SET img.lastupdated = $update_tag,
+        img.publisher = vm.image_publisher,
+        img.offer = vm.image_offer,
+        img.sku = vm.image_sku,
+        img.version = vm.image_version
+    WITH img, vm
+    MATCH (v:AzureVirtualMachine {id: vm.id})
+    MERGE (v)-[:HAS]->(img)
+    MERGE (v)-[rel:HAS]->(img)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $update_tag
+    """
+    neo4j_session.run(
+        ingest_vm_image,
+        vms=vm_list,
+        update_tag=update_tag,
+    )
 
 
 def _attach_vm_properties_public_ip(tx: neo4j.Transaction, vm_id: str, update_tag) -> None:
@@ -449,7 +488,9 @@ def _load_vm_scale_sets_tx(
     a.region = set.location,
     a.consolelinke = set.consolelink,
     a.resourcegroup = set.resource_group
+    SET a:AzureVMScaleSet
     SET a.lastupdated = $update_tag,
+    a.subscription_id = $SUBSCRIPTION_ID,
     a.name = set.name
     WITH a
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -498,6 +539,13 @@ def sync_vm_scale_sets(
     vm_scale_sets_list = get_vm_scale_sets_list(credentials, subscription_id, regions, common_job_parameters)
 
     load_vm_scale_sets(neo4j_session, subscription_id, vm_scale_sets_list, update_tag)
+    vmss.sync_vm_scale_sets_vms_part_of_relationships(
+        neo4j_session,
+        client,
+        vm_scale_sets_list,
+        update_tag,
+        subscription_id,
+    )
     cleanup_vm_scale_sets(neo4j_session, common_job_parameters)
     sync_virtual_machine_scale_sets_extensions(
         neo4j_session, client, vm_scale_sets_list, update_tag, common_job_parameters,

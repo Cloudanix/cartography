@@ -21,6 +21,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import iam
+from . import instance_groups
 from . import label
 from cartography.util import batch
 from cartography.util import run_cleanup_job
@@ -951,6 +952,44 @@ def load_gcp_instances(session: neo4j.Session, instances_list: List[Dict], gcp_u
         _attach_gcp_vpc(session, instance["partial_uri"], gcp_update_tag)
         _attach_instance_service_account(session, instance, gcp_update_tag)
 
+    load_gcp_instance_image_relations(session, instances_list, gcp_update_tag)
+
+
+@timeit
+def load_gcp_instance_image_relations(
+    session: neo4j.Session,
+    instances_list: List[Dict],
+    gcp_update_tag: int,
+) -> None:
+    session.write_transaction(_load_gcp_instance_image_relations_tx, instances_list, gcp_update_tag)
+
+
+def _load_gcp_instance_image_relations_tx(
+    tx: neo4j.Transaction,
+    instances: List[Dict],
+    gcp_update_tag: int,
+) -> None:
+    ingest_image = """
+    UNWIND $instances AS instance
+    WITH instance
+    WHERE instance.sourceImage IS NOT NULL
+    MERGE (img:GCPImage {id: instance.sourceImage})
+    ON CREATE SET img.firstseen = timestamp()
+    SET img.lastupdated = $gcp_update_tag,
+        img.self_link = instance.sourceImage
+    WITH img, instance
+    MATCH (i:GCPInstance {id: instance.partial_uri})
+    MERGE (i)-[:HAS]->(img)
+    MERGE (i)-[rel:HAS]->(img)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $gcp_update_tag
+    """
+    tx.run(
+        ingest_image,
+        instances=instances,
+        gcp_update_tag=gcp_update_tag,
+    )
+
 
 @timeit
 def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag: int) -> None:
@@ -971,6 +1010,7 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     MERGE (i:Instance:GCPInstance{id:instance.partial_uri})
     ON CREATE SET i.firstseen = timestamp(),
     i.partial_uri = instance.partial_uri
+    SET i:GCPComputeInstance
     SET i.self_link = instance.selfLink,
     i.instancename = instance.name,
     i.instance_id = instance.instance_id,
@@ -2030,6 +2070,15 @@ def sync(
             compute,
             project_id,
             zones,
+            gcp_update_tag,
+            common_job_parameters,
+        )
+        instance_groups.sync_managed_instance_groups(
+            neo4j_session,
+            compute,
+            project_id,
+            zones,
+            regions,
             gcp_update_tag,
             common_job_parameters,
         )
