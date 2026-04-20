@@ -46,6 +46,19 @@ def get_client(credentials: Credentials, subscription_id: str) -> ComputeManagem
     return client
 
 
+def _extract_aks_tags(tags_dict) -> Dict:
+    if not tags_dict:
+        return {'aks_cluster_name': None, 'aks_pool_name': None, 'aks_cluster_rg': None}
+
+    # Lowercase keys for safe lookup
+    lower_tags = {k.lower(): v for k, v in tags_dict.items()}
+    return {
+        'aks_cluster_name': lower_tags.get('aks-managed-cluster-name'),
+        'aks_pool_name': lower_tags.get('aks-managed-poolname'),
+        'aks_cluster_rg': lower_tags.get('aks-managed-cluster-rg'),
+    }
+
+
 def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         client = get_client(credentials, subscription_id)
@@ -56,7 +69,10 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
             vm['consolelink'] = azure_console_link.get_console_link(
                 id=vm['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
-
+            aks_tags = _extract_aks_tags(vm.get('tags', {}))
+            vm['aks_cluster_name'] = aks_tags['aks_cluster_name']
+            vm['aks_pool_name'] = aks_tags['aks_pool_name']
+            vm['aks_cluster_rg'] = aks_tags['aks_cluster_rg']
             network_interfaces = []
             for interface in vm.get('network_profile', {}).get('network_interfaces', []):
                 network_interfaces.append(interface)
@@ -139,7 +155,10 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.os_type=vm.os_type,
     v.os_disk_name=vm.os_disk_name,
     v.vm_os=vm.os,
-    v.os_version=vm.os_version
+    v.os_version=vm.os_version,
+    v.aks_cluster_name = vm.aks_cluster_name,
+    v.aks_pool_name = vm.aks_pool_name,
+    v.aks_cluster_rg = vm.aks_cluster_rg
     WITH vm, v
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(v)
@@ -464,6 +483,10 @@ def get_vm_scale_sets_list(credentials: Credentials, subscription_id: str, regio
             set['consolelink'] = azure_console_link.get_console_link(
                 id=set['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
+            aks_tags = _extract_aks_tags(set.get('tags', {}))
+            set['aks_cluster_name'] = aks_tags['aks_cluster_name']
+            set['aks_pool_name'] = aks_tags['aks_pool_name']
+            set['aks_cluster_rg'] = aks_tags['aks_cluster_rg']
             if regions is None:
                 sets_list.append(set)
             else:
@@ -490,6 +513,10 @@ def _load_vm_scale_sets_tx(
     a.resourcegroup = set.resource_group
     SET a:AzureVMScaleSet
     SET a.lastupdated = $update_tag,
+    a.name = set.name,
+    a.aks_cluster_name = set.aks_cluster_name,
+    a.aks_pool_name = set.aks_pool_name,
+    a.aks_cluster_rg = set.aks_cluster_rg,
     a.subscription_id = $SUBSCRIPTION_ID,
     a.name = set.name
     WITH a
@@ -933,6 +960,40 @@ def sync_snapshot(
 
 
 @timeit
+def link_compute_to_aks(neo4j_session: neo4j.Session, update_tag: int) -> None:
+    """Links Azure VMs and VM Scale Sets to AKS Clusters and Node Pools based on tags."""
+
+    # 1. Link VM Scale Sets and VMs to the AKS Cluster
+    cluster_query = """
+    MATCH (node) WHERE node:AzureVirtualMachine OR node:AzureVirtualMachineScaleSet
+    WITH node WHERE node.aks_cluster_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
+    MATCH (c:AzureCluster {name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg})
+    MERGE (c)-[r:HAS_NODE]->(node)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+
+    # 2. Link VM Scale Sets and VMs to the AKS Node Pool (Agent Pool)
+    pool_query = """
+    MATCH (node) WHERE node:AzureVirtualMachine OR node:AzureVirtualMachineScaleSet
+    WITH node WHERE node.aks_cluster_name IS NOT NULL AND node.aks_pool_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
+    MATCH (c:AzureCluster {name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg})-[:HAS]->(p:AzureClusterAgentPool {name: node.aks_pool_name})
+    MERGE (p)-[r:HAS_NODE]->(node)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+
+    neo4j_session.run(cluster_query, update_tag=update_tag)
+    neo4j_session.run(pool_query, update_tag=update_tag)
+
+
+@timeit
+def cleanup_aks_compute_links(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """Removes stale HAS_NODE relationships between AKS resources and Compute resources."""
+    run_cleanup_job('azure_aks_compute_links_cleanup.json', neo4j_session, common_job_parameters)
+
+
+@timeit
 def sync(
     neo4j_session: neo4j.Session, credentials: Credentials, subscription_id: str, update_tag: int,
     common_job_parameters: Dict, regions: list,
@@ -943,3 +1004,5 @@ def sync(
     sync_vm_scale_sets(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
     sync_disk(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
     sync_snapshot(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
+    link_compute_to_aks(neo4j_session, update_tag)
+    cleanup_aks_compute_links(neo4j_session, common_job_parameters)

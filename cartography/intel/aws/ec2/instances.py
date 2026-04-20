@@ -185,6 +185,21 @@ def transform_ec2_instances(
                 for role in iam_roles:
                     role["InstanceId"] = instance_id
 
+            # --- EKS TAG EXTRACTION ---
+            eks_cluster_name = None
+            eks_nodegroup_name = None
+            for tag in instance.get("Tags", []):
+                key = tag.get("Key", "")
+                val = tag.get("Value", "")
+                if key == "eks:cluster-name":
+                    eks_cluster_name = val
+                elif key == "eks:nodegroup-name":
+                    eks_nodegroup_name = val
+                elif key.startswith("kubernetes.io/cluster/") and val in ["owned", "shared"]:
+                    # Fallback for self-managed nodes
+                    if not eks_cluster_name:
+                        eks_cluster_name = key.split("/")[-1]
+
             os_details = instance.get("OSDetails", {})
             platform = os_details.get("Platform", "Linux")
             architecture = os_details.get("Architecture", "Unknown")
@@ -238,7 +253,8 @@ def transform_ec2_instances(
                     "arn": InstanceArn,
                     "IamRoles": iam_roles,
                     "UserData": user_data,
-                    "IsSpotInstance": is_spot_instance,
+                    "EksClusterName": eks_cluster_name,
+                    "EksNodeGroupName": eks_nodegroup_name,
                 },
             )
 
@@ -462,6 +478,32 @@ def load_ec2_roles(
     )
 
 
+@timeit
+def link_ec2_to_eks(neo4j_session: neo4j.Session, instance_list: List[Dict], update_tag: int) -> None:
+    """Links EC2 instances to EKS Clusters and Node Groups based on extracted tags."""
+    cluster_query = """
+    UNWIND $Instances as instance
+    WITH instance WHERE instance.EksClusterName IS NOT NULL
+    MATCH (i:EC2Instance{id: instance.InstanceId})
+    MATCH (c:EKSCluster{name: instance.EksClusterName})
+    MERGE (c)-[r:HAS_NODE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+
+    nodegroup_query = """
+    UNWIND $Instances as instance
+    WITH instance WHERE instance.EksNodeGroupName IS NOT NULL AND instance.EksClusterName IS NOT NULL
+    MATCH (i:EC2Instance{id: instance.InstanceId})
+    MATCH (c:EKSCluster{name: instance.EksClusterName})<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup{name: instance.EksNodeGroupName})
+    MERGE (ng)-[r:HAS_NODE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+    neo4j_session.run(cluster_query, Instances=instance_list, update_tag=update_tag)
+    neo4j_session.run(nodegroup_query, Instances=instance_list, update_tag=update_tag)
+
+
 def load_ec2_instance_data(
     neo4j_session: neo4j.Session,
     region: str,
@@ -484,6 +526,7 @@ def load_ec2_instance_data(
     load_ec2_network_interfaces(neo4j_session, nic_list, region, current_aws_account_id, update_tag)
     load_ec2_instance_ebs_volumes(neo4j_session, ebs_volumes_list, region, current_aws_account_id, update_tag)
     load_ec2_roles(neo4j_session, role_data, region, current_aws_account_id, update_tag)
+    link_ec2_to_eks(neo4j_session, instance_list, update_tag)
     # Note: EC2Instance -[:CHILDREN]-> EC2Image relationship is created in images.py
     # (sync_ec2_images -> link_ec2_instances_to_images) after EC2Image nodes exist.
 
@@ -493,6 +536,19 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
     logger.debug("Running EC2 instance cleanup")
     GraphJob.from_node_schema(EC2ReservationSchema(), common_job_parameters).run(neo4j_session)
     GraphJob.from_node_schema(EC2InstanceSchema(), common_job_parameters).run(neo4j_session)
+    cleanup_query = """
+    MATCH (node:EC2Instance)<-[r:HAS_NODE]-(s)
+    WHERE (s:EKSCluster OR s:EKSClusterNodeGroup)
+      AND (s)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
+      AND r.lastupdated <> $UPDATE_TAG
+    DELETE r
+    """
+    neo4j_session.run(
+        cleanup_query,
+        UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
+        AWS_ID=common_job_parameters['AWS_ID'],
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+    )
 
 
 @timeit
