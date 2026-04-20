@@ -175,7 +175,7 @@ def transform_ec2_instances(
             InstanceArn = f"arn:aws:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
             launch_time = instance.get("LaunchTime")
             launch_time_unix = str(time.mktime(launch_time.timetuple())) if launch_time else None
-            user_data = get_instance_user_data(boto3_session, region, instance_id)
+            # user_data = get_instance_user_data(boto3_session, region, instance_id)
 
             iam_roles = []
             if "IamInstanceProfile" in instance:
@@ -252,7 +252,7 @@ def transform_ec2_instances(
                     "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
                     "IamRoles": iam_roles,
-                    "UserData": user_data,
+                    # "UserData": user_data,
                     "EksClusterName": eks_cluster_name,
                     "EksNodeGroupName": eks_nodegroup_name,
                 },
