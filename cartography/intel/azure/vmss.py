@@ -93,4 +93,3 @@ def sync_vm_scale_sets_vms_part_of_relationships(
         relations,
         update_tag,
     )
-

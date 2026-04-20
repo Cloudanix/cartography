@@ -57,7 +57,7 @@ def _get_zonal_managed_instance_groups(
                             "region": zone_region["region"],
                             # Used later in listManagedInstances() calls.
                             "instanceGroupManager_name": igm["name"],
-                        }
+                        },
                     )
         except HttpError as e:
             # Permissions issues are expected sometimes; skip safely.
@@ -88,7 +88,7 @@ def _get_regional_managed_instance_groups(compute: Resource, project_id: str, re
                             "region": zone_region["region"],
                             # Used later in listManagedInstances() calls.
                             "instanceGroupManager_name": igm["name"],
-                        }
+                        },
                     )
         except HttpError as e:
             err = json.loads(e.content.decode("utf-8")).get("error", {})
@@ -170,7 +170,7 @@ def _get_managed_instances_for_mig(compute: Resource, project_id: str, mig: Dict
                     {
                         "vm_self_link": instance_self_link,
                         "mig_id": mig["id"],
-                    }
+                    },
                 )
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8")).get("error", {})
@@ -244,4 +244,3 @@ def sync_managed_instance_groups(
         _load_vm_to_mig_part_of_relationships(neo4j_session, relationships, gcp_update_tag)
 
     run_cleanup_job("gcp_instance_groups_cleanup.json", neo4j_session, common_job_parameters)
-
