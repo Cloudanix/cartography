@@ -121,6 +121,30 @@ def cleanup_images(neo4j_session: neo4j.Session, common_job_parameters: Dict[str
 
 
 @timeit
+def link_ec2_instances_to_images(neo4j_session: neo4j.Session, update_tag: int) -> None:
+    """
+    Create EC2Instance -[:CHILDREN]-> EC2Image relationships for all instances
+    whose ImageId matches a loaded EC2Image node.
+
+    This must run AFTER both EC2Instance nodes (from ec2:instance sync) and
+    EC2Image nodes (from ec2:images sync) are present in the graph.  That is
+    why this function lives here in images.py and is called at the end of
+    sync_ec2_images(), not inside instances.py (which runs earlier).
+    """
+    ingest_instance_image_rel = """
+    MATCH (img:EC2Image)
+    MATCH (i:EC2Instance {imageid: img.imageid})
+    MERGE (i)-[r:CHILDREN]->(img)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+    neo4j_session.run(
+        ingest_instance_image_rel,
+        update_tag=update_tag,
+    )
+
+
+@timeit
 def sync_ec2_images(
         neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str],
         current_aws_account_id: str, update_tag: int, common_job_parameters: Dict,
@@ -140,6 +164,12 @@ def sync_ec2_images(
 
     load_images(neo4j_session, data, current_aws_account_id, update_tag)
     cleanup_images(neo4j_session, common_job_parameters)
+
+    # Link EC2Instances to their EC2Image nodes via CHILDREN relationship.
+    # This runs after both node types are guaranteed to exist in the graph.
+    # (ec2:instance syncs before ec2:images, so the call in instances.py
+    # may find no EC2Image nodes yet — this call here is the reliable one.)
+    link_ec2_instances_to_images(neo4j_session, update_tag)
 
     toc = time.perf_counter()
     logger.info(f"Time to process Images: {toc - tic:0.4f} seconds")

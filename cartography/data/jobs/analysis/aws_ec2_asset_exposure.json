@@ -6,7 +6,7 @@
       "iterationsize": 100
     },
     {
-      "query": "MATCH (instance:EC2Instance{exposed_internet: true})-[:MEMBER_AUTO_SCALE_GROUP]->(asg:AutoScalingGroup)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET asg.exposed_internet = true,asg.exposed_internet_type = coalesce(instance.exposed_internet_type , [])",
+      "query": "MATCH (instance:EC2Instance{exposed_internet: true})-[:PART_OF]->(asg:AutoScalingGroup)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET asg.exposed_internet = true,asg.exposed_internet_type = coalesce(instance.exposed_internet_type , [])",
       "iterative": false
     },
     {
@@ -18,7 +18,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (instance:EC2Instance)-[:MEMBER_AUTO_SCALE_GROUP]->(asg:AutoScalingGroup)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE asg.exposed_internet = true WITH asg, collect(DISTINCT {instanceId: instance.id, publicIp: instance.publicipaddress, privateIp: instance.privateipaddress, exposureTypes: instance.exposed_internet_type, state: instance.state}) as instances SET asg.publicContext = apoc.convert.toJson([{resource: asg.id, resourceType: 'aws-compute-ec2-autoscalinggroup', context: [{asgName: asg.name, minSize: asg.minsize, maxSize: asg.maxsize, desiredCapacity: asg.desiredcapacity, exposureTypes: asg.exposed_internet_type, instances: instances}]}])",
+      "query": "MATCH (instance:EC2Instance)-[:PART_OF]->(asg:AutoScalingGroup)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE asg.exposed_internet = true WITH asg, collect(DISTINCT {instanceId: instance.id, publicIp: instance.publicipaddress, privateIp: instance.privateipaddress, exposureTypes: instance.exposed_internet_type, state: instance.state}) as instances SET asg.publicContext = apoc.convert.toJson([{resource: asg.id, resourceType: 'aws-compute-ec2-autoscalinggroup', context: [{asgName: asg.name, minSize: asg.minsize, maxSize: asg.maxsize, desiredCapacity: asg.desiredcapacity, exposureTypes: asg.exposed_internet_type, instances: instances}]}])",
       "iterative": false
     }
   ],
