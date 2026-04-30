@@ -31,7 +31,7 @@ class Session(neo4j.Session):
 
     def write_transaction(self, transaction_function, *args, **kwargs):
         try:
-            return self.neo4j_session.write_transaction(transaction_function, *args, **kwargs)
+            return self.neo4j_session.execute_write(transaction_function, *args, **kwargs)
 
         except (ServiceUnavailable, AuthError, SessionExpired, TransactionError, TransactionNestingError, RoutingServiceUnavailable, WriteServiceUnavailable) as e:
             logger.warning(f"Failed write transaction for neo4j. Error - {e}", exc_info=True, stack_info=True)

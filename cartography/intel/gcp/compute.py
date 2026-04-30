@@ -77,7 +77,7 @@ def get_compute_disks(compute: Resource, project_id: str, zones: list, common_jo
 
 @timeit
 def load_compute_disks(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.write_transaction(load_compute_disks_tx, data_list, project_id, update_tag)
+    session.execute_write(load_compute_disks_tx, data_list, project_id, update_tag)
 
 
 @timeit
@@ -230,7 +230,7 @@ def transform_ssl_proxies(proxies: List, project_id: str) -> List[Resource]:
 
 @timeit
 def load_proxies(session: neo4j.Session, proxies: List[Dict], project_id: str, update_tag: int) -> None:
-    session.write_transaction(load_proxies_tx, proxies, project_id, update_tag)
+    session.execute_write(load_proxies_tx, proxies, project_id, update_tag)
 
 
 @timeit
@@ -276,7 +276,7 @@ def attach_compute_disks_to_instance(
     instance_id: str,
     update_tag: int,
 ) -> None:
-    session.write_transaction(attach_compute_disks_to_instance_tx, data_list, instance_id, update_tag)
+    session.execute_write(attach_compute_disks_to_instance_tx, data_list, instance_id, update_tag)
 
 
 @timeit
@@ -943,7 +943,7 @@ def _parse_port_string_to_rule(port: Optional[str], protocol: str, fw_partial_ur
 def load_gcp_instances(session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int) -> None:
     logger.info(f"Loading instances  {len(instances_list)}")
     for paginated_instances in batch(instances_list, size=500):
-        session.write_transaction(load_gcp_instances_tx, paginated_instances, gcp_update_tag)
+        session.execute_write(load_gcp_instances_tx, paginated_instances, gcp_update_tag)
 
     for instance in instances_list:
         _attach_instance_tags(session, instance, gcp_update_tag)
@@ -1006,7 +1006,7 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
 
 @timeit
 def load_compute_entity_relation(session: neo4j.Session, instance: Dict, update_tag: int) -> None:
-    session.write_transaction(load_compute_entity_relation_tx, instance, update_tag)
+    session.execute_write(load_compute_entity_relation_tx, instance, update_tag)
 
 
 @timeit

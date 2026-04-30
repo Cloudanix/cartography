@@ -17,27 +17,27 @@ azure_console_link = AzureLinker()
 
 
 def load_vm_extensions(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.write_transaction(_load_vm_extensions_tx, data_list, update_tag)
+    session.execute_write(_load_vm_extensions_tx, data_list, update_tag)
 
 
 def load_vm_available_sizes(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.write_transaction(_load_vm_available_sizes_tx, data_list, update_tag)
+    session.execute_write(_load_vm_available_sizes_tx, data_list, update_tag)
 
 
 def load_vm_scale_sets(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
-    session.write_transaction(_load_vm_scale_sets_tx, subscription_id, data_list, update_tag)
+    session.execute_write(_load_vm_scale_sets_tx, subscription_id, data_list, update_tag)
 
 
 def load_vm_scale_sets_extensions(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.write_transaction(_load_vm_scale_sets_extensions_tx, data_list, update_tag)
+    session.execute_write(_load_vm_scale_sets_extensions_tx, data_list, update_tag)
 
 
 def load_vm_security_groups_relationship(session: neo4j.Session, vm_id: str, data_list: List[Dict], update_tag: int) -> None:
-    session.write_transaction(_load_vm_security_groups_relationship, vm_id, data_list, update_tag)
+    session.execute_write(_load_vm_security_groups_relationship, vm_id, data_list, update_tag)
 
 
 def load_vm_network_interfaces_relationship(session: neo4j.Session, vm_id: str, data_list: List[Dict], update_tag: int) -> None:
-    session.write_transaction(_load_vm_network_interfaces_relationship, vm_id, data_list, update_tag)
+    session.execute_write(_load_vm_network_interfaces_relationship, vm_id, data_list, update_tag)
 
 
 def get_client(credentials: Credentials, subscription_id: str) -> ComputeManagementClient:
