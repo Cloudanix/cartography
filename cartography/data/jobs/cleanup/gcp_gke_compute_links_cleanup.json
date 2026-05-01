@@ -1,0 +1,10 @@
+{
+    "statements": [
+        {
+            "query": "MATCH (s)-[r:HAS_NODE]->(node:GCPInstance) WHERE (s:GKECluster OR s:GKENodePool) AND (s)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) AND r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE r return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        }
+    ],
+    "name": "cleanup GCP GKE to Compute relationships"
+}
