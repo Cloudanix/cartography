@@ -1,7 +1,7 @@
 version: "3.7"
 services:
   neo4j:
-    image: neo4j:5-community
+    image: neo4j:5.13.0-community
     restart: unless-stopped
     ports:
       - 7474:7474
