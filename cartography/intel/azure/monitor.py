@@ -1,143 +1,146 @@
 import logging
-from typing import Dict
-from typing import List
+from typing import Any
 
 import neo4j
-from azure.core.exceptions import ClientAuthenticationError
 from azure.core.exceptions import HttpResponseError
-from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.monitor import MonitorManagementClient
-try:
-    from cloudconsolelink.clouds.azure import AzureLinker
-except ImportError:
-    AzureLinker = None
 
-from .util.credentials import Credentials
-from cartography.util import get_azure_resource_group_name
-from cartography.util import run_cleanup_job
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.azure.util.tag import transform_tags
+from cartography.models.azure.monitor import AzureMonitorMetricAlertSchema
+from cartography.models.azure.tags.monitor_metric_alert_tag import (
+    AzureMonitorMetricAlertTagsSchema,
+)
 from cartography.util import timeit
 
+from .util.credentials import Credentials
+
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker() if AzureLinker else None
-
-
-def load_monitor_log_profiles(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
-    session.write_transaction(_load_monitor_log_profiles_tx, subscription_id, data_list, update_tag)
 
 
 @timeit
-def get_monitoring_client(credentials: Credentials, subscription_id: str) -> MonitorManagementClient:
-    client = MonitorManagementClient(credentials, subscription_id)
-    return client
-
-
-@timeit
-def get_log_profiles_list(client: MonitorManagementClient, regions: List, common_job_parameters: Dict) -> List[Dict]:
+def get_metric_alerts(client: MonitorManagementClient) -> list[dict]:
+    """
+    Get a list of Metric Alerts from the given Azure subscription.
+    """
     try:
-        list_logs_profiles = list(map(lambda x: x.as_dict(), client.log_profiles.list()))
-        return list_logs_profiles
-    except ClientAuthenticationError as e:
-        logger.warning(f"Client Authentication Error while  logs profiles - {e}")
-        return []
-    except ResourceNotFoundError as e:
-        logger.warning(f" logs profiles not found error - {e}")
-        return []
-    except HttpResponseError as e:
-        logger.warning(f"Error while  logs profiles - {e}")
-        return []
-
-
-@timeit
-def transform_log_profiles(log_profiles: List[Dict], regions: List, common_job_parameters: str):
-    log_profiles_data = []
-    for log in log_profiles:
-        log['resource_group'] = get_azure_resource_group_name(log.get('id'))
-        log['consolelink'] = azure_console_link.get_console_link(
-            id=log['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+        return [
+            alert.as_dict() for alert in client.metric_alerts.list_by_subscription()
+        ]
+    except HttpResponseError:
+        logger.warning(
+            "Failed to get Azure Monitor Metric Alerts due to a transient error.",
+            exc_info=True,
         )
-        log['location'] = log.get('location', '').replace(" ", "").lower()
-        if regions is None:
-            log_profiles_data.append(log)
-        else:
-            if log.get('location') in regions or log.get('location') == 'global':
-                log_profiles_data.append(log)
-    return log_profiles_data
+        return []
+
+
+def transform_metric_alerts(metric_alerts: list[dict]) -> list[dict]:
+    """
+    Transform the raw API response to the dictionary structure that the model expects.
+    """
+    transformed_alerts: list[dict[str, Any]] = []
+    for alert in metric_alerts:
+        transformed_alert = {
+            "id": alert.get("id"),
+            "name": alert.get("name"),
+            "location": alert.get("location"),
+            "description": alert.get("description"),
+            "severity": alert.get("severity"),
+            "enabled": alert.get("enabled"),
+            "window_size": str(alert.get("window_size")),
+            "evaluation_frequency": str(alert.get("evaluation_frequency")),
+            "last_updated_time": alert.get("properties", {}).get("last_updated_time"),
+            "tags": alert.get("tags"),
+        }
+        transformed_alerts.append(transformed_alert)
+    return transformed_alerts
 
 
 @timeit
-def _load_monitor_log_profiles_tx(
-    tx: neo4j.Transaction, subscription_id: str, log_profiles_list: List[Dict], update_tag: int,
+def load_metric_alerts(
+    neo4j_session: neo4j.Session,
+    data: list[dict[str, Any]],
+    subscription_id: str,
+    update_tag: int,
 ) -> None:
-
-    query = """
-    UNWIND $LOGS as l
-    MERGE (log:AzureMonitorLogProfile{id: l.id})
-    ON CREATE SET log.firstseen = timestamp(),
-    log.type = l.type,
-    log.name = l.name,
-    log.consolelink = l.consolelink,
-    log.resourcegroup = l.resource_group,
-    log.location = l.location,
-    log.region = l.location,
-    log.service_bus_rule_id = l.service_bus_rule_id,
-    log.storage_account_id = l.storage_account_id
-    SET log.lastupdated = $update_tag,
-    log.name = l.name,
-    log.region = l.location
-    WITH log
-    MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
-    MERGE (owner)-[r:RESOURCE]->(log)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
     """
-    tx.run(
-        query,
-        LOGS=log_profiles_list,
-        SUBSCRIPTION_ID=subscription_id,
-        update_tag=update_tag,
-    )
-    for log_profile in log_profiles_list:
-        resource_group=get_azure_resource_group_name(log_profile.get('id'))
-        _attach_resource_group_monitor_logs(tx,log_profile['id'],resource_group,update_tag)
-
-
-def _attach_resource_group_monitor_logs(tx: neo4j.Transaction, log_profile_id:str,resource_group:str ,update_tag: int) -> None:
-    query = """
-    MATCH (log:AzureMonitorLogProfile{id: $log_profile_id})
-    WITH log
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
-    MERGE (log)-[r:RESOURCE_GROUP]->(rg)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    Load the transformed Azure Monitor Metric Alert data to Neo4j.
     """
-    tx.run(
-        query,
-        log_profile_id=log_profile_id,
-        resource_group=resource_group,
-        update_tag=update_tag,
+    load(
+        neo4j_session,
+        AzureMonitorMetricAlertSchema(),
+        data,
+        lastupdated=update_tag,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
     )
 
-def cleanup_monitor_log_profiles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('azure_import_monitor_log_profiles_cleanup.json', neo4j_session, common_job_parameters)
 
-
-def sync_monitor_log_profiles(
-    neo4j_session: neo4j.Session, credentials: Credentials, subscription_id: str, update_tag: int,
-    common_job_parameters: Dict, regions: list,
+@timeit
+def load_metric_alert_tags(
+    neo4j_session: neo4j.Session,
+    subscription_id: str,
+    alerts: list[dict],
+    update_tag: int,
 ) -> None:
-    client = get_monitoring_client(credentials, subscription_id)
-    log_profiles = get_log_profiles_list(client, regions, common_job_parameters)
-    log_profiles_list = transform_log_profiles(log_profiles, regions, common_job_parameters)
+    """
+    Loads tags for Monitor Metric Alerts.
+    """
+    tags = transform_tags(alerts, subscription_id)
+    load(
+        neo4j_session,
+        AzureMonitorMetricAlertTagsSchema(),
+        tags,
+        lastupdated=update_tag,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
+    )
 
-    load_monitor_log_profiles(neo4j_session, subscription_id, log_profiles_list, update_tag)
-    cleanup_monitor_log_profiles(neo4j_session, common_job_parameters)
+
+@timeit
+def cleanup_metric_alerts(
+    neo4j_session: neo4j.Session, common_job_parameters: dict
+) -> None:
+    """
+    Run the cleanup job for Azure Monitor Metric Alerts.
+    """
+    GraphJob.from_node_schema(
+        AzureMonitorMetricAlertSchema(), common_job_parameters
+    ).run(neo4j_session)
+
+
+@timeit
+def cleanup_metric_alert_tags(
+    neo4j_session: neo4j.Session, common_job_parameters: dict
+) -> None:
+    """
+    Runs cleanup job for Azure Monitor Metric Alert tags.
+    """
+    GraphJob.from_node_schema(
+        AzureMonitorMetricAlertTagsSchema(), common_job_parameters
+    ).run(neo4j_session)
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, credentials: Credentials, subscription_id: str, update_tag: int,
-    common_job_parameters: Dict, regions: list,
+    neo4j_session: neo4j.Session,
+    credentials: Credentials,
+    subscription_id: str,
+    update_tag: int,
+    common_job_parameters: dict,
 ) -> None:
-    logger.info("Syncing key Monitor Log Profiles for subscription '%s'.", subscription_id)
-
-    sync_monitor_log_profiles(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
+    """
+    The main sync function for Azure Monitor.
+    """
+    logger.info(
+        f"Syncing Azure Monitor Metric Alerts for subscription {subscription_id}."
+    )
+    client = MonitorManagementClient(credentials.credential, subscription_id)
+    raw_alerts = get_metric_alerts(client)
+    transformed_alerts = transform_metric_alerts(raw_alerts)
+    load_metric_alerts(neo4j_session, transformed_alerts, subscription_id, update_tag)
+    load_metric_alert_tags(
+        neo4j_session, subscription_id, transformed_alerts, update_tag
+    )
+    cleanup_metric_alerts(neo4j_session, common_job_parameters)
+    cleanup_metric_alert_tags(neo4j_session, common_job_parameters)

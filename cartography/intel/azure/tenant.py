@@ -1,151 +1,67 @@
 import logging
 from typing import Dict
-from typing import List
+from typing import Optional
 
 import neo4j
-import requests
-from azure.core.exceptions import HttpResponseError
-from azure.mgmt.resource import SubscriptionClient
 
-from .util.credentials import Credentials
-from cartography.util import run_cleanup_job
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.models.azure.principal import AzurePrincipalSchema
+
+# Import the new, separated schemas
+from cartography.models.azure.tenant import AzureTenantSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
 
-def list_tenants(credentials: Credentials) -> List[Dict]:
-    try:
-        # Create the client
-        client = SubscriptionClient(credentials.arm_credentials)
+@timeit
+def load_azure_tenant(
+    neo4j_session: neo4j.Session,
+    tenant_id: str,
+    current_user: Optional[str],
+    update_tag: int,
+) -> None:
+    """
+    Ingest the Azure Tenant and, if available, the Azure Principal into Neo4j.
+    """
+    tenant_data = {"id": tenant_id}
+    load(neo4j_session, AzureTenantSchema(), [tenant_data], lastupdated=update_tag)
 
-        # Get all the accessible tenants
-        tenants_list = list(client.tenants.list())
-
-    except HttpResponseError as e:
-        logger.error(
-            f'failed to fetch tenants for the credentials \
-            The provided credentials do not have access to any subscriptions - \
-            {e}',
+    if current_user:
+        principal_data = {"id": current_user}
+        load(
+            neo4j_session,
+            AzurePrincipalSchema(),
+            [principal_data],
+            lastupdated=update_tag,
+            TENANT_ID=tenant_id,
         )
 
-        return []
 
-    tenants = []
-    for tenant in tenants_list:
-        tenants.append({
-            'id': tenant.id,
-            'tenantId': tenant.tenant_id,
-            'tenantCategory': tenant.tenant_category,
-            'tenantType': tenant.tenant_type,
-            'displayName': tenant.display_name,
-            'country': tenant.country,
-            'countryCode': tenant.country_code,
-            'defaultDomain': tenant.default_domain,
-        })
-
-    return tenants
-
-
-def get_tenent_object_by_graph(credentials: Credentials):
-    tenant = {}
-    token = credentials.arm_credentials.get_token("https://graph.microsoft.com/.default")
-
-    headers = {"Authorization": f"Bearer {token.token}"}
-    resp = requests.get("https://graph.microsoft.com/v1.0/organization", headers=headers)
-    resp.raise_for_status()
-
-    data = resp.json()
-    for org in data["value"]:
-        for domain in org["verifiedDomains"]:
-            if domain.get("isDefault", False):
-                tenant["defaultDomain"] = domain["name"]
-                break
-        tenant["displayName"] = org["displayName"]
-        tenant["tenantType"] = org["tenantType"]
-    return tenant
-
-
-def get_active_tenant(credentials: Credentials) -> Dict:
-    # Fetch current tenant
-    tenants = list_tenants(credentials)
-    tenant_obj = list(filter(lambda t: t['tenantId'] == credentials.get_tenant_id(), tenants))
-    if not tenant_obj[0].get("defaultDomain"):
-        tenant = get_tenent_object_by_graph(credentials)
-        tenant_obj[0]["defaultDomain"] = tenant.get("defaultDomain")
-        tenant_obj[0]["displayName"] = tenant.get("displayName")
-        tenant_obj[0]["tenantType"] = tenant.get("tenantType")
-
-    return tenant_obj[0]
-
-
-def get_tenant_id(credentials: Credentials) -> str:
-    return credentials.get_tenant_id()
-
-
-def load_azure_tenant(
-    neo4j_session: neo4j.Session, tenant_obj: Dict, current_user: str, update_tag: int, common_job_parameters: Dict,
+@timeit
+def cleanup_azure_tenant(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
 ) -> None:
-    query = """
-    MERGE (w:CloudanixWorkspace{id: $workspaceId})
-    SET w.lastupdated = $update_tag
-    WITH w
-    MERGE (at:AzureTenant{id: $tenantId})
-    ON CREATE SET at.firstseen = timestamp()
-    SET at.lastupdated = $update_tag,
-    at.path = $id,
-    at.tenantCategory = $tenantCategory,
-    at.tenantType = $tenantType,
-    at.displayName = $displayName,
-    at.country = $country,
-    at.countryCode = $countryCode,
-    at.defaultDomain = $defaultDomain
-    WITH w, at
-    MERGE (w)-[o:OWNER]->(at)
-    ON CREATE SET o.firstseen = timestamp()
-    SET o.lastupdated = $update_tag
-    WITH at
-    MERGE (ap:AzurePrincipal{id: $userEmail})
-    ON CREATE SET ap.email = $userEmail, ap.firstseen = timestamp()
-    SET ap.lastupdated = $update_tag,
-    ap.name=$userName, ap.userid=$userId
-    WITH at, ap
-    MERGE (at)-[r:RESOURCE]->(ap)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag;
     """
-    neo4j_session.run(
-        query,
-        workspaceId=common_job_parameters['WORKSPACE_ID'],
-        id=tenant_obj['id'],
-        tenantId=tenant_obj['tenantId'],
-        tenantCategory=tenant_obj['tenantCategory'],
-        tenantType=tenant_obj['tenantType'],
-        displayName=tenant_obj['displayName'],
-        country=tenant_obj['country'],
-        countryCode=tenant_obj['countryCode'],
-        defaultDomain=tenant_obj['defaultDomain'],
-        userEmail=current_user.get('email'),
-        userId=current_user.get('id'),
-        userName=current_user.get('name'),
-        update_tag=update_tag,
+    Delete stale Azure Tenants and Principals.
+    """
+    GraphJob.from_node_schema(AzureTenantSchema(), common_job_parameters).run(
+        neo4j_session
     )
-
-
-def cleanup(neo4j_session: neo4j.Session, tenant_obj: Dict, common_job_parameters: Dict) -> None:
-    common_job_parameters['AZURE_TENANT_ID'] = tenant_obj['tenantId']
-
-    run_cleanup_job('azure_tenant_cleanup.json', neo4j_session, common_job_parameters)
-
-    del common_job_parameters["AZURE_TENANT_ID"]
+    GraphJob.from_node_schema(AzurePrincipalSchema(), common_job_parameters).run(
+        neo4j_session
+    )
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, tenant_obj: Dict, current_user: str, update_tag: int,
+    neo4j_session: neo4j.Session,
+    tenant_id: str,
+    current_user: Optional[str],
+    update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    load_azure_tenant(neo4j_session, tenant_obj, current_user, update_tag, common_job_parameters)
-    # AzureTenant is master node for Subscriptions. To avaid data cleanup skipping Tenant node cleanup job
-    # cleanup(neo4j_session, tenant_obj, common_job_parameters)
-    common_job_parameters['Object_ID'] = current_user['id']
+    logger.info("Syncing Azure tenant '%s'.", tenant_id)
+    load_azure_tenant(neo4j_session, tenant_id, current_user, update_tag)
+    cleanup_azure_tenant(neo4j_session, common_job_parameters)
