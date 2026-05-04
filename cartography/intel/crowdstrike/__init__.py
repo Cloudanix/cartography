@@ -11,9 +11,7 @@ from cartography.intel.crowdstrike.util import get_authorization
 from cartography.models.crowdstrike.hosts import CrowdstrikeHostSchema
 from cartography.models.crowdstrike.spotlight import CrowdstrikeCVESchema
 from cartography.stats import get_stats_client
-from cartography.util import merge_module_sync_metadata
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import merge_module_sync_metadata, run_cleanup_job, timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

@@ -1,6 +1,4 @@
-from digitalocean import Droplet
-from digitalocean import Image
-from digitalocean import Region
+from digitalocean import Droplet, Image, Region
 
 DROPLETS_RESPONSE = [
     Droplet(

@@ -14,8 +14,7 @@ from cartography.intel.spacelift.util import get_spacelift_token
 from cartography.intel.spacelift.workerpools import sync_worker_pools
 from cartography.intel.spacelift.workers import sync_workers
 from cartography.stats import get_stats_client
-from cartography.util import merge_module_sync_metadata
-from cartography.util import timeit
+from cartography.util import merge_module_sync_metadata, timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

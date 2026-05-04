@@ -1,19 +1,15 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.workos.invitations
 import tests.data.workos.invitations
 from tests.integration.cartography.intel.workos.test_organizations import (
     _ensure_local_neo4j_has_test_environment,
-)
-from tests.integration.cartography.intel.workos.test_organizations import (
     _ensure_local_neo4j_has_test_organizations,
 )
 from tests.integration.cartography.intel.workos.test_users import (
     _ensure_local_neo4j_has_test_users,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_CLIENT_ID = "client_1234567890abcdef"

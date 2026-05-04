@@ -1,7 +1,5 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import boto3
 import neo4j
@@ -11,8 +9,7 @@ from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.arns import build_arn
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.ec2.volumes import EBSVolumeSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

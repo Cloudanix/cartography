@@ -1,5 +1,4 @@
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cartography.intel.pagerduty.escalation_policies
 import tests.data.pagerduty.escalation_policies
@@ -15,8 +14,7 @@ from tests.integration.cartography.intel.pagerduty.test_teams import (
 from tests.integration.cartography.intel.pagerduty.test_users import (
     _ensure_local_neo4j_has_test_users,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 

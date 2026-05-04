@@ -22,8 +22,12 @@ def gcp_cartography_worker(event, ctx):
     logging.getLogger("cartography.graph").setLevel(os.environ.get("CDX_LOG_LEVEL"))
     logging.getLogger("cartography.intel").setLevel(os.environ.get("CDX_LOG_LEVEL"))
     logging.getLogger("cartography.sync").setLevel(os.environ.get("CDX_LOG_LEVEL"))
-    logging.getLogger("cartography.cartography").setLevel(os.environ.get("CDX_LOG_LEVEL"))
-    logging.getLogger("cloudconsolelink.clouds").setLevel(os.environ.get("CDX_LOG_LEVEL"))
+    logging.getLogger("cartography.cartography").setLevel(
+        os.environ.get("CDX_LOG_LEVEL")
+    )
+    logging.getLogger("cloudconsolelink.clouds").setLevel(
+        os.environ.get("CDX_LOG_LEVEL")
+    )
 
     logger = lgr.get_logger("DEBUG")
     logger.info("inventory sync gcp worker request received via PubSub")
@@ -98,7 +102,9 @@ def gcp_cartography_worker(event, ctx):
 
 
 def gcp_process_request(logger, params):
-    logger.info(f"request - {params.get('templateType')} - {params.get('eventId')} - {params.get('workspace')}")
+    logger.info(
+        f"request - {params.get('templateType')} - {params.get('eventId')} - {params.get('workspace')}"
+    )
 
     svcs = []
     for svc in params.get("services", []):
@@ -172,11 +178,15 @@ def gcp_process_request(logger, params):
 
     publish_response(logger, body, resp, params)
 
-    logger.info(f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}")
+    logger.info(
+        f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}"
+    )
 
 
 def github_process_request(logger, params):
-    logger.info(f"request - {params.get('templateType')} - {params.get('eventId')} - {params.get('workspace')}")
+    logger.info(
+        f"request - {params.get('templateType')} - {params.get('eventId')} - {params.get('workspace')}"
+    )
 
     svcs = []
     for svc in params.get("services", []):
@@ -260,13 +270,17 @@ def github_process_request(logger, params):
 
     publish_response(logger, body, resp, params)
 
-    logger.info(f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}")
+    logger.info(
+        f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}"
+    )
 
     return {"status": "success"}
 
 
 def azure_devops_process_request(logger, params):
-    logger.info(f"request - {params.get('templateType')} - {params.get('eventId')} - {params.get('workspace')}")
+    logger.info(
+        f"request - {params.get('templateType')} - {params.get('eventId')} - {params.get('workspace')}"
+    )
 
     svcs = []
     for svc in params.get("services", []):
@@ -345,13 +359,17 @@ def azure_devops_process_request(logger, params):
 
     publish_response(logger, body, resp, params)
 
-    logger.info(f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}")
+    logger.info(
+        f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}"
+    )
 
     return {"status": "success"}
 
 
 def bitbucket_process_request(logger, params):
-    logger.info(f"request - {params.get('templateType')} - {params.get('eventId')} - {params.get('workspace')}")
+    logger.info(
+        f"request - {params.get('templateType')} - {params.get('eventId')} - {params.get('workspace')}"
+    )
 
     svcs = []
     for svc in params.get("services", []):
@@ -378,7 +396,8 @@ def bitbucket_process_request(logger, params):
             "refresh_token": params.get("refreshToken"),
             # Prefer workspace access token (no OAuth refresh needed).
             # Falls back to OAuth refresh token flow for legacy sources.
-            "access_token": params.get("workspaceAccessToken") or get_bitbucket_access_token(
+            "access_token": params.get("workspaceAccessToken")
+            or get_bitbucket_access_token(
                 logger,
                 os.environ["CDX_BITBUCKET_CLIENT_ID"],
                 os.environ["CDX_BITBUCKET_CLIENT_SECRET"],
@@ -431,7 +450,9 @@ def bitbucket_process_request(logger, params):
 
     publish_response(logger, body, resp, params)
 
-    logger.info(f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}")
+    logger.info(
+        f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}"
+    )
 
     return {"status": "success"}
 
@@ -469,7 +490,9 @@ def gitlab_process_request(logger, params):
         },
         "gitlab": {
             "access_token": params.get("accessToken"),
-            "hosted_domain": params.get("headers", {}).get("X-Cloudanix-Gitlab-Hosted-Domain", GITLAB_CLOUD_DOMAIN),
+            "hosted_domain": params.get("headers", {}).get(
+                "X-Cloudanix-Gitlab-Hosted-Domain", GITLAB_CLOUD_DOMAIN
+            ),
         },
         "params": {
             "sessionString": params.get("sessionString"),
@@ -515,15 +538,22 @@ def gitlab_process_request(logger, params):
 
     publish_response(logger, body, resp, params)
 
-    logger.info(f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}")
+    logger.info(
+        f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}"
+    )
 
     return {"status": "success"}
 
 
-def get_bitbucket_access_token(logger, client_id: str, client_secret: str, refresh_token: str):
+def get_bitbucket_access_token(
+    logger, client_id: str, client_secret: str, refresh_token: str
+):
     try:
         TOKEN_URL = "https://bitbucket.org/site/oauth2/access_token"
-        token_req_payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
+        token_req_payload = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }
         response: Response = requests.post(
             TOKEN_URL,
             data=token_req_payload,
@@ -554,7 +584,9 @@ def publish_response(logger, body, resp, params):
         "resultTopic": body.get("params", {}).get("resultTopic"),
         "requestTopic": body.get("params", {}).get("requestTopic"),
         "partial": body.get("params", {}).get("partial"),
-        "iamEntitlementRequestTopic": body.get("params", {}).get("iamEntitlementRequestTopic"),
+        "iamEntitlementRequestTopic": body.get("params", {}).get(
+            "iamEntitlementRequestTopic"
+        ),
         "response": resp,
         "services": body.get("params", {}).get("services", []),
         "runTimestamp": resp.get("updateTag", None),
@@ -584,7 +616,9 @@ def publish_response(logger, body, resp, params):
                 )
 
             else:
-                logger.info("Result not published anywhere. since we want to avoid query when inventory is refreshed")
+                logger.info(
+                    "Result not published anywhere. since we want to avoid query when inventory is refreshed"
+                )
 
             status = True
 

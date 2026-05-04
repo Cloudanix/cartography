@@ -7,18 +7,17 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
-from cartography.models.aws.ec2.auto_scaling_groups import AutoScalingGroupSchema
-from cartography.models.aws.ec2.auto_scaling_groups import (
-    EC2InstanceAutoScalingGroupSchema,
+from cartography.intel.aws.util.botocore_config import (
+    create_boto3_client,
+    get_botocore_config,
 )
 from cartography.models.aws.ec2.auto_scaling_groups import (
+    AutoScalingGroupSchema,
+    EC2InstanceAutoScalingGroupSchema,
     EC2SubnetAutoScalingGroupSchema,
 )
 from cartography.models.aws.ec2.launch_configurations import LaunchConfigurationSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

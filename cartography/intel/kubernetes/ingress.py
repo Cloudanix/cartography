@@ -3,17 +3,17 @@ import logging
 from typing import Any
 
 import neo4j
-from kubernetes.client.models import V1HTTPIngressRuleValue
-from kubernetes.client.models import V1Ingress
-from kubernetes.client.models import V1IngressBackend
-from kubernetes.client.models import V1IngressLoadBalancerIngress
-from kubernetes.client.models import V1IngressRule
+from kubernetes.client.models import (
+    V1HTTPIngressRuleValue,
+    V1Ingress,
+    V1IngressBackend,
+    V1IngressLoadBalancerIngress,
+    V1IngressRule,
+)
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.kubernetes.util import get_epoch
-from cartography.intel.kubernetes.util import k8s_paginate
-from cartography.intel.kubernetes.util import K8sClient
+from cartography.intel.kubernetes.util import K8sClient, get_epoch, k8s_paginate
 from cartography.models.kubernetes.ingress import KubernetesIngressSchema
 from cartography.util import timeit
 

@@ -1,13 +1,11 @@
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cartography.intel.keycloak.users
 import tests.data.keycloak.users
 from tests.integration.cartography.intel.keycloak.test_realms import (
     _ensure_local_neo4j_has_test_realms,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_REALM = "simpson-corp"

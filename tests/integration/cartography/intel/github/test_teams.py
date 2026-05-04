@@ -2,12 +2,13 @@ from unittest.mock import patch
 
 import cartography.intel.github.teams
 from cartography.intel.github.teams import sync_github_teams
-from tests.data.github.teams import GH_TEAM_CHILD_TEAM
-from tests.data.github.teams import GH_TEAM_DATA
-from tests.data.github.teams import GH_TEAM_REPOS
-from tests.data.github.teams import GH_TEAM_USERS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.github.teams import (
+    GH_TEAM_CHILD_TEAM,
+    GH_TEAM_DATA,
+    GH_TEAM_REPOS,
+    GH_TEAM_USERS,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_JOB_PARAMS = {"UPDATE_TAG": TEST_UPDATE_TAG}

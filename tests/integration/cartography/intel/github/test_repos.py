@@ -3,13 +3,14 @@ from unittest.mock import patch
 import cartography.intel.github.repos
 from cartography.intel.github.util import PaginatedGraphqlData
 from tests.data.github.collaborators_test_data import COLLABORATORS_TEST_REPOS
-from tests.data.github.repos import DEP_MANIFESTS_BY_URL
-from tests.data.github.repos import DIRECT_COLLABORATORS
-from tests.data.github.repos import GET_REPOS
-from tests.data.github.repos import OUTSIDE_COLLABORATORS
+from tests.data.github.repos import (
+    DEP_MANIFESTS_BY_URL,
+    DIRECT_COLLABORATORS,
+    GET_REPOS,
+    OUTSIDE_COLLABORATORS,
+)
 from tests.integration.cartography.intel.github import test_users
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_JOB_PARAMS = {"UPDATE_TAG": TEST_UPDATE_TAG}

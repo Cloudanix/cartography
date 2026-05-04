@@ -1,8 +1,6 @@
 from cartography.intel.gitlab.supply_chain import (
-    build_singleton_dockerfile_fallback_matchlinks,
-)
-from cartography.intel.gitlab.supply_chain import (
     GITLAB_SINGLETON_DOCKERFILE_FALLBACK_CONFIDENCE,
+    build_singleton_dockerfile_fallback_matchlinks,
 )
 from cartography.intel.supply_chain import ContainerImage
 

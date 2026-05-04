@@ -5,8 +5,7 @@ Integration tests for ontology packages module
 from unittest.mock import patch
 
 import cartography.intel.ontology.packages
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 

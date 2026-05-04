@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.aws.ec2
 import cartography.intel.aws.ec2.subnets
@@ -9,8 +8,7 @@ from cartography.intel.aws.ec2.network_interfaces import sync_network_interfaces
 from tests.data.aws.ec2.instances import DESCRIBE_INSTANCES
 from tests.data.aws.ec2.network_interfaces import DESCRIBE_NETWORK_INTERFACES
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "eu-north-1"

@@ -20,8 +20,7 @@ queries can act on.
 
 import logging
 import re
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 from typing import Any
 
 import yaml

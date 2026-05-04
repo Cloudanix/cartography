@@ -7,8 +7,7 @@ from cartography.intel.duo.web_authn_credentials import (
 )
 from tests.data.duo.users import GET_USERS_RESPONSE
 from tests.data.duo.web_authn_credentials import GET_WEBAUTHNCREDENTIALS_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_API_HOSTNAME = "https://api-1234.duo.com"

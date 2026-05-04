@@ -3,8 +3,7 @@ import cartography.intel.slack.groups
 import cartography.intel.slack.teams
 import cartography.intel.slack.users
 from tests.integration.cartography.intel.slack.utils import slack_client
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 SLACK_TEAM_ID = "TTPQ4FBPT"
 SLACK_TOKEN = "fake-token"

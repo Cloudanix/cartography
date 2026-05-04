@@ -3,8 +3,7 @@ import re
 from typing import Any
 
 import neo4j
-from azure.core.exceptions import ClientAuthenticationError
-from azure.core.exceptions import HttpResponseError
+from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
 from azure.mgmt.web import WebSiteManagementClient
 
 from cartography.client.core.tx import load

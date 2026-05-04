@@ -2,20 +2,16 @@
 Framework and Fact execution logic for Cartography rules.
 """
 
-from neo4j import Driver
-from neo4j import GraphDatabase
+from neo4j import Driver, GraphDatabase
 
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.rules.data.rules import RULES
-from cartography.rules.formatters import _format_and_output_results
-from cartography.rules.formatters import _generate_neo4j_browser_url
-from cartography.rules.spec.model import Fact
-from cartography.rules.spec.model import Framework
-from cartography.rules.spec.model import Maturity
-from cartography.rules.spec.model import Rule
-from cartography.rules.spec.result import CounterResult
-from cartography.rules.spec.result import FactResult
-from cartography.rules.spec.result import RuleResult
+from cartography.rules.formatters import (
+    _format_and_output_results,
+    _generate_neo4j_browser_url,
+)
+from cartography.rules.spec.model import Fact, Framework, Maturity, Rule
+from cartography.rules.spec.result import CounterResult, FactResult, RuleResult
 
 
 def get_all_frameworks() -> dict[str, list[Framework]]:

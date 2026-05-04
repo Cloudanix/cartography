@@ -4,9 +4,11 @@ from unittest import mock
 import pytest
 
 from cartography.intel.okta.utils import check_rate_limit
-from tests.data.okta.utils import create_long_timeout_response
-from tests.data.okta.utils import create_response
-from tests.data.okta.utils import create_throttled_response
+from tests.data.okta.utils import (
+    create_long_timeout_response,
+    create_response,
+    create_throttled_response,
+)
 
 
 @mock.patch.object(time, "sleep", return_value=None)

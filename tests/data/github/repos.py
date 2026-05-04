@@ -1,6 +1,5 @@
 import textwrap
-from typing import Any
-from typing import List
+from typing import Any, List
 
 from cartography.intel.github.repos import UserAffiliationAndRepoPermission
 from tests.data.github.branch_protection_rules import PROTECTED_BRANCH_STRONG

@@ -1,7 +1,6 @@
 from unittest.mock import MagicMock
 
-from cartography.intel.cve_metadata.epss import get_epss_scores
-from cartography.intel.cve_metadata.epss import merge_epss_into_cves
+from cartography.intel.cve_metadata.epss import get_epss_scores, merge_epss_into_cves
 from tests.data.cve_metadata.epss import GET_EPSS_API_DATA
 
 

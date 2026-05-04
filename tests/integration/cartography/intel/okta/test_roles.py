@@ -1,12 +1,12 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.okta.roles
 from cartography.intel.okta.sync_state import OktaSyncState
-from tests.data.okta.adminroles import LIST_ASSIGNED_GROUP_ROLE_RESPONSE
-from tests.data.okta.adminroles import LIST_ASSIGNED_USER_ROLE_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.okta.adminroles import (
+    LIST_ASSIGNED_GROUP_ROLE_RESPONSE,
+    LIST_ASSIGNED_USER_ROLE_RESPONSE,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ORG_ID = "test-okta-org-id"
 TEST_UPDATE_TAG = 123456789

@@ -1,6 +1,8 @@
-from cartography.models.ontology.mapping.specs import OntologyFieldMapping
-from cartography.models.ontology.mapping.specs import OntologyMapping
-from cartography.models.ontology.mapping.specs import OntologyNodeMapping
+from cartography.models.ontology.mapping.specs import (
+    OntologyFieldMapping,
+    OntologyMapping,
+    OntologyNodeMapping,
+)
 
 # CodeRepository ontology fields:
 # - id: Unique identifier (URL or URI)

@@ -1,11 +1,15 @@
-from cartography.intel.sentinelone.account import sync_accounts
-from cartography.intel.sentinelone.account import sync_site_scoped_accounts
-from tests.data.sentinelone.account import ACCOUNT_ID
-from tests.data.sentinelone.account import ACCOUNT_ID_2
-from tests.data.sentinelone.account import ACCOUNTS_DATA
-from tests.data.sentinelone.account import SITE_ID
-from tests.data.sentinelone.account import SITE_ID_2
-from tests.data.sentinelone.account import SITES_DATA
+from cartography.intel.sentinelone.account import (
+    sync_accounts,
+    sync_site_scoped_accounts,
+)
+from tests.data.sentinelone.account import (
+    ACCOUNT_ID,
+    ACCOUNT_ID_2,
+    ACCOUNTS_DATA,
+    SITE_ID,
+    SITE_ID_2,
+    SITES_DATA,
+)
 from tests.integration.util import check_nodes
 
 TEST_UPDATE_TAG = 123456789

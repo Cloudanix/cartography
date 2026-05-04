@@ -1,5 +1,4 @@
-from typing import Any
-from typing import Generator
+from typing import Any, Generator
 
 import requests
 

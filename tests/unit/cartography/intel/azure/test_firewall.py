@@ -1,6 +1,8 @@
-from cartography.intel.azure.firewall import transform_firewall_policies
-from cartography.intel.azure.firewall import transform_firewalls
-from cartography.intel.azure.firewall import transform_ip_configurations
+from cartography.intel.azure.firewall import (
+    transform_firewall_policies,
+    transform_firewalls,
+    transform_ip_configurations,
+)
 
 
 def test_transform_firewalls():

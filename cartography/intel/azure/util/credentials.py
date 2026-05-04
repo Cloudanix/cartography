@@ -1,10 +1,8 @@
 import logging
-from typing import Any
-from typing import Optional
+from typing import Any, Optional
 
 import jwt
-from azure.identity import AzureCliCredential
-from azure.identity import ClientSecretCredential
+from azure.identity import AzureCliCredential, ClientSecretCredential
 from azure.mgmt.resource.subscriptions import SubscriptionClient
 
 logger = logging.getLogger(__name__)

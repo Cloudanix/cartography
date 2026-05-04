@@ -2,9 +2,11 @@
 #
 # _ont_name - The display name of the namespace.
 # _ont_status - Current lifecycle phase of the namespace (e.g., Active, Terminating).
-from cartography.models.ontology.mapping.specs import OntologyFieldMapping
-from cartography.models.ontology.mapping.specs import OntologyMapping
-from cartography.models.ontology.mapping.specs import OntologyNodeMapping
+from cartography.models.ontology.mapping.specs import (
+    OntologyFieldMapping,
+    OntologyMapping,
+    OntologyNodeMapping,
+)
 
 kubernetes_mapping = OntologyMapping(
     module_name="kubernetes",

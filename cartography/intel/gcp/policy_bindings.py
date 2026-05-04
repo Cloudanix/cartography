@@ -7,27 +7,31 @@ from threading import Lock
 from typing import Any
 
 import neo4j
-from google.api_core.exceptions import DeadlineExceeded
-from google.api_core.exceptions import PermissionDenied
-from google.api_core.exceptions import ResourceExhausted
-from google.api_core.exceptions import RetryError
-from google.api_core.exceptions import ServiceUnavailable
-from google.api_core.retry import if_exception_type
-from google.api_core.retry import Retry
+from google.api_core.exceptions import (
+    DeadlineExceeded,
+    PermissionDenied,
+    ResourceExhausted,
+    RetryError,
+    ServiceUnavailable,
+)
+from google.api_core.retry import Retry, if_exception_type
 from google.cloud.asset_v1 import AssetServiceClient
-from google.cloud.asset_v1.types import BatchGetEffectiveIamPoliciesRequest
-from google.cloud.asset_v1.types import SearchAllIamPoliciesRequest
+from google.cloud.asset_v1.types import (
+    BatchGetEffectiveIamPoliciesRequest,
+    SearchAllIamPoliciesRequest,
+)
 from google.protobuf.json_format import MessageToDict
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.permission_relationships import (
+    GCPPrincipalPermissionContext,
     build_principals_from_policy_bindings,
 )
-from cartography.intel.gcp.permission_relationships import GCPPrincipalPermissionContext
-from cartography.models.gcp.policy_bindings import GCPPolicyBindingAppliesToMatchLink
-from cartography.models.gcp.policy_bindings import GCPPolicyBindingSchema
+from cartography.models.gcp.policy_bindings import (
+    GCPPolicyBindingAppliesToMatchLink,
+    GCPPolicyBindingSchema,
+)
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

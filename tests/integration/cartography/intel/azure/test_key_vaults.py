@@ -1,13 +1,13 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.azure.key_vaults as key_vaults
-from tests.data.azure.key_vaults import MOCK_CERTIFICATES
-from tests.data.azure.key_vaults import MOCK_KEYS
-from tests.data.azure.key_vaults import MOCK_SECRETS
-from tests.data.azure.key_vaults import MOCK_VAULTS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.azure.key_vaults import (
+    MOCK_CERTIFICATES,
+    MOCK_KEYS,
+    MOCK_SECRETS,
+    MOCK_VAULTS,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

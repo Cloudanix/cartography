@@ -3,8 +3,7 @@ import logging
 import neo4j
 
 from cartography.config import Config
-from cartography.intel.snipeit import asset
-from cartography.intel.snipeit import user
+from cartography.intel.snipeit import asset, user
 from cartography.stats import get_stats_client
 from cartography.util import timeit
 

@@ -3,8 +3,7 @@ from unittest.mock import Mock
 import requests
 
 from cartography.intel.gitlab import util
-from cartography.intel.gitlab.util import fetch_registry_manifest
-from cartography.intel.gitlab.util import get_registry_token
+from cartography.intel.gitlab.util import fetch_registry_manifest, get_registry_token
 
 
 def _make_response(status_code: int, json_data=None, headers=None):

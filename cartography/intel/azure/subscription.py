@@ -1,7 +1,5 @@
 import logging
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Dict, List, Optional
 
 import neo4j
 from azure.core.exceptions import HttpResponseError

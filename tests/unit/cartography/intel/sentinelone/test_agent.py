@@ -2,13 +2,14 @@ from unittest.mock import patch
 
 import pytest
 
-from cartography.intel.sentinelone.agent import get_agents
-from cartography.intel.sentinelone.agent import transform_agents
-from tests.data.sentinelone.agent import AGENT_ID
-from tests.data.sentinelone.agent import AGENT_ID_2
-from tests.data.sentinelone.agent import AGENT_ID_3
-from tests.data.sentinelone.agent import AGENTS_DATA
-from tests.data.sentinelone.agent import AGENTS_DATA_MINIMAL
+from cartography.intel.sentinelone.agent import get_agents, transform_agents
+from tests.data.sentinelone.agent import (
+    AGENT_ID,
+    AGENT_ID_2,
+    AGENT_ID_3,
+    AGENTS_DATA,
+    AGENTS_DATA_MINIMAL,
+)
 
 
 @patch("cartography.intel.sentinelone.agent.get_paginated_results")

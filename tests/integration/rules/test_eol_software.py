@@ -1,8 +1,8 @@
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.rules.data.rules.eol_software import (
     _build_ec2_instance_amazon_linux_2_eol_query,
+    eol_software,
 )
-from cartography.rules.data.rules.eol_software import eol_software
 
 
 def _reset_graph(neo4j_session) -> None:

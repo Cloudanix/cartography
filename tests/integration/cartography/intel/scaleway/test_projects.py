@@ -1,10 +1,8 @@
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cartography.intel.scaleway.projects
 import tests.data.scaleway.projects
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = "0681c477-fbb9-4820-b8d6-0eef10cfcd6d"

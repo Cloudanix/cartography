@@ -1,11 +1,12 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cartography.intel.github.app_auth import AppCredential
-from cartography.intel.github.app_auth import make_credential
-from cartography.intel.github.app_auth import PatCredential
+from cartography.intel.github.app_auth import (
+    AppCredential,
+    PatCredential,
+    make_credential,
+)
 
 
 def test_pat_get_token_returns_static_token() -> None:

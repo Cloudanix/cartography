@@ -1,7 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import call
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 from cartography.intel.gcp.crm.folders import get_default_apps_script_folder_names
 from cartography.intel.gcp.crm.projects import get_gcp_projects

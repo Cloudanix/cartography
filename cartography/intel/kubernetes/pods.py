@@ -3,14 +3,11 @@ import logging
 from typing import Any
 
 import neo4j
-from kubernetes.client.models import V1Container
-from kubernetes.client.models import V1Pod
+from kubernetes.client.models import V1Container, V1Pod
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.kubernetes.util import get_epoch
-from cartography.intel.kubernetes.util import k8s_paginate
-from cartography.intel.kubernetes.util import K8sClient
+from cartography.intel.kubernetes.util import K8sClient, get_epoch, k8s_paginate
 from cartography.models.kubernetes.containers import KubernetesContainerSchema
 from cartography.models.kubernetes.pods import KubernetesPodSchema
 from cartography.util import timeit

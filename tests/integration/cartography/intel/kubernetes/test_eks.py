@@ -1,28 +1,30 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from kubernetes.client.exceptions import ApiException
 from kubernetes.client.models import V1ConfigMap
 
-from cartography.intel.aws.iam import load_role_data
-from cartography.intel.aws.iam import load_users
-from cartography.intel.aws.iam import transform_role_trust_policies
-from cartography.intel.aws.iam import transform_users
+from cartography.intel.aws.iam import (
+    load_role_data,
+    load_users,
+    transform_role_trust_policies,
+    transform_users,
+)
 from cartography.intel.kubernetes.clusters import load_kubernetes_cluster
 from cartography.intel.kubernetes.eks import sync as sync_eks
-from tests.data.kubernetes.eks import AWS_AUTH_CONFIGMAP_DATA
-from tests.data.kubernetes.eks import MOCK_ACCESS_ENTRIES
-from tests.data.kubernetes.eks import MOCK_AWS_ROLES
-from tests.data.kubernetes.eks import MOCK_AWS_USERS
-from tests.data.kubernetes.eks import MOCK_CLUSTER_DATA
-from tests.data.kubernetes.eks import MOCK_OIDC_PROVIDER
-from tests.data.kubernetes.eks import TEST_ACCOUNT_ID
-from tests.data.kubernetes.eks import TEST_CLUSTER_ID
-from tests.data.kubernetes.eks import TEST_CLUSTER_NAME
-from tests.data.kubernetes.eks import TEST_REGION
-from tests.data.kubernetes.eks import TEST_UPDATE_TAG
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.kubernetes.eks import (
+    AWS_AUTH_CONFIGMAP_DATA,
+    MOCK_ACCESS_ENTRIES,
+    MOCK_AWS_ROLES,
+    MOCK_AWS_USERS,
+    MOCK_CLUSTER_DATA,
+    MOCK_OIDC_PROVIDER,
+    TEST_ACCOUNT_ID,
+    TEST_CLUSTER_ID,
+    TEST_CLUSTER_NAME,
+    TEST_REGION,
+    TEST_UPDATE_TAG,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_CLUSTER_ARN = (
     f"arn:aws:eks:{TEST_REGION}:{TEST_ACCOUNT_ID}:cluster/{TEST_CLUSTER_NAME}"

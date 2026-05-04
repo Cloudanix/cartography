@@ -8,8 +8,7 @@ from googleapiclient.errors import HttpError
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.labels import sync_labels
-from cartography.intel.gcp.util import gcp_api_execute_with_retry
-from cartography.intel.gcp.util import is_api_disabled_error
+from cartography.intel.gcp.util import gcp_api_execute_with_retry, is_api_disabled_error
 from cartography.models.gcp.cloudsql.authorized_network import (
     GCPCloudSQLAuthorizedNetworkSchema,
 )

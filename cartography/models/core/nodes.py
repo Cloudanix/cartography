@@ -1,12 +1,12 @@
 import abc
-from dataclasses import dataclass
-from dataclasses import field
-from typing import Optional
-from typing import Union
+from dataclasses import dataclass, field
+from typing import Optional, Union
 
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.relationships import CartographyRelSchema
-from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import (
+    CartographyRelSchema,
+    OtherRelationships,
+)
 
 
 @dataclass(frozen=True)

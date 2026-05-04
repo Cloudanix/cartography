@@ -1,18 +1,20 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import neo4j
 from googleapiclient.discovery import Resource
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gcp.util import determine_role_type_and_scope
-from cartography.intel.gcp.util import gcp_api_execute_with_retry
-from cartography.models.gcp.iam import GCPOrgRoleSchema
-from cartography.models.gcp.iam import GCPProjectRoleSchema
-from cartography.models.gcp.iam import GCPServiceAccountSchema
+from cartography.intel.gcp.util import (
+    determine_role_type_and_scope,
+    gcp_api_execute_with_retry,
+)
+from cartography.models.gcp.iam import (
+    GCPOrgRoleSchema,
+    GCPProjectRoleSchema,
+    GCPServiceAccountSchema,
+)
 from cartography.models.gcp.iam_keys import GCPServiceAccountKeySchema
 from cartography.util import timeit
 

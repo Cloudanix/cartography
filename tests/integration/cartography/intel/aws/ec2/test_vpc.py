@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography
 from cartography.intel.aws.ec2.network_acls import sync_network_acls
@@ -17,8 +16,7 @@ from tests.data.aws.ec2.vpc_peerings import DESCRIBE_VPC_PEERINGS
 from tests.data.aws.ec2.vpcs import TEST_VPCS
 from tests.data.aws.redshift import CLUSTERS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ACCOUNT_ID = "12345"
 TEST_REGION = "us-east-1"

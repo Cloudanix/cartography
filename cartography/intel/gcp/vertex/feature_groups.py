@@ -9,9 +9,11 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.clients import build_vertex_ai_feature_registry_client
 from cartography.intel.gcp.vertex.models import get_vertex_ai_locations
-from cartography.intel.gcp.vertex.utils import fetch_vertex_ai_resources_for_locations
-from cartography.intel.gcp.vertex.utils import get_vertex_credentials
-from cartography.intel.gcp.vertex.utils import list_vertex_ai_resources_for_location
+from cartography.intel.gcp.vertex.utils import (
+    fetch_vertex_ai_resources_for_locations,
+    get_vertex_credentials,
+    list_vertex_ai_resources_for_location,
+)
 from cartography.models.gcp.vertex.feature_group import GCPVertexAIFeatureGroupSchema
 from cartography.util import timeit
 

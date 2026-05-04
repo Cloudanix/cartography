@@ -1,9 +1,6 @@
 import logging
 from itertools import islice
-from typing import Any
-from typing import Dict
-from typing import Iterable
-from typing import List
+from typing import Any, Dict, Iterable, List
 
 logger = logging.getLogger(__name__)
 

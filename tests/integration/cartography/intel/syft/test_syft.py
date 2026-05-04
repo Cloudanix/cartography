@@ -9,15 +9,18 @@ import json
 from unittest.mock import MagicMock
 
 import cartography.intel.aws.ecr
-from cartography.intel.syft import sync_single_syft
-from cartography.intel.syft import sync_syft_from_dir
-from cartography.intel.syft import sync_syft_from_s3
-from tests.data.syft.syft_sample import EXPECTED_SYFT_PACKAGE_DEPENDENCIES
-from tests.data.syft.syft_sample import EXPECTED_SYFT_PACKAGES
-from tests.data.syft.syft_sample import SYFT_SAMPLE
+from cartography.intel.syft import (
+    sync_single_syft,
+    sync_syft_from_dir,
+    sync_syft_from_s3,
+)
+from tests.data.syft.syft_sample import (
+    EXPECTED_SYFT_PACKAGE_DEPENDENCIES,
+    EXPECTED_SYFT_PACKAGES,
+    SYFT_SAMPLE,
+)
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ACCOUNT_ID = "000000000000"

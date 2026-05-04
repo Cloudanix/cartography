@@ -1,13 +1,11 @@
 import datetime
 from datetime import timezone as tz
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from botocore.exceptions import ClientError
 
 import cartography.intel.aws.secretsmanager
-from cartography.intel.aws.secretsmanager import get_secret_versions
-from cartography.intel.aws.secretsmanager import transform_secrets
+from cartography.intel.aws.secretsmanager import get_secret_versions, transform_secrets
 from tests.data.aws.secretsmanager import SECRETS_RAW_DATA
 
 

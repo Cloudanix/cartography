@@ -1,14 +1,15 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from kiota_abstractions.api_error import APIError
 from kiota_http.middleware.options.retry_handler_option import RetryHandlerOption
 
-from cartography.intel.microsoft.client import create_graph_service_client
-from cartography.intel.microsoft.client import get_api_error_response_header
-from cartography.intel.microsoft.client import GRAPH_MAX_RETRIES
-from cartography.intel.microsoft.client import GRAPH_RETRY_DELAY_SECONDS
-from cartography.intel.microsoft.client import GRAPH_SCOPES
+from cartography.intel.microsoft.client import (
+    GRAPH_MAX_RETRIES,
+    GRAPH_RETRY_DELAY_SECONDS,
+    GRAPH_SCOPES,
+    create_graph_service_client,
+    get_api_error_response_header,
+)
 
 
 @patch("cartography.intel.microsoft.client.GraphServiceClient")

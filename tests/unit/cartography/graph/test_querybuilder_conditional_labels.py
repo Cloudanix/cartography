@@ -1,19 +1,25 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from cartography.graph.querybuilder import build_conditional_label_queries
-from cartography.graph.querybuilder import build_create_index_queries
-from cartography.graph.querybuilder import build_ingestion_query
+from cartography.graph.querybuilder import (
+    build_conditional_label_queries,
+    build_create_index_queries,
+    build_ingestion_query,
+)
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import CartographyNodeProperties
-from cartography.models.core.nodes import CartographyNodeSchema
-from cartography.models.core.nodes import ConditionalNodeLabel
-from cartography.models.core.nodes import ExtraNodeLabels
-from cartography.models.core.relationships import CartographyRelProperties
-from cartography.models.core.relationships import CartographyRelSchema
-from cartography.models.core.relationships import LinkDirection
-from cartography.models.core.relationships import make_target_node_matcher
-from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.core.nodes import (
+    CartographyNodeProperties,
+    CartographyNodeSchema,
+    ConditionalNodeLabel,
+    ExtraNodeLabels,
+)
+from cartography.models.core.relationships import (
+    CartographyRelProperties,
+    CartographyRelSchema,
+    LinkDirection,
+    TargetNodeMatcher,
+    make_target_node_matcher,
+)
 
 
 @dataclass(frozen=True)

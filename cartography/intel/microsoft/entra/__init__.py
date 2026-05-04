@@ -16,10 +16,12 @@ from cartography.intel.microsoft.entra.federation.aws_identity_center import (
 from cartography.intel.microsoft.entra.groups import sync_entra_groups
 from cartography.intel.microsoft.entra.ou import sync_entra_ous
 from cartography.intel.microsoft.entra.service_principals import sync_service_principals
-from cartography.intel.microsoft.entra.users import get_tenant
-from cartography.intel.microsoft.entra.users import load_tenant
-from cartography.intel.microsoft.entra.users import sync_entra_users
-from cartography.intel.microsoft.entra.users import transform_tenant
+from cartography.intel.microsoft.entra.users import (
+    get_tenant,
+    load_tenant,
+    sync_entra_users,
+    transform_tenant,
+)
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

@@ -5,11 +5,10 @@ import neo4j
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
-from cartography.models.googleworkspace.oauth_app import GoogleWorkspaceOAuthAppSchema
 from cartography.models.googleworkspace.oauth_app import (
+    GoogleWorkspaceOAuthAppSchema,
     GoogleWorkspaceUserToOAuthAppRel,
 )
 from cartography.util import timeit

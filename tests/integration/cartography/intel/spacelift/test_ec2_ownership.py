@@ -1,17 +1,14 @@
 from typing import Any
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import neo4j
 
 from cartography.intel.spacelift.account import sync_account
 from cartography.intel.spacelift.ec2_ownership import sync_ec2_ownership
 from cartography.intel.spacelift.runs import sync_runs
-from tests.data.spacelift.spacelift_data import CLOUDTRAIL_EC2_OWNERSHIP_DATA
-from tests.data.spacelift.spacelift_data import RUNS_DATA
+from tests.data.spacelift.spacelift_data import CLOUDTRAIL_EC2_OWNERSHIP_DATA, RUNS_DATA
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_SPACELIFT_ACCOUNT_ID = "test-spacelift-account"

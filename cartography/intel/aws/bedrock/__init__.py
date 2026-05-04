@@ -16,12 +16,14 @@ from cartography.intel.aws.util.service_regions import (
 from cartography.util import timeit
 
 # Import sync functions from individual modules
-from . import agents
-from . import custom_models
-from . import foundation_models
-from . import guardrails
-from . import knowledge_bases
-from . import provisioned_model_throughput
+from . import (
+    agents,
+    custom_models,
+    foundation_models,
+    guardrails,
+    knowledge_bases,
+    provisioned_model_throughput,
+)
 
 logger = logging.getLogger(__name__)
 

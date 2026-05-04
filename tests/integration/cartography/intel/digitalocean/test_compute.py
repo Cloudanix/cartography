@@ -5,8 +5,7 @@ import tests.data.digitalocean.compute
 from tests.integration.cartography.intel.digitalocean.test_management import (
     _ensure_local_neo4j_has_project_data,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 

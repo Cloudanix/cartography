@@ -4,22 +4,26 @@ import cartography.intel.aws.ec2.load_balancer_v2s
 from cartography.intel.kubernetes.clusters import load_kubernetes_cluster
 from cartography.intel.kubernetes.namespaces import load_namespaces
 from cartography.intel.kubernetes.pods import load_pods
-from cartography.intel.kubernetes.services import cleanup
-from cartography.intel.kubernetes.services import load_services
+from cartography.intel.kubernetes.services import cleanup, load_services
 from tests.data.aws.ec2.load_balancers import LOAD_BALANCER_DATA
-from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_DATA
-from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_IDS
-from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_NAMES
-from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_1_NAMESPACES_DATA
-from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_2_NAMESPACES_DATA
+from tests.data.kubernetes.clusters import (
+    KUBERNETES_CLUSTER_DATA,
+    KUBERNETES_CLUSTER_IDS,
+    KUBERNETES_CLUSTER_NAMES,
+)
+from tests.data.kubernetes.namespaces import (
+    KUBERNETES_CLUSTER_1_NAMESPACES_DATA,
+    KUBERNETES_CLUSTER_2_NAMESPACES_DATA,
+)
 from tests.data.kubernetes.pods import KUBERNETES_PODS_DATA
-from tests.data.kubernetes.services import AWS_TEST_LB_DNS_NAME
-from tests.data.kubernetes.services import AWS_TEST_LB_DNS_NAME_2
-from tests.data.kubernetes.services import KUBERNETES_LOADBALANCER_SERVICE_DATA
-from tests.data.kubernetes.services import KUBERNETES_MULTI_LB_SERVICE_DATA
-from tests.data.kubernetes.services import KUBERNETES_SERVICES_DATA
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.kubernetes.services import (
+    AWS_TEST_LB_DNS_NAME,
+    AWS_TEST_LB_DNS_NAME_2,
+    KUBERNETES_LOADBALANCER_SERVICE_DATA,
+    KUBERNETES_MULTI_LB_SERVICE_DATA,
+    KUBERNETES_SERVICES_DATA,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ACCOUNT_ID = "000000000000"

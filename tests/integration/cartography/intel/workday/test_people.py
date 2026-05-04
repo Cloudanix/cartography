@@ -1,13 +1,14 @@
 from unittest.mock import patch
 
-from cartography.intel.workday.people import _load_manager_relationships
-from cartography.intel.workday.people import _load_organizations
-from cartography.intel.workday.people import _load_people
-from cartography.intel.workday.people import _transform_people_data
-from cartography.intel.workday.people import sync_workday_people
+from cartography.intel.workday.people import (
+    _load_manager_relationships,
+    _load_organizations,
+    _load_people,
+    _transform_people_data,
+    sync_workday_people,
+)
 from tests.data.workday.people import GET_WORKDAY_DIRECTORY_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_WORKDAY_API_URL = "https://example.workday.com/api"

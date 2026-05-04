@@ -1,16 +1,16 @@
 # Copyright (c) 2020, Oracle and/or its affiliates.
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.oci.iam as iam
-from tests.data.oci.iam import LIST_COMPARTMENTS
-from tests.data.oci.iam import LIST_GROUP_MEMBERSHIPS
-from tests.data.oci.iam import LIST_GROUPS
-from tests.data.oci.iam import LIST_POLICIES
-from tests.data.oci.iam import LIST_REGION_SUBSCRIPTIONS
-from tests.data.oci.iam import LIST_USERS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.oci.iam import (
+    LIST_COMPARTMENTS,
+    LIST_GROUP_MEMBERSHIPS,
+    LIST_GROUPS,
+    LIST_POLICIES,
+    LIST_REGION_SUBSCRIPTIONS,
+    LIST_USERS,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_TENANCY_ID = (
     "ocid1.tenancy.oc1..nqilyrb1l5t6gnmlcjgeim8q47vccnklev8k2ud9skn78eapu116oyv9wcr0"

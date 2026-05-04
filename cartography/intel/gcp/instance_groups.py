@@ -1,25 +1,24 @@
 import json
 import logging
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Dict, List, Optional
 
 import neo4j
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
 
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import run_cleanup_job, timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker() if GCPLinker else None
 
 
-def _parse_mig_zone_region(self_link: str, fallback_zone: Optional[str], fallback_region: Optional[str]) -> Dict:
+def _parse_mig_zone_region(
+    self_link: str, fallback_zone: Optional[str], fallback_region: Optional[str]
+) -> Dict:
     """
     Best-effort extraction of zone/region from a MIG selfLink.
     If parsing fails, use fallback values derived from the request scope.
@@ -48,11 +47,15 @@ def _get_zonal_managed_instance_groups(
     for zone in zones:
         zone_name = zone["name"]
         try:
-            req = compute.instanceGroupManagers().list(project=project_id, zone=zone_name)
+            req = compute.instanceGroupManagers().list(
+                project=project_id, zone=zone_name
+            )
             res = req.execute()
             if "items" in res:
                 for igm in res["items"]:
-                    zone_region = _parse_mig_zone_region(igm.get("selfLink", ""), zone_name, None)
+                    zone_region = _parse_mig_zone_region(
+                        igm.get("selfLink", ""), zone_name, None
+                    )
                     migs.append(
                         {
                             "id": igm["selfLink"],
@@ -63,7 +66,7 @@ def _get_zonal_managed_instance_groups(
                             # Used later in listManagedInstances() calls.
                             "instanceGroupManager_name": igm["name"],
                             "consolelink": gcp_console_link.get_console_link(
-                                resource_name='global_instance_group',
+                                resource_name="global_instance_group",
                                 project_id=project_id,
                                 zone=zone_region["zone"],
                                 instance_group_name=igm["name"],
@@ -73,23 +76,36 @@ def _get_zonal_managed_instance_groups(
         except HttpError as e:
             # Permissions issues are expected sometimes; skip safely.
             err = json.loads(e.content.decode("utf-8")).get("error", {})
-            if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
-                logger.warning("Skipping zonal MIGs for %s due to permissions. Project=%s", zone_name, project_id)
+            if (
+                err.get("status", "") == "PERMISSION_DENIED"
+                or err.get("message", "") == "Forbidden"
+            ):
+                logger.warning(
+                    "Skipping zonal MIGs for %s due to permissions. Project=%s",
+                    zone_name,
+                    project_id,
+                )
                 continue
             raise
 
     return migs
 
 
-def _get_regional_managed_instance_groups(compute: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def _get_regional_managed_instance_groups(
+    compute: Resource, project_id: str, regions: List[str]
+) -> List[Dict]:
     migs: List[Dict] = []
     for region in regions:
         try:
-            req = compute.regionInstanceGroupManagers().list(project=project_id, region=region)
+            req = compute.regionInstanceGroupManagers().list(
+                project=project_id, region=region
+            )
             res = req.execute()
             if "items" in res:
                 for igm in res["items"]:
-                    zone_region = _parse_mig_zone_region(igm.get("selfLink", ""), None, region)
+                    zone_region = _parse_mig_zone_region(
+                        igm.get("selfLink", ""), None, region
+                    )
                     migs.append(
                         {
                             "id": igm["selfLink"],
@@ -100,7 +116,7 @@ def _get_regional_managed_instance_groups(compute: Resource, project_id: str, re
                             # Used later in listManagedInstances() calls.
                             "instanceGroupManager_name": igm["name"],
                             "consolelink": gcp_console_link.get_console_link(
-                                resource_name='regional_instance_group',
+                                resource_name="regional_instance_group",
                                 project_id=project_id,
                                 region=zone_region["region"],
                                 instance_group_name=igm["name"],
@@ -109,8 +125,15 @@ def _get_regional_managed_instance_groups(compute: Resource, project_id: str, re
                     )
         except HttpError as e:
             err = json.loads(e.content.decode("utf-8")).get("error", {})
-            if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
-                logger.warning("Skipping regional MIGs for %s due to permissions. Project=%s", region, project_id)
+            if (
+                err.get("status", "") == "PERMISSION_DENIED"
+                or err.get("message", "") == "Forbidden"
+            ):
+                logger.warning(
+                    "Skipping regional MIGs for %s due to permissions. Project=%s",
+                    region,
+                    project_id,
+                )
                 continue
             raise
     return migs
@@ -122,7 +145,9 @@ def _load_managed_instance_groups(
     project_id: str,
     gcp_update_tag: int,
 ) -> None:
-    session.write_transaction(_load_managed_instance_groups_tx, migs, project_id, gcp_update_tag)
+    session.write_transaction(
+        _load_managed_instance_groups_tx, migs, project_id, gcp_update_tag
+    )
 
 
 def _load_managed_instance_groups_tx(
@@ -158,7 +183,9 @@ def _load_managed_instance_groups_tx(
     )
 
 
-def _get_managed_instances_for_mig(compute: Resource, project_id: str, mig: Dict) -> List[Dict]:
+def _get_managed_instances_for_mig(
+    compute: Resource, project_id: str, mig: Dict
+) -> List[Dict]:
     """
     Returns a list of instance selfLinks for this managed instance group.
     """
@@ -192,7 +219,10 @@ def _get_managed_instances_for_mig(compute: Resource, project_id: str, mig: Dict
                 )
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8")).get("error", {})
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 "Skipping managed instances for MIG due to permissions. Project=%s MIG=%s",
                 project_id,
@@ -209,7 +239,9 @@ def _load_vm_to_mig_part_of_relationships(
     relationships: List[Dict],
     gcp_update_tag: int,
 ) -> None:
-    session.write_transaction(_load_vm_to_mig_part_of_relationships_tx, relationships, gcp_update_tag)
+    session.write_transaction(
+        _load_vm_to_mig_part_of_relationships_tx, relationships, gcp_update_tag
+    )
 
 
 def _load_vm_to_mig_part_of_relationships_tx(
@@ -259,6 +291,10 @@ def sync_managed_instance_groups(
         relationships.extend(_get_managed_instances_for_mig(compute, project_id, mig))
 
     if relationships:
-        _load_vm_to_mig_part_of_relationships(neo4j_session, relationships, gcp_update_tag)
+        _load_vm_to_mig_part_of_relationships(
+            neo4j_session, relationships, gcp_update_tag
+        )
 
-    run_cleanup_job("gcp_instance_groups_cleanup.json", neo4j_session, common_job_parameters)
+    run_cleanup_job(
+        "gcp_instance_groups_cleanup.json", neo4j_session, common_job_parameters
+    )

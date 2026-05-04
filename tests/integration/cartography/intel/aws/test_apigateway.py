@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.aws.apigateway
 import tests.data.aws.apigateway
@@ -12,8 +11,7 @@ from cartography.models.aws.apigateway.apigatewayresource import (
 )
 from cartography.models.aws.apigateway.apigatewaystage import APIGatewayStageSchema
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "eu-west-1"

@@ -1,12 +1,12 @@
-from cartography.graph.querybuilder import _build_ontology_field_statement_equal_boolean
 from cartography.graph.querybuilder import (
+    _build_ontology_field_statement_equal_boolean,
     _build_ontology_field_statement_invert_boolean,
+    _build_ontology_field_statement_mapping,
+    _build_ontology_field_statement_or_boolean,
+    _build_ontology_field_statement_static_value,
+    _build_ontology_field_statement_to_boolean,
+    _escape_cypher_string,
 )
-from cartography.graph.querybuilder import _build_ontology_field_statement_mapping
-from cartography.graph.querybuilder import _build_ontology_field_statement_or_boolean
-from cartography.graph.querybuilder import _build_ontology_field_statement_static_value
-from cartography.graph.querybuilder import _build_ontology_field_statement_to_boolean
-from cartography.graph.querybuilder import _escape_cypher_string
 from cartography.models.core.common import PropertyRef
 from cartography.models.ontology.mapping.specs import OntologyFieldMapping
 

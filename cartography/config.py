@@ -7,8 +7,8 @@ def _resolve_report_source_config(
     s3_prefix: str | None,
     warn_on_legacy: bool = True,
 ) -> str | None:
-    from cartography.intel.common.report_source import LegacyReportSourceNames
     from cartography.intel.common.report_source import (
+        LegacyReportSourceNames,
         resolve_report_source_with_legacy_fields,
     )
 

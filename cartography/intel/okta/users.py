@@ -1,8 +1,6 @@
 # Okta intel module - Users
 import logging
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 import neo4j
 from okta import UsersClient

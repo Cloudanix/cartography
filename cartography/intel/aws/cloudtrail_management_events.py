@@ -1,34 +1,32 @@
 import json
 import logging
-from datetime import datetime
-from datetime import timedelta
-from typing import Any
-from typing import Dict
-from typing import List
+from datetime import datetime, timedelta
+from typing import Any, Dict, List
 
 import boto3
 import neo4j
-from botocore.exceptions import ClientError
-from botocore.exceptions import ConnectionClosedError
-from botocore.exceptions import ConnectTimeoutError
-from botocore.exceptions import EndpointConnectionError
-from botocore.exceptions import ReadTimeoutError
+from botocore.exceptions import (
+    ClientError,
+    ConnectionClosedError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 from botocore.parsers import ResponseParserError
 
 from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.cloudtrail import _is_retryable_cloudtrail_error
-from cartography.intel.aws.cloudtrail import CloudTrailTransientRegionFailure
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.models.aws.cloudtrail.management_events import AssumedRoleMatchLink
-from cartography.models.aws.cloudtrail.management_events import (
-    AssumedRoleWithSAMLMatchLink,
+from cartography.intel.aws.cloudtrail import (
+    CloudTrailTransientRegionFailure,
+    _is_retryable_cloudtrail_error,
 )
+from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.cloudtrail.management_events import (
+    AssumedRoleMatchLink,
+    AssumedRoleWithSAMLMatchLink,
     GitHubRepoAssumeRoleWithWebIdentityMatchLink,
 )
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

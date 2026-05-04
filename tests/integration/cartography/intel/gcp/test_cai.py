@@ -1,13 +1,13 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp.cai
 import tests.data.gcp.iam
-from tests.integration.cartography.intel.gcp.test_iam import _create_test_project
-from tests.integration.cartography.intel.gcp.test_iam import TEST_PROJECT_ID
-from tests.integration.cartography.intel.gcp.test_iam import TEST_UPDATE_TAG
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.cartography.intel.gcp.test_iam import (
+    TEST_PROJECT_ID,
+    TEST_UPDATE_TAG,
+    _create_test_project,
+)
+from tests.integration.util import check_nodes, check_rels
 
 COMMON_JOB_PARAMS = {
     "PROJECT_ID": TEST_PROJECT_ID,

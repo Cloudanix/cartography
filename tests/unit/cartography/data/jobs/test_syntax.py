@@ -4,11 +4,9 @@ import sys
 import pytest
 
 if sys.version_info >= (3, 7):
-    from importlib.resources import contents
-    from importlib.resources import read_text
+    from importlib.resources import contents, read_text
 else:
-    from importlib_resources import contents
-    from importlib_resources import read_text
+    from importlib_resources import contents, read_text
 
 
 def test_analysis_jobs_are_valid_json():

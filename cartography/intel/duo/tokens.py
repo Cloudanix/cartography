@@ -1,8 +1,6 @@
 import json
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import duo_client
 import neo4j

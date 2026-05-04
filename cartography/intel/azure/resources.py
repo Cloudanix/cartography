@@ -1,17 +1,19 @@
 from typing import Dict
 
-from . import aks
-from . import compute
-from . import containerregistry
-from . import cosmosdb
-from . import function_app
-from . import iam
-from . import key_vaults
-from . import monitor
-from . import network
-from . import securitycenter
-from . import sql
-from . import storage
+from . import (
+    aks,
+    compute,
+    containerregistry,
+    cosmosdb,
+    function_app,
+    iam,
+    key_vaults,
+    monitor,
+    network,
+    securitycenter,
+    sql,
+    storage,
+)
 
 RESOURCE_FUNCTIONS: Dict = {
     "iam": iam.sync,

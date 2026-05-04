@@ -1,30 +1,33 @@
 import logging
 import time
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
     AWSLinker = None
 
 from cartography.intel.aws.ec2.util import get_botocore_config
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import run_cleanup_job, timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker() if AWSLinker else None
 
 
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
-    client = boto3_session.client(service, region_name=region, config=get_botocore_config())
+    client = boto3_session.client(
+        service, region_name=region, config=get_botocore_config()
+    )
     return client
 
 
 @timeit
-def get_bedrock_agents_list(boto3_session: boto3.session.Session, current_aws_account_id: str, region: str) -> List[Dict]:
+def get_bedrock_agents_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str
+) -> List[Dict]:
     bedrock_agents: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "bedrock-agent", region)
@@ -35,8 +38,12 @@ def get_bedrock_agents_list(boto3_session: boto3.session.Session, current_aws_ac
 
         for bedrock_agent in bedrock_agents:
             bedrock_agent["region"] = region
-            bedrock_agent["arn"] = f"arn:aws:bedrock:{region}:{current_aws_account_id}:agent/{bedrock_agent['agentId']}"
-            bedrock_agent["consolelink"] = aws_console_link.get_console_link(arn=bedrock_agent["arn"])
+            bedrock_agent["arn"] = (
+                f"arn:aws:bedrock:{region}:{current_aws_account_id}:agent/{bedrock_agent['agentId']}"
+            )
+            bedrock_agent["consolelink"] = aws_console_link.get_console_link(
+                arn=bedrock_agent["arn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -52,7 +59,9 @@ def load_bedrock_agents(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_bedrock_agents_tx, bedrock_agents, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_bedrock_agents_tx, bedrock_agents, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
@@ -91,7 +100,9 @@ def _load_bedrock_agents_tx(
 
 
 @timeit
-def get_model_customisation_jobs_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_model_customisation_jobs_list(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict]:
     model_customisation_jobs: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "bedrock", region)
@@ -102,7 +113,9 @@ def get_model_customisation_jobs_list(boto3_session: boto3.session.Session, regi
 
         for model_customisation_job in model_customisation_jobs:
             model_customisation_job["region"] = region
-            model_customisation_job["consolelink"] = aws_console_link.get_console_link(arn=model_customisation_job['jobArn'])
+            model_customisation_job["consolelink"] = aws_console_link.get_console_link(
+                arn=model_customisation_job["jobArn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -118,7 +131,12 @@ def load_model_customisation_jobs(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_model_customisation_jobs_tx, model_customisation_jobs, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_model_customisation_jobs_tx,
+        model_customisation_jobs,
+        current_aws_account_id,
+        aws_update_tag,
+    )
 
 
 @timeit
@@ -156,7 +174,9 @@ def _load_model_customisation_jobs_tx(
 
 
 @timeit
-def get_bedrock_guardrails_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_bedrock_guardrails_list(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict]:
     bedrock_guardrails: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "bedrock", region)
@@ -167,7 +187,9 @@ def get_bedrock_guardrails_list(boto3_session: boto3.session.Session, region: st
 
         for bedrock_guardrail in bedrock_guardrails:
             bedrock_guardrail["region"] = region
-            bedrock_guardrail["consolelink"] = aws_console_link.get_console_link(arn=bedrock_guardrail['arn'])
+            bedrock_guardrail["consolelink"] = aws_console_link.get_console_link(
+                arn=bedrock_guardrail["arn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -183,7 +205,12 @@ def load_bedrock_guardrails(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_bedrock_guardrails_tx, bedrock_guardrails, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_bedrock_guardrails_tx,
+        bedrock_guardrails,
+        current_aws_account_id,
+        aws_update_tag,
+    )
 
 
 @timeit
@@ -233,7 +260,9 @@ def get_custom_models(boto3_session: boto3.session.Session, region: str) -> List
 
         for custom_model in custom_models:
             custom_model["region"] = region
-            custom_model["consolelink"] = aws_console_link.get_console_link(arn=custom_model['modelArn'])
+            custom_model["consolelink"] = aws_console_link.get_console_link(
+                arn=custom_model["modelArn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -249,7 +278,9 @@ def load_custom_models(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_custom_models_tx, custom_models, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_custom_models_tx, custom_models, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
@@ -286,37 +317,60 @@ def _load_custom_models_tx(
 
 @timeit
 def cleanup_bedrock(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_bedrock_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job(
+        "aws_import_bedrock_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_bedrock(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: str, current_aws_account_id: str,
-    aws_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: str,
+    current_aws_account_id: str,
+    aws_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     bedrock_agents = []
     for region in regions:
-        bedrock_agents.extend(get_bedrock_agents_list(boto3_session, current_aws_account_id, region))
+        bedrock_agents.extend(
+            get_bedrock_agents_list(boto3_session, current_aws_account_id, region)
+        )
 
     logger.info(f"Total bedrock agents: {len(bedrock_agents)}")
 
-    load_bedrock_agents(neo4j_session, bedrock_agents, current_aws_account_id, aws_update_tag)
+    load_bedrock_agents(
+        neo4j_session, bedrock_agents, current_aws_account_id, aws_update_tag
+    )
 
     model_customisation_jobs_list = []
     for region in regions:
-        model_customisation_jobs_list.extend(get_model_customisation_jobs_list(boto3_session, region))
+        model_customisation_jobs_list.extend(
+            get_model_customisation_jobs_list(boto3_session, region)
+        )
 
-    logger.info(f"Total Bedrock model customisation jobs list: {len(model_customisation_jobs_list)}")
+    logger.info(
+        f"Total Bedrock model customisation jobs list: {len(model_customisation_jobs_list)}"
+    )
 
-    load_model_customisation_jobs(neo4j_session, model_customisation_jobs_list, current_aws_account_id, aws_update_tag)
+    load_model_customisation_jobs(
+        neo4j_session,
+        model_customisation_jobs_list,
+        current_aws_account_id,
+        aws_update_tag,
+    )
 
     bedrock_guardrails_list = []
     for region in regions:
-        bedrock_guardrails_list.extend(get_bedrock_guardrails_list(boto3_session, region))
+        bedrock_guardrails_list.extend(
+            get_bedrock_guardrails_list(boto3_session, region)
+        )
 
     logger.info(f"Total bedrock guardrails: {len(bedrock_guardrails_list)}")
 
-    load_bedrock_guardrails(neo4j_session, bedrock_guardrails_list, current_aws_account_id, aws_update_tag)
+    load_bedrock_guardrails(
+        neo4j_session, bedrock_guardrails_list, current_aws_account_id, aws_update_tag
+    )
 
     custom_models_list = []
     for region in regions:
@@ -324,18 +378,31 @@ def sync_bedrock(
 
     logger.info(f"Total bedrock custom models: {len(custom_models_list)}")
 
-    load_custom_models(neo4j_session, custom_models_list, current_aws_account_id, aws_update_tag)
+    load_custom_models(
+        neo4j_session, custom_models_list, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
 
     logger.info("Syncing Bedrock for account '%s', at %s.", current_aws_account_id, tic)
-    sync_bedrock(neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters)
+    sync_bedrock(
+        neo4j_session,
+        boto3_session,
+        regions,
+        current_aws_account_id,
+        update_tag,
+        common_job_parameters,
+    )
 
     cleanup_bedrock(neo4j_session, common_job_parameters)
 

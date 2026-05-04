@@ -6,8 +6,10 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.intel.aws.util.botocore_config import (
+    create_boto3_client,
+    get_botocore_config,
+)
 from cartography.models.aws.dynamodb.archival import DynamoDBArchivalSummarySchema
 from cartography.models.aws.dynamodb.backups import DynamoDBBackupSchema
 from cartography.models.aws.dynamodb.billing import DynamoDBBillingModeSummarySchema
@@ -17,9 +19,7 @@ from cartography.models.aws.dynamodb.sse import DynamoDBSSEDescriptionSchema
 from cartography.models.aws.dynamodb.streams import DynamoDBStreamSchema
 from cartography.models.aws.dynamodb.tables import DynamoDBTableSchema
 from cartography.stats import get_stats_client
-from cartography.util import aws_handle_regions
-from cartography.util import merge_module_sync_metadata
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, merge_module_sync_metadata, timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

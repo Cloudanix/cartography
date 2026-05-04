@@ -4,9 +4,11 @@
 # _ont_status - Current runtime status of the pod / task.
 # _ont_namespace - Namespace the pod runs in (where applicable).
 # _ont_node - Node or host the pod is scheduled on (where applicable).
-from cartography.models.ontology.mapping.specs import OntologyFieldMapping
-from cartography.models.ontology.mapping.specs import OntologyMapping
-from cartography.models.ontology.mapping.specs import OntologyNodeMapping
+from cartography.models.ontology.mapping.specs import (
+    OntologyFieldMapping,
+    OntologyMapping,
+    OntologyNodeMapping,
+)
 
 aws_ecs_mapping = OntologyMapping(
     module_name="aws",

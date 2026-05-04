@@ -1,14 +1,10 @@
 import base64
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import ExtensionOID
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtensionOID, NameOID
 
 from cartography.intel.aws import eks
 

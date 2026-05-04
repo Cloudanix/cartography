@@ -1,8 +1,7 @@
 import base64
 import json
 import logging
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 import neo4j
 

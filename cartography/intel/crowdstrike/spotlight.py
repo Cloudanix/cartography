@@ -6,8 +6,10 @@ from falconpy.oauth2 import OAuth2
 from falconpy.spotlight_vulnerabilities import Spotlight_Vulnerabilities
 
 from cartography.client.core.tx import load
-from cartography.models.crowdstrike.spotlight import CrowdstrikeCVESchema
-from cartography.models.crowdstrike.spotlight import SpotlightVulnerabilitySchema
+from cartography.models.crowdstrike.spotlight import (
+    CrowdstrikeCVESchema,
+    SpotlightVulnerabilitySchema,
+)
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

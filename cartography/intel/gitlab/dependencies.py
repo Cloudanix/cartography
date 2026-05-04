@@ -15,8 +15,10 @@ import requests
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gitlab.util import check_rate_limit_remaining
-from cartography.intel.gitlab.util import make_request_with_retry
+from cartography.intel.gitlab.util import (
+    check_rate_limit_remaining,
+    make_request_with_retry,
+)
 from cartography.models.gitlab.dependencies import GitLabDependencySchema
 from cartography.util import timeit
 
@@ -419,8 +421,8 @@ def sync_gitlab_dependencies(
             transformed_files = dependency_files_by_project.get(project_url, [])
         else:
             # Fallback: import here to avoid circular import at module level
-            from cartography.intel.gitlab.dependency_files import get_dependency_files
             from cartography.intel.gitlab.dependency_files import (
+                get_dependency_files,
                 transform_dependency_files,
             )
 

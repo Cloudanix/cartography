@@ -1,27 +1,26 @@
 import json
-from unittest.mock import mock_open
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 import cartography.intel.gitlab.container_images
 import cartography.intel.gitlab.container_repository_tags
 import cartography.intel.trivy
 from cartography.intel.common.object_store import ReportRef
 from cartography.intel.trivy import sync_trivy_from_dir
-from tests.data.gitlab.container_registry import GET_CONTAINER_IMAGES_RESPONSE
-from tests.data.gitlab.container_registry import GET_CONTAINER_MANIFEST_LISTS_RESPONSE
-from tests.data.gitlab.container_registry import GET_CONTAINER_REPOSITORY_TAGS_RESPONSE
-from tests.data.gitlab.container_registry import TEST_ORG_URL
-from tests.data.trivy.trivy_gitlab_sample import TRIVY_GITLAB_MULTI_REPO_DIGESTS
-from tests.data.trivy.trivy_gitlab_sample import TRIVY_GITLAB_MULTIARCH_CHILD_AMD64
-from tests.data.trivy.trivy_gitlab_sample import TRIVY_GITLAB_MULTIARCH_CHILD_ARM64
-from tests.data.trivy.trivy_gitlab_sample import TRIVY_GITLAB_SAMPLE
+from tests.data.gitlab.container_registry import (
+    GET_CONTAINER_IMAGES_RESPONSE,
+    GET_CONTAINER_MANIFEST_LISTS_RESPONSE,
+    GET_CONTAINER_REPOSITORY_TAGS_RESPONSE,
+    TEST_ORG_URL,
+)
+from tests.data.trivy.trivy_gitlab_sample import (
+    TRIVY_GITLAB_MULTI_REPO_DIGESTS,
+    TRIVY_GITLAB_MULTIARCH_CHILD_AMD64,
+    TRIVY_GITLAB_MULTIARCH_CHILD_ARM64,
+    TRIVY_GITLAB_SAMPLE,
+)
 from tests.integration.cartography.intel.trivy.test_helpers import (
     assert_trivy_finding_extended_fields,
-)
-from tests.integration.cartography.intel.trivy.test_helpers import (
     assert_trivy_image_relationships,
-)
-from tests.integration.cartography.intel.trivy.test_helpers import (
     assert_trivy_package_extended_fields,
 )
 

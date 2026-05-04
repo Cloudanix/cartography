@@ -3,8 +3,7 @@ import logging
 import cartography.intel.kandji
 import tests.data.kandji.devices
 import tests.data.kandji.tenant
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 logger = logging.getLogger(__name__)
 

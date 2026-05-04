@@ -1,11 +1,8 @@
 import base64
 import binascii
 import logging
-from datetime import datetime
-from datetime import timezone
-from typing import Any
-from typing import Dict
-from typing import List
+from datetime import datetime, timezone
+from typing import Any, Dict, List
 
 import boto3
 import neo4j
@@ -18,8 +15,7 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.eks.clusters import EKSClusterSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,10 @@ from google.auth.credentials import Credentials as GoogleCredentials
 from cartography.intel.gcp.artifact_registry.artifact import (
     sync_artifact_registry_artifacts,
 )
-from cartography.intel.gcp.artifact_registry.manifest import cleanup_manifests
-from cartography.intel.gcp.artifact_registry.manifest import load_manifests
+from cartography.intel.gcp.artifact_registry.manifest import (
+    cleanup_manifests,
+    load_manifests,
+)
 from cartography.intel.gcp.artifact_registry.repository import (
     sync_artifact_registry_repositories,
 )

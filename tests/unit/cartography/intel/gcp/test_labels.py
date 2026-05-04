@@ -1,8 +1,6 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from cartography.intel.gcp.labels import cleanup
-from cartography.intel.gcp.labels import get_labels
+from cartography.intel.gcp.labels import cleanup, get_labels
 
 
 def test_get_labels_instance_uses_partial_uri():

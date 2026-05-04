@@ -1,6 +1,5 @@
 import logging
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import boto3
 import neo4j
@@ -8,11 +7,12 @@ from botocore.exceptions import ClientError
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.intel.aws.util.botocore_config import (
+    create_boto3_client,
+    get_botocore_config,
+)
 from cartography.models.aws.ec2.elastic_ip_addresses import ElasticIPAddressSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

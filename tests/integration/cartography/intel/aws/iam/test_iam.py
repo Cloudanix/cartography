@@ -5,11 +5,9 @@ import cartography.intel.aws.iam
 import cartography.intel.aws.permission_relationships
 import tests.data.aws.iam
 from cartography.client.core.tx import load
-from cartography.intel.aws.iam import _transform_policy_statements
-from cartography.intel.aws.iam import sync_root_principal
+from cartography.intel.aws.iam import _transform_policy_statements, sync_root_principal
 from cartography.models.aws.iam.inline_policy import AWSInlinePolicySchema
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "us-east-1"

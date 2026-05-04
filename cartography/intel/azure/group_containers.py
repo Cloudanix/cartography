@@ -2,8 +2,7 @@ import logging
 from typing import Any
 
 import neo4j
-from azure.core.exceptions import ClientAuthenticationError
-from azure.core.exceptions import HttpResponseError
+from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
 from azure.mgmt.containerinstance import ContainerInstanceManagementClient
 
 from cartography.client.core.tx import load

@@ -1,22 +1,24 @@
-from typing import Any
-from typing import cast
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.artifact_registry import sync
-from cartography.intel.gcp.artifact_registry.artifact import load_docker_images
-from cartography.intel.gcp.artifact_registry.artifact import transform_apt_artifacts
-from cartography.intel.gcp.artifact_registry.artifact import transform_docker_images
-from cartography.intel.gcp.artifact_registry.artifact import transform_maven_artifacts
-from cartography.intel.gcp.artifact_registry.artifact import transform_yum_artifacts
+from cartography.intel.gcp.artifact_registry.artifact import (
+    load_docker_images,
+    transform_apt_artifacts,
+    transform_docker_images,
+    transform_maven_artifacts,
+    transform_yum_artifacts,
+)
 from cartography.intel.gcp.artifact_registry.manifest import load_manifests
 from cartography.intel.gcp.artifact_registry.repository import (
     ArtifactRegistryRepositorySyncResult,
 )
-from cartography.intel.gcp.artifact_registry.supply_chain import _build_layer_dicts
-from cartography.intel.gcp.artifact_registry.supply_chain import load_image_layers
-from cartography.intel.gcp.artifact_registry.supply_chain import load_image_provenance
+from cartography.intel.gcp.artifact_registry.supply_chain import (
+    _build_layer_dicts,
+    load_image_layers,
+    load_image_provenance,
+)
 from cartography.models.gcp.artifact_registry.container_image import (
     GCPArtifactRegistryContainerImageSchema,
 )
@@ -26,14 +28,15 @@ from cartography.models.gcp.artifact_registry.image_layer import (
 from cartography.models.gcp.artifact_registry.platform_image import (
     GCPArtifactRegistryPlatformImageSchema,
 )
-from tests.data.gcp.artifact_registry import MOCK_APT_ARTIFACTS
-from tests.data.gcp.artifact_registry import MOCK_DOCKER_IMAGES
-from tests.data.gcp.artifact_registry import MOCK_HELM_CHARTS
-from tests.data.gcp.artifact_registry import MOCK_MAVEN_ARTIFACTS
-from tests.data.gcp.artifact_registry import MOCK_REPOSITORIES
-from tests.data.gcp.artifact_registry import MOCK_YUM_ARTIFACTS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.gcp.artifact_registry import (
+    MOCK_APT_ARTIFACTS,
+    MOCK_DOCKER_IMAGES,
+    MOCK_HELM_CHARTS,
+    MOCK_MAVEN_ARTIFACTS,
+    MOCK_REPOSITORIES,
+    MOCK_YUM_ARTIFACTS,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_PROJECT_ID = "test-project"

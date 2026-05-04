@@ -1,12 +1,10 @@
 import copy
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 from cartography.intel.aibom.parser import parse_aibom_document
-from tests.data.aibom.aibom_sample import AIBOM_REPORT
-from tests.data.aibom.aibom_sample import TEST_SOURCE_KEY
+from tests.data.aibom.aibom_sample import AIBOM_REPORT, TEST_SOURCE_KEY
 
 
 def test_parse_aibom_document_rejects_missing_image_uri() -> None:

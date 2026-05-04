@@ -8,18 +8,16 @@ by verifying the exact Cypher queries generated.
 
 import pytest
 
-from cartography.graph.cleanupbuilder import _build_cleanup_node_and_rel_queries
-from cartography.graph.cleanupbuilder import build_cleanup_queries
+from cartography.graph.cleanupbuilder import (
+    _build_cleanup_node_and_rel_queries,
+    build_cleanup_queries,
+)
 from tests.data.graph.querybuilder.sample_models.allow_unscoped import (
     UnscopedNodeSchema,
 )
 from tests.data.graph.querybuilder.sample_models.interesting_asset import (
     InterestingAssetSchema,
-)
-from tests.data.graph.querybuilder.sample_models.interesting_asset import (
     InterestingAssetToHelloAssetRel,
-)
-from tests.data.graph.querybuilder.sample_models.interesting_asset import (
     InterestingAssetToSubResourceRel,
 )
 from tests.unit.cartography.graph.helpers import clean_query_list

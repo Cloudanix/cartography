@@ -10,21 +10,13 @@ from google.auth.transport.requests import Request
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.artifact_registry.util import (
     ARTIFACT_REGISTRY_LOAD_BATCH_SIZE,
-)
-from cartography.intel.gcp.artifact_registry.util import load_matchlinks_with_progress
-from cartography.intel.gcp.artifact_registry.util import (
+    load_matchlinks_with_progress,
     load_nodes_without_relationships,
 )
 from cartography.models.gcp.artifact_registry.platform_image import (
     GCPArtifactRegistryContainerImageContainsPlatformImageRel,
-)
-from cartography.models.gcp.artifact_registry.platform_image import (
     GCPArtifactRegistryContainerImageToPlatformImageRel,
-)
-from cartography.models.gcp.artifact_registry.platform_image import (
     GCPArtifactRegistryPlatformImageSchema,
-)
-from cartography.models.gcp.artifact_registry.platform_image import (
     GCPArtifactRegistryProjectToPlatformImageRel,
 )
 from cartography.util import timeit

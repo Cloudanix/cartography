@@ -1,10 +1,10 @@
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
-from cartography.intel.okta.groups import transform_okta_group
-from cartography.intel.okta.groups import transform_okta_group_member_list
-from tests.data.okta.groups import create_test_group
-from tests.data.okta.groups import GROUP_MEMBERS_SAMPLE_DATA
+from cartography.intel.okta.groups import (
+    transform_okta_group,
+    transform_okta_group_member_list,
+)
+from tests.data.okta.groups import GROUP_MEMBERS_SAMPLE_DATA, create_test_group
 
 
 def test_group_transform_with_all_values():

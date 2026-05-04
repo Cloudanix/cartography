@@ -1,7 +1,6 @@
 from cartography.intel.cve import feed
 from tests.data.cve.feed import GET_CVE_API_DATA
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 NIST_CVE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0/"

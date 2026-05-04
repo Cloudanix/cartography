@@ -5,9 +5,11 @@ from neo4j import Session
 from cartography.client.core.tx import load
 from cartography.intel.aibom.parser import ParsedAIBOMDocument
 from cartography.intel.aibom.transform import transform_aibom_document
-from cartography.models.aibom import AIBOMComponentSchema
-from cartography.models.aibom import AIBOMSourceSchema
-from cartography.models.aibom import AIBOMWorkflowSchema
+from cartography.models.aibom import (
+    AIBOMComponentSchema,
+    AIBOMSourceSchema,
+    AIBOMWorkflowSchema,
+)
 from cartography.stats import get_stats_client
 
 logger = logging.getLogger(__name__)

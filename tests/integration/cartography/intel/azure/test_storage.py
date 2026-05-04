@@ -1,17 +1,18 @@
 from unittest.mock import patch
 
 import cartography.intel.azure.storage
-from tests.data.azure.storage import DESCRIBE_BLOB_CONTAINERS
-from tests.data.azure.storage import DESCRIBE_BLOB_SERVICES
-from tests.data.azure.storage import DESCRIBE_FILE_SERVICES
-from tests.data.azure.storage import DESCRIBE_FILE_SHARES
-from tests.data.azure.storage import DESCRIBE_QUEUE
-from tests.data.azure.storage import DESCRIBE_QUEUE_SERVICES
-from tests.data.azure.storage import DESCRIBE_STORAGE_ACCOUNTS
-from tests.data.azure.storage import DESCRIBE_TABLE_SERVICES
-from tests.data.azure.storage import DESCRIBE_TABLES
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.azure.storage import (
+    DESCRIBE_BLOB_CONTAINERS,
+    DESCRIBE_BLOB_SERVICES,
+    DESCRIBE_FILE_SERVICES,
+    DESCRIBE_FILE_SHARES,
+    DESCRIBE_QUEUE,
+    DESCRIBE_QUEUE_SERVICES,
+    DESCRIBE_STORAGE_ACCOUNTS,
+    DESCRIBE_TABLE_SERVICES,
+    DESCRIBE_TABLES,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_RESOURCE_GROUP = "TestRG"

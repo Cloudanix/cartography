@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.relationships import CartographyRelProperties
-from cartography.models.core.relationships import CartographyRelSchema
-from cartography.models.core.relationships import LinkDirection
-from cartography.models.core.relationships import make_source_node_matcher
-from cartography.models.core.relationships import make_target_node_matcher
-from cartography.models.core.relationships import SourceNodeMatcher
-from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.core.relationships import (
+    CartographyRelProperties,
+    CartographyRelSchema,
+    LinkDirection,
+    SourceNodeMatcher,
+    TargetNodeMatcher,
+    make_source_node_matcher,
+    make_target_node_matcher,
+)
 
 
 @dataclass(frozen=True)

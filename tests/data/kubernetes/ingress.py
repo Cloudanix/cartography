@@ -2,18 +2,20 @@ import json
 from datetime import datetime
 from uuid import uuid4
 
-from kubernetes.client import V1HTTPIngressPath
-from kubernetes.client import V1HTTPIngressRuleValue
-from kubernetes.client import V1Ingress
-from kubernetes.client import V1IngressBackend
-from kubernetes.client import V1IngressLoadBalancerIngress
-from kubernetes.client import V1IngressLoadBalancerStatus
-from kubernetes.client import V1IngressRule
-from kubernetes.client import V1IngressServiceBackend
-from kubernetes.client import V1IngressSpec
-from kubernetes.client import V1IngressStatus
-from kubernetes.client import V1ObjectMeta
-from kubernetes.client import V1ServiceBackendPort
+from kubernetes.client import (
+    V1HTTPIngressPath,
+    V1HTTPIngressRuleValue,
+    V1Ingress,
+    V1IngressBackend,
+    V1IngressLoadBalancerIngress,
+    V1IngressLoadBalancerStatus,
+    V1IngressRule,
+    V1IngressServiceBackend,
+    V1IngressSpec,
+    V1IngressStatus,
+    V1ObjectMeta,
+    V1ServiceBackendPort,
+)
 
 from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_1_NAMESPACES_DATA
 

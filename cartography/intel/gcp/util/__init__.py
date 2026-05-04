@@ -7,14 +7,10 @@ including both network-level errors and HTTP 5xx server errors.
 
 import json
 import logging
-from typing import Any
-from typing import cast
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List, cast
 
 import backoff
-from google.api_core.exceptions import ServerError
-from google.api_core.exceptions import TooManyRequests
+from google.api_core.exceptions import ServerError, TooManyRequests
 from google.protobuf.json_format import MessageToDict
 from googleapiclient.errors import HttpError
 

@@ -16,9 +16,11 @@ import requests
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.github.util import call_github_rest_api
-from cartography.intel.github.util import fetch_all_rest_api_pages
-from cartography.intel.github.util import rest_api_base_url
+from cartography.intel.github.util import (
+    call_github_rest_api,
+    fetch_all_rest_api_pages,
+    rest_api_base_url,
+)
 from cartography.models.github.packages import GitHubPackageSchema
 from cartography.util import timeit
 

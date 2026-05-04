@@ -8,11 +8,13 @@ import yaml
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
 
-from cartography.intel.gcp.workspace import cleanup_groups
-from cartography.intel.gcp.workspace import cleanup_users
-from cartography.intel.gcp.workspace import load_groups
-from cartography.intel.gcp.workspace import load_groups_members
-from cartography.intel.gcp.workspace import load_users
+from cartography.intel.gcp.workspace import (
+    cleanup_groups,
+    cleanup_users,
+    load_groups,
+    load_groups_members,
+    load_users,
+)
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -79,7 +81,10 @@ def transform_bucket_file_memberships(data: str) -> None:
 
 @timeit
 def sync_identites_from_bucket(
-    neo4j_session: neo4j.Session, project_id: str, gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     bucket_name = os.environ.get("CDX_CUSTOMERS_IDP_BUCKET_NAME")
     file_name = f"{common_job_parameters['WORKSPACE_ID']}/{common_job_parameters['GCP_PROJECT_ID']}/identity.yml"
@@ -92,7 +97,7 @@ def sync_identites_from_bucket(
     transform_bucket_file_groups(data)
     transform_bucket_file_memberships(data)
 
-    gcp_organization_id = common_job_parameters['GCP_ORGANIZATION_ID']
+    gcp_organization_id = common_job_parameters["GCP_ORGANIZATION_ID"]
 
     load_users(neo4j_session, data["Users"], gcp_organization_id, gcp_update_tag)
     load_groups(neo4j_session, data["Groups"], gcp_organization_id, gcp_update_tag)
@@ -106,8 +111,18 @@ def sync_identites_from_bucket(
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, external_idp: Dict, project_id: str, gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    external_idp: Dict,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
-    logger.info("Syncing Identity data for project '%s' from external Identity '%s'", project_id, external_idp.get("type"))
+    logger.info(
+        "Syncing Identity data for project '%s' from external Identity '%s'",
+        project_id,
+        external_idp.get("type"),
+    )
     if external_idp.get("type") == "BUCKET":
-        sync_identites_from_bucket(neo4j_session, project_id, gcp_update_tag, common_job_parameters)
+        sync_identites_from_bucket(
+            neo4j_session, project_id, gcp_update_tag, common_job_parameters
+        )

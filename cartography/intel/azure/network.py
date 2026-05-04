@@ -4,8 +4,7 @@ from typing import Any
 import neo4j
 from azure.mgmt.network import NetworkManagementClient
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.intel.azure.util.tag import transform_tags
 from cartography.models.azure.network_interface import AzureNetworkInterfaceSchema
@@ -13,8 +12,7 @@ from cartography.models.azure.network_security_group import (
     AzureNetworkSecurityGroupSchema,
 )
 from cartography.models.azure.public_ip_address import AzurePublicIPAddressSchema
-from cartography.models.azure.subnet import AzureSubnetSchema
-from cartography.models.azure.subnet import AzureSubnetToNSGRel
+from cartography.models.azure.subnet import AzureSubnetSchema, AzureSubnetToNSGRel
 from cartography.models.azure.tags.network_security_group_tag import (
     AzureNetworkSecurityGroupTagsSchema,
 )

@@ -1,8 +1,5 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import boto3
 import neo4j
@@ -13,9 +10,7 @@ from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.sns.topic import SNSTopicSchema
 from cartography.models.aws.sns.topic_subscription import SNSTopicSubscriptionSchema
 from cartography.stats import get_stats_client
-from cartography.util import aws_handle_regions
-from cartography.util import merge_module_sync_metadata
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, merge_module_sync_metadata, timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

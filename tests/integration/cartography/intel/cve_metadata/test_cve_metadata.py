@@ -3,13 +3,14 @@ from unittest.mock import patch
 
 import cartography.intel.cve_metadata
 from cartography.config import Config
-from cartography.intel.cve_metadata import CVE_METADATA_FEED_ID
-from cartography.intel.cve_metadata import get_cve_ids_from_graph
-from cartography.intel.cve_metadata import start_cve_metadata_ingestion
+from cartography.intel.cve_metadata import (
+    CVE_METADATA_FEED_ID,
+    get_cve_ids_from_graph,
+    start_cve_metadata_ingestion,
+)
 from cartography.intel.cve_metadata.nvd import transform_cves
 from tests.data.cve_metadata.nvd import GET_NVD_API_DATA
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_UPDATE_TAG_2 = 987654321

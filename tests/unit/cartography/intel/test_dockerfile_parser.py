@@ -5,12 +5,14 @@ Tests for the Dockerfile parser utility module.
 import tempfile
 from pathlib import Path
 
-from cartography.intel.supply_chain import compute_command_similarity
-from cartography.intel.supply_chain import extract_layer_commands_from_history
-from cartography.intel.supply_chain import find_best_dockerfile_matches
-from cartography.intel.supply_chain import normalize_command
-from cartography.intel.supply_chain import parse
-from cartography.intel.supply_chain import parse_file
+from cartography.intel.supply_chain import (
+    compute_command_similarity,
+    extract_layer_commands_from_history,
+    find_best_dockerfile_matches,
+    normalize_command,
+    parse,
+    parse_file,
+)
 
 # =============================================================================
 # normalize_command tests

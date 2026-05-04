@@ -1,8 +1,7 @@
 import cartography.intel.aws.emr
 import tests.data.aws.emr
 from cartography.intel.aws.emr import cleanup
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "us-east-1"

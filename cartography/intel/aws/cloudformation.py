@@ -1,20 +1,18 @@
 import logging
 import time
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import boto3
 import neo4j
 from botocore.exceptions import ClientError
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
     AWSLinker = None
 
 from cartography.intel.aws.ec2.util import get_botocore_config
-from cartography.util import aws_handle_regions
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, run_cleanup_job, timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker() if AWSLinker else None
@@ -22,20 +20,24 @@ aws_console_link = AWSLinker() if AWSLinker else None
 
 @timeit
 @aws_handle_regions
-def get_cloudformation_stack(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_cloudformation_stack(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict]:
     stacks = []
     try:
-        client = boto3_session.client('cloudformation', region_name=region, config=get_botocore_config())
-        paginator = client.get_paginator('describe_stacks')
+        client = boto3_session.client(
+            "cloudformation", region_name=region, config=get_botocore_config()
+        )
+        paginator = client.get_paginator("describe_stacks")
 
         page_iterator = paginator.paginate()
         for page in page_iterator:
-            stacks.extend(page['Stacks'])
+            stacks.extend(page["Stacks"])
 
         return stacks
 
     except ClientError as e:
-        logger.error(f'Failed to call cloudformation describe_stacks: {region} - {e}')
+        logger.error(f"Failed to call cloudformation describe_stacks: {region} - {e}")
         return stacks
 
 
@@ -43,20 +45,32 @@ def get_cloudformation_stack(boto3_session: boto3.session.Session, region: str) 
 def transform_stack(sts: List[Dict], region: str) -> List[Dict]:
     stacks = []
     for stack in sts:
-        stack['region'] = region
-        stack['arn'] = stack['StackId']
-        stack['consolelink'] = aws_console_link.get_console_link(arn=stack['arn'])
+        stack["region"] = region
+        stack["arn"] = stack["StackId"]
+        stack["consolelink"] = aws_console_link.get_console_link(arn=stack["arn"])
         stacks.append(stack)
 
     return stacks
 
 
-def load_cloudformation_stack(session: neo4j.Session, stacks: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    session.write_transaction(_load_cloudformation_stack_tx, stacks, current_aws_account_id, aws_update_tag)
+def load_cloudformation_stack(
+    session: neo4j.Session,
+    stacks: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    session.write_transaction(
+        _load_cloudformation_stack_tx, stacks, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
-def _load_cloudformation_stack_tx(tx: neo4j.Transaction, stacks: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
+def _load_cloudformation_stack_tx(
+    tx: neo4j.Transaction,
+    stacks: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
     query: str = """
     UNWIND $Records as record
     MERGE (stack:AWSCloudformationStack{id: record.StackId})
@@ -93,22 +107,38 @@ def _load_cloudformation_stack_tx(tx: neo4j.Transaction, stacks: List[Dict], cur
 
 
 @timeit
-def cleanup_cloudformation_stack(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_cloudformation_stack_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_cloudformation_stack(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "aws_import_cloudformation_stack_cleanup.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
 
-    logger.info("Syncing Cloudformation for account '%s', at %s.", current_aws_account_id, tic)
+    logger.info(
+        "Syncing Cloudformation for account '%s', at %s.", current_aws_account_id, tic
+    )
 
     stacks = []
     for region in regions:
-        logger.info("Syncing Cloudformation for region '%s' in account '%s'.", region, current_aws_account_id)
+        logger.info(
+            "Syncing Cloudformation for region '%s' in account '%s'.",
+            region,
+            current_aws_account_id,
+        )
 
         sts = get_cloudformation_stack(boto3_session, region)
 

@@ -1,63 +1,76 @@
 import json
 import logging
 import time
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import neo4j
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
+
+from cartography.util import run_cleanup_job, timeit
 
 from . import label
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker() if GCPLinker else None
 
 
 @timeit
-def get_bigtable_instances(bigtable: Resource, project_id: str, common_job_parameters) -> List[Dict]:
+def get_bigtable_instances(
+    bigtable: Resource, project_id: str, common_job_parameters
+) -> List[Dict]:
     """
-        Returns a list of bigtable instances for a given project.
+    Returns a list of bigtable instances for a given project.
 
-        :type bigtable: Resource
-        :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
+    :type bigtable: Resource
+    :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :rtype: list
-        :return: List of Bigtable Instances
+    :rtype: list
+    :return: List of Bigtable Instances
     """
     try:
         bigtable_instances = []
         request = bigtable.projects().instances().list(parent=f"projects/{project_id}")
         while request is not None:
             response = request.execute()
-            if response.get('instances', []):
-                for instance in response['instances']:
-                    instance['id'] = instance['name']
-                    instance['instance_name'] = instance['name'].split('/')[-1]
-                    instance['consolelink'] = gcp_console_link.get_console_link(
-                        resource_name='big_table_instance', project_id=project_id, bigtable_instance_name=instance['name'].split("/")[-1],
+            if response.get("instances", []):
+                for instance in response["instances"]:
+                    instance["id"] = instance["name"]
+                    instance["instance_name"] = instance["name"].split("/")[-1]
+                    instance["consolelink"] = gcp_console_link.get_console_link(
+                        resource_name="big_table_instance",
+                        project_id=project_id,
+                        bigtable_instance_name=instance["name"].split("/")[-1],
                     )
                     bigtable_instances.append(instance)
-            request = bigtable.projects().instances().list_next(previous_request=request, previous_response=response)
+            request = (
+                bigtable.projects()
+                .instances()
+                .list_next(previous_request=request, previous_response=response)
+            )
 
         return bigtable_instances
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Bigtable Instances on project %s due to permissions issues.\
                          Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -65,63 +78,88 @@ def get_bigtable_instances(bigtable: Resource, project_id: str, common_job_param
 
 
 @timeit
-def get_bigtable_clusters(bigtable: Resource, bigtable_instances: List[Dict], project_id: str, regions: list) -> List[Dict]:
+def get_bigtable_clusters(
+    bigtable: Resource, bigtable_instances: List[Dict], project_id: str, regions: list
+) -> List[Dict]:
     """
-        Returns a list of bigtable clusters for a given project.
+    Returns a list of bigtable clusters for a given project.
 
-        :type bigtable: Resource
-        :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
+    :type bigtable: Resource
+    :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
 
-        :type bigtable_instances: List
-        :param bigtable_instances: A list of bigtable instances
+    :type bigtable_instances: List
+    :param bigtable_instances: A list of bigtable instances
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :rtype: list
-        :return: List of Bigtable Clusters
+    :rtype: list
+    :return: List of Bigtable Clusters
     """
     bigtable_clusters = []
     for instance in bigtable_instances:
         try:
-            request = bigtable.projects().instances().clusters().list(
-                parent=instance['name'],
+            request = (
+                bigtable.projects()
+                .instances()
+                .clusters()
+                .list(
+                    parent=instance["name"],
+                )
             )
             while request is not None:
                 response = request.execute()
-                if response.get('clusters', []):
-                    for cluster in response['clusters']:
-                        cluster['instance_id'] = instance['id']
-                        cluster['instance_name'] = instance.get('name')
-                        cluster['id'] = cluster['name']
-                        cluster['cluster_name'] = cluster['name'].split('/')[-1]
-                        cluster['consolelink'] = gcp_console_link.get_console_link(
-                            resource_name='big_table_cluster', project_id=project_id, bigtable_instance_name=instance['name'].split("/")[-1], bigtable_cluster_id=cluster['name'].split("/")[-1],
+                if response.get("clusters", []):
+                    for cluster in response["clusters"]:
+                        cluster["instance_id"] = instance["id"]
+                        cluster["instance_name"] = instance.get("name")
+                        cluster["id"] = cluster["name"]
+                        cluster["cluster_name"] = cluster["name"].split("/")[-1]
+                        cluster["consolelink"] = gcp_console_link.get_console_link(
+                            resource_name="big_table_cluster",
+                            project_id=project_id,
+                            bigtable_instance_name=instance["name"].split("/")[-1],
+                            bigtable_cluster_id=cluster["name"].split("/")[-1],
                         )
                         x = cluster.get("location", "global").split("/")
 
-                        cluster['region'] = "global"
+                        cluster["region"] = "global"
                         if x != ["global"]:
                             x = x[x.index("locations") + 1].split("-")
-                            cluster['region'] = x[0]
+                            cluster["region"] = x[0]
                             if len(x) > 1:
-                                cluster['region'] = f"{x[0]}-{x[1]}"
+                                cluster["region"] = f"{x[0]}-{x[1]}"
                         if regions is None:
                             bigtable_clusters.append(cluster)
                         else:
-                            if cluster['region'] in regions or cluster['region'] == 'global':
+                            if (
+                                cluster["region"] in regions
+                                or cluster["region"] == "global"
+                            ):
                                 bigtable_clusters.append(cluster)
-                request = bigtable.projects().instances().clusters().list_next(
-                    previous_request=request, previous_response=response,
+                request = (
+                    bigtable.projects()
+                    .instances()
+                    .clusters()
+                    .list_next(
+                        previous_request=request,
+                        previous_response=response,
+                    )
                 )
         except HttpError as e:
-            err = json.loads(e.content.decode('utf-8'))['error']
-            if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            err = json.loads(e.content.decode("utf-8"))["error"]
+            if (
+                err.get("status", "") == "PERMISSION_DENIED"
+                or err.get("message", "") == "Forbidden"
+            ):
                 logger.warning(
                     (
                         "Could not retrieve Bigtable Instance Clusters on project %s due to permissions issues.\
                             Code: %s, Message: %s"
-                    ), project_id, err['code'], err['message'],
+                    ),
+                    project_id,
+                    err["code"],
+                    err["message"],
                 )
                 return []
             else:
@@ -130,52 +168,81 @@ def get_bigtable_clusters(bigtable: Resource, bigtable_instances: List[Dict], pr
 
 
 @timeit
-def get_bigtable_cluster_backups(bigtable: Resource, bigtable_clusters: List[Dict], project_id: str, common_job_parameters) -> List[Dict]:
+def get_bigtable_cluster_backups(
+    bigtable: Resource,
+    bigtable_clusters: List[Dict],
+    project_id: str,
+    common_job_parameters,
+) -> List[Dict]:
     """
-        Returns a list of bigtable cluster backups for a given project.
+    Returns a list of bigtable cluster backups for a given project.
 
-        :type bigtable: Resource
-        :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
+    :type bigtable: Resource
+    :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
 
-        :type bigtable_clusters: list
-        :param bigtable_clusters: List of bigtable clusters
+    :type bigtable_clusters: list
+    :param bigtable_clusters: List of bigtable clusters
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :rtype: list
-        :return: List of Bigtable Cluster Backups
+    :rtype: list
+    :return: List of Bigtable Cluster Backups
     """
     cluster_backups = []
     for cluster in bigtable_clusters:
         try:
-            request = bigtable.projects().instances().clusters().backups().list(
-                parent=cluster.get('name', None),
+            request = (
+                bigtable.projects()
+                .instances()
+                .clusters()
+                .backups()
+                .list(
+                    parent=cluster.get("name", None),
+                )
             )
             while request is not None:
                 response = request.execute()
-                if response.get('backups', []):
-                    for backup in response['backups']:
-                        backup['cluster_id'] = cluster['id']
-                        backup['id'] = backup['name']
-                        backup['backup_name'] = backup['name'].split('/')[-1]
-                        backup['region'] = cluster.get('region', "global")
-                        backup['consolelink'] = gcp_console_link.get_console_link(
-                            resource_name='big_table_backup', project_id=project_id, bigtable_instance_name=cluster['instance_id'].split("/")[-1], bigtable_table_id=backup['sourceTable'].split("/")[-1],
+                if response.get("backups", []):
+                    for backup in response["backups"]:
+                        backup["cluster_id"] = cluster["id"]
+                        backup["id"] = backup["name"]
+                        backup["backup_name"] = backup["name"].split("/")[-1]
+                        backup["region"] = cluster.get("region", "global")
+                        backup["consolelink"] = gcp_console_link.get_console_link(
+                            resource_name="big_table_backup",
+                            project_id=project_id,
+                            bigtable_instance_name=cluster["instance_id"].split("/")[
+                                -1
+                            ],
+                            bigtable_table_id=backup["sourceTable"].split("/")[-1],
                         )
                         cluster_backups.append(backup)
-                request = bigtable.projects().instances().clusters().backups().list_next(
-                    previous_request=request, previous_response=response,
+                request = (
+                    bigtable.projects()
+                    .instances()
+                    .clusters()
+                    .backups()
+                    .list_next(
+                        previous_request=request,
+                        previous_response=response,
+                    )
                 )
 
         except HttpError as e:
-            err = json.loads(e.content.decode('utf-8'))['error']
-            if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            err = json.loads(e.content.decode("utf-8"))["error"]
+            if (
+                err.get("status", "") == "PERMISSION_DENIED"
+                or err.get("message", "") == "Forbidden"
+            ):
                 logger.warning(
                     (
                         "Could not retrieve Bigtable Instance Clusters Backups on project %s due to permissions issues.\
                              Code: %s, Message: %s"
-                    ), project_id, err['code'], err['message'],
+                    ),
+                    project_id,
+                    err["code"],
+                    err["message"],
                 )
                 return []
             else:
@@ -184,55 +251,80 @@ def get_bigtable_cluster_backups(bigtable: Resource, bigtable_clusters: List[Dic
 
 
 @timeit
-def get_get_bigtable_tables(bigtable: Resource, bigtable_instances: List[Dict], project_id: str, regions: list) -> List[Dict]:
+def get_get_bigtable_tables(
+    bigtable: Resource, bigtable_instances: List[Dict], project_id: str, regions: list
+) -> List[Dict]:
     """
-        Returns a list of bigtable tables for a given project.
+    Returns a list of bigtable tables for a given project.
 
-        :type bigtable: Resource
-        :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
+    :type bigtable: Resource
+    :param bigtable: The bigtable resource created by googleapiclient.discovery.build()
 
-        :type bigtable_instances: List
-        :param bigtable_instances: List of bigtable instances
+    :type bigtable_instances: List
+    :param bigtable_instances: List of bigtable instances
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :rtype: list
-        :return: List of Bigtable Tables
+    :rtype: list
+    :return: List of Bigtable Tables
     """
     bigtable_tables = []
     for instance in bigtable_instances:
         try:
-            request = bigtable.projects().instances().tables().list(
-                parent=instance.get('name', None),
+            request = (
+                bigtable.projects()
+                .instances()
+                .tables()
+                .list(
+                    parent=instance.get("name", None),
+                )
             )
             while request is not None:
                 response = request.execute()
-                if response.get('tables', []):
-                    for table in response['tables']:
-                        table['instance_id'] = instance['id']
-                        table['id'] = table['name']
-                        table['table_name'] = table['name'].split('/')[-1]
-                        table['region'] = instance.get('region', 'global')
-                        table['consolelink'] = gcp_console_link.get_console_link(
-                            resource_name='big_table', project_id=project_id, bigtable_instance_name=instance['id'].split("/")[-1], bigtable_table_id=table['name'].split("/")[-1],
+                if response.get("tables", []):
+                    for table in response["tables"]:
+                        table["instance_id"] = instance["id"]
+                        table["id"] = table["name"]
+                        table["table_name"] = table["name"].split("/")[-1]
+                        table["region"] = instance.get("region", "global")
+                        table["consolelink"] = gcp_console_link.get_console_link(
+                            resource_name="big_table",
+                            project_id=project_id,
+                            bigtable_instance_name=instance["id"].split("/")[-1],
+                            bigtable_table_id=table["name"].split("/")[-1],
                         )
                         if regions is None:
                             bigtable_tables.append(table)
                         else:
-                            if table['region'] in regions or table['region'] == 'global':
+                            if (
+                                table["region"] in regions
+                                or table["region"] == "global"
+                            ):
                                 bigtable_tables.append(table)
-                request = bigtable.projects().instances().tables().list_next(
-                    previous_request=request, previous_response=response,
+                request = (
+                    bigtable.projects()
+                    .instances()
+                    .tables()
+                    .list_next(
+                        previous_request=request,
+                        previous_response=response,
+                    )
                 )
         except HttpError as e:
-            err = json.loads(e.content.decode('utf-8'))['error']
-            if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            err = json.loads(e.content.decode("utf-8"))["error"]
+            if (
+                err.get("status", "") == "PERMISSION_DENIED"
+                or err.get("message", "") == "Forbidden"
+            ):
                 logger.warning(
                     (
                         "Could not retrieve Bigtable Instance Tables on project %s due to permissions issues.\
                              Code: %s, Message: %s"
-                    ), project_id, err['code'], err['message'],
+                    ),
+                    project_id,
+                    err["code"],
+                    err["message"],
                 )
                 return []
             else:
@@ -241,27 +333,33 @@ def get_get_bigtable_tables(bigtable: Resource, bigtable_instances: List[Dict], 
 
 
 @timeit
-def load_bigtable_instances(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.write_transaction(_load_bigtable_instances_tx, data_list, project_id, update_tag)
+def load_bigtable_instances(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.write_transaction(
+        _load_bigtable_instances_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def _load_bigtable_instances_tx(
-    tx: neo4j.Transaction, bigtable_instances: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    bigtable_instances: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     """
-        :type neo4j_transaction: Neo4j transaction object
-        :param neo4j transaction: The Neo4j transaction object
+    :type neo4j_transaction: Neo4j transaction object
+    :param neo4j transaction: The Neo4j transaction object
 
-        :type instances_resp: List
-        :param instances_resp: A list of Bigtable Instances
+    :type instances_resp: List
+    :param instances_resp: A list of Bigtable Instances
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :type gcp_update_tag: timestamp
-        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :type gcp_update_tag: timestamp
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
     """
     ingest_bigtable_instances = """
     UNWIND $bigtable_instances as instance
@@ -295,27 +393,33 @@ def _load_bigtable_instances_tx(
 
 
 @timeit
-def load_bigtable_clusters(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.write_transaction(_load_bigtable_clusters_tx, data_list, project_id, update_tag)
+def load_bigtable_clusters(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.write_transaction(
+        _load_bigtable_clusters_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def _load_bigtable_clusters_tx(
-    tx: neo4j.Transaction, bigtable_clusters: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    bigtable_clusters: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     """
-        :type neo4j_transaction: Neo4j transaction object
-        :param neo4j transaction: The Neo4j transaction object
+    :type neo4j_transaction: Neo4j transaction object
+    :param neo4j transaction: The Neo4j transaction object
 
-        :type clusters_resp: List
-        :param clusters_resp: A list of Bigtable Instance Clusters
+    :type clusters_resp: List
+    :param clusters_resp: A list of Bigtable Instance Clusters
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :type gcp_update_tag: timestamp
-        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :type gcp_update_tag: timestamp
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
     """
     ingest_bigtable_clusters = """
     UNWIND $bigtable_clusters as cluster
@@ -349,29 +453,35 @@ def _load_bigtable_clusters_tx(
 
 @timeit
 def load_bigtable_cluster_backups(
-    session: neo4j.Session, data_list: List[Dict],
-    project_id: str, update_tag: int,
+    session: neo4j.Session,
+    data_list: List[Dict],
+    project_id: str,
+    update_tag: int,
 ) -> None:
-    session.write_transaction(_load_bigtable_cluster_backups_tx, data_list, project_id, update_tag)
+    session.write_transaction(
+        _load_bigtable_cluster_backups_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def _load_bigtable_cluster_backups_tx(
-    tx: neo4j.Transaction, bigtable_cluster_backups: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    bigtable_cluster_backups: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     """
-        :type neo4j_transaction: Neo4j transaction object
-        :param neo4j transaction: The Neo4j transaction object
+    :type neo4j_transaction: Neo4j transaction object
+    :param neo4j transaction: The Neo4j transaction object
 
-        :type cluster_backup_resp: List
-        :param cluster_backup_resp: A list of Bigtable Instance Cluster Backups
+    :type cluster_backup_resp: List
+    :param cluster_backup_resp: A list of Bigtable Instance Cluster Backups
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :type gcp_update_tag: timestamp
-        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :type gcp_update_tag: timestamp
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
     """
     ingest_bigtable_cluster_backups = """
     UNWIND $bigtable_cluster_backups as backup
@@ -406,27 +516,33 @@ def _load_bigtable_cluster_backups_tx(
 
 
 @timeit
-def load_bigtable_tables(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.write_transaction(_load_bigtable_tables_tx, data_list, project_id, update_tag)
+def load_bigtable_tables(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.write_transaction(
+        _load_bigtable_tables_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def _load_bigtable_tables_tx(
-    tx: neo4j.Transaction, bigtable_tables: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    bigtable_tables: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     """
-        :type neo4j_transaction: Neo4j transaction object
-        :param neo4j transaction: The Neo4j transaction object
+    :type neo4j_transaction: Neo4j transaction object
+    :param neo4j transaction: The Neo4j transaction object
 
-        :type bigtable_table_resp: List
-        :param bigtable_table_resp: A list of Bigtable Tables
+    :type bigtable_table_resp: List
+    :param bigtable_table_resp: A list of Bigtable Tables
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :type gcp_update_tag: timestamp
-        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :type gcp_update_tag: timestamp
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
     """
     ingest_bigtable_tables = """
     UNWIND $bigtable_tables as table
@@ -460,68 +576,89 @@ def _load_bigtable_tables_tx(
 @timeit
 def cleanup_bigtable(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """
-        Delete out-of-date GCP Bigtable Instances,Clusters,Cluster Backups and Tables and relationships
+    Delete out-of-date GCP Bigtable Instances,Clusters,Cluster Backups and Tables and relationships
 
-        :type neo4j_session: The Neo4j session object
-        :param neo4j_session: The Neo4j session
+    :type neo4j_session: The Neo4j session object
+    :param neo4j_session: The Neo4j session
 
-        :type common_job_parameters: dict
-        :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+    :type common_job_parameters: dict
+    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
 
-        :rtype: NoneType
-        :return: Nothing
+    :rtype: NoneType
+    :return: Nothing
     """
-    run_cleanup_job('gcp_bigtable_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("gcp_bigtable_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, bigtable: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: Dict, regions: list,
+    neo4j_session: neo4j.Session,
+    bigtable: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
+    regions: list,
 ) -> None:
     """
-        Get GCP Cloud Bigtable Entities using the Cloud Bigtable resource object,
-        ingest to Neo4j, and clean up old data.
+    Get GCP Cloud Bigtable Entities using the Cloud Bigtable resource object,
+    ingest to Neo4j, and clean up old data.
 
-        :type neo4j_session: The Neo4j session object
-        :param neo4j_session: The Neo4j session
+    :type neo4j_session: The Neo4j session object
+    :param neo4j_session: The Neo4j session
 
-        :type bigtable: The GCP Bigtable resource object created by googleapiclient.discovery.build()
-        :param sql: The GCP Bigtable resource object
+    :type bigtable: The GCP Bigtable resource object created by googleapiclient.discovery.build()
+    :param sql: The GCP Bigtable resource object
 
-        :type project_id: str
-        :param project_id: The project ID of the corresponding project
+    :type project_id: str
+    :param project_id: The project ID of the corresponding project
 
-        :type gcp_update_tag: timestamp
-        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :type gcp_update_tag: timestamp
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
 
-        :type common_job_parameters: dict
-        :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
+    :type common_job_parameters: dict
+    :param common_job_parameters: Dictionary of other job parameters to pass to Neo4j
 
-        :rtype: NoneType
-        :return: Nothing
+    :rtype: NoneType
+    :return: Nothing
     """
     tic = time.perf_counter()
 
     logger.info("Syncing Bigtable for project '%s', at %s.", project_id, tic)
 
     # BIGTABLE INSTANCES
-    bigtable_instances = get_bigtable_instances(bigtable, project_id, common_job_parameters)
-    load_bigtable_instances(neo4j_session, bigtable_instances, project_id, gcp_update_tag)
+    bigtable_instances = get_bigtable_instances(
+        bigtable, project_id, common_job_parameters
+    )
+    load_bigtable_instances(
+        neo4j_session, bigtable_instances, project_id, gcp_update_tag
+    )
     label.sync_labels(
-        neo4j_session, bigtable_instances, gcp_update_tag,
-        common_job_parameters, 'bigtable_instances', 'GCPBigtableInstance',
+        neo4j_session,
+        bigtable_instances,
+        gcp_update_tag,
+        common_job_parameters,
+        "bigtable_instances",
+        "GCPBigtableInstance",
     )
     # BIGTABLE CLUSTERS
-    bigtable_clusters = get_bigtable_clusters(bigtable, bigtable_instances, project_id, regions)
+    bigtable_clusters = get_bigtable_clusters(
+        bigtable, bigtable_instances, project_id, regions
+    )
     load_bigtable_clusters(neo4j_session, bigtable_clusters, project_id, gcp_update_tag)
     # BIGTABLE CLUSTER BACKUPS
     cluster_backups = get_bigtable_cluster_backups(
-        bigtable, bigtable_clusters, project_id, common_job_parameters,
+        bigtable,
+        bigtable_clusters,
+        project_id,
+        common_job_parameters,
     )
-    load_bigtable_cluster_backups(neo4j_session, cluster_backups, project_id, gcp_update_tag)
+    load_bigtable_cluster_backups(
+        neo4j_session, cluster_backups, project_id, gcp_update_tag
+    )
     # BIGTABLE TABLES
-    bigtable_tables = get_get_bigtable_tables(bigtable, bigtable_instances, project_id, regions)
+    bigtable_tables = get_get_bigtable_tables(
+        bigtable, bigtable_instances, project_id, regions
+    )
     load_bigtable_tables(neo4j_session, bigtable_tables, project_id, gcp_update_tag)
     cleanup_bigtable(neo4j_session, common_job_parameters)
 

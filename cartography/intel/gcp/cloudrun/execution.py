@@ -7,8 +7,10 @@ from google.auth.credentials import Credentials as GoogleCredentials
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.clients import build_cloud_run_execution_client
-from cartography.intel.gcp.cloudrun.util import fetch_cloud_run_resources_for_locations
-from cartography.intel.gcp.cloudrun.util import list_cloud_run_resources_for_location
+from cartography.intel.gcp.cloudrun.util import (
+    fetch_cloud_run_resources_for_locations,
+    list_cloud_run_resources_for_location,
+)
 from cartography.models.gcp.cloudrun.execution import GCPCloudRunExecutionSchema
 from cartography.util import timeit
 

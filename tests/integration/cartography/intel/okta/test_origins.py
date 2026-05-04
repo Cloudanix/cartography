@@ -1,10 +1,8 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.okta.origins
 from tests.data.okta.trustedorigin import LIST_TRUSTED_ORIGIN_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ORG_ID = "test-okta-org-id"
 TEST_UPDATE_TAG = 123456789

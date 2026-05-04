@@ -3,10 +3,14 @@ from unittest.mock import MagicMock
 
 import cartography.intel.aws.iam
 from cartography.intel.aws.iam import sync_roles
-from tests.data.aws.iam.role_policies import ANOTHER_GET_ROLE_LIST_DATASET
-from tests.data.aws.iam.role_policies import GET_ROLE_MANAGED_POLICY_DATA
-from tests.data.aws.iam.user_policies import GET_ROLE_INLINE_POLS_SAMPLE
-from tests.data.aws.iam.user_policies import GET_ROLE_LIST_DATA
+from tests.data.aws.iam.role_policies import (
+    ANOTHER_GET_ROLE_LIST_DATASET,
+    GET_ROLE_MANAGED_POLICY_DATA,
+)
+from tests.data.aws.iam.user_policies import (
+    GET_ROLE_INLINE_POLS_SAMPLE,
+    GET_ROLE_LIST_DATA,
+)
 
 AWS_UPDATE_TAG = 111111
 AWS_ACCOUNT_ID = "1234"

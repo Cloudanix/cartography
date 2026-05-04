@@ -5,12 +5,13 @@ import neo4j
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
-from cartography.models.gsuite.group import GSuiteGroupSchema
-from cartography.models.gsuite.group import GSuiteGroupToGroupMemberRel
-from cartography.models.gsuite.group import GSuiteGroupToGroupOwnerRel
+from cartography.models.gsuite.group import (
+    GSuiteGroupSchema,
+    GSuiteGroupToGroupMemberRel,
+    GSuiteGroupToGroupOwnerRel,
+)
 from cartography.models.gsuite.tenant import GSuiteTenantSchema
 from cartography.util import timeit
 

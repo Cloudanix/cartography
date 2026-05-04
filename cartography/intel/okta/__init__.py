@@ -5,19 +5,19 @@ import neo4j
 from okta.framework.OktaError import OktaError
 
 from cartography.config import Config
-from cartography.intel.okta import applications
-from cartography.intel.okta import awssaml
-from cartography.intel.okta import factors
-from cartography.intel.okta import groups
-from cartography.intel.okta import organization
-from cartography.intel.okta import origins
-from cartography.intel.okta import roles
-from cartography.intel.okta import users
+from cartography.intel.okta import (
+    applications,
+    awssaml,
+    factors,
+    groups,
+    organization,
+    origins,
+    roles,
+    users,
+)
 from cartography.intel.okta.sync_state import OktaSyncState
 from cartography.stats import get_stats_client
-from cartography.util import merge_module_sync_metadata
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import merge_module_sync_metadata, run_cleanup_job, timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

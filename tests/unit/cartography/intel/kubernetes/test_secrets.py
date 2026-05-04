@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from kubernetes.client.exceptions import ApiException
 

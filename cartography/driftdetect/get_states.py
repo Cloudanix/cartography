@@ -1,9 +1,7 @@
 import logging
 import os.path
 import time
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import neo4j.exceptions
 from marshmallow import ValidationError
@@ -13,8 +11,7 @@ from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.driftdetect.add_shortcut import add_shortcut
 from cartography.driftdetect.config import UpdateConfig
 from cartography.driftdetect.model import State
-from cartography.driftdetect.serializers import ShortcutSchema
-from cartography.driftdetect.serializers import StateSchema
+from cartography.driftdetect.serializers import ShortcutSchema, StateSchema
 from cartography.driftdetect.storage import FileSystem
 from cartography.driftdetect.util import valid_directory
 

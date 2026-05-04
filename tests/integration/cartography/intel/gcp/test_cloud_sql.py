@@ -1,15 +1,11 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp.cloud_sql_backup_config as cloud_sql_backup_config
 import cartography.intel.gcp.cloud_sql_database as cloud_sql_database
 import cartography.intel.gcp.cloud_sql_instance as cloud_sql_instance
 import cartography.intel.gcp.cloud_sql_user as cloud_sql_user
-from tests.data.gcp.cloud_sql import MOCK_DATABASES
-from tests.data.gcp.cloud_sql import MOCK_INSTANCES
-from tests.data.gcp.cloud_sql import MOCK_USERS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.gcp.cloud_sql import MOCK_DATABASES, MOCK_INSTANCES, MOCK_USERS
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_PROJECT_ID = "test-project"

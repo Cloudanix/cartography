@@ -1,6 +1,5 @@
 # Okta intel module - sync state
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
 
 class OktaSyncState:

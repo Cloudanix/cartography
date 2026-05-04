@@ -1,7 +1,9 @@
 from cartography.client.core.tx import load_graph_data
 from cartography.graph.querybuilder import build_ingestion_query
-from tests.data.graph.querybuilder.sample_data.multiple_attr_match import MERGE_PERSONS
-from tests.data.graph.querybuilder.sample_data.multiple_attr_match import TEST_COMPUTERS
+from tests.data.graph.querybuilder.sample_data.multiple_attr_match import (
+    MERGE_PERSONS,
+    TEST_COMPUTERS,
+)
 from tests.data.graph.querybuilder.sample_models.multiple_attr_match import TestComputer
 
 

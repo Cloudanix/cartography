@@ -1,41 +1,41 @@
 import asyncio
 import logging
 import re
-from datetime import datetime
-from datetime import timezone
-from functools import partial
-from functools import wraps
-from importlib.resources import open_binary
-from importlib.resources import read_text
+from datetime import datetime, timezone
+from functools import partial, wraps
+from importlib.resources import open_binary, read_text
 from string import Template
-from typing import Any
-from typing import Awaitable
-from typing import BinaryIO
-from typing import Callable
-from typing import cast
-from typing import Dict
-from typing import Iterable
-from typing import List
-from typing import Optional
-from typing import Set
-from typing import Type
-from typing import TypeVar
-from typing import Union
+from typing import (
+    Any,
+    Awaitable,
+    BinaryIO,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import backoff
 import boto3
 import botocore
 import neo4j
-from botocore.exceptions import ConnectTimeoutError
-from botocore.exceptions import EndpointConnectionError
-from botocore.exceptions import ReadTimeoutError
+from botocore.exceptions import (
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 from botocore.parsers import ResponseParserError
 
 from cartography import helpers
 from cartography.graph.job import GraphJob
 from cartography.graph.statement import get_job_shortname
-from cartography.stats import get_stats_client
-from cartography.stats import ScopedStatsClient
+from cartography.stats import ScopedStatsClient, get_stats_client
 
 logger = logging.getLogger(__name__)
 
@@ -1148,6 +1148,7 @@ def make_neo4j_datetime_validator() -> Callable[[Any], Union[datetime, None]]:
 
 # Cloudanix-specific utilities
 
+
 def get_azure_resource_group_name(id: str) -> str:
     resource_group = ""
     id = id.lower()
@@ -1165,18 +1166,22 @@ def normalize_datetime(date_str: Optional[str]):
         return None, None
     try:
         from datetime import timezone
-        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+
+        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         dt_utc = dt.astimezone(timezone.utc)
-        iso_str = dt_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        iso_str = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         timestamp_ms = int(dt_utc.timestamp() * 1000)
         return iso_str, timestamp_ms
     except (ValueError, TypeError):
         return None, None
 
 
-def make_requests_url(url: str, access_token: str, return_raw: bool = False) -> Union[Dict, Any]:
+def make_requests_url(
+    url: str, access_token: str, return_raw: bool = False
+) -> Union[Dict, Any]:
     try:
         import requests as _requests
+
         headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {access_token}",

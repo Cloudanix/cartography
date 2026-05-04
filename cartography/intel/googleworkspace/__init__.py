@@ -9,17 +9,12 @@ import neo4j
 from google.auth import default
 from google.auth.exceptions import DefaultCredentialsError
 from google.auth.transport.requests import Request
-from google.oauth2 import credentials
-from google.oauth2 import service_account
+from google.oauth2 import credentials, service_account
 from google.oauth2.credentials import Credentials as OAuth2Credentials
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
 from cartography.config import Config
-from cartography.intel.googleworkspace import devices
-from cartography.intel.googleworkspace import groups
-from cartography.intel.googleworkspace import oauth_apps
-from cartography.intel.googleworkspace import tenant
-from cartography.intel.googleworkspace import users
+from cartography.intel.googleworkspace import devices, groups, oauth_apps, tenant, users
 from cartography.util import timeit
 
 OAUTH_SCOPES = [

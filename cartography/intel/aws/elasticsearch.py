@@ -1,22 +1,21 @@
 import json
 import logging
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import boto3
 import botocore
 import neo4j
 from policyuniverse.policy import Policy
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import run_write_query
+from cartography.client.core.tx import load, run_write_query
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.intel.aws.util.botocore_config import (
+    create_boto3_client,
+    get_botocore_config,
+)
 from cartography.intel.dns import ingest_dns_record_by_fqdn
 from cartography.models.aws.elasticsearch.domain import ESDomainSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

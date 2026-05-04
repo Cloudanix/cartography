@@ -1,9 +1,6 @@
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from unittest import mock
-from unittest.mock import MagicMock
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 import botocore
 import pytest
@@ -12,14 +9,18 @@ from googleapiclient.errors import HttpError
 
 import cartography.util
 from cartography import util
-from cartography.intel.gcp.util import gcp_api_execute_with_retry
-from cartography.intel.gcp.util import GCP_API_MAX_RETRIES
-from cartography.intel.gcp.util import is_retryable_gcp_http_error
-from cartography.util import aws_handle_regions
-from cartography.util import batch
-from cartography.util import is_service_control_policy_explicit_deny
-from cartography.util import run_analysis_and_ensure_deps
-from cartography.util import to_datetime
+from cartography.intel.gcp.util import (
+    GCP_API_MAX_RETRIES,
+    gcp_api_execute_with_retry,
+    is_retryable_gcp_http_error,
+)
+from cartography.util import (
+    aws_handle_regions,
+    batch,
+    is_service_control_policy_explicit_deny,
+    run_analysis_and_ensure_deps,
+    to_datetime,
+)
 
 SAMPLE_ANALYSIS_JOB = """
 {

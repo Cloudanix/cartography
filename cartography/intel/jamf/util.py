@@ -1,6 +1,5 @@
 import logging
-from typing import Any
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import requests
 import requests.auth

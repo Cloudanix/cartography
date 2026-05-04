@@ -8,10 +8,8 @@ import oci
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.models.oci.compartment import OCICompartmentSchema
-from cartography.models.oci.group import OCIGroupSchema
-from cartography.models.oci.group import OCIGroupWithMembersSchema
-from cartography.models.oci.policy import OCIPolicySchema
-from cartography.models.oci.policy import OCIPolicyWithReferencesSchema
+from cartography.models.oci.group import OCIGroupSchema, OCIGroupWithMembersSchema
+from cartography.models.oci.policy import OCIPolicySchema, OCIPolicyWithReferencesSchema
 from cartography.models.oci.region import OCIRegionSchema
 from cartography.models.oci.user import OCIUserSchema
 from cartography.util import timeit

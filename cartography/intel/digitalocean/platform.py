@@ -1,11 +1,8 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import neo4j
-from digitalocean import Account
-from digitalocean import Manager
+from digitalocean import Account, Manager
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob

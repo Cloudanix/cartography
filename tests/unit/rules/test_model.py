@@ -1,6 +1,4 @@
-from cartography.rules.spec.model import Framework
-from cartography.rules.spec.model import Module
-from cartography.rules.spec.model import MODULE_TO_CARTOGRAPHY_INTEL
+from cartography.rules.spec.model import MODULE_TO_CARTOGRAPHY_INTEL, Framework, Module
 from cartography.sync import TOP_LEVEL_MODULES
 
 

@@ -3,8 +3,7 @@ from unittest.mock import Mock
 from cartography.intel.duo.api_host import sync_duo_api_host
 from cartography.intel.duo.groups import sync_duo_groups
 from tests.data.duo.groups import GET_GROUPS_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_API_HOSTNAME = "https://api-1234.duo.com"

@@ -1,10 +1,7 @@
 from datetime import datetime
 
 from dateutil.tz import tzutc
-from scaleway.instance.v1 import ServerSummary
-from scaleway.instance.v1 import Snapshot
-from scaleway.instance.v1 import SnapshotBaseVolume
-from scaleway.instance.v1 import Volume
+from scaleway.instance.v1 import ServerSummary, Snapshot, SnapshotBaseVolume, Volume
 
 SCALEWAY_VOLUMES = [
     Volume(

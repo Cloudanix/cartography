@@ -1,7 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import call
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 from cartography.graph.statement import GraphStatement
 

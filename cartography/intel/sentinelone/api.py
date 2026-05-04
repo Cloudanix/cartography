@@ -1,6 +1,4 @@
-from typing import Any
-from typing import Callable
-from typing import cast
+from typing import Any, Callable, cast
 
 import backoff
 import requests

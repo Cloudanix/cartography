@@ -1,15 +1,10 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.aws.guardduty
-from cartography.intel.aws.guardduty import _get_severity_range_for_threshold
-from cartography.intel.aws.guardduty import sync
-from tests.data.aws.guardduty import GET_DETECTOR_DETAILS
-from tests.data.aws.guardduty import GET_FINDINGS
-from tests.data.aws.guardduty import LIST_DETECTORS
+from cartography.intel.aws.guardduty import _get_severity_range_for_threshold, sync
+from tests.data.aws.guardduty import GET_DETECTOR_DETAILS, GET_FINDINGS, LIST_DETECTORS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ACCOUNT_ID = "123456789012"
 TEST_REGION = "us-east-1"

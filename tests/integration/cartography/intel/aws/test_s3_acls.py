@@ -1,8 +1,5 @@
-from cartography.intel.aws.s3 import _load_s3_acls
-from cartography.intel.aws.s3 import load_s3_buckets
-from cartography.intel.aws.s3 import parse_acl
-from tests.data.aws.s3 import LIST_BUCKETS
-from tests.data.aws.s3 import OPEN_BUCKET_ACLS
+from cartography.intel.aws.s3 import _load_s3_acls, load_s3_buckets, parse_acl
+from tests.data.aws.s3 import LIST_BUCKETS, OPEN_BUCKET_ACLS
 from tests.integration.cartography.intel.aws.iam.test_iam import _create_base_account
 from tests.integration.util import check_nodes
 

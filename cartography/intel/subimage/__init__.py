@@ -10,8 +10,7 @@ import cartography.intel.subimage.neo4jusers
 import cartography.intel.subimage.team
 import cartography.intel.subimage.tenant
 from cartography.config import Config
-from cartography.intel.subimage.util import create_api_session
-from cartography.intel.subimage.util import get_access_token
+from cartography.intel.subimage.util import create_api_session, get_access_token
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

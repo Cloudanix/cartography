@@ -6,8 +6,7 @@ import tests.data.cloudflare.zones
 from tests.integration.cartography.intel.cloudflare.test_zones import (
     _ensure_local_neo4j_has_test_zones,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 ZONE_ID = tests.data.cloudflare.zones.CLOUDFLARE_ZONES[0]["id"]

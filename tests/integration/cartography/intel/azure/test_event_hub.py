@@ -1,12 +1,9 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.azure.event_hub as event_hub
 import cartography.intel.azure.event_hub_namespace as event_hub_namespace
-from tests.data.azure.event_hub import MOCK_EVENT_HUBS
-from tests.data.azure.event_hub import MOCK_NAMESPACES
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.azure.event_hub import MOCK_EVENT_HUBS, MOCK_NAMESPACES
+from tests.integration.util import check_nodes, check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

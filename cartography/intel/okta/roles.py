@@ -1,16 +1,14 @@
 # Okta intel module - Roles
 import json
 import logging
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import neo4j
 from okta.framework.ApiClient import ApiClient
 
 from cartography.client.core.tx import run_write_query
 from cartography.intel.okta.sync_state import OktaSyncState
-from cartography.intel.okta.utils import check_rate_limit
-from cartography.intel.okta.utils import create_api_client
+from cartography.intel.okta.utils import check_rate_limit, create_api_client
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

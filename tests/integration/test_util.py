@@ -1,7 +1,6 @@
 import pytest
 
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 
 @pytest.mark.flaky(reruns=5)

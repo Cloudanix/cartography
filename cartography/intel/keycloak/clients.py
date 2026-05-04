@@ -3,12 +3,13 @@ from typing import Any
 import neo4j
 import requests
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.intel.keycloak.util import get_paginated
-from cartography.models.keycloak.client import KeycloakClientSchema
-from cartography.models.keycloak.client import KeycloakClientToFlowMatchLink
+from cartography.models.keycloak.client import (
+    KeycloakClientSchema,
+    KeycloakClientToFlowMatchLink,
+)
 from cartography.models.keycloak.user import KeycloakUserSchema
 from cartography.util import timeit
 

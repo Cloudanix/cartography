@@ -5,9 +5,7 @@ from cartography.intel.duo.endpoints import sync_duo_endpoints
 from cartography.intel.duo.groups import sync_duo_groups
 from cartography.intel.duo.phones import sync as sync_duo_phones
 from cartography.intel.duo.tokens import sync as sync_duo_tokens
-from cartography.intel.duo.users import _load_users
-from cartography.intel.duo.users import _transform_users
-from cartography.intel.duo.users import sync_duo_users
+from cartography.intel.duo.users import _load_users, _transform_users, sync_duo_users
 from cartography.intel.duo.web_authn_credentials import (
     sync as sync_duo_web_authn_credentials,
 )
@@ -17,8 +15,7 @@ from tests.data.duo.phones import GET_PHONES_RESPONSE
 from tests.data.duo.tokens import GET_TOKENS_RESPONSE
 from tests.data.duo.users import GET_USERS_RESPONSE
 from tests.data.duo.web_authn_credentials import GET_WEBAUTHNCREDENTIALS_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_API_HOSTNAME = "https://api-1234.duo.com"

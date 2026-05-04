@@ -4,17 +4,15 @@ from typing import Any
 import neo4j
 import requests
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
-from cartography.intel.tailscale.utils import ACLParser
-from cartography.intel.tailscale.utils import role_to_group
+from cartography.intel.tailscale.utils import ACLParser, role_to_group
 from cartography.models.tailscale.deviceposture import (
     TailscaleDevicePostureConditionSchema,
+    TailscaleDevicePostureSchema,
 )
-from cartography.models.tailscale.deviceposture import TailscaleDevicePostureSchema
-from cartography.models.tailscale.group import TailscaleGroupSchema
 from cartography.models.tailscale.group import (
+    TailscaleGroupSchema,
     TailscaleUserToGroupInheritedMemberMatchLink,
 )
 from cartography.models.tailscale.tag import TailscaleTagSchema

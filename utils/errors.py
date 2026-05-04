@@ -1,4 +1,5 @@
 """Error handler class"""
+
 # define Python user-defined exceptions
 
 
@@ -27,7 +28,7 @@ class GraphRequestError(ServerError):
 
 
 class PubSubPublishError(ServerError):
-    """ Raised when publishing message to Google PubSub fails"""
+    """Raised when publishing message to Google PubSub fails"""
 
 
 class TimeLimitError(ServerError):
@@ -36,12 +37,14 @@ class TimeLimitError(ServerError):
 
 def classify_error(logger, err, msg, extra=None):
     """Classify the error to Permission or Request Processing Error"""
-    message = f'{msg}: {err}'
-    if err.response['Error']['Code'] == 'AccessDenied' or \
-            err.response['Error']['Code'] == 'AccessDeniedException' or \
-            err.response['Error']['Code'] == 'UnauthorizedOperation' or \
-            err.response['Error']['Code'] == 'Client.UnauthorizedOperation':
-        logger.exception(f'Insufficient permissions. {message}', extra=extra)
+    message = f"{msg}: {err}"
+    if (
+        err.response["Error"]["Code"] == "AccessDenied"
+        or err.response["Error"]["Code"] == "AccessDeniedException"
+        or err.response["Error"]["Code"] == "UnauthorizedOperation"
+        or err.response["Error"]["Code"] == "Client.UnauthorizedOperation"
+    ):
+        logger.exception(f"Insufficient permissions. {message}", extra=extra)
         return AWSPermissionError(message)
 
     else:

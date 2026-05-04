@@ -1,18 +1,18 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp.bigtable_app_profile as bigtable_app_profile
 import cartography.intel.gcp.bigtable_backup as bigtable_backup
 import cartography.intel.gcp.bigtable_cluster as bigtable_cluster
 import cartography.intel.gcp.bigtable_instance as bigtable_instance
 import cartography.intel.gcp.bigtable_table as bigtable_table
-from tests.data.gcp.bigtable import MOCK_APP_PROFILES
-from tests.data.gcp.bigtable import MOCK_BACKUPS
-from tests.data.gcp.bigtable import MOCK_CLUSTERS
-from tests.data.gcp.bigtable import MOCK_INSTANCES
-from tests.data.gcp.bigtable import MOCK_TABLES
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.gcp.bigtable import (
+    MOCK_APP_PROFILES,
+    MOCK_BACKUPS,
+    MOCK_CLUSTERS,
+    MOCK_INSTANCES,
+    MOCK_TABLES,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_PROJECT_ID = "test-project"

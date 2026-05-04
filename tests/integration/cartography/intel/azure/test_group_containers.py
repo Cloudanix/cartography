@@ -1,10 +1,8 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.azure.group_containers as group_containers
 from tests.data.azure.container_instances import MOCK_CONTAINER_GROUPS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

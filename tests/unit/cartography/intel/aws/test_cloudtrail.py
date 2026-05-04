@@ -2,13 +2,13 @@ import inspect
 from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError
-from botocore.exceptions import ConnectionClosedError
-from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import ClientError, ConnectionClosedError, ConnectTimeoutError
 
-from cartography.intel.aws.cloudtrail import CloudTrailTransientRegionFailure
-from cartography.intel.aws.cloudtrail import get_cloudtrail_trails
-from cartography.intel.aws.cloudtrail import sync
+from cartography.intel.aws.cloudtrail import (
+    CloudTrailTransientRegionFailure,
+    get_cloudtrail_trails,
+    sync,
+)
 from cartography.intel.aws.util.botocore_config import get_botocore_config
 
 

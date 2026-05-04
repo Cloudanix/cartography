@@ -1,19 +1,15 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import neo4j
 import requests
-from requests.exceptions import HTTPError
-from requests.exceptions import ReadTimeout
+from requests.exceptions import HTTPError, ReadTimeout
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.models.semgrep.secrets import SemgrepSecretsFindingSchema
 from cartography.stats import get_stats_client
-from cartography.util import merge_module_sync_metadata
-from cartography.util import timeit
+from cartography.util import merge_module_sync_metadata, timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

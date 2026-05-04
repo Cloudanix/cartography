@@ -4,9 +4,7 @@ from typing import Any
 
 import neo4j
 import oci
-from oci.exceptions import ConfigFileNotFound
-from oci.exceptions import InvalidConfig
-from oci.exceptions import ProfileNotFound
+from oci.exceptions import ConfigFileNotFound, InvalidConfig, ProfileNotFound
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob

@@ -1,13 +1,15 @@
 import base64
 import json
 
-from cartography.intel.supply_chain import ContainerImage
-from cartography.intel.supply_chain import decode_attestation_blob_to_predicate
-from cartography.intel.supply_chain import extract_container_parent_image
-from cartography.intel.supply_chain import extract_image_source_provenance
-from cartography.intel.supply_chain import get_slsa_dependency_list
-from cartography.intel.supply_chain import match_images_to_dockerfiles
-from cartography.intel.supply_chain import unwrap_attestation_predicate
+from cartography.intel.supply_chain import (
+    ContainerImage,
+    decode_attestation_blob_to_predicate,
+    extract_container_parent_image,
+    extract_image_source_provenance,
+    get_slsa_dependency_list,
+    match_images_to_dockerfiles,
+    unwrap_attestation_predicate,
+)
 
 
 def test_decode_attestation_blob_dsse_envelope():

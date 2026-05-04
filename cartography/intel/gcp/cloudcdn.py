@@ -2,20 +2,19 @@ import json
 import logging
 import re
 import time
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import neo4j
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
+
+from cartography.util import run_cleanup_job, timeit
 
 from . import label
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker() if GCPLinker else None
@@ -28,25 +27,36 @@ def get_backend_buckets(compute: Resource, project_id: str) -> List[Dict]:
         req = compute.backendBuckets().list(project=project_id)
         while req is not None:
             res = req.execute()
-            if res.get('items'):
-                for bucket in res['items']:
-                    bucket['region'] = 'global'
-                    bucket['id'] = f"projects/{project_id}/global/backendBuckets/{bucket['bucketName']}"
-                    bucket['consolelink'] = gcp_console_link.get_console_link(
+            if res.get("items"):
+                for bucket in res["items"]:
+                    bucket["region"] = "global"
+                    bucket["id"] = (
+                        f"projects/{project_id}/global/backendBuckets/{bucket['bucketName']}"
+                    )
+                    bucket["consolelink"] = gcp_console_link.get_console_link(
                         project_id=project_id,
-                        backend_bucket_name=bucket['name'], resource_name='backend_bucket',
+                        backend_bucket_name=bucket["name"],
+                        resource_name="backend_bucket",
                     )
                     backend_buckets.append(bucket)
-            req = compute.backendBuckets().list_next(previous_request=req, previous_response=res)
+            req = compute.backendBuckets().list_next(
+                previous_request=req, previous_response=res
+            )
 
         return backend_buckets
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve backend buckets on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -54,14 +64,18 @@ def get_backend_buckets(compute: Resource, project_id: str) -> List[Dict]:
 
 
 @timeit
-def load_backend_buckets(session: neo4j.Session, buckets: List[Dict], project_id: str, update_tag: int) -> None:
+def load_backend_buckets(
+    session: neo4j.Session, buckets: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.write_transaction(load_backend_buckets_tx, buckets, project_id, update_tag)
 
 
 @timeit
 def load_backend_buckets_tx(
-    tx: neo4j.Transaction, buckets: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    buckets: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     query = """
     UNWIND $Buckets as b
@@ -93,21 +107,35 @@ def load_backend_buckets_tx(
 
 
 @timeit
-def cleanup_backend_buckets(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_backend_buckets_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_backend_buckets(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_backend_buckets_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_backend_buckets(
-    neo4j_session: neo4j.Session, compute: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    compute: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     backend_buckets = get_backend_buckets(compute, project_id)
 
     load_backend_buckets(neo4j_session, backend_buckets, project_id, gcp_update_tag)
     cleanup_backend_buckets(neo4j_session, common_job_parameters)
-    label.sync_labels(neo4j_session, backend_buckets, gcp_update_tag, common_job_parameters, 'backend_bucket', 'GCPBackendBucket')
+    label.sync_labels(
+        neo4j_session,
+        backend_buckets,
+        gcp_update_tag,
+        common_job_parameters,
+        "backend_bucket",
+        "GCPBackendBucket",
+    )
 
 
 @timeit
@@ -117,27 +145,40 @@ def get_global_backend_services(compute: Resource, project_id: str) -> List[Dict
         req = compute.backendServices().list(project=project_id)
         while req is not None:
             res = req.execute()
-            if res.get('items'):
-                for backend_service in res.get('items'):
-                    backend_service['region'] = 'global'
-                    backend_service['type'] = 'global'
-                    backend_service['id'] = f"projects/{project_id}/global/backendServices/{backend_service['name']}"
-                    backend_service['consolelink'] = gcp_console_link.get_console_link(
-                        project_id=project_id,
-                        backend_service_name=backend_service['name'], resource_name='global_backend_service',
+            if res.get("items"):
+                for backend_service in res.get("items"):
+                    backend_service["region"] = "global"
+                    backend_service["type"] = "global"
+                    backend_service["id"] = (
+                        f"projects/{project_id}/global/backendServices/{backend_service['name']}"
                     )
-                    backend_service['isUserCreated'] = is_user_created_backend_service(backend_service)
+                    backend_service["consolelink"] = gcp_console_link.get_console_link(
+                        project_id=project_id,
+                        backend_service_name=backend_service["name"],
+                        resource_name="global_backend_service",
+                    )
+                    backend_service["isUserCreated"] = is_user_created_backend_service(
+                        backend_service
+                    )
                     global_backend_services.append(backend_service)
-            req = compute.backendServices().list_next(previous_request=req, previous_response=res)
+            req = compute.backendServices().list_next(
+                previous_request=req, previous_response=res
+            )
 
         return global_backend_services
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve global backend buckets on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -151,7 +192,9 @@ def is_user_created_backend_service(service):
     scheme: str = service.get("loadBalancingScheme", "")
     backends: list = service.get("backends", [])
     usedBy: list = service.get("usedBy", [])
-    tags: dict = service.get("params", {}).get("resourceManagerTags", {}) or service.get("labels", {})
+    tags: dict = service.get("params", {}).get(
+        "resourceManagerTags", {}
+    ) or service.get("labels", {})
 
     # List to keep all the failed checks
     gcp_managed_signals: list = []
@@ -163,15 +206,15 @@ def is_user_created_backend_service(service):
 
     # B. Check for known GCP naming patterns
     gcp_managed_patterns = [
-        (r'^k8s\d*-[a-f0-9]+-', "GKE Ingress/NEG pattern"),
-        (r'^agg-', "Aggregated backend service"),
-        (r'^goog-', "Google-managed prefix"),
-        (r'^gcp-', "GCP prefix"),
-        (r'^gcf-', "Cloud Functions"),
-        (r'^espv2-', "ESPv2 API Gateway"),
-        (r'^gae-', "App Engine"),
-        (r'^cloud[-_]?run', "Cloud Run"),
-        (r'^internal-backend', "Auto internal naming"),
+        (r"^k8s\d*-[a-f0-9]+-", "GKE Ingress/NEG pattern"),
+        (r"^agg-", "Aggregated backend service"),
+        (r"^goog-", "Google-managed prefix"),
+        (r"^gcp-", "GCP prefix"),
+        (r"^gcf-", "Cloud Functions"),
+        (r"^espv2-", "ESPv2 API Gateway"),
+        (r"^gae-", "App Engine"),
+        (r"^cloud[-_]?run", "Cloud Run"),
+        (r"^internal-backend", "Auto internal naming"),
     ]
 
     for pattern, reason in gcp_managed_patterns:
@@ -218,15 +261,15 @@ def is_user_created_backend_service(service):
                     gcp_managed_signals.append(f"Backend[{idx}]: {reason}")
 
             # Check for GKE NEG pattern
-            if re.search(r'k8s\d*-[a-f0-9]+-', group):
+            if re.search(r"k8s\d*-[a-f0-9]+-", group):
                 gcp_managed_signals.append(f"Backend[{idx}]: GKE NEG pattern in group")
 
     # F. Check Used By references
     gcp_ref_patterns = [
-        (r'k8s\d*-[a-f0-9]+-', "GKE resource"),
-        (r'espv2-', "ESPv2 API Gateway"),
-        (r'goog-', "Google-managed resource"),
-        (r'gcp-', "GCP-managed resource"),
+        (r"k8s\d*-[a-f0-9]+-", "GKE resource"),
+        (r"espv2-", "ESPv2 API Gateway"),
+        (r"goog-", "Google-managed resource"),
+        (r"gcp-", "GCP-managed resource"),
     ]
 
     for ref in usedBy:
@@ -240,14 +283,23 @@ def is_user_created_backend_service(service):
 
 
 @timeit
-def load_backend_services(session: neo4j.Session, backend_services: List[Dict], project_id: str, update_tag: int) -> None:
-    session.write_transaction(load_backend_services_tx, backend_services, project_id, update_tag)
+def load_backend_services(
+    session: neo4j.Session,
+    backend_services: List[Dict],
+    project_id: str,
+    update_tag: int,
+) -> None:
+    session.write_transaction(
+        load_backend_services_tx, backend_services, project_id, update_tag
+    )
 
 
 @timeit
 def load_backend_services_tx(
-    tx: neo4j.Transaction, backend_services: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    backend_services: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -285,52 +337,85 @@ def load_backend_services_tx(
 
 
 @timeit
-def cleanup_backend_services(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_backend_services_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_backend_services(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_backend_services_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_global_backend_services(
-    neo4j_session: neo4j.Session, compute: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    compute: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     global_services = get_global_backend_services(compute, project_id)
 
     load_backend_services(neo4j_session, global_services, project_id, gcp_update_tag)
     cleanup_backend_services(neo4j_session, common_job_parameters)
-    label.sync_labels(neo4j_session, global_services, gcp_update_tag, common_job_parameters, 'backend_service', 'GCPBackendService')
+    label.sync_labels(
+        neo4j_session,
+        global_services,
+        gcp_update_tag,
+        common_job_parameters,
+        "backend_service",
+        "GCPBackendService",
+    )
 
 
 @timeit
-def get_regional_backend_services(compute: Resource, project_id: str, regions: list) -> List[Dict]:
+def get_regional_backend_services(
+    compute: Resource, project_id: str, regions: list
+) -> List[Dict]:
     regional_backend_services = []
     try:
         if regions:
             for region in regions:
-                req = compute.regionBackendServices().list(project=project_id, region=region)
+                req = compute.regionBackendServices().list(
+                    project=project_id, region=region
+                )
                 while req is not None:
                     res = req.execute()
-                    if res.get('items'):
-                        for region_service in res.get('items'):
-                            region_service['region'] = region
-                            region_service['type'] = 'regional'
-                            region_service['id'] = f"projects/{project_id}/regions/{region}/backendServices/{region_service['name']}"
-                            region_service['consolelink'] = gcp_console_link.get_console_link(
-                                project_id=project_id,
-                                backend_service_name=region_service['name'], region=region_service['region'], resource_name='regional_backend_service',
+                    if res.get("items"):
+                        for region_service in res.get("items"):
+                            region_service["region"] = region
+                            region_service["type"] = "regional"
+                            region_service["id"] = (
+                                f"projects/{project_id}/regions/{region}/backendServices/{region_service['name']}"
+                            )
+                            region_service["consolelink"] = (
+                                gcp_console_link.get_console_link(
+                                    project_id=project_id,
+                                    backend_service_name=region_service["name"],
+                                    region=region_service["region"],
+                                    resource_name="regional_backend_service",
+                                )
                             )
                             regional_backend_services.append(region_service)
-                    req = compute.regionBackendServices().list_next(previous_request=req, previous_response=res)
+                    req = compute.regionBackendServices().list_next(
+                        previous_request=req, previous_response=res
+                    )
 
         return regional_backend_services
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden' or err.get('code') == 400:
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+            or err.get("code") == 400
+        ):
             logger.warning(
                 (
                     "Could not retrieve regional backend services on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -339,15 +424,26 @@ def get_regional_backend_services(compute: Resource, project_id: str, regions: l
 
 @timeit
 def sync_regional_backend_services(
-    neo4j_session: neo4j.Session, compute: Resource, project_id: str, regions: list,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    compute: Resource,
+    project_id: str,
+    regions: list,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     regional_services = get_regional_backend_services(compute, project_id, regions)
 
     load_backend_services(neo4j_session, regional_services, project_id, gcp_update_tag)
     cleanup_backend_services(neo4j_session, common_job_parameters)
-    label.sync_labels(neo4j_session, regional_services, gcp_update_tag, common_job_parameters, 'backend_service', 'GCPBackendService')
+    label.sync_labels(
+        neo4j_session,
+        regional_services,
+        gcp_update_tag,
+        common_job_parameters,
+        "backend_service",
+        "GCPBackendService",
+    )
 
 
 @timeit
@@ -357,18 +453,26 @@ def get_global_url_maps(compute: Resource, project_id: str) -> List[Dict]:
         req = compute.urlMaps().list(project=project_id)
         while req is not None:
             res = req.execute()
-            if res.get('items'):
-                global_url_maps.extend(res.get('items', []))
-            req = compute.urlMaps().list_next(previous_request=req, previous_response=res)
+            if res.get("items"):
+                global_url_maps.extend(res.get("items", []))
+            req = compute.urlMaps().list_next(
+                previous_request=req, previous_response=res
+            )
 
         return global_url_maps
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve global url maps on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -379,24 +483,30 @@ def get_global_url_maps(compute: Resource, project_id: str) -> List[Dict]:
 def transform_global_url_maps(url_maps: List[Dict], project_id: str) -> List[Dict]:
     global_url_maps = []
     for url_map in url_maps:
-        url_map['region'] = 'global'
-        url_map['type'] = 'global'
-        url_map['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='cdn_home')
-        url_map['id'] = f"projects/{project_id}/global/urlmaps/{url_map['name']}"
+        url_map["region"] = "global"
+        url_map["type"] = "global"
+        url_map["consolelink"] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name="cdn_home"
+        )
+        url_map["id"] = f"projects/{project_id}/global/urlmaps/{url_map['name']}"
         global_url_maps.append(url_map)
 
     return global_url_maps
 
 
 @timeit
-def load_url_maps(session: neo4j.Session, url_maps: List[Dict], project_id: str, update_tag: int) -> None:
+def load_url_maps(
+    session: neo4j.Session, url_maps: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.write_transaction(load_url_maps_tx, url_maps, project_id, update_tag)
 
 
 @timeit
 def load_url_maps_tx(
-    tx: neo4j.Transaction, url_maps: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    url_maps: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -430,13 +540,16 @@ def load_url_maps_tx(
 
 @timeit
 def cleanup_url_maps(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_url_maps_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("gcp_url_maps_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync_global_url_maps(
-    neo4j_session: neo4j.Session, compute: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    compute: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     maps = get_global_url_maps(compute, project_id)
@@ -444,28 +557,46 @@ def sync_global_url_maps(
 
     load_url_maps(neo4j_session, global_maps, project_id, gcp_update_tag)
     cleanup_url_maps(neo4j_session, common_job_parameters)
-    label.sync_labels(neo4j_session, global_maps, gcp_update_tag, common_job_parameters, 'url_map', 'GCPUrlMap')
+    label.sync_labels(
+        neo4j_session,
+        global_maps,
+        gcp_update_tag,
+        common_job_parameters,
+        "url_map",
+        "GCPUrlMap",
+    )
 
 
 @timeit
-def get_regional_url_maps(compute: Resource, project_id: str, region: Dict) -> List[Dict]:
+def get_regional_url_maps(
+    compute: Resource, project_id: str, region: Dict
+) -> List[Dict]:
     regional_url_maps = []
     try:
         req = compute.regionUrlMaps().list(project=project_id, region=region)
         while req is not None:
             res = req.execute()
-            if res.get('items'):
-                regional_url_maps.extend(res.get('items', []))
-            req = compute.regionUrlMaps().list_next(previous_request=req, previous_response=res)
+            if res.get("items"):
+                regional_url_maps.extend(res.get("items", []))
+            req = compute.regionUrlMaps().list_next(
+                previous_request=req, previous_response=res
+            )
 
         return regional_url_maps
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden' or err.get('code') == 400:
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+            or err.get("code") == 400
+        ):
             logger.warning(
                 (
                     "Could not retrieve regional url maps on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -473,13 +604,19 @@ def get_regional_url_maps(compute: Resource, project_id: str, region: Dict) -> L
 
 
 @timeit
-def transform_regional_url_maps(url_maps: List[Dict], region: str, project_id: str) -> List[Dict]:
+def transform_regional_url_maps(
+    url_maps: List[Dict], region: str, project_id: str
+) -> List[Dict]:
     regional_url_maps = []
     for url_map in url_maps:
-        url_map['region'] = region
-        url_map['type'] = 'regional'
-        url_map['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='cdn_home')
-        url_map['id'] = f"projects/{project_id}/regions/{region}/urlmaps/{url_map['name']}"
+        url_map["region"] = region
+        url_map["type"] = "regional"
+        url_map["consolelink"] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name="cdn_home"
+        )
+        url_map["id"] = (
+            f"projects/{project_id}/regions/{region}/urlmaps/{url_map['name']}"
+        )
         regional_url_maps.append(url_map)
 
     return regional_url_maps
@@ -487,8 +624,12 @@ def transform_regional_url_maps(url_maps: List[Dict], region: str, project_id: s
 
 @timeit
 def sync_regional_url_maps(
-    neo4j_session: neo4j.Session, compute: Resource, project_id: str, regions: list,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    compute: Resource,
+    project_id: str,
+    regions: list,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     regional_maps = []
@@ -499,23 +640,54 @@ def sync_regional_url_maps(
 
     load_url_maps(neo4j_session, regional_maps, project_id, gcp_update_tag)
     cleanup_url_maps(neo4j_session, common_job_parameters)
-    label.sync_labels(neo4j_session, regional_maps, gcp_update_tag, common_job_parameters, 'url_map', 'GCPUrlMap')
+    label.sync_labels(
+        neo4j_session,
+        regional_maps,
+        gcp_update_tag,
+        common_job_parameters,
+        "url_map",
+        "GCPUrlMap",
+    )
 
 
 def sync(
-    neo4j_session: neo4j.Session, compute: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: dict, regions: list,
+    neo4j_session: neo4j.Session,
+    compute: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: dict,
+    regions: list,
 ) -> None:
 
     tic = time.perf_counter()
 
     logger.info(f"Syncing cloudcdn for project {project_id}, at {tic}")
 
-    sync_backend_buckets(neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters)
-    sync_global_backend_services(neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters)
-    sync_regional_backend_services(neo4j_session, compute, project_id, regions, gcp_update_tag, common_job_parameters)
-    sync_global_url_maps(neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters)
-    sync_regional_url_maps(neo4j_session, compute, project_id, regions, gcp_update_tag, common_job_parameters)
+    sync_backend_buckets(
+        neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters
+    )
+    sync_global_backend_services(
+        neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters
+    )
+    sync_regional_backend_services(
+        neo4j_session,
+        compute,
+        project_id,
+        regions,
+        gcp_update_tag,
+        common_job_parameters,
+    )
+    sync_global_url_maps(
+        neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters
+    )
+    sync_regional_url_maps(
+        neo4j_session,
+        compute,
+        project_id,
+        regions,
+        gcp_update_tag,
+        common_job_parameters,
+    )
 
     toc = time.perf_counter()
     logger.info(f"Time to process cloudcdn: {toc - tic:0.4f} seconds")

@@ -2,19 +2,17 @@ import logging
 import os
 import re
 from string import Template
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Pattern
-from typing import Tuple
+from typing import Any, Dict, List, Pattern, Tuple
 
 import boto3
 import neo4j
 import yaml
 
-from cartography.client.core.tx import read_list_of_dicts_tx
-from cartography.client.core.tx import read_list_of_values_tx
-from cartography.client.core.tx import run_write_query
+from cartography.client.core.tx import (
+    read_list_of_dicts_tx,
+    read_list_of_values_tx,
+    run_write_query,
+)
 from cartography.graph.statement import GraphStatement
 from cartography.util import timeit
 

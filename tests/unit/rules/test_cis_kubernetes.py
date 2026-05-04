@@ -9,46 +9,23 @@ import pytest
 
 from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_1_cluster_admin_usage,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import cis_k8s_5_1_2_secret_access
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
+    cis_k8s_5_1_2_secret_access,
     cis_k8s_5_1_3_wildcard_roles,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_4_pod_create_access,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_5_default_sa_bindings,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_7_system_masters_group,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_8_escalation_permissions,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_9_pv_create_access,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_10_node_proxy_access,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_11_csr_approval_access,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_12_webhook_config_access,
-)
-from cartography.rules.data.rules.cis_kubernetes_rbac import (
     cis_k8s_5_1_13_sa_token_creation,
 )
 from cartography.rules.data.rules.cis_kubernetes_workloads import (
     cis_k8s_5_4_1_secrets_in_env_vars,
-)
-from cartography.rules.data.rules.cis_kubernetes_workloads import (
     cis_k8s_5_6_4_default_namespace,
 )
-from cartography.rules.spec.model import Maturity
-from cartography.rules.spec.model import Module
+from cartography.rules.spec.model import Maturity, Module
 
 ALL_CIS_K8S_RULES = [
     cis_k8s_5_1_1_cluster_admin_usage,

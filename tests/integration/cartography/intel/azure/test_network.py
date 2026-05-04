@@ -1,14 +1,14 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.azure.network as network
-from tests.data.azure.network import MOCK_NETWORK_INTERFACES
-from tests.data.azure.network import MOCK_NSGS
-from tests.data.azure.network import MOCK_PUBLIC_IPS
-from tests.data.azure.network import MOCK_SUBNETS
-from tests.data.azure.network import MOCK_VNETS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.azure.network import (
+    MOCK_NETWORK_INTERFACES,
+    MOCK_NSGS,
+    MOCK_PUBLIC_IPS,
+    MOCK_SUBNETS,
+    MOCK_VNETS,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

@@ -2,25 +2,21 @@ from typing import List
 
 import pytest
 
-from cartography.graph.cleanupbuilder import _build_cleanup_node_and_rel_queries
-from cartography.graph.cleanupbuilder import _build_cleanup_rel_query_no_sub_resource
-from cartography.graph.cleanupbuilder import build_cleanup_queries
+from cartography.graph.cleanupbuilder import (
+    _build_cleanup_node_and_rel_queries,
+    _build_cleanup_rel_query_no_sub_resource,
+    build_cleanup_queries,
+)
 from cartography.graph.job import get_parameters
 from cartography.models.aws.emr import EMRClusterToAWSAccountRel
 from cartography.models.github.users import GitHubOrganizationUserSchema
 from tests.data.graph.querybuilder.sample_models.asset_with_non_kwargs_tgm import (
     FakeEC2InstanceSchema,
-)
-from tests.data.graph.querybuilder.sample_models.asset_with_non_kwargs_tgm import (
     FakeEC2InstanceToAWSAccountRel,
 )
 from tests.data.graph.querybuilder.sample_models.interesting_asset import (
     InterestingAssetSchema,
-)
-from tests.data.graph.querybuilder.sample_models.interesting_asset import (
     InterestingAssetToHelloAssetRel,
-)
-from tests.data.graph.querybuilder.sample_models.interesting_asset import (
     InterestingAssetToSubResourceRel,
 )
 from tests.data.graph.querybuilder.sample_models.invalid_unscoped import (

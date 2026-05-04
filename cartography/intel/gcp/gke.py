@@ -1,18 +1,17 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import neo4j
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.labels import sync_labels
-from cartography.intel.gcp.util import classify_gcp_http_error
-from cartography.intel.gcp.util import gcp_api_execute_with_retry
-from cartography.intel.gcp.util import summarize_gcp_http_error
+from cartography.intel.gcp.util import (
+    classify_gcp_http_error,
+    gcp_api_execute_with_retry,
+    summarize_gcp_http_error,
+)
 from cartography.models.gcp.gke import GCPGKEClusterSchema
 from cartography.util import timeit
 

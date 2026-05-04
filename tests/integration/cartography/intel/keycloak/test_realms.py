@@ -1,5 +1,4 @@
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cartography.intel.keycloak.realms
 import tests.data.keycloak.realms

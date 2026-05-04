@@ -6,10 +6,11 @@ import tests.data.semgrep.deployment
 import tests.data.semgrep.secrets
 from cartography.intel.semgrep.deployment import sync_deployment
 from cartography.intel.semgrep.secrets import sync_secrets
-from tests.integration.cartography.intel.semgrep.common import create_github_repos
-from tests.integration.cartography.intel.semgrep.common import TEST_UPDATE_TAG
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.cartography.intel.semgrep.common import (
+    TEST_UPDATE_TAG,
+    create_github_repos,
+)
+from tests.integration.util import check_nodes, check_rels
 
 
 @patch.object(

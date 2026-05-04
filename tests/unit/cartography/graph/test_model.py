@@ -1,20 +1,22 @@
 import logging
 import warnings
-from typing import Dict
-from typing import Set
-from typing import Type
+from typing import Dict, Set, Type
 
 import pytest
 
 import cartography.models
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import CartographyNodeProperties
-from cartography.models.core.nodes import CartographyNodeSchema
-from cartography.models.core.relationships import CartographyRelProperties
-from cartography.models.core.relationships import CartographyRelSchema
-from cartography.models.core.relationships import LinkDirection
-from cartography.models.core.relationships import make_target_node_matcher
-from cartography.models.core.relationships import MatchLinkSubResource
+from cartography.models.core.nodes import (
+    CartographyNodeProperties,
+    CartographyNodeSchema,
+)
+from cartography.models.core.relationships import (
+    CartographyRelProperties,
+    CartographyRelSchema,
+    LinkDirection,
+    MatchLinkSubResource,
+    make_target_node_matcher,
+)
 from tests.utils import load_models
 
 logger = logging.getLogger(__name__)

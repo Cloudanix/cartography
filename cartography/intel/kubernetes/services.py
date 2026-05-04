@@ -3,16 +3,16 @@ import logging
 from typing import Any
 
 import neo4j
-from kubernetes.client.models import V1LoadBalancerIngress
-from kubernetes.client.models import V1PortStatus
-from kubernetes.client.models import V1Service
+from kubernetes.client.models import V1LoadBalancerIngress, V1PortStatus, V1Service
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.kubernetes.util import get_epoch
-from cartography.intel.kubernetes.util import get_qualified_resource_name
-from cartography.intel.kubernetes.util import k8s_paginate
-from cartography.intel.kubernetes.util import K8sClient
+from cartography.intel.kubernetes.util import (
+    K8sClient,
+    get_epoch,
+    get_qualified_resource_name,
+    k8s_paginate,
+)
 from cartography.models.kubernetes.services import KubernetesServiceSchema
 from cartography.util import timeit
 

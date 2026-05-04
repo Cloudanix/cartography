@@ -1,6 +1,5 @@
 from copy import deepcopy
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cartography.intel.keycloak.identityproviders
 import tests.data.keycloak.identityproviders
@@ -10,8 +9,7 @@ from tests.integration.cartography.intel.keycloak.test_realms import (
 from tests.integration.cartography.intel.keycloak.test_users import (
     _ensure_local_neo4j_has_test_users,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_REALM = "simpson-corp"

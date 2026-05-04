@@ -1,12 +1,13 @@
 """Integration tests for GitLab dependency files module."""
 
 from cartography.intel.gitlab.dependency_files import load_dependency_files
-from tests.data.gitlab.dependency_files import TEST_GITLAB_URL
-from tests.data.gitlab.dependency_files import TEST_PROJECT_ID
-from tests.data.gitlab.dependency_files import TEST_PROJECT_URL
-from tests.data.gitlab.dependency_files import TRANSFORMED_DEPENDENCY_FILES
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.gitlab.dependency_files import (
+    TEST_GITLAB_URL,
+    TEST_PROJECT_ID,
+    TEST_PROJECT_URL,
+    TRANSFORMED_DEPENDENCY_FILES,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 

@@ -7,14 +7,15 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.intel.aws.util.botocore_config import (
+    create_boto3_client,
+    get_botocore_config,
+)
 from cartography.models.aws.ec2.launch_template_versions import (
     LaunchTemplateVersionSchema,
 )
 from cartography.models.aws.ec2.launch_templates import LaunchTemplateSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

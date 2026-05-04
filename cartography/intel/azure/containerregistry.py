@@ -1,27 +1,27 @@
 import logging
 import time
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Dict, List, Optional
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.containerregistry import ContainerRegistryManagementClient
+
 try:
     from cloudconsolelink.clouds.azure import AzureLinker
 except ImportError:
     AzureLinker = None
 
+from cartography.util import get_azure_resource_group_name, run_cleanup_job, timeit
+
 from .util.credentials import Credentials
-from cartography.util import get_azure_resource_group_name
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 azure_console_link = AzureLinker() if AzureLinker else None
 
 
-def get_client(credentials: Credentials, subscription_id: str) -> ContainerRegistryManagementClient:
+def get_client(
+    credentials: Credentials, subscription_id: str
+) -> ContainerRegistryManagementClient:
     client = ContainerRegistryManagementClient(credentials, subscription_id)
     return client
 
@@ -51,20 +51,34 @@ def get_registry_list(
                 "admin_user_enabled": registry.admin_user_enabled,
                 "public_network_access": registry.public_network_access,
                 "zone_redundancy": registry.zone_redundancy,
-                "encryption_status": registry.encryption.status if registry.encryption else None,
-                "trust_policy_status": registry.policies.trust_policy.status
-                if registry.policies and registry.policies.trust_policy
-                else None,
-                "quarantine_policy_status": registry.policies.quarantine_policy.status
-                if registry.policies and registry.policies.quarantine_policy
-                else None,
-                "retention_policy_status": registry.policies.retention_policy.status
-                if registry.policies and registry.policies.retention_policy
-                else None,
-                "creation_date": registry.creation_date.isoformat() if registry.creation_date else None,
+                "encryption_status": (
+                    registry.encryption.status if registry.encryption else None
+                ),
+                "trust_policy_status": (
+                    registry.policies.trust_policy.status
+                    if registry.policies and registry.policies.trust_policy
+                    else None
+                ),
+                "quarantine_policy_status": (
+                    registry.policies.quarantine_policy.status
+                    if registry.policies and registry.policies.quarantine_policy
+                    else None
+                ),
+                "retention_policy_status": (
+                    registry.policies.retention_policy.status
+                    if registry.policies and registry.policies.retention_policy
+                    else None
+                ),
+                "creation_date": (
+                    registry.creation_date.isoformat()
+                    if registry.creation_date
+                    else None
+                ),
                 "console_link": azure_console_link.get_console_link(
                     id=registry.id,
-                    primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
+                    primary_ad_domain_name=common_job_parameters[
+                        "Azure_Primary_AD_Domain_Name"
+                    ],
                 ),
                 "subscription_id": subscription_id,
                 "type": registry.type,
@@ -74,7 +88,9 @@ def get_registry_list(
 
         return registries
     except HttpResponseError as e:
-        logger.warning(f"Failed to retrieve container registries for subscription {subscription_id}: {e}")
+        logger.warning(
+            f"Failed to retrieve container registries for subscription {subscription_id}: {e}"
+        )
         return []
 
 
@@ -93,8 +109,12 @@ def get_repository_list(
             repo_dict = {
                 "name": repo.name,
                 "registry_name": registry_name,
-                "created_time": repo.created_time.isoformat() if repo.created_time else None,
-                "last_update_time": repo.last_update_time.isoformat() if repo.last_update_time else None,
+                "created_time": (
+                    repo.created_time.isoformat() if repo.created_time else None
+                ),
+                "last_update_time": (
+                    repo.last_update_time.isoformat() if repo.last_update_time else None
+                ),
                 "manifest_count": repo.manifest_count,
                 "tag_count": repo.tag_count,
                 "size": repo.size,
@@ -105,7 +125,9 @@ def get_repository_list(
 
         return repositories
     except HttpResponseError as e:
-        logger.warning(f"Failed to retrieve repositories for registry {registry_name}: {e}")
+        logger.warning(
+            f"Failed to retrieve repositories for registry {registry_name}: {e}"
+        )
         return []
 
 
@@ -121,13 +143,21 @@ def get_image_list(
         client = get_client(credentials, subscription_id)
         images = []
 
-        for manifest in client.manifests.list(resource_group, registry_name, repository_name):
+        for manifest in client.manifests.list(
+            resource_group, registry_name, repository_name
+        ):
             image_dict = {
                 "digest": manifest.digest,
                 "repository_name": repository_name,
                 "registry_name": registry_name,
-                "created_time": manifest.created_time.isoformat() if manifest.created_time else None,
-                "last_update_time": manifest.last_update_time.isoformat() if manifest.last_update_time else None,
+                "created_time": (
+                    manifest.created_time.isoformat() if manifest.created_time else None
+                ),
+                "last_update_time": (
+                    manifest.last_update_time.isoformat()
+                    if manifest.last_update_time
+                    else None
+                ),
                 "architecture": manifest.architecture,
                 "os": manifest.os,
                 "size": manifest.size,
@@ -144,11 +174,15 @@ def get_image_list(
 
         return images
     except HttpResponseError as e:
-        logger.warning(f"Failed to retrieve images for repository {repository_name}: {e}")
+        logger.warning(
+            f"Failed to retrieve images for repository {repository_name}: {e}"
+        )
         return []
 
 
-def _load_registries_tx(tx: neo4j.Transaction, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
+def _load_registries_tx(
+    tx: neo4j.Transaction, subscription_id: str, data_list: List[Dict], update_tag: int
+) -> None:
     ingest_query = """
     UNWIND $registries as registry
     MERGE (r:AzureContainerRegistry{id: registry.id})
@@ -188,7 +222,9 @@ def _load_registries_tx(tx: neo4j.Transaction, subscription_id: str, data_list: 
     )
 
 
-def _load_repositories_tx(tx: neo4j.Transaction, registry_id: str, data_list: List[Dict], update_tag: int) -> None:
+def _load_repositories_tx(
+    tx: neo4j.Transaction, registry_id: str, data_list: List[Dict], update_tag: int
+) -> None:
     ingest_query = """
     UNWIND $repositories as repo
     MERGE (r:AzureContainerRepository{name: repo.name, registry_name: repo.registry_name})
@@ -261,11 +297,17 @@ def _load_images_tx(
     )
 
 
-def load_registries(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
-    session.write_transaction(_load_registries_tx, subscription_id, data_list, update_tag)
+def load_registries(
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int
+) -> None:
+    session.write_transaction(
+        _load_registries_tx, subscription_id, data_list, update_tag
+    )
 
 
-def load_repositories(session: neo4j.Session, registry_id: str, data_list: List[Dict], update_tag: int) -> None:
+def load_repositories(
+    session: neo4j.Session, registry_id: str, data_list: List[Dict], update_tag: int
+) -> None:
     session.write_transaction(_load_repositories_tx, registry_id, data_list, update_tag)
 
 
@@ -276,19 +318,33 @@ def load_images(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(_load_images_tx, repository_name, registry_name, data_list, update_tag)
+    session.write_transaction(
+        _load_images_tx, repository_name, registry_name, data_list, update_tag
+    )
 
 
-def cleanup_container_registries(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("azure_container_registries_cleanup.json", session, common_job_parameters)
+def cleanup_container_registries(
+    session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "azure_container_registries_cleanup.json", session, common_job_parameters
+    )
 
 
-def cleanup_container_repositories(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("azure_container_repositories_cleanup.json", session, common_job_parameters)
+def cleanup_container_repositories(
+    session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "azure_container_repositories_cleanup.json", session, common_job_parameters
+    )
 
 
-def cleanup_container_images(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("azure_container_images_cleanup.json", session, common_job_parameters)
+def cleanup_container_images(
+    session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "azure_container_images_cleanup.json", session, common_job_parameters
+    )
 
 
 @timeit
@@ -300,10 +356,14 @@ def sync(
     common_job_parameters: Dict,
     regions: Optional[List[str]] = None,
 ) -> None:
-    logger.info("Syncing Azure Container Registries for subscription '%s'", subscription_id)
+    logger.info(
+        "Syncing Azure Container Registries for subscription '%s'", subscription_id
+    )
     tic = time.perf_counter()
 
-    registries = get_registry_list(credentials, subscription_id, regions, common_job_parameters)
+    registries = get_registry_list(
+        credentials, subscription_id, regions, common_job_parameters
+    )
     load_registries(session, subscription_id, registries, update_tag)
 
     for registry in registries:
@@ -327,7 +387,9 @@ def sync(
                 repository["name"],
                 common_job_parameters,
             )
-            load_images(session, repository["name"], registry["name"], images, update_tag)
+            load_images(
+                session, repository["name"], registry["name"], images, update_tag
+            )
 
     cleanup_container_registries(session, common_job_parameters)
     cleanup_container_repositories(session, common_job_parameters)

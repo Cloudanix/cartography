@@ -1,10 +1,8 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.azure.app_service as app_service
 from tests.data.azure.app_service import MOCK_APP_SERVICES
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

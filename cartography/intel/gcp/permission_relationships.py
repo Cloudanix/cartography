@@ -3,14 +3,12 @@ import os
 import re
 from collections.abc import Iterator
 from string import Template
-from typing import Any
-from typing import Callable
+from typing import Any, Callable
 
 import neo4j
 import yaml
 
-from cartography.client.core.tx import load_matchlinks
-from cartography.client.core.tx import read_list_of_values_tx
+from cartography.client.core.tx import load_matchlinks, read_list_of_values_tx
 from cartography.graph.job import GraphJob
 from cartography.models.gcp.permission_relationships import GCPPermissionMatchLink
 from cartography.util import timeit

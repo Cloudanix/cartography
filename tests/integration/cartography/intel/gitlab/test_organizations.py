@@ -1,7 +1,9 @@
 """Integration tests for GitLab organizations module."""
 
-from cartography.intel.gitlab.organizations import cleanup_organizations
-from cartography.intel.gitlab.organizations import load_organizations
+from cartography.intel.gitlab.organizations import (
+    cleanup_organizations,
+    load_organizations,
+)
 from tests.data.gitlab.organizations import TRANSFORMED_ORGANIZATION
 from tests.integration.util import check_nodes
 

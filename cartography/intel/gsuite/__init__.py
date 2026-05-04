@@ -9,17 +9,14 @@ import neo4j
 from google.auth import default
 from google.auth.exceptions import DefaultCredentialsError
 from google.auth.transport.requests import Request
-from google.oauth2 import credentials
-from google.oauth2 import service_account
+from google.oauth2 import credentials, service_account
 from google.oauth2.credentials import Credentials as OAuth2Credentials
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from googleapiclient.discovery import Resource
 
 from cartography.config import Config
-from cartography.intel.gsuite import groups
-from cartography.intel.gsuite import users
-from cartography.util import run_analysis_job
-from cartography.util import timeit
+from cartography.intel.gsuite import groups, users
+from cartography.util import run_analysis_job, timeit
 
 OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/admin.directory.user.readonly",

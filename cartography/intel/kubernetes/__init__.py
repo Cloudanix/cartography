@@ -15,8 +15,7 @@ from cartography.intel.kubernetes.rbac import sync_kubernetes_rbac
 from cartography.intel.kubernetes.secrets import sync_secrets
 from cartography.intel.kubernetes.services import sync_services
 from cartography.intel.kubernetes.util import get_k8s_clients
-from cartography.util import run_scoped_analysis_job
-from cartography.util import timeit
+from cartography.util import run_scoped_analysis_job, timeit
 
 logger = logging.getLogger(__name__)
 

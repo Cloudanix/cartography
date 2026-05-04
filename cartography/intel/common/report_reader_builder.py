@@ -1,14 +1,15 @@
 import logging
-from typing import Any
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import cartography.intel.common.object_store as object_store
 from cartography.intel.common.object_store import ReportReader
-from cartography.intel.common.report_source import AzureBlobReportSource
-from cartography.intel.common.report_source import GCSReportSource
-from cartography.intel.common.report_source import LocalReportSource
-from cartography.intel.common.report_source import ReportSource
-from cartography.intel.common.report_source import S3ReportSource
+from cartography.intel.common.report_source import (
+    AzureBlobReportSource,
+    GCSReportSource,
+    LocalReportSource,
+    ReportSource,
+    S3ReportSource,
+)
 
 if TYPE_CHECKING:
     from cartography.config import Config

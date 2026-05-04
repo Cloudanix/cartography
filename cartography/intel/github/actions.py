@@ -13,22 +13,29 @@ from urllib.parse import quote
 
 import neo4j
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import read_list_of_values_tx
+from cartography.client.core.tx import load, read_list_of_values_tx
 from cartography.graph.job import GraphJob
-from cartography.intel.github.util import _get_rest_api_base_url
-from cartography.intel.github.util import fetch_all_rest_api_pages
-from cartography.intel.github.util import get_file_content
-from cartography.intel.github.workflow_parser import deduplicate_actions
-from cartography.intel.github.workflow_parser import parse_workflow_yaml
-from cartography.intel.github.workflow_parser import ParsedWorkflow
+from cartography.intel.github.util import (
+    _get_rest_api_base_url,
+    fetch_all_rest_api_pages,
+    get_file_content,
+)
+from cartography.intel.github.workflow_parser import (
+    ParsedWorkflow,
+    deduplicate_actions,
+    parse_workflow_yaml,
+)
 from cartography.models.github.action import GitHubActionSchema
-from cartography.models.github.actions_secret import GitHubEnvActionsSecretSchema
-from cartography.models.github.actions_secret import GitHubOrgActionsSecretSchema
-from cartography.models.github.actions_secret import GitHubRepoActionsSecretSchema
-from cartography.models.github.actions_variable import GitHubEnvActionsVariableSchema
-from cartography.models.github.actions_variable import GitHubOrgActionsVariableSchema
-from cartography.models.github.actions_variable import GitHubRepoActionsVariableSchema
+from cartography.models.github.actions_secret import (
+    GitHubEnvActionsSecretSchema,
+    GitHubOrgActionsSecretSchema,
+    GitHubRepoActionsSecretSchema,
+)
+from cartography.models.github.actions_variable import (
+    GitHubEnvActionsVariableSchema,
+    GitHubOrgActionsVariableSchema,
+    GitHubRepoActionsVariableSchema,
+)
 from cartography.models.github.environment import GitHubEnvironmentSchema
 from cartography.models.github.workflow import GitHubWorkflowSchema
 from cartography.util import timeit

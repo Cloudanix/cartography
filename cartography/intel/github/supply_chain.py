@@ -8,26 +8,21 @@ import requests
 from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.intel.github.util import call_github_rest_api
-from cartography.intel.supply_chain import ContainerImage
-from cartography.intel.supply_chain import convert_layer_history_records
-from cartography.intel.supply_chain import get_unmatched_gcp_images_with_history
-from cartography.intel.supply_chain import match_images_to_dockerfiles
-from cartography.intel.supply_chain import parse_dockerfile_info
-from cartography.intel.supply_chain import transform_matches_for_matchlink
+from cartography.intel.supply_chain import (
+    ContainerImage,
+    convert_layer_history_records,
+    get_unmatched_gcp_images_with_history,
+    match_images_to_dockerfiles,
+    parse_dockerfile_info,
+    transform_matches_for_matchlink,
+)
 from cartography.models.github.packaged_matchlink import (
     GitHubRepoDockerfilePackagedFromMatchLink,
-)
-from cartography.models.github.packaged_matchlink import (
     GitHubRepoPackageOwnerPackagedFromMatchLink,
-)
-from cartography.models.github.packaged_matchlink import (
     GitHubRepoProvenancePackagedFromMatchLink,
-)
-from cartography.models.github.packaged_matchlink import (
     ImagePackagedByWorkflowMatchLink,
 )
-from cartography.util import run_analysis_job
-from cartography.util import timeit
+from cartography.util import run_analysis_job, timeit
 
 logger = logging.getLogger(__name__)
 

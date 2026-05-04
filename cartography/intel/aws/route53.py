@@ -6,17 +6,14 @@ import boto3
 import botocore
 import neo4j
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
-from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.client.core.tx import load, load_matchlinks, read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.route53.dnsrecord import AWSDNSRecordSchema
 from cartography.models.aws.route53.nameserver import NameServerSchema
 from cartography.models.aws.route53.subzone import AWSDNSZoneSubzoneMatchLink
 from cartography.models.aws.route53.zone import AWSDNSZoneSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

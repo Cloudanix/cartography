@@ -2,13 +2,14 @@ import logging
 from typing import Any
 
 import neo4j
-from kubernetes.client.models import V1Namespace
-from kubernetes.client.models import VersionInfo
+from kubernetes.client.models import V1Namespace, VersionInfo
 
 from cartography.client.core.tx import load
-from cartography.intel.kubernetes.util import get_epoch
-from cartography.intel.kubernetes.util import get_kubeconfig_tls_diagnostics
-from cartography.intel.kubernetes.util import K8sClient
+from cartography.intel.kubernetes.util import (
+    K8sClient,
+    get_epoch,
+    get_kubeconfig_tls_diagnostics,
+)
 from cartography.models.kubernetes.clusters import KubernetesClusterSchema
 from cartography.util import timeit
 

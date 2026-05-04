@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import neo4j
 
@@ -7,8 +6,7 @@ import cartography.intel.gcp.gcf as gcf
 import tests.data.gcp.gcf
 from cartography.client.core.tx import load
 from cartography.models.gcp.iam import GCPServiceAccountSchema
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_PROJECT_ID = "test-project"
 TEST_UPDATE_TAG = 123456789

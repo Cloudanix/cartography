@@ -4,8 +4,7 @@ import neo4j
 import requests
 
 from cartography.client.core.tx import load
-from cartography.intel.sentry.util import call_sentry_api
-from cartography.intel.sentry.util import get_paginated_results
+from cartography.intel.sentry.util import call_sentry_api, get_paginated_results
 from cartography.models.sentry.organization import SentryOrganizationSchema
 from cartography.util import timeit
 

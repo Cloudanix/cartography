@@ -1,24 +1,26 @@
-from unittest.mock import AsyncMock
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from kiota_abstractions.api_error import APIError
 
 import cartography.intel.microsoft.entra.groups
 from cartography.intel.microsoft.entra.groups import sync_entra_groups
-from cartography.intel.microsoft.entra.users import load_tenant
-from cartography.intel.microsoft.entra.users import load_users
-from cartography.intel.microsoft.entra.users import transform_users
-from tests.data.microsoft.entra.groups import MOCK_DELETED_GROUP
-from tests.data.microsoft.entra.groups import MOCK_ENTRA_GROUPS
-from tests.data.microsoft.entra.groups import MOCK_ENTRA_GROUPS_WITH_DELETED
-from tests.data.microsoft.entra.groups import MOCK_GROUP_MEMBERS
-from tests.data.microsoft.entra.groups import TEST_CLIENT_ID
-from tests.data.microsoft.entra.groups import TEST_CLIENT_SECRET
-from tests.data.microsoft.entra.groups import TEST_TENANT_ID
+from cartography.intel.microsoft.entra.users import (
+    load_tenant,
+    load_users,
+    transform_users,
+)
+from tests.data.microsoft.entra.groups import (
+    MOCK_DELETED_GROUP,
+    MOCK_ENTRA_GROUPS,
+    MOCK_ENTRA_GROUPS_WITH_DELETED,
+    MOCK_GROUP_MEMBERS,
+    TEST_CLIENT_ID,
+    TEST_CLIENT_SECRET,
+    TEST_TENANT_ID,
+)
 from tests.data.microsoft.entra.users import MOCK_ENTRA_USERS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 1234567890
 

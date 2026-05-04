@@ -1,16 +1,17 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.github.supply_chain
-from tests.data.github.dockerfiles import DOCKERFILE_CONTENT
-from tests.data.github.dockerfiles import DOCKERFILE_DEV_CONTENT
-from tests.data.github.dockerfiles import DOCKERFILE_PROD_CONTENT
-from tests.data.github.dockerfiles import FILE_CONTENT_DOCKERFILE
-from tests.data.github.dockerfiles import FILE_CONTENT_DOCKERFILE_DEV
-from tests.data.github.dockerfiles import FILE_CONTENT_DOCKERFILE_PROD
-from tests.data.github.dockerfiles import SEARCH_DOCKERFILES_EMPTY_RESPONSE
-from tests.data.github.dockerfiles import SEARCH_DOCKERFILES_ORG_RESPONSE
-from tests.data.github.dockerfiles import TEST_REPOS
+from tests.data.github.dockerfiles import (
+    DOCKERFILE_CONTENT,
+    DOCKERFILE_DEV_CONTENT,
+    DOCKERFILE_PROD_CONTENT,
+    FILE_CONTENT_DOCKERFILE,
+    FILE_CONTENT_DOCKERFILE_DEV,
+    FILE_CONTENT_DOCKERFILE_PROD,
+    SEARCH_DOCKERFILES_EMPTY_RESPONSE,
+    SEARCH_DOCKERFILES_ORG_RESPONSE,
+    TEST_REPOS,
+)
 
 TEST_UPDATE_TAG = 123456789
 TEST_JOB_PARAMS = {"UPDATE_TAG": TEST_UPDATE_TAG}

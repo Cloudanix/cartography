@@ -130,7 +130,8 @@ def process_request(context, args, retry=0):
                         "error": str(e),
                     }
                     status = sns_helper.publish(
-                        json.dumps(payload), args["params"]["resultTopic"],
+                        json.dumps(payload),
+                        args["params"]["resultTopic"],
                     )
                     context.logger.debug(
                         f"result published to SNS with status: {status}",
@@ -218,7 +219,8 @@ def process_request(context, args, retry=0):
                     "services": args.get("services"),
                     "defaultSubscription": args.get("defaultSubscription"),
                     "authMode": args.get("headers", {}).get(
-                        "x-cloudanix-azure-auth-mode", "user_impersonation",
+                        "x-cloudanix-azure-auth-mode",
+                        "user_impersonation",
                     ),
                 },
                 "services": svcs,
@@ -337,7 +339,8 @@ def publish_response(context, body, resp, args):
         if resp.get("services", None):
             if body.get("params", {}).get("requestTopic"):
                 status = sns_helper.publish(
-                    json.dumps(payload), body["params"]["requestTopic"],
+                    json.dumps(payload),
+                    body["params"]["requestTopic"],
                 )
 
         elif body.get("params", {}).get("resultTopic"):
@@ -346,7 +349,8 @@ def publish_response(context, body, resp, args):
             ):
                 # In case of a partial request processing, result should be pushed to "resultTopic" passed in the request
                 status = sns_helper.publish(
-                    json.dumps(payload), body["params"]["resultTopic"],
+                    json.dumps(payload),
+                    body["params"]["resultTopic"],
                 )
 
             else:
@@ -361,7 +365,8 @@ def publish_response(context, body, resp, args):
         else:
             context.logger.debug("publishing results to CDX_CARTOGRAPHY_RESULT_TOPIC")
             status = sns_helper.publish(
-                json.dumps(payload), context.aws_inventory_sync_response_topic,
+                json.dumps(payload),
+                context.aws_inventory_sync_response_topic,
             )
             if template_type == "AWSINVENTORYVIEWS":
                 publish_request_iam_entitlement(context, args, body)
@@ -414,14 +419,18 @@ def get_auth_creds(context, args):
     else:
         auth_creds = {
             "type": "self",
-            "aws_access_key_id": args.get("credentials", {}).get("awsAccessKeyID")
-            if "credentials" in args
-            else None,
-            "aws_secret_access_key": args.get("credentials", {}).get(
-                "awsSecretAccessKey",
-            )
-            if "credentials" in args
-            else None,
+            "aws_access_key_id": (
+                args.get("credentials", {}).get("awsAccessKeyID")
+                if "credentials" in args
+                else None
+            ),
+            "aws_secret_access_key": (
+                args.get("credentials", {}).get(
+                    "awsSecretAccessKey",
+                )
+                if "credentials" in args
+                else None
+            ),
         }
 
     return auth_creds
@@ -449,14 +458,18 @@ def get_logging_account_auth_creds(context, args):
     else:
         auth_creds = {
             "type": "self",
-            "aws_access_key_id": args.get("credentials", {}).get("awsAccessKeyID")
-            if "credentials" in args
-            else None,
-            "aws_secret_access_key": args.get("credentials", {}).get(
-                "awsSecretAccessKey",
-            )
-            if "credentials" in args
-            else None,
+            "aws_access_key_id": (
+                args.get("credentials", {}).get("awsAccessKeyID")
+                if "credentials" in args
+                else None
+            ),
+            "aws_secret_access_key": (
+                args.get("credentials", {}).get(
+                    "awsSecretAccessKey",
+                )
+                if "credentials" in args
+                else None
+            ),
         }
 
     args["loggingAccount"]["creds"] = auth_creds
@@ -554,7 +567,8 @@ def extend_visibility_timeout(message, receipt_handle, timeout_duration, stop_ev
             logging.debug(f"Extending visibilityTimeout for message: {receipt_handle}")
 
             status = sqs_library.change_message_visibility(
-                receipt_handle, timeout_duration,
+                receipt_handle,
+                timeout_duration,
             )
             if status:
                 context.logger.debug(
@@ -597,7 +611,8 @@ def process_message(context: AppContext, message: dict):
 
         params = json.loads(message["Body"])
         context.logger.debug(
-            "Received", extra={"message": params, "handle": receipt_handle},
+            "Received",
+            extra={"message": params, "handle": receipt_handle},
         )
 
         process_request(context, params)
@@ -675,7 +690,8 @@ def poll_messages(context: AppContext):
             # Pull messages from SQS
             messages = sqs_library.fetch_messages()
             context.logger.debug(
-                "Messages fetched from Queue", extra={"count": len(messages)},
+                "Messages fetched from Queue",
+                extra={"count": len(messages)},
             )
 
             if len(messages) > 0:

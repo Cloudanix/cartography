@@ -11,11 +11,12 @@ from googleapiclient.errors import HttpError
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.clients import build_vertex_ai_model_client
-from cartography.intel.gcp.util import classify_gcp_http_error
-from cartography.intel.gcp.util import summarize_gcp_http_error
-from cartography.intel.gcp.vertex.utils import fetch_vertex_ai_resources_for_locations
-from cartography.intel.gcp.vertex.utils import get_vertex_credentials
-from cartography.intel.gcp.vertex.utils import list_vertex_ai_resources_for_location
+from cartography.intel.gcp.util import classify_gcp_http_error, summarize_gcp_http_error
+from cartography.intel.gcp.vertex.utils import (
+    fetch_vertex_ai_resources_for_locations,
+    get_vertex_credentials,
+    list_vertex_ai_resources_for_location,
+)
 from cartography.models.gcp.vertex.model import GCPVertexAIModelSchema
 from cartography.util import timeit
 

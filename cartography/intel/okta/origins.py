@@ -1,8 +1,7 @@
 # Okta intel module - Origin
 import json
 import logging
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import neo4j
 from okta.framework.ApiClient import ApiClient

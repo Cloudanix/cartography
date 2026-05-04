@@ -1,6 +1,8 @@
-from cartography.models.ontology.mapping.specs import OntologyFieldMapping
-from cartography.models.ontology.mapping.specs import OntologyMapping
-from cartography.models.ontology.mapping.specs import OntologyNodeMapping
+from cartography.models.ontology.mapping.specs import (
+    OntologyFieldMapping,
+    OntologyMapping,
+    OntologyNodeMapping,
+)
 
 # =============================================================================
 # Node Mappings - Create PublicIP nodes from provider-specific IP resources

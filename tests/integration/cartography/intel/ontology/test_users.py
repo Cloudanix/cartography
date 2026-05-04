@@ -9,8 +9,7 @@ from tests.integration.cartography.intel.duo.test_users import (
 from tests.integration.cartography.intel.tailscale.test_users import (
     _ensure_local_neo4j_has_test_users as _ensure_local_neo4j_has_test_tailscale_users,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 EXISTING_DUO_USERS = _transform_users(tests.data.duo.users.GET_USERS_RESPONSE)

@@ -1,23 +1,18 @@
 import json
 import logging
 import re
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import boto3
 import neo4j
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import read_list_of_values_tx
+from cartography.client.core.tx import load, read_list_of_values_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.ssm.instance_information import SSMInstanceInformationSchema
 from cartography.models.aws.ssm.instance_patch import SSMInstancePatchSchema
 from cartography.models.aws.ssm.parameters import SSMParameterSchema
-from cartography.util import aws_handle_regions
-from cartography.util import dict_date_to_epoch
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, dict_date_to_epoch, timeit
 
 logger = logging.getLogger(__name__)
 

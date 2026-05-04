@@ -3,8 +3,7 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 from cartography.intel.cve_metadata import nvd
-from cartography.intel.cve_metadata.nvd import merge_nvd_into_cves
-from cartography.intel.cve_metadata.nvd import transform_cves
+from cartography.intel.cve_metadata.nvd import merge_nvd_into_cves, transform_cves
 from tests.data.cve_metadata.nvd import GET_NVD_API_DATA
 
 

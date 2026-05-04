@@ -9,14 +9,18 @@ Projects also have a semantic HAS_BRANCH relationship to branches (defined in pr
 from dataclasses import dataclass
 
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import CartographyNodeProperties
-from cartography.models.core.nodes import CartographyNodeSchema
-from cartography.models.core.relationships import CartographyRelProperties
-from cartography.models.core.relationships import CartographyRelSchema
-from cartography.models.core.relationships import LinkDirection
-from cartography.models.core.relationships import make_target_node_matcher
-from cartography.models.core.relationships import OtherRelationships
-from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.core.nodes import (
+    CartographyNodeProperties,
+    CartographyNodeSchema,
+)
+from cartography.models.core.relationships import (
+    CartographyRelProperties,
+    CartographyRelSchema,
+    LinkDirection,
+    OtherRelationships,
+    TargetNodeMatcher,
+    make_target_node_matcher,
+)
 
 
 @dataclass(frozen=True)

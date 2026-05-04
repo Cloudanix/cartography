@@ -1,5 +1,4 @@
-from typing import Any
-from typing import Tuple
+from typing import Any, Tuple
 
 import neo4j
 import requests

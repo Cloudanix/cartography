@@ -1,17 +1,19 @@
 import pytest
 
 from cartography.intel.kubernetes.clusters import load_kubernetes_cluster
-from cartography.intel.kubernetes.namespaces import cleanup
-from cartography.intel.kubernetes.namespaces import load_namespaces
-from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_DATA
-from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_IDS
-from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_NAMES
-from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_1_NAMESPACE_IDS
-from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_1_NAMESPACES_DATA
-from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_2_NAMESPACE_IDS
-from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_2_NAMESPACES_DATA
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from cartography.intel.kubernetes.namespaces import cleanup, load_namespaces
+from tests.data.kubernetes.clusters import (
+    KUBERNETES_CLUSTER_DATA,
+    KUBERNETES_CLUSTER_IDS,
+    KUBERNETES_CLUSTER_NAMES,
+)
+from tests.data.kubernetes.namespaces import (
+    KUBERNETES_CLUSTER_1_NAMESPACE_IDS,
+    KUBERNETES_CLUSTER_1_NAMESPACES_DATA,
+    KUBERNETES_CLUSTER_2_NAMESPACE_IDS,
+    KUBERNETES_CLUSTER_2_NAMESPACES_DATA,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_COMMON_JOB_PARAMETERS = {

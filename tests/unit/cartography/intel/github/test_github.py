@@ -2,11 +2,9 @@ import json
 import typing
 from base64 import b64encode
 from copy import deepcopy
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from datetime import timezone as tz
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from requests import Response
@@ -14,10 +12,12 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError
 
 import cartography.intel.github.packages
-from cartography.intel.github.util import _GRAPHQL_RATE_LIMIT_REMAINING_THRESHOLD
-from cartography.intel.github.util import fetch_all
-from cartography.intel.github.util import fetch_all_rest_api_pages
-from cartography.intel.github.util import handle_rate_limit_sleep
+from cartography.intel.github.util import (
+    _GRAPHQL_RATE_LIMIT_REMAINING_THRESHOLD,
+    fetch_all,
+    fetch_all_rest_api_pages,
+    handle_rate_limit_sleep,
+)
 from tests.data.github.rate_limit import RATE_LIMIT_RESPONSE_JSON
 
 

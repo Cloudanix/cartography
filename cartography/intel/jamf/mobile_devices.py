@@ -7,9 +7,11 @@ import requests
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.jamf.tenant import load_tenant
-from cartography.intel.jamf.util import get_http_status_code
-from cartography.intel.jamf.util import get_paginated_jamf_results
-from cartography.intel.jamf.util import normalize_group_id
+from cartography.intel.jamf.util import (
+    get_http_status_code,
+    get_paginated_jamf_results,
+    normalize_group_id,
+)
 from cartography.models.jamf.mobiledevice import JamfMobileDeviceSchema
 from cartography.util import timeit
 

@@ -7,25 +7,25 @@ Focus on high-value tests:
 3. Cross-resource relationships (Agent→Model, Agent→KB, Agent→Guardrail, KB→S3)
 """
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.aws.bedrock.agents
 import cartography.intel.aws.bedrock.custom_models
 import cartography.intel.aws.bedrock.foundation_models
 import cartography.intel.aws.bedrock.guardrails
 import cartography.intel.aws.bedrock.knowledge_bases
-from tests.data.aws.bedrock import AGENTS
-from tests.data.aws.bedrock import CUSTOM_MODELS
-from tests.data.aws.bedrock import FOUNDATION_MODELS
-from tests.data.aws.bedrock import GUARDRAILS
-from tests.data.aws.bedrock import KNOWLEDGE_BASES
-from tests.data.aws.bedrock import TEST_ACCOUNT_ID
-from tests.data.aws.bedrock import TEST_REGION
-from tests.data.aws.bedrock import TEST_UPDATE_TAG
+from tests.data.aws.bedrock import (
+    AGENTS,
+    CUSTOM_MODELS,
+    FOUNDATION_MODELS,
+    GUARDRAILS,
+    KNOWLEDGE_BASES,
+    TEST_ACCOUNT_ID,
+    TEST_REGION,
+    TEST_UPDATE_TAG,
+)
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 
 def create_test_s3_bucket(neo4j_session, bucket_name, update_tag):

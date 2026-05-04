@@ -16,11 +16,12 @@ import requests
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gitlab.util import fetch_registry_blob
-from cartography.intel.gitlab.util import fetch_registry_manifest
-from cartography.intel.supply_chain import decode_attestation_blob_to_predicate
-from cartography.intel.supply_chain import extract_container_parent_image
-from cartography.intel.supply_chain import extract_image_source_provenance
+from cartography.intel.gitlab.util import fetch_registry_blob, fetch_registry_manifest
+from cartography.intel.supply_chain import (
+    decode_attestation_blob_to_predicate,
+    extract_container_parent_image,
+    extract_image_source_provenance,
+)
 from cartography.models.gitlab.container_image_attestations import (
     GitLabContainerImageAttestationSchema,
 )

@@ -3,9 +3,11 @@ from typing import Type
 
 import cartography.models
 from cartography.models.core.nodes import CartographyNodeSchema
-from cartography.models.ontology.mapping import ONTOLOGY_MODELS
-from cartography.models.ontology.mapping import ONTOLOGY_NODES_MAPPING
-from cartography.models.ontology.mapping import SEMANTIC_LABELS_MAPPING
+from cartography.models.ontology.mapping import (
+    ONTOLOGY_MODELS,
+    ONTOLOGY_NODES_MAPPING,
+    SEMANTIC_LABELS_MAPPING,
+)
 from cartography.sync import TOP_LEVEL_MODULES
 from tests.utils import load_models
 

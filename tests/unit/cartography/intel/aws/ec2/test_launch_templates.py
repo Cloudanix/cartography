@@ -1,14 +1,13 @@
 from datetime import datetime
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import botocore
 import pytest
 
 from cartography.intel.aws.ec2.launch_templates import (
     get_launch_template_versions_by_template,
+    transform_launch_templates,
 )
-from cartography.intel.aws.ec2.launch_templates import transform_launch_templates
 from tests.utils import unwrapper
 
 FAKE_AWS_ACCOUNT_ID = "123456789012"

@@ -1,18 +1,17 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import boto3
 import neo4j
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.container_arch import ARCH_SOURCE_RUNTIME_API_EXACT
-from cartography.intel.container_arch import ARCH_SOURCE_TASK_DEFINITION_HINT
-from cartography.intel.container_arch import normalize_architecture
+from cartography.intel.container_arch import (
+    ARCH_SOURCE_RUNTIME_API_EXACT,
+    ARCH_SOURCE_TASK_DEFINITION_HINT,
+    normalize_architecture,
+)
 from cartography.models.aws.ec2.loadbalancerv2 import (
     ELBV2TargetGroupToECSServiceMatchLink,
 )
@@ -25,8 +24,7 @@ from cartography.models.aws.ecs.containers import ECSContainerSchema
 from cartography.models.aws.ecs.services import ECSServiceSchema
 from cartography.models.aws.ecs.task_definitions import ECSTaskDefinitionSchema
 from cartography.models.aws.ecs.tasks import ECSTaskSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

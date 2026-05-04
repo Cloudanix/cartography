@@ -1,6 +1,5 @@
 import logging
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
 import cartography._version as cartography_version
 

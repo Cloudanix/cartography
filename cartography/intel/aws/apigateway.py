@@ -1,10 +1,6 @@
 import json
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
 import botocore
@@ -14,8 +10,10 @@ from policyuniverse.policy import Policy
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.intel.aws.util.botocore_config import (
+    create_boto3_client,
+    get_botocore_config,
+)
 from cartography.models.aws.apigateway.apigateway import APIGatewayRestAPISchema
 from cartography.models.aws.apigateway.apigatewaycertificate import (
     APIGatewayClientCertificateSchema,
@@ -31,8 +29,7 @@ from cartography.models.aws.apigateway.apigatewayresource import (
     APIGatewayResourceSchema,
 )
 from cartography.models.aws.apigateway.apigatewaystage import APIGatewayStageSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

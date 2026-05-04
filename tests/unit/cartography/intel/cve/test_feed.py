@@ -1,21 +1,18 @@
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
-from unittest.mock import MagicMock
-from unittest.mock import Mock
-from unittest.mock import patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from requests import Session
 from requests.exceptions import ChunkedEncodingError
 
-from cartography.intel.cve.feed import _call_cves_api
-from cartography.intel.cve.feed import _map_cve_dict
-from cartography.intel.cve.feed import get_cves_in_batches
-from cartography.intel.cve.feed import get_modified_cves
-from cartography.intel.cve.feed import get_published_cves_per_year
-from tests.data.cve.feed import GET_CVE_API_DATA
-from tests.data.cve.feed import GET_CVE_API_DATA_BATCH_2
+from cartography.intel.cve.feed import (
+    _call_cves_api,
+    _map_cve_dict,
+    get_cves_in_batches,
+    get_modified_cves,
+    get_published_cves_per_year,
+)
+from tests.data.cve.feed import GET_CVE_API_DATA, GET_CVE_API_DATA_BATCH_2
 
 NIST_CVE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0/"
 API_KEY = "nvd_api_key"

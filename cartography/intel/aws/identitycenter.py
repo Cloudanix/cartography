@@ -5,9 +5,7 @@ import boto3
 import botocore.exceptions
 import neo4j
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
-from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.client.core.tx import load, load_matchlinks, read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.identitycenter.awsidentitycenter import (
@@ -15,17 +13,12 @@ from cartography.models.aws.identitycenter.awsidentitycenter import (
 )
 from cartography.models.aws.identitycenter.awspermissionset import (
     AWSPermissionSetSchema,
-)
-from cartography.models.aws.identitycenter.awspermissionset import (
     AWSRoleToSSOGroupMatchLink,
-)
-from cartography.models.aws.identitycenter.awspermissionset import (
     AWSRoleToSSOUserMatchLink,
 )
 from cartography.models.aws.identitycenter.awssogroup import AWSSSOGroupSchema
 from cartography.models.aws.identitycenter.awsssouser import AWSSSOUserSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

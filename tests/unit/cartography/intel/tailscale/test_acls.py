@@ -1,5 +1,7 @@
-from cartography.intel.tailscale.acls import build_effective_group_members
-from cartography.intel.tailscale.acls import build_inherited_member_relationships
+from cartography.intel.tailscale.acls import (
+    build_effective_group_members,
+    build_inherited_member_relationships,
+)
 
 
 def test_build_effective_group_members_handles_cycles() -> None:

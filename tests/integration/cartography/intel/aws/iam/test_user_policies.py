@@ -3,8 +3,10 @@ from unittest.mock import MagicMock
 
 import cartography.intel.aws.iam
 from cartography.intel.aws.iam import sync_users
-from tests.data.aws.iam.user_policies import GET_USER_LIST_DATA
-from tests.data.aws.iam.user_policies import GET_USER_MANAGED_POLS_SAMPLE
+from tests.data.aws.iam.user_policies import (
+    GET_USER_LIST_DATA,
+    GET_USER_MANAGED_POLS_SAMPLE,
+)
 
 AWS_UPDATE_TAG = 111111
 AWS_ACCOUNT_ID = "000000"

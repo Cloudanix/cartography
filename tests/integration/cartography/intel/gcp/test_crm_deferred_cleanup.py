@@ -3,8 +3,7 @@ Integration tests for GCP CRM deferred cleanup functionality.
 Tests that hierarchical cleanup happens in the correct order to prevent orphaned nodes.
 """
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp
 import cartography.intel.gcp.crm.folders
@@ -16,8 +15,7 @@ from cartography.config import Config
 from cartography.graph.job import GraphJob
 from cartography.models.gcp.crm.folders import GCPFolderSchema
 from tests.integration import settings
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_UPDATE_TAG_V2 = 123456790  # For simulating a second sync

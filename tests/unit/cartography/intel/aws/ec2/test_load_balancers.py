@@ -1,8 +1,7 @@
 from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError
-from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import ClientError, ConnectTimeoutError
 
 from cartography.intel.aws.ec2 import load_balancers
 

@@ -1,5 +1,7 @@
-from cartography.graph.querybuilder import _get_module_from_schema
-from cartography.graph.querybuilder import build_ingestion_query
+from cartography.graph.querybuilder import (
+    _get_module_from_schema,
+    build_ingestion_query,
+)
 from cartography.version import get_cartography_version
 from tests.data.graph.querybuilder.sample_models.fake_emps_githubusers import (
     FakeEmpSchema,
@@ -7,8 +9,8 @@ from tests.data.graph.querybuilder.sample_models.fake_emps_githubusers import (
 from tests.data.graph.querybuilder.sample_models.fake_emps_githubusers_fuzzy import (
     FakeEmp2Schema,
 )
-from tests.data.graph.querybuilder.sample_models.simple_node import SimpleNodeSchema
 from tests.data.graph.querybuilder.sample_models.simple_node import (
+    SimpleNodeSchema,
     SimpleNodeWithSubResourceSchema,
 )
 from tests.unit.cartography.graph.helpers import (

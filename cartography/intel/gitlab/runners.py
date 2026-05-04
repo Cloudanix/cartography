@@ -22,11 +22,12 @@ import requests
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gitlab.util import get_paginated
-from cartography.intel.gitlab.util import get_single
-from cartography.models.gitlab.runners import GitLabGroupRunnerSchema
-from cartography.models.gitlab.runners import GitLabInstanceRunnerSchema
-from cartography.models.gitlab.runners import GitLabProjectRunnerSchema
+from cartography.intel.gitlab.util import get_paginated, get_single
+from cartography.models.gitlab.runners import (
+    GitLabGroupRunnerSchema,
+    GitLabInstanceRunnerSchema,
+    GitLabProjectRunnerSchema,
+)
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

@@ -1,9 +1,6 @@
 import json
 import logging
-from typing import Any
-from typing import Dict
-from typing import Generator
-from typing import List
+from typing import Any, Dict, Generator, List
 
 import boto3
 import botocore
@@ -17,9 +14,7 @@ from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.kms.aliases import KMSAliasSchema
 from cartography.models.aws.kms.grants import KMSGrantSchema
 from cartography.models.aws.kms.keys import KMSKeySchema
-from cartography.util import aws_handle_regions
-from cartography.util import dict_date_to_epoch
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, dict_date_to_epoch, timeit
 
 logger = logging.getLogger(__name__)
 

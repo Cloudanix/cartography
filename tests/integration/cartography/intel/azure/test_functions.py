@@ -1,16 +1,16 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.azure.functions as functions
 from cartography.util import run_analysis_job
-from tests.data.azure.functions import MOCK_FUNCTION_APP_CONFIGS
-from tests.data.azure.functions import MOCK_FUNCTION_APPS
-from tests.data.azure.functions import TEST_FUNCTIONAPP_CODE_ID
-from tests.data.azure.functions import TEST_FUNCTIONAPP_CONTAINER_ID
-from tests.data.azure.functions import TEST_FUNCTIONAPP_IMAGE_DIGEST
-from tests.data.azure.functions import TEST_FUNCTIONAPP_IMAGE_URI
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.azure.functions import (
+    MOCK_FUNCTION_APP_CONFIGS,
+    MOCK_FUNCTION_APPS,
+    TEST_FUNCTIONAPP_CODE_ID,
+    TEST_FUNCTIONAPP_CONTAINER_ID,
+    TEST_FUNCTIONAPP_IMAGE_DIGEST,
+    TEST_FUNCTIONAPP_IMAGE_URI,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

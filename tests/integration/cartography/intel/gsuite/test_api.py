@@ -1,11 +1,11 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from cartography.intel.gsuite import groups
-from cartography.intel.gsuite import users
-from tests.data.gsuite.api import MOCK_GSUITE_GROUPS_RESPONSE
-from tests.data.gsuite.api import MOCK_GSUITE_MEMBERS_BY_GROUP_EMAIL
-from tests.data.gsuite.api import MOCK_GSUITE_USERS_RESPONSE
+from cartography.intel.gsuite import groups, users
+from tests.data.gsuite.api import (
+    MOCK_GSUITE_GROUPS_RESPONSE,
+    MOCK_GSUITE_MEMBERS_BY_GROUP_EMAIL,
+    MOCK_GSUITE_USERS_RESPONSE,
+)
 from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789

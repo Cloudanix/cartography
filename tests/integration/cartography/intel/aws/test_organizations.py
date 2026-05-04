@@ -1,7 +1,6 @@
 import cartography.intel.aws.organizations
 from tests.data.aws.organizations import TEST_ACCOUNTS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 

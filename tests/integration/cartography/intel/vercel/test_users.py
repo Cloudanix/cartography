@@ -7,8 +7,7 @@ import tests.data.vercel.users
 from tests.integration.cartography.intel.vercel.test_teams import (
     _ensure_local_neo4j_has_test_teams,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_TEAM_ID = "team_abc123"

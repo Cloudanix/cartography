@@ -4,9 +4,7 @@ import neo4j
 from digitalocean import Manager
 
 from cartography.config import Config
-from cartography.intel.digitalocean import compute
-from cartography.intel.digitalocean import management
-from cartography.intel.digitalocean import platform
+from cartography.intel.digitalocean import compute, management, platform
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

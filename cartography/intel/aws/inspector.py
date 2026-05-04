@@ -1,28 +1,26 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import Iterator
-from typing import List
-from typing import Set
-from typing import Tuple
+from typing import Any, Dict, Iterator, List, Set, Tuple
 
 import boto3
 import botocore
 import neo4j
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.helpers import batch
 from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.models.aws.inspector.findings import AWSInspectorFindingSchema
-from cartography.models.aws.inspector.findings import InspectorFindingToPackageMatchLink
+from cartography.models.aws.inspector.findings import (
+    AWSInspectorFindingSchema,
+    InspectorFindingToPackageMatchLink,
+)
 from cartography.models.aws.inspector.packages import AWSInspectorPackageSchema
-from cartography.util import aws_handle_regions
-from cartography.util import aws_paginate
-from cartography.util import AWS_REGION_ACCESS_DENIED_ERROR_CODES
-from cartography.util import is_service_control_policy_explicit_deny
-from cartography.util import timeit
+from cartography.util import (
+    AWS_REGION_ACCESS_DENIED_ERROR_CODES,
+    aws_handle_regions,
+    aws_paginate,
+    is_service_control_policy_explicit_deny,
+    timeit,
+)
 
 logger = logging.getLogger(__name__)
 

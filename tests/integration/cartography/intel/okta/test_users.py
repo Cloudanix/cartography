@@ -1,11 +1,9 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.okta.users
 from cartography.intel.okta.sync_state import OktaSyncState
 from tests.data.okta.users import create_test_user
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ORG_ID = "test-okta-org-id"
 TEST_UPDATE_TAG = 123456789

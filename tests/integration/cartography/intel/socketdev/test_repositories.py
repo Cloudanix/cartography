@@ -5,8 +5,7 @@ import tests.data.socketdev.repositories
 from cartography.intel.socketdev.organizations import load_organizations
 from cartography.intel.socketdev.organizations import transform as transform_orgs
 from tests.data.socketdev.organizations import ORGANIZATIONS_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = "org-001"

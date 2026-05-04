@@ -1,10 +1,11 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.aws.config
-from tests.data.aws.config import LIST_CONFIG_RULES
-from tests.data.aws.config import LIST_CONFIGURATION_RECORDERS
-from tests.data.aws.config import LIST_DELIVERY_CHANNELS
+from tests.data.aws.config import (
+    LIST_CONFIG_RULES,
+    LIST_CONFIGURATION_RECORDERS,
+    LIST_DELIVERY_CHANNELS,
+)
 from tests.integration.cartography.intel.aws.common import create_test_account
 from tests.integration.util import check_nodes
 

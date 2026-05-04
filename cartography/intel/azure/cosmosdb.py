@@ -1,15 +1,13 @@
 import logging
 import uuid
-from typing import Any
-from typing import Dict
-from typing import Generator
-from typing import List
-from typing import Tuple
+from typing import Any, Dict, Generator, List, Tuple
 
 import neo4j
-from azure.core.exceptions import ClientAuthenticationError
-from azure.core.exceptions import HttpResponseError
-from azure.core.exceptions import ResourceNotFoundError
+from azure.core.exceptions import (
+    ClientAuthenticationError,
+    HttpResponseError,
+    ResourceNotFoundError,
+)
 from azure.mgmt.cosmosdb import CosmosDBManagementClient
 
 from cartography.client.core.tx import load

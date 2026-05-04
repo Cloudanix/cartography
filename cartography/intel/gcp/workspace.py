@@ -1,14 +1,12 @@
 import json
 import logging
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import neo4j
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
 
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import run_cleanup_job, timeit
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +25,9 @@ def get_all_users(admin: Resource, project_id: str) -> List[Dict]:
     :return: List of Google users in domain
     see https://developers.google.com/admin-sdk/directory/v1/guides/manage-users#get_all_domain_users
     """
-    request = admin.users().list(customer='my_customer', maxResults=500, orderBy='email')
+    request = admin.users().list(
+        customer="my_customer", maxResults=500, orderBy="email"
+    )
     response_objects = []
     try:
         while request is not None:
@@ -35,25 +35,30 @@ def get_all_users(admin: Resource, project_id: str) -> List[Dict]:
             response_objects.append(resp)
             request = admin.users().list_next(request, resp)
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
+        err = json.loads(e.content.decode("utf-8"))["error"]
         logger.warning(
             (
                 "Could not retrieve users on project %s due to issue. Code: %s, Message: %s"
-            ), project_id, err['code'], err['message'],
+            ),
+            project_id,
+            err["code"],
+            err["message"],
         )
 
     return response_objects
 
 
 @timeit
-def transform_users(response_objects: List[Dict], total_members: set, common_job_parameters: Dict) -> List[Dict]:
-    """  Strips list of API response objects to return list of group objects only
+def transform_users(
+    response_objects: List[Dict], total_members: set, common_job_parameters: Dict
+) -> List[Dict]:
+    """Strips list of API response objects to return list of group objects only
     :param response_objects:
     :return: list of dictionary objects as defined in /docs/schema/gsuite.md
     """
     users: List[Dict] = []
     for response_object in response_objects:
-        for user in response_object['users']:
+        for user in response_object["users"]:
             if common_job_parameters.get("GROUPS"):
                 if not user.get("id") in total_members:
                     continue
@@ -73,7 +78,9 @@ def get_all_groups(admin: Resource, project_id: str) -> List[Dict]:
     See https://googleapis.github.io/google-api-python-client/docs/epy/googleapiclient.discovery-module.html#build.
     :return: List of Google groups in domain
     """
-    request = admin.groups().list(customer='my_customer', maxResults=20, orderBy='email')
+    request = admin.groups().list(
+        customer="my_customer", maxResults=20, orderBy="email"
+    )
     response_objects = []
     try:
         while request is not None:
@@ -81,18 +88,23 @@ def get_all_groups(admin: Resource, project_id: str) -> List[Dict]:
             response_objects.append(resp)
             request = admin.groups().list_next(request, resp)
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
+        err = json.loads(e.content.decode("utf-8"))["error"]
         logger.warning(
             (
                 "Could not retrieve groups on project %s due to issue. Code: %s, Message: %s"
-            ), project_id, err['code'], err['message'],
+            ),
+            project_id,
+            err["code"],
+            err["message"],
         )
     return response_objects
 
 
 @timeit
-def transform_groups(response_objects: List[Dict], common_job_parameters: Dict) -> List[Dict]:
-    """  Strips list of API response objects to return list of group objects only
+def transform_groups(
+    response_objects: List[Dict], common_job_parameters: Dict
+) -> List[Dict]:
+    """Strips list of API response objects to return list of group objects only
 
     :param response_objects:
     :return: list of dictionary objects as defined in /docs/schema/gsuite.md
@@ -100,7 +112,7 @@ def transform_groups(response_objects: List[Dict], common_job_parameters: Dict) 
     groups: List[Dict] = []
     group_id_list = [group["id"] for group in common_job_parameters.get("GROUPS", [])]
     for response_object in response_objects:
-        for group in response_object['groups']:
+        for group in response_object["groups"]:
             if common_job_parameters.get("GROUPS"):
                 if not group.get("id") in group_id_list:
                     continue
@@ -115,17 +127,19 @@ def get_users(admin: Resource) -> List[Dict]:
         req = admin.users().list(customer="my_customer")
         while req is not None:
             res = req.execute()
-            page = res.get('users', [])
+            page = res.get("users", [])
             users.extend(page)
             req = admin.users().list_next(previous_request=req, previous_response=res)
         return users
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err['status'] == 'PERMISSION_DENIED':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if err["status"] == "PERMISSION_DENIED":
             logger.warning(
                 (
                     "Could not retrieve users due to permissions issue. Code: %s, Message: %s"
-                ), err['code'], err['message'],
+                ),
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -134,7 +148,7 @@ def get_users(admin: Resource) -> List[Dict]:
 
 @timeit
 def get_members_for_group(admin: Resource, group_email: str) -> List[Dict]:
-    """ Get all members for a google group
+    """Get all members for a google group
 
     :param group_email: A string representing the email address for the group
 
@@ -147,7 +161,7 @@ def get_members_for_group(admin: Resource, group_email: str) -> List[Dict]:
     members: List[Dict] = []
     while request is not None:
         resp = request.execute(num_retries=GOOGLE_API_NUM_RETRIES)
-        members = members + resp.get('members', [])
+        members = members + resp.get("members", [])
         request = admin.members().list_next(request, resp)
 
     return members
@@ -160,17 +174,19 @@ def get_groups(admin: Resource) -> List[Dict]:
         req = admin.groups().list()
         while req is not None:
             res = req.execute()
-            page = res.get('groups', [])
+            page = res.get("groups", [])
             groups.extend(page)
             req = admin.groups().list_next(previous_request=req, previous_response=res)
         return groups
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err['status'] == 'PERMISSION_DENIED':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if err["status"] == "PERMISSION_DENIED":
             logger.warning(
                 (
                     "Could not retrieve groups due to permissions issue. Code: %s, Message: %s"
-                ), err['code'], err['message'],
+                ),
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -178,12 +194,16 @@ def get_groups(admin: Resource) -> List[Dict]:
 
 
 @timeit
-def load_users(session: neo4j.Session, data_list: List[Dict], organization_id: str, update_tag: int) -> None:
+def load_users(
+    session: neo4j.Session, data_list: List[Dict], organization_id: str, update_tag: int
+) -> None:
     session.write_transaction(_load_users_tx, data_list, organization_id, update_tag)
 
 
 @timeit
-def _load_users_tx(tx: neo4j.Transaction, users: List[Dict], organization_id: str, gcp_update_tag: int) -> None:
+def _load_users_tx(
+    tx: neo4j.Transaction, users: List[Dict], organization_id: str, gcp_update_tag: int
+) -> None:
     ingest_users = """
     UNWIND $users as usr
     MERGE (user:GCPUser{id:usr.primaryEmail})
@@ -229,16 +249,22 @@ def _load_users_tx(tx: neo4j.Transaction, users: List[Dict], organization_id: st
 
 @timeit
 def cleanup_users(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_workspace_users_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job(
+        "gcp_workspace_users_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
-def load_groups(session: neo4j.Session, data_list: List[Dict], organization_id: str, update_tag: int) -> None:
+def load_groups(
+    session: neo4j.Session, data_list: List[Dict], organization_id: str, update_tag: int
+) -> None:
     session.write_transaction(_load_groups_tx, data_list, organization_id, update_tag)
 
 
 @timeit
-def _load_groups_tx(tx: neo4j.Transaction, groups: List[Dict], organization_id: str, gcp_update_tag: int) -> None:
+def _load_groups_tx(
+    tx: neo4j.Transaction, groups: List[Dict], organization_id: str, gcp_update_tag: int
+) -> None:
     ingest_groups = """
     UNWIND $groups as grp
     MERGE (group:GCPGroup{id:grp.email})
@@ -270,7 +296,12 @@ def _load_groups_tx(tx: neo4j.Transaction, groups: List[Dict], organization_id: 
 
 
 @timeit
-def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List[Dict], gsuite_update_tag: int) -> None:
+def load_groups_members(
+    neo4j_session: neo4j.Session,
+    group: Dict,
+    members: List[Dict],
+    gsuite_update_tag: int,
+) -> None:
     ingestion_qry = """
         UNWIND $MemberData as member
         MERGE (user:GCPUser {userId: member.id})
@@ -302,23 +333,34 @@ def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List
         SET
         r.lastupdated = $UpdateTag
     """
-    neo4j_session.run(membership_qry, MemberData=members, GroupID=group.get("id"), UpdateTag=gsuite_update_tag)
+    neo4j_session.run(
+        membership_qry,
+        MemberData=members,
+        GroupID=group.get("id"),
+        UpdateTag=gsuite_update_tag,
+    )
 
 
 @timeit
 def cleanup_groups(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_workspace_groups_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job(
+        "gcp_workspace_groups_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_groups_members(
-    groups: List[Dict], neo4j_session: neo4j.Session, admin: Resource, gsuite_update_tag: int, common_job_parameters: Dict,
+    groups: List[Dict],
+    neo4j_session: neo4j.Session,
+    admin: Resource,
+    gsuite_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     group_id_list = [group["id"] for group in common_job_parameters.get("GROUPS", [])]
     total_members = []
     for group in groups:
-        members = get_members_for_group(admin, group['email'])
-        group['members'] = members
+        members = get_members_for_group(admin, group["email"])
+        group["members"] = members
         if common_job_parameters.get("GROUPS"):
             if not group.get("id") in group_id_list:
                 continue
@@ -328,25 +370,40 @@ def sync_groups_members(
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, admin: Resource,
-    project_id: str, gcp_update_tag: int, common_job_parameters: Dict, regions: List,
+    neo4j_session: neo4j.Session,
+    admin: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
+    regions: List,
 ) -> None:
     if common_job_parameters.get("GOOGLE_WORKSPACE_USER_EMAIL"):
         logger.info("Syncing workspace objects for project %s.", project_id)
 
-        gcp_organization_id = common_job_parameters['GCP_ORGANIZATION_ID']
+        gcp_organization_id = common_job_parameters["GCP_ORGANIZATION_ID"]
 
         groups_response_objects = get_all_groups(admin, project_id)
-        groups = transform_groups(response_objects=groups_response_objects, common_job_parameters=common_job_parameters)
+        groups = transform_groups(
+            response_objects=groups_response_objects,
+            common_job_parameters=common_job_parameters,
+        )
         load_groups(neo4j_session, groups, gcp_organization_id, gcp_update_tag)
-        total_members = sync_groups_members(groups, neo4j_session, admin, gcp_update_tag, common_job_parameters)
+        total_members = sync_groups_members(
+            groups, neo4j_session, admin, gcp_update_tag, common_job_parameters
+        )
         total_members = {member["id"] for member in total_members}
 
         users_response_objects = get_all_users(admin, project_id)
-        users = transform_users(response_objects=users_response_objects, total_members=total_members, common_job_parameters=common_job_parameters)
+        users = transform_users(
+            response_objects=users_response_objects,
+            total_members=total_members,
+            common_job_parameters=common_job_parameters,
+        )
 
         load_users(neo4j_session, users, gcp_organization_id, gcp_update_tag)
         for group in groups:
-            load_groups_members(neo4j_session, group, group.get("members", []), gcp_update_tag)
+            load_groups_members(
+                neo4j_session, group, group.get("members", []), gcp_update_tag
+            )
         cleanup_users(neo4j_session, common_job_parameters)
         cleanup_groups(neo4j_session, common_job_parameters)

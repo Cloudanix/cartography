@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.aws.iam_instance_profiles
 from cartography.intel.aws.ec2.instances import sync_ec2_instances
@@ -10,8 +9,7 @@ from tests.data.aws.ec2.instances import INSTANCE_WITH_IAM_PROFILE
 from tests.data.aws.iam.instance_profiles import INSTANCE_PROFILES
 from tests.data.aws.iam.roles import ROLES
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ACCOUNT_ID = "1234"
 TEST_UPDATE_TAG = 123456789

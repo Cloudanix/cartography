@@ -5,17 +5,18 @@ import cartography.intel.googleworkspace.groups
 import cartography.intel.googleworkspace.users
 from cartography.intel.googleworkspace.groups import sync_googleworkspace_groups
 from cartography.intel.googleworkspace.users import sync_googleworkspace_users
-from tests.data.googleworkspace.api import MOCK_GOOGLEWORKSPACE_GROUPS_RESPONSE
-from tests.data.googleworkspace.api import MOCK_GOOGLEWORKSPACE_MEMBERS_BY_GROUP_EMAIL
-from tests.data.googleworkspace.api import MOCK_GOOGLEWORKSPACE_USERS_RESPONSE
+from tests.data.googleworkspace.api import (
+    MOCK_GOOGLEWORKSPACE_GROUPS_RESPONSE,
+    MOCK_GOOGLEWORKSPACE_MEMBERS_BY_GROUP_EMAIL,
+    MOCK_GOOGLEWORKSPACE_USERS_RESPONSE,
+)
 from tests.integration.cartography.intel.googleworkspace.test_tenant import (
     _ensure_local_neo4j_has_test_tenant,
 )
 from tests.integration.cartography.intel.googleworkspace.test_users import (
     _ensure_local_neo4j_has_test_users,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_CUSTOMER_ID = "ABC123CD"

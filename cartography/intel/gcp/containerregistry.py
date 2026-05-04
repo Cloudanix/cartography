@@ -1,19 +1,16 @@
 import logging
 import time
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Dict, List, Optional
 
 import neo4j
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
 
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import run_cleanup_job, timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker() if GCPLinker else None
@@ -42,9 +39,13 @@ def get_artifact_registry_repositories(
 
         # If no locations specified, get all available locations
         if not locations:
-            locations_req = client.projects().locations().list(name=f"projects/{project_id}")
+            locations_req = (
+                client.projects().locations().list(name=f"projects/{project_id}")
+            )
             locations_result = locations_req.execute()
-            locations = [loc["locationId"] for loc in locations_result.get("locations", [])]
+            locations = [
+                loc["locationId"] for loc in locations_result.get("locations", [])
+            ]
 
         for location in locations:
             try:
@@ -77,18 +78,29 @@ def get_artifact_registry_repositories(
                             }
                             repositories.append(repo_dict)
 
-                    req = client.projects().locations().repositories().list_next(req, result)
+                    req = (
+                        client.projects()
+                        .locations()
+                        .repositories()
+                        .list_next(req, result)
+                    )
 
             except HttpError as e:
                 if e.resp.status == 403:
-                    logger.warning(f"Access denied for Artifact Registry in location {location}: {e}")
+                    logger.warning(
+                        f"Access denied for Artifact Registry in location {location}: {e}"
+                    )
                 else:
-                    logger.warning(f"Failed to retrieve Artifact Registry repositories in {location}: {e}")
+                    logger.warning(
+                        f"Failed to retrieve Artifact Registry repositories in {location}: {e}"
+                    )
 
         return repositories
 
     except HttpError as e:
-        logger.warning(f"Failed to retrieve Artifact Registry repositories for project {project_id}: {e}")
+        logger.warning(
+            f"Failed to retrieve Artifact Registry repositories for project {project_id}: {e}"
+        )
         return []
 
 
@@ -125,8 +137,13 @@ def get_container_registry_repositories(
                     for repo in result.get("repositories", []):
                         repo_dict = {
                             "name": repo["name"],
-                            "display_name": repo.get("displayName", f"Container Registry - {location}"),
-                            "description": repo.get("description", f"Google Container Registry in {location}"),
+                            "display_name": repo.get(
+                                "displayName", f"Container Registry - {location}"
+                            ),
+                            "description": repo.get(
+                                "description",
+                                f"Google Container Registry in {location}",
+                            ),
                             "format": "DOCKER",
                             "location": location,
                             "project_id": project_id,
@@ -164,12 +181,16 @@ def get_container_registry_repositories(
                         repositories.append(repo_dict)
 
             except Exception as e:
-                logger.warning(f"Failed to process Container Registry in {location}: {e}")
+                logger.warning(
+                    f"Failed to process Container Registry in {location}: {e}"
+                )
 
         return repositories
 
     except Exception as e:
-        logger.warning(f"Failed to retrieve Container Registry repositories for project {project_id}: {e}")
+        logger.warning(
+            f"Failed to retrieve Container Registry repositories for project {project_id}: {e}"
+        )
         return []
 
 
@@ -182,9 +203,13 @@ def get_artifact_registry_packages(
 ) -> List[Dict]:
     try:
         packages = []
-        parent = f"projects/{project_id}/locations/{location}/repositories/{repository_name}"
+        parent = (
+            f"projects/{project_id}/locations/{location}/repositories/{repository_name}"
+        )
 
-        req = client.projects().locations().repositories().packages().list(parent=parent)
+        req = (
+            client.projects().locations().repositories().packages().list(parent=parent)
+        )
 
         while req:
             result = req.execute()
@@ -202,12 +227,20 @@ def get_artifact_registry_packages(
                     }
                     packages.append(package_dict)
 
-            req = client.projects().locations().repositories().packages().list_next(req, result)
+            req = (
+                client.projects()
+                .locations()
+                .repositories()
+                .packages()
+                .list_next(req, result)
+            )
 
         return packages
 
     except HttpError as e:
-        logger.warning(f"Failed to retrieve packages for repository {repository_name}: {e}")
+        logger.warning(
+            f"Failed to retrieve packages for repository {repository_name}: {e}"
+        )
         return []
 
 
@@ -223,7 +256,14 @@ def get_artifact_registry_versions(
         versions = []
         parent = f"projects/{project_id}/locations/{location}/repositories/{repository_name}/packages/{package_name}"
 
-        req = client.projects().locations().repositories().packages().versions().list(parent=parent)
+        req = (
+            client.projects()
+            .locations()
+            .repositories()
+            .packages()
+            .versions()
+            .list(parent=parent)
+        )
 
         while req:
             result = req.execute()
@@ -238,10 +278,14 @@ def get_artifact_registry_versions(
                         "related_tags": version.get("relatedTags", []),
                         "metadata": version.get("metadata", {}),
                         "size_bytes": version.get("sizeBytes", 0),
-                        "digest": version.get("name", "").split("/")[-1]
-                        if "@sha256:" in version.get("name", "")
-                        else "",
-                        "architecture": version.get("metadata", {}).get("architecture", ""),
+                        "digest": (
+                            version.get("name", "").split("/")[-1]
+                            if "@sha256:" in version.get("name", "")
+                            else ""
+                        ),
+                        "architecture": version.get("metadata", {}).get(
+                            "architecture", ""
+                        ),
                         "os": version.get("metadata", {}).get("os", ""),
                         "project_id": project_id,
                         "location": location,
@@ -250,7 +294,14 @@ def get_artifact_registry_versions(
                     }
                     versions.append(version_dict)
 
-            req = client.projects().locations().repositories().packages().versions().list_next(req, result)
+            req = (
+                client.projects()
+                .locations()
+                .repositories()
+                .packages()
+                .versions()
+                .list_next(req, result)
+            )
 
         return versions
 
@@ -270,7 +321,9 @@ def get_container_registry_images(
         images = []
         parent = f"projects/{project_id}/locations/{location}/repositories/{repository_name.split('/')[-1]}"
 
-        req = client.projects().locations().repositories().packages().list(parent=parent)
+        req = (
+            client.projects().locations().repositories().packages().list(parent=parent)
+        )
 
         while req:
             result = req.execute()
@@ -305,10 +358,14 @@ def get_container_registry_images(
                                     "related_tags": version.get("relatedTags", []),
                                     "metadata": version.get("metadata", {}),
                                     "size_bytes": version.get("sizeBytes", 0),
-                                    "digest": version.get("name", "").split("/")[-1]
-                                    if "@sha256:" in version.get("name", "")
-                                    else "",
-                                    "architecture": version.get("metadata", {}).get("architecture", ""),
+                                    "digest": (
+                                        version.get("name", "").split("/")[-1]
+                                        if "@sha256:" in version.get("name", "")
+                                        else ""
+                                    ),
+                                    "architecture": version.get("metadata", {}).get(
+                                        "architecture", ""
+                                    ),
                                     "os": version.get("metadata", {}).get("os", ""),
                                     "project_id": project_id,
                                     "location": location,
@@ -327,12 +384,20 @@ def get_container_registry_images(
                             )
                         )
 
-            req = client.projects().locations().repositories().packages().list_next(req, result)
+            req = (
+                client.projects()
+                .locations()
+                .repositories()
+                .packages()
+                .list_next(req, result)
+            )
 
         return images
 
     except HttpError as e:
-        logger.warning(f"Failed to retrieve images for repository {repository_name}: {e}")
+        logger.warning(
+            f"Failed to retrieve images for repository {repository_name}: {e}"
+        )
         return []
 
 
@@ -535,7 +600,9 @@ def load_artifact_registry_repositories(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(_load_artifact_registry_repositories_tx, project_id, data_list, update_tag)
+    session.write_transaction(
+        _load_artifact_registry_repositories_tx, project_id, data_list, update_tag
+    )
 
 
 def load_container_registry_repositories(
@@ -544,7 +611,9 @@ def load_container_registry_repositories(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(_load_container_registry_repositories_tx, project_id, data_list, update_tag)
+    session.write_transaction(
+        _load_container_registry_repositories_tx, project_id, data_list, update_tag
+    )
 
 
 def load_artifact_registry_packages(
@@ -553,7 +622,9 @@ def load_artifact_registry_packages(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(_load_artifact_registry_packages_tx, repository_name, data_list, update_tag)
+    session.write_transaction(
+        _load_artifact_registry_packages_tx, repository_name, data_list, update_tag
+    )
 
 
 def load_artifact_registry_versions(
@@ -562,7 +633,9 @@ def load_artifact_registry_versions(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(_load_artifact_registry_versions_tx, package_name, data_list, update_tag)
+    session.write_transaction(
+        _load_artifact_registry_versions_tx, package_name, data_list, update_tag
+    )
 
 
 def load_container_registry_images(
@@ -571,27 +644,53 @@ def load_container_registry_images(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(_load_container_registry_images_tx, repository_name, data_list, update_tag)
+    session.write_transaction(
+        _load_container_registry_images_tx, repository_name, data_list, update_tag
+    )
 
 
-def cleanup_artifact_registry_repositories(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("gcp_artifact_registry_repositories_cleanup.json", session, common_job_parameters)
+def cleanup_artifact_registry_repositories(
+    session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_artifact_registry_repositories_cleanup.json",
+        session,
+        common_job_parameters,
+    )
 
 
-def cleanup_container_registry_repositories(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("gcp_container_registry_repositories_cleanup.json", session, common_job_parameters)
+def cleanup_container_registry_repositories(
+    session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_container_registry_repositories_cleanup.json",
+        session,
+        common_job_parameters,
+    )
 
 
-def cleanup_artifact_registry_packages(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("gcp_artifact_registry_packages_cleanup.json", session, common_job_parameters)
+def cleanup_artifact_registry_packages(
+    session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_artifact_registry_packages_cleanup.json", session, common_job_parameters
+    )
 
 
-def cleanup_artifact_registry_versions(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("gcp_artifact_registry_versions_cleanup.json", session, common_job_parameters)
+def cleanup_artifact_registry_versions(
+    session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_artifact_registry_versions_cleanup.json", session, common_job_parameters
+    )
 
 
-def cleanup_container_registry_images(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("gcp_container_registry_images_cleanup.json", session, common_job_parameters)
+def cleanup_container_registry_images(
+    session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_container_registry_images_cleanup.json", session, common_job_parameters
+    )
 
 
 @timeit
@@ -615,7 +714,9 @@ def sync(
         common_job_parameters,
     )
 
-    load_artifact_registry_repositories(session, project_id, artifact_repositories, update_tag)
+    load_artifact_registry_repositories(
+        session, project_id, artifact_repositories, update_tag
+    )
 
     # Sync packages and versions for Artifact Registry repositories only
     for repository in artifact_repositories:
@@ -629,7 +730,9 @@ def sync(
             repo_name,
             common_job_parameters,
         )
-        load_artifact_registry_packages(session, repository["name"], packages, update_tag)
+        load_artifact_registry_packages(
+            session, repository["name"], packages, update_tag
+        )
 
         for package in packages:
             pkg_name = package["name"].split("/")[-1]
@@ -643,7 +746,9 @@ def sync(
                 pkg_name,
                 common_job_parameters,
             )
-            load_artifact_registry_versions(session, package["name"], versions, update_tag)
+            load_artifact_registry_versions(
+                session, package["name"], versions, update_tag
+            )
 
     cleanup_artifact_registry_repositories(session, common_job_parameters)
     cleanup_artifact_registry_packages(session, common_job_parameters)
@@ -659,7 +764,9 @@ def sync(
     )
 
     # Load repositories separately
-    load_container_registry_repositories(session, project_id, container_repositories, update_tag)
+    load_container_registry_repositories(
+        session, project_id, container_repositories, update_tag
+    )
 
     # Sync images for Container Registry repositories
     for repository in container_repositories:

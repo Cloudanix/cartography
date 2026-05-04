@@ -1,19 +1,19 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp.backendservice
 import cartography.intel.gcp.cloud_armor
 import cartography.intel.gcp.compute
 import cartography.intel.gcp.instancegroup
 from cartography.graph.job import GraphJob
-from tests.data.gcp.compute_exposure import BACKEND_SERVICE_RESPONSE
-from tests.data.gcp.compute_exposure import CLOUD_ARMOR_RESPONSE
-from tests.data.gcp.compute_exposure import GLOBAL_FORWARDING_RULES_RESPONSE
-from tests.data.gcp.compute_exposure import INSTANCE_GROUP_RESPONSES
-from tests.data.gcp.compute_exposure import INSTANCE_RESPONSES
-from tests.data.gcp.compute_exposure import REGIONAL_FORWARDING_RULES_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.gcp.compute_exposure import (
+    BACKEND_SERVICE_RESPONSE,
+    CLOUD_ARMOR_RESPONSE,
+    GLOBAL_FORWARDING_RULES_RESPONSE,
+    INSTANCE_GROUP_RESPONSES,
+    INSTANCE_RESPONSES,
+    REGIONAL_FORWARDING_RULES_RESPONSE,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_PROJECT_ID = "sample-project-123456"

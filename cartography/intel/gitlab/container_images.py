@@ -14,9 +14,11 @@ import neo4j
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.helpers import batch
-from cartography.intel.gitlab.util import fetch_registry_blob
-from cartography.intel.gitlab.util import fetch_registry_manifest
-from cartography.intel.gitlab.util import get_paginated
+from cartography.intel.gitlab.util import (
+    fetch_registry_blob,
+    fetch_registry_manifest,
+    get_paginated,
+)
 from cartography.models.gitlab.container_image_layers import (
     GitLabContainerImageLayerSchema,
 )

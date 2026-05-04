@@ -6,8 +6,10 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.sagemaker.util import sagemaker_handle_regions
-from cartography.intel.aws.sagemaker.util import sync_sagemaker_resource
+from cartography.intel.aws.sagemaker.util import (
+    sagemaker_handle_regions,
+    sync_sagemaker_resource,
+)
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.sagemaker.model_package_group import (
     AWSSageMakerModelPackageGroupSchema,

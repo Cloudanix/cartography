@@ -2,10 +2,8 @@ from unittest.mock import patch
 
 import cartography.intel.bigfix.computers
 from cartography.intel.bigfix.computers import sync
-from tests.data.bigfix.computers import BF_COMPUTER_DETAILS
-from tests.data.bigfix.computers import BF_COMPUTER_LIST
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.bigfix.computers import BF_COMPUTER_DETAILS, BF_COMPUTER_LIST
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_TENANT_ID = 11223344

@@ -1,6 +1,8 @@
-from cartography.intel.docker_scout.scanner import parse_recommendation_raw
-from cartography.intel.docker_scout.scanner import sync_from_file
-from cartography.intel.docker_scout.scanner import transform_public_image_tags
+from cartography.intel.docker_scout.scanner import (
+    parse_recommendation_raw,
+    sync_from_file,
+    transform_public_image_tags,
+)
 from tests.data.docker_scout.mock_data import MOCK_ECR_RECOMMENDATION_RAW
 
 

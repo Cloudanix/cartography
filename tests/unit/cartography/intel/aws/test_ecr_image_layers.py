@@ -1,7 +1,6 @@
 import asyncio
 import logging
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -9,12 +8,14 @@ from botocore.exceptions import ClientError
 
 import cartography.intel.aws.ecr_image_layers as ecr_layers
 import tests.data.aws.ecr as test_data
-from cartography.intel.aws.ecr_image_layers import batch_get_manifest
-from cartography.intel.aws.ecr_image_layers import ECRLayerFetchTransientError
-from cartography.intel.aws.ecr_image_layers import extract_repo_uri_from_image_uri
-from cartography.intel.aws.ecr_image_layers import fetch_image_layers_async
-from cartography.intel.aws.ecr_image_layers import get_blob_json_via_presigned
-from cartography.intel.aws.ecr_image_layers import transform_ecr_image_layers
+from cartography.intel.aws.ecr_image_layers import (
+    ECRLayerFetchTransientError,
+    batch_get_manifest,
+    extract_repo_uri_from_image_uri,
+    fetch_image_layers_async,
+    get_blob_json_via_presigned,
+    transform_ecr_image_layers,
+)
 from cartography.intel.supply_chain import extract_workflow_path_from_ref
 
 

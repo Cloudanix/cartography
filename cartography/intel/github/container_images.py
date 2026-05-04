@@ -13,17 +13,14 @@ the previous sync already populated those properties.
 """
 
 import logging
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 import neo4j
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import read_list_of_values_tx
+from cartography.client.core.tx import load, read_list_of_values_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.github.packages import get_package_versions
-from cartography.intel.github.util import fetch_ghcr_blob
-from cartography.intel.github.util import fetch_ghcr_manifest
+from cartography.intel.github.util import fetch_ghcr_blob, fetch_ghcr_manifest
 from cartography.models.github.container_image_layers import (
     GitHubContainerImageLayerSchema,
 )

@@ -1,12 +1,9 @@
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import neo4j
 from pagerduty import RestApiV2Client
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.models.pagerduty.team import PagerDutyTeamSchema
 from cartography.models.pagerduty.team_membership import (

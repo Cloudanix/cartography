@@ -2,45 +2,46 @@ import asyncio
 import hashlib
 import json
 import logging
-from typing import Any
-from typing import Dict
-from typing import Generator
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Union
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
 import boto3
 import botocore
 import neo4j
-from botocore.exceptions import ClientError
-from botocore.exceptions import ConnectTimeoutError
-from botocore.exceptions import EndpointConnectionError
-from botocore.exceptions import ReadTimeoutError
+from botocore.exceptions import (
+    ClientError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 from policyuniverse.policy import Policy
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import run_write_query
+from cartography.client.core.tx import load, run_write_query
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.intel.aws.util.botocore_config import (
+    create_boto3_client,
+    get_botocore_config,
+)
 from cartography.models.aws.s3.acl import S3AclSchema
-from cartography.models.aws.s3.bucket import S3BucketEncryptionSchema
-from cartography.models.aws.s3.bucket import S3BucketLoggingSchema
-from cartography.models.aws.s3.bucket import S3BucketOwnershipSchema
-from cartography.models.aws.s3.bucket import S3BucketPolicySchema
-from cartography.models.aws.s3.bucket import S3BucketPublicAccessBlockSchema
-from cartography.models.aws.s3.bucket import S3BucketSchema
-from cartography.models.aws.s3.bucket import S3BucketVersioningSchema
+from cartography.models.aws.s3.bucket import (
+    S3BucketEncryptionSchema,
+    S3BucketLoggingSchema,
+    S3BucketOwnershipSchema,
+    S3BucketPolicySchema,
+    S3BucketPublicAccessBlockSchema,
+    S3BucketSchema,
+    S3BucketVersioningSchema,
+)
 from cartography.models.aws.s3.policy_statement import S3PolicyStatementSchema
 from cartography.stats import get_stats_client
-from cartography.util import aws_handle_regions
-from cartography.util import merge_module_sync_metadata
-from cartography.util import run_analysis_job
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
-from cartography.util import to_asynchronous
-from cartography.util import to_synchronous
+from cartography.util import (
+    aws_handle_regions,
+    merge_module_sync_metadata,
+    run_analysis_job,
+    run_cleanup_job,
+    timeit,
+    to_asynchronous,
+    to_synchronous,
+)
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

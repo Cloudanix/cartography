@@ -2,18 +2,19 @@
 Integration test for the Container/Function -> Image RESOLVED_IMAGE analysis job.
 """
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp.cloudrun.job as cloudrun_job
 import cartography.intel.gcp.cloudrun.revision as cloudrun_revision
 import cartography.intel.gcp.cloudrun.service as cloudrun_service
 from cartography.util import run_analysis_job
-from tests.data.gcp.cloudrun import MOCK_JOB_WITH_DIGEST
-from tests.data.gcp.cloudrun import MOCK_REVISION_WITH_DIGEST
-from tests.data.gcp.cloudrun import MOCK_SERVICE_WITH_DIGEST
-from tests.data.gcp.cloudrun import TEST_JOB_PRIMARY_DIGEST
-from tests.data.gcp.cloudrun import TEST_REVISION_PRIMARY_DIGEST
+from tests.data.gcp.cloudrun import (
+    MOCK_JOB_WITH_DIGEST,
+    MOCK_REVISION_WITH_DIGEST,
+    MOCK_SERVICE_WITH_DIGEST,
+    TEST_JOB_PRIMARY_DIGEST,
+    TEST_REVISION_PRIMARY_DIGEST,
+)
 from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789

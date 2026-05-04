@@ -7,21 +7,24 @@ from neo4j import Session
 from cartography.client.aws import list_accounts
 from cartography.client.aws.ecr import get_ecr_images
 from cartography.client.gcp.artifact_registry import get_gcp_container_images
-from cartography.client.gitlab.container_images import get_gitlab_container_images
-from cartography.client.gitlab.container_images import get_gitlab_container_tags
+from cartography.client.gitlab.container_images import (
+    get_gitlab_container_images,
+    get_gitlab_container_tags,
+)
 from cartography.config import Config
-from cartography.intel.common.object_store import filter_report_refs
-from cartography.intel.common.object_store import LocalReportReader
-from cartography.intel.common.object_store import ObjectStoreError
-from cartography.intel.common.object_store import read_json_report
-from cartography.intel.common.object_store import ReportReader
-from cartography.intel.common.object_store import S3BucketReader
+from cartography.intel.common.object_store import (
+    LocalReportReader,
+    ObjectStoreError,
+    ReportReader,
+    S3BucketReader,
+    filter_report_refs,
+    read_json_report,
+)
 from cartography.intel.common.report_reader_builder import (
     build_report_reader_for_source,
 )
 from cartography.intel.common.report_source import parse_report_source
-from cartography.intel.trivy.scanner import cleanup
-from cartography.intel.trivy.scanner import sync_single_image
+from cartography.intel.trivy.scanner import cleanup, sync_single_image
 from cartography.stats import get_stats_client
 from cartography.util import timeit
 

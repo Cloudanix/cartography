@@ -1,5 +1,4 @@
-from typing import Any
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 import neo4j
 from msgraph import GraphServiceClient

@@ -24,9 +24,11 @@ import requests
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gitlab.ci_config_parser import parse_ci_config
-from cartography.intel.gitlab.ci_config_parser import parse_lint_includes
-from cartography.intel.gitlab.ci_config_parser import ParsedCIConfig
+from cartography.intel.gitlab.ci_config_parser import (
+    ParsedCIConfig,
+    parse_ci_config,
+    parse_lint_includes,
+)
 from cartography.intel.gitlab.util import make_request_with_retry
 from cartography.models.gitlab.ci_config import GitLabCIConfigSchema
 from cartography.models.gitlab.ci_include import GitLabCIIncludeSchema

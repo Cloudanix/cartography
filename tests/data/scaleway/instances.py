@@ -1,14 +1,16 @@
 from datetime import datetime
 
 from dateutil.tz import tzutc
-from scaleway.instance.v1 import Image
-from scaleway.instance.v1 import SecurityGroupSummary
-from scaleway.instance.v1 import Server
-from scaleway.instance.v1 import ServerIp
-from scaleway.instance.v1 import ServerLocation
-from scaleway.instance.v1 import ServerSummary
-from scaleway.instance.v1 import VolumeServer
-from scaleway.instance.v1 import VolumeSummary
+from scaleway.instance.v1 import (
+    Image,
+    SecurityGroupSummary,
+    Server,
+    ServerIp,
+    ServerLocation,
+    ServerSummary,
+    VolumeServer,
+    VolumeSummary,
+)
 
 SCALEWAY_INSTANCES = [
     Server(

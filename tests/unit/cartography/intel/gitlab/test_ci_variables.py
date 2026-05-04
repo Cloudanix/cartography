@@ -1,19 +1,22 @@
 """Unit tests for GitLab CI/CD variables module."""
 
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import requests
 
-from cartography.intel.gitlab.ci_variables import _make_variable_id
-from cartography.intel.gitlab.ci_variables import get_group_variables
-from cartography.intel.gitlab.ci_variables import get_project_variables
-from cartography.intel.gitlab.ci_variables import transform_variables
-from tests.data.gitlab.ci_variables import GET_GROUP_VARIABLES_RESPONSE
-from tests.data.gitlab.ci_variables import GET_PROJECT_VARIABLES_RESPONSE
-from tests.data.gitlab.ci_variables import TEST_GITLAB_URL
-from tests.data.gitlab.ci_variables import TEST_GROUP_ID
-from tests.data.gitlab.ci_variables import TEST_PROJECT_ID
+from cartography.intel.gitlab.ci_variables import (
+    _make_variable_id,
+    get_group_variables,
+    get_project_variables,
+    transform_variables,
+)
+from tests.data.gitlab.ci_variables import (
+    GET_GROUP_VARIABLES_RESPONSE,
+    GET_PROJECT_VARIABLES_RESPONSE,
+    TEST_GITLAB_URL,
+    TEST_GROUP_ID,
+    TEST_PROJECT_ID,
+)
 
 
 def _http_error(status_code: int) -> requests.exceptions.HTTPError:

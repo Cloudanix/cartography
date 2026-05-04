@@ -6,20 +6,18 @@ import pytest
 from cartography.config import Config
 from cartography.intel.common.report_reader_builder import (
     build_azure_blob_credential_from_config,
-)
-from cartography.intel.common.report_reader_builder import (
     build_report_reader_for_source,
 )
-from cartography.intel.common.report_source import AzureBlobReportSource
-from cartography.intel.common.report_source import build_s3_source
-from cartography.intel.common.report_source import GCSReportSource
-from cartography.intel.common.report_source import LegacyReportSourceNames
-from cartography.intel.common.report_source import LocalReportSource
-from cartography.intel.common.report_source import parse_report_source
 from cartography.intel.common.report_source import (
+    AzureBlobReportSource,
+    GCSReportSource,
+    LegacyReportSourceNames,
+    LocalReportSource,
+    S3ReportSource,
+    build_s3_source,
+    parse_report_source,
     resolve_report_source_with_legacy_fields,
 )
-from cartography.intel.common.report_source import S3ReportSource
 
 
 class _TestConfig(Config):

@@ -1,24 +1,25 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.aws.iam
 from cartography.intel.aws.iam import sync
-from tests.data.aws.iam import GET_GROUP_MEMBERSHIPS_DATA
-from tests.data.aws.iam import LIST_GROUPS_SAMPLE
+from tests.data.aws.iam import GET_GROUP_MEMBERSHIPS_DATA, LIST_GROUPS_SAMPLE
 from tests.data.aws.iam.access_keys import GET_USER_ACCESS_KEYS_DATA
-from tests.data.aws.iam.group_policies import GET_GROUP_INLINE_POLS_SAMPLE
-from tests.data.aws.iam.group_policies import GET_GROUP_MANAGED_POLICY_DATA
+from tests.data.aws.iam.group_policies import (
+    GET_GROUP_INLINE_POLS_SAMPLE,
+    GET_GROUP_MANAGED_POLICY_DATA,
+)
 from tests.data.aws.iam.role_inline_policies import GET_ROLE_INLINE_POLS_SAMPLE
 from tests.data.aws.iam.role_policies import (
     ANOTHER_GET_ROLE_LIST_DATASET as GET_ROLE_LIST_DATA,
 )
 from tests.data.aws.iam.role_policies import GET_ROLE_MANAGED_POLICY_DATA
 from tests.data.aws.iam.user_inline_policies import GET_USER_INLINE_POLS_SAMPLE
-from tests.data.aws.iam.user_policies import GET_USER_LIST_DATA
-from tests.data.aws.iam.user_policies import GET_USER_MANAGED_POLS_SAMPLE
+from tests.data.aws.iam.user_policies import (
+    GET_USER_LIST_DATA,
+    GET_USER_MANAGED_POLS_SAMPLE,
+)
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_ACCOUNT_ID = "1234"
 TEST_UPDATE_TAG = 123456789

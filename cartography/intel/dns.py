@@ -1,8 +1,6 @@
 import logging
 from string import Template
-from typing import Any
-from typing import List
-from typing import Optional
+from typing import Any, List, Optional
 
 import dns.rdatatype
 import dns.resolver

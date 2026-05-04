@@ -2,15 +2,15 @@
 import logging
 import re
 from collections import namedtuple
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Dict, List, Optional
 
 import neo4j
 
-from cartography.client.core.tx import read_list_of_dicts_tx
-from cartography.client.core.tx import read_single_value_tx
-from cartography.client.core.tx import run_write_query
+from cartography.client.core.tx import (
+    read_list_of_dicts_tx,
+    read_single_value_tx,
+    run_write_query,
+)
 from cartography.util import timeit
 
 AccountRole = namedtuple("AccountRole", ["account_id", "role_name"])

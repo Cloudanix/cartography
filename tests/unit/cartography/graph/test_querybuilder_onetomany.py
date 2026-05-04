@@ -1,5 +1,7 @@
-from cartography.graph.querybuilder import _get_module_from_schema
-from cartography.graph.querybuilder import build_ingestion_query
+from cartography.graph.querybuilder import (
+    _get_module_from_schema,
+    build_ingestion_query,
+)
 from cartography.models.aws.iam.instanceprofile import InstanceProfileSchema
 from cartography.version import get_cartography_version
 from tests.unit.cartography.graph.helpers import (

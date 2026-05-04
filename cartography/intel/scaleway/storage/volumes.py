@@ -3,13 +3,11 @@ from typing import Any
 
 import neo4j
 import scaleway
-from scaleway.instance.v1 import InstanceV1API
-from scaleway.instance.v1 import Volume
+from scaleway.instance.v1 import InstanceV1API, Volume
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.scaleway.utils import DEFAULT_ZONE
-from cartography.intel.scaleway.utils import scaleway_obj_to_dict
+from cartography.intel.scaleway.utils import DEFAULT_ZONE, scaleway_obj_to_dict
 from cartography.models.scaleway.storage.volume import ScalewayVolumeSchema
 from cartography.util import timeit
 

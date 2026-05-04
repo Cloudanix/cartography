@@ -2,8 +2,7 @@ from unittest.mock import patch
 
 import cartography.intel.lastpass.users
 import tests.data.lastpass.users
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_TENANT_ID = 11223344

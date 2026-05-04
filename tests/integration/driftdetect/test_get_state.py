@@ -6,8 +6,7 @@ from marshmallow import ValidationError
 
 from cartography.driftdetect.add_shortcut import add_shortcut
 from cartography.driftdetect.get_states import get_query_state
-from cartography.driftdetect.serializers import ShortcutSchema
-from cartography.driftdetect.serializers import StateSchema
+from cartography.driftdetect.serializers import ShortcutSchema, StateSchema
 from cartography.driftdetect.storage import FileSystem
 
 

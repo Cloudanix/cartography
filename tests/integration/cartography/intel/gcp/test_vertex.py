@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp.vertex.datasets
 import cartography.intel.gcp.vertex.deployed_models
@@ -9,8 +8,7 @@ import cartography.intel.gcp.vertex.instances
 import cartography.intel.gcp.vertex.models
 import cartography.intel.gcp.vertex.training_pipelines
 import tests.data.gcp.vertex
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_PROJECT_ID = "test-project"
 TEST_UPDATE_TAG = 123456789

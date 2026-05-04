@@ -9,9 +9,11 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.clients import build_vertex_ai_pipeline_client
 from cartography.intel.gcp.vertex.models import get_vertex_ai_locations
-from cartography.intel.gcp.vertex.utils import fetch_vertex_ai_resources_for_locations
-from cartography.intel.gcp.vertex.utils import get_vertex_credentials
-from cartography.intel.gcp.vertex.utils import list_vertex_ai_resources_for_location
+from cartography.intel.gcp.vertex.utils import (
+    fetch_vertex_ai_resources_for_locations,
+    get_vertex_credentials,
+    list_vertex_ai_resources_for_location,
+)
 from cartography.models.gcp.vertex.training_pipeline import (
     GCPVertexAITrainingPipelineSchema,
 )

@@ -1,22 +1,18 @@
 import logging
 import time
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from functools import reduce
-from typing import Any
-from typing import cast
-from typing import Dict
-from typing import List
-from typing import Optional
+from typing import Any, Dict, List, Optional, cast
 
 import neo4j
 import requests
 from requests import Session
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import read_list_of_values_tx
-from cartography.client.core.tx import read_single_value_tx
+from cartography.client.core.tx import (
+    load,
+    read_list_of_values_tx,
+    read_single_value_tx,
+)
 from cartography.models.cve.cve import CVESchema
 from cartography.models.cve.cve_feed import CVEFeedSchema
 from cartography.util import timeit

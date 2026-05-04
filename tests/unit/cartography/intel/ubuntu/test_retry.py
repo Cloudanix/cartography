@@ -6,8 +6,7 @@ from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3.exceptions import MaxRetryError
 
-from cartography.intel.ubuntu.util import LoggingRetry
-from cartography.intel.ubuntu.util import retryable_session
+from cartography.intel.ubuntu.util import LoggingRetry, retryable_session
 
 
 class TestRetryableSession:

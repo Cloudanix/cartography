@@ -3,13 +3,12 @@ import logging
 import uuid
 
 from azure.core.credentials import AzureKeyCredential
-from azure.eventgrid import EventGridEvent
-from azure.eventgrid import EventGridPublisherClient
+from azure.eventgrid import EventGridEvent, EventGridPublisherClient
 
 logger = logging.getLogger(__name__)
 
 
-class EventGridLibrary():
+class EventGridLibrary:
     def __init__(self, topic, access_key):
         # authenticate client
         self.credential = AzureKeyCredential(access_key)
@@ -37,7 +36,11 @@ class EventGridLibrary():
             }
 
         except Exception as e:
-            logging.error(f"failed to publish message to queue: {e}", exc_info=True, stack_info=True)
+            logging.error(
+                f"failed to publish message to queue: {e}",
+                exc_info=True,
+                stack_info=True,
+            )
 
             return {
                 "status": "failure",

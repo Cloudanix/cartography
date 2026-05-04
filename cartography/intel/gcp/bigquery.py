@@ -1,27 +1,28 @@
 import json
 import logging
 import time
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import neo4j
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
+
+from cartography.util import run_cleanup_job, timeit
 
 from . import label
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker() if GCPLinker else None
 
 
 @timeit
-def get_bigquery_dataset(bigquery: Resource, project_id: str, common_job_parameters) -> List[Resource]:
+def get_bigquery_dataset(
+    bigquery: Resource, project_id: str, common_job_parameters
+) -> List[Resource]:
     """
     Returns a list of Bigquery Datasets within the given project.
 
@@ -39,18 +40,26 @@ def get_bigquery_dataset(bigquery: Resource, project_id: str, common_job_paramet
         request = bigquery.datasets().list(projectId=project_id, maxResults=5000)
         while request is not None:
             response = request.execute()
-            if 'datasets' in response:
-                datasets.extend(response.get('datasets', []))
-            request = bigquery.datasets().list_next(previous_request=request, previous_response=response)
+            if "datasets" in response:
+                datasets.extend(response.get("datasets", []))
+            request = bigquery.datasets().list_next(
+                previous_request=request, previous_response=response
+            )
 
         return datasets
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Bigquery datasets on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -58,13 +67,17 @@ def get_bigquery_dataset(bigquery: Resource, project_id: str, common_job_paramet
 
 
 @timeit
-def transform_bigquery_dataset(bigquery: Resource, datasets: List[Dict], project_id: str) -> List[Resource]:
+def transform_bigquery_dataset(
+    bigquery: Resource, datasets: List[Dict], project_id: str
+) -> List[Resource]:
     list_dataset = []
     for dataset in datasets:
-        dataset['id'] = dataset.get('datasetReference', {}).get('datasetId', '')
-        dataset['uniqueId'] = f"projects/{project_id}/datasets/{dataset['id']}"
-        dataset['details'] = get_dataset_info(bigquery, dataset['id'], project_id)
-        dataset['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='bigquery_home')
+        dataset["id"] = dataset.get("datasetReference", {}).get("datasetId", "")
+        dataset["uniqueId"] = f"projects/{project_id}/datasets/{dataset['id']}"
+        dataset["details"] = get_dataset_info(bigquery, dataset["id"], project_id)
+        dataset["consolelink"] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name="bigquery_home"
+        )
         list_dataset.append(dataset)
 
     return list_dataset
@@ -74,15 +87,25 @@ def transform_bigquery_dataset(bigquery: Resource, datasets: List[Dict], project
 def get_dataset_info(bigquery, dataset_id, project_id):
     response = {}
     try:
-        response = bigquery.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
+        response = (
+            bigquery.datasets()
+            .get(projectId=project_id, datasetId=dataset_id)
+            .execute()
+        )
 
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Bigquery dataset info on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return {}
         else:
@@ -95,15 +118,25 @@ def get_dataset_info(bigquery, dataset_id, project_id):
 def get_dataset_access_info(bigquery, dataset_id, project_id):
     response = {}
     try:
-        response = bigquery.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
-        accesses = response.get('access', [])
+        response = (
+            bigquery.datasets()
+            .get(projectId=project_id, datasetId=dataset_id)
+            .execute()
+        )
+        accesses = response.get("access", [])
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Bigquery dataset info on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -113,7 +146,9 @@ def get_dataset_access_info(bigquery, dataset_id, project_id):
 
 
 @timeit
-def transform_dataset_accesses(response_objects: List[Dict], dataset_id: str, project_id: str) -> List[Dict]:
+def transform_dataset_accesses(
+    response_objects: List[Dict], dataset_id: str, project_id: str
+) -> List[Dict]:
     """
     Process the GCP dataset access objects and return a flattened list of GCP accesses with all the necessary fields
     we need to load it into Neo4j
@@ -122,20 +157,26 @@ def transform_dataset_accesses(response_objects: List[Dict], dataset_id: str, pr
     """
     accesses_list = []
     for res in response_objects:
-        res['id'] = f"projects/{project_id}/bigquery/{dataset_id}/role/{res['role']}"
+        res["id"] = f"projects/{project_id}/bigquery/{dataset_id}/role/{res['role']}"
         accesses_list.append(res)
     return accesses_list
 
 
 @timeit
-def attach_dataset_to_accesses(session: neo4j.Session, dataset_id: str, accesses: List[Dict], gcp_update_tag: int) -> None:
-    session.write_transaction(attach_dataset_to_accesses_tx, accesses, dataset_id, gcp_update_tag)
+def attach_dataset_to_accesses(
+    session: neo4j.Session, dataset_id: str, accesses: List[Dict], gcp_update_tag: int
+) -> None:
+    session.write_transaction(
+        attach_dataset_to_accesses_tx, accesses, dataset_id, gcp_update_tag
+    )
 
 
 @timeit
 def attach_dataset_to_accesses_tx(
-    tx: neo4j.Transaction, accesses: List[Dict],
-    dataset_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    accesses: List[Dict],
+    dataset_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -163,7 +204,9 @@ def attach_dataset_to_accesses_tx(
 
 
 @timeit
-def get_bigquery_tables(bigquery: Resource, dataset: Dict, project_id: str, common_job_parameters) -> List[Resource]:
+def get_bigquery_tables(
+    bigquery: Resource, dataset: Dict, project_id: str, common_job_parameters
+) -> List[Resource]:
     """
     Returns a list of Bigquery Datasets  tables within the given project.
 
@@ -178,20 +221,30 @@ def get_bigquery_tables(bigquery: Resource, dataset: Dict, project_id: str, comm
     """
     try:
         tables = []
-        request = bigquery.tables().list(projectId=project_id, datasetId=dataset['id'], maxResults=5000)
+        request = bigquery.tables().list(
+            projectId=project_id, datasetId=dataset["id"], maxResults=5000
+        )
         while request is not None:
             response = request.execute()
-            if 'tables' in response:
-                tables.extend(response.get('tables', []))
-            request = bigquery.tables().list_next(previous_request=request, previous_response=response)
+            if "tables" in response:
+                tables.extend(response.get("tables", []))
+            request = bigquery.tables().list_next(
+                previous_request=request, previous_response=response
+            )
         return tables
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Bigquery tables on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -199,14 +252,22 @@ def get_bigquery_tables(bigquery: Resource, dataset: Dict, project_id: str, comm
 
 
 @timeit
-def transform_bigquery_tables(bigquery: Resource, dataset: Dict, tables: List, project_id: str) -> List[Resource]:
+def transform_bigquery_tables(
+    bigquery: Resource, dataset: Dict, tables: List, project_id: str
+) -> List[Resource]:
     list_tables = []
     for table in tables:
-        table['id'] = table.get('tableReference', {}).get('tableId', '')
-        table['datasetId'] = dataset['id']
-        table['uniqueId'] = f"projects/{project_id}/datasets/{dataset['id']}/tables/{table['id']}"
-        table['details'] = get_table_info(bigquery, project_id, dataset['id'], table['id'])
-        table['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='bigquery_home')
+        table["id"] = table.get("tableReference", {}).get("tableId", "")
+        table["datasetId"] = dataset["id"]
+        table["uniqueId"] = (
+            f"projects/{project_id}/datasets/{dataset['id']}/tables/{table['id']}"
+        )
+        table["details"] = get_table_info(
+            bigquery, project_id, dataset["id"], table["id"]
+        )
+        table["consolelink"] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name="bigquery_home"
+        )
         list_tables.append(table)
 
     return list_tables
@@ -216,15 +277,25 @@ def transform_bigquery_tables(bigquery: Resource, dataset: Dict, tables: List, p
 def get_table_info(bigquery, project_id, dataset_id, table_id):
     response = {}
     try:
-        response = bigquery.tables().get(projectId=project_id, datasetId=dataset_id, tableId=table_id).execute()
+        response = (
+            bigquery.tables()
+            .get(projectId=project_id, datasetId=dataset_id, tableId=table_id)
+            .execute()
+        )
 
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Bigquery table info on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return {}
         else:
@@ -234,14 +305,20 @@ def get_table_info(bigquery, project_id, dataset_id, table_id):
 
 
 @timeit
-def load_bigquery_datasets(session: neo4j.Session, datasets: List[Dict], project_id: str, update_tag: int) -> None:
-    session.write_transaction(load_bigquery_datasets_tx, datasets, project_id, update_tag)
+def load_bigquery_datasets(
+    session: neo4j.Session, datasets: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.write_transaction(
+        load_bigquery_datasets_tx, datasets, project_id, update_tag
+    )
 
 
 @timeit
 def load_bigquery_datasets_tx(
-    tx: neo4j.Transaction, datasets: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    datasets: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     query = """
     UNWIND $Datasets as d
@@ -275,14 +352,18 @@ def load_bigquery_datasets_tx(
 
 
 @timeit
-def load_bigquery_tables(session: neo4j.Session, tables: List[Dict], project_id: str, update_tag: int) -> None:
+def load_bigquery_tables(
+    session: neo4j.Session, tables: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.write_transaction(load_bigquery_tables_tx, tables, project_id, update_tag)
 
 
 @timeit
 def load_bigquery_tables_tx(
-    tx: neo4j.Transaction, tables: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    tables: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
     query = """
     UNWIND $Tables as t
@@ -315,7 +396,9 @@ def load_bigquery_tables_tx(
 
 
 @timeit
-def cleanup_gcp_bigquery(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+def cleanup_gcp_bigquery(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
     """
     Delete out-of-date GCP Bigquery and relationships
 
@@ -328,11 +411,13 @@ def cleanup_gcp_bigquery(neo4j_session: neo4j.Session, common_job_parameters: Di
     :rtype: NoneType
     :return: Nothing
     """
-    run_cleanup_job('gcp_bigquery_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("gcp_bigquery_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
-def cleanup_gcp_bigquery_accesses(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+def cleanup_gcp_bigquery_accesses(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
     """
     Delete out-of-date GCP Bigquery access and relationships
 
@@ -345,13 +430,19 @@ def cleanup_gcp_bigquery_accesses(neo4j_session: neo4j.Session, common_job_param
     :rtype: NoneType
     :return: Nothing
     """
-    run_cleanup_job('gcp_bigquery_access_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job(
+        "gcp_bigquery_access_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, bigquery: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: Dict, regions: List,
+    neo4j_session: neo4j.Session,
+    bigquery: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
+    regions: List,
 ) -> None:
     """
     Get GCP Bigquery using the Cloud Bigquery resource object, ingest to Neo4j, and clean up old data.
@@ -382,17 +473,37 @@ def sync(
     datasets = get_bigquery_dataset(bigquery, project_id, common_job_parameters)
     bigquery_datasets = transform_bigquery_dataset(bigquery, datasets, project_id)
     load_bigquery_datasets(neo4j_session, bigquery_datasets, project_id, gcp_update_tag)
-    label.sync_labels(neo4j_session, bigquery_datasets, gcp_update_tag, common_job_parameters, 'bigquerydataset', 'GCPBigqueryDataset')
+    label.sync_labels(
+        neo4j_session,
+        bigquery_datasets,
+        gcp_update_tag,
+        common_job_parameters,
+        "bigquerydataset",
+        "GCPBigqueryDataset",
+    )
 
     # BIGQUERY TABLES
     for dataset in bigquery_datasets:
-        accesses = get_dataset_access_info(bigquery, dataset['id'], project_id)
-        accesses_list = transform_dataset_accesses(accesses, dataset['id'], project_id)
-        attach_dataset_to_accesses(neo4j_session, dataset['id'], accesses_list, gcp_update_tag)
-        tables = get_bigquery_tables(bigquery, dataset, project_id, common_job_parameters)
-        bigquery_tables = transform_bigquery_tables(bigquery, dataset, tables, project_id)
+        accesses = get_dataset_access_info(bigquery, dataset["id"], project_id)
+        accesses_list = transform_dataset_accesses(accesses, dataset["id"], project_id)
+        attach_dataset_to_accesses(
+            neo4j_session, dataset["id"], accesses_list, gcp_update_tag
+        )
+        tables = get_bigquery_tables(
+            bigquery, dataset, project_id, common_job_parameters
+        )
+        bigquery_tables = transform_bigquery_tables(
+            bigquery, dataset, tables, project_id
+        )
         load_bigquery_tables(neo4j_session, bigquery_tables, project_id, gcp_update_tag)
-        label.sync_labels(neo4j_session, bigquery_tables, gcp_update_tag, common_job_parameters, 'bigquerytable', 'GCPBigqueryTable')
+        label.sync_labels(
+            neo4j_session,
+            bigquery_tables,
+            gcp_update_tag,
+            common_job_parameters,
+            "bigquerytable",
+            "GCPBigqueryTable",
+        )
 
     cleanup_gcp_bigquery(neo4j_session, common_job_parameters)
 

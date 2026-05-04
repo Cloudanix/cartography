@@ -2,8 +2,7 @@ import logging
 import os
 import sys
 
-from utils.sentry import capture_error
-from utils.sentry import capture_warning
+from utils.sentry import capture_error, capture_warning
 
 
 class Logger:
@@ -21,7 +20,8 @@ class Logger:
         # Simplify log output for Production
         if os.getenv("CDX_APP_ENV") == "PRODUCTION":
             formatter = logging.Formatter(
-                "%(levelname)-s - %(filename)s - Line:%(lineno)d - %(message)s - %(context)s", "%Y-%m-%d %H:%M:%S",
+                "%(levelname)-s - %(filename)s - Line:%(lineno)d - %(message)s - %(context)s",
+                "%Y-%m-%d %H:%M:%S",
             )
 
         else:

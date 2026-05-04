@@ -1,22 +1,22 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Any, Dict, List, Tuple
 
 import boto3
 import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.intel.aws.util.botocore_config import (
+    create_boto3_client,
+    get_botocore_config,
+)
 from cartography.models.aws.ec2.vpc import AWSVpcSchema
 from cartography.models.aws.ec2.vpc_cidr import AWSIPv4CidrBlockSchema
-from cartography.models.aws.ec2.vpc_peering import AWSAccountVPCPeeringSchema
-from cartography.models.aws.ec2.vpc_peering import AWSPeeringConnectionSchema
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.models.aws.ec2.vpc_peering import (
+    AWSAccountVPCPeeringSchema,
+    AWSPeeringConnectionSchema,
+)
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 

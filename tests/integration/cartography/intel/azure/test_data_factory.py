@@ -1,16 +1,16 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.azure.data_factory as data_factory
 import cartography.intel.azure.data_factory_dataset as data_factory_dataset
 import cartography.intel.azure.data_factory_linked_service as data_factory_linked_service
 import cartography.intel.azure.data_factory_pipeline as data_factory_pipeline
-from tests.data.azure.data_factory import MOCK_DATASETS
-from tests.data.azure.data_factory import MOCK_FACTORIES
-from tests.data.azure.data_factory import MOCK_LINKED_SERVICES
-from tests.data.azure.data_factory import MOCK_PIPELINES
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.azure.data_factory import (
+    MOCK_DATASETS,
+    MOCK_FACTORIES,
+    MOCK_LINKED_SERVICES,
+    MOCK_PIPELINES,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

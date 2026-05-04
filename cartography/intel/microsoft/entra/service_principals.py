@@ -1,7 +1,6 @@
 import logging
 import re
-from typing import Any
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 import neo4j
 from azure.identity import ClientSecretCredential

@@ -5,15 +5,16 @@ from typing import Any
 
 import neo4j
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
-from cartography.models.tailscale.grant import TailscaleDeviceToDeviceAccessMatchLink
-from cartography.models.tailscale.grant import TailscaleGrantSchema
-from cartography.models.tailscale.grant import TailscaleGroupToDeviceAccessMatchLink
-from cartography.models.tailscale.grant import TailscaleGroupToServiceAccessMatchLink
-from cartography.models.tailscale.grant import TailscaleUserToDeviceAccessMatchLink
-from cartography.models.tailscale.grant import TailscaleUserToServiceAccessMatchLink
+from cartography.models.tailscale.grant import (
+    TailscaleDeviceToDeviceAccessMatchLink,
+    TailscaleGrantSchema,
+    TailscaleGroupToDeviceAccessMatchLink,
+    TailscaleGroupToServiceAccessMatchLink,
+    TailscaleUserToDeviceAccessMatchLink,
+    TailscaleUserToServiceAccessMatchLink,
+)
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

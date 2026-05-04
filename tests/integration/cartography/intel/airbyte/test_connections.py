@@ -1,5 +1,4 @@
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cartography.intel.airbyte.connections
 import tests.data.airbyte.connections
@@ -19,8 +18,7 @@ from tests.integration.cartography.intel.airbyte.test_tags import (
 from tests.integration.cartography.intel.airbyte.test_workspaces import (
     _ensure_local_neo4j_has_test_workspaces,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = "31634962-4b3c-4b0c-810d-a2a77d6df222"

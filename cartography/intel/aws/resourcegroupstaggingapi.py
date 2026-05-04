@@ -1,20 +1,16 @@
 import logging
 from string import Template
-from typing import Any
-from typing import Dict
-from typing import List
+from typing import Any, Dict, List
 
 import boto3
 import neo4j
 
 from cartography.client.core.tx import execute_write_with_retry
 from cartography.helpers import batch
-from cartography.intel.aws.iam import get_role_tags
-from cartography.intel.aws.iam import get_user_tags
+from cartography.intel.aws.iam import get_role_tags, get_user_tags
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.stats import get_stats_client
-from cartography.util import aws_handle_regions
-from cartography.util import timeit
+from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

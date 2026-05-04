@@ -7,8 +7,7 @@ import tests.data.openai.projects
 from tests.integration.cartography.intel.openai.test_users import (
     _ensure_local_neo4j_has_test_users,
 )
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = "org-iwai3meew4phaeNgu8ae"

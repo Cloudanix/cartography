@@ -1,15 +1,13 @@
 import logging
 import os
-from typing import List
-from typing import Union
+from typing import List, Union
 
 from marshmallow import ValidationError
 
 from cartography.driftdetect.config import GetDriftConfig
 from cartography.driftdetect.model import State
 from cartography.driftdetect.reporter import report_drift
-from cartography.driftdetect.serializers import ShortcutSchema
-from cartography.driftdetect.serializers import StateSchema
+from cartography.driftdetect.serializers import ShortcutSchema, StateSchema
 from cartography.driftdetect.storage import FileSystem
 from cartography.driftdetect.util import valid_directory
 

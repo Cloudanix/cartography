@@ -9,8 +9,7 @@ This addresses the bug where truthy checks on parent lists (if clusters_raw:)
 would skip cleanup when the list was empty, leaving orphaned child nodes.
 """
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp as gcp
 import cartography.intel.gcp.bigtable_backup as bigtable_backup

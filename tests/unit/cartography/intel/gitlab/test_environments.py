@@ -1,15 +1,18 @@
 """Unit tests for GitLab environments module."""
 
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import requests
 
-from cartography.intel.gitlab.environments import get_environments
-from cartography.intel.gitlab.environments import transform_environments
-from tests.data.gitlab.environments import GET_ENVIRONMENTS_RESPONSE
-from tests.data.gitlab.environments import TEST_GITLAB_URL
-from tests.data.gitlab.environments import TEST_PROJECT_ID
+from cartography.intel.gitlab.environments import (
+    get_environments,
+    transform_environments,
+)
+from tests.data.gitlab.environments import (
+    GET_ENVIRONMENTS_RESPONSE,
+    TEST_GITLAB_URL,
+    TEST_PROJECT_ID,
+)
 
 
 def _http_error(status_code: int) -> requests.exceptions.HTTPError:

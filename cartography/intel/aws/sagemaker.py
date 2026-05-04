@@ -1,30 +1,33 @@
 import logging
 import time
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
     AWSLinker = None
 
 from cartography.intel.aws.ec2.util import get_botocore_config
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import run_cleanup_job, timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker() if AWSLinker else None
 
 
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
-    client = boto3_session.client(service, region_name=region, config=get_botocore_config())
+    client = boto3_session.client(
+        service, region_name=region, config=get_botocore_config()
+    )
     return client
 
 
 @timeit
-def get_notebook_instances_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_notebook_instances_list(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict]:
     instances: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
@@ -35,7 +38,9 @@ def get_notebook_instances_list(boto3_session: boto3.session.Session, region: st
 
         for instance in instances:
             instance["region"] = region
-            instance["consolelink"] = aws_console_link.get_console_link(arn=instance['NotebookInstanceArn'])
+            instance["consolelink"] = aws_console_link.get_console_link(
+                arn=instance["NotebookInstanceArn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -51,7 +56,9 @@ def load_notebook_instances(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_notebook_instances_tx, instances, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_notebook_instances_tx, instances, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
@@ -103,7 +110,9 @@ def get_endpoints_list(boto3_session: boto3.session.Session, region: str) -> Lis
 
         for endpoint in endpoints:
             endpoint["region"] = region
-            endpoint["consolelink"] = aws_console_link.get_console_link(arn=endpoint['EndpointArn'])
+            endpoint["consolelink"] = aws_console_link.get_console_link(
+                arn=endpoint["EndpointArn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -119,7 +128,9 @@ def load_endpoints(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_endpoints_tx, endpoints, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_endpoints_tx, endpoints, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
@@ -157,7 +168,9 @@ def _load_endpoints_tx(
 
 
 @timeit
-def get_training_jobs_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_training_jobs_list(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict]:
     training_jobs: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
@@ -168,7 +181,9 @@ def get_training_jobs_list(boto3_session: boto3.session.Session, region: str) ->
 
         for training_job in training_jobs:
             training_job["region"] = region
-            training_job["consolelink"] = aws_console_link.get_console_link(arn=training_job['TrainingJobArn'])
+            training_job["consolelink"] = aws_console_link.get_console_link(
+                arn=training_job["TrainingJobArn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -184,7 +199,9 @@ def load_training_jobs(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_training_jobs_tx, training_jobs, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_training_jobs_tx, training_jobs, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
@@ -234,7 +251,9 @@ def get_models_list(boto3_session: boto3.session.Session, region: str) -> List[D
 
         for model in models:
             model["region"] = region
-            model["consolelink"] = aws_console_link.get_console_link(arn=model['ModelArn'])
+            model["consolelink"] = aws_console_link.get_console_link(
+                arn=model["ModelArn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -250,7 +269,9 @@ def load_models(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_models_tx, models, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_models_tx, models, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
@@ -297,7 +318,9 @@ def get_domains_list(boto3_session: boto3.session.Session, region: str) -> List[
 
         for domain in domains:
             domain["region"] = region
-            domain["consolelink"] = aws_console_link.get_console_link(arn=domain['DomainArn'])
+            domain["consolelink"] = aws_console_link.get_console_link(
+                arn=domain["DomainArn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -313,7 +336,9 @@ def load_domains(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_domains_tx, domains, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_domains_tx, domains, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
@@ -364,7 +389,9 @@ def get_clusters_list(boto3_session: boto3.session.Session, region: str) -> List
 
         for cluster in clusters:
             cluster["region"] = region
-            cluster["consolelink"] = aws_console_link.get_console_link(arn=cluster['ClusterArn'])
+            cluster["consolelink"] = aws_console_link.get_console_link(
+                arn=cluster["ClusterArn"]
+            )
 
     except Exception as e:
         logger.warning(
@@ -380,7 +407,9 @@ def load_clusters(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(_load_clusters_tx, clusters, current_aws_account_id, aws_update_tag)
+    neo4j_session.write_transaction(
+        _load_clusters_tx, clusters, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
@@ -417,22 +446,34 @@ def _load_clusters_tx(
 
 
 @timeit
-def cleanup_sagemaker(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_sagemaker_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_sagemaker(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "aws_import_sagemaker_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_sagemaker(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: str, current_aws_account_id: str,
-    aws_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: str,
+    current_aws_account_id: str,
+    aws_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     notebook_instances_list = []
     for region in regions:
-        notebook_instances_list.extend(get_notebook_instances_list(boto3_session, region))
+        notebook_instances_list.extend(
+            get_notebook_instances_list(boto3_session, region)
+        )
 
     logger.info(f"Total notebook instances: {len(notebook_instances_list)}")
 
-    load_notebook_instances(neo4j_session, notebook_instances_list, current_aws_account_id, aws_update_tag)
+    load_notebook_instances(
+        neo4j_session, notebook_instances_list, current_aws_account_id, aws_update_tag
+    )
 
     endpoints_list = []
     for region in regions:
@@ -440,7 +481,9 @@ def sync_sagemaker(
 
     logger.info(f"Total endpoints: {len(endpoints_list)}")
 
-    load_endpoints(neo4j_session, endpoints_list, current_aws_account_id, aws_update_tag)
+    load_endpoints(
+        neo4j_session, endpoints_list, current_aws_account_id, aws_update_tag
+    )
 
     training_jobs_list = []
     for region in regions:
@@ -448,7 +491,9 @@ def sync_sagemaker(
 
     logger.info(f"Total training jobs: {len(training_jobs_list)}")
 
-    load_training_jobs(neo4j_session, training_jobs_list, current_aws_account_id, aws_update_tag)
+    load_training_jobs(
+        neo4j_session, training_jobs_list, current_aws_account_id, aws_update_tag
+    )
 
     models_list = []
     for region in regions:
@@ -477,13 +522,26 @@ def sync_sagemaker(
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
 
-    logger.info("Syncing Sagemaker for account '%s', at %s.", current_aws_account_id, tic)
-    sync_sagemaker(neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters)
+    logger.info(
+        "Syncing Sagemaker for account '%s', at %s.", current_aws_account_id, tic
+    )
+    sync_sagemaker(
+        neo4j_session,
+        boto3_session,
+        regions,
+        current_aws_account_id,
+        update_tag,
+        common_job_parameters,
+    )
 
     cleanup_sagemaker(neo4j_session, common_job_parameters)
 

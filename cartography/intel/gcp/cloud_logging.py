@@ -1,20 +1,19 @@
 import json
 import logging
 import time
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import neo4j
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
+
+from cartography.util import run_cleanup_job, timeit
 
 from . import label
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker() if GCPLinker else None
@@ -27,23 +26,35 @@ def get_logging_metrics(logging: Resource, project_id: str) -> List[Dict]:
         req = logging.projects().metrics().list(parent=f"projects/{project_id}")
         while req is not None:
             res = req.execute()
-            if res.get('metrics'):
-                for metric in res['metrics']:
-                    metric['region'] = 'global'
-                    metric['id'] = metric['name']
-                    metric['metric_name'] = metric.get('name').split('/')[-1]
-                    metric['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name="cloud_logging_metric")
+            if res.get("metrics"):
+                for metric in res["metrics"]:
+                    metric["region"] = "global"
+                    metric["id"] = metric["name"]
+                    metric["metric_name"] = metric.get("name").split("/")[-1]
+                    metric["consolelink"] = gcp_console_link.get_console_link(
+                        project_id=project_id, resource_name="cloud_logging_metric"
+                    )
                     metrics.append(metric)
-            req = logging.projects().metrics().list_next(previous_request=req, previous_response=res)
+            req = (
+                logging.projects()
+                .metrics()
+                .list_next(previous_request=req, previous_response=res)
+            )
 
         return metrics
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve logging metrics on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -51,14 +62,20 @@ def get_logging_metrics(logging: Resource, project_id: str) -> List[Dict]:
 
 
 @timeit
-def load_logging_metrics(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.write_transaction(load_logging_metrics_tx, data_list, project_id, update_tag)
+def load_logging_metrics(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.write_transaction(
+        load_logging_metrics_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def load_logging_metrics_tx(
-    tx: neo4j.Transaction, data: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    data: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -94,14 +111,21 @@ def load_logging_metrics_tx(
 
 
 @timeit
-def cleanup_logging_metrics(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_logging_metrics_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_logging_metrics(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_logging_metrics_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_logging_metrics(
-    neo4j_session: neo4j.Session, logging: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    logging: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     metrics = get_logging_metrics(logging, project_id)
@@ -117,22 +141,34 @@ def get_logging_sinks(logging: Resource, project_id: str) -> List[Dict]:
         req = logging.sinks().list(parent=f"projects/{project_id}")
         while req is not None:
             res = req.execute()
-            if res.get('sinks'):
-                for sink in res['sinks']:
-                    sink['region'] = 'global'
-                    sink['id'] = f"projects/{project_id}/sinks/{sink['name']}"
-                    sink['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='cloud_logging_sink')
+            if res.get("sinks"):
+                for sink in res["sinks"]:
+                    sink["region"] = "global"
+                    sink["id"] = f"projects/{project_id}/sinks/{sink['name']}"
+                    sink["consolelink"] = gcp_console_link.get_console_link(
+                        project_id=project_id, resource_name="cloud_logging_sink"
+                    )
                     sinks.append(sink)
-            req = logging.projects().sinks().list_next(previous_request=req, previous_response=res)
+            req = (
+                logging.projects()
+                .sinks()
+                .list_next(previous_request=req, previous_response=res)
+            )
 
         return sinks
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve logging sinks on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -140,14 +176,18 @@ def get_logging_sinks(logging: Resource, project_id: str) -> List[Dict]:
 
 
 @timeit
-def load_logging_sinks(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+def load_logging_sinks(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.write_transaction(load_logging_sinks_tx, data_list, project_id, update_tag)
 
 
 @timeit
 def load_logging_sinks_tx(
-    tx: neo4j.Transaction, data: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    data: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -183,14 +223,21 @@ def load_logging_sinks_tx(
 
 
 @timeit
-def cleanup_logging_sinks(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_logging_sinks_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_logging_sinks(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_logging_sinks_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_logging_sinks(
-    neo4j_session: neo4j.Session, logging: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    logging: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     sinks = get_logging_sinks(logging, project_id)
@@ -200,8 +247,12 @@ def sync_logging_sinks(
 
 
 def sync(
-    neo4j_session: neo4j.Session, logging: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: dict, regions: list,
+    neo4j_session: neo4j.Session,
+    logging: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: dict,
+    regions: list,
 ) -> None:
 
     tic = time.perf_counter()
@@ -209,12 +260,18 @@ def sync(
     logger.info(f"Syncing logging for project {project_id}, at {tic}")
 
     sync_logging_metrics(
-        neo4j_session, logging, project_id,
-        gcp_update_tag, common_job_parameters,
+        neo4j_session,
+        logging,
+        project_id,
+        gcp_update_tag,
+        common_job_parameters,
     )
     sync_logging_sinks(
-        neo4j_session, logging, project_id,
-        gcp_update_tag, common_job_parameters,
+        neo4j_session,
+        logging,
+        project_id,
+        gcp_update_tag,
+        common_job_parameters,
     )
 
     toc = time.perf_counter()

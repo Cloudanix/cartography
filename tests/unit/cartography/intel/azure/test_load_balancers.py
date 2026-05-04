@@ -1,5 +1,7 @@
-from cartography.intel.azure.load_balancers import transform_backend_pools
-from cartography.intel.azure.load_balancers import transform_frontend_ips
+from cartography.intel.azure.load_balancers import (
+    transform_backend_pools,
+    transform_frontend_ips,
+)
 
 
 def test_transform_frontend_ips_extracts_nested_public_ip_id() -> None:

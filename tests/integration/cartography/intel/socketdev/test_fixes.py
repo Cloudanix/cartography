@@ -14,8 +14,7 @@ from tests.data.socketdev.alerts import ALERTS_RESPONSE
 from tests.data.socketdev.dependencies import DEPENDENCIES_RESPONSE
 from tests.data.socketdev.organizations import ORGANIZATIONS_RESPONSE
 from tests.data.socketdev.repositories import REPOSITORIES_RESPONSE
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = "org-001"

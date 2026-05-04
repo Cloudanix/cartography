@@ -9,8 +9,8 @@ import pytest
 
 from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
-from tests.data.graph.matchlink.iam_permissions import PrincipalToS3BucketPermissionRel
 from tests.data.graph.matchlink.iam_permissions import (
+    PrincipalToS3BucketPermissionRel,
     PrincipalToS3BucketScopedPermissionRel,
 )
 from tests.integration.util import check_rels

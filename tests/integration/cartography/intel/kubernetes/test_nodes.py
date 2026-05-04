@@ -4,12 +4,12 @@ import cartography.intel.kubernetes.nodes as nodes_module
 import cartography.intel.kubernetes.pods as pods_module
 from cartography.intel.kubernetes.nodes import sync_nodes
 from cartography.intel.kubernetes.pods import sync_pods
-from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_IDS
-from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_NAMES
-from tests.data.kubernetes.nodes import RAW_NODES
-from tests.data.kubernetes.nodes import RAW_PODS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.kubernetes.clusters import (
+    KUBERNETES_CLUSTER_IDS,
+    KUBERNETES_CLUSTER_NAMES,
+)
+from tests.data.kubernetes.nodes import RAW_NODES, RAW_PODS
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 CLUSTER_ID = KUBERNETES_CLUSTER_IDS[0]

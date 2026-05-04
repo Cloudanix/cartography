@@ -2,8 +2,7 @@ from unittest.mock import patch
 
 import cartography.intel.github.commits
 from tests.data.github.commits import MOCK_COMMITS_BY_REPO
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_GITHUB_URL = "https://fake.github.net/graphql/"

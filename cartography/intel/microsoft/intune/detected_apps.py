@@ -1,19 +1,19 @@
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
-from typing import Any
-from typing import Mapping
+from typing import Any, Mapping
 
 import neo4j
 from msgraph import GraphServiceClient
 
-from cartography.client.core.tx import load
-from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load, load_matchlinks
 from cartography.graph.job import GraphJob
-from cartography.intel.microsoft.intune.reports import export_report_rows
-from cartography.intel.microsoft.intune.reports import ExportedReportRows
-from cartography.models.microsoft.intune.detected_app import IntuneDetectedAppSchema
+from cartography.intel.microsoft.intune.reports import (
+    ExportedReportRows,
+    export_report_rows,
+)
 from cartography.models.microsoft.intune.detected_app import (
+    IntuneDetectedAppSchema,
     IntuneManagedDeviceToDetectedAppMatchLink,
 )
 from cartography.util import timeit

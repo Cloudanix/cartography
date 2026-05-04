@@ -3,12 +3,9 @@ from unittest.mock import patch
 import pytest
 
 import cartography.intel.microsoft.entra.users
-from cartography.intel.microsoft.entra.users import load_tenant
-from cartography.intel.microsoft.entra.users import sync_entra_users
-from tests.data.microsoft.entra.users import MOCK_ENTRA_USERS
-from tests.data.microsoft.entra.users import TEST_TENANT_ID
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from cartography.intel.microsoft.entra.users import load_tenant, sync_entra_users
+from tests.data.microsoft.entra.users import MOCK_ENTRA_USERS, TEST_TENANT_ID
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 1234567890
 

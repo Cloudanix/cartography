@@ -7,10 +7,12 @@ from googleapiclient.errors import HttpError
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gcp.util import gcp_api_execute_with_retry
-from cartography.intel.gcp.util import is_api_disabled_error
-from cartography.intel.gcp.util import is_billing_disabled_error
-from cartography.intel.gcp.util import summarize_gcp_http_error
+from cartography.intel.gcp.util import (
+    gcp_api_execute_with_retry,
+    is_api_disabled_error,
+    is_billing_disabled_error,
+    summarize_gcp_http_error,
+)
 from cartography.models.gcp.kms.cryptokey import GCPCryptoKeySchema
 from cartography.models.gcp.kms.keyring import GCPKeyRingSchema
 from cartography.util import timeit

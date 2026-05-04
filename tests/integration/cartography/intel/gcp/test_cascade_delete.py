@@ -9,8 +9,7 @@ without cascade_delete, the project's resources (instances, buckets, etc.)
 would remain as orphans since resource cleanup is scoped to PROJECT_ID.
 """
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp
 import cartography.intel.gcp.crm.folders

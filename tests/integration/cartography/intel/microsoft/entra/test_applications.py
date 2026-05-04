@@ -17,14 +17,15 @@ from cartography.intel.microsoft.entra.federation.aws_identity_center import (
 )
 from cartography.intel.microsoft.entra.service_principals import sync_service_principals
 from cartography.intel.microsoft.entra.users import load_tenant
-from tests.data.microsoft.entra.applications import MOCK_APP_ROLE_ASSIGNMENTS
-from tests.data.microsoft.entra.applications import MOCK_ENTRA_APPLICATIONS
-from tests.data.microsoft.entra.applications import MOCK_SERVICE_PRINCIPALS
-from tests.data.microsoft.entra.applications import TEST_CLIENT_ID
-from tests.data.microsoft.entra.applications import TEST_CLIENT_SECRET
-from tests.data.microsoft.entra.applications import TEST_TENANT_ID
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.data.microsoft.entra.applications import (
+    MOCK_APP_ROLE_ASSIGNMENTS,
+    MOCK_ENTRA_APPLICATIONS,
+    MOCK_SERVICE_PRINCIPALS,
+    TEST_CLIENT_ID,
+    TEST_CLIENT_SECRET,
+    TEST_TENANT_ID,
+)
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 1234567890
 

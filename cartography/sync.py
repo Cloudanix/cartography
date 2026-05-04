@@ -3,10 +3,7 @@ import re
 import time
 from collections import OrderedDict
 from pkgutil import iter_modules
-from typing import Callable
-from typing import List
-
-import cloudanix
+from typing import Callable, List
 
 import neo4j.exceptions
 from neo4j import GraphDatabase
@@ -14,6 +11,7 @@ from statsd import StatsClient
 
 import cartography.intel.analysis
 import cartography.intel.create_indexes
+import cloudanix
 
 # Provider intel modules — wrapped so missing deps don't break import
 try:
@@ -204,8 +202,7 @@ except ImportError:
     cartography.intel.workos = None  # type: ignore[assignment]
 from cartography.config import Config
 from cartography.stats import set_stats_client
-from cartography.util import STATUS_FAILURE
-from cartography.util import STATUS_SUCCESS
+from cartography.util import STATUS_FAILURE, STATUS_SUCCESS
 
 logger = logging.getLogger(__name__)
 
@@ -215,64 +212,83 @@ def _mod(attr_path: str):
     parts = attr_path.rsplit(".", 1)
     mod_path, attr = parts[0], parts[1]
     import sys
+
     mod = sys.modules.get(mod_path)
     return getattr(mod, attr, None) if mod else None
 
 
 TOP_LEVEL_MODULES: OrderedDict[str, Callable[..., None]] = OrderedDict(
-    {k: v for k, v in {
-        # preserve order so that the default sync always runs `analysis` at the very end
-        "create-indexes": cartography.intel.create_indexes.run,
-        "aws": _mod("cartography.intel.aws.start_aws_ingestion"),
-        "azure": _mod("cartography.intel.azure.start_azure_ingestion"),
-        "bigfix": _mod("cartography.intel.bigfix.start_bigfix_ingestion"),
-        "crowdstrike": _mod("cartography.intel.crowdstrike.start_crowdstrike_ingestion"),
-        "gcp": _mod("cartography.intel.gcp.start_gcp_ingestion"),
-        "gsuite": _mod("cartography.intel.gsuite.start_gsuite_ingestion"),
-        "cve": _mod("cartography.intel.cve.start_cve_ingestion"),
-        "cve_metadata": _mod("cartography.intel.cve_metadata.start_cve_metadata_ingestion"),
-        "oci": _mod("cartography.intel.oci.start_oci_ingestion"),
-        "okta": _mod("cartography.intel.okta.start_okta_ingestion"),
-        "github": _mod("cartography.intel.github.start_github_ingestion"),
-        "gitlab": _mod("cartography.intel.gitlab.start_gitlab_ingestion"),
-        "digitalocean": _mod("cartography.intel.digitalocean.start_digitalocean_ingestion"),
-        "kubernetes": _mod("cartography.intel.kubernetes.start_k8s_ingestion"),
-        "lastpass": _mod("cartography.intel.lastpass.start_lastpass_ingestion"),
-        "duo": _mod("cartography.intel.duo.start_duo_ingestion"),
-        "semgrep": _mod("cartography.intel.semgrep.start_semgrep_ingestion"),
-        "jamf": _mod("cartography.intel.jamf.start_jamf_ingestion"),
-        "pagerduty": _mod("cartography.intel.pagerduty.start_pagerduty_ingestion"),
-        # Phase 7 modules — available when ported
-        "aibom": _mod("cartography.intel.aibom.start_aibom_ingestion"),
-        "airbyte": _mod("cartography.intel.airbyte.start_airbyte_ingestion"),
-        "anthropic": _mod("cartography.intel.anthropic.start_anthropic_ingestion"),
-        "cloudflare": _mod("cartography.intel.cloudflare.start_cloudflare_ingestion"),
-        "docker_scout": _mod("cartography.intel.docker_scout.start_docker_scout_ingestion"),
-        "googleworkspace": _mod("cartography.intel.googleworkspace.start_googleworkspace_ingestion"),
-        "jumpcloud": _mod("cartography.intel.jumpcloud.start_jumpcloud_ingestion"),
-        "kandji": _mod("cartography.intel.kandji.start_kandji_ingestion"),
-        "keycloak": _mod("cartography.intel.keycloak.start_keycloak_ingestion"),
-        "microsoft": _mod("cartography.intel.microsoft.start_microsoft_ingestion"),
-        "ontology": _mod("cartography.intel.ontology.run"),
-        "openai": _mod("cartography.intel.openai.start_openai_ingestion"),
-        "scaleway": _mod("cartography.intel.scaleway.start_scaleway_ingestion"),
-        "sentinelone": _mod("cartography.intel.sentinelone.start_sentinelone_ingestion"),
-        "sentry": _mod("cartography.intel.sentry.start_sentry_ingestion"),
-        "slack": _mod("cartography.intel.slack.start_slack_ingestion"),
-        "snipeit": _mod("cartography.intel.snipeit.start_snipeit_ingestion"),
-        "socketdev": _mod("cartography.intel.socketdev.start_socketdev_ingestion"),
-        "spacelift": _mod("cartography.intel.spacelift.start_spacelift_ingestion"),
-        "subimage": _mod("cartography.intel.subimage.start_subimage_ingestion"),
-        "syft": _mod("cartography.intel.syft.start_syft_ingestion"),
-        "tailscale": _mod("cartography.intel.tailscale.start_tailscale_ingestion"),
-        "trivy": _mod("cartography.intel.trivy.start_trivy_ingestion"),
-        "ubuntu": _mod("cartography.intel.ubuntu.start_ubuntu_ingestion"),
-        "vercel": _mod("cartography.intel.vercel.start_vercel_ingestion"),
-        "workday": _mod("cartography.intel.workday.start_workday_ingestion"),
-        "workos": _mod("cartography.intel.workos.start_workos_ingestion"),
-        # Analysis should be the last stage
-        "analysis": cartography.intel.analysis.run,
-    }.items() if v is not None}
+    {
+        k: v
+        for k, v in {
+            # preserve order so that the default sync always runs `analysis` at the very end
+            "create-indexes": cartography.intel.create_indexes.run,
+            "aws": _mod("cartography.intel.aws.start_aws_ingestion"),
+            "azure": _mod("cartography.intel.azure.start_azure_ingestion"),
+            "bigfix": _mod("cartography.intel.bigfix.start_bigfix_ingestion"),
+            "crowdstrike": _mod(
+                "cartography.intel.crowdstrike.start_crowdstrike_ingestion"
+            ),
+            "gcp": _mod("cartography.intel.gcp.start_gcp_ingestion"),
+            "gsuite": _mod("cartography.intel.gsuite.start_gsuite_ingestion"),
+            "cve": _mod("cartography.intel.cve.start_cve_ingestion"),
+            "cve_metadata": _mod(
+                "cartography.intel.cve_metadata.start_cve_metadata_ingestion"
+            ),
+            "oci": _mod("cartography.intel.oci.start_oci_ingestion"),
+            "okta": _mod("cartography.intel.okta.start_okta_ingestion"),
+            "github": _mod("cartography.intel.github.start_github_ingestion"),
+            "gitlab": _mod("cartography.intel.gitlab.start_gitlab_ingestion"),
+            "digitalocean": _mod(
+                "cartography.intel.digitalocean.start_digitalocean_ingestion"
+            ),
+            "kubernetes": _mod("cartography.intel.kubernetes.start_k8s_ingestion"),
+            "lastpass": _mod("cartography.intel.lastpass.start_lastpass_ingestion"),
+            "duo": _mod("cartography.intel.duo.start_duo_ingestion"),
+            "semgrep": _mod("cartography.intel.semgrep.start_semgrep_ingestion"),
+            "jamf": _mod("cartography.intel.jamf.start_jamf_ingestion"),
+            "pagerduty": _mod("cartography.intel.pagerduty.start_pagerduty_ingestion"),
+            # Phase 7 modules — available when ported
+            "aibom": _mod("cartography.intel.aibom.start_aibom_ingestion"),
+            "airbyte": _mod("cartography.intel.airbyte.start_airbyte_ingestion"),
+            "anthropic": _mod("cartography.intel.anthropic.start_anthropic_ingestion"),
+            "cloudflare": _mod(
+                "cartography.intel.cloudflare.start_cloudflare_ingestion"
+            ),
+            "docker_scout": _mod(
+                "cartography.intel.docker_scout.start_docker_scout_ingestion"
+            ),
+            "googleworkspace": _mod(
+                "cartography.intel.googleworkspace.start_googleworkspace_ingestion"
+            ),
+            "jumpcloud": _mod("cartography.intel.jumpcloud.start_jumpcloud_ingestion"),
+            "kandji": _mod("cartography.intel.kandji.start_kandji_ingestion"),
+            "keycloak": _mod("cartography.intel.keycloak.start_keycloak_ingestion"),
+            "microsoft": _mod("cartography.intel.microsoft.start_microsoft_ingestion"),
+            "ontology": _mod("cartography.intel.ontology.run"),
+            "openai": _mod("cartography.intel.openai.start_openai_ingestion"),
+            "scaleway": _mod("cartography.intel.scaleway.start_scaleway_ingestion"),
+            "sentinelone": _mod(
+                "cartography.intel.sentinelone.start_sentinelone_ingestion"
+            ),
+            "sentry": _mod("cartography.intel.sentry.start_sentry_ingestion"),
+            "slack": _mod("cartography.intel.slack.start_slack_ingestion"),
+            "snipeit": _mod("cartography.intel.snipeit.start_snipeit_ingestion"),
+            "socketdev": _mod("cartography.intel.socketdev.start_socketdev_ingestion"),
+            "spacelift": _mod("cartography.intel.spacelift.start_spacelift_ingestion"),
+            "subimage": _mod("cartography.intel.subimage.start_subimage_ingestion"),
+            "syft": _mod("cartography.intel.syft.start_syft_ingestion"),
+            "tailscale": _mod("cartography.intel.tailscale.start_tailscale_ingestion"),
+            "trivy": _mod("cartography.intel.trivy.start_trivy_ingestion"),
+            "ubuntu": _mod("cartography.intel.ubuntu.start_ubuntu_ingestion"),
+            "vercel": _mod("cartography.intel.vercel.start_vercel_ingestion"),
+            "workday": _mod("cartography.intel.workday.start_workday_ingestion"),
+            "workos": _mod("cartography.intel.workos.start_workos_ingestion"),
+            # Analysis should be the last stage
+            "analysis": cartography.intel.analysis.run,
+        }.items()
+        if v is not None
+    }
 )
 
 
@@ -750,6 +766,8 @@ def build_sync(selected_modules_as_str: str) -> Sync:
         [(sync_name, TOP_LEVEL_MODULES[sync_name]) for sync_name in selected_modules],
     )
     return sync
+
+
 def build_aws_sync():
     """
     Build the aws cartography sync, which runs all intelligence modules shipped with the cartography package.

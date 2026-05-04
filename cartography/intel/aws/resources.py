@@ -3,48 +3,50 @@ from typing import Callable
 
 from cartography.intel.aws.ec2.route_tables import sync_route_tables
 
-from . import acm
-from . import apigateway
-from . import apigatewayv2
-from . import bedrock
-from . import cloudfront
-from . import cloudtrail
-from . import cloudtrail_management_events
-from . import cloudwatch
-from . import codebuild
-from . import cognito
-from . import config
-from . import dynamodb
-from . import ecr
-from . import ecr_image_layers
-from . import ecs
-from . import efs
-from . import eks
-from . import elasticache
-from . import elasticsearch
-from . import emr
-from . import eventbridge
-from . import glue
-from . import guardduty
-from . import iam
-from . import identitycenter
-from . import inspector
-from . import kms
-from . import lambda_function
-from . import permission_relationships
-from . import rds
-from . import redshift
-from . import resourcegroupstaggingapi
-from . import route53
-from . import s3
-from . import s3accountpublicaccessblock
-from . import sagemaker
-from . import secretsmanager
-from . import securityhub
-from . import ses
-from . import sns
-from . import sqs
-from . import ssm
+from . import (
+    acm,
+    apigateway,
+    apigatewayv2,
+    bedrock,
+    cloudfront,
+    cloudtrail,
+    cloudtrail_management_events,
+    cloudwatch,
+    codebuild,
+    cognito,
+    config,
+    dynamodb,
+    ecr,
+    ecr_image_layers,
+    ecs,
+    efs,
+    eks,
+    elasticache,
+    elasticsearch,
+    emr,
+    eventbridge,
+    glue,
+    guardduty,
+    iam,
+    identitycenter,
+    inspector,
+    kms,
+    lambda_function,
+    permission_relationships,
+    rds,
+    redshift,
+    resourcegroupstaggingapi,
+    route53,
+    s3,
+    s3accountpublicaccessblock,
+    sagemaker,
+    secretsmanager,
+    securityhub,
+    ses,
+    sns,
+    sqs,
+    ssm,
+)
 from .ec2.auto_scaling_groups import sync_ec2_auto_scaling_groups
 from .ec2.elastic_ip_addresses import sync_elastic_ip_addresses
 from .ec2.images import sync_ec2_images
@@ -52,8 +54,7 @@ from .ec2.instances import sync_ec2_instances
 from .ec2.internet_gateways import sync_internet_gateways
 from .ec2.key_pairs import sync_ec2_key_pairs
 from .ec2.launch_templates import sync_ec2_launch_templates
-from .ec2.load_balancer_v2s import sync_load_balancer_v2_expose
-from .ec2.load_balancer_v2s import sync_load_balancer_v2s
+from .ec2.load_balancer_v2s import sync_load_balancer_v2_expose, sync_load_balancer_v2s
 from .ec2.load_balancers import sync_load_balancers
 from .ec2.network_acls import sync_network_acls
 from .ec2.network_interfaces import sync_network_interfaces

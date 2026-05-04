@@ -1,9 +1,7 @@
 # Okta intel module - Group
 import json
 import logging
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 import neo4j
 from okta.framework.ApiClient import ApiClient
@@ -13,9 +11,11 @@ from okta.models.usergroup import UserGroup
 
 from cartography.client.core.tx import run_write_query
 from cartography.intel.okta.sync_state import OktaSyncState
-from cartography.intel.okta.utils import check_rate_limit
-from cartography.intel.okta.utils import create_api_client
-from cartography.intel.okta.utils import is_last_page
+from cartography.intel.okta.utils import (
+    check_rate_limit,
+    create_api_client,
+    is_last_page,
+)
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

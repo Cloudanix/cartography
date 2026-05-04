@@ -6,9 +6,7 @@ from kubernetes.client.models import V1Namespace
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.kubernetes.util import get_epoch
-from cartography.intel.kubernetes.util import k8s_paginate
-from cartography.intel.kubernetes.util import K8sClient
+from cartography.intel.kubernetes.util import K8sClient, get_epoch, k8s_paginate
 from cartography.models.kubernetes.namespaces import KubernetesNamespaceSchema
 from cartography.util import timeit
 

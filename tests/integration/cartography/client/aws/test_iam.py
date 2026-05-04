@@ -1,12 +1,13 @@
 from cartography.client.aws.iam import get_aws_admin_like_principals
 from cartography.client.core.tx import load
-from cartography.intel.aws.iam import _transform_policy_statements
-from cartography.intel.aws.iam import load_groups
-from cartography.intel.aws.iam import load_policy_statements
-from cartography.intel.aws.iam import transform_groups
+from cartography.intel.aws.iam import (
+    _transform_policy_statements,
+    load_groups,
+    load_policy_statements,
+    transform_groups,
+)
 from cartography.models.aws.iam.inline_policy import AWSInlinePolicySchema
-from tests.data.aws.iam import INLINE_POLICY_STATEMENTS
-from tests.data.aws.iam import LIST_GROUPS
+from tests.data.aws.iam import INLINE_POLICY_STATEMENTS, LIST_GROUPS
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_UPDATE_TAG = 0000

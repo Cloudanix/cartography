@@ -2,8 +2,7 @@ import os
 from typing import Optional
 
 import sentry_sdk
-from sentry_sdk import capture_exception
-from sentry_sdk import capture_message
+from sentry_sdk import capture_exception, capture_message
 
 sentry_sdk.init(
     dsn=os.environ.get("CDX_SENTRY_DSN"),

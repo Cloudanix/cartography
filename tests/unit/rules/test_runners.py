@@ -5,14 +5,10 @@ These tests focus on verifying that the aggregation logic for findings
 correctly sums up from facts → findings.
 """
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from cartography.rules.runners import _run_single_rule
-from cartography.rules.spec.model import Fact
-from cartography.rules.spec.model import Framework
-from cartography.rules.spec.model import Maturity
-from cartography.rules.spec.model import Rule
+from cartography.rules.spec.model import Fact, Framework, Maturity, Rule
 from cartography.rules.spec.result import FactResult
 
 

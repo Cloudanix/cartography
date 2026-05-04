@@ -8,10 +8,12 @@ from neo4j import Session
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.common.object_store import filter_report_refs
-from cartography.intel.common.object_store import read_text_report
-from cartography.intel.common.object_store import ReportRef
-from cartography.intel.common.object_store import S3BucketReader
+from cartography.intel.common.object_store import (
+    ReportRef,
+    S3BucketReader,
+    filter_report_refs,
+    read_text_report,
+)
 from cartography.intel.trivy.util import make_normalized_package_id
 from cartography.models.trivy.findings import TrivyImageFindingSchema
 from cartography.models.trivy.fix import TrivyFixSchema

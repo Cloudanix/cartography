@@ -1,11 +1,9 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cartography.intel.gcp.iam
 import tests.data.gcp.iam
 from cartography.graph.job import GraphJob
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_PROJECT_ID = "project-abc"
 TEST_ORG_ID = "organizations/123456789012"

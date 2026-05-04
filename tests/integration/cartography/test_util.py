@@ -1,7 +1,6 @@
 from unittest.mock import patch
 
-from cartography.stats import get_stats_client
-from cartography.stats import ScopedStatsClient
+from cartography.stats import ScopedStatsClient, get_stats_client
 from cartography.util import merge_module_sync_metadata
 
 TEST_ACCOUNT_ID = "000000000000"

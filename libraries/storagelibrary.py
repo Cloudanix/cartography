@@ -22,14 +22,14 @@ class StorageLibrary:
 
             blob.upload_from_string(payload)
 
-            blob.content_type = 'application/json'
-            blob.content_disposition = f'attachment; filename={file_name}'
+            blob.content_type = "application/json"
+            blob.content_disposition = f"attachment; filename={file_name}"
             blob.patch()
 
             return True
 
         except (AttributeError, GoogleCloudError) as ex:
-            logging.error(f'error while uploading payload to google storage: {str(ex)}')
+            logging.error(f"error while uploading payload to google storage: {str(ex)}")
 
             traceback.print_exception(type(ex), ex, ex.__traceback__)
 
@@ -45,14 +45,16 @@ class StorageLibrary:
         # Reference - https://gist.github.com/jezhumble/91051485db4462add82045ef9ac2a0ec
 
         auth_request = requests.Request()
-        signing_credentials = compute_engine.IDTokenCredentials(auth_request, "", storage_client._credentials.service_account_email)
+        signing_credentials = compute_engine.IDTokenCredentials(
+            auth_request, "", storage_client._credentials.service_account_email
+        )
 
         url = blob.generate_signed_url(
             version="v4",
             # This URL is valid for 15 minutes
             expiration=timedelta(minutes=duration),
             # Allow GET requests using this URL.
-            method='GET',
+            method="GET",
             credentials=signing_credentials,
         )
 

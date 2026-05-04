@@ -3,8 +3,7 @@ from unittest.mock import patch
 import cartography.intel.dns
 from cartography.client.core.tx import run_write_query
 from tests.data.dns import RESOLVED_IPS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from tests.integration.util import check_nodes, check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_FQDN = "example.cartography.test"

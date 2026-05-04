@@ -1,66 +1,79 @@
 import json
 import logging
 import time
-from typing import Dict
-from typing import List
+from typing import Dict, List
 
 import neo4j
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import HttpError, Resource
 
-from . import iam
-from . import label
-from cartography.util import run_cleanup_job
-from cartography.util import timeit
+from cartography.util import run_cleanup_job, timeit
+
+from . import iam, label
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker() if GCPLinker else None
 
 
 @timeit
-def get_gcp_functions(function: Resource, project_id: str, regions: list, common_job_parameters) -> List[Dict]:
+def get_gcp_functions(
+    function: Resource, project_id: str, regions: list, common_job_parameters
+) -> List[Dict]:
     """
-        Returns a list of functions for a given project.
+    Returns a list of functions for a given project.
 
-        :type functions: Resource
-        :param function: The function resource created by googleapiclient.discovery.build()
+    :type functions: Resource
+    :param function: The function resource created by googleapiclient.discovery.build()
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :type region: string
-        :param region: The region in which the function is defined
+    :type region: string
+    :param region: The region in which the function is defined
 
-        :rtype: list
-        :return: List of Functions
+    :rtype: list
+    :return: List of Functions
     """
     try:
         locations = []
         request = function.projects().locations().list(name=f"projects/{project_id}")
         while request is not None:
             response = request.execute()
-            for location in response['locations']:
+            for location in response["locations"]:
                 location["id"] = location.get("name", None)
-                location['location_name'] = location['name'].split('/')[-1]
+                location["location_name"] = location["name"].split("/")[-1]
                 if regions is None or len(regions) == 0:
                     locations.append(location)
                 else:
-                    if location['locationId'] in regions or location['locationId'] == 'global':
+                    if (
+                        location["locationId"] in regions
+                        or location["locationId"] == "global"
+                    ):
                         locations.append(location)
 
-            request = function.projects().locations().list_next(previous_request=request, previous_response=response)
+            request = (
+                function.projects()
+                .locations()
+                .list_next(previous_request=request, previous_response=response)
+            )
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Functions locations on project %s due to permissions issues.\
                         Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -69,65 +82,98 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
     try:
         functions = []
         for region in locations:
-            request = function.projects().locations().functions().list(
-                parent=region.get('name', None),
+            request = (
+                function.projects()
+                .locations()
+                .functions()
+                .list(
+                    parent=region.get("name", None),
+                )
             )
             while request is not None:
                 response = request.execute()
-                for func in response.get('functions', []):
-                    func['id'] = func['name']
-                    func['function_name'] = func['name'].split('/')[-1]
-                    func['region'] = region.get('locationId', 'global')
-                    func['consolelink'] = gcp_console_link.get_console_link(
-                        resource_name='cloud_function', project_id=project_id, cloud_function_name=func['name'].split('/')[-1], region=func['region'],
+                for func in response.get("functions", []):
+                    func["id"] = func["name"]
+                    func["function_name"] = func["name"].split("/")[-1]
+                    func["region"] = region.get("locationId", "global")
+                    func["consolelink"] = gcp_console_link.get_console_link(
+                        resource_name="cloud_function",
+                        project_id=project_id,
+                        cloud_function_name=func["name"].split("/")[-1],
+                        region=func["region"],
                     )
                     functions.append(func)
-                request = function.projects().locations().functions().list_next(
-                    previous_request=request,
-                    previous_response=response,
+                request = (
+                    function.projects()
+                    .locations()
+                    .functions()
+                    .list_next(
+                        previous_request=request,
+                        previous_response=response,
+                    )
                 )
 
         return functions
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Functions on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
             raise
 
 
-def get_function_policy_bindings(function: Resource, fns: Dict, project_id: str) -> List[Dict]:
+def get_function_policy_bindings(
+    function: Resource, fns: Dict, project_id: str
+) -> List[Dict]:
     """
-        Returns a list of bindings attached to IAM policy of a Function within the given project.
+    Returns a list of bindings attached to IAM policy of a Function within the given project.
 
-        :type function: The GCP function resource object
-        :param function: The functions resource object created by googleapiclient.discovery.build()
+    :type function: The GCP function resource object
+    :param function: The functions resource object created by googleapiclient.discovery.build()
 
-        :type Func: Dict
-        :param fns: The Dict object of function
+    :type Func: Dict
+    :param fns: The Dict object of function
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :rtype: list
-        :return: List of gcp function iam policy bindings
+    :rtype: list
+    :return: List of gcp function iam policy bindings
     """
     try:
-        iam_policy = function.projects().locations().functions().getIamPolicy(resource=fns['name']).execute()
-        bindings = iam_policy.get('bindings', [])
+        iam_policy = (
+            function.projects()
+            .locations()
+            .functions()
+            .getIamPolicy(resource=fns["name"])
+            .execute()
+        )
+        bindings = iam_policy.get("bindings", [])
         return bindings
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve iam policy of function on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -135,7 +181,9 @@ def get_function_policy_bindings(function: Resource, fns: Dict, project_id: str)
 
 
 @timeit
-def transform_function_policy_bindings(response_objects: List[Dict], function_id: str, project_id: str) -> List[Dict]:
+def transform_function_policy_bindings(
+    response_objects: List[Dict], function_id: str, project_id: str
+) -> List[Dict]:
     """
     Process the GCP function_policy_binding objects and return a flattened list of GCP bindings with all the necessary fields
     we need to load it into Neo4j
@@ -144,30 +192,37 @@ def transform_function_policy_bindings(response_objects: List[Dict], function_id
     """
     binding_list = []
     for res in response_objects:
-        res['id'] = f"projects/{project_id}/function/{function_id}/role/{res['role']}"
+        res["id"] = f"projects/{project_id}/function/{function_id}/role/{res['role']}"
         binding_list.append(res)
     return binding_list
 
 
 @timeit
-def load_functions(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+def load_functions(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.write_transaction(_load_functions_tx, data_list, project_id, update_tag)
 
 
 @timeit
-def _load_functions_tx(tx: neo4j.Transaction, functions: List[Resource], project_id: str, gcp_update_tag: int) -> None:
+def _load_functions_tx(
+    tx: neo4j.Transaction,
+    functions: List[Resource],
+    project_id: str,
+    gcp_update_tag: int,
+) -> None:
     """
-        :type neo4j_transaction: Neo4j transaction object
-        :param neo4j transaction: The Neo4j transaction object
+    :type neo4j_transaction: Neo4j transaction object
+    :param neo4j transaction: The Neo4j transaction object
 
-        :type function_resp: List
-        :param function_resp: A list GCP Functions
+    :type function_resp: List
+    :param function_resp: A list GCP Functions
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :type gcp_update_tag: timestamp
-        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :type gcp_update_tag: timestamp
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
     """
     ingest_functions = """
     UNWIND $functions as func
@@ -215,27 +270,31 @@ def _load_functions_tx(tx: neo4j.Transaction, functions: List[Resource], project
 
 
 @timeit
-def load_function_entity_relation(session: neo4j.Session, function: Dict, update_tag: int) -> None:
+def load_function_entity_relation(
+    session: neo4j.Session, function: Dict, update_tag: int
+) -> None:
     session.write_transaction(load_function_entity_relation_tx, function, update_tag)
 
 
 @timeit
-def load_function_entity_relation_tx(tx: neo4j.Transaction, function: Dict, gcp_update_tag: int) -> None:
+def load_function_entity_relation_tx(
+    tx: neo4j.Transaction, function: Dict, gcp_update_tag: int
+) -> None:
     """
-        :type neo4j_session: Neo4j session object
-        :param neo4j session: The Neo4j session object
+    :type neo4j_session: Neo4j session object
+    :param neo4j session: The Neo4j session object
 
-        :type function: Dict
-        :param fucntion: Function Dict object
+    :type function: Dict
+    :param fucntion: Function Dict object
 
-        :type project_id: str
-        :param project_id: Current Google Project Id
+    :type project_id: str
+    :param project_id: Current Google Project Id
 
-        :type gcp_update_tag: timestamp
-        :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :type gcp_update_tag: timestamp
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
 
-        :rtype: NoneType
-        :return: Nothing
+    :rtype: NoneType
+    :return: Nothing
     """
     ingest_entities = """
     UNWIND $entities AS entity
@@ -247,21 +306,27 @@ def load_function_entity_relation_tx(tx: neo4j.Transaction, function: Dict, gcp_
     SET r.lastupdated = $gcp_update_tag    """
     tx.run(
         ingest_entities,
-        function_id=function.get('id', None),
-        entities=function.get('entities', []),
+        function_id=function.get("id", None),
+        entities=function.get("entities", []),
         gcp_update_tag=gcp_update_tag,
     )
 
 
 @timeit
-def attach_function_to_binding(session: neo4j.Session, function_id: str, bindings: List[Dict], gcp_update_tag: int) -> None:
-    session.write_transaction(attach_function_to_bindings_tx, bindings, function_id, gcp_update_tag)
+def attach_function_to_binding(
+    session: neo4j.Session, function_id: str, bindings: List[Dict], gcp_update_tag: int
+) -> None:
+    session.write_transaction(
+        attach_function_to_bindings_tx, bindings, function_id, gcp_update_tag
+    )
 
 
 @timeit
 def attach_function_to_bindings_tx(
-    tx: neo4j.Transaction, bindings: List[Dict],
-    function_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    bindings: List[Dict],
+    function_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -289,7 +354,9 @@ def attach_function_to_bindings_tx(
 
 
 @timeit
-def cleanup_gcp_functions(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+def cleanup_gcp_functions(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
     """
     Delete out-of-date GCP Functions and relationships
 
@@ -302,11 +369,13 @@ def cleanup_gcp_functions(neo4j_session: neo4j.Session, common_job_parameters: D
     :rtype: NoneType
     :return: Nothing
     """
-    run_cleanup_job('gcp_function_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job("gcp_function_cleanup.json", neo4j_session, common_job_parameters)
 
 
 @timeit
-def cleanup_function_policy_bindings(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+def cleanup_function_policy_bindings(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
     """
     Delete out-of-date GCP Bindings and relationships
 
@@ -319,13 +388,21 @@ def cleanup_function_policy_bindings(neo4j_session: neo4j.Session, common_job_pa
     :rtype: NoneType
     :return: Nothing
     """
-    run_cleanup_job('gcp_function_policy_bindings_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job(
+        "gcp_function_policy_bindings_cleanup.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, function: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: Dict, regions: list,
+    neo4j_session: neo4j.Session,
+    function: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
+    regions: list,
 ) -> None:
     """
     Get GCP Cloud Functions using the Cloud Function resource object, ingest to Neo4j, and clean up old data.
@@ -359,12 +436,23 @@ def sync(
     for func in functions:
         load_function_entity_relation(neo4j_session, func, gcp_update_tag)
         bindings = get_function_policy_bindings(function, func, project_id)
-        bindings_list = transform_function_policy_bindings(bindings, func['id'], project_id)
-        attach_function_to_binding(neo4j_session, func['id'], bindings_list, gcp_update_tag)
+        bindings_list = transform_function_policy_bindings(
+            bindings, func["id"], project_id
+        )
+        attach_function_to_binding(
+            neo4j_session, func["id"], bindings_list, gcp_update_tag
+        )
 
     cleanup_function_policy_bindings(neo4j_session, common_job_parameters)
     cleanup_gcp_functions(neo4j_session, common_job_parameters)
-    label.sync_labels(neo4j_session, functions, gcp_update_tag, common_job_parameters, 'functions', 'GCPFunction')
+    label.sync_labels(
+        neo4j_session,
+        functions,
+        gcp_update_tag,
+        common_job_parameters,
+        "functions",
+        "GCPFunction",
+    )
 
     toc = time.perf_counter()
     logger.info(f"Time to process Cloud Functions: {toc - tic:0.4f} seconds")
