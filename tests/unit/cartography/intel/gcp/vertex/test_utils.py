@@ -2,11 +2,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from google.api_core.exceptions import (
-    GoogleAPICallError,
-    PermissionDenied,
-    ServiceUnavailable,
-)
+from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import PermissionDenied
+from google.api_core.exceptions import ServiceUnavailable
 
 from cartography.intel.gcp import vertex
 from cartography.intel.gcp.util import GCP_API_MAX_RETRIES

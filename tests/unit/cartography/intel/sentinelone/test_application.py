@@ -2,36 +2,32 @@ from unittest.mock import patch
 
 import pytest
 
-from cartography.intel.sentinelone.application import (
-    get_application_data,
-    get_application_installs,
-    transform_application_versions,
-    transform_applications,
-)
-from tests.data.sentinelone.application import (
-    AGENT_UUID_1,
-    AGENT_UUID_2,
-    AGENT_UUID_3,
-    APP_VERSION_ID_1,
-    APP_VERSION_ID_2,
-    APP_VERSION_ID_3,
-    APP_VERSION_ID_4,
-    APPLICATION_ID_1,
-    APPLICATION_ID_2,
-    APPLICATION_ID_3,
-    APPLICATION_INSTALLS_DATA,
-    APPLICATION_INSTALLS_DATA_MINIMAL,
-    APPLICATION_INSTALLS_DATA_MISSING_NAME,
-    APPLICATION_INSTALLS_DATA_MISSING_VENDOR,
-    APPLICATION_INSTALLS_DATA_MISSING_VERSION,
-    APPLICATIONS_DATA,
-    APPLICATIONS_DATA_MINIMAL,
-    APPLICATIONS_DATA_MISSING_NAME,
-    APPLICATIONS_DATA_MISSING_VENDOR,
-    TEST_ACCOUNT_ID,
-    TEST_API_TOKEN,
-    TEST_API_URL,
-)
+from cartography.intel.sentinelone.application import get_application_data
+from cartography.intel.sentinelone.application import get_application_installs
+from cartography.intel.sentinelone.application import transform_application_versions
+from cartography.intel.sentinelone.application import transform_applications
+from tests.data.sentinelone.application import AGENT_UUID_1
+from tests.data.sentinelone.application import AGENT_UUID_2
+from tests.data.sentinelone.application import AGENT_UUID_3
+from tests.data.sentinelone.application import APP_VERSION_ID_1
+from tests.data.sentinelone.application import APP_VERSION_ID_2
+from tests.data.sentinelone.application import APP_VERSION_ID_3
+from tests.data.sentinelone.application import APP_VERSION_ID_4
+from tests.data.sentinelone.application import APPLICATION_ID_1
+from tests.data.sentinelone.application import APPLICATION_ID_2
+from tests.data.sentinelone.application import APPLICATION_ID_3
+from tests.data.sentinelone.application import APPLICATION_INSTALLS_DATA
+from tests.data.sentinelone.application import APPLICATION_INSTALLS_DATA_MINIMAL
+from tests.data.sentinelone.application import APPLICATION_INSTALLS_DATA_MISSING_NAME
+from tests.data.sentinelone.application import APPLICATION_INSTALLS_DATA_MISSING_VENDOR
+from tests.data.sentinelone.application import APPLICATION_INSTALLS_DATA_MISSING_VERSION
+from tests.data.sentinelone.application import APPLICATIONS_DATA
+from tests.data.sentinelone.application import APPLICATIONS_DATA_MINIMAL
+from tests.data.sentinelone.application import APPLICATIONS_DATA_MISSING_NAME
+from tests.data.sentinelone.application import APPLICATIONS_DATA_MISSING_VENDOR
+from tests.data.sentinelone.application import TEST_ACCOUNT_ID
+from tests.data.sentinelone.application import TEST_API_TOKEN
+from tests.data.sentinelone.application import TEST_API_URL
 
 
 def test_transform_applications():

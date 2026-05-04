@@ -5,11 +5,10 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.sentinelone.api import build_scope_params, get_paginated_results
-from cartography.intel.sentinelone.utils import (
-    get_application_id,
-    get_application_version_id,
-)
+from cartography.intel.sentinelone.api import build_scope_params
+from cartography.intel.sentinelone.api import get_paginated_results
+from cartography.intel.sentinelone.utils import get_application_id
+from cartography.intel.sentinelone.utils import get_application_version_id
 from cartography.models.sentinelone.application import S1ApplicationSchema
 from cartography.models.sentinelone.application_version import (
     S1ApplicationVersionSchema,

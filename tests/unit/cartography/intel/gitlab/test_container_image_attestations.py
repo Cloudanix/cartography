@@ -3,11 +3,21 @@ from unittest.mock import Mock
 import requests
 
 from cartography.intel.gitlab.container_image_attestations import (
-    AttestationDiscoverySummary,
     _extract_image_provenance,
+)
+from cartography.intel.gitlab.container_image_attestations import (
     _extract_predicate_from_attestation,
+)
+from cartography.intel.gitlab.container_image_attestations import (
+    AttestationDiscoverySummary,
+)
+from cartography.intel.gitlab.container_image_attestations import (
     get_container_image_attestations,
+)
+from cartography.intel.gitlab.container_image_attestations import (
     sync_container_image_attestations,
+)
+from cartography.intel.gitlab.container_image_attestations import (
     transform_image_provenance_records,
 )
 

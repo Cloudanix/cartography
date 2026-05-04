@@ -7,13 +7,12 @@ from neo4j.time import DateTime
 import cartography.intel.microsoft.entra.ou
 from cartography.intel.microsoft.entra.ou import sync_entra_ous
 from cartography.intel.microsoft.entra.users import load_tenant
-from tests.data.microsoft.entra.ou import (
-    MOCK_ENTRA_OUS,
-    TEST_CLIENT_ID,
-    TEST_CLIENT_SECRET,
-    TEST_TENANT_ID,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.microsoft.entra.ou import MOCK_ENTRA_OUS
+from tests.data.microsoft.entra.ou import TEST_CLIENT_ID
+from tests.data.microsoft.entra.ou import TEST_CLIENT_SECRET
+from tests.data.microsoft.entra.ou import TEST_TENANT_ID
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 1234567890
 

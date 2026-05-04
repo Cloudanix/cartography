@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.ec2.instances
 from cartography.intel.aws.ec2.instances import sync_ec2_instances
@@ -9,16 +10,15 @@ from cartography.intel.spacelift.stacks import sync_stacks
 from cartography.intel.spacelift.workerpools import sync_worker_pools
 from cartography.intel.spacelift.workers import sync_workers
 from tests.data.aws.ec2.instances import DESCRIBE_INSTANCES
-from tests.data.spacelift.spacelift_data import (
-    ENTITIES_DATA,
-    RUNS_DATA,
-    SPACES_DATA,
-    STACKS_DATA,
-    WORKER_POOLS_DATA,
-    WORKERS_DATA,
-)
+from tests.data.spacelift.spacelift_data import ENTITIES_DATA
+from tests.data.spacelift.spacelift_data import RUNS_DATA
+from tests.data.spacelift.spacelift_data import SPACES_DATA
+from tests.data.spacelift.spacelift_data import STACKS_DATA
+from tests.data.spacelift.spacelift_data import WORKER_POOLS_DATA
+from tests.data.spacelift.spacelift_data import WORKERS_DATA
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_API_ENDPOINT = "https://fake.spacelift.io/graphql"

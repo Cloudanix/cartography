@@ -1,15 +1,11 @@
 """Unit tests for the GitLab CI config orchestration module."""
 
-from cartography.intel.gitlab.ci_config import (
-    transform_ci_config,
-    transform_ci_includes,
-)
+from cartography.intel.gitlab.ci_config import transform_ci_config
+from cartography.intel.gitlab.ci_config import transform_ci_includes
 from cartography.intel.gitlab.ci_config_parser import parse_ci_config
-from tests.data.gitlab.ci_configs import (
-    PIPELINE_WITH_MIXED_INCLUDES,
-    TEST_GITLAB_URL,
-    TEST_PROJECT_ID,
-)
+from tests.data.gitlab.ci_configs import PIPELINE_WITH_MIXED_INCLUDES
+from tests.data.gitlab.ci_configs import TEST_GITLAB_URL
+from tests.data.gitlab.ci_configs import TEST_PROJECT_ID
 
 FILE_PATH = ".gitlab-ci.yml"
 

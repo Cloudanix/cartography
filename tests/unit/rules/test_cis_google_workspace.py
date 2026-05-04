@@ -1,8 +1,11 @@
 from cartography.rules.data.rules.cis_google_workspace import (
     cis_gw_4_1_1_1_admin_2sv_not_enforced,
+)
+from cartography.rules.data.rules.cis_google_workspace import (
     cis_gw_4_1_1_3_user_2sv_not_enforced,
 )
-from cartography.rules.spec.model import Maturity, Module
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
 
 
 def test_rules_registered_and_metadata():

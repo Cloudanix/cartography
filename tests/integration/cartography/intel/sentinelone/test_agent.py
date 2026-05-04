@@ -1,12 +1,11 @@
 import cartography.intel.sentinelone.agent
-from tests.data.sentinelone.agent import (
-    AGENT_ID,
-    AGENT_ID_2,
-    AGENT_ID_3,
-    AGENTS_DATA,
-    TEST_ACCOUNT_ID,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.sentinelone.agent import AGENT_ID
+from tests.data.sentinelone.agent import AGENT_ID_2
+from tests.data.sentinelone.agent import AGENT_ID_3
+from tests.data.sentinelone.agent import AGENTS_DATA
+from tests.data.sentinelone.agent import TEST_ACCOUNT_ID
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_API_URL = "https://test-api.sentinelone.net"

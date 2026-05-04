@@ -1,13 +1,12 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import pytest
 import requests
 
-from cartography.intel.jamf.util import (
-    call_jamf_api,
-    create_jamf_api_session,
-    get_paginated_jamf_results,
-)
+from cartography.intel.jamf.util import call_jamf_api
+from cartography.intel.jamf.util import create_jamf_api_session
+from cartography.intel.jamf.util import get_paginated_jamf_results
 
 
 @patch("cartography.intel.jamf.util.requests.Session")

@@ -4,7 +4,8 @@ import neo4j
 
 import cartography.intel.aws.iam
 import tests.data.aws.iam.server_certificates
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "123456789012"
 TEST_UPDATE_TAG = 123456789

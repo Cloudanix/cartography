@@ -2,7 +2,8 @@ from unittest.mock import MagicMock
 
 import requests
 
-from cartography.intel.tailscale.services import get, transform
+from cartography.intel.tailscale.services import get
+from cartography.intel.tailscale.services import transform
 
 
 def test_transform_preserves_prefixed_service_name() -> None:

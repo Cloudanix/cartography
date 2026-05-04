@@ -9,10 +9,8 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gitlab.util import (
-    check_rate_limit_remaining,
-    make_request_with_retry,
-)
+from cartography.intel.gitlab.util import check_rate_limit_remaining
+from cartography.intel.gitlab.util import make_request_with_retry
 from cartography.models.gitlab.manifests import GitLabDependencyFileSchema
 from cartography.util import timeit
 

@@ -1,8 +1,11 @@
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
-from google.api_core.exceptions import PermissionDenied, ResourceExhausted, RetryError
+from google.api_core.exceptions import PermissionDenied
+from google.api_core.exceptions import ResourceExhausted
+from google.api_core.exceptions import RetryError
 
 import cartography.intel.gcp
 import cartography.intel.gcp.policy_bindings as policy_bindings

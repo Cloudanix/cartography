@@ -1,47 +1,47 @@
 import json
 import logging
 from collections import namedtuple
-from typing import Dict, List, Optional, Set
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
 
 import neo4j
 from google.auth.credentials import Credentials as GoogleCredentials
 from google.cloud.asset_v1 import AssetServiceClient
-from googleapiclient.discovery import HttpError, Resource
+from googleapiclient.discovery import HttpError
+from googleapiclient.discovery import Resource
 
 from cartography.config import Config
 from cartography.graph.job import GraphJob
-from cartography.intel.gcp import (
-    artifact_registry,
-    bigquery_connection,
-    bigquery_dataset,
-    bigquery_routine,
-    bigquery_table,
-    bigtable_app_profile,
-    bigtable_backup,
-    bigtable_cluster,
-    bigtable_instance,
-    bigtable_table,
-    cai,
-    cloud_sql_backup_config,
-    cloud_sql_database,
-    cloud_sql_instance,
-    cloud_sql_user,
-    compute,
-    dns,
-    gcf,
-    gke,
-    iam,
-    kms,
-    permission_relationships,
-    policy_bindings,
-    secretsmanager,
-    storage,
-)
-from cartography.intel.gcp.clients import (
-    build_asset_client,
-    build_client,
-    get_gcp_credentials,
-)
+from cartography.intel.gcp import artifact_registry
+from cartography.intel.gcp import bigquery_connection
+from cartography.intel.gcp import bigquery_dataset
+from cartography.intel.gcp import bigquery_routine
+from cartography.intel.gcp import bigquery_table
+from cartography.intel.gcp import bigtable_app_profile
+from cartography.intel.gcp import bigtable_backup
+from cartography.intel.gcp import bigtable_cluster
+from cartography.intel.gcp import bigtable_instance
+from cartography.intel.gcp import bigtable_table
+from cartography.intel.gcp import cai
+from cartography.intel.gcp import cloud_sql_backup_config
+from cartography.intel.gcp import cloud_sql_database
+from cartography.intel.gcp import cloud_sql_instance
+from cartography.intel.gcp import cloud_sql_user
+from cartography.intel.gcp import compute
+from cartography.intel.gcp import dns
+from cartography.intel.gcp import gcf
+from cartography.intel.gcp import gke
+from cartography.intel.gcp import iam
+from cartography.intel.gcp import kms
+from cartography.intel.gcp import permission_relationships
+from cartography.intel.gcp import policy_bindings
+from cartography.intel.gcp import secretsmanager
+from cartography.intel.gcp import storage
+from cartography.intel.gcp.clients import build_asset_client
+from cartography.intel.gcp.clients import build_client
+from cartography.intel.gcp.clients import get_gcp_credentials
 from cartography.intel.gcp.cloudrun import execution as cloudrun_execution
 from cartography.intel.gcp.cloudrun import job as cloudrun_job
 from cartography.intel.gcp.cloudrun import revision as cloudrun_revision
@@ -56,15 +56,15 @@ from cartography.intel.gcp.vertex.deployed_models import sync_vertex_ai_deployed
 from cartography.intel.gcp.vertex.endpoints import sync_vertex_ai_endpoints
 from cartography.intel.gcp.vertex.feature_groups import sync_feature_groups
 from cartography.intel.gcp.vertex.instances import sync_workbench_instances
-from cartography.intel.gcp.vertex.models import (
-    get_vertex_ai_locations,
-    sync_vertex_ai_models,
-)
+from cartography.intel.gcp.vertex.models import get_vertex_ai_locations
+from cartography.intel.gcp.vertex.models import sync_vertex_ai_models
 from cartography.intel.gcp.vertex.training_pipelines import sync_training_pipelines
 from cartography.models.gcp.crm.folders import GCPFolderSchema
 from cartography.models.gcp.crm.organizations import GCPOrganizationSchema
 from cartography.models.gcp.crm.projects import GCPProjectSchema
-from cartography.util import run_analysis_job, run_scoped_analysis_job, timeit
+from cartography.util import run_analysis_job
+from cartography.util import run_scoped_analysis_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

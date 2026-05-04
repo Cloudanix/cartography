@@ -1,7 +1,8 @@
 from datetime import datetime
 
 from cartography.intel.aws.guardduty import transform_findings
-from tests.data.aws.guardduty import EXPECTED_TRANSFORM_RESULTS, GET_FINDINGS
+from tests.data.aws.guardduty import EXPECTED_TRANSFORM_RESULTS
+from tests.data.aws.guardduty import GET_FINDINGS
 
 TEST_UPDATE_TAG = 123456789
 

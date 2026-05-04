@@ -5,11 +5,9 @@ Tests the package normalization functions used for cross-tool matching
 between Trivy and Syft.
 """
 
-from cartography.intel.trivy.util import (
-    make_normalized_package_id,
-    normalize_package_name,
-    parse_purl,
-)
+from cartography.intel.trivy.util import make_normalized_package_id
+from cartography.intel.trivy.util import normalize_package_name
+from cartography.intel.trivy.util import parse_purl
 
 
 class TestParsePurl:

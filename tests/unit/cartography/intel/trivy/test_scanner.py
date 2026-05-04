@@ -1,14 +1,15 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
-from cartography.intel.common.object_store import ObjectStoreError, ReportRef
-from cartography.intel.trivy import sync_trivy_from_report_reader, sync_trivy_from_s3
-from cartography.intel.trivy.scanner import (
-    get_json_files_in_s3,
-    sync_single_image_from_s3,
-)
+from cartography.intel.common.object_store import ObjectStoreError
+from cartography.intel.common.object_store import ReportRef
+from cartography.intel.trivy import sync_trivy_from_report_reader
+from cartography.intel.trivy import sync_trivy_from_s3
+from cartography.intel.trivy.scanner import get_json_files_in_s3
+from cartography.intel.trivy.scanner import sync_single_image_from_s3
 
 
 @patch("boto3.Session")

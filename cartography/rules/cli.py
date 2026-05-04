@@ -14,7 +14,8 @@ import typer
 from typing_extensions import Annotated
 
 from cartography.rules.data.rules import RULES
-from cartography.rules.runners import get_all_frameworks, run_rules
+from cartography.rules.runners import get_all_frameworks
+from cartography.rules.runners import run_rules
 
 app = typer.Typer(
     help="Execute Cartography security frameworks",

@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
+from unittest.mock import patch
 
 import cartography.intel.entra.ou
 import cartography.intel.entra.users

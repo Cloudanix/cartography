@@ -1,17 +1,16 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import neo4j.exceptions
 import pytest
 
-from cartography.client.core.tx import (
-    _buffer_error_backoff_handler,
-    _entity_not_found_backoff_handler,
-    _is_retryable_buffer_error,
-    _is_retryable_client_error,
-    _run_index_query_with_retry,
-    _run_with_retry,
-    execute_write_with_retry,
-)
+from cartography.client.core.tx import _buffer_error_backoff_handler
+from cartography.client.core.tx import _entity_not_found_backoff_handler
+from cartography.client.core.tx import _is_retryable_buffer_error
+from cartography.client.core.tx import _is_retryable_client_error
+from cartography.client.core.tx import _run_index_query_with_retry
+from cartography.client.core.tx import _run_with_retry
+from cartography.client.core.tx import execute_write_with_retry
 
 
 def _create_client_error(

@@ -2,18 +2,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import (
-    CartographyNodeProperties,
-    CartographyNodeSchema,
-    ExtraNodeLabels,
-)
-from cartography.models.core.relationships import (
-    CartographyRelProperties,
-    CartographyRelSchema,
-    LinkDirection,
-    TargetNodeMatcher,
-    make_target_node_matcher,
-)
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import TargetNodeMatcher
 
 # ============================================================================
 # Base S3Bucket Schema - Core properties only

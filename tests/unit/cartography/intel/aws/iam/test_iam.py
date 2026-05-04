@@ -1,7 +1,8 @@
 import datetime
 
 from cartography.intel.aws import iam
-from cartography.intel.aws.iam import PolicyType, transform_policy_data
+from cartography.intel.aws.iam import PolicyType
+from cartography.intel.aws.iam import transform_policy_data
 from tests.data.aws.iam.mfa_devices import LIST_MFA_DEVICES
 from tests.data.aws.iam.server_certificates import LIST_SERVER_CERTIFICATES_RESPONSE
 

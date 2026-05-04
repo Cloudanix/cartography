@@ -3,14 +3,16 @@ import json
 import zipfile
 from unittest.mock import Mock
 
+from cartography.intel.gitlab.dependencies import _parse_cyclonedx_sbom
+from cartography.intel.gitlab.dependencies import _select_dependency_scan_job
 from cartography.intel.gitlab.dependencies import (
     AUTODEVOPS_MAVEN_DEPENDENCY_SCAN_JOB_NAME,
-    AUTODEVOPS_PYTHON_DEPENDENCY_SCAN_JOB_NAME,
-    DEFAULT_DEPENDENCY_SCAN_JOB_NAME,
-    _parse_cyclonedx_sbom,
-    _select_dependency_scan_job,
-    get_dependencies,
 )
+from cartography.intel.gitlab.dependencies import (
+    AUTODEVOPS_PYTHON_DEPENDENCY_SCAN_JOB_NAME,
+)
+from cartography.intel.gitlab.dependencies import DEFAULT_DEPENDENCY_SCAN_JOB_NAME
+from cartography.intel.gitlab.dependencies import get_dependencies
 
 
 def _build_artifacts_zip(files: dict[str, dict]) -> bytes:

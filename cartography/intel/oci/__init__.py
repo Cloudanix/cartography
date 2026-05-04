@@ -9,7 +9,9 @@ from oci.exceptions import ConfigFileNotFound, InvalidConfig, ProfileNotFound
 
 from cartography.config import Config
 
-from . import iam, organizations, utils
+from . import iam
+from . import organizations
+from . import utils
 
 # from cartography.util import run_analysis_job
 # from cartography.util import run_cleanup_job

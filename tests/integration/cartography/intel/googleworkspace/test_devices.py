@@ -2,17 +2,16 @@ from unittest.mock import patch
 
 import cartography.intel.googleworkspace.devices
 from cartography.intel.googleworkspace.devices import sync_googleworkspace_devices
-from tests.data.googleworkspace.devices import (
-    MOCK_DEVICE_USERS_RESPONSE,
-    MOCK_DEVICES_RESPONSE,
-)
+from tests.data.googleworkspace.devices import MOCK_DEVICE_USERS_RESPONSE
+from tests.data.googleworkspace.devices import MOCK_DEVICES_RESPONSE
 from tests.integration.cartography.intel.googleworkspace.test_tenant import (
     _ensure_local_neo4j_has_test_tenant,
 )
 from tests.integration.cartography.intel.googleworkspace.test_users import (
     _ensure_local_neo4j_has_test_users,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_CUSTOMER_ID = "ABC123CD"

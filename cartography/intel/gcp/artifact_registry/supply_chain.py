@@ -10,28 +10,28 @@ from google.auth.transport.requests import Request
 
 from cartography.graph.job import GraphJob
 from cartography.intel.container_arch import normalize_architecture
-from cartography.intel.gcp.artifact_registry.manifest import (
-    build_blob_url,
-    build_manifest_url,
-    parse_docker_image_uri,
-)
+from cartography.intel.gcp.artifact_registry.manifest import build_blob_url
+from cartography.intel.gcp.artifact_registry.manifest import build_manifest_url
+from cartography.intel.gcp.artifact_registry.manifest import parse_docker_image_uri
 from cartography.intel.gcp.artifact_registry.util import (
     ARTIFACT_REGISTRY_LOAD_BATCH_SIZE,
-    load_matchlinks_with_progress,
+)
+from cartography.intel.gcp.artifact_registry.util import load_matchlinks_with_progress
+from cartography.intel.gcp.artifact_registry.util import (
     load_nodes_without_relationships,
 )
 from cartography.intel.gcp.clients import _resolve_credentials
-from cartography.intel.supply_chain import (
-    decode_attestation_blob_to_predicate,
-    extract_image_source_provenance,
-    extract_layers_from_oci_config,
-    extract_provenance_from_oci_config,
-)
+from cartography.intel.supply_chain import decode_attestation_blob_to_predicate
+from cartography.intel.supply_chain import extract_image_source_provenance
+from cartography.intel.supply_chain import extract_layers_from_oci_config
+from cartography.intel.supply_chain import extract_provenance_from_oci_config
 from cartography.models.gcp.artifact_registry.container_image import (
     GCPArtifactRegistryContainerImageProvenanceSchema,
 )
 from cartography.models.gcp.artifact_registry.image_layer import (
     GCPArtifactRegistryImageLayerSchema,
+)
+from cartography.models.gcp.artifact_registry.image_layer import (
     GCPArtifactRegistryProjectToImageLayerRel,
 )
 from cartography.util import timeit

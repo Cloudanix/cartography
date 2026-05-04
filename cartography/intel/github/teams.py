@@ -1,6 +1,9 @@
 import logging
 from collections import namedtuple
-from typing import Any, Dict, List, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 import neo4j
 
@@ -8,7 +11,8 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.github.util import PaginatedGraphqlData, fetch_all
 from cartography.models.github.teams import GitHubTeamSchema
-from cartography.util import retries_with_backoff, timeit
+from cartography.util import retries_with_backoff
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

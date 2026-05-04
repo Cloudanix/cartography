@@ -2,8 +2,10 @@
 Unit tests for cartography.intel.syft.parser module.
 """
 
-from cartography.intel.syft.parser import _extract_image_digests, transform_artifacts
-from tests.data.syft.syft_sample import EXPECTED_SYFT_PACKAGES, SYFT_SAMPLE
+from cartography.intel.syft.parser import _extract_image_digests
+from cartography.intel.syft.parser import transform_artifacts
+from tests.data.syft.syft_sample import EXPECTED_SYFT_PACKAGES
+from tests.data.syft.syft_sample import SYFT_SAMPLE
 
 
 class TestTransformArtifacts:

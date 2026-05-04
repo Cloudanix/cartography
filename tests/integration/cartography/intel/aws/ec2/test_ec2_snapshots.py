@@ -1,11 +1,13 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.ec2.snapshots
 import cartography.intel.aws.ec2.volumes
 import tests.data.aws.ec2.snapshots
 import tests.data.aws.ec2.volumes
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "eu-west-1"

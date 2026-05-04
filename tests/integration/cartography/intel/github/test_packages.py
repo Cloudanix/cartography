@@ -9,22 +9,21 @@ import cartography.intel.github.container_image_tags
 import cartography.intel.github.container_images
 import cartography.intel.github.packages
 import cartography.intel.github.supply_chain
-from tests.data.github.packages import (
-    CONFIG_BLOBS_BY_DIGEST,
-    DIGEST_API_AMD64,
-    DIGEST_API_ARM64,
-    DIGEST_API_INDEX,
-    DIGEST_API_LATEST,
-    DIGEST_WORKER,
-    GET_CONTAINER_PACKAGES,
-    LAYER_DIFF_A,
-    LAYER_DIFF_B,
-    LAYER_DIFF_C,
-    MANIFESTS_BY_REFERENCE,
-    PACKAGE_VERSIONS_BY_NAME,
-    SLSA_STATEMENT_API_LATEST,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.github.packages import CONFIG_BLOBS_BY_DIGEST
+from tests.data.github.packages import DIGEST_API_AMD64
+from tests.data.github.packages import DIGEST_API_ARM64
+from tests.data.github.packages import DIGEST_API_INDEX
+from tests.data.github.packages import DIGEST_API_LATEST
+from tests.data.github.packages import DIGEST_WORKER
+from tests.data.github.packages import GET_CONTAINER_PACKAGES
+from tests.data.github.packages import LAYER_DIFF_A
+from tests.data.github.packages import LAYER_DIFF_B
+from tests.data.github.packages import LAYER_DIFF_C
+from tests.data.github.packages import MANIFESTS_BY_REFERENCE
+from tests.data.github.packages import PACKAGE_VERSIONS_BY_NAME
+from tests.data.github.packages import SLSA_STATEMENT_API_LATEST
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_JOB_PARAMS = {"UPDATE_TAG": TEST_UPDATE_TAG}

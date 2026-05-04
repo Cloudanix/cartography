@@ -1,13 +1,11 @@
+from cartography.intel.aws.ec2.launch_templates import load_launch_template_versions
+from cartography.intel.aws.ec2.launch_templates import load_launch_templates
 from cartography.intel.aws.ec2.launch_templates import (
-    load_launch_template_versions,
-    load_launch_templates,
     transform_launch_template_versions,
-    transform_launch_templates,
 )
-from tests.data.aws.ec2.launch_templates import (
-    GET_LAUNCH_TEMPLATE_VERSIONS,
-    GET_LAUNCH_TEMPLATES,
-)
+from cartography.intel.aws.ec2.launch_templates import transform_launch_templates
+from tests.data.aws.ec2.launch_templates import GET_LAUNCH_TEMPLATE_VERSIONS
+from tests.data.aws.ec2.launch_templates import GET_LAUNCH_TEMPLATES
 from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"

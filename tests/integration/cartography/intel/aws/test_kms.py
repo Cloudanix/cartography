@@ -1,6 +1,7 @@
 import cartography.intel.aws.kms
 import tests.data.aws.kms
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "eu-west-1"

@@ -1,23 +1,24 @@
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import boto3
 import neo4j
-from botocore.exceptions import (
-    ClientError,
-    ConnectionClosedError,
-    ConnectTimeoutError,
-    EndpointConnectionError,
-    ReadTimeoutError,
-)
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectionClosedError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import EndpointConnectionError
+from botocore.exceptions import ReadTimeoutError
 from botocore.parsers import ResponseParserError
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.cloudtrail.trail import CloudTrailTrailSchema
-from cartography.util import aws_handle_regions, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

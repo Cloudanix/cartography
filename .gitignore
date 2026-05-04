@@ -26,24 +26,8 @@ poetry.lock
 .gitconfig
 .python_history
 github_config.json
-.env*
-env.dev.json
-env.prod.json
+.env.local
 .claude/*
 # Track the .claude/skills symlink so Claude Code can autodiscover skills
 # from .agents/skills/ without each contributor having to create it.
 !.claude/skills
-
-# Cloudanix-specific
-tmp
-node_modules
-.serverless
-*/venv_cartography_test/
-build.log
-azure.build.log
-git.worker.log
-scripts
-dev.py
-Dockerfile.aws.worker
-Dockerfile.azure.worker
-config

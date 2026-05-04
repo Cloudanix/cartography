@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.ec2.route_tables
 import cartography.intel.aws.ec2.vpc_endpoint
@@ -13,7 +14,8 @@ from tests.data.aws.ec2.subnets import DESCRIBE_SUBNETS
 from tests.data.aws.ec2.vpc_endpoints import DESCRIBE_VPC_ENDPOINTS
 from tests.data.aws.ec2.vpcs import TEST_VPCS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "us-east-1"

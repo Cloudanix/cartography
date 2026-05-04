@@ -3,18 +3,17 @@ from typing import Any
 
 import neo4j
 
-from cartography.client.core.tx import load, run_write_query
-from cartography.models.gcp.labels.label import (
-    GCPBigtableInstanceGCPLabelSchema,
-    GCPBucketGCPLabelSchema,
-    GCPCloudRunJobGCPLabelSchema,
-    GCPCloudRunServiceGCPLabelSchema,
-    GCPCloudSQLInstanceGCPLabelSchema,
-    GCPDNSZoneGCPLabelSchema,
-    GCPInstanceGCPLabelSchema,
-    GCPSecretManagerSecretGCPLabelSchema,
-    GKEClusterGCPLabelSchema,
-)
+from cartography.client.core.tx import load
+from cartography.client.core.tx import run_write_query
+from cartography.models.gcp.labels.label import GCPBigtableInstanceGCPLabelSchema
+from cartography.models.gcp.labels.label import GCPBucketGCPLabelSchema
+from cartography.models.gcp.labels.label import GCPCloudRunJobGCPLabelSchema
+from cartography.models.gcp.labels.label import GCPCloudRunServiceGCPLabelSchema
+from cartography.models.gcp.labels.label import GCPCloudSQLInstanceGCPLabelSchema
+from cartography.models.gcp.labels.label import GCPDNSZoneGCPLabelSchema
+from cartography.models.gcp.labels.label import GCPInstanceGCPLabelSchema
+from cartography.models.gcp.labels.label import GCPSecretManagerSecretGCPLabelSchema
+from cartography.models.gcp.labels.label import GKEClusterGCPLabelSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

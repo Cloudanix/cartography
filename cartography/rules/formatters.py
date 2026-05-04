@@ -4,7 +4,8 @@ Output formatting utilities for Cartography rules.
 
 import json
 import re
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict
+from dataclasses import is_dataclass
 from enum import Enum
 from urllib.parse import quote
 

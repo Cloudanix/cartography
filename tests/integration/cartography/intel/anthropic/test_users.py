@@ -4,7 +4,8 @@ import requests
 
 import cartography.intel.anthropic.users
 import tests.data.anthropic.users
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = "8834c225-ea27-405a-aea9-5ed5f07f4858"

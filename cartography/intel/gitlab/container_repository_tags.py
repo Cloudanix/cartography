@@ -13,7 +13,8 @@ import requests
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gitlab.util import get_paginated, get_single
+from cartography.intel.gitlab.util import get_paginated
+from cartography.intel.gitlab.util import get_single
 from cartography.models.gitlab.container_repository_tags import (
     GitLabContainerRepositoryTagSchema,
 )

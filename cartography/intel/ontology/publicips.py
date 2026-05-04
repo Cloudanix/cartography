@@ -7,7 +7,8 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.ontology.utils import get_source_nodes_from_graph
 from cartography.models.ontology.publicip import PublicIPSchema
-from cartography.util import run_analysis_job, timeit
+from cartography.util import run_analysis_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

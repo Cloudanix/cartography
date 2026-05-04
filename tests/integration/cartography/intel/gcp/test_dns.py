@@ -1,8 +1,10 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.gcp.dns
 import tests.data.gcp.dns
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_PROJECT_ID = "000000000000"
 TEST_UPDATE_TAG = 123456789

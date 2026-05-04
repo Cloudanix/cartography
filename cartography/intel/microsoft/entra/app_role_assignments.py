@@ -1,5 +1,6 @@
 import gc
-from typing import Any, AsyncGenerator
+from typing import Any
+from typing import AsyncGenerator
 
 import neo4j
 from azure.identity import ClientSecretCredential
@@ -8,16 +9,14 @@ from msgraph.generated.models.app_role_assignment_collection_response import (
     AppRoleAssignmentCollectionResponse,
 )
 
-from cartography.client.core.tx import (
-    load,
-    read_list_of_values_tx,
-    read_single_value_tx,
-)
+from cartography.client.core.tx import load
+from cartography.client.core.tx import read_list_of_values_tx
+from cartography.client.core.tx import read_single_value_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.microsoft.entra.applications import (
     APP_ROLE_ASSIGNMENTS_PAGE_SIZE,
-    logger,
 )
+from cartography.intel.microsoft.entra.applications import logger
 from cartography.intel.microsoft.entra.utils import call_with_retries
 from cartography.models.microsoft.entra.app_role_assignment import (
     EntraAppRoleAssignmentSchema,

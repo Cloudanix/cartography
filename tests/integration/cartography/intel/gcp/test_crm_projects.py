@@ -2,7 +2,8 @@ from unittest.mock import patch
 
 import cartography.intel.gcp.crm
 import tests.data.gcp.crm
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 COMMON_JOB_PARAMS = {

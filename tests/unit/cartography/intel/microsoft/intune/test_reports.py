@@ -1,6 +1,8 @@
 import io
 import zipfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 from msgraph.generated.models.device_management_export_job import (
@@ -11,11 +13,9 @@ from msgraph.generated.models.device_management_report_status import (
 )
 
 import cartography.intel.microsoft.intune.reports
-from cartography.intel.microsoft.intune.reports import (
-    download_export_report_rows,
-    export_report_rows,
-    wait_for_export_job,
-)
+from cartography.intel.microsoft.intune.reports import download_export_report_rows
+from cartography.intel.microsoft.intune.reports import export_report_rows
+from cartography.intel.microsoft.intune.reports import wait_for_export_job
 
 
 def _build_zip(files: dict[str, str]) -> bytes:

@@ -1,6 +1,7 @@
 from cartography.rules.data.rules import RULES
 from cartography.rules.data.rules.eol_software import eol_software
-from cartography.rules.spec.model import Maturity, Module
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
 
 
 def test_eol_software_rule_registered() -> None:

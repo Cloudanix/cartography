@@ -1,6 +1,8 @@
 import logging
 from ast import literal_eval
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import neo4j
 import requests

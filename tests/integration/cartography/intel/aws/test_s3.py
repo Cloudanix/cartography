@@ -1,12 +1,15 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.s3
 import cartography.intel.aws.sns
 import tests.data.aws.s3
 from cartography.intel.aws.s3 import sync
-from tests.data.aws.s3 import GET_S3_BUCKET_DETAILS, LIST_BUCKETS
+from tests.data.aws.s3 import GET_S3_BUCKET_DETAILS
+from tests.data.aws.s3 import LIST_BUCKETS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "us-east-1"

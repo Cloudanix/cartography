@@ -3,16 +3,27 @@ from cartography.graph.job import GraphJob
 from cartography.graph.querybuilder import build_ingestion_query
 from tests.data.graph.querybuilder.sample_data.helloworld_relationships import (
     INTERESTING_NODE_NO_WORLD_ASSET,
+)
+from tests.data.graph.querybuilder.sample_data.helloworld_relationships import (
     INTERESTING_NODE_SUB_RES_ONLY,
+)
+from tests.data.graph.querybuilder.sample_data.helloworld_relationships import (
     INTERESTING_NODE_WITH_ALL_RELS,
+)
+from tests.data.graph.querybuilder.sample_data.helloworld_relationships import (
     MERGE_HELLO_ASSET_QUERY,
+)
+from tests.data.graph.querybuilder.sample_data.helloworld_relationships import (
     MERGE_SUB_RESOURCE_QUERY,
+)
+from tests.data.graph.querybuilder.sample_data.helloworld_relationships import (
     MERGE_WORLD_ASSET_QUERY,
 )
 from tests.data.graph.querybuilder.sample_models.interesting_asset import (
     InterestingAssetSchema,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 
 # TODO: Once we have more real modules using cartography data objects, add a test using them instead of these fake objs.

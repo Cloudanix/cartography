@@ -1,13 +1,14 @@
 from cartography.rules.data.rules import RULES
+from cartography.rules.data.rules.nist_ai_rmf import nist_ai_admin_ai_app_authorizations
+from cartography.rules.data.rules.nist_ai_rmf import nist_ai_aibom_agent_inventory
+from cartography.rules.data.rules.nist_ai_rmf import nist_ai_aibom_coverage_gaps
+from cartography.rules.data.rules.nist_ai_rmf import nist_ai_provider_api_key_hygiene
+from cartography.rules.data.rules.nist_ai_rmf import nist_ai_third_party_app_inventory
 from cartography.rules.data.rules.nist_ai_rmf import (
-    nist_ai_admin_ai_app_authorizations,
-    nist_ai_aibom_agent_inventory,
-    nist_ai_aibom_coverage_gaps,
-    nist_ai_provider_api_key_hygiene,
-    nist_ai_third_party_app_inventory,
     nist_ai_third_party_app_sensitive_scopes,
 )
-from cartography.rules.spec.model import Maturity, Module
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
 
 
 def test_nist_ai_rules_registered_and_metadata():

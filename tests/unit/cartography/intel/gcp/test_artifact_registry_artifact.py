@@ -1,16 +1,19 @@
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 from google.api_core.exceptions import GoogleAPICallError
 
 from cartography.intel.gcp.artifact_registry.artifact import (
     sync_artifact_registry_artifacts,
-    transform_docker_images,
 )
+from cartography.intel.gcp.artifact_registry.artifact import transform_docker_images
+from cartography.intel.gcp.artifact_registry.util import _load_with_progress
 from cartography.intel.gcp.artifact_registry.util import (
     ARTIFACT_REGISTRY_LOAD_BATCH_SIZE,
-    _load_with_progress,
+)
+from cartography.intel.gcp.artifact_registry.util import (
     load_nodes_without_relationships,
 )
 

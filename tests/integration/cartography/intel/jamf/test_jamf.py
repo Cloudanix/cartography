@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.jamf.computers
 import cartography.intel.jamf.groups
@@ -9,7 +10,8 @@ from cartography.intel.jamf.mobile_devices import sync as sync_mobile_devices
 from tests.data.jamf.computers import COMPUTERS
 from tests.data.jamf.groups import GROUPS
 from tests.data.jamf.mobile_devices import MOBILE_DEVICES
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_JAMF_URI = "https://test.jamfcloud.com"

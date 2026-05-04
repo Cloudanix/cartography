@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.gcp.compute
 import cartography.intel.gcp.iam
@@ -7,20 +8,17 @@ import cartography.intel.gcp.policy_bindings
 import cartography.intel.gcp.storage
 import cartography.intel.gsuite.groups
 import cartography.intel.gsuite.users
-from tests.data.gcp.permission_relationships import (
-    MOCK_COMPUTE_INSTANCES,
-    MOCK_PERMISSION_RELATIONSHIPS_YAML,
-    MOCK_STORAGE_BUCKETS,
-)
-from tests.data.gcp.policy_bindings import (
-    MOCK_GSUITE_GROUP_MEMBERS,
-    MOCK_GSUITE_GROUPS,
-    MOCK_GSUITE_USERS,
-    MOCK_IAM_ROLES,
-    MOCK_IAM_SERVICE_ACCOUNTS,
-    MOCK_POLICY_BINDINGS_RESPONSE,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gcp.permission_relationships import MOCK_COMPUTE_INSTANCES
+from tests.data.gcp.permission_relationships import MOCK_PERMISSION_RELATIONSHIPS_YAML
+from tests.data.gcp.permission_relationships import MOCK_STORAGE_BUCKETS
+from tests.data.gcp.policy_bindings import MOCK_GSUITE_GROUP_MEMBERS
+from tests.data.gcp.policy_bindings import MOCK_GSUITE_GROUPS
+from tests.data.gcp.policy_bindings import MOCK_GSUITE_USERS
+from tests.data.gcp.policy_bindings import MOCK_IAM_ROLES
+from tests.data.gcp.policy_bindings import MOCK_IAM_SERVICE_ACCOUNTS
+from tests.data.gcp.policy_bindings import MOCK_POLICY_BINDINGS_RESPONSE
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_PROJECT_ID = "project-abc"
 TEST_UPDATE_TAG = 123456789

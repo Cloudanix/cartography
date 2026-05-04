@@ -1,24 +1,23 @@
 from unittest.mock import patch
 
 import cartography.intel.sentinelone.application
-from tests.data.sentinelone.application import (
-    AGENT_UUID_1,
-    AGENT_UUID_2,
-    AGENT_UUID_3,
-    APP_VERSION_ID_1,
-    APP_VERSION_ID_2,
-    APP_VERSION_ID_3,
-    APP_VERSION_ID_4,
-    APPLICATION_ID_1,
-    APPLICATION_ID_2,
-    APPLICATION_ID_3,
-    APPLICATION_INSTALLS_DATA,
-    APPLICATIONS_DATA,
-    TEST_ACCOUNT_ID,
-    TEST_COMMON_JOB_PARAMETERS,
-    TEST_UPDATE_TAG,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.sentinelone.application import AGENT_UUID_1
+from tests.data.sentinelone.application import AGENT_UUID_2
+from tests.data.sentinelone.application import AGENT_UUID_3
+from tests.data.sentinelone.application import APP_VERSION_ID_1
+from tests.data.sentinelone.application import APP_VERSION_ID_2
+from tests.data.sentinelone.application import APP_VERSION_ID_3
+from tests.data.sentinelone.application import APP_VERSION_ID_4
+from tests.data.sentinelone.application import APPLICATION_ID_1
+from tests.data.sentinelone.application import APPLICATION_ID_2
+from tests.data.sentinelone.application import APPLICATION_ID_3
+from tests.data.sentinelone.application import APPLICATION_INSTALLS_DATA
+from tests.data.sentinelone.application import APPLICATIONS_DATA
+from tests.data.sentinelone.application import TEST_ACCOUNT_ID
+from tests.data.sentinelone.application import TEST_COMMON_JOB_PARAMETERS
+from tests.data.sentinelone.application import TEST_UPDATE_TAG
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 
 @patch.object(

@@ -1,8 +1,11 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import neo4j
-from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
+from azure.core.exceptions import ClientAuthenticationError
+from azure.core.exceptions import HttpResponseError
 from azure.mgmt.web import WebSiteManagementClient
 
 from cartography.client.core.tx import load

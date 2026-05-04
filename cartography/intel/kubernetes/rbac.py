@@ -1,19 +1,21 @@
 import logging
 from itertools import chain
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import neo4j
-from kubernetes.client import (
-    V1ClusterRole,
-    V1ClusterRoleBinding,
-    V1Role,
-    V1RoleBinding,
-    V1ServiceAccount,
-)
+from kubernetes.client import V1ClusterRole
+from kubernetes.client import V1ClusterRoleBinding
+from kubernetes.client import V1Role
+from kubernetes.client import V1RoleBinding
+from kubernetes.client import V1ServiceAccount
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.kubernetes.util import K8sClient, get_epoch, k8s_paginate
+from cartography.intel.kubernetes.util import get_epoch
+from cartography.intel.kubernetes.util import k8s_paginate
+from cartography.intel.kubernetes.util import K8sClient
 from cartography.models.kubernetes.clusterrolebindings import (
     KubernetesClusterRoleBindingSchema,
 )

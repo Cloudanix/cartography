@@ -1,14 +1,14 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.efs
 from cartography.intel.aws.efs import sync
-from tests.data.aws.efs import (
-    GET_EFS_ACCESS_POINTS,
-    GET_EFS_FILE_SYSTEMS,
-    GET_EFS_MOUNT_TARGETS,
-)
+from tests.data.aws.efs import GET_EFS_ACCESS_POINTS
+from tests.data.aws.efs import GET_EFS_FILE_SYSTEMS
+from tests.data.aws.efs import GET_EFS_MOUNT_TARGETS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "us-west-2"

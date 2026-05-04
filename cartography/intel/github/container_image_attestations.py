@@ -15,14 +15,17 @@ import base64
 import binascii
 import json
 import logging
-from typing import Any, cast
+from typing import Any
+from typing import cast
 from urllib.parse import quote
 
 import neo4j
 
-from cartography.client.core.tx import load, read_list_of_values_tx
+from cartography.client.core.tx import load
+from cartography.client.core.tx import read_list_of_values_tx
 from cartography.graph.job import GraphJob
-from cartography.intel.github.util import fetch_all_rest_api_pages, rest_api_base_url
+from cartography.intel.github.util import fetch_all_rest_api_pages
+from cartography.intel.github.util import rest_api_base_url
 from cartography.models.github.container_image_attestations import (
     GitHubContainerImageAttestationSchema,
 )

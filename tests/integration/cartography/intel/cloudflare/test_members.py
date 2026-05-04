@@ -10,7 +10,8 @@ from tests.integration.cartography.intel.cloudflare.test_accounts import (
 from tests.integration.cartography.intel.cloudflare.test_roles import (
     _ensure_local_neo4j_has_test_roles,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 ACCOUNT_ID = tests.data.cloudflare.accounts.CLOUDFLARE_ACCOUNTS[0]["id"]

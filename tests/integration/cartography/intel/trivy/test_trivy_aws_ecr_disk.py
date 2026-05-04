@@ -1,5 +1,7 @@
 import json
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock
+from unittest.mock import mock_open
+from unittest.mock import patch
 
 import cartography.intel.aws.ecr
 import cartography.intel.trivy
@@ -10,9 +12,9 @@ from tests.data.trivy.trivy_sample import TRIVY_SAMPLE
 from tests.integration.cartography.intel.aws.common import create_test_account
 from tests.integration.cartography.intel.trivy.test_helpers import (
     assert_all_trivy_relationships,
-    assert_trivy_findings,
-    assert_trivy_packages,
 )
+from tests.integration.cartography.intel.trivy.test_helpers import assert_trivy_findings
+from tests.integration.cartography.intel.trivy.test_helpers import assert_trivy_packages
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_UPDATE_TAG = 123456789

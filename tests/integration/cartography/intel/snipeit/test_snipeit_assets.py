@@ -4,7 +4,8 @@ import cartography.intel.snipeit
 import tests.data.snipeit.assets
 import tests.data.snipeit.tenants
 import tests.data.snipeit.users
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 logger = logging.getLogger(__name__)
 TEST_UPDATE_TAG = 1234

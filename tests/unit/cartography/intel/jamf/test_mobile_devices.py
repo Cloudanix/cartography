@@ -1,9 +1,13 @@
-from typing import Any, cast
-from unittest.mock import Mock, patch
+from typing import Any
+from typing import cast
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import pytest
 
-from cartography.intel.jamf.mobile_devices import _normalize_mobile_os, get, transform
+from cartography.intel.jamf.mobile_devices import _normalize_mobile_os
+from cartography.intel.jamf.mobile_devices import get
+from cartography.intel.jamf.mobile_devices import transform
 from tests.data.jamf.mobile_devices import MOBILE_DEVICES
 
 

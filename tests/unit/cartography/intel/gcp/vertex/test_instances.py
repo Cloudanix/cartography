@@ -1,10 +1,8 @@
 from unittest.mock import MagicMock
 
-from cartography.intel.gcp.vertex.instances import (
-    get_workbench_api_locations,
-    get_workbench_instances_for_location,
-    sync_workbench_instances,
-)
+from cartography.intel.gcp.vertex.instances import get_workbench_api_locations
+from cartography.intel.gcp.vertex.instances import get_workbench_instances_for_location
+from cartography.intel.gcp.vertex.instances import sync_workbench_instances
 
 
 def test_get_workbench_api_locations_uses_authorized_session(monkeypatch):

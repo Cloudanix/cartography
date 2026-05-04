@@ -10,13 +10,23 @@ import pytest
 from cartography.client.core.tx import load
 from tests.data.graph.querybuilder.sample_data.conditional_label_data import (
     CONTAINER_IMAGES,
+)
+from tests.data.graph.querybuilder.sample_data.conditional_label_data import (
     CONTAINER_IMAGES_UPDATED,
+)
+from tests.data.graph.querybuilder.sample_data.conditional_label_data import (
     MERGE_CONTAINER_REGISTRY_QUERY,
+)
+from tests.data.graph.querybuilder.sample_data.conditional_label_data import (
     VULNERABILITIES,
 )
 from tests.data.graph.querybuilder.sample_models.conditional_label_models import (
     ContainerImageSchema,
+)
+from tests.data.graph.querybuilder.sample_models.conditional_label_models import (
     ContainerImageSchemaNoSubResource,
+)
+from tests.data.graph.querybuilder.sample_models.conditional_label_models import (
     VulnerabilitySchema,
 )
 

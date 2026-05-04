@@ -1,6 +1,8 @@
 ## Usage Tutorial
 
-Once everything has been installed and synced, you can view the Neo4j web interface at http://localhost:7474. You can view the reference on this [here](https://neo4j.com/developer/guide-neo4j-browser/#_installing_and_starting_neo4j_browser).
+Once everything has been installed and synced, you can follow this tutorial on querying the graph directly.
+
+View the Neo4j web interface at http://localhost:7474. You can view the reference on this [here](https://neo4j.com/developer/guide-neo4j-browser/#_installing_and_starting_neo4j_browser).
 
 If you already know Neo4j and just need to know what are the nodes, attributes, and graph relationships for our representation of infrastructure assets, you can view our [sample queries](samplequeries.html). More sample queries are available at https://github.com/marco-lancini/cartography-queries.
 
@@ -90,7 +92,7 @@ This says "what are the possible labels for all nodes connected to all DNSRecord
 ```
 ["AWSDNSRecord", "DNSRecord"]
 ["AWSDNSZone", "DNSZone"]
-["LoadBalancerV2"]
+["AWSLoadBalancerV2"]
 ["NameServer"]
 ["ESDomain"]
 ["LoadBalancer"]
@@ -148,7 +150,6 @@ If you want to learn more in depth about Neo4j and Cypher queries you can look a
 
 ### Data Enrichment
 
-.. _data-augmentation:
 
 Cartography adds custom attributes to nodes and relationships to point out security-related items of interest. Data augmentation jobs meant to apply to the whole graph and run at the end of a sync are stored in `cartography/data/jobs/analysis`. Here is a summary of all of Cartography's custom attributes.
 

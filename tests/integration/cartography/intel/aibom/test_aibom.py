@@ -1,31 +1,33 @@
 import copy
 import datetime
 import json
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock
+from unittest.mock import mock_open
+from unittest.mock import patch
 
 import cartography.intel.aws.ecr
 import tests.data.aws.ecr
-from cartography.intel.aibom import sync_aibom_from_dir, sync_aibom_from_s3
+from cartography.intel.aibom import sync_aibom_from_dir
+from cartography.intel.aibom import sync_aibom_from_s3
 from cartography.intel.aibom.cleanup import cleanup_aibom
 from cartography.intel.common.object_store import ReportRef
 from cartography.intel.kubernetes.pods import load_containers
 from cartography.util import run_analysis_job
-from tests.data.aibom.aibom_sample import (
-    AIBOM_DIGEST_BASED_REPORT,
-    AIBOM_INCOMPLETE_REPORT,
-    AIBOM_REPORT,
-    AIBOM_SINGLE_PLATFORM_REPORT,
-    AIBOM_UNMATCHED_REPORT,
-    CONTAINER_ON_MANIFEST_LIST,
-    CONTAINER_ON_SINGLE_PLATFORM,
-    TEST_CLUSTER_ID,
-    TEST_CLUSTER_NAME,
-    TEST_DIGEST_BASED_IMAGE_URI,
-    TEST_IMAGE_URI,
-    TEST_SOURCE_KEY,
-)
+from tests.data.aibom.aibom_sample import AIBOM_DIGEST_BASED_REPORT
+from tests.data.aibom.aibom_sample import AIBOM_INCOMPLETE_REPORT
+from tests.data.aibom.aibom_sample import AIBOM_REPORT
+from tests.data.aibom.aibom_sample import AIBOM_SINGLE_PLATFORM_REPORT
+from tests.data.aibom.aibom_sample import AIBOM_UNMATCHED_REPORT
+from tests.data.aibom.aibom_sample import CONTAINER_ON_MANIFEST_LIST
+from tests.data.aibom.aibom_sample import CONTAINER_ON_SINGLE_PLATFORM
+from tests.data.aibom.aibom_sample import TEST_CLUSTER_ID
+from tests.data.aibom.aibom_sample import TEST_CLUSTER_NAME
+from tests.data.aibom.aibom_sample import TEST_DIGEST_BASED_IMAGE_URI
+from tests.data.aibom.aibom_sample import TEST_IMAGE_URI
+from tests.data.aibom.aibom_sample import TEST_SOURCE_KEY
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_UPDATE_TAG = 123456789

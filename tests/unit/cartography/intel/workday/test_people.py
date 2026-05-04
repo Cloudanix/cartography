@@ -1,9 +1,8 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-from cartography.intel.workday.people import (
-    _transform_people_data,
-    get_workday_directory,
-)
+from cartography.intel.workday.people import _transform_people_data
+from cartography.intel.workday.people import get_workday_directory
 
 
 def test_transform_people_data_basic():

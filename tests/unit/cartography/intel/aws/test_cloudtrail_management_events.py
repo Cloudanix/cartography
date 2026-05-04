@@ -1,23 +1,34 @@
 from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError, ReadTimeoutError
+from botocore.exceptions import ClientError
+from botocore.exceptions import ReadTimeoutError
 
 import cartography.intel.aws.cloudtrail_management_events as cloudtrail_management_events
 from cartography.intel.aws.cloudtrail import CloudTrailTransientRegionFailure
+from cartography.intel.aws.cloudtrail_management_events import get_assume_role_events
+from cartography.intel.aws.cloudtrail_management_events import get_saml_role_events
 from cartography.intel.aws.cloudtrail_management_events import (
-    get_assume_role_events,
-    get_saml_role_events,
     get_web_identity_role_events,
-    sync_assume_role_events,
+)
+from cartography.intel.aws.cloudtrail_management_events import sync_assume_role_events
+from cartography.intel.aws.cloudtrail_management_events import (
     transform_assume_role_events_to_role_assumptions,
+)
+from cartography.intel.aws.cloudtrail_management_events import (
     transform_saml_role_events_to_role_assumptions,
+)
+from cartography.intel.aws.cloudtrail_management_events import (
     transform_web_identity_role_events_to_role_assumptions,
 )
 from cartography.intel.aws.util.botocore_config import get_botocore_config
 from tests.data.aws.cloudtrail_management_events import (
     ACCESS_DENIED_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
+)
+from tests.data.aws.cloudtrail_management_events import (
     ACCESS_DENIED_SAML_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
+)
+from tests.data.aws.cloudtrail_management_events import (
     ACCESS_DENIED_WEB_IDENTITY_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
 )
 

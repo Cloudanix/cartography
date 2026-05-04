@@ -1,12 +1,11 @@
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 
-from cartography.intel.docker_scout import (
-    sync_docker_scout_from_dir,
-    sync_docker_scout_from_s3,
-)
+from cartography.intel.docker_scout import sync_docker_scout_from_dir
+from cartography.intel.docker_scout import sync_docker_scout_from_s3
 
 
 @patch("cartography.intel.docker_scout.cleanup")

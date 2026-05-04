@@ -1,8 +1,11 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.azure.aks as aks
-from tests.data.azure.aks import MOCK_AGENT_POOLS, MOCK_CLUSTERS
-from tests.integration.util import check_nodes, check_rels
+from tests.data.azure.aks import MOCK_AGENT_POOLS
+from tests.data.azure.aks import MOCK_CLUSTERS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

@@ -1,4 +1,7 @@
-from typing import Dict, List, Optional, cast
+from typing import cast
+from typing import Dict
+from typing import List
+from typing import Optional
 from unittest.mock import patch
 
 import cartography.intel.github.repos

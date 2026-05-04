@@ -1,12 +1,12 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.okta.applications
-from tests.data.okta.application import (
-    LIST_APPLICATION_GROUP_ASSIGNED_RESPONSE,
-    LIST_APPLICATION_USER_ASSIGNED_RESPONSE,
-    create_test_application,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.okta.application import create_test_application
+from tests.data.okta.application import LIST_APPLICATION_GROUP_ASSIGNED_RESPONSE
+from tests.data.okta.application import LIST_APPLICATION_USER_ASSIGNED_RESPONSE
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ORG_ID = "test-okta-org-id"
 TEST_UPDATE_TAG = 123456789

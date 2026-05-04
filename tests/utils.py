@@ -1,16 +1,14 @@
 import inspect
 import logging
 from pkgutil import iter_modules
-from typing import Generator, Tuple, Type
+from typing import Generator
+from typing import Tuple
+from typing import Type
 
-from cartography.models.core.nodes import (
-    CartographyNodeProperties,
-    CartographyNodeSchema,
-)
-from cartography.models.core.relationships import (
-    CartographyRelProperties,
-    CartographyRelSchema,
-)
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
 
 logger = logging.getLogger(__name__)
 

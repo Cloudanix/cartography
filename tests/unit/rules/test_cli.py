@@ -2,7 +2,9 @@ from unittest.mock import MagicMock
 
 from typer.testing import CliRunner
 
-from cartography.rules.cli import app, complete_facts, complete_rules
+from cartography.rules.cli import app
+from cartography.rules.cli import complete_facts
+from cartography.rules.cli import complete_rules
 
 runner = CliRunner()
 

@@ -2,22 +2,19 @@ import logging
 
 import boto3
 import neo4j
-from botocore.exceptions import (
-    ClientError,
-    ConnectTimeoutError,
-    EndpointConnectionError,
-    ReadTimeoutError,
-)
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import EndpointConnectionError
+from botocore.exceptions import ReadTimeoutError
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import (
-    create_boto3_client,
-    get_botocore_config,
-)
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import get_botocore_config
 from cartography.models.aws.ec2.load_balancer_listeners import ELBListenerSchema
 from cartography.models.aws.ec2.load_balancers import LoadBalancerSchema
-from cartography.util import aws_handle_regions, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

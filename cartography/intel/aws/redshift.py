@@ -8,7 +8,8 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.redshift import RedshiftClusterSchema
-from cartography.util import aws_handle_regions, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

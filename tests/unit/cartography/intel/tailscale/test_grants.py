@@ -1,4 +1,5 @@
-from cartography.intel.tailscale.grants import resolve_access, transform
+from cartography.intel.tailscale.grants import resolve_access
+from cartography.intel.tailscale.grants import transform
 from cartography.intel.tailscale.utils import ACLParser
 
 

@@ -5,15 +5,24 @@ import neo4j
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-from cartography.client.core.tx import load, load_matchlinks
+from cartography.client.core.tx import load
+from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
+from cartography.models.googleworkspace.group import GoogleWorkspaceGroupSchema
 from cartography.models.googleworkspace.group import (
-    GoogleWorkspaceGroupSchema,
     GoogleWorkspaceGroupToGroupInheritedMemberRel,
+)
+from cartography.models.googleworkspace.group import (
     GoogleWorkspaceGroupToGroupInheritedOwnerRel,
+)
+from cartography.models.googleworkspace.group import (
     GoogleWorkspaceGroupToGroupMemberRel,
-    GoogleWorkspaceGroupToGroupOwnerRel,
+)
+from cartography.models.googleworkspace.group import GoogleWorkspaceGroupToGroupOwnerRel
+from cartography.models.googleworkspace.group import (
     GoogleWorkspaceUserToGroupInheritedMemberRel,
+)
+from cartography.models.googleworkspace.group import (
     GoogleWorkspaceUserToGroupInheritedOwnerRel,
 )
 from cartography.util import timeit

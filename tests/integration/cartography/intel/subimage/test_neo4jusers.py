@@ -7,7 +7,8 @@ import tests.data.subimage.neo4jusers
 from tests.integration.cartography.intel.subimage.test_team import (
     _ensure_local_neo4j_has_test_tenant,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_TENANT_ID = "tenant-abc-123"

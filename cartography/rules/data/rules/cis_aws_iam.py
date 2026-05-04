@@ -13,15 +13,13 @@ from typing import Annotated
 
 from pydantic import BeforeValidator
 
-from cartography.rules.spec.model import (
-    Fact,
-    Finding,
-    Framework,
-    Maturity,
-    Module,
-    Rule,
-    RuleReference,
-)
+from cartography.rules.spec.model import Fact
+from cartography.rules.spec.model import Finding
+from cartography.rules.spec.model import Framework
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
+from cartography.rules.spec.model import Rule
+from cartography.rules.spec.model import RuleReference
 from cartography.util import to_datetime
 
 # Type alias for datetime fields that may come from Neo4j as neo4j.time.DateTime

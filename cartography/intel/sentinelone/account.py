@@ -5,10 +5,8 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
-from cartography.intel.sentinelone.api import (
-    call_sentinelone_api,
-    is_site_scope_http_error,
-)
+from cartography.intel.sentinelone.api import call_sentinelone_api
+from cartography.intel.sentinelone.api import is_site_scope_http_error
 from cartography.models.sentinelone.account import S1AccountSchema
 from cartography.util import timeit
 

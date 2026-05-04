@@ -2,7 +2,8 @@ from typing import Any
 
 import neo4j
 
-from cartography.client.core.tx import load_matchlinks, read_list_of_dicts_tx
+from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.models.microsoft.entra.entra_user_to_aws_sso import (
     EntraUserToAWSSSOUserMatchLink,

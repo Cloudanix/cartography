@@ -12,14 +12,12 @@ from googleapiclient.errors import HttpError
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.gcp.util import (
-    gcp_api_execute_with_retry,
-    get_error_reason,
-    is_api_disabled_error,
-    is_billing_disabled_error,
-    parse_compute_full_uri_to_partial_uri,
-    summarize_gcp_http_error,
-)
+from cartography.intel.gcp.util import gcp_api_execute_with_retry
+from cartography.intel.gcp.util import get_error_reason
+from cartography.intel.gcp.util import is_api_disabled_error
+from cartography.intel.gcp.util import is_billing_disabled_error
+from cartography.intel.gcp.util import parse_compute_full_uri_to_partial_uri
+from cartography.intel.gcp.util import summarize_gcp_http_error
 from cartography.models.gcp.compute.instance_group import GCPInstanceGroupSchema
 from cartography.util import timeit
 

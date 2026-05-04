@@ -2,8 +2,14 @@ from dataclasses import dataclass
 
 from cartography.models.aws.ec2.networkinterface_instance import (
     EC2NetworkInterfaceToAWSAccountRel,
+)
+from cartography.models.aws.ec2.networkinterface_instance import (
     EC2NetworkInterfaceToEC2InstanceRel,
+)
+from cartography.models.aws.ec2.networkinterface_instance import (
     EC2NetworkInterfaceToEC2SecurityGroupRel,
+)
+from cartography.models.aws.ec2.networkinterface_instance import (
     EC2NetworkInterfaceToEC2SubnetRel,
 )
 from cartography.models.core.common import PropertyRef

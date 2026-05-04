@@ -1,14 +1,14 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.cloudwatch
 from cartography.intel.aws.cloudwatch import sync
-from tests.data.aws.cloudwatch import (
-    GET_CLOUDWATCH_LOG_GROUPS,
-    GET_CLOUDWATCH_LOG_METRIC_FILTERS,
-    GET_CLOUDWATCH_METRIC_ALARMS,
-)
+from tests.data.aws.cloudwatch import GET_CLOUDWATCH_LOG_GROUPS
+from tests.data.aws.cloudwatch import GET_CLOUDWATCH_LOG_METRIC_FILTERS
+from tests.data.aws.cloudwatch import GET_CLOUDWATCH_METRIC_ALARMS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "eu-west-1"

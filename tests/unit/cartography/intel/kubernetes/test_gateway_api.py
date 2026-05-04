@@ -1,15 +1,14 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 from kubernetes.client.exceptions import ApiException
 
 import cartography.intel.kubernetes.gateway_api
-from cartography.intel.kubernetes.gateway_api import (
-    _list_cluster_custom_objects,
-    sync_gateway_api,
-    transform_gateways,
-    transform_http_routes,
-)
+from cartography.intel.kubernetes.gateway_api import _list_cluster_custom_objects
+from cartography.intel.kubernetes.gateway_api import sync_gateway_api
+from cartography.intel.kubernetes.gateway_api import transform_gateways
+from cartography.intel.kubernetes.gateway_api import transform_http_routes
 from tests.data.kubernetes.gateway_api import KUBERNETES_HTTP_ROUTES_RAW
 from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_1_NAMESPACES_DATA
 

@@ -1,17 +1,17 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.lambda_function
 import tests.data.aws.lambda_function
 from cartography.util import run_analysis_job
-from tests.data.aws.lambda_function import (
-    LIST_LAMBDA_FUNCTIONS_CONTAINER_IMAGE,
-    TEST_LAMBDA_IMAGE_DIGEST,
-    TEST_LAMBDA_IMAGE_URI,
-    mock_get_event_source_mappings_for_sync_test,
-    mock_get_function_aliases_for_sync_test,
-)
+from tests.data.aws.lambda_function import LIST_LAMBDA_FUNCTIONS_CONTAINER_IMAGE
+from tests.data.aws.lambda_function import mock_get_event_source_mappings_for_sync_test
+from tests.data.aws.lambda_function import mock_get_function_aliases_for_sync_test
+from tests.data.aws.lambda_function import TEST_LAMBDA_IMAGE_DIGEST
+from tests.data.aws.lambda_function import TEST_LAMBDA_IMAGE_URI
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "us-west-2"

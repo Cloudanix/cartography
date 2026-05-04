@@ -5,17 +5,16 @@ from unittest.mock import patch
 import requests
 
 from cartography.intel.gitlab.runners import sync_gitlab_runners
-from tests.data.gitlab.runners import (
-    GET_GROUP_RUNNERS_LIST,
-    GET_INSTANCE_RUNNERS_LIST,
-    GET_PROJECT_RUNNERS_LIST,
-    RUNNER_DETAILS,
-    TEST_GITLAB_URL,
-    TEST_GROUP_ID,
-    TEST_ORG_ID,
-    TEST_PROJECT_ID,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gitlab.runners import GET_GROUP_RUNNERS_LIST
+from tests.data.gitlab.runners import GET_INSTANCE_RUNNERS_LIST
+from tests.data.gitlab.runners import GET_PROJECT_RUNNERS_LIST
+from tests.data.gitlab.runners import RUNNER_DETAILS
+from tests.data.gitlab.runners import TEST_GITLAB_URL
+from tests.data.gitlab.runners import TEST_GROUP_ID
+from tests.data.gitlab.runners import TEST_ORG_ID
+from tests.data.gitlab.runners import TEST_PROJECT_ID
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 

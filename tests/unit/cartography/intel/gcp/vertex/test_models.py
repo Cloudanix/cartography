@@ -1,11 +1,10 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-from cartography.intel.gcp.vertex.models import (
-    get_vertex_ai_locations,
-    sync_vertex_ai_models,
-    transform_vertex_ai_models,
-)
+from cartography.intel.gcp.vertex.models import get_vertex_ai_locations
+from cartography.intel.gcp.vertex.models import sync_vertex_ai_models
+from cartography.intel.gcp.vertex.models import transform_vertex_ai_models
 
 
 def test_transform_vertex_ai_models_serializes_labels_and_map_training_pipeline():

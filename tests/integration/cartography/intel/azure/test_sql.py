@@ -1,21 +1,20 @@
 from unittest.mock import patch
 
 import cartography.intel.azure.sql
-from tests.data.azure.sql import (
-    DESCRIBE_AD_ADMINS,
-    DESCRIBE_DATABASES,
-    DESCRIBE_DNS_ALIASES,
-    DESCRIBE_ELASTIC_POOLS,
-    DESCRIBE_FAILOVER_GROUPS,
-    DESCRIBE_RECOVERABLE_DATABASES,
-    DESCRIBE_REPLICATION_LINKS,
-    DESCRIBE_RESTORABLE_DROPPED_DATABASES,
-    DESCRIBE_RESTORE_POINTS,
-    DESCRIBE_SERVERS,
-    DESCRIBE_THREAT_DETECTION_POLICY,
-    DESCRIBE_TRANSPARENT_DATA_ENCRYPTIONS,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.azure.sql import DESCRIBE_AD_ADMINS
+from tests.data.azure.sql import DESCRIBE_DATABASES
+from tests.data.azure.sql import DESCRIBE_DNS_ALIASES
+from tests.data.azure.sql import DESCRIBE_ELASTIC_POOLS
+from tests.data.azure.sql import DESCRIBE_FAILOVER_GROUPS
+from tests.data.azure.sql import DESCRIBE_RECOVERABLE_DATABASES
+from tests.data.azure.sql import DESCRIBE_REPLICATION_LINKS
+from tests.data.azure.sql import DESCRIBE_RESTORABLE_DROPPED_DATABASES
+from tests.data.azure.sql import DESCRIBE_RESTORE_POINTS
+from tests.data.azure.sql import DESCRIBE_SERVERS
+from tests.data.azure.sql import DESCRIBE_THREAT_DETECTION_POLICY
+from tests.data.azure.sql import DESCRIBE_TRANSPARENT_DATA_ENCRYPTIONS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_RESOURCE_GROUP = "TestRG"

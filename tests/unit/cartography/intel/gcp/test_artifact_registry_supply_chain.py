@@ -5,17 +5,15 @@ import httpx
 import pytest
 
 from cartography.intel.gcp.artifact_registry import supply_chain
+from cartography.intel.gcp.artifact_registry.supply_chain import _build_layer_dicts
 from cartography.intel.gcp.artifact_registry.supply_chain import (
-    _build_layer_dicts,
     _fetch_attestation_provenance,
-    _process_single_image,
-    _TokenManager,
 )
+from cartography.intel.gcp.artifact_registry.supply_chain import _process_single_image
+from cartography.intel.gcp.artifact_registry.supply_chain import _TokenManager
 from cartography.intel.supply_chain import extract_provenance_from_oci_config
-from tests.data.gcp.artifact_registry import (
-    MOCK_SINGLE_IMAGE_CONFIG,
-    MOCK_SINGLE_IMAGE_MANIFEST,
-)
+from tests.data.gcp.artifact_registry import MOCK_SINGLE_IMAGE_CONFIG
+from tests.data.gcp.artifact_registry import MOCK_SINGLE_IMAGE_MANIFEST
 
 # ---------------------------------------------------------------------------
 # OCI label provenance

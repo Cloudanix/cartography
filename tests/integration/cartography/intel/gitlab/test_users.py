@@ -3,13 +3,12 @@
 from unittest.mock import patch
 
 from cartography.intel.gitlab.users import sync_gitlab_users
-from tests.data.gitlab.users import (
-    GET_GITLAB_COMMITS,
-    GET_GITLAB_GROUP_MEMBERS,
-    GET_GITLAB_ORG_MEMBERS,
-    TEST_ORG_URL,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gitlab.users import GET_GITLAB_COMMITS
+from tests.data.gitlab.users import GET_GITLAB_GROUP_MEMBERS
+from tests.data.gitlab.users import GET_GITLAB_ORG_MEMBERS
+from tests.data.gitlab.users import TEST_ORG_URL
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = 100

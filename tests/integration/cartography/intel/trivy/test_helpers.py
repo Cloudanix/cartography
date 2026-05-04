@@ -1,6 +1,7 @@
 from neo4j import Session
 
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 
 def assert_trivy_findings(neo4j_session: Session) -> None:

@@ -4,7 +4,9 @@ from typing import Any
 
 import neo4j
 
-from cartography.client.core.tx import load, read_single_value_tx, run_write_query
+from cartography.client.core.tx import load
+from cartography.client.core.tx import read_single_value_tx
+from cartography.client.core.tx import run_write_query
 from cartography.intel.ubuntu.feed import FEED_ID
 from cartography.intel.ubuntu.util import retryable_session
 from cartography.models.ubuntu.notices import UbuntuSecurityNoticeSchema

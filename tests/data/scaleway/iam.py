@@ -1,16 +1,14 @@
 from datetime import datetime
 
 from dateutil.tz import tzutc
-from scaleway.iam.v1alpha1 import (
-    APIKey,
-    Application,
-    Group,
-    PermissionSet,
-    PermissionSetScopeType,
-    Policy,
-    Rule,
-    User,
-)
+from scaleway.iam.v1alpha1 import APIKey
+from scaleway.iam.v1alpha1 import Application
+from scaleway.iam.v1alpha1 import Group
+from scaleway.iam.v1alpha1 import PermissionSet
+from scaleway.iam.v1alpha1 import PermissionSetScopeType
+from scaleway.iam.v1alpha1 import Policy
+from scaleway.iam.v1alpha1 import Rule
+from scaleway.iam.v1alpha1 import User
 
 SCALEWAY_USERS = [
     User(

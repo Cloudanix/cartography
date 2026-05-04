@@ -1,14 +1,12 @@
 import json
 
-from kubernetes.client.models import (
-    V1LoadBalancerIngress,
-    V1LoadBalancerStatus,
-    V1ObjectMeta,
-    V1PortStatus,
-    V1Service,
-    V1ServiceSpec,
-    V1ServiceStatus,
-)
+from kubernetes.client.models import V1LoadBalancerIngress
+from kubernetes.client.models import V1LoadBalancerStatus
+from kubernetes.client.models import V1ObjectMeta
+from kubernetes.client.models import V1PortStatus
+from kubernetes.client.models import V1Service
+from kubernetes.client.models import V1ServiceSpec
+from kubernetes.client.models import V1ServiceStatus
 
 from cartography.intel.kubernetes.services import transform_services
 

@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from cartography.intel.gitlab.container_image_attestations import (
     AttestationDiscoverySummary,
+)
+from cartography.intel.gitlab.container_image_attestations import (
     sync_container_image_attestations,
 )
 from cartography.intel.gitlab.container_images import sync_container_images
@@ -15,14 +17,15 @@ from cartography.intel.gitlab.container_repository_tags import (
 )
 from tests.data.gitlab.container_registry import (
     GET_CONTAINER_IMAGE_ATTESTATIONS_RESPONSE,
-    GET_CONTAINER_IMAGES_RESPONSE,
-    GET_CONTAINER_MANIFEST_LISTS_RESPONSE,
-    GET_CONTAINER_REPOSITORIES_RESPONSE,
-    GET_CONTAINER_REPOSITORY_TAGS_RESPONSE,
-    TEST_GITLAB_URL,
-    TEST_ORG_URL,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gitlab.container_registry import GET_CONTAINER_IMAGES_RESPONSE
+from tests.data.gitlab.container_registry import GET_CONTAINER_MANIFEST_LISTS_RESPONSE
+from tests.data.gitlab.container_registry import GET_CONTAINER_REPOSITORIES_RESPONSE
+from tests.data.gitlab.container_registry import GET_CONTAINER_REPOSITORY_TAGS_RESPONSE
+from tests.data.gitlab.container_registry import TEST_GITLAB_URL
+from tests.data.gitlab.container_registry import TEST_ORG_URL
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = 12345

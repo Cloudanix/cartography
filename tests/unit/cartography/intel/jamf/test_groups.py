@@ -1,9 +1,11 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import pytest
 import requests
 
-from cartography.intel.jamf.groups import get, transform
+from cartography.intel.jamf.groups import get
+from cartography.intel.jamf.groups import transform
 
 
 @patch("cartography.intel.jamf.groups.get_paginated_jamf_results")

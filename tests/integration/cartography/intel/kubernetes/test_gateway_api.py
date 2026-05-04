@@ -1,5 +1,6 @@
 from copy import deepcopy
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -7,30 +8,23 @@ from kubernetes.client.exceptions import ApiException
 
 import cartography.intel.kubernetes.gateway_api
 from cartography.intel.kubernetes.clusters import load_kubernetes_cluster
-from cartography.intel.kubernetes.gateway_api import (
-    load_gateways,
-    load_http_routes,
-    sync_gateway_api,
-)
+from cartography.intel.kubernetes.gateway_api import load_gateways
+from cartography.intel.kubernetes.gateway_api import load_http_routes
+from cartography.intel.kubernetes.gateway_api import sync_gateway_api
 from cartography.intel.kubernetes.namespaces import load_namespaces
 from cartography.intel.kubernetes.services import load_services
-from tests.data.kubernetes.clusters import (
-    KUBERNETES_CLUSTER_DATA,
-    KUBERNETES_CLUSTER_IDS,
-    KUBERNETES_CLUSTER_NAMES,
-)
-from tests.data.kubernetes.gateway_api import (
-    KUBERNETES_GATEWAYS_DATA,
-    KUBERNETES_GATEWAYS_RAW,
-    KUBERNETES_HTTP_ROUTES_DATA,
-    KUBERNETES_HTTP_ROUTES_RAW,
-)
-from tests.data.kubernetes.namespaces import (
-    KUBERNETES_CLUSTER_1_NAMESPACES_DATA,
-    KUBERNETES_CLUSTER_2_NAMESPACES_DATA,
-)
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_DATA
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_IDS
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_NAMES
+from tests.data.kubernetes.gateway_api import KUBERNETES_GATEWAYS_DATA
+from tests.data.kubernetes.gateway_api import KUBERNETES_GATEWAYS_RAW
+from tests.data.kubernetes.gateway_api import KUBERNETES_HTTP_ROUTES_DATA
+from tests.data.kubernetes.gateway_api import KUBERNETES_HTTP_ROUTES_RAW
+from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_1_NAMESPACES_DATA
+from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_2_NAMESPACES_DATA
 from tests.data.kubernetes.services import KUBERNETES_SERVICES_DATA
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 

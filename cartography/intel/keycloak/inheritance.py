@@ -3,11 +3,14 @@ from typing import Any
 
 import neo4j
 
-from cartography.client.core.tx import load_matchlinks, read_list_of_dicts_tx
+from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.models.keycloak.inheritance import (
     KeycloakRoleIndirectGrantsScopeMatchLink,
-    KeycloakUserAssumeScopeMatchLink,
+)
+from cartography.models.keycloak.inheritance import KeycloakUserAssumeScopeMatchLink
+from cartography.models.keycloak.inheritance import (
     KeycloakUserInheritedMemberOfGroupMatchLink,
 )
 from cartography.util import timeit

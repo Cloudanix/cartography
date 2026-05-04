@@ -1,10 +1,10 @@
 ## Crowdstrike Schema
 
-.. _crowdstrike_schema:
-
 ### CrowdstrikeHost
 
 Representation of a Crowdstrike Host
+
+> **Ontology Mapping**: This node participates in the canonical `Device` ontology, enabling cross-platform device correlation via `(:Device)-[:OBSERVED_AS]->(:CrowdstrikeHost)` relationships.
 
 | Field | Description |
 |-------|-------------|
@@ -12,6 +12,7 @@ Representation of a Crowdstrike Host
 | lastupdated | Timestamp of the last time the node was updated |
 | id | The device ID for this host |
 | cid | The customer ID |
+| email | Email address associated with the host record in CrowdStrike. |
 | instance\_id | The AWS instance ID associated with this host |
 | status | Containment Status of the machine. "Normal" denotes good operations; other values might mean reduced functionality or support. |
 | hostname | The name of the machine. |
@@ -82,7 +83,7 @@ Representation of a Crowdstrike Vulnerability
     (SpotlightVulnerability)-[HAS_CVE]->(CVE)
     ```
 
-### CVE::CrowdstrikeFinding
+### CrowdstrikeFinding::CVE
 
 Representation of a CVE
 

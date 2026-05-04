@@ -3,13 +3,11 @@ Unit tests for GitHub branch protection rules transformation logic.
 """
 
 from cartography.intel.github.repos import _transform_branch_protection_rules
-from tests.data.github.branch_protection_rules import (
-    NO_PROTECTED_BRANCHES,
-    PROTECTED_BRANCH_RELEASE,
-    PROTECTED_BRANCH_STRONG,
-    PROTECTED_BRANCH_WEAK,
-    PROTECTED_BRANCHES_DATA,
-)
+from tests.data.github.branch_protection_rules import NO_PROTECTED_BRANCHES
+from tests.data.github.branch_protection_rules import PROTECTED_BRANCH_RELEASE
+from tests.data.github.branch_protection_rules import PROTECTED_BRANCH_STRONG
+from tests.data.github.branch_protection_rules import PROTECTED_BRANCH_WEAK
+from tests.data.github.branch_protection_rules import PROTECTED_BRANCHES_DATA
 
 TEST_REPO_URL = "https://github.com/test-org/test-repo"
 

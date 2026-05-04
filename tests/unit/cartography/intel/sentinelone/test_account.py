@@ -2,19 +2,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cartography.intel.sentinelone.account import (
-    get_accounts,
-    get_sites,
-    sync_site_scoped_accounts,
-    transform_accounts,
-    transform_accounts_from_sites,
-)
-from tests.data.sentinelone.account import (
-    ACCOUNT_ID,
-    ACCOUNT_ID_2,
-    ACCOUNTS_DATA,
-    SITES_DATA,
-)
+from cartography.intel.sentinelone.account import get_accounts
+from cartography.intel.sentinelone.account import get_sites
+from cartography.intel.sentinelone.account import sync_site_scoped_accounts
+from cartography.intel.sentinelone.account import transform_accounts
+from cartography.intel.sentinelone.account import transform_accounts_from_sites
+from tests.data.sentinelone.account import ACCOUNT_ID
+from tests.data.sentinelone.account import ACCOUNT_ID_2
+from tests.data.sentinelone.account import ACCOUNTS_DATA
+from tests.data.sentinelone.account import SITES_DATA
 
 
 def test_transform_accounts():

@@ -1,9 +1,7 @@
 from dataclasses import dataclass
 
-from cartography.models.aws.ec2.subnet_instance import (
-    EC2SubnetToAWSAccountRel,
-    EC2SubnetToEC2InstanceRel,
-)
+from cartography.models.aws.ec2.subnet_instance import EC2SubnetToAWSAccountRel
+from cartography.models.aws.ec2.subnet_instance import EC2SubnetToEC2InstanceRel
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import (
     CartographyNodeProperties,

@@ -1,5 +1,6 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from types import SimpleNamespace
 
 from cartography.intel.kubernetes.clusters import transform_kubernetes_cluster

@@ -3,20 +3,16 @@ from dataclasses import asdict
 from string import Template
 
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import (
-    CartographyNodeProperties,
-    CartographyNodeSchema,
-    ConditionalNodeLabel,
-    ExtraNodeLabels,
-)
-from cartography.models.core.relationships import (
-    CartographyRelSchema,
-    LinkDirection,
-    MatchLinkSubResource,
-    OtherRelationships,
-    SourceNodeMatcher,
-    TargetNodeMatcher,
-)
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ConditionalNodeLabel
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import MatchLinkSubResource
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import SourceNodeMatcher
+from cartography.models.core.relationships import TargetNodeMatcher
 from cartography.models.ontology.mapping import (
     get_semantic_label_mapping_from_node_schema,
 )

@@ -1,19 +1,20 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import boto3
 import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import (
-    create_boto3_client,
-    get_botocore_config,
-)
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import get_botocore_config
 from cartography.models.aws.efs.access_point import EfsAccessPointSchema
 from cartography.models.aws.efs.file_system import EfsFileSystemSchema
 from cartography.models.aws.efs.mount_target import EfsMountTargetSchema
-from cartography.util import aws_handle_regions, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,7 @@
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 import neo4j
 from googleapiclient.discovery import HttpError, Resource
@@ -7,13 +9,12 @@ from googleapiclient.discovery import HttpError, Resource
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.labels import sync_labels
-from cartography.intel.gcp.util import (
-    gcp_api_execute_with_retry,
-    get_error_reason,
-    is_permission_denied_error,
-    summarize_gcp_http_error,
-)
-from cartography.models.gcp.storage.bucket import GCPBucketLabelSchema, GCPBucketSchema
+from cartography.intel.gcp.util import gcp_api_execute_with_retry
+from cartography.intel.gcp.util import get_error_reason
+from cartography.intel.gcp.util import is_permission_denied_error
+from cartography.intel.gcp.util import summarize_gcp_http_error
+from cartography.models.gcp.storage.bucket import GCPBucketLabelSchema
+from cartography.models.gcp.storage.bucket import GCPBucketSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

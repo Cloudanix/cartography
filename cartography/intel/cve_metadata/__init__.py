@@ -7,14 +7,17 @@ from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
-from cartography.client.core.tx import load, read_list_of_values_tx
+from cartography.client.core.tx import load
+from cartography.client.core.tx import read_list_of_values_tx
 from cartography.config import Config
 from cartography.graph.job import GraphJob
-from cartography.intel.cve_metadata import epss, nvd
+from cartography.intel.cve_metadata import epss
+from cartography.intel.cve_metadata import nvd
 from cartography.models.cve_metadata.cve_metadata import CVEMetadataSchema
 from cartography.models.cve_metadata.cve_metadata_feed import CVEMetadataFeedSchema
 from cartography.stats import get_stats_client
-from cartography.util import merge_module_sync_metadata, timeit
+from cartography.util import merge_module_sync_metadata
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

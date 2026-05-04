@@ -2,11 +2,9 @@ from dataclasses import asdict
 from string import Template
 from typing import Dict, List
 
-from cartography.graph.querybuilder import (
-    _asdict_with_validate_relprops,
-    _build_match_clause,
-    rel_present_on_node_schema,
-)
+from cartography.graph.querybuilder import _asdict_with_validate_relprops
+from cartography.graph.querybuilder import _build_match_clause
+from cartography.graph.querybuilder import rel_present_on_node_schema
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.models.core.relationships import (

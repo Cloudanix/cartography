@@ -9,8 +9,8 @@ from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.models.tailscale.deviceposture import (
     TailscaleDeviceToPostureConditionMatchLink,
-    TailscaleDeviceToPostureMatchLink,
 )
+from cartography.models.tailscale.deviceposture import TailscaleDeviceToPostureMatchLink
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

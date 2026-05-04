@@ -1,4 +1,5 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 from cartography.intel.kubernetes import rbac
 from cartography.intel.kubernetes.clusters import load_kubernetes_cluster
@@ -7,31 +8,28 @@ from cartography.intel.kubernetes.rbac import sync_kubernetes_rbac
 from cartography.intel.okta.groups import _load_okta_groups
 from cartography.intel.okta.organization import create_okta_organization
 from cartography.intel.okta.users import _load_okta_users
-from tests.data.kubernetes.clusters import (
-    KUBERNETES_CLUSTER_DATA,
-    KUBERNETES_CLUSTER_IDS,
-    KUBERNETES_CLUSTER_NAMES,
-)
-from tests.data.kubernetes.rbac import (
-    KUBERNETES_CLUSTER_1_CLUSTER_ROLE_BINDING_IDS,
-    KUBERNETES_CLUSTER_1_CLUSTER_ROLE_BINDINGS_RAW,
-    KUBERNETES_CLUSTER_1_CLUSTER_ROLE_IDS,
-    KUBERNETES_CLUSTER_1_CLUSTER_ROLES_RAW,
-    KUBERNETES_CLUSTER_1_GROUP_IDS,
-    KUBERNETES_CLUSTER_1_ROLE_BINDING_IDS,
-    KUBERNETES_CLUSTER_1_ROLE_BINDINGS_RAW,
-    KUBERNETES_CLUSTER_1_ROLE_IDS,
-    KUBERNETES_CLUSTER_1_ROLES_RAW,
-    KUBERNETES_CLUSTER_1_SERVICE_ACCOUNT_GCP_EMAILS,
-    KUBERNETES_CLUSTER_1_SERVICE_ACCOUNT_IDS,
-    KUBERNETES_CLUSTER_1_SERVICE_ACCOUNT_ROLE_ARNS,
-    KUBERNETES_CLUSTER_1_SERVICE_ACCOUNTS_RAW,
-    KUBERNETES_CLUSTER_1_USER_IDS,
-    MOCK_OKTA_GROUPS,
-    MOCK_OKTA_USERS,
-    RBAC_TEST_NAMESPACES_DATA,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_DATA
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_IDS
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_NAMES
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_CLUSTER_ROLE_BINDING_IDS
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_CLUSTER_ROLE_BINDINGS_RAW
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_CLUSTER_ROLE_IDS
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_CLUSTER_ROLES_RAW
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_GROUP_IDS
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_ROLE_BINDING_IDS
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_ROLE_BINDINGS_RAW
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_ROLE_IDS
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_ROLES_RAW
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_SERVICE_ACCOUNT_GCP_EMAILS
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_SERVICE_ACCOUNT_IDS
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_SERVICE_ACCOUNT_ROLE_ARNS
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_SERVICE_ACCOUNTS_RAW
+from tests.data.kubernetes.rbac import KUBERNETES_CLUSTER_1_USER_IDS
+from tests.data.kubernetes.rbac import MOCK_OKTA_GROUPS
+from tests.data.kubernetes.rbac import MOCK_OKTA_USERS
+from tests.data.kubernetes.rbac import RBAC_TEST_NAMESPACES_DATA
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_OKTA_ORG_ID = "test-okta-org"

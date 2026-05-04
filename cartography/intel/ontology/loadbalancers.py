@@ -3,7 +3,8 @@ from typing import Any
 
 import neo4j
 
-from cartography.util import run_analysis_job, timeit
+from cartography.util import run_analysis_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

@@ -3,11 +3,14 @@ from typing import Any
 
 import neo4j
 
-from cartography.client.core.tx import load, load_matchlinks
+from cartography.client.core.tx import load
+from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.intel.ontology.utils import get_source_nodes_from_graph
-from cartography.models.ontology.device import HOSTNAME_MATCHLINKS, DeviceSchema
-from cartography.util import run_analysis_job, timeit
+from cartography.models.ontology.device import DeviceSchema
+from cartography.models.ontology.device import HOSTNAME_MATCHLINKS
+from cartography.util import run_analysis_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

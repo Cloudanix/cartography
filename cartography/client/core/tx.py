@@ -1,20 +1,26 @@
 import logging
 import time
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
+from typing import Any
+from typing import Callable
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
+from typing import TypeVar
+from typing import Union
 
 import backoff
 import neo4j
 import neo4j.exceptions
 
-from cartography.graph.querybuilder import (
-    build_conditional_label_queries,
-    build_create_index_queries,
-    build_create_index_queries_for_matchlink,
-    build_ingestion_query,
-    build_matchlink_query,
-)
-from cartography.helpers import backoff_handler, batch
+from cartography.graph.querybuilder import build_conditional_label_queries
+from cartography.graph.querybuilder import build_create_index_queries
+from cartography.graph.querybuilder import build_create_index_queries_for_matchlink
+from cartography.graph.querybuilder import build_ingestion_query
+from cartography.graph.querybuilder import build_matchlink_query
+from cartography.helpers import backoff_handler
+from cartography.helpers import batch
 from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.models.core.relationships import CartographyRelSchema
 from cartography.stats import get_stats_client

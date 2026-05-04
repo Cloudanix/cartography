@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.cloudtrail_management_events
 import cartography.intel.aws.iam
@@ -7,26 +8,53 @@ from cartography.intel.aws.cloudtrail_management_events import sync
 from cartography.intel.aws.iam import transform_users
 from tests.data.aws.cloudtrail_management_events import (
     AGGREGATION_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
-    BASIC_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
-    CROSS_ACCOUNT_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
-    GITHUB_ACTIONS_AGGREGATION_CLOUDTRAIL_EVENTS,
-    GITHUB_ACTIONS_AGGREGATION_IAM_ROLES,
-    GITHUB_ACTIONS_IAM_ROLES,
-    GITHUB_WEB_IDENTITY_CLOUDTRAIL_EVENTS,
-    INTEGRATION_TEST_AGGREGATION_ACCOUNT_ID,
-    INTEGRATION_TEST_AGGREGATION_IAM_ROLES,
-    INTEGRATION_TEST_AGGREGATION_IAM_USERS,
-    INTEGRATION_TEST_BASIC_ACCOUNT_ID,
-    INTEGRATION_TEST_BASIC_IAM_ROLES,
-    INTEGRATION_TEST_BASIC_IAM_USERS,
-    INTEGRATION_TEST_CROSS_ACCOUNT_IAM_ROLES,
-    INTEGRATION_TEST_CROSS_ACCOUNT_IAM_USERS,
-    INTEGRATION_TEST_CROSS_ACCOUNT_ID,
-    SAML_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
-    TEST_SSO_USERS,
 )
+from tests.data.aws.cloudtrail_management_events import (
+    BASIC_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    CROSS_ACCOUNT_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    GITHUB_ACTIONS_AGGREGATION_CLOUDTRAIL_EVENTS,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    GITHUB_ACTIONS_AGGREGATION_IAM_ROLES,
+)
+from tests.data.aws.cloudtrail_management_events import GITHUB_ACTIONS_IAM_ROLES
+from tests.data.aws.cloudtrail_management_events import (
+    GITHUB_WEB_IDENTITY_CLOUDTRAIL_EVENTS,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    INTEGRATION_TEST_AGGREGATION_ACCOUNT_ID,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    INTEGRATION_TEST_AGGREGATION_IAM_ROLES,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    INTEGRATION_TEST_AGGREGATION_IAM_USERS,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    INTEGRATION_TEST_BASIC_ACCOUNT_ID,
+)
+from tests.data.aws.cloudtrail_management_events import INTEGRATION_TEST_BASIC_IAM_ROLES
+from tests.data.aws.cloudtrail_management_events import INTEGRATION_TEST_BASIC_IAM_USERS
+from tests.data.aws.cloudtrail_management_events import (
+    INTEGRATION_TEST_CROSS_ACCOUNT_IAM_ROLES,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    INTEGRATION_TEST_CROSS_ACCOUNT_IAM_USERS,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    INTEGRATION_TEST_CROSS_ACCOUNT_ID,
+)
+from tests.data.aws.cloudtrail_management_events import (
+    SAML_ASSUME_ROLE_CLOUDTRAIL_EVENTS,
+)
+from tests.data.aws.cloudtrail_management_events import TEST_SSO_USERS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_REGION = "us-east-1"
 TEST_UPDATE_TAG = 123456789

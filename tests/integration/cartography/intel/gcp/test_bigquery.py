@@ -1,21 +1,21 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.gcp.bigquery_connection as bigquery_connection
 import cartography.intel.gcp.bigquery_dataset as bigquery_dataset
 import cartography.intel.gcp.bigquery_routine as bigquery_routine
 import cartography.intel.gcp.bigquery_table as bigquery_table
-from tests.data.gcp.bigquery import (
-    MOCK_CONNECTIONS,
-    MOCK_DATASETS,
-    MOCK_ROUTINES_MY_DATASET,
-    MOCK_ROUTINES_OTHER_DATASET,
-    MOCK_TABLE_DETAIL_EVENTS,
-    MOCK_TABLE_DETAIL_USER_VIEW,
-    MOCK_TABLE_DETAIL_USERS,
-    MOCK_TABLES_MY_DATASET,
-    MOCK_TABLES_OTHER_DATASET,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gcp.bigquery import MOCK_CONNECTIONS
+from tests.data.gcp.bigquery import MOCK_DATASETS
+from tests.data.gcp.bigquery import MOCK_ROUTINES_MY_DATASET
+from tests.data.gcp.bigquery import MOCK_ROUTINES_OTHER_DATASET
+from tests.data.gcp.bigquery import MOCK_TABLE_DETAIL_EVENTS
+from tests.data.gcp.bigquery import MOCK_TABLE_DETAIL_USER_VIEW
+from tests.data.gcp.bigquery import MOCK_TABLE_DETAIL_USERS
+from tests.data.gcp.bigquery import MOCK_TABLES_MY_DATASET
+from tests.data.gcp.bigquery import MOCK_TABLES_OTHER_DATASET
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_PROJECT_ID = "test-project"

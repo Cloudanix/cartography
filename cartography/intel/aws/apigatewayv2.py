@@ -3,19 +3,18 @@ from typing import Any
 
 import boto3
 import neo4j
-from botocore.exceptions import (
-    ClientError,
-    ConnectionClosedError,
-    ConnectTimeoutError,
-    ReadTimeoutError,
-)
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectionClosedError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import ReadTimeoutError
 from botocore.parsers import ResponseParserError
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.apigatewayv2.apigatewayv2 import APIGatewayV2APISchema
-from cartography.util import aws_handle_regions, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

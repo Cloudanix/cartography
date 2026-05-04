@@ -1,12 +1,11 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 
 import tests.data.aws.apigateway as test_data
-from cartography.intel.aws.apigateway import (
-    get_rest_api_resources_methods_integrations,
-    parse_policy,
-)
+from cartography.intel.aws.apigateway import get_rest_api_resources_methods_integrations
+from cartography.intel.aws.apigateway import parse_policy
 
 
 def test_parse_policy():

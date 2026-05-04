@@ -1,5 +1,7 @@
 import logging
-from typing import Dict, List, Set
+from typing import Dict
+from typing import List
+from typing import Set
 
 import boto3
 import neo4j

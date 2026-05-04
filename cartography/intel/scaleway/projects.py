@@ -2,7 +2,8 @@ from typing import Any
 
 import neo4j
 import scaleway
-from scaleway.account.v3 import AccountV3ProjectAPI, Project
+from scaleway.account.v3 import AccountV3ProjectAPI
+from scaleway.account.v3 import Project
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob

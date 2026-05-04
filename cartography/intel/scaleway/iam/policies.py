@@ -2,7 +2,9 @@ from typing import Any
 
 import neo4j
 import scaleway
-from scaleway.iam.v1alpha1 import IamV1Alpha1API, Policy, Rule
+from scaleway.iam.v1alpha1 import IamV1Alpha1API
+from scaleway.iam.v1alpha1 import Policy
+from scaleway.iam.v1alpha1 import Rule
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob

@@ -7,7 +7,8 @@ import tests.data.subimage.team
 import tests.data.subimage.tenant
 from cartography.intel.subimage.team import load_team_members
 from cartography.intel.subimage.tenant import load_tenants
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_TENANT_ID = "tenant-abc-123"

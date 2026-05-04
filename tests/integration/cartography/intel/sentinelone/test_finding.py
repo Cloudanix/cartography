@@ -1,16 +1,15 @@
 from unittest.mock import patch
 
 import cartography.intel.sentinelone.finding
-from tests.data.sentinelone.finding import (
-    CVE_ID_1,
-    CVE_ID_2,
-    CVE_ID_3,
-    CVES_DATA,
-    TEST_ACCOUNT_ID,
-    TEST_COMMON_JOB_PARAMETERS,
-    TEST_UPDATE_TAG,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.sentinelone.finding import CVE_ID_1
+from tests.data.sentinelone.finding import CVE_ID_2
+from tests.data.sentinelone.finding import CVE_ID_3
+from tests.data.sentinelone.finding import CVES_DATA
+from tests.data.sentinelone.finding import TEST_ACCOUNT_ID
+from tests.data.sentinelone.finding import TEST_COMMON_JOB_PARAMETERS
+from tests.data.sentinelone.finding import TEST_UPDATE_TAG
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 # Expected application version IDs based on the test data
 EXPECTED_APP_VERSION_IDS = {

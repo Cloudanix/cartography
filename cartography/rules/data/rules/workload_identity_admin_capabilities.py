@@ -1,4 +1,8 @@
-from cartography.rules.spec.model import Fact, Finding, Maturity, Module, Rule
+from cartography.rules.spec.model import Fact
+from cartography.rules.spec.model import Finding
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
+from cartography.rules.spec.model import Rule
 
 # AWS
 _aws_service_account_manipulation_via_ec2 = Fact(

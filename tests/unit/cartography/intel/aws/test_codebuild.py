@@ -1,11 +1,10 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
-from botocore.exceptions import (
-    ClientError,
-    ConnectTimeoutError,
-    EndpointConnectionError,
-)
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import EndpointConnectionError
 
 from cartography.intel.aws import codebuild
 from tests.data.aws.codebuild import GET_PROJECTS

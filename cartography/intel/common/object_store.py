@@ -2,16 +2,17 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Callable, Iterable, Protocol
+from typing import Any
+from typing import Callable
+from typing import Iterable
+from typing import Protocol
 
 from azure.storage import blob as azure_blob
 from typing_extensions import Self
 
-from cartography.intel.common.report_source import (
-    build_azblob_source,
-    build_gcs_source,
-    build_s3_source,
-)
+from cartography.intel.common.report_source import build_azblob_source
+from cartography.intel.common.report_source import build_gcs_source
+from cartography.intel.common.report_source import build_s3_source
 
 
 @dataclass(frozen=True)
@@ -179,7 +180,8 @@ class S3BucketReader(_BaseReader):
         return refs
 
     def read_bytes(self, ref: ReportRef) -> bytes:
-        from botocore.exceptions import BotoCoreError, ClientError
+        from botocore.exceptions import BotoCoreError
+        from botocore.exceptions import ClientError
 
         expected_prefix = f"s3://{self._bucket}/"
         if not ref.uri.startswith(expected_prefix):

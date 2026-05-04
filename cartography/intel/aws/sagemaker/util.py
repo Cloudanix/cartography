@@ -1,19 +1,23 @@
 import logging
 from functools import wraps
-from typing import Any, Callable, Iterable, Optional, TypeVar, cast
+from typing import Any
+from typing import Callable
+from typing import cast
+from typing import Iterable
+from typing import Optional
+from typing import TypeVar
 
 import boto3
 import neo4j
-from botocore.exceptions import (
-    ClientError,
-    ConnectionClosedError,
-    ConnectTimeoutError,
-    EndpointConnectionError,
-    ReadTimeoutError,
-)
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectionClosedError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import EndpointConnectionError
+from botocore.exceptions import ReadTimeoutError
 from botocore.parsers import ResponseParserError
 
-from cartography.util import is_aws_region_skippable_client_error, timeit
+from cartography.util import is_aws_region_skippable_client_error
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

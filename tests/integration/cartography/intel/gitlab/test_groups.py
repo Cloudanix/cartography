@@ -1,13 +1,12 @@
 """Integration tests for GitLab groups module."""
 
 from cartography.intel.gitlab.groups import load_groups
-from tests.data.gitlab.groups import (
-    TEST_GITLAB_URL,
-    TEST_ORG_ID,
-    TEST_ORG_URL,
-    TRANSFORMED_GROUPS,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gitlab.groups import TEST_GITLAB_URL
+from tests.data.gitlab.groups import TEST_ORG_ID
+from tests.data.gitlab.groups import TEST_ORG_URL
+from tests.data.gitlab.groups import TRANSFORMED_GROUPS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 

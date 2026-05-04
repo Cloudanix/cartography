@@ -6,24 +6,20 @@ import cartography.intel.kubernetes.pods as pods
 import cartography.intel.kubernetes.rbac as rbac
 from cartography.intel.kubernetes.clusters import load_kubernetes_cluster
 from cartography.intel.kubernetes.namespaces import load_namespaces
-from cartography.intel.kubernetes.pods import (
-    cleanup,
-    load_containers,
-    load_pods,
-    sync_pods,
-)
+from cartography.intel.kubernetes.pods import cleanup
+from cartography.intel.kubernetes.pods import load_containers
+from cartography.intel.kubernetes.pods import load_pods
+from cartography.intel.kubernetes.pods import sync_pods
 from cartography.intel.kubernetes.rbac import sync_kubernetes_rbac
-from tests.data.kubernetes.clusters import (
-    KUBERNETES_CLUSTER_DATA,
-    KUBERNETES_CLUSTER_IDS,
-    KUBERNETES_CLUSTER_NAMES,
-)
-from tests.data.kubernetes.namespaces import (
-    KUBERNETES_CLUSTER_1_NAMESPACES_DATA,
-    KUBERNETES_CLUSTER_2_NAMESPACES_DATA,
-)
-from tests.data.kubernetes.pods import KUBERNETES_CONTAINER_DATA, KUBERNETES_PODS_DATA
-from tests.integration.util import check_nodes, check_rels
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_DATA
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_IDS
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_NAMES
+from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_1_NAMESPACES_DATA
+from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_2_NAMESPACES_DATA
+from tests.data.kubernetes.pods import KUBERNETES_CONTAINER_DATA
+from tests.data.kubernetes.pods import KUBERNETES_PODS_DATA
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 

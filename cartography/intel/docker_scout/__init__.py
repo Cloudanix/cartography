@@ -5,18 +5,17 @@ import boto3
 from neo4j import Session
 
 from cartography.config import Config
-from cartography.intel.common.object_store import (
-    LocalReportReader,
-    ObjectStoreError,
-    ReportReader,
-    S3BucketReader,
-    read_text_report,
-)
+from cartography.intel.common.object_store import LocalReportReader
+from cartography.intel.common.object_store import ObjectStoreError
+from cartography.intel.common.object_store import read_text_report
+from cartography.intel.common.object_store import ReportReader
+from cartography.intel.common.object_store import S3BucketReader
 from cartography.intel.common.report_reader_builder import (
     build_report_reader_for_source,
 )
 from cartography.intel.common.report_source import parse_report_source
-from cartography.intel.docker_scout.scanner import cleanup, sync_from_file
+from cartography.intel.docker_scout.scanner import cleanup
+from cartography.intel.docker_scout.scanner import sync_from_file
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

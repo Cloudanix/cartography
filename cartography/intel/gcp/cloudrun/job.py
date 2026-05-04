@@ -7,17 +7,13 @@ from google.auth.credentials import Credentials as GoogleCredentials
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.container_arch import (
-    ARCH_SOURCE_PLATFORM_REQUIREMENT,
-    normalize_architecture,
-)
+from cartography.intel.container_arch import ARCH_SOURCE_PLATFORM_REQUIREMENT
+from cartography.intel.container_arch import normalize_architecture
 from cartography.intel.container_image import parse_image_uri
 from cartography.intel.gcp.clients import build_cloud_run_job_client
-from cartography.intel.gcp.cloudrun.util import (
-    CLOUD_RUN_LABEL_BATCH_SIZE,
-    fetch_cloud_run_resources_for_locations,
-    list_cloud_run_resources_for_location,
-)
+from cartography.intel.gcp.cloudrun.util import CLOUD_RUN_LABEL_BATCH_SIZE
+from cartography.intel.gcp.cloudrun.util import fetch_cloud_run_resources_for_locations
+from cartography.intel.gcp.cloudrun.util import list_cloud_run_resources_for_location
 from cartography.intel.gcp.labels import sync_labels
 from cartography.models.gcp.cloudrun.job import GCPCloudRunJobSchema
 from cartography.models.gcp.cloudrun.job_container import GCPCloudRunJobContainerSchema

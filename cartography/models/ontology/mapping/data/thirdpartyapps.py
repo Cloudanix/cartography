@@ -1,8 +1,6 @@
-from cartography.models.ontology.mapping.specs import (
-    OntologyFieldMapping,
-    OntologyMapping,
-    OntologyNodeMapping,
-)
+from cartography.models.ontology.mapping.specs import OntologyFieldMapping
+from cartography.models.ontology.mapping.specs import OntologyMapping
+from cartography.models.ontology.mapping.specs import OntologyNodeMapping
 
 # ThirdPartyApp ontology fields:
 # client_id (REQUIRED) - OAuth client identifier

@@ -13,12 +13,10 @@ from cartography.models.aws.secretsmanager.secret_version import (
     SecretsManagerSecretVersionSchema,
 )
 from cartography.stats import get_stats_client
-from cartography.util import (
-    aws_handle_regions,
-    dict_date_to_epoch,
-    merge_module_sync_metadata,
-    timeit,
-)
+from cartography.util import aws_handle_regions
+from cartography.util import dict_date_to_epoch
+from cartography.util import merge_module_sync_metadata
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

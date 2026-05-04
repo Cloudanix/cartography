@@ -1,8 +1,11 @@
 from unittest.mock import patch
 
 import cartography.intel.azure.compute
-from tests.data.azure.compute import DESCRIBE_DISKS, DESCRIBE_SNAPSHOTS, DESCRIBE_VMS
-from tests.integration.util import check_nodes, check_rels
+from tests.data.azure.compute import DESCRIBE_DISKS
+from tests.data.azure.compute import DESCRIBE_SNAPSHOTS
+from tests.data.azure.compute import DESCRIBE_VMS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_RESOURCE_GROUP = "TestRG"

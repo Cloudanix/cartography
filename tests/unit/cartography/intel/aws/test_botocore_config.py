@@ -1,12 +1,10 @@
 import pytest
 
-from cartography.intel.aws.util.botocore_config import (
-    create_aioboto3_client,
-    create_boto3_client,
-    create_boto3_resource,
-    get_botocore_config,
-    get_lambda_botocore_config,
-)
+from cartography.intel.aws.util.botocore_config import create_aioboto3_client
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import create_boto3_resource
+from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.intel.aws.util.botocore_config import get_lambda_botocore_config
 
 
 class FakeSession:

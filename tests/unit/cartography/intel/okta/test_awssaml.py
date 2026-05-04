@@ -3,14 +3,12 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 import cartography.intel.okta.awssaml
-from cartography.intel.okta.awssaml import (
-    AccountRole,
-    GroupRole,
-    OktaGroup,
-    _parse_okta_group_name,
-    query_for_okta_to_awssso_role_mapping,
-    transform_okta_group_to_aws_role,
-)
+from cartography.intel.okta.awssaml import _parse_okta_group_name
+from cartography.intel.okta.awssaml import AccountRole
+from cartography.intel.okta.awssaml import GroupRole
+from cartography.intel.okta.awssaml import OktaGroup
+from cartography.intel.okta.awssaml import query_for_okta_to_awssso_role_mapping
+from cartography.intel.okta.awssaml import transform_okta_group_to_aws_role
 
 SAMPLE_OKTA_GROUP_IDS = ["00g9oh2", "00g9oh3", "00g9oh4"]
 

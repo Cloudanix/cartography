@@ -1,12 +1,16 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.eventbridge
 from cartography.intel.aws.eventbridge import sync
-from cartography.intel.aws.iam import load_role_data, transform_role_trust_policies
-from tests.data.aws.eventbridge import GET_EVENTBRIDGE_RULES, GET_EVENTBRIDGE_TARGETS
+from cartography.intel.aws.iam import load_role_data
+from cartography.intel.aws.iam import transform_role_trust_policies
+from tests.data.aws.eventbridge import GET_EVENTBRIDGE_RULES
+from tests.data.aws.eventbridge import GET_EVENTBRIDGE_TARGETS
 from tests.data.aws.iam.roles import ROLES
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "eu-west-1"

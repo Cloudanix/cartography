@@ -4,7 +4,8 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import read_list_of_dicts_tx
-from cartography.models.ontology.mapping import ONTOLOGY_MODELS, ONTOLOGY_NODES_MAPPING
+from cartography.models.ontology.mapping import ONTOLOGY_MODELS
+from cartography.models.ontology.mapping import ONTOLOGY_NODES_MAPPING
 from cartography.models.ontology.mapping.specs import OntologyNodeMapping
 from cartography.util import timeit
 

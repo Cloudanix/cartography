@@ -3,17 +3,25 @@ from dataclasses import dataclass
 from functools import partial
 
 import neo4j
-from google.api_core.exceptions import GoogleAPICallError, PermissionDenied
-from google.auth.exceptions import DefaultCredentialsError, RefreshError
+from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import PermissionDenied
+from google.auth.exceptions import DefaultCredentialsError
+from google.auth.exceptions import RefreshError
 from google.cloud.artifactregistry_v1 import ArtifactRegistryClient
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.gcp.artifact_registry.util import (
     ARTIFACT_REGISTRY_LOAD_BATCH_SIZE,
+)
+from cartography.intel.gcp.artifact_registry.util import (
     DEFAULT_ARTIFACT_REGISTRY_WORKERS,
+)
+from cartography.intel.gcp.artifact_registry.util import (
     fetch_artifact_registry_resources,
-    get_artifact_registry_locations,
+)
+from cartography.intel.gcp.artifact_registry.util import get_artifact_registry_locations
+from cartography.intel.gcp.artifact_registry.util import (
     list_artifact_registry_resources,
 )
 from cartography.intel.gcp.util import proto_message_to_dict

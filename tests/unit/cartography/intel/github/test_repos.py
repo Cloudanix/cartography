@@ -2,21 +2,17 @@ from copy import deepcopy
 from unittest.mock import patch
 
 import cartography.intel.github.repos
-from cartography.intel.github.repos import (
-    _build_branch_data,
-    _create_git_url_from_ssh_url,
-    _merge_repos_with_privileged_details,
-    _repos_need_privileged_details,
-    _transform_dependency_graph,
-    _transform_dependency_manifests,
-    _transform_python_requirements,
-    transform,
-)
-from tests.data.github.repos import (
-    DEP_MANIFESTS_BY_URL,
-    DEPENDENCY_GRAPH_WITH_MULTIPLE_ECOSYSTEMS,
-    GET_REPOS,
-)
+from cartography.intel.github.repos import _build_branch_data
+from cartography.intel.github.repos import _create_git_url_from_ssh_url
+from cartography.intel.github.repos import _merge_repos_with_privileged_details
+from cartography.intel.github.repos import _repos_need_privileged_details
+from cartography.intel.github.repos import _transform_dependency_graph
+from cartography.intel.github.repos import _transform_dependency_manifests
+from cartography.intel.github.repos import _transform_python_requirements
+from cartography.intel.github.repos import transform
+from tests.data.github.repos import DEP_MANIFESTS_BY_URL
+from tests.data.github.repos import DEPENDENCY_GRAPH_WITH_MULTIPLE_ECOSYSTEMS
+from tests.data.github.repos import GET_REPOS
 
 TEST_UPDATE_TAG = 123456789
 

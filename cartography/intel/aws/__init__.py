@@ -10,21 +10,18 @@ import neo4j
 
 from cartography.config import Config
 from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.common import (
-    parse_and_validate_aws_regions,
-    parse_and_validate_aws_requested_syncs,
-)
+from cartography.intel.aws.util.common import parse_and_validate_aws_regions
+from cartography.intel.aws.util.common import parse_and_validate_aws_requested_syncs
 from cartography.stats import get_stats_client
-from cartography.util import (
-    merge_module_sync_metadata,
-    run_analysis_and_ensure_deps,
-    run_analysis_job,
-    run_cleanup_job,
-    run_scoped_analysis_job,
-    timeit,
-)
+from cartography.util import merge_module_sync_metadata
+from cartography.util import run_analysis_and_ensure_deps
+from cartography.util import run_analysis_job
+from cartography.util import run_cleanup_job
+from cartography.util import run_scoped_analysis_job
+from cartography.util import timeit
 
-from . import ec2, organizations
+from . import ec2
+from . import organizations
 from .resources import RESOURCE_FUNCTIONS
 
 stat_handler = get_stats_client(__name__)
@@ -419,7 +416,6 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "aws_cloudtrail_management_events_lookback_hours": config.aws_cloudtrail_management_events_lookback_hours,
         "experimental_aws_inspector_batch": config.experimental_aws_inspector_batch,
         "aws_tagging_api_cleanup_batch": config.aws_tagging_api_cleanup_batch,
-        "AWS_INTERNAL_ACCOUNTS": getattr(config, "aws_internal_accounts", None),
     }
     try:
         boto3_session = boto3.Session()
@@ -467,12 +463,6 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         regions = parse_and_validate_aws_regions(config.aws_regions)
     else:
         regions = None
-
-    if getattr(config, "aws_excluded_regions", None):
-        excluded = set(config.aws_excluded_regions)
-        if regions:
-            regions = [r for r in regions if r not in excluded]
-        logger.info("Excluding AWS regions: %s", excluded)
 
     sync_successful = _sync_multiple_accounts(
         neo4j_session,

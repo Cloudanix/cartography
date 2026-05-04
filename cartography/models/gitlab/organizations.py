@@ -8,10 +8,8 @@ They serve as the root of the organizational hierarchy and contain groups and pr
 from dataclasses import dataclass
 
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import (
-    CartographyNodeProperties,
-    CartographyNodeSchema,
-)
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
 
 
 @dataclass(frozen=True)

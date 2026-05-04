@@ -3,23 +3,19 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-from google.api_core.exceptions import (
-    InternalServerError,
-    ServiceUnavailable,
-    TooManyRequests,
-)
+from google.api_core.exceptions import InternalServerError
+from google.api_core.exceptions import ServiceUnavailable
+from google.api_core.exceptions import TooManyRequests
 from googleapiclient.errors import HttpError
 
-from cartography.intel.gcp.util import (
-    classify_gcp_http_error,
-    gcp_api_giveup_handler,
-    get_error_reason,
-    is_api_disabled_error,
-    is_billing_disabled_error,
-    is_permission_denied_error,
-    is_retryable_gcp_http_error,
-    summarize_gcp_http_error,
-)
+from cartography.intel.gcp.util import classify_gcp_http_error
+from cartography.intel.gcp.util import gcp_api_giveup_handler
+from cartography.intel.gcp.util import get_error_reason
+from cartography.intel.gcp.util import is_api_disabled_error
+from cartography.intel.gcp.util import is_billing_disabled_error
+from cartography.intel.gcp.util import is_permission_denied_error
+from cartography.intel.gcp.util import is_retryable_gcp_http_error
+from cartography.intel.gcp.util import summarize_gcp_http_error
 
 
 class TestIsApiDisabledError:

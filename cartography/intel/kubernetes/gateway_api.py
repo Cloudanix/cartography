@@ -6,16 +6,12 @@ from kubernetes.client.exceptions import ApiException
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.kubernetes.util import (
-    K8sClient,
-    get_epoch,
-    get_qualified_resource_name,
-    parse_rfc3339,
-)
-from cartography.models.kubernetes.gateway_api import (
-    KubernetesGatewaySchema,
-    KubernetesHTTPRouteSchema,
-)
+from cartography.intel.kubernetes.util import get_epoch
+from cartography.intel.kubernetes.util import get_qualified_resource_name
+from cartography.intel.kubernetes.util import K8sClient
+from cartography.intel.kubernetes.util import parse_rfc3339
+from cartography.models.kubernetes.gateway_api import KubernetesGatewaySchema
+from cartography.models.kubernetes.gateway_api import KubernetesHTTPRouteSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

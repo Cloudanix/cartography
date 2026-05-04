@@ -3,11 +3,9 @@ from typing import Any
 from neo4j import Session
 
 from cartography.graph.job import GraphJob
-from cartography.models.aibom import (
-    AIBOMComponentSchema,
-    AIBOMSourceSchema,
-    AIBOMWorkflowSchema,
-)
+from cartography.models.aibom import AIBOMComponentSchema
+from cartography.models.aibom import AIBOMSourceSchema
+from cartography.models.aibom import AIBOMWorkflowSchema
 
 
 def cleanup_aibom(

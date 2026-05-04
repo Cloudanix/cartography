@@ -5,9 +5,11 @@ This module defines the data structures used to represent the results
 of rule and fact execution.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 
-from cartography.rules.spec.model import Finding, Framework
+from cartography.rules.spec.model import Finding
+from cartography.rules.spec.model import Framework
 
 
 @dataclass

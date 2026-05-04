@@ -1,8 +1,6 @@
-from cartography.models.ontology.mapping.specs import (
-    OntologyFieldMapping,
-    OntologyMapping,
-    OntologyNodeMapping,
-)
+from cartography.models.ontology.mapping.specs import OntologyFieldMapping
+from cartography.models.ontology.mapping.specs import OntologyMapping
+from cartography.models.ontology.mapping.specs import OntologyNodeMapping
 
 # NetworkAccessControl fields:
 # name - Display name of the security group or firewall (REQUIRED)

@@ -7,16 +7,22 @@ Tests the query building functions for matchlink operations.
 from unittest.mock import patch
 
 from cartography.graph.cleanupbuilder import build_cleanup_query_for_matchlink
-from cartography.graph.querybuilder import (
-    build_create_index_queries_for_matchlink,
-    build_matchlink_query,
+from cartography.graph.querybuilder import build_create_index_queries_for_matchlink
+from cartography.graph.querybuilder import build_matchlink_query
+from tests.data.graph.matchlink.iam_permissions import PrincipalToS3BucketPermissionRel
+from tests.data.graph.matchlink.iam_permissions import (
+    PrincipalToS3BucketScopedPermissionRel,
 )
 from tests.data.graph.matchlink.iam_permissions import (
-    PrincipalToS3BucketPermissionRel,
-    PrincipalToS3BucketScopedPermissionRel,
     PrincipalToS3BucketSourceScopedPermissionRel,
+)
+from tests.data.graph.matchlink.iam_permissions import (
     PrincipalToS3BucketTargetScopedOutwardPermissionRel,
+)
+from tests.data.graph.matchlink.iam_permissions import (
     PrincipalToS3BucketTargetScopedPermissionRel,
+)
+from tests.data.graph.matchlink.iam_permissions import (
     PrincipalToS3BucketUnequalScopedPermissionRel,
 )
 from tests.unit.cartography.graph.helpers import (

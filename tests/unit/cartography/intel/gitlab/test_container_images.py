@@ -1,13 +1,13 @@
 from unittest.mock import Mock
 
+from cartography.intel.gitlab.container_images import GITLAB_CONTAINER_IMAGE_BATCH_SIZE
 from cartography.intel.gitlab.container_images import (
-    GITLAB_CONTAINER_IMAGE_BATCH_SIZE,
     GITLAB_CONTAINER_IMAGE_LAYER_BATCH_SIZE,
-    load_container_image_layers,
-    load_container_images,
-    sync_container_images,
-    transform_container_image_layers,
 )
+from cartography.intel.gitlab.container_images import load_container_image_layers
+from cartography.intel.gitlab.container_images import load_container_images
+from cartography.intel.gitlab.container_images import sync_container_images
+from cartography.intel.gitlab.container_images import transform_container_image_layers
 
 
 def _patch_sync_container_images_dependencies(

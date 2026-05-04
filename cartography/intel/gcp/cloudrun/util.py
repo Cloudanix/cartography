@@ -3,24 +3,27 @@ Utility functions for GCP Cloud Run intel modules.
 """
 
 import logging
-from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
+from collections.abc import Iterable
+from concurrent.futures import as_completed
+from concurrent.futures import ThreadPoolExecutor
 
-from google.api_core.exceptions import (
-    DeadlineExceeded,
-    GoogleAPICallError,
-    NotFound,
-    PermissionDenied,
-    ResourceExhausted,
-    ServiceUnavailable,
-)
-from google.api_core.retry import Retry, if_exception_type
+from google.api_core.exceptions import DeadlineExceeded
+from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import PermissionDenied
+from google.api_core.exceptions import ResourceExhausted
+from google.api_core.exceptions import ServiceUnavailable
+from google.api_core.retry import if_exception_type
+from google.api_core.retry import Retry
 from google.auth.credentials import Credentials as GoogleCredentials
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-from cartography.intel.gcp.clients import build_client, get_gcp_credentials
-from cartography.intel.gcp.util import is_api_disabled_error, proto_message_to_dict
+from cartography.intel.gcp.clients import build_client
+from cartography.intel.gcp.clients import get_gcp_credentials
+from cartography.intel.gcp.util import is_api_disabled_error
+from cartography.intel.gcp.util import proto_message_to_dict
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

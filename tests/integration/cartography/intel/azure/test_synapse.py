@@ -1,21 +1,21 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.azure.synapse as synapse
-from tests.data.azure.synapse import (
-    MOCK_LINKED_SERVICES,
-    MOCK_MPES,
-    MOCK_PIPELINES,
-    MOCK_SPARK_POOLS,
-    MOCK_SQL_POOLS,
-    MOCK_WORKSPACES,
-    TEST_LS_ID,
-    TEST_MPE_ID,
-    TEST_PIPELINE_ID,
-    TEST_SPARK_POOL_ID,
-    TEST_SQL_POOL_ID,
-    TEST_WORKSPACE_ID,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.azure.synapse import MOCK_LINKED_SERVICES
+from tests.data.azure.synapse import MOCK_MPES
+from tests.data.azure.synapse import MOCK_PIPELINES
+from tests.data.azure.synapse import MOCK_SPARK_POOLS
+from tests.data.azure.synapse import MOCK_SQL_POOLS
+from tests.data.azure.synapse import MOCK_WORKSPACES
+from tests.data.azure.synapse import TEST_LS_ID
+from tests.data.azure.synapse import TEST_MPE_ID
+from tests.data.azure.synapse import TEST_PIPELINE_ID
+from tests.data.azure.synapse import TEST_SPARK_POOL_ID
+from tests.data.azure.synapse import TEST_SQL_POOL_ID
+from tests.data.azure.synapse import TEST_WORKSPACE_ID
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"  # Use the short GUID
 TEST_UPDATE_TAG = 123456789

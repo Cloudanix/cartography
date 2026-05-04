@@ -1,13 +1,16 @@
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import neo4j
 from googleapiclient.discovery import Resource
 
 from cartography.client.core.tx import load
 from cartography.intel.gcp.util import determine_role_type_and_scope
-from cartography.models.gcp.iam import GCPProjectRoleSchema, GCPServiceAccountSchema
+from cartography.models.gcp.iam import GCPProjectRoleSchema
+from cartography.models.gcp.iam import GCPServiceAccountSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,8 @@ from cartography.graph.querybuilder import build_ingestion_query
 from tests.data.graph.querybuilder.sample_models.allow_unscoped import (
     UnscopedNodeSchema,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 
 def test_cleanup_unscoped_node_end_to_end(neo4j_session):

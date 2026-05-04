@@ -5,7 +5,8 @@ import cartography.intel.ubuntu.feed
 import cartography.intel.ubuntu.notices
 import tests.data.ubuntu.cves
 import tests.data.ubuntu.notices
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_API_URL = "https://fake-ubuntu-api.example.com"

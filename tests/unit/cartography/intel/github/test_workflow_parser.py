@@ -3,25 +3,21 @@ Unit tests for GitHub Workflow YAML parser.
 """
 
 from cartography.intel.github.actions import enrich_workflow_with_parsed_content
-from cartography.intel.github.workflow_parser import (
-    deduplicate_actions,
-    extract_secrets_from_string,
-    parse_action_reference,
-    parse_permissions,
-    parse_workflow_yaml,
-)
-from tests.data.github.workflow_content import (
-    WORKFLOW_CI_CONTENT,
-    WORKFLOW_DOCKER_ACTION,
-    WORKFLOW_EMPTY,
-    WORKFLOW_FULL_PERMISSIONS,
-    WORKFLOW_LOCAL_ACTION,
-    WORKFLOW_MALFORMED,
-    WORKFLOW_PINNED_ACTIONS,
-    WORKFLOW_READ_ALL_PERMISSIONS,
-    WORKFLOW_REUSABLE,
-    WORKFLOW_SECRETS_EVERYWHERE,
-)
+from cartography.intel.github.workflow_parser import deduplicate_actions
+from cartography.intel.github.workflow_parser import extract_secrets_from_string
+from cartography.intel.github.workflow_parser import parse_action_reference
+from cartography.intel.github.workflow_parser import parse_permissions
+from cartography.intel.github.workflow_parser import parse_workflow_yaml
+from tests.data.github.workflow_content import WORKFLOW_CI_CONTENT
+from tests.data.github.workflow_content import WORKFLOW_DOCKER_ACTION
+from tests.data.github.workflow_content import WORKFLOW_EMPTY
+from tests.data.github.workflow_content import WORKFLOW_FULL_PERMISSIONS
+from tests.data.github.workflow_content import WORKFLOW_LOCAL_ACTION
+from tests.data.github.workflow_content import WORKFLOW_MALFORMED
+from tests.data.github.workflow_content import WORKFLOW_PINNED_ACTIONS
+from tests.data.github.workflow_content import WORKFLOW_READ_ALL_PERMISSIONS
+from tests.data.github.workflow_content import WORKFLOW_REUSABLE
+from tests.data.github.workflow_content import WORKFLOW_SECRETS_EVERYWHERE
 
 # =============================================================================
 # Tests for parse_action_reference

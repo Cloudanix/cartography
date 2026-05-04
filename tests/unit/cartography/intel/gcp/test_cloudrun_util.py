@@ -1,20 +1,17 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
-from google.api_core.exceptions import (
-    DeadlineExceeded,
-    GoogleAPICallError,
-    PermissionDenied,
-)
+from google.api_core.exceptions import DeadlineExceeded
+from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import PermissionDenied
 from googleapiclient.errors import HttpError
 
-from cartography.intel.gcp.cloudrun.util import (
-    CLOUD_RUN_LIST_TIMEOUT,
-    build_cloud_run_resource_retry,
-    discover_cloud_run_locations,
-    fetch_cloud_run_resources_for_locations,
-    list_cloud_run_resources_for_location,
-)
+from cartography.intel.gcp.cloudrun.util import build_cloud_run_resource_retry
+from cartography.intel.gcp.cloudrun.util import CLOUD_RUN_LIST_TIMEOUT
+from cartography.intel.gcp.cloudrun.util import discover_cloud_run_locations
+from cartography.intel.gcp.cloudrun.util import fetch_cloud_run_resources_for_locations
+from cartography.intel.gcp.cloudrun.util import list_cloud_run_resources_for_location
 
 
 def _http_error(status: int) -> HttpError:

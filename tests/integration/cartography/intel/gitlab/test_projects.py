@@ -3,12 +3,11 @@
 import json
 
 from cartography.intel.gitlab.projects import load_projects
-from tests.data.gitlab.projects import (
-    TEST_GITLAB_URL,
-    TEST_ORG_ID,
-    TRANSFORMED_PROJECTS,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gitlab.projects import TEST_GITLAB_URL
+from tests.data.gitlab.projects import TEST_ORG_ID
+from tests.data.gitlab.projects import TRANSFORMED_PROJECTS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_URL = "https://gitlab.example.com/myorg"

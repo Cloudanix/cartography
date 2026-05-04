@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from cartography.intel.gcp.artifact_registry.manifest import load_manifests
 from cartography.intel.gcp.artifact_registry.util import (

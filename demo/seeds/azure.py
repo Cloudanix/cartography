@@ -296,7 +296,8 @@ class AzureSeed(Seed):
         )
 
     def _seed_firewall(self) -> None:
-        from typing import Any, cast
+        from typing import Any
+        from typing import cast
 
         # Transform the test data
         transformed_firewalls = cartography.intel.azure.firewall.transform_firewalls(

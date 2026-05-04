@@ -5,7 +5,8 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.sentinelone.api import build_scope_params, get_paginated_results
+from cartography.intel.sentinelone.api import build_scope_params
+from cartography.intel.sentinelone.api import get_paginated_results
 from cartography.models.sentinelone.agent import S1AgentSchema
 from cartography.util import timeit
 

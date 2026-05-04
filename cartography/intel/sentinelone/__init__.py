@@ -8,14 +8,13 @@ import cartography.intel.sentinelone.agent
 import cartography.intel.sentinelone.application
 import cartography.intel.sentinelone.finding
 from cartography.config import Config
-from cartography.intel.sentinelone.account import (
-    SentinelOneSyncScope,
-    sync_accounts,
-    sync_site_scoped_accounts,
-)
+from cartography.intel.sentinelone.account import SentinelOneSyncScope
+from cartography.intel.sentinelone.account import sync_accounts
+from cartography.intel.sentinelone.account import sync_site_scoped_accounts
 from cartography.intel.sentinelone.api import is_site_scope_http_error
 from cartography.stats import get_stats_client
-from cartography.util import merge_module_sync_metadata, timeit
+from cartography.util import merge_module_sync_metadata
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

@@ -11,7 +11,8 @@ from cartography.intel.pagerduty.teams import sync_teams
 from cartography.intel.pagerduty.users import sync_users
 from cartography.intel.pagerduty.vendors import sync_vendors
 from cartography.stats import get_stats_client
-from cartography.util import merge_module_sync_metadata, timeit
+from cartography.util import merge_module_sync_metadata
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

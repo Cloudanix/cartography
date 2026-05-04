@@ -7,14 +7,13 @@ import tests.data.semgrep.sast
 import tests.data.semgrep.sca
 from cartography.intel.semgrep.deployment import sync_deployment
 from cartography.intel.semgrep.findings import sync_findings
-from tests.integration.cartography.intel.semgrep.common import (
-    TEST_UPDATE_TAG,
-    check_nodes_as_list,
-    create_cve_nodes,
-    create_dependency_nodes,
-    create_github_repos,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.cartography.intel.semgrep.common import check_nodes_as_list
+from tests.integration.cartography.intel.semgrep.common import create_cve_nodes
+from tests.integration.cartography.intel.semgrep.common import create_dependency_nodes
+from tests.integration.cartography.intel.semgrep.common import create_github_repos
+from tests.integration.cartography.intel.semgrep.common import TEST_UPDATE_TAG
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 
 @patch.object(

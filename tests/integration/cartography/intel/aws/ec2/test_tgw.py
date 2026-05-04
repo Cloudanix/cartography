@@ -1,13 +1,13 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.ec2.tgw
-from tests.data.aws.ec2.tgw import (
-    TGW_VPC_ATTACHMENTS,
-    TRANSIT_GATEWAY_ATTACHMENTS,
-    TRANSIT_GATEWAYS,
-)
+from tests.data.aws.ec2.tgw import TGW_VPC_ATTACHMENTS
+from tests.data.aws.ec2.tgw import TRANSIT_GATEWAY_ATTACHMENTS
+from tests.data.aws.ec2.tgw import TRANSIT_GATEWAYS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "eu-west-1"

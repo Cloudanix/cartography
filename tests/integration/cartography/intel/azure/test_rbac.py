@@ -7,8 +7,10 @@ This test follows the VPC integration test pattern:
 3. Asserts that the expected nodes and relationships are created
 """
 
-from typing import Any, AsyncGenerator
-from unittest.mock import MagicMock, patch
+from typing import Any
+from typing import AsyncGenerator
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -18,21 +20,20 @@ import cartography.intel.azure.tenant
 import cartography.intel.microsoft.entra.groups
 import cartography.intel.microsoft.entra.service_principals
 import cartography.intel.microsoft.entra.users
-from tests.data.azure.rbac import (
-    AZURE_ROLE_ASSIGNMENTS,
-    AZURE_ROLE_DEFINITIONS,
-    ENTRA_GROUPS,
-    ENTRA_SERVICE_PRINCIPALS,
-    ENTRA_USERS,
-    MOCK_ENTRA_TENANT,
-)
+from tests.data.azure.rbac import AZURE_ROLE_ASSIGNMENTS
+from tests.data.azure.rbac import AZURE_ROLE_DEFINITIONS
+from tests.data.azure.rbac import ENTRA_GROUPS
+from tests.data.azure.rbac import ENTRA_SERVICE_PRINCIPALS
+from tests.data.azure.rbac import ENTRA_USERS
+from tests.data.azure.rbac import MOCK_ENTRA_TENANT
 from tests.integration.cartography.intel.azure.common import (
     create_test_azure_subscription,
 )
 from tests.integration.cartography.intel.microsoft.entra.common import (
     create_test_entra_tenant,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_SUBSCRIPTION_ID = "12345678-1234-1234-1234-123456789012"
 TEST_TENANT_ID = "tenant-123"

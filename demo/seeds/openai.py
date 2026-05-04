@@ -1,4 +1,5 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import cartography.intel.openai.adminapikeys
 import cartography.intel.openai.apikeys

@@ -8,7 +8,8 @@ from cartography.intel.aws.resourcegroupstaggingapi import sync
 from tests.data.aws.ec2.instances import DESCRIBE_INSTANCES
 from tests.data.aws.resourcegroupstaggingapi import GET_RESOURCES_RESPONSE
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "1234"
 TEST_REGION = "us-east-1"

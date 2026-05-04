@@ -1,6 +1,9 @@
 import json
-from typing import Any, cast
-from unittest.mock import MagicMock, mock_open, patch
+from typing import Any
+from typing import cast
+from unittest.mock import MagicMock
+from unittest.mock import mock_open
+from unittest.mock import patch
 
 from cartography.intel.common.object_store import ReportRef
 from cartography.intel.gcp.artifact_registry import sync
@@ -9,11 +12,9 @@ from cartography.intel.gcp.artifact_registry.repository import (
     ArtifactRegistryRepositorySyncResult,
 )
 from cartography.intel.trivy import sync_trivy_from_dir
-from tests.data.gcp.artifact_registry import (
-    MOCK_DOCKER_IMAGES,
-    MOCK_PLATFORM_IMAGES,
-    MOCK_REPOSITORIES,
-)
+from tests.data.gcp.artifact_registry import MOCK_DOCKER_IMAGES
+from tests.data.gcp.artifact_registry import MOCK_PLATFORM_IMAGES
+from tests.data.gcp.artifact_registry import MOCK_REPOSITORIES
 from tests.data.trivy.trivy_gcp_sample import TRIVY_GCP_SAMPLE
 from tests.integration.cartography.intel.trivy.test_helpers import (
     assert_trivy_image_relationships,

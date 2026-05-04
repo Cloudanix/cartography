@@ -1,19 +1,15 @@
 """Unit tests for the GitLab CI config YAML parser."""
 
-from cartography.intel.gitlab.ci_config_parser import (
-    _is_pinned,
-    parse_ci_config,
-    parse_lint_includes,
-)
-from tests.data.gitlab.ci_configs import (
-    PIPELINE_BAD_YAML,
-    PIPELINE_EMPTY,
-    PIPELINE_LOCAL_LIST,
-    PIPELINE_NO_INCLUDES,
-    PIPELINE_NOT_A_DICT,
-    PIPELINE_SCHEDULED,
-    PIPELINE_WITH_MIXED_INCLUDES,
-)
+from cartography.intel.gitlab.ci_config_parser import _is_pinned
+from cartography.intel.gitlab.ci_config_parser import parse_ci_config
+from cartography.intel.gitlab.ci_config_parser import parse_lint_includes
+from tests.data.gitlab.ci_configs import PIPELINE_BAD_YAML
+from tests.data.gitlab.ci_configs import PIPELINE_EMPTY
+from tests.data.gitlab.ci_configs import PIPELINE_LOCAL_LIST
+from tests.data.gitlab.ci_configs import PIPELINE_NO_INCLUDES
+from tests.data.gitlab.ci_configs import PIPELINE_NOT_A_DICT
+from tests.data.gitlab.ci_configs import PIPELINE_SCHEDULED
+from tests.data.gitlab.ci_configs import PIPELINE_WITH_MIXED_INCLUDES
 
 
 def test_parse_includes_string_form_treated_as_local():

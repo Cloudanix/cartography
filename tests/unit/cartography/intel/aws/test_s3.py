@@ -1,19 +1,19 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
-from botocore.exceptions import ClientError, ConnectTimeoutError
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectTimeoutError
 
-from cartography.intel.aws.s3 import (
-    FETCH_FAILED,
-    get_acl,
-    get_bucket_logging,
-    get_bucket_ownership_controls,
-    get_encryption,
-    get_policy,
-    get_public_access_block,
-    get_s3_bucket_list,
-    get_versioning,
-)
+from cartography.intel.aws.s3 import FETCH_FAILED
+from cartography.intel.aws.s3 import get_acl
+from cartography.intel.aws.s3 import get_bucket_logging
+from cartography.intel.aws.s3 import get_bucket_ownership_controls
+from cartography.intel.aws.s3 import get_encryption
+from cartography.intel.aws.s3 import get_policy
+from cartography.intel.aws.s3 import get_public_access_block
+from cartography.intel.aws.s3 import get_s3_bucket_list
+from cartography.intel.aws.s3 import get_versioning
 
 
 def _make_client_error(status_code, headers=None):

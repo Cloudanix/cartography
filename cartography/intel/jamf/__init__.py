@@ -3,7 +3,9 @@ import logging
 import neo4j
 
 from cartography.config import Config
-from cartography.intel.jamf import computers, groups, mobile_devices
+from cartography.intel.jamf import computers
+from cartography.intel.jamf import groups
+from cartography.intel.jamf import mobile_devices
 from cartography.intel.jamf.util import create_jamf_api_session
 from cartography.util import timeit
 

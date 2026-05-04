@@ -5,17 +5,14 @@ from unittest.mock import Mock
 import requests
 
 from cartography.intel.gitlab.ci_config import sync_gitlab_ci_config
-from cartography.intel.gitlab.ci_variables import (
-    load_project_variables,
-    transform_variables,
-)
-from tests.data.gitlab.ci_configs import (
-    LINT_RESPONSE,
-    PIPELINE_WITH_MIXED_INCLUDES,
-    TEST_GITLAB_URL,
-    TEST_PROJECT_ID,
-)
-from tests.integration.util import check_nodes, check_rels
+from cartography.intel.gitlab.ci_variables import load_project_variables
+from cartography.intel.gitlab.ci_variables import transform_variables
+from tests.data.gitlab.ci_configs import LINT_RESPONSE
+from tests.data.gitlab.ci_configs import PIPELINE_WITH_MIXED_INCLUDES
+from tests.data.gitlab.ci_configs import TEST_GITLAB_URL
+from tests.data.gitlab.ci_configs import TEST_PROJECT_ID
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = 10

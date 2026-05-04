@@ -1,5 +1,7 @@
-from typing import Any, AsyncGenerator
-from unittest.mock import MagicMock, patch
+from typing import Any
+from typing import AsyncGenerator
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -15,21 +17,17 @@ import cartography.intel.microsoft.entra.groups
 import cartography.intel.microsoft.entra.service_principals
 import cartography.intel.microsoft.entra.users
 from cartography.intel.azure import permission_relationships
-from tests.data.azure.permission_relationships import (
-    AZURE_COSMOSDB_ACCOUNTS,
-    AZURE_SQL_SERVERS,
-    AZURE_STORAGE_ACCOUNTS,
-    AZURE_VMS,
-    PERMISSION_RELATIONSHIPS_YAML,
-)
-from tests.data.azure.rbac import (
-    AZURE_ROLE_ASSIGNMENTS,
-    AZURE_ROLE_DEFINITIONS,
-    ENTRA_GROUPS,
-    ENTRA_SERVICE_PRINCIPALS,
-    ENTRA_USERS,
-    MOCK_ENTRA_TENANT,
-)
+from tests.data.azure.permission_relationships import AZURE_COSMOSDB_ACCOUNTS
+from tests.data.azure.permission_relationships import AZURE_SQL_SERVERS
+from tests.data.azure.permission_relationships import AZURE_STORAGE_ACCOUNTS
+from tests.data.azure.permission_relationships import AZURE_VMS
+from tests.data.azure.permission_relationships import PERMISSION_RELATIONSHIPS_YAML
+from tests.data.azure.rbac import AZURE_ROLE_ASSIGNMENTS
+from tests.data.azure.rbac import AZURE_ROLE_DEFINITIONS
+from tests.data.azure.rbac import ENTRA_GROUPS
+from tests.data.azure.rbac import ENTRA_SERVICE_PRINCIPALS
+from tests.data.azure.rbac import ENTRA_USERS
+from tests.data.azure.rbac import MOCK_ENTRA_TENANT
 from tests.integration.cartography.intel.azure.common import (
     create_test_azure_subscription,
 )

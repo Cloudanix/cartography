@@ -1,20 +1,19 @@
 from unittest.mock import patch
 
 import cartography.intel.github.actions
-from tests.data.github.actions import (
-    GET_ENV_SECRETS_PRODUCTION,
-    GET_ENV_SECRETS_STAGING,
-    GET_ENV_VARIABLES_PRODUCTION,
-    GET_ENV_VARIABLES_STAGING,
-    GET_ORG_SECRETS,
-    GET_ORG_VARIABLES,
-    GET_REPO_ENVIRONMENTS,
-    GET_REPO_SECRETS,
-    GET_REPO_VARIABLES,
-    GET_REPO_WORKFLOWS,
-)
+from tests.data.github.actions import GET_ENV_SECRETS_PRODUCTION
+from tests.data.github.actions import GET_ENV_SECRETS_STAGING
+from tests.data.github.actions import GET_ENV_VARIABLES_PRODUCTION
+from tests.data.github.actions import GET_ENV_VARIABLES_STAGING
+from tests.data.github.actions import GET_ORG_SECRETS
+from tests.data.github.actions import GET_ORG_VARIABLES
+from tests.data.github.actions import GET_REPO_ENVIRONMENTS
+from tests.data.github.actions import GET_REPO_SECRETS
+from tests.data.github.actions import GET_REPO_VARIABLES
+from tests.data.github.actions import GET_REPO_WORKFLOWS
 from tests.data.github.workflow_content import WORKFLOW_CI_CONTENT
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_JOB_PARAMS = {"UPDATE_TAG": TEST_UPDATE_TAG}

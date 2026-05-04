@@ -4,27 +4,25 @@ Utility functions for GCP Vertex AI intel modules.
 
 import logging
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, cast
+from concurrent.futures import as_completed
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
+from typing import cast
 
 import backoff
-from google.api_core.exceptions import (
-    GoogleAPICallError,
-    NotFound,
-    PermissionDenied,
-    ServerError,
-    TooManyRequests,
-)
+from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import PermissionDenied
+from google.api_core.exceptions import ServerError
+from google.api_core.exceptions import TooManyRequests
 from google.auth.credentials import Credentials as GoogleCredentials
 
-from cartography.intel.gcp.util import (
-    GCP_API_BACKOFF_BASE,
-    GCP_API_BACKOFF_MAX,
-    GCP_API_MAX_RETRIES,
-    gcp_api_backoff_handler,
-    gcp_api_giveup_handler,
-    proto_message_to_dict,
-)
+from cartography.intel.gcp.util import GCP_API_BACKOFF_BASE
+from cartography.intel.gcp.util import gcp_api_backoff_handler
+from cartography.intel.gcp.util import GCP_API_BACKOFF_MAX
+from cartography.intel.gcp.util import gcp_api_giveup_handler
+from cartography.intel.gcp.util import GCP_API_MAX_RETRIES
+from cartography.intel.gcp.util import proto_message_to_dict
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

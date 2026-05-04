@@ -6,10 +6,8 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import (
-    create_boto3_client,
-    get_botocore_config,
-)
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import get_botocore_config
 from cartography.models.aws.dynamodb.archival import DynamoDBArchivalSummarySchema
 from cartography.models.aws.dynamodb.backups import DynamoDBBackupSchema
 from cartography.models.aws.dynamodb.billing import DynamoDBBillingModeSummarySchema

@@ -76,10 +76,8 @@ from cartography.models.ontology.mapping.data.useraccounts import (
     USERACCOUNTS_ONTOLOGY_MAPPING,
 )
 from cartography.models.ontology.mapping.data.users import USERS_ONTOLOGY_MAPPING
-from cartography.models.ontology.mapping.specs import (
-    OntologyMapping,
-    OntologyNodeMapping,
-)
+from cartography.models.ontology.mapping.specs import OntologyMapping
+from cartography.models.ontology.mapping.specs import OntologyNodeMapping
 from cartography.models.ontology.package import PackageSchema
 from cartography.models.ontology.publicip import PublicIPSchema
 from cartography.models.ontology.user import UserSchema

@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.googleworkspace.users
 from cartography.intel.googleworkspace.users import sync_googleworkspace_users

@@ -1,33 +1,31 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
 import cartography.intel.kubernetes.ingress
 from cartography.intel.aws.ec2.load_balancer_v2s import load_load_balancer_v2s
 from cartography.intel.kubernetes.clusters import load_kubernetes_cluster
-from cartography.intel.kubernetes.ingress import cleanup, load_ingresses, sync_ingress
+from cartography.intel.kubernetes.ingress import cleanup
+from cartography.intel.kubernetes.ingress import load_ingresses
+from cartography.intel.kubernetes.ingress import sync_ingress
 from cartography.intel.kubernetes.namespaces import load_namespaces
 from cartography.intel.kubernetes.services import load_services
 from tests.data.aws.ec2.load_balancer_v2s import GET_LOAD_BALANCER_V2_DATA
-from tests.data.kubernetes.clusters import (
-    KUBERNETES_CLUSTER_DATA,
-    KUBERNETES_CLUSTER_IDS,
-    KUBERNETES_CLUSTER_NAMES,
-)
-from tests.data.kubernetes.ingress import (
-    KUBERNETES_ALB_INGRESS_DATA,
-    KUBERNETES_ALB_INGRESS_RAW,
-    KUBERNETES_INGRESS_DATA,
-    KUBERNETES_INGRESS_RAW,
-    SHARED_ALB_DNS_NAME,
-)
-from tests.data.kubernetes.namespaces import (
-    KUBERNETES_CLUSTER_1_NAMESPACES_DATA,
-    KUBERNETES_CLUSTER_2_NAMESPACES_DATA,
-)
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_DATA
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_IDS
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_NAMES
+from tests.data.kubernetes.ingress import KUBERNETES_ALB_INGRESS_DATA
+from tests.data.kubernetes.ingress import KUBERNETES_ALB_INGRESS_RAW
+from tests.data.kubernetes.ingress import KUBERNETES_INGRESS_DATA
+from tests.data.kubernetes.ingress import KUBERNETES_INGRESS_RAW
+from tests.data.kubernetes.ingress import SHARED_ALB_DNS_NAME
+from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_1_NAMESPACES_DATA
+from tests.data.kubernetes.namespaces import KUBERNETES_CLUSTER_2_NAMESPACES_DATA
 from tests.data.kubernetes.services import KUBERNETES_SERVICES_DATA
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ACCOUNT_ID = "000000000000"

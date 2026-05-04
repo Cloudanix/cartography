@@ -1,44 +1,46 @@
 import logging
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 import neo4j
 
 from cartography.config import Config
-from cartography.util import run_analysis_job, run_scoped_analysis_job, timeit
+from cartography.util import run_analysis_job
+from cartography.util import run_scoped_analysis_job
+from cartography.util import timeit
 
-from . import (
-    aks,
-    app_service,
-    compute,
-    container_instances,
-    cosmosdb,
-    data_factory,
-    data_factory_dataset,
-    data_factory_linked_service,
-    data_factory_pipeline,
-    data_lake,
-    event_grid,
-    event_hub,
-    event_hub_namespace,
-    firewall,
-    functions,
-    group_containers,
-    key_vaults,
-    load_balancers,
-    logic_apps,
-    monitor,
-    network,
-    permission_relationships,
-    rbac,
-    resource_groups,
-    security_center,
-    sql,
-    storage,
-    subscription,
-    synapse,
-    tenant,
-)
-from .util.credentials import Authenticator, Credentials
+from . import aks
+from . import app_service
+from . import compute
+from . import container_instances
+from . import cosmosdb
+from . import data_factory
+from . import data_factory_dataset
+from . import data_factory_linked_service
+from . import data_factory_pipeline
+from . import data_lake
+from . import event_grid
+from . import event_hub
+from . import event_hub_namespace
+from . import firewall
+from . import functions
+from . import group_containers
+from . import key_vaults
+from . import load_balancers
+from . import logic_apps
+from . import monitor
+from . import network
+from . import permission_relationships
+from . import rbac
+from . import resource_groups
+from . import security_center
+from . import sql
+from . import storage
+from . import subscription
+from . import synapse
+from . import tenant
+from .util.credentials import Authenticator
+from .util.credentials import Credentials
 
 logger = logging.getLogger(__name__)
 

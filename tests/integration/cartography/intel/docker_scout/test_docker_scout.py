@@ -1,13 +1,13 @@
 import cartography.intel.docker_scout.scanner
-from cartography.intel.docker_scout.scanner import cleanup, sync_from_file
-from tests.data.docker_scout.mock_data import (
-    MOCK_ECR_RECOMMENDATION_RAW,
-    MOCK_GITLAB_RECOMMENDATION_RAW,
-    TEST_ECR_IMAGE_DIGEST,
-    TEST_GITLAB_IMAGE_DIGEST,
-    TEST_UPDATE_TAG,
-)
-from tests.integration.util import check_nodes, check_rels
+from cartography.intel.docker_scout.scanner import cleanup
+from cartography.intel.docker_scout.scanner import sync_from_file
+from tests.data.docker_scout.mock_data import MOCK_ECR_RECOMMENDATION_RAW
+from tests.data.docker_scout.mock_data import MOCK_GITLAB_RECOMMENDATION_RAW
+from tests.data.docker_scout.mock_data import TEST_ECR_IMAGE_DIGEST
+from tests.data.docker_scout.mock_data import TEST_GITLAB_IMAGE_DIGEST
+from tests.data.docker_scout.mock_data import TEST_UPDATE_TAG
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 
 def _create_ontology_image(neo4j_session, ont_digest, update_tag):

@@ -2,10 +2,16 @@ from unittest.mock import MagicMock, patch
 
 import botocore.exceptions
 
+import botocore.exceptions
+
 import cartography.intel.aws.inspector
-from cartography.intel.aws.inspector import BATCH_SIZE, _sync_findings_for_account, sync
-from tests.data.aws.inspector import LIST_FINDINGS_EC2_PACKAGE, LIST_FINDINGS_NETWORK
-from tests.integration.util import check_nodes, check_rels
+from cartography.intel.aws.inspector import _sync_findings_for_account
+from cartography.intel.aws.inspector import BATCH_SIZE
+from cartography.intel.aws.inspector import sync
+from tests.data.aws.inspector import LIST_FINDINGS_EC2_PACKAGE
+from tests.data.aws.inspector import LIST_FINDINGS_NETWORK
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456
 TEST_REGION = "us-west-2"

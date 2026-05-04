@@ -6,11 +6,14 @@ from urllib.parse import quote
 import neo4j
 import requests
 
-from cartography.client.core.tx import load, load_matchlinks
+from cartography.client.core.tx import load
+from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.models.keycloak.authenticationexecution import (
     ExecutionToExecutionMatchLink,
-    ExecutionToFlowMatchLink,
+)
+from cartography.models.keycloak.authenticationexecution import ExecutionToFlowMatchLink
+from cartography.models.keycloak.authenticationexecution import (
     KeycloakAuthenticationExecutionSchema,
 )
 from cartography.util import timeit

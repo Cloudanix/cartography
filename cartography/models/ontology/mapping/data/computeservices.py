@@ -3,11 +3,9 @@
 # _ont_name - The display name of the service / orchestrator.
 # _ont_region - The region or location where the service is deployed.
 # _ont_status - Current provisioning or operational status of the service.
-from cartography.models.ontology.mapping.specs import (
-    OntologyFieldMapping,
-    OntologyMapping,
-    OntologyNodeMapping,
-)
+from cartography.models.ontology.mapping.specs import OntologyFieldMapping
+from cartography.models.ontology.mapping.specs import OntologyMapping
+from cartography.models.ontology.mapping.specs import OntologyNodeMapping
 
 aws_ecs_mapping = OntologyMapping(
     module_name="aws",

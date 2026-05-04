@@ -1,205 +1,16 @@
+import importlib
 import logging
 import re
 import time
 from collections import OrderedDict
 from pkgutil import iter_modules
-from typing import Callable, List
+from typing import Any
+from typing import Callable
 
 import neo4j.exceptions
 from neo4j import GraphDatabase
 from statsd import StatsClient
 
-import cartography.intel.analysis
-import cartography.intel.create_indexes
-import cloudanix
-
-# Provider intel modules — wrapped so missing deps don't break import
-try:
-    import cartography.intel.aws
-except Exception:
-    cartography.intel.aws = None  # type: ignore[assignment]
-try:
-    import cartography.intel.azure
-except Exception:
-    cartography.intel.azure = None  # type: ignore[assignment]
-try:
-    import cartography.intel.gcp
-except Exception:
-    cartography.intel.gcp = None  # type: ignore[assignment]
-try:
-    import cartography.intel.bigfix
-except Exception:
-    cartography.intel.bigfix = None  # type: ignore[assignment]
-try:
-    import cartography.intel.crowdstrike
-except Exception:
-    cartography.intel.crowdstrike = None  # type: ignore[assignment]
-try:
-    import cartography.intel.cve
-except Exception:
-    cartography.intel.cve = None  # type: ignore[assignment]
-try:
-    import cartography.intel.cve_metadata
-except Exception:
-    cartography.intel.cve_metadata = None  # type: ignore[assignment]
-try:
-    import cartography.intel.digitalocean
-except Exception:
-    cartography.intel.digitalocean = None  # type: ignore[assignment]
-try:
-    import cartography.intel.duo
-except Exception:
-    cartography.intel.duo = None  # type: ignore[assignment]
-try:
-    import cartography.intel.github
-except Exception:
-    cartography.intel.github = None  # type: ignore[assignment]
-try:
-    import cartography.intel.gitlab
-except Exception:
-    cartography.intel.gitlab = None  # type: ignore[assignment]
-try:
-    import cartography.intel.gsuite
-except Exception:
-    cartography.intel.gsuite = None  # type: ignore[assignment]
-try:
-    import cartography.intel.jamf
-except Exception:
-    cartography.intel.jamf = None  # type: ignore[assignment]
-try:
-    import cartography.intel.kubernetes
-except Exception:
-    cartography.intel.kubernetes = None  # type: ignore[assignment]
-try:
-    import cartography.intel.lastpass
-except Exception:
-    cartography.intel.lastpass = None  # type: ignore[assignment]
-try:
-    import cartography.intel.oci
-except Exception:
-    cartography.intel.oci = None  # type: ignore[assignment]
-try:
-    import cartography.intel.okta
-except Exception:
-    cartography.intel.okta = None  # type: ignore[assignment]
-try:
-    import cartography.intel.pagerduty
-except Exception:
-    cartography.intel.pagerduty = None  # type: ignore[assignment]
-try:
-    import cartography.intel.semgrep
-except Exception:
-    cartography.intel.semgrep = None  # type: ignore[assignment]
-
-# Upstream modules not yet ported — will be added in Phase 7
-try:
-    import cartography.intel.aibom
-except ImportError:
-    cartography.intel.aibom = None  # type: ignore[assignment]
-try:
-    import cartography.intel.airbyte
-except ImportError:
-    cartography.intel.airbyte = None  # type: ignore[assignment]
-try:
-    import cartography.intel.anthropic
-except ImportError:
-    cartography.intel.anthropic = None  # type: ignore[assignment]
-try:
-    import cartography.intel.cloudflare
-except ImportError:
-    cartography.intel.cloudflare = None  # type: ignore[assignment]
-try:
-    import cartography.intel.docker_scout
-except ImportError:
-    cartography.intel.docker_scout = None  # type: ignore[assignment]
-try:
-    import cartography.intel.googleworkspace
-except ImportError:
-    cartography.intel.googleworkspace = None  # type: ignore[assignment]
-try:
-    import cartography.intel.jumpcloud
-except ImportError:
-    cartography.intel.jumpcloud = None  # type: ignore[assignment]
-try:
-    import cartography.intel.kandji
-except ImportError:
-    cartography.intel.kandji = None  # type: ignore[assignment]
-try:
-    import cartography.intel.keycloak
-except ImportError:
-    cartography.intel.keycloak = None  # type: ignore[assignment]
-try:
-    import cartography.intel.microsoft
-except ImportError:
-    cartography.intel.microsoft = None  # type: ignore[assignment]
-try:
-    import cartography.intel.ontology
-except ImportError:
-    cartography.intel.ontology = None  # type: ignore[assignment]
-try:
-    import cartography.intel.openai
-except ImportError:
-    cartography.intel.openai = None  # type: ignore[assignment]
-try:
-    import cartography.intel.scaleway
-except ImportError:
-    cartography.intel.scaleway = None  # type: ignore[assignment]
-try:
-    import cartography.intel.sentinelone
-except ImportError:
-    cartography.intel.sentinelone = None  # type: ignore[assignment]
-try:
-    import cartography.intel.sentry
-except ImportError:
-    cartography.intel.sentry = None  # type: ignore[assignment]
-try:
-    import cartography.intel.slack
-except ImportError:
-    cartography.intel.slack = None  # type: ignore[assignment]
-try:
-    import cartography.intel.snipeit
-except ImportError:
-    cartography.intel.snipeit = None  # type: ignore[assignment]
-try:
-    import cartography.intel.socketdev
-except ImportError:
-    cartography.intel.socketdev = None  # type: ignore[assignment]
-try:
-    import cartography.intel.spacelift
-except ImportError:
-    cartography.intel.spacelift = None  # type: ignore[assignment]
-try:
-    import cartography.intel.subimage
-except ImportError:
-    cartography.intel.subimage = None  # type: ignore[assignment]
-try:
-    import cartography.intel.syft
-except ImportError:
-    cartography.intel.syft = None  # type: ignore[assignment]
-try:
-    import cartography.intel.tailscale
-except ImportError:
-    cartography.intel.tailscale = None  # type: ignore[assignment]
-try:
-    import cartography.intel.trivy
-except ImportError:
-    cartography.intel.trivy = None  # type: ignore[assignment]
-try:
-    import cartography.intel.ubuntu
-except ImportError:
-    cartography.intel.ubuntu = None  # type: ignore[assignment]
-try:
-    import cartography.intel.vercel
-except ImportError:
-    cartography.intel.vercel = None  # type: ignore[assignment]
-try:
-    import cartography.intel.workday
-except ImportError:
-    cartography.intel.workday = None  # type: ignore[assignment]
-try:
-    import cartography.intel.workos
-except ImportError:
-    cartography.intel.workos = None  # type: ignore[assignment]
 from cartography.config import Config
 from cartography.stats import set_stats_client
 from cartography.util import STATUS_FAILURE, STATUS_SUCCESS
@@ -207,87 +18,116 @@ from cartography.util import STATUS_FAILURE, STATUS_SUCCESS
 logger = logging.getLogger(__name__)
 
 
-def _mod(attr_path: str):
-    """Return module attribute if module loaded, else None."""
-    parts = attr_path.rsplit(".", 1)
-    mod_path, attr = parts[0], parts[1]
-    import sys
+class _LazyStage:
+    """Callable that defers `from cartography.intel.X import func` until first invocation.
 
-    mod = sys.modules.get(mod_path)
-    return getattr(mod, attr, None) if mod else None
+    Keeps `import cartography.sync` cheap: provider SDKs (boto3, azure-mgmt-*,
+    google-cloud-*, etc.) only load when the stage is actually run.
+    """
+
+    __slots__ = ("_module", "_attr", "_resolved")
+
+    def __init__(self, module: str, attr: str) -> None:
+        self._module = module
+        self._attr = attr
+        self._resolved: Callable[..., None] | None = None
+
+    def __call__(self, *args: Any, **kwargs: Any) -> None:
+        if self._resolved is None:
+            self._resolved = getattr(importlib.import_module(self._module), self._attr)
+        self._resolved(*args, **kwargs)
+
+    def __repr__(self) -> str:
+        return f"_LazyStage({self._module}.{self._attr})"
 
 
 TOP_LEVEL_MODULES: OrderedDict[str, Callable[..., None]] = OrderedDict(
-    {
-        k: v
-        for k, v in {
-            # preserve order so that the default sync always runs `analysis` at the very end
-            "create-indexes": cartography.intel.create_indexes.run,
-            "aws": _mod("cartography.intel.aws.start_aws_ingestion"),
-            "azure": _mod("cartography.intel.azure.start_azure_ingestion"),
-            "bigfix": _mod("cartography.intel.bigfix.start_bigfix_ingestion"),
-            "crowdstrike": _mod(
-                "cartography.intel.crowdstrike.start_crowdstrike_ingestion"
-            ),
-            "gcp": _mod("cartography.intel.gcp.start_gcp_ingestion"),
-            "gsuite": _mod("cartography.intel.gsuite.start_gsuite_ingestion"),
-            "cve": _mod("cartography.intel.cve.start_cve_ingestion"),
-            "cve_metadata": _mod(
-                "cartography.intel.cve_metadata.start_cve_metadata_ingestion"
-            ),
-            "oci": _mod("cartography.intel.oci.start_oci_ingestion"),
-            "okta": _mod("cartography.intel.okta.start_okta_ingestion"),
-            "github": _mod("cartography.intel.github.start_github_ingestion"),
-            "gitlab": _mod("cartography.intel.gitlab.start_gitlab_ingestion"),
-            "digitalocean": _mod(
-                "cartography.intel.digitalocean.start_digitalocean_ingestion"
-            ),
-            "kubernetes": _mod("cartography.intel.kubernetes.start_k8s_ingestion"),
-            "lastpass": _mod("cartography.intel.lastpass.start_lastpass_ingestion"),
-            "duo": _mod("cartography.intel.duo.start_duo_ingestion"),
-            "semgrep": _mod("cartography.intel.semgrep.start_semgrep_ingestion"),
-            "jamf": _mod("cartography.intel.jamf.start_jamf_ingestion"),
-            "pagerduty": _mod("cartography.intel.pagerduty.start_pagerduty_ingestion"),
-            # Phase 7 modules — available when ported
-            "aibom": _mod("cartography.intel.aibom.start_aibom_ingestion"),
-            "airbyte": _mod("cartography.intel.airbyte.start_airbyte_ingestion"),
-            "anthropic": _mod("cartography.intel.anthropic.start_anthropic_ingestion"),
-            "cloudflare": _mod(
-                "cartography.intel.cloudflare.start_cloudflare_ingestion"
-            ),
-            "docker_scout": _mod(
-                "cartography.intel.docker_scout.start_docker_scout_ingestion"
-            ),
-            "googleworkspace": _mod(
-                "cartography.intel.googleworkspace.start_googleworkspace_ingestion"
-            ),
-            "jumpcloud": _mod("cartography.intel.jumpcloud.start_jumpcloud_ingestion"),
-            "kandji": _mod("cartography.intel.kandji.start_kandji_ingestion"),
-            "keycloak": _mod("cartography.intel.keycloak.start_keycloak_ingestion"),
-            "microsoft": _mod("cartography.intel.microsoft.start_microsoft_ingestion"),
-            "ontology": _mod("cartography.intel.ontology.run"),
-            "openai": _mod("cartography.intel.openai.start_openai_ingestion"),
-            "scaleway": _mod("cartography.intel.scaleway.start_scaleway_ingestion"),
-            "sentinelone": _mod(
-                "cartography.intel.sentinelone.start_sentinelone_ingestion"
-            ),
-            "sentry": _mod("cartography.intel.sentry.start_sentry_ingestion"),
-            "slack": _mod("cartography.intel.slack.start_slack_ingestion"),
-            "snipeit": _mod("cartography.intel.snipeit.start_snipeit_ingestion"),
-            "socketdev": _mod("cartography.intel.socketdev.start_socketdev_ingestion"),
-            "spacelift": _mod("cartography.intel.spacelift.start_spacelift_ingestion"),
-            "subimage": _mod("cartography.intel.subimage.start_subimage_ingestion"),
-            "syft": _mod("cartography.intel.syft.start_syft_ingestion"),
-            "tailscale": _mod("cartography.intel.tailscale.start_tailscale_ingestion"),
-            "trivy": _mod("cartography.intel.trivy.start_trivy_ingestion"),
-            "ubuntu": _mod("cartography.intel.ubuntu.start_ubuntu_ingestion"),
-            "vercel": _mod("cartography.intel.vercel.start_vercel_ingestion"),
-            "workday": _mod("cartography.intel.workday.start_workday_ingestion"),
-            "workos": _mod("cartography.intel.workos.start_workos_ingestion"),
-            # Analysis should be the last stage
-            "analysis": cartography.intel.analysis.run,
-        }.items()
-        if v is not None
+    {  # preserve order so that the default sync always runs `analysis` at the very end
+        "create-indexes": _LazyStage("cartography.intel.create_indexes", "run"),
+        "airbyte": _LazyStage("cartography.intel.airbyte", "start_airbyte_ingestion"),
+        "anthropic": _LazyStage(
+            "cartography.intel.anthropic", "start_anthropic_ingestion"
+        ),
+        "aws": _LazyStage("cartography.intel.aws", "start_aws_ingestion"),
+        "azure": _LazyStage("cartography.intel.azure", "start_azure_ingestion"),
+        "microsoft": _LazyStage(
+            "cartography.intel.microsoft", "start_microsoft_ingestion"
+        ),
+        "cloudflare": _LazyStage(
+            "cartography.intel.cloudflare", "start_cloudflare_ingestion"
+        ),
+        "crowdstrike": _LazyStage(
+            "cartography.intel.crowdstrike", "start_crowdstrike_ingestion"
+        ),
+        "gcp": _LazyStage("cartography.intel.gcp", "start_gcp_ingestion"),
+        "googleworkspace": _LazyStage(
+            "cartography.intel.googleworkspace", "start_googleworkspace_ingestion"
+        ),
+        "gsuite": _LazyStage("cartography.intel.gsuite", "start_gsuite_ingestion"),
+        "cve": _LazyStage("cartography.intel.cve", "start_cve_ingestion"),
+        "cve_metadata": _LazyStage(
+            "cartography.intel.cve_metadata", "start_cve_metadata_ingestion"
+        ),
+        "oci": _LazyStage("cartography.intel.oci", "start_oci_ingestion"),
+        "okta": _LazyStage("cartography.intel.okta", "start_okta_ingestion"),
+        "openai": _LazyStage("cartography.intel.openai", "start_openai_ingestion"),
+        "github": _LazyStage("cartography.intel.github", "start_github_ingestion"),
+        "gitlab": _LazyStage("cartography.intel.gitlab", "start_gitlab_ingestion"),
+        "digitalocean": _LazyStage(
+            "cartography.intel.digitalocean", "start_digitalocean_ingestion"
+        ),
+        "kandji": _LazyStage("cartography.intel.kandji", "start_kandji_ingestion"),
+        "keycloak": _LazyStage(
+            "cartography.intel.keycloak", "start_keycloak_ingestion"
+        ),
+        "kubernetes": _LazyStage("cartography.intel.kubernetes", "start_k8s_ingestion"),
+        "jumpcloud": _LazyStage(
+            "cartography.intel.jumpcloud", "start_jumpcloud_ingestion"
+        ),
+        "lastpass": _LazyStage(
+            "cartography.intel.lastpass", "start_lastpass_ingestion"
+        ),
+        "bigfix": _LazyStage("cartography.intel.bigfix", "start_bigfix_ingestion"),
+        "duo": _LazyStage("cartography.intel.duo", "start_duo_ingestion"),
+        "workday": _LazyStage("cartography.intel.workday", "start_workday_ingestion"),
+        "scaleway": _LazyStage(
+            "cartography.intel.scaleway", "start_scaleway_ingestion"
+        ),
+        "semgrep": _LazyStage("cartography.intel.semgrep", "start_semgrep_ingestion"),
+        "sentry": _LazyStage("cartography.intel.sentry", "start_sentry_ingestion"),
+        "snipeit": _LazyStage("cartography.intel.snipeit", "start_snipeit_ingestion"),
+        "socketdev": _LazyStage(
+            "cartography.intel.socketdev", "start_socketdev_ingestion"
+        ),
+        "tailscale": _LazyStage(
+            "cartography.intel.tailscale", "start_tailscale_ingestion"
+        ),
+        "jamf": _LazyStage("cartography.intel.jamf", "start_jamf_ingestion"),
+        "pagerduty": _LazyStage(
+            "cartography.intel.pagerduty", "start_pagerduty_ingestion"
+        ),
+        "docker_scout": _LazyStage(
+            "cartography.intel.docker_scout", "start_docker_scout_ingestion"
+        ),
+        "trivy": _LazyStage("cartography.intel.trivy", "start_trivy_ingestion"),
+        "syft": _LazyStage("cartography.intel.syft", "start_syft_ingestion"),
+        "aibom": _LazyStage("cartography.intel.aibom", "start_aibom_ingestion"),
+        "ubuntu": _LazyStage("cartography.intel.ubuntu", "start_ubuntu_ingestion"),
+        "sentinelone": _LazyStage(
+            "cartography.intel.sentinelone", "start_sentinelone_ingestion"
+        ),
+        "slack": _LazyStage("cartography.intel.slack", "start_slack_ingestion"),
+        "spacelift": _LazyStage(
+            "cartography.intel.spacelift", "start_spacelift_ingestion"
+        ),
+        "workos": _LazyStage("cartography.intel.workos", "start_workos_ingestion"),
+        "subimage": _LazyStage(
+            "cartography.intel.subimage", "start_subimage_ingestion"
+        ),
+        "vercel": _LazyStage("cartography.intel.vercel", "start_vercel_ingestion"),
+        "ontology": _LazyStage("cartography.intel.ontology", "run"),
+        # Analysis should be the last stage
+        "analysis": _LazyStage("cartography.intel.analysis", "run"),
     }
 )
 
@@ -476,11 +316,14 @@ class Sync:
             The 'create-indexes' and 'analysis' modules are handled specially
             to ensure consistent ordering regardless of discovery order.
         """
+        intel_pkg = importlib.import_module("cartography.intel")
         available_modules = OrderedDict({})
-        available_modules["create-indexes"] = cartography.intel.create_indexes.run
+        available_modules["create-indexes"] = importlib.import_module(
+            "cartography.intel.create_indexes"
+        ).run
         callable_regex = re.compile(r"^start_(.+)_ingestion$")
         # Load built-in modules
-        for intel_module_info in iter_modules(cartography.intel.__path__):
+        for intel_module_info in iter_modules(intel_pkg.__path__):
             if intel_module_info.name in ("analysis", "create_indexes", "entra"):
                 continue
             try:
@@ -517,8 +360,12 @@ class Sync:
                         intel_module_info.name,
                     )
                 available_modules[intel_module_info.name] = v
-        available_modules["ontology"] = cartography.intel.ontology.run
-        available_modules["analysis"] = cartography.intel.analysis.run
+        available_modules["ontology"] = importlib.import_module(
+            "cartography.intel.ontology"
+        ).run
+        available_modules["analysis"] = importlib.import_module(
+            "cartography.intel.analysis"
+        ).run
         return available_modules
 
 
@@ -665,6 +512,8 @@ def build_default_sync() -> Sync:
         For custom sync configurations with specific modules, use build_sync()
         with a selected modules string instead.
     """
+    import cartography.intel.gcp
+
     sync = Sync()
     sync.add_stages(
         [
@@ -759,105 +608,6 @@ def build_sync(selected_modules_as_str: str) -> Sync:
         order. It's recommended to include 'create-indexes' first and 'analysis'
         last for optimal results. The function validates all module names
         before creating the sync instance.
-    """
-    selected_modules = parse_and_validate_selected_modules(selected_modules_as_str)
-    sync = Sync()
-    sync.add_stages(
-        [(sync_name, TOP_LEVEL_MODULES[sync_name]) for sync_name in selected_modules],
-    )
-    return sync
-
-
-def build_aws_sync():
-    """
-    Build the aws cartography sync, which runs all intelligence modules shipped with the cartography package.
-
-    :rtype: cartography.sync.Sync
-    :return: The aws cartography sync object.
-    """
-    import cartography.intel.aws
-
-    sync = Sync()
-
-    stages = []
-    stages.append(("cloudanix-workspace", cloudanix.run))
-    stages.append(("aws", cartography.intel.aws.start_aws_ingestion))
-    stages.append(("analysis", cartography.intel.analysis.run))
-
-    sync.add_stages(stages)
-
-    return sync
-
-
-def build_azure_sync():
-    """
-    Build the azure cartography sync, which runs all intelligence modules shipped with the cartography package.
-
-    :rtype: cartography.sync.Sync
-    :return: The azure cartography sync object.
-    """
-    import cartography.intel.azure
-
-    sync = Sync()
-
-    stages = []
-    stages.append(("cloudanix-workspace", cloudanix.run))
-    stages.append(("azure", cartography.intel.azure.start_azure_ingestion))
-    stages.append(("analysis", cartography.intel.analysis.run))
-
-    sync.add_stages(stages)
-
-    return sync
-
-
-def build_gcp_sync():
-    """
-    Build the default cartography sync, which runs all intelligence modules shipped with the cartography package.
-
-    :rtype: cartography.sync.Sync
-    :return: The default cartography sync object.
-    """
-    import cartography.intel.gcp
-
-    sync = Sync()
-
-    stages = []
-    stages.append(("cloudanix-workspace", cloudanix.run))
-    stages.append(("gcp", cartography.intel.gcp.start_gcp_ingestion))
-    stages.append(("analysis", cartography.intel.analysis.run))
-
-    sync.add_stages(stages)
-
-    return sync
-
-
-def parse_and_validate_selected_modules(selected_modules: str) -> List[str]:
-    """
-    Ensures that user-selected modules passed through the CLI are valid and parses them to a list of str.
-    :param selected_modules: comma separated string of module names provided by user
-    :return: A validated list of module names that we will run
-    """
-    validated_modules: List[str] = []
-    for module in selected_modules.split(","):
-        module = module.strip()
-
-        if module in TOP_LEVEL_MODULES.keys():
-            validated_modules.append(module)
-        else:
-            valid_modules = ", ".join(TOP_LEVEL_MODULES.keys())
-            raise ValueError(
-                f'Error parsing `selected_modules`. You specified "{selected_modules}". '
-                f"Please check that your string is formatted properly. "
-                f'Example valid input looks like "aws,gcp,analysis" or "azure, oci, crowdstrike". '
-                f"Our full list of valid values is: {valid_modules}.",
-            )
-    return validated_modules
-
-
-def build_sync(selected_modules_as_str: str) -> Sync:
-    """
-    Returns a cartography sync object where all the sync stages are from the user-specified comma separated list of
-    modules to run.
     """
     selected_modules = parse_and_validate_selected_modules(selected_modules_as_str)
     sync = Sync()

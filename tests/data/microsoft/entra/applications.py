@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import datetime
+from datetime import timezone
 from uuid import UUID
 
 from msgraph.generated.models.app_role_assignment import AppRoleAssignment

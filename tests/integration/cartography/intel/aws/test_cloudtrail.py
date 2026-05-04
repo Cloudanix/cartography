@@ -1,13 +1,16 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.cloudtrail
 import cartography.intel.aws.cloudwatch
 from cartography.intel.aws.cloudtrail import sync
-from tests.data.aws.cloudtrail import BUCKETS, DESCRIBE_CLOUDTRAIL_TRAILS
+from tests.data.aws.cloudtrail import BUCKETS
+from tests.data.aws.cloudtrail import DESCRIBE_CLOUDTRAIL_TRAILS
 from tests.data.aws.cloudwatch import GET_CLOUDWATCH_LOG_GROUPS
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "123456789012"
 TEST_REGION = "eu-west-1"

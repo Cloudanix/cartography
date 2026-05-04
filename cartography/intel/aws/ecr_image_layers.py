@@ -9,7 +9,8 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
+from typing import Optional
 
 import aioboto3
 import httpx
@@ -21,22 +22,16 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_aioboto3_client
 from cartography.intel.container_arch import normalize_architecture
-from cartography.intel.supply_chain import (
-    extract_container_parent_image,
-    extract_image_source_provenance,
-    extract_workflow_path_from_ref,
-)
-from cartography.models.aws.ecr.image import (
-    ECRImageHasLayerRelSchema,
-    ECRImageLayerEnrichmentSchema,
-)
-from cartography.models.aws.ecr.image_layer import (
-    ECRImageLayerHeadRelSchema,
-    ECRImageLayerNextRelSchema,
-    ECRImageLayerNodeSchema,
-    ECRImageLayerSchema,
-    ECRImageLayerTailRelSchema,
-)
+from cartography.intel.supply_chain import extract_container_parent_image
+from cartography.intel.supply_chain import extract_image_source_provenance
+from cartography.intel.supply_chain import extract_workflow_path_from_ref
+from cartography.models.aws.ecr.image import ECRImageHasLayerRelSchema
+from cartography.models.aws.ecr.image import ECRImageLayerEnrichmentSchema
+from cartography.models.aws.ecr.image_layer import ECRImageLayerHeadRelSchema
+from cartography.models.aws.ecr.image_layer import ECRImageLayerNextRelSchema
+from cartography.models.aws.ecr.image_layer import ECRImageLayerNodeSchema
+from cartography.models.aws.ecr.image_layer import ECRImageLayerSchema
+from cartography.models.aws.ecr.image_layer import ECRImageLayerTailRelSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

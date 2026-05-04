@@ -4,15 +4,14 @@ from typing import Any
 import neo4j
 import requests
 
-from cartography.client.core.tx import load, run_write_query
+from cartography.client.core.tx import load
+from cartography.client.core.tx import run_write_query
 from cartography.graph.job import GraphJob
 from cartography.intel.jamf.tenant import load_tenant
-from cartography.intel.jamf.util import (
-    call_jamf_api,
-    get_http_status_code,
-    get_paginated_jamf_results,
-    normalize_group_id,
-)
+from cartography.intel.jamf.util import call_jamf_api
+from cartography.intel.jamf.util import get_http_status_code
+from cartography.intel.jamf.util import get_paginated_jamf_results
+from cartography.intel.jamf.util import normalize_group_id
 from cartography.models.jamf.computergroup import JamfComputerGroupSchema
 from cartography.models.jamf.mobiledevicegroup import JamfMobileDeviceGroupSchema
 from cartography.util import timeit

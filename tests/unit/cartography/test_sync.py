@@ -1,14 +1,12 @@
 import pytest
 
 from cartography.config import Config
-from cartography.sync import (
-    TOP_LEVEL_MODULES,
-    Sync,
-    build_default_sync,
-    build_sync,
-    parse_and_validate_selected_modules,
-    run_with_config,
-)
+from cartography.sync import build_default_sync
+from cartography.sync import build_sync
+from cartography.sync import parse_and_validate_selected_modules
+from cartography.sync import run_with_config
+from cartography.sync import Sync
+from cartography.sync import TOP_LEVEL_MODULES
 
 
 def test_available_modules_import():

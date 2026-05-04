@@ -1,11 +1,13 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.crowdstrike
 import cartography.intel.crowdstrike.endpoints
 import cartography.intel.crowdstrike.spotlight
 from tests.data.crowdstrike.endpoints import GET_HOSTS
 from tests.data.crowdstrike.spotlight import GET_SPOTLIGHT_VULNERABILITIES
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 

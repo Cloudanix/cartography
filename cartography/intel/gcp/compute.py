@@ -16,28 +16,26 @@ from cartography.intel.gcp.backendservice import sync_gcp_backend_services
 from cartography.intel.gcp.cloud_armor import sync_gcp_cloud_armor
 from cartography.intel.gcp.instancegroup import sync_gcp_instance_groups
 from cartography.intel.gcp.labels import sync_labels
-from cartography.intel.gcp.util import (
-    gcp_api_execute_with_retry,
-    get_error_reason,
-    is_permission_denied_error,
-    parse_compute_full_uri_to_partial_uri,
-    summarize_gcp_http_error,
-)
+from cartography.intel.gcp.util import gcp_api_execute_with_retry
+from cartography.intel.gcp.util import get_error_reason
+from cartography.intel.gcp.util import is_permission_denied_error
+from cartography.intel.gcp.util import parse_compute_full_uri_to_partial_uri
+from cartography.intel.gcp.util import summarize_gcp_http_error
 from cartography.models.gcp.compute.firewall import GCPFirewallSchema
 from cartography.models.gcp.compute.firewall_target_tag import (
     GCPFirewallTargetTagSchema,
 )
+from cartography.models.gcp.compute.forwarding_rule import GCPForwardingRuleSchema
 from cartography.models.gcp.compute.forwarding_rule import (
-    GCPForwardingRuleSchema,
     GCPForwardingRuleWithSubnetSchema,
+)
+from cartography.models.gcp.compute.forwarding_rule import (
     GCPForwardingRuleWithVpcSchema,
 )
 from cartography.models.gcp.compute.instance import GCPInstanceSchema
 from cartography.models.gcp.compute.ip_range import IpRangeSchema
-from cartography.models.gcp.compute.ip_rule import (
-    GCPIpRuleAllowedSchema,
-    GCPIpRuleDeniedSchema,
-)
+from cartography.models.gcp.compute.ip_rule import GCPIpRuleAllowedSchema
+from cartography.models.gcp.compute.ip_rule import GCPIpRuleDeniedSchema
 from cartography.models.gcp.compute.network_interface import GCPNetworkInterfaceSchema
 from cartography.models.gcp.compute.network_tag import GCPNetworkTagSchema
 from cartography.models.gcp.compute.nic_access_config import GCPNicAccessConfigSchema

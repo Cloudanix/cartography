@@ -21,14 +21,12 @@ from neo4j import Session
 from cartography.client.core.tx import load
 from cartography.config import Config
 from cartography.graph.job import GraphJob
-from cartography.intel.common.object_store import (
-    LocalReportReader,
-    ObjectStoreError,
-    ReportReader,
-    S3BucketReader,
-    filter_report_refs,
-    read_json_report,
-)
+from cartography.intel.common.object_store import filter_report_refs
+from cartography.intel.common.object_store import LocalReportReader
+from cartography.intel.common.object_store import ObjectStoreError
+from cartography.intel.common.object_store import read_json_report
+from cartography.intel.common.object_store import ReportReader
+from cartography.intel.common.object_store import S3BucketReader
 from cartography.intel.common.report_reader_builder import (
     build_report_reader_for_source,
 )

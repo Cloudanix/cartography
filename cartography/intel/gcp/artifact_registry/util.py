@@ -1,35 +1,33 @@
 import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, TypeVar
+from typing import Any
+from typing import TypeVar
 
 import backoff
 import neo4j
-from google.api_core.exceptions import GoogleAPICallError, PermissionDenied
-from google.auth.exceptions import DefaultCredentialsError, RefreshError
+from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import PermissionDenied
+from google.auth.exceptions import DefaultCredentialsError
+from google.auth.exceptions import RefreshError
 from google.cloud.artifactregistry_v1 import ArtifactRegistryClient
 
-from cartography.client.core.tx import (
-    ensure_indexes,
-    ensure_indexes_for_matchlinks,
-    load_graph_data,
-    run_write_query,
-)
-from cartography.graph.querybuilder import (
-    build_conditional_label_queries,
-    build_ingestion_query,
-    build_matchlink_query,
-)
+from cartography.client.core.tx import ensure_indexes
+from cartography.client.core.tx import ensure_indexes_for_matchlinks
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
+from cartography.graph.querybuilder import build_conditional_label_queries
+from cartography.graph.querybuilder import build_ingestion_query
+from cartography.graph.querybuilder import build_matchlink_query
 from cartography.helpers import batch
-from cartography.intel.gcp.util import (
-    GCP_API_BACKOFF_BASE,
-    GCP_API_BACKOFF_MAX,
-    GCP_API_MAX_RETRIES,
-    gcp_api_backoff_handler,
-    gcp_api_giveup_handler,
-    is_retryable_gcp_http_error,
-)
+from cartography.intel.gcp.util import GCP_API_BACKOFF_BASE
+from cartography.intel.gcp.util import gcp_api_backoff_handler
+from cartography.intel.gcp.util import GCP_API_BACKOFF_MAX
+from cartography.intel.gcp.util import gcp_api_giveup_handler
+from cartography.intel.gcp.util import GCP_API_MAX_RETRIES
+from cartography.intel.gcp.util import is_retryable_gcp_http_error
 from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.models.core.relationships import CartographyRelSchema
 from cartography.stats import get_stats_client

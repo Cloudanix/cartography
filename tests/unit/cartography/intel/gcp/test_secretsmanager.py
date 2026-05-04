@@ -4,7 +4,8 @@ from unittest.mock import MagicMock
 
 from googleapiclient.errors import HttpError
 
-from cartography.intel.gcp.secretsmanager import get_secret_versions, get_secrets
+from cartography.intel.gcp.secretsmanager import get_secret_versions
+from cartography.intel.gcp.secretsmanager import get_secrets
 
 
 def _make_http_error(status: int, payload: dict) -> HttpError:

@@ -6,11 +6,9 @@ from azure.mgmt.authorization import AuthorizationManagementClient
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.models.azure.rbac import (
-    AzurePermissionsSchema,
-    AzureRoleAssignmentSchema,
-    AzureRoleDefinitionSchema,
-)
+from cartography.models.azure.rbac import AzurePermissionsSchema
+from cartography.models.azure.rbac import AzureRoleAssignmentSchema
+from cartography.models.azure.rbac import AzureRoleDefinitionSchema
 from cartography.util import timeit
 
 from .util.credentials import Credentials

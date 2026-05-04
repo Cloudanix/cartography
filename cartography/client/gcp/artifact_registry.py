@@ -1,4 +1,5 @@
-from typing import Set, Tuple
+from typing import Set
+from typing import Tuple
 
 import neo4j
 

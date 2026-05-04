@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from google.api_core.exceptions import PermissionDenied
 
@@ -7,7 +8,8 @@ import cartography.intel.gcp.policy_bindings
 import cartography.intel.gsuite.groups
 import cartography.intel.gsuite.users
 import tests.data.gcp.policy_bindings
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_PROJECT_ID = "project-abc"
 TEST_UPDATE_TAG = 123456789

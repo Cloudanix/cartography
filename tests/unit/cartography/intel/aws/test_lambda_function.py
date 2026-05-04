@@ -1,7 +1,9 @@
-from unittest.mock import ANY, MagicMock
+from unittest.mock import ANY
+from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
+from botocore.exceptions import ClientError
+from botocore.exceptions import EndpointConnectionError
 
 from cartography.intel.aws import lambda_function
 from cartography.intel.aws.util.botocore_config import get_lambda_botocore_config

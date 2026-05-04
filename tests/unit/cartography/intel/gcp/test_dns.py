@@ -1,10 +1,12 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 from googleapiclient.errors import HttpError
 
-from cartography.intel.gcp.dns import get_dns_rrs, get_dns_zones
+from cartography.intel.gcp.dns import get_dns_rrs
+from cartography.intel.gcp.dns import get_dns_zones
 
 
 def _make_http_error(status: int) -> HttpError:

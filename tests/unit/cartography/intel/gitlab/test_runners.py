@@ -1,15 +1,15 @@
 """Unit tests for GitLab runners module."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import requests
 
-from cartography.intel.gitlab.runners import (
-    _list_runners_tolerant,
-    get_runner_details,
-    transform_runners,
-)
-from tests.data.gitlab.runners import RUNNER_DETAILS, TEST_GITLAB_URL
+from cartography.intel.gitlab.runners import _list_runners_tolerant
+from cartography.intel.gitlab.runners import get_runner_details
+from cartography.intel.gitlab.runners import transform_runners
+from tests.data.gitlab.runners import RUNNER_DETAILS
+from tests.data.gitlab.runners import TEST_GITLAB_URL
 
 
 def _http_error(status_code: int) -> requests.exceptions.HTTPError:

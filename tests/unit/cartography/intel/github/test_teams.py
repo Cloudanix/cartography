@@ -1,16 +1,15 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
-from cartography.intel.github.teams import (
-    ChildTeam,
-    RepoPermission,
-    UserRole,
-    _get_child_teams_for_multiple_teams,
-    _get_team_repos_for_multiple_teams,
-    _get_team_users_for_multiple_teams,
-    transform_teams,
-)
+from cartography.intel.github.teams import _get_child_teams_for_multiple_teams
+from cartography.intel.github.teams import _get_team_repos_for_multiple_teams
+from cartography.intel.github.teams import _get_team_users_for_multiple_teams
+from cartography.intel.github.teams import ChildTeam
+from cartography.intel.github.teams import RepoPermission
+from cartography.intel.github.teams import transform_teams
+from cartography.intel.github.teams import UserRole
 from cartography.intel.github.util import PaginatedGraphqlData
 
 TEST_ORG_DATA = {

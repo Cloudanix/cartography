@@ -1,32 +1,36 @@
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 import boto3
 import botocore
 import neo4j
-from botocore.exceptions import (
-    ClientError,
-    ConnectTimeoutError,
-    EndpointConnectionError,
-    ReadTimeoutError,
-)
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import EndpointConnectionError
+from botocore.exceptions import ReadTimeoutError
 
-from cartography.client.core.tx import load, load_matchlinks
+from cartography.client.core.tx import load
+from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import (
-    create_boto3_client,
-    get_botocore_config,
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.models.aws.ec2.loadbalancerv2 import ELBV2ListenerSchema
+from cartography.models.aws.ec2.loadbalancerv2 import ELBV2TargetGroupSchema
+from cartography.models.aws.ec2.loadbalancerv2 import LoadBalancerV2Schema
+from cartography.models.aws.ec2.loadbalancerv2 import LoadBalancerV2ToAWSLambdaMatchLink
+from cartography.models.aws.ec2.loadbalancerv2 import (
+    LoadBalancerV2ToEC2InstanceMatchLink,
 )
 from cartography.models.aws.ec2.loadbalancerv2 import (
-    ELBV2ListenerSchema,
-    ELBV2TargetGroupSchema,
-    LoadBalancerV2Schema,
-    LoadBalancerV2ToAWSLambdaMatchLink,
-    LoadBalancerV2ToEC2InstanceMatchLink,
     LoadBalancerV2ToEC2PrivateIpMatchLink,
+)
+from cartography.models.aws.ec2.loadbalancerv2 import (
     LoadBalancerV2ToLoadBalancerV2MatchLink,
 )
-from cartography.util import aws_handle_regions, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

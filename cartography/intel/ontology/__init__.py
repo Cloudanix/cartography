@@ -9,7 +9,8 @@ import cartography.intel.ontology.packages
 import cartography.intel.ontology.publicips
 import cartography.intel.ontology.users
 from cartography.config import Config
-from cartography.util import run_analysis_job, timeit
+from cartography.util import run_analysis_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

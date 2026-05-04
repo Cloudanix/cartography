@@ -12,21 +12,16 @@ from cartography.intel.microsoft.intune.detected_apps import sync_detected_apps
 from cartography.intel.microsoft.intune.managed_devices import sync_managed_devices
 from cartography.intel.microsoft.intune.reports import ExportedReportRows
 from cartography.util import run_scoped_analysis_job
-from tests.data.microsoft.intune.compliance_policies import (
-    MOCK_COMPLIANCE_POLICIES,
-    TEST_GROUP_ID,
-)
-from tests.data.microsoft.intune.detected_apps import (
-    MOCK_DETECTED_APP_AGGREGATE_ROWS,
-    MOCK_DETECTED_APP_RAW_ROWS,
-)
-from tests.data.microsoft.intune.managed_devices import (
-    MOCK_MANAGED_DEVICES,
-    TEST_TENANT_ID,
-    TEST_USER_ID_1,
-    TEST_USER_ID_2,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.microsoft.intune.compliance_policies import MOCK_COMPLIANCE_POLICIES
+from tests.data.microsoft.intune.compliance_policies import TEST_GROUP_ID
+from tests.data.microsoft.intune.detected_apps import MOCK_DETECTED_APP_AGGREGATE_ROWS
+from tests.data.microsoft.intune.detected_apps import MOCK_DETECTED_APP_RAW_ROWS
+from tests.data.microsoft.intune.managed_devices import MOCK_MANAGED_DEVICES
+from tests.data.microsoft.intune.managed_devices import TEST_TENANT_ID
+from tests.data.microsoft.intune.managed_devices import TEST_USER_ID_1
+from tests.data.microsoft.intune.managed_devices import TEST_USER_ID_2
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 1234567890
 APP_KEY_DEVICE_INVENTORY_AGENT = "0142ec1846a5fe5aae49d155590a2116300000904abcd"

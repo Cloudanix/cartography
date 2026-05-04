@@ -4,9 +4,9 @@ import botocore.exceptions
 
 from cartography.intel.aws.identitycenter import (
     _is_permission_set_sync_unsupported_error,
-    get_permission_sets,
-    get_user_permissionsets,
 )
+from cartography.intel.aws.identitycenter import get_permission_sets
+from cartography.intel.aws.identitycenter import get_user_permissionsets
 from cartography.intel.aws.util.botocore_config import get_botocore_config
 
 

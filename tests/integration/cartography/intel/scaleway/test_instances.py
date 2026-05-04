@@ -1,4 +1,5 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import cartography.intel.scaleway.instances.instances
 import tests.data.scaleway.instances
@@ -8,7 +9,8 @@ from tests.integration.cartography.intel.scaleway.test_projects import (
 from tests.integration.cartography.intel.scaleway.test_storage import (
     _ensure_local_neo4j_has_test_volumes,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = "0681c477-fbb9-4820-b8d6-0eef10cfcd6d"

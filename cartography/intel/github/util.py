@@ -4,7 +4,8 @@ import logging
 import time
 from datetime import datetime, timedelta
 from datetime import timezone as tz
-from typing import Any, NamedTuple
+from typing import Any
+from typing import NamedTuple
 
 import requests
 

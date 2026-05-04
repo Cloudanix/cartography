@@ -1,6 +1,9 @@
 import logging
 from copy import deepcopy
-from typing import Any, Dict, List, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 import neo4j
 
@@ -8,12 +11,11 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.github.util import fetch_all
 from cartography.models.github.orgs import GitHubOrganizationSchema
-from cartography.models.github.users import (
-    GitHubOrganizationUserSchema,
-    GitHubUnaffiliatedUserSchema,
-)
+from cartography.models.github.users import GitHubOrganizationUserSchema
+from cartography.models.github.users import GitHubUnaffiliatedUserSchema
 from cartography.stats import get_stats_client
-from cartography.util import merge_module_sync_metadata, timeit
+from cartography.util import merge_module_sync_metadata
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)

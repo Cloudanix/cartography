@@ -1,4 +1,6 @@
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 GET_TOKENS_RESPONSE: List[Dict[str, Any]] = [
     {

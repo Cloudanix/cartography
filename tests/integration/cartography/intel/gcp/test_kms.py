@@ -1,12 +1,16 @@
 import json
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from googleapiclient.errors import HttpError
 
 import cartography.intel.gcp.kms as kms
-from tests.data.gcp.kms import MOCK_KEY_RINGS, MOCK_KEYS_BY_RING, MOCK_LOCATIONS
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gcp.kms import MOCK_KEY_RINGS
+from tests.data.gcp.kms import MOCK_KEYS_BY_RING
+from tests.data.gcp.kms import MOCK_LOCATIONS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_PROJECT_ID = "test-project"
 TEST_UPDATE_TAG = 123456789

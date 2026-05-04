@@ -1,19 +1,18 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
-from cartography.intel.common.object_store import (
-    AzureBlobContainerReader,
-    GCSBucketReader,
-    LocalReportReader,
-    ObjectStoreError,
-    ReportRef,
-    S3BucketReader,
-    filter_report_refs,
-    read_json_report,
-    read_text_report,
-)
+from cartography.intel.common.object_store import AzureBlobContainerReader
+from cartography.intel.common.object_store import filter_report_refs
+from cartography.intel.common.object_store import GCSBucketReader
+from cartography.intel.common.object_store import LocalReportReader
+from cartography.intel.common.object_store import ObjectStoreError
+from cartography.intel.common.object_store import read_json_report
+from cartography.intel.common.object_store import read_text_report
+from cartography.intel.common.object_store import ReportRef
+from cartography.intel.common.object_store import S3BucketReader
 
 
 def test_local_report_reader_lists_files_and_reads_bytes(tmp_path) -> None:

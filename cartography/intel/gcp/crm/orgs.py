@@ -1,5 +1,7 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict
+from typing import List
+from typing import Optional
 
 import neo4j
 from google.auth.credentials import Credentials as GoogleCredentials

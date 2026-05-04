@@ -1,13 +1,12 @@
 """Integration tests for GitLab branches module."""
 
 from cartography.intel.gitlab.branches import load_branches
-from tests.data.gitlab.branches import (
-    TEST_GITLAB_URL,
-    TEST_PROJECT_ID,
-    TEST_PROJECT_URL,
-    TRANSFORMED_BRANCHES,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gitlab.branches import TEST_GITLAB_URL
+from tests.data.gitlab.branches import TEST_PROJECT_ID
+from tests.data.gitlab.branches import TEST_PROJECT_URL
+from tests.data.gitlab.branches import TRANSFORMED_BRANCHES
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 

@@ -1,16 +1,14 @@
 from datetime import datetime
 
-from kubernetes.client import (
-    RbacV1Subject,
-    V1ClusterRole,
-    V1ClusterRoleBinding,
-    V1ObjectMeta,
-    V1PolicyRule,
-    V1Role,
-    V1RoleBinding,
-    V1RoleRef,
-    V1ServiceAccount,
-)
+from kubernetes.client import RbacV1Subject
+from kubernetes.client import V1ClusterRole
+from kubernetes.client import V1ClusterRoleBinding
+from kubernetes.client import V1ObjectMeta
+from kubernetes.client import V1PolicyRule
+from kubernetes.client import V1Role
+from kubernetes.client import V1RoleBinding
+from kubernetes.client import V1RoleRef
+from kubernetes.client import V1ServiceAccount
 
 # Raw ServiceAccount data as returned by Kubernetes API
 KUBERNETES_CLUSTER_1_SERVICE_ACCOUNTS_RAW = [

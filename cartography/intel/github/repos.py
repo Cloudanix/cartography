@@ -1,39 +1,43 @@
 import configparser
 import logging
 import time
-from collections import defaultdict, namedtuple
-from typing import Any, Dict, List, Optional, cast
+from collections import defaultdict
+from collections import namedtuple
+from typing import Any
+from typing import cast
+from typing import Dict
+from typing import List
+from typing import Optional
 
 import neo4j
 import requests
-from packaging.requirements import InvalidRequirement, Requirement
+from packaging.requirements import InvalidRequirement
+from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from cartography.client.core.tx import load as load_data
 from cartography.graph.job import GraphJob
 from cartography.helpers import backoff_handler
-from cartography.intel.github.util import (
-    PaginatedGraphqlData,
-    fetch_all,
-    fetch_page,
-    handle_rate_limit_sleep,
-)
-from cartography.intel.trivy.util import make_normalized_package_id, parse_purl
+from cartography.intel.github.util import fetch_all
+from cartography.intel.github.util import fetch_page
+from cartography.intel.github.util import handle_rate_limit_sleep
+from cartography.intel.github.util import PaginatedGraphqlData
+from cartography.intel.trivy.util import make_normalized_package_id
+from cartography.intel.trivy.util import parse_purl
 from cartography.models.github.branch_protection_rules import (
     GitHubBranchProtectionRuleSchema,
 )
 from cartography.models.github.dependencies import GitHubDependencySchema
 from cartography.models.github.manifests import DependencyGraphManifestSchema
-from cartography.models.github.repos import (
-    GitHubBranchSchema,
-    GitHubOwnerOrganizationSchema,
-    GitHubOwnerUserSchema,
-    GitHubPythonLibrarySchema,
-    GitHubRepositorySchema,
-    ProgrammingLanguageSchema,
-    make_github_collaborator_schema,
-)
-from cartography.util import retries_with_backoff, timeit
+from cartography.models.github.repos import GitHubBranchSchema
+from cartography.models.github.repos import GitHubOwnerOrganizationSchema
+from cartography.models.github.repos import GitHubOwnerUserSchema
+from cartography.models.github.repos import GitHubPythonLibrarySchema
+from cartography.models.github.repos import GitHubRepositorySchema
+from cartography.models.github.repos import make_github_collaborator_schema
+from cartography.models.github.repos import ProgrammingLanguageSchema
+from cartography.util import retries_with_backoff
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

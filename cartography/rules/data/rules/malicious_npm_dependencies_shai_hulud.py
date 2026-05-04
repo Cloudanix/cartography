@@ -1,11 +1,9 @@
-from cartography.rules.spec.model import (
-    Fact,
-    Finding,
-    Maturity,
-    Module,
-    Rule,
-    RuleReference,
-)
+from cartography.rules.spec.model import Fact
+from cartography.rules.spec.model import Finding
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
+from cartography.rules.spec.model import Rule
+from cartography.rules.spec.model import RuleReference
 
 # Facts
 _malicious_npm_dependencies_shai_hulud_sept_2025_github = Fact(

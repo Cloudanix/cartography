@@ -1,17 +1,15 @@
 import json
 
+from cartography.intel.okta.applications import transform_application_assigned_groups
+from cartography.intel.okta.applications import transform_application_assigned_users
+from cartography.intel.okta.applications import transform_okta_application
 from cartography.intel.okta.applications import (
-    transform_application_assigned_groups,
-    transform_application_assigned_users,
-    transform_okta_application,
     transform_okta_application_extract_replyurls,
 )
-from tests.data.okta.application import (
-    APPLICATION_WITH_REDITECT_URIS,
-    LIST_APPLICATION_GROUP_ASSIGNED_RESPONSE,
-    LIST_APPLICATION_USER_ASSIGNED_RESPONSE,
-    create_test_application,
-)
+from tests.data.okta.application import APPLICATION_WITH_REDITECT_URIS
+from tests.data.okta.application import create_test_application
+from tests.data.okta.application import LIST_APPLICATION_GROUP_ASSIGNED_RESPONSE
+from tests.data.okta.application import LIST_APPLICATION_USER_ASSIGNED_RESPONSE
 
 
 def test_application_with_all_values():

@@ -1,9 +1,7 @@
 import pytest
 
-from cartography.intel.aws.util.common import (
-    parse_and_validate_aws_regions,
-    parse_and_validate_aws_requested_syncs,
-)
+from cartography.intel.aws.util.common import parse_and_validate_aws_regions
+from cartography.intel.aws.util.common import parse_and_validate_aws_requested_syncs
 
 
 def test_parse_and_validate_requested_syncs():

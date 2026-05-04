@@ -7,8 +7,8 @@ def _resolve_report_source_config(
     s3_prefix: str | None,
     warn_on_legacy: bool = True,
 ) -> str | None:
+    from cartography.intel.common.report_source import LegacyReportSourceNames
     from cartography.intel.common.report_source import (
-        LegacyReportSourceNames,
         resolve_report_source_with_legacy_fields,
     )
 
@@ -354,18 +354,11 @@ class Config:
         azure_tenant_id=None,
         azure_client_id=None,
         azure_client_secret=None,
-        azure_redirect_uri=None,
-        azure_refresh_token=None,
-        azure_graph_scope=None,
-        azure_default_graph_scope=None,
-        azure_vault_scope=None,
-        azure_azure_scope=None,
         azure_subscription_id: str | None = None,
         entra_tenant_id=None,
         entra_client_id=None,
         entra_client_secret=None,
         aws_requested_syncs=None,
-        azure_requested_syncs=None,
         aws_guardduty_severity_threshold=None,
         analysis_job_directory=None,
         oci_sync_all_profiles=None,
@@ -374,7 +367,6 @@ class Config:
         okta_base_domain="okta.com",
         okta_saml_role_regex=None,
         github_config=None,
-        azure_devops_config=None,
         github_commit_lookback_days=30,
         digitalocean_token=None,
         permission_relationships_file=None,
@@ -389,13 +381,6 @@ class Config:
         kandji_token=None,
         k8s_kubeconfig=None,
         managed_kubernetes=None,
-        crxcavator_api_base_uri=None,
-        crxcavator_api_key=None,
-        bitbucket_access_token=None,
-        gitlab_access_token=None,
-        gitlab_hosted_domain=None,
-        credentials=None,
-        params=None,
         statsd_enabled=False,
         statsd_prefix=None,
         statsd_host=None,
@@ -505,13 +490,6 @@ class Config:
         neo4j_max_transaction_retry_time=None,
         neo4j_max_connection_pool_size=None,
         neo4j_connection_acquisition_timeout=None,
-        refresh_entitlements=False,
-        identity_store_region=None,
-        aws_internal_accounts=None,
-        partial=None,
-        manual_run=None,
-        dc=None,
-        aws_excluded_regions=None,
         _warn_on_legacy_report_source=True,
     ):
         self.neo4j_uri = neo4j_uri
@@ -540,18 +518,11 @@ class Config:
         self.azure_tenant_id = azure_tenant_id
         self.azure_client_id = azure_client_id
         self.azure_client_secret = azure_client_secret
-        self.azure_redirect_uri = azure_redirect_uri
-        self.azure_refresh_token = azure_refresh_token
-        self.azure_graph_scope = azure_graph_scope
-        self.azure_default_graph_scope = azure_default_graph_scope
-        self.azure_vault_scope = azure_vault_scope
-        self.azure_azure_scope = azure_azure_scope
         self.azure_subscription_id = azure_subscription_id
         self.entra_tenant_id = entra_tenant_id
         self.entra_client_id = entra_client_id
         self.entra_client_secret = entra_client_secret
         self.aws_requested_syncs = aws_requested_syncs
-        self.azure_requested_syncs = azure_requested_syncs
         self.aws_guardduty_severity_threshold = aws_guardduty_severity_threshold
         self.analysis_job_directory = analysis_job_directory
         self.oci_sync_all_profiles = oci_sync_all_profiles
@@ -560,7 +531,6 @@ class Config:
         self.okta_base_domain = okta_base_domain
         self.okta_saml_role_regex = okta_saml_role_regex
         self.github_config = github_config
-        self.azure_devops_config = azure_devops_config
         self.github_commit_lookback_days = github_commit_lookback_days
         self.digitalocean_token = digitalocean_token
         self.permission_relationships_file = permission_relationships_file
@@ -575,13 +545,6 @@ class Config:
         self.kandji_token = kandji_token
         self.k8s_kubeconfig = k8s_kubeconfig
         self.managed_kubernetes = managed_kubernetes
-        self.crxcavator_api_base_uri = crxcavator_api_base_uri
-        self.crxcavator_api_key = crxcavator_api_key
-        self.bitbucket_access_token = bitbucket_access_token
-        self.gitlab_access_token = gitlab_access_token
-        self.gitlab_hosted_domain = gitlab_hosted_domain
-        self.credentials = credentials
-        self.params = params
         self.statsd_enabled = statsd_enabled
         self.statsd_prefix = statsd_prefix
         self.statsd_host = statsd_host
@@ -715,10 +678,3 @@ class Config:
         self.jumpcloud_api_key = jumpcloud_api_key
         self.jumpcloud_org_id = jumpcloud_org_id
         self.socketdev_token = socketdev_token
-        self.refresh_entitlements = refresh_entitlements
-        self.identity_store_region = identity_store_region
-        self.aws_internal_accounts = aws_internal_accounts
-        self.partial = partial
-        self.manual_run = manual_run
-        self.dc = dc
-        self.aws_excluded_regions = aws_excluded_regions or []

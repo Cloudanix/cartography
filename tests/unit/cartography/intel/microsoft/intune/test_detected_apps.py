@@ -1,20 +1,20 @@
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
 import cartography.intel.microsoft.intune.detected_apps
+from cartography.intel.microsoft.intune.detected_apps import APPINVAGGREGATE_COLUMNS
+from cartography.intel.microsoft.intune.detected_apps import APPINVRAWDATA_COLUMNS
 from cartography.intel.microsoft.intune.detected_apps import (
-    APPINVAGGREGATE_COLUMNS,
-    APPINVRAWDATA_COLUMNS,
     build_detected_app_export_rows,
-    sync_detected_apps,
 )
+from cartography.intel.microsoft.intune.detected_apps import sync_detected_apps
 from cartography.intel.microsoft.intune.reports import ExportedReportRows
-from tests.data.microsoft.intune.detected_apps import (
-    MOCK_DETECTED_APP_AGGREGATE_ROWS,
-    MOCK_DETECTED_APP_RAW_ROWS,
-)
+from tests.data.microsoft.intune.detected_apps import MOCK_DETECTED_APP_AGGREGATE_ROWS
+from tests.data.microsoft.intune.detected_apps import MOCK_DETECTED_APP_RAW_ROWS
 
 
 def test_build_detected_app_export_rows_unions_both_reports():

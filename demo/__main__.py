@@ -9,9 +9,11 @@ import neo4j
 
 import cartography.intel.analysis
 from cartography.config import Config
-from cartography.intel import create_indexes, ontology
+from cartography.intel import create_indexes
+from cartography.intel import ontology
 from demo import seeds
-from demo.seeds.base import AsyncSeed, Seed
+from demo.seeds.base import AsyncSeed
+from demo.seeds.base import Seed
 
 NEO4J_URL = os.environ.get("NEO4J_URL", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER")

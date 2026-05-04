@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.googleworkspace.oauth_apps
 from cartography.intel.googleworkspace.oauth_apps import sync_googleworkspace_oauth_apps
@@ -9,7 +10,8 @@ from tests.integration.cartography.intel.googleworkspace.test_tenant import (
 from tests.integration.cartography.intel.googleworkspace.test_users import (
     _ensure_local_neo4j_has_test_users,
 )
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_CUSTOMER_ID = "ABC123CD"

@@ -5,20 +5,30 @@ from functools import partial
 from urllib.parse import unquote
 
 import neo4j
-from google.api_core.exceptions import NotFound, PermissionDenied
-from google.auth.exceptions import DefaultCredentialsError, RefreshError
+from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import PermissionDenied
+from google.auth.exceptions import DefaultCredentialsError
+from google.auth.exceptions import RefreshError
 from google.cloud.artifactregistry_v1 import ArtifactRegistryClient
 from google.cloud.artifactregistry_v1.types import Package
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
+from cartography.intel.gcp.artifact_registry.util import apply_conditional_labels
 from cartography.intel.gcp.artifact_registry.util import (
     ARTIFACT_REGISTRY_LOAD_BATCH_SIZE,
+)
+from cartography.intel.gcp.artifact_registry.util import (
     DEFAULT_ARTIFACT_REGISTRY_WORKERS,
-    apply_conditional_labels,
+)
+from cartography.intel.gcp.artifact_registry.util import (
     fetch_artifact_registry_resources,
+)
+from cartography.intel.gcp.artifact_registry.util import (
     list_artifact_registry_resources,
-    load_matchlinks_with_progress,
+)
+from cartography.intel.gcp.artifact_registry.util import load_matchlinks_with_progress
+from cartography.intel.gcp.artifact_registry.util import (
     load_nodes_without_relationships,
 )
 from cartography.intel.gcp.util import proto_message_to_dict
@@ -27,7 +37,11 @@ from cartography.models.gcp.artifact_registry.artifact import (
 )
 from cartography.models.gcp.artifact_registry.container_image import (
     GCPArtifactRegistryContainerImageSchema,
+)
+from cartography.models.gcp.artifact_registry.container_image import (
     GCPArtifactRegistryProjectToContainerImageRel,
+)
+from cartography.models.gcp.artifact_registry.container_image import (
     GCPArtifactRegistryRepositoryToContainerImageRel,
 )
 from cartography.models.gcp.artifact_registry.helm_chart import (

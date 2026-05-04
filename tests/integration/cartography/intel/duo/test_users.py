@@ -5,7 +5,9 @@ from cartography.intel.duo.endpoints import sync_duo_endpoints
 from cartography.intel.duo.groups import sync_duo_groups
 from cartography.intel.duo.phones import sync as sync_duo_phones
 from cartography.intel.duo.tokens import sync as sync_duo_tokens
-from cartography.intel.duo.users import _load_users, _transform_users, sync_duo_users
+from cartography.intel.duo.users import _load_users
+from cartography.intel.duo.users import _transform_users
+from cartography.intel.duo.users import sync_duo_users
 from cartography.intel.duo.web_authn_credentials import (
     sync as sync_duo_web_authn_credentials,
 )

@@ -8,10 +8,8 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import (
-    create_boto3_client,
-    get_botocore_config,
-)
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import get_botocore_config
 from cartography.models.aws.ec2.networkinterfaces import EC2NetworkInterfaceSchema
 from cartography.models.aws.ec2.privateip_networkinterface import (
     EC2PrivateIpNetworkInterfaceSchema,
@@ -22,7 +20,8 @@ from cartography.models.aws.ec2.securitygroup_networkinterface import (
 from cartography.models.aws.ec2.subnet_networkinterface import (
     EC2SubnetNetworkInterfaceSchema,
 )
-from cartography.util import aws_handle_regions, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

@@ -1,10 +1,14 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.airbyte.util import AirbyteClient, list_to_string
+from cartography.intel.airbyte.util import AirbyteClient
+from cartography.intel.airbyte.util import list_to_string
 from cartography.models.airbyte.connection import AirbyteConnectionSchema
 from cartography.models.airbyte.stream import AirbyteStreamSchema
 from cartography.util import timeit

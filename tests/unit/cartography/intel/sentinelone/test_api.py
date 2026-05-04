@@ -1,29 +1,26 @@
 import logging
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import pytest
 import requests
 
-from cartography.intel.sentinelone.api import (
-    SentinelOnePassthroughRequestException,
-    build_scope_params,
-    call_sentinelone_api,
-    get_paginated_results,
-    is_retryable_sentinelone_exception,
-    is_site_scope_http_error,
-)
-from tests.data.sentinelone.api import (
-    EXPECTED_PAGINATED_RESULT,
-    MOCK_API_RESPONSE_SUCCESS,
-    MOCK_EMPTY_PAGINATION_RESPONSE,
-    MOCK_PAGINATED_RESPONSE_PAGE_1,
-    MOCK_PAGINATED_RESPONSE_PAGE_2,
-    MOCK_SINGLE_PAGE_RESPONSE,
-    TEST_API_TOKEN,
-    TEST_API_URL,
-    TEST_ENDPOINT,
-    TEST_PARAMS,
-)
+from cartography.intel.sentinelone.api import build_scope_params
+from cartography.intel.sentinelone.api import call_sentinelone_api
+from cartography.intel.sentinelone.api import get_paginated_results
+from cartography.intel.sentinelone.api import is_retryable_sentinelone_exception
+from cartography.intel.sentinelone.api import is_site_scope_http_error
+from cartography.intel.sentinelone.api import SentinelOnePassthroughRequestException
+from tests.data.sentinelone.api import EXPECTED_PAGINATED_RESULT
+from tests.data.sentinelone.api import MOCK_API_RESPONSE_SUCCESS
+from tests.data.sentinelone.api import MOCK_EMPTY_PAGINATION_RESPONSE
+from tests.data.sentinelone.api import MOCK_PAGINATED_RESPONSE_PAGE_1
+from tests.data.sentinelone.api import MOCK_PAGINATED_RESPONSE_PAGE_2
+from tests.data.sentinelone.api import MOCK_SINGLE_PAGE_RESPONSE
+from tests.data.sentinelone.api import TEST_API_TOKEN
+from tests.data.sentinelone.api import TEST_API_URL
+from tests.data.sentinelone.api import TEST_ENDPOINT
+from tests.data.sentinelone.api import TEST_PARAMS
 
 
 @patch("cartography.intel.sentinelone.api.requests.request")

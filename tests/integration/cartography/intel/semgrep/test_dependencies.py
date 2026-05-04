@@ -6,16 +6,13 @@ import cartography.intel.semgrep.dependencies
 import cartography.intel.semgrep.deployment
 import tests.data.semgrep.dependencies
 import tests.data.semgrep.deployment
-from cartography.intel.semgrep.dependencies import (
-    parse_and_validate_semgrep_ecosystems,
-    sync_dependencies,
-)
+from cartography.intel.semgrep.dependencies import parse_and_validate_semgrep_ecosystems
+from cartography.intel.semgrep.dependencies import sync_dependencies
 from cartography.intel.semgrep.deployment import sync_deployment
-from tests.integration.cartography.intel.semgrep.common import (
-    TEST_UPDATE_TAG,
-    create_github_repos,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.cartography.intel.semgrep.common import create_github_repos
+from tests.integration.cartography.intel.semgrep.common import TEST_UPDATE_TAG
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 
 def test_parse_and_validate_semgrep_ecosystems():

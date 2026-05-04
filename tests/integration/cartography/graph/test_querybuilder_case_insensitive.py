@@ -3,7 +3,11 @@ from cartography.intel.github.users import load_users
 from cartography.models.github.users import GitHubOrganizationUserSchema
 from tests.data.graph.querybuilder.sample_data.case_insensitive_prop_ref import (
     FAKE_EMPLOYEE_DATA,
+)
+from tests.data.graph.querybuilder.sample_data.case_insensitive_prop_ref import (
     FAKE_GITHUB_ORG_DATA,
+)
+from tests.data.graph.querybuilder.sample_data.case_insensitive_prop_ref import (
     FAKE_GITHUB_USER_DATA,
 )
 from tests.data.graph.querybuilder.sample_models.fake_emps_githubusers import (

@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Callable
+from typing import Any
+from typing import Callable
 
 import backoff
 import httpx

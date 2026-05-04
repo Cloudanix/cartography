@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import botocore.exceptions
 import pytest
@@ -6,22 +7,21 @@ import pytest
 import cartography.intel.aws.identitycenter
 import tests.data.aws.identitycenter
 from cartography.client.core.tx import load
-from cartography.intel.aws.identitycenter import (
-    PermissionSetSyncNotSupported,
-    get_permission_sets,
-    load_group_roles,
-    load_identity_center_instances,
-    load_permission_sets,
-    load_sso_groups,
-    load_sso_users,
-    transform_permission_sets,
-    transform_sso_groups,
-    transform_sso_users,
-)
+from cartography.intel.aws.identitycenter import get_permission_sets
+from cartography.intel.aws.identitycenter import load_group_roles
+from cartography.intel.aws.identitycenter import load_identity_center_instances
+from cartography.intel.aws.identitycenter import load_permission_sets
+from cartography.intel.aws.identitycenter import load_sso_groups
+from cartography.intel.aws.identitycenter import load_sso_users
+from cartography.intel.aws.identitycenter import PermissionSetSyncNotSupported
+from cartography.intel.aws.identitycenter import transform_permission_sets
+from cartography.intel.aws.identitycenter import transform_sso_groups
+from cartography.intel.aws.identitycenter import transform_sso_users
 from cartography.models.aws.iam.role import AWSRoleSchema
 from cartography.models.aws.identitycenter.awssogroup import AWSSSOGroupSchema
 from cartography.models.aws.identitycenter.awsssouser import AWSSSOUserSchema
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "1234567890"
 

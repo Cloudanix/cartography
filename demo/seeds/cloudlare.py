@@ -1,4 +1,5 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import cartography.intel.cloudflare.accounts
 import cartography.intel.cloudflare.dnsrecords

@@ -1,8 +1,6 @@
 from cartography.intel.sentinelone.utils import get_application_id
-from tests.data.sentinelone.utils import (
-    APPLICATION_ID_EDGE_CASES,
-    APPLICATION_ID_TEST_CASES,
-)
+from tests.data.sentinelone.utils import APPLICATION_ID_EDGE_CASES
+from tests.data.sentinelone.utils import APPLICATION_ID_TEST_CASES
 
 
 def test_get_application_id_standard_cases():

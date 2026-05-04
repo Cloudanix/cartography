@@ -7,35 +7,44 @@ current AWS CIS v5.0 requirement numbering used by Cartography.
 
 import pytest
 
-from cartography.rules.data.rules.cis_aws_iam import (
-    cis_aws_1_12_unused_credentials,
-    cis_aws_1_13_multiple_access_keys,
-    cis_aws_1_14_access_key_not_rotated,
-    cis_aws_1_15_user_direct_policies,
-    cis_aws_1_18_expired_certificates,
-)
+from cartography.rules.data.rules.cis_aws_iam import cis_aws_1_12_unused_credentials
+from cartography.rules.data.rules.cis_aws_iam import cis_aws_1_13_multiple_access_keys
+from cartography.rules.data.rules.cis_aws_iam import cis_aws_1_14_access_key_not_rotated
+from cartography.rules.data.rules.cis_aws_iam import cis_aws_1_15_user_direct_policies
+from cartography.rules.data.rules.cis_aws_iam import cis_aws_1_18_expired_certificates
 from cartography.rules.data.rules.cis_aws_logging import (
     cis_aws_3_1_cloudtrail_multi_region,
+)
+from cartography.rules.data.rules.cis_aws_logging import (
     cis_aws_3_4_cloudtrail_log_validation,
+)
+from cartography.rules.data.rules.cis_aws_logging import (
     cis_aws_3_5_cloudtrail_cloudwatch,
+)
+from cartography.rules.data.rules.cis_aws_logging import (
     cis_aws_3_7_cloudtrail_encryption,
 )
 from cartography.rules.data.rules.cis_aws_networking import (
     cis_aws_5_3_remote_admin_ipv4,
+)
+from cartography.rules.data.rules.cis_aws_networking import (
     cis_aws_5_4_remote_admin_ipv6,
+)
+from cartography.rules.data.rules.cis_aws_networking import (
     cis_aws_5_5_default_sg_traffic,
-    cis_aws_5_7_ec2_imdsv2,
 )
+from cartography.rules.data.rules.cis_aws_networking import cis_aws_5_7_ec2_imdsv2
+from cartography.rules.data.rules.cis_aws_storage import cis_aws_2_1_1_s3_versioning
+from cartography.rules.data.rules.cis_aws_storage import cis_aws_2_1_2_s3_mfa_delete
 from cartography.rules.data.rules.cis_aws_storage import (
-    cis_aws_2_1_1_s3_versioning,
-    cis_aws_2_1_2_s3_mfa_delete,
     cis_aws_2_1_4_s3_block_public_access,
-    cis_aws_2_1_5_s3_access_logging,
-    cis_aws_2_1_6_s3_encryption,
-    cis_aws_2_2_1_rds_encryption,
-    cis_aws_2_3_1_ebs_encryption,
 )
-from cartography.rules.spec.model import Maturity, Module
+from cartography.rules.data.rules.cis_aws_storage import cis_aws_2_1_5_s3_access_logging
+from cartography.rules.data.rules.cis_aws_storage import cis_aws_2_1_6_s3_encryption
+from cartography.rules.data.rules.cis_aws_storage import cis_aws_2_2_1_rds_encryption
+from cartography.rules.data.rules.cis_aws_storage import cis_aws_2_3_1_ebs_encryption
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
 
 ALL_CIS_AWS_RULES = [
     cis_aws_1_12_unused_credentials,

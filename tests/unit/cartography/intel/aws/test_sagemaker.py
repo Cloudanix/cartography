@@ -1,7 +1,8 @@
 from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError, ConnectTimeoutError
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectTimeoutError
 
 from cartography.intel.aws import sagemaker
 from cartography.intel.aws.sagemaker import notebook_instances

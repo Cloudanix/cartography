@@ -1,8 +1,11 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.azure.data_lake as data_lake
-from tests.data.azure.data_lake import MOCK_FILESYSTEMS, MOCK_STORAGE_ACCOUNTS
-from tests.integration.util import check_nodes, check_rels
+from tests.data.azure.data_lake import MOCK_FILESYSTEMS
+from tests.data.azure.data_lake import MOCK_STORAGE_ACCOUNTS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789

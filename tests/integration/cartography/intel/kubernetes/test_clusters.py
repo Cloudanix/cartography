@@ -1,10 +1,9 @@
 # from cartography.intel.kubernetes.clusters import cleanup
 from cartography.intel.kubernetes.clusters import load_kubernetes_cluster
-from tests.data.kubernetes.clusters import (
-    KUBERNETES_CLUSTER_DATA,
-    KUBERNETES_CLUSTER_IDS,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_DATA
+from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_IDS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 

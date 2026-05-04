@@ -1,7 +1,8 @@
 from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
+from botocore.exceptions import ClientError
+from botocore.exceptions import EndpointConnectionError
 
 import tests.data.aws.apigatewayv2 as test_data
 from cartography.intel.aws import apigatewayv2

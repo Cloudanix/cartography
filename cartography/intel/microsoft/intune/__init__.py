@@ -12,7 +12,8 @@ from cartography.intel.microsoft.intune.compliance_policies import (
 )
 from cartography.intel.microsoft.intune.detected_apps import sync_detected_apps
 from cartography.intel.microsoft.intune.managed_devices import sync_managed_devices
-from cartography.util import run_scoped_analysis_job, timeit
+from cartography.util import run_scoped_analysis_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

@@ -4,11 +4,9 @@ from unittest.mock import MagicMock
 import pytest
 from google.api_core.exceptions import NotFound
 
-from cartography.intel.gcp.artifact_registry.artifact import (
-    get_apt_artifacts,
-    get_go_modules,
-    get_yum_artifacts,
-)
+from cartography.intel.gcp.artifact_registry.artifact import get_apt_artifacts
+from cartography.intel.gcp.artifact_registry.artifact import get_go_modules
+from cartography.intel.gcp.artifact_registry.artifact import get_yum_artifacts
 
 
 def _make_os_package_client(package_name: str, version_name: str) -> MagicMock:

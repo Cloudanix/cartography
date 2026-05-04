@@ -2,18 +2,15 @@
 
 from unittest.mock import patch
 
-from cartography.intel.gitlab.ci_variables import (
-    load_project_variables,
-    transform_variables,
-)
+from cartography.intel.gitlab.ci_variables import load_project_variables
+from cartography.intel.gitlab.ci_variables import transform_variables
 from cartography.intel.gitlab.environments import sync_gitlab_environments
 from tests.data.gitlab.ci_variables import GET_PROJECT_VARIABLES_RESPONSE
-from tests.data.gitlab.environments import (
-    GET_ENVIRONMENTS_RESPONSE,
-    TEST_GITLAB_URL,
-    TEST_PROJECT_ID,
-)
-from tests.integration.util import check_nodes, check_rels
+from tests.data.gitlab.environments import GET_ENVIRONMENTS_RESPONSE
+from tests.data.gitlab.environments import TEST_GITLAB_URL
+from tests.data.gitlab.environments import TEST_PROJECT_ID
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_ORG_ID = 10

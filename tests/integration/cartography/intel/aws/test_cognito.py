@@ -1,16 +1,17 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import cartography.intel.aws.cognito
 from cartography.intel.aws.cognito import sync
-from cartography.intel.aws.iam import load_role_data, transform_role_trust_policies
-from tests.data.aws.cognito import (
-    GET_COGNITO_IDENTITY_POOLS,
-    GET_COGNITO_USER_POOLS,
-    GET_POOLS,
-)
+from cartography.intel.aws.iam import load_role_data
+from cartography.intel.aws.iam import transform_role_trust_policies
+from tests.data.aws.cognito import GET_COGNITO_IDENTITY_POOLS
+from tests.data.aws.cognito import GET_COGNITO_USER_POOLS
+from tests.data.aws.cognito import GET_POOLS
 from tests.data.aws.iam.roles import ROLES
 from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes, check_rels
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 TEST_ACCOUNT_ID = "000000000000"
 TEST_REGION = "eu-west-1"

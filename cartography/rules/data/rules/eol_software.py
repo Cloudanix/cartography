@@ -1,11 +1,9 @@
-from cartography.rules.spec.model import (
-    Fact,
-    Finding,
-    Maturity,
-    Module,
-    Rule,
-    RuleReference,
-)
+from cartography.rules.spec.model import Fact
+from cartography.rules.spec.model import Finding
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
+from cartography.rules.spec.model import Rule
+from cartography.rules.spec.model import RuleReference
 
 _OLDEST_SUPPORTED_UPSTREAM_KUBERNETES_MINOR = 33
 _OLDEST_SUPPORTED_EKS_KUBERNETES_MINOR = 29

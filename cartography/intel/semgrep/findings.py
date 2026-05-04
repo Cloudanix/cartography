@@ -3,7 +3,8 @@ from typing import Any, Dict, List, Tuple
 
 import neo4j
 import requests
-from requests.exceptions import HTTPError, ReadTimeout
+from requests.exceptions import HTTPError
+from requests.exceptions import ReadTimeout
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob

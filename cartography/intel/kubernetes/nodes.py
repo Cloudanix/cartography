@@ -7,7 +7,8 @@ from kubernetes.client.models import V1Node
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.container_arch import normalize_architecture
-from cartography.intel.kubernetes.util import K8sClient, k8s_paginate
+from cartography.intel.kubernetes.util import k8s_paginate
+from cartography.intel.kubernetes.util import K8sClient
 from cartography.models.kubernetes.nodes import KubernetesNodeSchema
 from cartography.util import timeit
 
