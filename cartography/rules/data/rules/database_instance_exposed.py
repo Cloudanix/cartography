@@ -1,0 +1,98 @@
+from cartography.rules.spec.model import Fact
+from cartography.rules.spec.model import Finding
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
+from cartography.rules.spec.model import Rule
+
+# GCP Facts
+_gcp_cloud_sql_public_access = Fact(
+    id="gcp_cloud_sql_public_access",
+    name="Internet-Accessible Cloud SQL Database Attack Surface",
+    description=(
+        "GCP Cloud SQL instances that allow inbound connections from any IP "
+        "(authorized network 0.0.0.0/0)."
+    ),
+    cypher_query="""
+    MATCH (sql:GCPCloudSQLInstance)-[:AUTHORIZED_NETWORK]-(net:GCPCloudSQLAuthorizedNetwork)
+    WHERE net.value = '0.0.0.0/0'
+    RETURN
+        sql.id AS id,
+        sql.database_version AS engine,
+        sql.connection_name AS host,
+        sql.region AS region,
+        sql.require_ssl AS encrypted
+    """,
+    cypher_visual_query="""
+    MATCH p=(sql:GCPCloudSQLInstance)-[:AUTHORIZED_NETWORK]-(net:GCPCloudSQLAuthorizedNetwork)
+    WHERE net.value = '0.0.0.0/0'
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (sql:GCPCloudSQLInstance)
+    RETURN COUNT(sql) AS count
+    """,
+    module=Module.GCP,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+# AWS Facts
+_aws_rds_public_access = Fact(
+    id="aws_rds_public_access",
+    name="Internet-Accessible RDS Database Attack Surface",
+    description="AWS RDS instances accessible from the internet",
+    cypher_query="""
+    MATCH (rds:RDSInstance)
+    WHERE rds.publicly_accessible = true
+    RETURN rds.id AS id,
+        rds.engine AS engine,
+        rds.db_instance_class AS instance_class,
+        rds.endpoint_address AS host,
+        rds.endpoint_port AS port,
+        rds.region AS region,
+        rds.storage_encrypted AS encrypted
+    """,
+    cypher_visual_query="""
+    MATCH p1=(rds:RDSInstance{publicly_accessible: true})
+    OPTIONAL MATCH p2=(rds)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)
+    OPTIONAL MATCH p3=(rds)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(rule:AWSIpPermissionInbound:AWSIpRule)
+    OPTIONAL MATCH p4=(rds)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(rule:AWSIpPermissionInbound:AWSIpRule)<-[:MEMBER_OF_IP_RULE]-(ip:AWSIpRange)
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (rds:RDSInstance)
+    RETURN COUNT(rds) AS count
+    """,
+    module=Module.AWS,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+# Rule
+class DatabaseInstanceExposed(Finding):
+    host: str | None = None
+    id: str | None = None
+    engine: str | None = None
+    port: int | None = None
+    region: str | None = None
+    encrypted: bool | None = None
+
+
+database_instance_exposed = Rule(
+    id="database_instance_exposed",
+    name="Internet-Exposed Databases",
+    description=("Database instances accessible from the internet"),
+    output_model=DatabaseInstanceExposed,
+    facts=(
+        _aws_rds_public_access,
+        _gcp_cloud_sql_public_access,
+    ),
+    tags=(
+        "infrastructure",
+        "databases",
+        "attack_surface",
+        "stride:information_disclosure",
+        "stride:tampering",
+    ),
+    version="0.1.0",
+)

@@ -1,133 +1,233 @@
 import base64
 import json
 import logging
-import os
-from concurrent.futures import as_completed
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
-from typing import Dict
-from typing import List
+from typing import cast
 
 import neo4j
-from neo4j import GraphDatabase
-from requests import exceptions
 
-from . import organization
-from .resources import RESOURCE_FUNCTIONS
+import cartography.intel.github.actions
+import cartography.intel.github.commits
+import cartography.intel.github.container_image_attestations
+import cartography.intel.github.container_image_tags
+import cartography.intel.github.container_images
+import cartography.intel.github.packages
+import cartography.intel.github.repos
+import cartography.intel.github.supply_chain
+import cartography.intel.github.teams
+import cartography.intel.github.users
+from cartography.client.core.tx import read_list_of_values_tx
 from cartography.config import Config
-from cartography.graph.session import Session
-from cartography.util import run_cleanup_job
+from cartography.intel.github.app_auth import make_credential
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
 
-def concurrent_execution(
-    service: str, service_func: Any, config: Config, organization_name: str, url, refresh_token: str, common_job_parameters: Dict,
-):
-    logger.info(f"BEGIN processing for service: {service}")
-    try:
-        neo4j_auth = (config.neo4j_user, config.neo4j_password)
-        neo4j_driver = GraphDatabase.driver(
-            config.neo4j_uri,
-            auth=neo4j_auth,
-            max_connection_lifetime=config.neo4j_max_connection_lifetime,
-        )
-        service_func(
-            Session(neo4j_driver), common_job_parameters, refresh_token, url, organization_name,
-        )
-        logger.info(f"END processing for service: {service}")
-    except Exception as e:
-        logger.warning(f"error to process service {service} - {e}")
+def _get_repos_from_graph(neo4j_session: neo4j.Session, organization: str) -> list[str]:
+    """
+    Get repository names for an organization from the graph instead of making an API call.
+
+    :param neo4j_session: Neo4j session for database interface
+    :param organization: GitHub organization name
+    :return: List of repository names
+    """
+    org_url = f"https://github.com/{organization}"
+    query = """
+    MATCH (org:GitHubOrganization {id: $org_url})<-[:OWNER]-(repo:GitHubRepository)
+    RETURN repo.name
+    ORDER BY repo.name
+    """
+    return cast(
+        list[str],
+        neo4j_session.execute_read(
+            read_list_of_values_tx,
+            query,
+            org_url=org_url,
+        ),
+    )
 
 
 @timeit
-def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: Dict, common_job_parameters: Dict) -> None:
-    try:
-        logger.info("Syncing Github Organization: %s", common_job_parameters["ORGANIZATION_ID"])
-        organization.sync(neo4j_session, auth_data["token"], auth_data["name"], auth_data["url"], common_job_parameters)
+def cleanup_unscoped_github_resources(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: dict[str, Any],
+) -> None:
+    """
+    Clean up GitHub resources that are not scoped to a single organization.
 
-        requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
+    External orchestrators that call start_github_ingestion() with
+    skip_unscoped_cleanup=True should call this once after all organizations
+    have been refreshed with the same update tag.
+    """
+    cartography.intel.github.users.cleanup(neo4j_session, common_job_parameters)
+    cartography.intel.github.repos.cleanup_global_resources(
+        neo4j_session,
+        common_job_parameters,
+    )
 
-        if os.environ.get("LOCAL_RUN", "0") == "1":
-            # BEGIN - Sequential Run
-
-            sync_args = {
-                'neo4j_session': neo4j_session,
-                'common_job_parameters': common_job_parameters,
-                'github_api_key': auth_data['token'],
-                'github_url': auth_data['url'],
-                'organization': auth_data['name'],
-            }
-
-            for func_name in requested_syncs:
-                if func_name in RESOURCE_FUNCTIONS:
-                    try:
-                        logger.info(f"Processing {func_name}")
-                        RESOURCE_FUNCTIONS[func_name](**sync_args)
-                    except Exception as e:
-                        logger.warning(f"error to process service {func_name} - {e}")
-                else:
-                    logger.warning(f'GITHUB sync function "{func_name}" was specified but does not exist. Did you misspell it?')
-
-            # END - Sequential Run
-
-        else:
-            # BEGIN - Parallel Run
-
-            # Process each service in parallel.
-            with ThreadPoolExecutor(max_workers=len(RESOURCE_FUNCTIONS)) as executor:
-                futures = []
-                for request in requested_syncs:
-                    if request in RESOURCE_FUNCTIONS:
-                        try:
-                            futures.append(
-                                executor.submit(
-                                    concurrent_execution,
-                                    request,
-                                    RESOURCE_FUNCTIONS[request],
-                                    config,
-                                    auth_data['name'],
-                                    auth_data['url'],
-                                    auth_data['token'],
-                                    common_job_parameters,
-                                ),
-                            )
-                        except Exception as e:
-                            logger.warning(f"error to append service {func_name} in futures - {e}")
-                    else:
-                        logger.warning(f'Github sync function "{request}" was specified but does not exist. Did you misspell it?')
-
-                for future in as_completed(futures):
-                    logger.info(f'Result from Future - Service Processing: {future.result()}')
-
-            # END - Parallel Run
-
-    except exceptions.RequestException as e:
-        logger.error("Could not complete request to the GitHub API: %s", e)
+    # DEPRECATED: one-time migration, run once per sync cycle (not per org)
+    cartography.intel.github.repos.cleanup_orphaned_github_branches(
+        neo4j_session,
+        common_job_parameters,
+    )
 
 
 @timeit
-def start_github_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
+def start_github_ingestion(
+    neo4j_session: neo4j.Session,
+    config: Config,
+    *,
+    skip_unscoped_cleanup: bool = False,
+) -> None:
     """
     If this module is configured, perform ingestion of Github  data. Otherwise warn and exit
     :param neo4j_session: Neo4J session for database interface
     :param config: A cartography.config object
+    :param skip_unscoped_cleanup: Skip cleanup of GitHub resources that are not
+        scoped to a single organization. External orchestrators that set this
+        to True should call cleanup_unscoped_github_resources() once after all
+        organizations have been refreshed with the same update tag.
     :return: None
     """
     if not config.github_config:
-        logger.info('GitHub import is not configured - skipping this module. See docs to configure.')
+        logger.info(
+            "GitHub import is not configured - skipping this module. See docs to configure.",
+        )
         return
 
     auth_tokens = json.loads(base64.b64decode(config.github_config).decode())
     common_job_parameters = {
-        "WORKSPACE_ID": config.params['workspace']['id_string'],
         "UPDATE_TAG": config.update_tag,
-        "ORGANIZATION_ID": config.params['workspace']['account_id'],
     }
+    processed_any_org = False
 
-    # run sync for the provided github tokens
-    for auth_data in auth_tokens['organization']:
-        sync_organization(neo4j_session, config, auth_data, common_job_parameters)
+    # run sync for the provided github organizations
+    for auth_data in auth_tokens["organization"]:
+        credential = make_credential(auth_data)
+        api_url = auth_data["url"]
+        org_name = auth_data["name"]
 
-    return common_job_parameters
+        # credential is a GitHubCredential (duck-typed as str by _resolve_token in util.py)
+        token: Any = credential
+
+        cartography.intel.github.users.sync(
+            neo4j_session,
+            common_job_parameters,
+            token,
+            api_url,
+            org_name,
+        )
+        cartography.intel.github.repos.sync(
+            neo4j_session,
+            common_job_parameters,
+            token,
+            api_url,
+            org_name,
+        )
+        cartography.intel.github.teams.sync_github_teams(
+            neo4j_session,
+            common_job_parameters,
+            token,
+            api_url,
+            org_name,
+        )
+
+        # Sync GitHub Actions (workflows, secrets, variables, environments)
+        all_workflows = cartography.intel.github.actions.sync(
+            neo4j_session,
+            common_job_parameters,
+            token,
+            api_url,
+            org_name,
+        )
+
+        # Sync commit relationships for the configured lookback period
+        # Get repo names from the graph instead of making another API call
+        repo_names = _get_repos_from_graph(neo4j_session, org_name)
+
+        cartography.intel.github.commits.sync_github_commits(
+            neo4j_session,
+            token,
+            api_url,
+            org_name,
+            repo_names,
+            common_job_parameters["UPDATE_TAG"],
+            config.github_commit_lookback_days,
+        )
+
+        repos_json = cartography.intel.github.repos.get(
+            token,
+            api_url,
+            org_name,
+        )
+        # Filter out None entries
+        valid_repos = [r for r in repos_json if r is not None]
+
+        # Sync GHCR (container packages, image manifests, tags, attestations).
+        # Runs before supply_chain.sync so the latter can correlate digests.
+        # Gate on cleanup_safe — not on the packages list — so an org that
+        # legitimately has zero packages still gets its stale GHCR images,
+        # tags, and attestations reaped. An endpoint outage or missing-scope
+        # condition flips cleanup_safe to False, which disables both the
+        # fetches and the downstream cleanups.
+        ghcr_result = cartography.intel.github.packages.sync_packages(
+            neo4j_session,
+            token,
+            api_url,
+            org_name,
+            common_job_parameters["UPDATE_TAG"],
+            common_job_parameters,
+        )
+        if ghcr_result.cleanup_safe:
+            (
+                ghcr_manifests,
+                _ghcr_manifest_lists,
+                ghcr_tag_rows,
+                ghcr_observed_and_skipped,
+            ) = cartography.intel.github.container_images.sync_container_images(
+                neo4j_session,
+                token,
+                api_url,
+                org_name,
+                ghcr_result.packages,
+                common_job_parameters["UPDATE_TAG"],
+                common_job_parameters,
+            )
+            cartography.intel.github.container_image_tags.sync_container_image_tags(
+                neo4j_session,
+                org_name,
+                ghcr_tag_rows,
+                common_job_parameters["UPDATE_TAG"],
+                common_job_parameters,
+            )
+            cartography.intel.github.container_image_attestations.sync_container_image_attestations(
+                neo4j_session,
+                token,
+                api_url,
+                org_name,
+                ghcr_manifests,
+                common_job_parameters["UPDATE_TAG"],
+                common_job_parameters,
+                additional_observed_digests=ghcr_observed_and_skipped,
+            )
+
+        if valid_repos:
+            cartography.intel.github.supply_chain.sync(
+                neo4j_session,
+                token,
+                api_url,
+                org_name,
+                common_job_parameters["UPDATE_TAG"],
+                common_job_parameters,
+                valid_repos,
+                workflows=all_workflows,
+            )
+
+        processed_any_org = True
+
+    if processed_any_org and not skip_unscoped_cleanup:
+        cleanup_unscoped_github_resources(
+            neo4j_session,
+            common_job_parameters,
+        )

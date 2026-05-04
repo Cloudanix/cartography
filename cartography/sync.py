@@ -270,8 +270,6 @@ TOP_LEVEL_MODULES: OrderedDict[str, Callable[..., None]] = OrderedDict(
         "vercel": _mod("cartography.intel.vercel.start_vercel_ingestion"),
         "workday": _mod("cartography.intel.workday.start_workday_ingestion"),
         "workos": _mod("cartography.intel.workos.start_workos_ingestion"),
-        # Cloudanix
-        "cloudanix": cloudanix.run,
         # Analysis should be the last stage
         "analysis": cartography.intel.analysis.run,
     }.items() if v is not None}

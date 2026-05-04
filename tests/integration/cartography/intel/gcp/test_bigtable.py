@@ -1,259 +1,254 @@
-import cartography.intel.gcp.bigtable
-import tests.data.gcp.bigtable
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-TEST_PROJECT_NUMBER = '000000000000'
+import cartography.intel.gcp.bigtable_app_profile as bigtable_app_profile
+import cartography.intel.gcp.bigtable_backup as bigtable_backup
+import cartography.intel.gcp.bigtable_cluster as bigtable_cluster
+import cartography.intel.gcp.bigtable_instance as bigtable_instance
+import cartography.intel.gcp.bigtable_table as bigtable_table
+from tests.data.gcp.bigtable import MOCK_APP_PROFILES
+from tests.data.gcp.bigtable import MOCK_BACKUPS
+from tests.data.gcp.bigtable import MOCK_CLUSTERS
+from tests.data.gcp.bigtable import MOCK_INSTANCES
+from tests.data.gcp.bigtable import MOCK_TABLES
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
+
 TEST_UPDATE_TAG = 123456789
+TEST_PROJECT_ID = "test-project"
+TEST_INSTANCE_ID = "projects/test-project/instances/carto-bt-instance"
+TEST_CLUSTER_ID = (
+    "projects/test-project/instances/carto-bt-instance/clusters/carto-bt-cluster-c1"
+)
+TEST_TABLE_ID = (
+    "projects/test-project/instances/carto-bt-instance/tables/carto-test-table"
+)
+TEST_APP_PROFILE_ID = (
+    "projects/test-project/instances/carto-bt-instance/appProfiles/carto-app-profile"
+)
+TEST_BACKUP_ID = "projects/test-project/instances/carto-bt-instance/clusters/carto-bt-cluster-c1/backups/carto-table-backup"
 
 
-def test_load_bigtable_instances(neo4j_session):
-    data = tests.data.gcp.bigtable.BIGTABLE_INSTANCE
-    cartography.intel.gcp.bigtable.load_bigtable_instances(
-        neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
-        TEST_UPDATE_TAG,
-    )
-
-    expected_nodes = {
-        'instance123',
-        'instance456',
-    }
-
-    nodes = neo4j_session.run(
-        """
-        MATCH (r:GCPBigtableInstance) RETURN r.id;
-        """,
-    )
-
-    actual_nodes = {n['r.id'] for n in nodes}
-
-    assert actual_nodes == expected_nodes
-
-
-def test_bigtable_cluster(neo4j_session):
-    data = tests.data.gcp.bigtable.BIGTABLE_CLUSTER
-    cartography.intel.gcp.bigtable.load_bigtable_clusters(
-        neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
-        TEST_UPDATE_TAG,
-    )
-
-    expected_nodes = {
-        'cluster123',
-        'cluster456',
-    }
-
-    nodes = neo4j_session.run(
-        """
-        MATCH (r:GCPBigtableCluster) RETURN r.id;
-        """,
-    )
-
-    actual_nodes = {n['r.id'] for n in nodes}
-
-    assert actual_nodes == expected_nodes
-
-
-def test_bigtable_cluster_backup(neo4j_session):
-    data = tests.data.gcp.bigtable.BIGTABLE_CLUSTER_BACKUP
-    cartography.intel.gcp.bigtable.load_bigtable_cluster_backups(
-        neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
-        TEST_UPDATE_TAG,
-    )
-
-    expected_nodes = {
-        'clusterbackup123',
-        'clusterbackup456',
-    }
-
-    nodes = neo4j_session.run(
-        """
-        MATCH (r:GCPBigtableClusterBackup) RETURN r.id;
-        """,
-    )
-
-    actual_nodes = {n['r.id'] for n in nodes}
-
-    assert actual_nodes == expected_nodes
-
-
-def test_bigtable_cluster_table(neo4j_session):
-    data = tests.data.gcp.bigtable.BIGTABLE_TABLE
-    cartography.intel.gcp.bigtable.load_bigtable_tables(
-        neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
-        TEST_UPDATE_TAG,
-    )
-
-    expected_nodes = {
-        'table123',
-        'table456',
-    }
-
-    nodes = neo4j_session.run(
-        """
-        MATCH (r:GCPBigtableTable) RETURN r.id;
-        """,
-    )
-
-    actual_nodes = {n['r.id'] for n in nodes}
-
-    assert actual_nodes == expected_nodes
-
-
-def test_bigtable_instance_relationship(neo4j_session):
-    # Create Test GCP Project
+def _create_prerequisite_nodes(neo4j_session):
+    """
+    Create the GCPProject node that this sync needs to link to.
+    """
     neo4j_session.run(
-        """
-        MERGE (gcp:GCPProject{id: $PROJECT_NUMBER})
-        ON CREATE SET gcp.firstseen = timestamp()
-        SET gcp.lastupdated = $UPDATE_TAG
-        """,
-        PROJECT_NUMBER=TEST_PROJECT_NUMBER,
-        UPDATE_TAG=TEST_UPDATE_TAG,
+        "MERGE (p:GCPProject {id: $project_id}) SET p.lastupdated = $tag",
+        project_id=TEST_PROJECT_ID,
+        tag=TEST_UPDATE_TAG,
     )
 
-    # Load Bigtable Instance
-    data = tests.data.gcp.bigtable.BIGTABLE_INSTANCE
-    cartography.intel.gcp.bigtable.load_bigtable_instances(
+
+@patch("cartography.intel.gcp.bigtable_backup.get_bigtable_backups")
+@patch("cartography.intel.gcp.bigtable_app_profile.get_bigtable_app_profiles")
+@patch("cartography.intel.gcp.bigtable_table.get_bigtable_tables")
+@patch("cartography.intel.gcp.bigtable_cluster.get_bigtable_clusters")
+@patch("cartography.intel.gcp.bigtable_instance.get_bigtable_instances")
+def test_sync_bigtable_modules(
+    mock_get_instances,
+    mock_get_clusters,
+    mock_get_tables,
+    mock_get_app_profiles,
+    mock_get_backups,
+    neo4j_session,
+):
+    """
+    Test the sync functions for the refactored Bigtable modules.
+    This test simulates the behavior of the main gcp/__init__.py file.
+    """
+    # Arrange: Mock all 5 API calls
+    mock_get_instances.return_value = MOCK_INSTANCES["instances"]
+    mock_get_clusters.return_value = MOCK_CLUSTERS["clusters"]
+    mock_get_tables.return_value = MOCK_TABLES["tables"]
+    mock_get_app_profiles.return_value = MOCK_APP_PROFILES["appProfiles"]
+    mock_get_backups.return_value = MOCK_BACKUPS["backups"]
+
+    # Arrange: Create prerequisite nodes
+    _create_prerequisite_nodes(neo4j_session)
+
+    common_job_parameters = {
+        "UPDATE_TAG": TEST_UPDATE_TAG,
+        "PROJECT_ID": TEST_PROJECT_ID,
+    }
+    mock_bigtable_client = MagicMock()
+
+    # Act: Run the sync functions in the same order as gcp/__init__.py
+    instances_raw = bigtable_instance.sync_bigtable_instances(
         neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
+        mock_bigtable_client,
+        TEST_PROJECT_ID,
         TEST_UPDATE_TAG,
+        common_job_parameters,
     )
 
-    expected = {
-        (TEST_PROJECT_NUMBER, 'instance123'),
-        (TEST_PROJECT_NUMBER, 'instance456'),
-    }
-
-    # Fetch relationships
-    result = neo4j_session.run(
-        """
-        MATCH (n1:GCPProject)-[:RESOURCE]->(n2:GCPBigtableInstance) RETURN n1.id, n2.id;
-        """,
-    )
-
-    actual = {
-        (r['n1.id'], r['n2.id']) for r in result
-    }
-
-    assert actual == expected
-
-
-def test_bigtable_cluster_relationship(neo4j_session):
-    # Load Bigtable Instance
-    data = tests.data.gcp.bigtable.BIGTABLE_INSTANCE
-    cartography.intel.gcp.bigtable.load_bigtable_instances(
+    clusters_raw = bigtable_cluster.sync_bigtable_clusters(
         neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
+        mock_bigtable_client,
+        instances_raw,
+        TEST_PROJECT_ID,
         TEST_UPDATE_TAG,
+        common_job_parameters,
     )
 
-    # Load Bigtable Cluster
-    data = tests.data.gcp.bigtable.BIGTABLE_CLUSTER
-    cartography.intel.gcp.bigtable.load_bigtable_clusters(
+    bigtable_table.sync_bigtable_tables(
         neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
+        mock_bigtable_client,
+        instances_raw,
+        TEST_PROJECT_ID,
         TEST_UPDATE_TAG,
+        common_job_parameters,
     )
 
-    expected = {
-        ('instance123', 'cluster123'),
-        ('instance456', 'cluster456'),
-    }
-
-    # Fetch relationships
-    result = neo4j_session.run(
-        """
-        MATCH (n1:GCPBigtableInstance)-[:HAS_CLUSTER]->(n2:GCPBigtableCluster) RETURN n1.id, n2.id;
-        """,
-    )
-
-    actual = {
-        (r['n1.id'], r['n2.id']) for r in result
-    }
-
-    assert actual == expected
-
-
-def test_bigtable_cluster_backup_relationship(neo4j_session):
-    # Load Bigtable Cluster
-    data = tests.data.gcp.bigtable.BIGTABLE_CLUSTER
-    cartography.intel.gcp.bigtable.load_bigtable_clusters(
+    bigtable_app_profile.sync_bigtable_app_profiles(
         neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
+        mock_bigtable_client,
+        instances_raw,
+        TEST_PROJECT_ID,
         TEST_UPDATE_TAG,
+        common_job_parameters,
     )
 
-    # Load Bigtable Cluster Backups
-    data = tests.data.gcp.bigtable.BIGTABLE_CLUSTER_BACKUP
-    cartography.intel.gcp.bigtable.load_bigtable_cluster_backups(
+    bigtable_backup.sync_bigtable_backups(
         neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
+        mock_bigtable_client,
+        clusters_raw,
+        TEST_PROJECT_ID,
         TEST_UPDATE_TAG,
+        common_job_parameters,
     )
 
-    expected = {
-        ('cluster123', 'clusterbackup123'),
-        ('cluster456', 'clusterbackup456'),
+    # Assert: Check all 5 new node types
+    assert check_nodes(neo4j_session, "GCPBigtableInstance", ["id"]) == {
+        (TEST_INSTANCE_ID,)
+    }
+    assert check_nodes(neo4j_session, "GCPBigtableCluster", ["id"]) == {
+        (TEST_CLUSTER_ID,)
+    }
+    assert check_nodes(neo4j_session, "GCPBigtableTable", ["id"]) == {(TEST_TABLE_ID,)}
+    assert check_nodes(neo4j_session, "GCPBigtableAppProfile", ["id"]) == {
+        (TEST_APP_PROFILE_ID,)
+    }
+    assert check_nodes(neo4j_session, "GCPBigtableBackup", ["id"]) == {
+        (TEST_BACKUP_ID,)
     }
 
-    # Fetch relationships
-    result = neo4j_session.run(
-        """
-        MATCH (n1:GCPBigtableCluster)-[:HAS_BACKUP]->(n2:GCPBigtableClusterBackup) RETURN n1.id, n2.id;
-        """,
-    )
-
-    actual = {
-        (r['n1.id'], r['n2.id']) for r in result
-    }
-
-    assert actual == expected
-
-
-def test_bigtable_table_relationship(neo4j_session):
-    # Load Bigtable Instance
-    data = tests.data.gcp.bigtable.BIGTABLE_INSTANCE
-    cartography.intel.gcp.bigtable.load_bigtable_instances(
+    # Assert: Check all 11 relationships
+    assert check_rels(
         neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
-        TEST_UPDATE_TAG,
-    )
+        "GCPProject",
+        "id",
+        "GCPBigtableInstance",
+        "id",
+        "RESOURCE",
+    ) == {(TEST_PROJECT_ID, TEST_INSTANCE_ID)}
 
-    # Load Bigtable Table
-    data = tests.data.gcp.bigtable.BIGTABLE_TABLE
-    cartography.intel.gcp.bigtable.load_bigtable_tables(
+    assert check_rels(
         neo4j_session,
-        data,
-        TEST_PROJECT_NUMBER,
-        TEST_UPDATE_TAG,
-    )
+        "GCPProject",
+        "id",
+        "GCPBigtableCluster",
+        "id",
+        "RESOURCE",
+    ) == {(TEST_PROJECT_ID, TEST_CLUSTER_ID)}
 
-    expected = {
-        ('instance123', 'table123'),
-        ('instance456', 'table456'),
+    assert check_rels(
+        neo4j_session,
+        "GCPProject",
+        "id",
+        "GCPBigtableTable",
+        "id",
+        "RESOURCE",
+    ) == {(TEST_PROJECT_ID, TEST_TABLE_ID)}
+
+    assert check_rels(
+        neo4j_session,
+        "GCPProject",
+        "id",
+        "GCPBigtableAppProfile",
+        "id",
+        "RESOURCE",
+    ) == {(TEST_PROJECT_ID, TEST_APP_PROFILE_ID)}
+
+    assert check_rels(
+        neo4j_session,
+        "GCPProject",
+        "id",
+        "GCPBigtableBackup",
+        "id",
+        "RESOURCE",
+    ) == {(TEST_PROJECT_ID, TEST_BACKUP_ID)}
+
+    assert check_rels(
+        neo4j_session,
+        "GCPBigtableInstance",
+        "id",
+        "GCPBigtableCluster",
+        "id",
+        "HAS_CLUSTER",
+    ) == {(TEST_INSTANCE_ID, TEST_CLUSTER_ID)}
+
+    assert check_rels(
+        neo4j_session,
+        "GCPBigtableInstance",
+        "id",
+        "GCPBigtableTable",
+        "id",
+        "HAS_TABLE",
+    ) == {(TEST_INSTANCE_ID, TEST_TABLE_ID)}
+
+    assert check_rels(
+        neo4j_session,
+        "GCPBigtableInstance",
+        "id",
+        "GCPBigtableAppProfile",
+        "id",
+        "HAS_APP_PROFILE",
+    ) == {(TEST_INSTANCE_ID, TEST_APP_PROFILE_ID)}
+
+    assert check_rels(
+        neo4j_session,
+        "GCPBigtableAppProfile",
+        "id",
+        "GCPBigtableCluster",
+        "id",
+        "ROUTES_TO",
+    ) == {(TEST_APP_PROFILE_ID, TEST_CLUSTER_ID)}
+
+    assert check_rels(
+        neo4j_session,
+        "GCPBigtableCluster",
+        "id",
+        "GCPBigtableBackup",
+        "id",
+        "STORES_BACKUP",
+    ) == {(TEST_CLUSTER_ID, TEST_BACKUP_ID)}
+
+    assert check_rels(
+        neo4j_session,
+        "GCPBigtableTable",
+        "id",
+        "GCPBigtableBackup",
+        "id",
+        "BACKED_UP_AS",
+    ) == {(TEST_TABLE_ID, TEST_BACKUP_ID)}
+
+    # Assert: Check GCPLabel nodes from Bigtable instance labels
+    assert check_nodes(neo4j_session, "GCPLabel", ["key", "value"]) >= {
+        ("env", "dev"),
+        ("team", "data"),
     }
 
-    # Fetch relationships
-    result = neo4j_session.run(
-        """
-        MATCH (n1:GCPBigtableInstance)-[:HAS_TABLE]->(n2:GCPBigtableTable) RETURN n1.id, n2.id;
-        """,
-    )
-
-    actual = {
-        (r['n1.id'], r['n2.id']) for r in result
+    # Assert: Check LABELED relationships
+    assert check_rels(
+        neo4j_session,
+        "GCPBigtableInstance",
+        "id",
+        "GCPLabel",
+        "id",
+        "LABELED",
+        rel_direction_right=True,
+    ) == {
+        (TEST_INSTANCE_ID, f"{TEST_INSTANCE_ID}:env:dev"),
+        (TEST_INSTANCE_ID, f"{TEST_INSTANCE_ID}:team:data"),
     }
-
-    assert actual == expected

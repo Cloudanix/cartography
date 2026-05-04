@@ -10,11 +10,11 @@ import neo4j
 from okta.framework.ApiClient import ApiClient
 from okta.framework.OktaError import OktaError
 
+from cartography.client.core.tx import run_write_query
 from cartography.intel.okta.utils import check_rate_limit
 from cartography.intel.okta.utils import create_api_client
 from cartography.intel.okta.utils import is_last_page
 from cartography.util import timeit
-
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +36,9 @@ def _get_okta_applications(api_client: ApiClient) -> List[Dict]:
                 paged_response = api_client.get(next_url)
             else:
                 params = {
-                    'limit': 500,
+                    "limit": 500,
                 }
-                paged_response = api_client.get_path('/', params)
+                paged_response = api_client.get_path("/", params)
         except OktaError as okta_error:
             logger.debug(f"Got error while listing applications {okta_error}")
             break
@@ -73,11 +73,13 @@ def _get_application_assigned_users(api_client: ApiClient, app_id: str) -> List[
                 paged_response = api_client.get(next_url)
             else:
                 params = {
-                    'limit': 500,
+                    "limit": 500,
                 }
-                paged_response = api_client.get_path(f'/{app_id}/users', params)
+                paged_response = api_client.get_path(f"/{app_id}/users", params)
         except OktaError as okta_error:
-            logger.debug(f"Got error while going through list application assigned users {okta_error}")
+            logger.debug(
+                f"Got error while going through list application assigned users {okta_error}",
+            )
             break
 
         app_users.append(paged_response.text)
@@ -110,11 +112,13 @@ def _get_application_assigned_groups(api_client: ApiClient, app_id: str) -> List
                 paged_response = api_client.get(next_url)
             else:
                 params = {
-                    'limit': 500,
+                    "limit": 500,
                 }
-                paged_response = api_client.get_path(f'/{app_id}/groups', params)
+                paged_response = api_client.get_path(f"/{app_id}/groups", params)
         except OktaError as okta_error:
-            logger.debug(f"Got error while going through list application assigned groups {okta_error}")
+            logger.debug(
+                f"Got error while going through list application assigned groups {okta_error}",
+            )
             break
 
         app_groups.append(paged_response.text)
@@ -130,7 +134,9 @@ def _get_application_assigned_groups(api_client: ApiClient, app_id: str) -> List
 
 
 @timeit
-def transform_application_assigned_users_list(assigned_user_list: List[str]) -> List[str]:
+def transform_application_assigned_users_list(
+    assigned_user_list: List[str],
+) -> List[str]:
     """
     Transform application users Okta data
     :param assigned_user_list: Okta data on assigned users
@@ -161,7 +167,9 @@ def transform_application_assigned_users(json_app_data: str) -> List[str]:
 
 
 @timeit
-def transform_application_assigned_groups_list(assigned_group_list: List[str]) -> List[Dict]:
+def transform_application_assigned_groups_list(
+    assigned_group_list: List[str],
+) -> List[Dict]:
     group_list: List[Dict] = []
 
     for current in assigned_group_list:
@@ -206,14 +214,16 @@ def transform_okta_application(okta_application: Dict) -> Dict:
     app_props["label"] = okta_application["label"]
     if "created" in okta_application and okta_application["created"]:
         app_props["created"] = datetime.strptime(
-            okta_application["created"], "%Y-%m-%dT%H:%M:%S.%fZ",
+            okta_application["created"],
+            "%Y-%m-%dT%H:%M:%S.%fZ",
         ).strftime("%m/%d/%Y, %H:%M:%S")
     else:
         app_props["created"] = None
 
     if "lastUpdated" in okta_application and okta_application["lastUpdated"]:
         app_props["okta_last_updated"] = datetime.strptime(
-            okta_application["lastUpdated"], "%Y-%m-%dT%H:%M:%S.%fZ",
+            okta_application["lastUpdated"],
+            "%Y-%m-%dT%H:%M:%S.%fZ",
         ).strftime("%m/%d/%Y, %H:%M:%S")
     else:
         app_props["okta_last_updated"] = None
@@ -222,7 +232,8 @@ def transform_okta_application(okta_application: Dict) -> Dict:
 
     if "activated" in okta_application and okta_application["activated"]:
         app_props["activated"] = datetime.strptime(
-            okta_application["activated"], "%Y-%m-%dT%H:%M:%S.%fZ",
+            okta_application["activated"],
+            "%Y-%m-%dT%H:%M:%S.%fZ",
         ).strftime("%m/%d/%Y, %H:%M:%S")
     else:
         app_props["activated"] = None
@@ -234,7 +245,9 @@ def transform_okta_application(okta_application: Dict) -> Dict:
 
 
 @timeit
-def transform_okta_application_extract_replyurls(okta_application: Dict) -> Optional[str]:
+def transform_okta_application_extract_replyurls(
+    okta_application: Dict,
+) -> Optional[str]:
     """
     Extracts the reply uri information from an okta app
     """
@@ -247,7 +260,9 @@ def transform_okta_application_extract_replyurls(okta_application: Dict) -> Opti
 
 @timeit
 def _load_okta_applications(
-    neo4j_session: neo4j.Session, okta_org_id: str, app_list: List[Dict],
+    neo4j_session: neo4j.Session,
+    okta_org_id: str,
+    app_list: List[Dict],
     okta_update_tag: int,
 ) -> None:
     """
@@ -264,7 +279,13 @@ def _load_okta_applications(
     UNWIND $APP_LIST as app_data
     MERGE (new_app:OktaApplication{id: app_data.id})
     ON CREATE SET new_app.firstseen = timestamp()
-    SET new_app.name = app_data.name,
+    SET new_app:ThirdPartyApp,
+    new_app.name = app_data.name,
+    new_app._ont_client_id = app_data.id,
+    new_app._ont_name = app_data.label,
+    new_app._ont_enabled = (app_data.status IN ['ACTIVE']),
+    new_app._ont_protocol = app_data.sign_on_mode,
+    new_app._ont_source = 'okta',
     new_app.label = app_data.label,
     new_app.created = app_data.created,
     new_app.okta_last_updated = app_data.okta_last_updated,
@@ -279,7 +300,8 @@ def _load_okta_applications(
     SET org_r.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_statement,
         ORG_ID=okta_org_id,
         APP_LIST=app_list,
@@ -289,7 +311,9 @@ def _load_okta_applications(
 
 @timeit
 def _load_application_user(
-    neo4j_session: neo4j.Session, app_id: str, user_list: List[str],
+    neo4j_session: neo4j.Session,
+    app_id: str,
+    user_list: List[str],
     okta_update_tag: int,
 ) -> None:
     """
@@ -311,7 +335,8 @@ def _load_application_user(
     SET r.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest,
         APP_ID=app_id,
         USER_LIST=user_list,
@@ -321,7 +346,9 @@ def _load_application_user(
 
 @timeit
 def _load_application_group(
-    neo4j_session: neo4j.Session, app_id: str, group_list: List[str],
+    neo4j_session: neo4j.Session,
+    app_id: str,
+    group_list: List[str],
     okta_update_tag: int,
 ) -> None:
     """
@@ -343,7 +370,8 @@ def _load_application_group(
     SET r.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest,
         APP_ID=app_id,
         GROUP_LIST=group_list,
@@ -353,7 +381,9 @@ def _load_application_group(
 
 @timeit
 def _load_application_reply_urls(
-    neo4j_session: neo4j.Session, app_id: str, reply_urls: List[str],
+    neo4j_session: neo4j.Session,
+    app_id: str,
+    reply_urls: List[str],
     okta_update_tag: int,
 ) -> None:
     """
@@ -380,7 +410,8 @@ def _load_application_reply_urls(
     SET r.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest,
         APP_ID=app_id,
         URL_LIST=reply_urls,
@@ -390,8 +421,11 @@ def _load_application_reply_urls(
 
 @timeit
 def sync_okta_applications(
-    neo4j_session: neo4j.Session, okta_org_id: str, okta_update_tag: int,
+    neo4j_session: neo4j.Session,
+    okta_org_id: str,
+    okta_update_tag: int,
     okta_api_key: str,
+    okta_base_domain: str = "okta.com",
 ) -> None:
     """
     Sync okta application
@@ -399,11 +433,14 @@ def sync_okta_applications(
     :param okta_org_id: okta organization id
     :param okta_update_tag: The timestamp value to set our new Neo4j resources with
     :param okta_api_key: Okta api key
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: Nothing
     """
     logger.info("Syncing Okta Applications")
 
-    api_client = create_api_client(okta_org_id, "/api/v1/apps", okta_api_key)
+    api_client = create_api_client(
+        okta_org_id, "/api/v1/apps", okta_api_key, okta_base_domain
+    )
 
     okta_app_data = _get_okta_applications(api_client)
     app_data = transform_okta_application_list(okta_app_data)

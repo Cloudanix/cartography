@@ -7,6 +7,7 @@ from typing import List
 import neo4j
 from okta.framework.ApiClient import ApiClient
 
+from cartography.client.core.tx import run_write_query
 from cartography.intel.okta.sync_state import OktaSyncState
 from cartography.intel.okta.utils import check_rate_limit
 from cartography.intel.okta.utils import create_api_client
@@ -26,7 +27,7 @@ def _get_user_roles(api_client: ApiClient, user_id: str, okta_org_id: str) -> st
     """
 
     # https://developer.okta.com/docs/reference/api/roles/#list-roles
-    response = api_client.get_path(f'/{user_id}/roles')
+    response = api_client.get_path(f"/{user_id}/roles")
     check_rate_limit(response)
     return response.text
 
@@ -42,7 +43,7 @@ def _get_group_roles(api_client: ApiClient, group_id: str, okta_org_id: str) -> 
     """
 
     # https://developer.okta.com/docs/reference/api/roles/#list-roles-assigned-to-group
-    response = api_client.get_path(f'/{group_id}/roles')
+    response = api_client.get_path(f"/{group_id}/roles")
     check_rate_limit(response)
     return response.text
 
@@ -94,14 +95,24 @@ def transform_group_roles_data(data: str, okta_org_id: str) -> List[Dict]:
 
 
 @timeit
-def _load_user_role(neo4j_session: neo4j.Session, user_id: str, roles_data: List[Dict], okta_update_tag: int) -> None:
+def _load_user_role(
+    neo4j_session: neo4j.Session,
+    user_id: str,
+    roles_data: List[Dict],
+    okta_update_tag: int,
+) -> None:
     ingest = """
     MATCH (user:OktaUser{id: $USER_ID})<-[:RESOURCE]-(org:OktaOrganization)
     WITH user,org
     UNWIND $ROLES_DATA as role_data
-    MERGE (role_node:OktaAdministrationRole{id: role_data.type})
+    MERGE (role_node:OktaAdministrationRole:PermissionRole{id: role_data.type})
     ON CREATE SET role_node.type = role_data.type, role_node.firstseen = timestamp()
-    SET role_node.label = role_data.label, role_node.lastupdated = $okta_update_tag
+    SET role_node.label = role_data.label,
+        role_node.lastupdated = $okta_update_tag,
+        role_node._ont_name = role_data.label,
+        role_node._ont_type = 'builtin',
+        role_node._ont_scope = 'org',
+        role_node._ont_source = 'okta'
     WITH user, role_node, org
     MERGE (user)-[r:MEMBER_OF_OKTA_ROLE]->(role_node)
     ON CREATE SET r.firstseen = timestamp()
@@ -112,7 +123,8 @@ def _load_user_role(neo4j_session: neo4j.Session, user_id: str, roles_data: List
     SET r2.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest,
         USER_ID=user_id,
         ROLES_DATA=roles_data,
@@ -122,16 +134,23 @@ def _load_user_role(neo4j_session: neo4j.Session, user_id: str, roles_data: List
 
 @timeit
 def _load_group_role(
-    neo4j_session: neo4j.Session, group_id: str, roles_data: List[Dict],
+    neo4j_session: neo4j.Session,
+    group_id: str,
+    roles_data: List[Dict],
     okta_update_tag: int,
 ) -> None:
     ingest = """
     MATCH (group:OktaGroup{id: $GROUP_ID})<-[:RESOURCE]-(org:OktaOrganization)
     WITH group,org
     UNWIND $ROLES_DATA as role_data
-    MERGE (role_node:OktaAdministrationRole{id: role_data.type})
+    MERGE (role_node:OktaAdministrationRole:PermissionRole{id: role_data.type})
     ON CREATE SET role_node.type = role_data.type, role_node.firstseen = timestamp()
-    SET role_node.label = role_data.label, role_node.lastupdated = $okta_update_tag
+    SET role_node.label = role_data.label,
+        role_node.lastupdated = $okta_update_tag,
+        role_node._ont_name = role_data.label,
+        role_node._ont_type = 'builtin',
+        role_node._ont_scope = 'org',
+        role_node._ont_source = 'okta'
     WITH group, role_node, org
     MERGE (group)-[r:MEMBER_OF_OKTA_ROLE]->(role_node)
     ON CREATE SET r.firstseen = timestamp()
@@ -142,7 +161,8 @@ def _load_group_role(
     SET r2.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest,
         GROUP_ID=group_id,
         ROLES_DATA=roles_data,
@@ -152,8 +172,12 @@ def _load_group_role(
 
 @timeit
 def sync_roles(
-    neo4j_session: str, okta_org_id: str, okta_update_tag: int, okta_api_key: str,
+    neo4j_session: str,
+    okta_org_id: str,
+    okta_update_tag: int,
+    okta_api_key: str,
     sync_state: OktaSyncState,
+    okta_base_domain: str = "okta.com",
 ) -> None:
     """
     Sync okta roles
@@ -162,13 +186,16 @@ def sync_roles(
     :param okta_update_tag: Update tag
     :param okta_api_key: Okta API key
     :param sync_state: Okta sync state
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: None
     """
 
     logger.info("Syncing Okta Roles")
 
     # get API client
-    api_client = create_api_client(okta_org_id, "/api/v1/users", okta_api_key)
+    api_client = create_api_client(
+        okta_org_id, "/api/v1/users", okta_api_key, okta_base_domain
+    )
 
     if sync_state.users:
         for user_id in sync_state.users:

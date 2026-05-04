@@ -1,67 +1,123 @@
-from cartography.intel.azure import monitor
-from tests.data.azure.monitor import DESCRIBE_LOGPROFILES
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-TEST_SUBSCRIPTION_ID = '00-00-00-00'
-TEST_RESOURCE_GROUP = 'TestRG'
+import cartography.intel.azure.monitor as monitor
+from tests.data.azure.monitor import MOCK_METRIC_ALERTS
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
+
+TEST_SUBSCRIPTION_ID = "00-00-00-00"
 TEST_UPDATE_TAG = 123456789
 
 
-def test_load_log_profiles(neo4j_session):
-    monitor.load_monitor_log_profiles(
-        neo4j_session,
-        TEST_SUBSCRIPTION_ID,
-        DESCRIBE_LOGPROFILES,
-        TEST_UPDATE_TAG,
-    )
+@patch("cartography.intel.azure.monitor.get_metric_alerts")
+def test_sync_metric_alerts(mock_get, neo4j_session):
+    """
+    Test that we can correctly sync Azure Monitor Metric Alert data and relationships.
+    """
+    # Arrange
+    mock_get.return_value = MOCK_METRIC_ALERTS
 
-    expected_nodes = {
-        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.LogProfiles/logprofile/logprofile1",
-        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.LogProfiles/logprofile/logprofile2",
-    }
-
-    nodes = neo4j_session.run(
-        """
-        MATCH (r:AzureMonitorLogProfile) RETURN r.id;
-        """, )
-    actual_nodes = {n['r.id'] for n in nodes}
-
-    assert actual_nodes == expected_nodes
-
-
-def test_load_log_profiles_relationships(neo4j_session):
+    # Create the prerequisite AzureSubscription node
     neo4j_session.run(
         """
-        MERGE (as:AzureSubscription{id: $subscription_id})
-        ON CREATE SET as.firstseen = timestamp()
-        SET as.lastupdated = $update_tag
+        MERGE (s:AzureSubscription{id: $sub_id})
+        SET s.lastupdated = $update_tag
         """,
-        subscription_id=TEST_SUBSCRIPTION_ID,
+        sub_id=TEST_SUBSCRIPTION_ID,
         update_tag=TEST_UPDATE_TAG,
     )
 
-    monitor.load_monitor_log_profiles(
+    common_job_parameters = {
+        "UPDATE_TAG": TEST_UPDATE_TAG,
+        "AZURE_SUBSCRIPTION_ID": TEST_SUBSCRIPTION_ID,
+    }
+
+    # Act
+    monitor.sync(
+        neo4j_session,
+        MagicMock(),
+        TEST_SUBSCRIPTION_ID,
+        TEST_UPDATE_TAG,
+        common_job_parameters,
+    )
+
+    # Assert Nodes
+    expected_nodes = {
+        (
+            "/subscriptions/00-00-00-00/resourceGroups/CartographyTest-RG/providers/microsoft.insights/metricAlerts/Cartography-Test-Alert",
+            "Cartography-Test-Alert",
+        ),
+    }
+    actual_nodes = check_nodes(neo4j_session, "AzureMonitorMetricAlert", ["id", "name"])
+    assert actual_nodes == expected_nodes
+
+    # Assert Relationships
+    expected_rels = {
+        (
+            TEST_SUBSCRIPTION_ID,
+            "/subscriptions/00-00-00-00/resourceGroups/CartographyTest-RG/providers/microsoft.insights/metricAlerts/Cartography-Test-Alert",
+        ),
+    }
+    actual_rels = check_rels(
+        neo4j_session,
+        "AzureSubscription",
+        "id",
+        "AzureMonitorMetricAlert",
+        "id",
+        "RESOURCE",
+    )
+    assert actual_rels == expected_rels
+
+
+def test_load_metric_alert_tags(neo4j_session):
+    """
+    Test that tags are correctly loaded for Monitor Metric Alerts.
+    """
+    # 1. Arrange
+    neo4j_session.run(
+        """
+        MERGE (s:AzureSubscription{id: $sub_id})
+        SET s.lastupdated = $update_tag
+        """,
+        sub_id=TEST_SUBSCRIPTION_ID,
+        update_tag=TEST_UPDATE_TAG,
+    )
+
+    transformed_alerts = monitor.transform_metric_alerts(MOCK_METRIC_ALERTS)
+
+    monitor.load_metric_alerts(
+        neo4j_session, transformed_alerts, TEST_SUBSCRIPTION_ID, TEST_UPDATE_TAG
+    )
+
+    # 2. Act
+    monitor.load_metric_alert_tags(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
-        DESCRIBE_LOGPROFILES,
+        transformed_alerts,
         TEST_UPDATE_TAG,
     )
 
-    expected = {
-        (
-            TEST_SUBSCRIPTION_ID,
-            "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.LogProfiles/logprofile/logprofile1",
-        ),
-        (
-            TEST_SUBSCRIPTION_ID,
-            "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.LogProfiles/logprofile/logprofile2",
-        ),
+    # 3. Assert: Check tags
+    expected_tags = {
+        f"{TEST_SUBSCRIPTION_ID}|env:prod",
+        f"{TEST_SUBSCRIPTION_ID}|service:monitor",
     }
+    tag_nodes = neo4j_session.run("MATCH (t:AzureTag) RETURN t.id")
+    actual_tags = {n["t.id"] for n in tag_nodes}
+    assert actual_tags == expected_tags
 
-    result = neo4j_session.run(
-        """
-        MATCH (n1:AzureSubscription)-[:RESOURCE]->(n2:AzureMonitorLogProfile) RETURN n1.id, n2.id;
-        """, )
-
-    actual = {(r['n1.id'], r['n2.id']) for r in result}
-
-    assert actual == expected
+    # 4. Check Relationship
+    expected_rels = {
+        (MOCK_METRIC_ALERTS[0]["id"], f"{TEST_SUBSCRIPTION_ID}|env:prod"),
+        (MOCK_METRIC_ALERTS[0]["id"], f"{TEST_SUBSCRIPTION_ID}|service:monitor"),
+    }
+    actual_rels = check_rels(
+        neo4j_session,
+        "AzureMonitorMetricAlert",
+        "id",
+        "AzureTag",
+        "id",
+        "TAGGED",
+    )
+    assert actual_rels == expected_rels

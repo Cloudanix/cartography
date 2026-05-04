@@ -1,279 +1,292 @@
-import logging
-import time
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
-from typing import Any
-from typing import Dict
-from typing import List
-from urllib.parse import quote
+"""
+GitLab Projects Intelligence Module
+"""
 
+import asyncio
+import json
+import logging
+from typing import Any
+
+import httpx
 import neo4j
 
-from cartography.intel.gitlab.pagination import paginate_request
-from cartography.util import make_requests_url
-from cartography.util import normalize_datetime
-from cartography.util import run_cleanup_job
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.gitlab.organizations import get_organization
+from cartography.intel.gitlab.util import get_paginated
+from cartography.models.gitlab.projects import GitLabProjectSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+# Default concurrency settings for language fetching (can be overridden via config)
+DEFAULT_MAX_CONCURRENT_REQUESTS = 10
+DEFAULT_REQUEST_TIMEOUT = 60.0
 
-@timeit
-def get_group_projects(hosted_domain: str, access_token: str, group_id: int):
-    """
-    As per the rest api docs: https://docs.gitlab.com/api/groups/#list-projects
-    Pagination: https://docs.gitlab.com/api/rest/#pagination
-    """
-    url_encoded_group_id = quote(str(group_id), safe="")
-    url = f"{hosted_domain}/api/v4/groups/{url_encoded_group_id}/projects?include_subgroups=true&per_page=100"
-    projects = paginate_request(url, access_token)
 
+async def _fetch_project_languages(
+    client: httpx.AsyncClient,
+    semaphore: asyncio.Semaphore,
+    gitlab_url: str,
+    project_id: int,
+) -> tuple[int, dict[str, float]]:
+    """
+    Fetch languages for a single project.
+
+    :param client: The httpx async client.
+    :param semaphore: Semaphore to limit concurrent requests.
+    :param gitlab_url: The GitLab instance URL.
+    :param project_id: The numeric project ID.
+    :return: A tuple of (project_id, language_dict) where language_dict maps name to percentage.
+    """
+    async with semaphore:
+        try:
+            url = f"{gitlab_url}/api/v4/projects/{project_id}/languages"
+            response = await client.get(url)
+            response.raise_for_status()
+            # GitLab returns {language_name: percentage, ...}
+            return (project_id, response.json())
+        except httpx.HTTPStatusError as e:
+            logger.debug(
+                f"HTTP error fetching languages for project {project_id}: {e.response.status_code}"
+            )
+            return (project_id, {})
+        except Exception as e:
+            logger.debug(f"Error fetching languages for project {project_id}: {e}")
+            return (project_id, {})
+
+
+async def _fetch_all_languages(
+    gitlab_url: str,
+    token: str,
+    projects: list[dict[str, Any]],
+    max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
+) -> dict[int, dict[str, float]]:
+    """
+    Fetch languages for all projects concurrently using asyncio.
+
+    :param gitlab_url: The GitLab instance URL.
+    :param token: The GitLab API token.
+    :param projects: List of raw project dicts (must have 'id' key).
+    :param max_concurrent_requests: Maximum concurrent API requests (default: 10).
+    :return: Dict mapping project_id to language dict {name: percentage}.
+    """
+    if not projects:
+        return {}
+
+    headers = {"Authorization": f"Bearer {token}"}
+    semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+    async with httpx.AsyncClient(
+        headers=headers, timeout=DEFAULT_REQUEST_TIMEOUT
+    ) as client:
+        tasks = [
+            _fetch_project_languages(client, semaphore, gitlab_url, project["id"])
+            for project in projects
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Build dict from results, filtering out exceptions
+    languages_by_project: dict[int, dict[str, float]] = {}
+    for result in results:
+        if isinstance(result, tuple):
+            project_id, languages = result
+            languages_by_project[project_id] = languages
+        elif isinstance(result, Exception):
+            logger.debug(f"Exception fetching languages: {result}")
+
+    return languages_by_project
+
+
+def get_projects(gitlab_url: str, token: str, group_id: int) -> list[dict[str, Any]]:
+    """
+    Fetch all projects for a specific group from GitLab.
+    """
+    logger.debug("Fetching projects for group ID %s", group_id)
+    projects = get_paginated(
+        gitlab_url,
+        token,
+        f"/api/v4/groups/{group_id}/projects",
+        extra_params={"include_subgroups": True},
+    )
+    logger.debug("Fetched %s projects for group ID %s", len(projects), group_id)
     return projects
 
 
-@timeit
-def get_project_languages(hosted_domain: str, access_token: str, project_id: int):
+def transform_projects(
+    raw_projects: list[dict[str, Any]],
+    org_id: int,
+    org_url: str,
+    gitlab_url: str,
+    languages_by_project: dict[int, dict[str, float]] | None = None,
+) -> list[dict[str, Any]]:
     """
-    As per the rest api docs: https://docs.gitlab.com/api/projects/#list-programming-languages-used
-    Pagination: https://docs.gitlab.com/api/rest/#pagination
+    Transform raw GitLab project data into the format expected by the schema.
+
+    :param raw_projects: List of raw project dicts from GitLab API.
+    :param org_url: The organization URL.
+    :param languages_by_project: Optional dict mapping project_id to language dict.
+    :return: List of transformed project dicts.
     """
-    url = f"{hosted_domain}/api/v4/projects/{project_id}/languages"
-    languages = make_requests_url(url, access_token)
+    if languages_by_project is None:
+        languages_by_project = {}
 
-    return languages
+    transformed = []
 
-
-@timeit
-def get_project_branches(hosted_domain: str, access_token: str, project_id: int):
-    """
-    As per the rest api docs: https://docs.gitlab.com/api/branches/#list-repository-branches
-    Pagination: https://docs.gitlab.com/api/rest/#pagination
-    """
-    url = f"{hosted_domain}/api/v4/projects/{project_id}/repository/branches?per_page=100"
-    branches = paginate_request(url, access_token)
-
-    return branches
-
-
-def transform_projects_data(projects: List[Dict]) -> List[Dict]:
-    for project in projects:
-        project["is_private"] = project["visibility"] == "private"
-        project["archived"] = project.get("archived", False)
-        iso_str, ts_ms = normalize_datetime(project.get("last_activity_at"))
-        project["last_activity_at"] = iso_str
-        project["last_activity_at_timestamp"] = ts_ms
-
-    return projects
-
-
-def transform_branches_data(branches: List[Dict], project_id: int, project_path: str, default_branch: str = None) -> List[Dict]:
-    """
-    Transform branch data and filter to include only:
-    - Branches active in the last 180 days
-    - Default branch (always included)
-    """
-    transformed_branches = []
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
-
-    for branch in branches:
-        branch_name = branch["name"]
-        commit = branch.get("commit", {})
-        committed_date_str = commit.get("committed_date")
-
-        # Always include default branch
-        if branch_name == default_branch:
-            transformed_branches.append({
-                "project_id": project_id,
-                "project_path": project_path,
-                "id": f"{project_id}:{branch_name}",
-                "name": branch_name,
-                "committed_date": committed_date_str,
-            })
+    for project in raw_projects:
+        # Extract group information from namespace
+        namespace = project.get("namespace", {})
+        if (
+            namespace.get("kind") != "group"
+        ):  # Only process projects that belong to groups
             continue
 
-        # Filter by activity date
-        if committed_date_str:
-            committed_date = datetime.fromisoformat(committed_date_str.replace('Z', '+00:00'))
-            if committed_date >= cutoff_date:
-                transformed_branches.append({
-                    "project_id": project_id,
-                    "project_path": project_path,
-                    "id": f"{project_id}:{branch_name}",
-                    "name": branch_name,
-                    "committed_date": committed_date_str,
-                })
+        namespace_url = namespace.get("web_url")
+        namespace_id = namespace.get("id")
+
+        # Determine if this project is in the org directly or in a nested group
+        if namespace_url == org_url:
+            # Org-level project - no group relationship
+            group_id = None
         else:
-            transformed_branches.append({
-                "project_id": project_id,
-                "project_path": project_path,
-                "id": f"{project_id}:{branch_name}",
-                "name": branch_name,
-                "committed_date": committed_date_str,
-            })
+            # Group-level project - has relationship to nested group
+            group_id = namespace_id
 
-    return transformed_branches
+        # GitLab project IDs are canonical and required for identity/matching.
+        project_id = project["id"]
+        project_languages = languages_by_project.get(project_id, {})
+        # Convert to JSON string for storage in Neo4j
+        languages_json = json.dumps(project_languages) if project_languages else None
 
+        transformed_project = {
+            "id": project_id,
+            "web_url": project.get("web_url"),
+            "name": project.get("name"),
+            "path": project.get("path"),
+            "path_with_namespace": project.get("path_with_namespace"),
+            "description": project.get("description"),
+            "visibility": project.get("visibility"),
+            "default_branch": project.get("default_branch"),
+            "archived": project.get("archived", False),
+            "created_at": project.get("created_at"),
+            "last_activity_at": project.get("last_activity_at"),
+            "org_id": org_id,
+            "group_id": group_id,
+            "gitlab_url": gitlab_url,
+            "languages": languages_json,
+        }
+        transformed.append(transformed_project)
 
-def load_projects_data(
-    session: neo4j.Session,
-    project_data: List[Dict],
-    common_job_parameters: Dict,
-    group_id: int,
-) -> None:
-    session.write_transaction(
-        _load_projects_data,
-        project_data,
-        common_job_parameters,
-        group_id,
-    )
-
-
-def load_branches_data(
-    session: neo4j.Session,
-    branches_data: List[Dict],
-    common_job_parameters: Dict,
-) -> None:
-    session.write_transaction(
-        _load_branches_data,
-        branches_data,
-        common_job_parameters,
-    )
+    logger.info(f"Transformed {len(transformed)} projects (group projects only)")
+    return transformed
 
 
-def _load_branches_data(
-    tx: neo4j.Transaction,
-    branches_data: List[Dict],
-    common_job_parameters: Dict,
-) -> None:
-    ingest_branches = """
-    UNWIND $branchesData as branch
-    MERGE (br:GitLabBranch{id:branch.id})
-    ON CREATE SET br.firstseen = timestamp()
-    SET br.name = branch.name,
-    br.committed_date = branch.committed_date,
-    br.projectid = branch.project_id,
-    br.lastupdated = $UpdateTag
-
-    WITH br, branch
-    MATCH (project:GitLabProject{path_with_namespace:branch.project_path})
-    MERGE (project)-[r:BRANCH]->(br)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
-    """
-
-    tx.run(
-        ingest_branches,
-        branchesData=branches_data,
-        UpdateTag=common_job_parameters["UPDATE_TAG"],
-    )
-
-
-def _load_projects_data(
-    tx: neo4j.Transaction,
-    project_data: List[Dict],
-    common_job_parameters: Dict,
-    group_id: int,
-) -> None:
-    ingest_group = """
-    UNWIND $projectData as project
-    MERGE (pro:GitLabProject {id: project.path})
-    ON CREATE SET
-        pro.firstseen = timestamp(),
-        pro.created_at = project.created_at
-
-    SET
-        pro.name = project.name,
-        pro.archived = project.archived,
-        pro.avatar_url = project.avatar_url,
-        pro.creator_id = project.creator_id,
-        pro.web_url = project.web_url,
-        pro.path = project.path,
-        pro.id = project.id,
-        pro.projectid = project.id,
-        pro.path_with_namespace = project.path_with_namespace,
-        pro.description = project.description,
-        pro.name_with_namespace = project.name_with_namespace,
-        pro.visibility = project.visibility,
-        pro.is_private = project.is_private,
-        pro.namespace= project.namespace.path,
-        pro.last_activity_at = project.last_activity_at,
-        pro.last_activity_at_timestamp = project.last_activity_at_timestamp,
-        pro.default_branch = project.default_branch,
-        pro.primary_language = project.primary_language,
-        pro.lastupdated = $UpdateTag
-
-    WITH pro, project
-    MATCH (group:GitLabGroup{id: $GroupId})
-    MERGE (group)-[r:RESOURCE]->(pro)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
-    """
-
-    tx.run(
-        ingest_group,
-        projectData=project_data,
-        UpdateTag=common_job_parameters["UPDATE_TAG"],
-        GroupId=group_id,
-    )
-
-
-def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job(
-        "gitlab_group_project_cleanup.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-
-def sync(
+@timeit
+def load_projects(
     neo4j_session: neo4j.Session,
-    group_id: int,
-    hosted_domain: str,
-    access_token: str,
-    common_job_parameters: Dict[str, Any],
-    group_name: str,
+    projects: list[dict[str, Any]],
+    org_id: int,
+    gitlab_url: str,
+    update_tag: int,
 ) -> None:
     """
-    Performs the sequential tasks to collect, transform, and sync gitlab data
-    :param neo4j_session: Neo4J session for database interface
-    :param common_job_parameters: Common job parameters containing UPDATE_TAG
-    :return: Nothing
+    Load GitLab projects into the graph for a specific organization.
     """
-    tic = time.perf_counter()
-
-    logger.info("Syncing Projects for Gitlab Group '%s', at %s.", group_name, tic)
-
-    group_projects = get_group_projects(hosted_domain, access_token, group_id)
-
-    for project in group_projects:
-        project_languages = get_project_languages(
-            hosted_domain,
-            access_token,
-            project["id"],
-        )
-        if project_languages:
-            primary_language = max(project_languages, key=project_languages.get)
-            project["primary_language"] = primary_language.lower()
-
-    group_projects = transform_projects_data(group_projects)
-
-    load_projects_data(neo4j_session, group_projects, common_job_parameters, group_id)
-
-    # Sync branches for each project
-    for project in group_projects:
-        branches = get_project_branches(hosted_domain, access_token, project["id"])
-        transformed_branches = transform_branches_data(
-            branches,
-            project["id"],
-            project.get("path_with_namespace", project["path"]),
-            project.get("default_branch"),
-        )
-        load_branches_data(neo4j_session, transformed_branches, common_job_parameters)
-
-    cleanup(neo4j_session, common_job_parameters)
-
-    toc = time.perf_counter()
-    logger.info(
-        f"Time to process Projects for Gitlab Group '{group_name}': {toc - tic:0.4f} seconds",
+    load(
+        neo4j_session,
+        GitLabProjectSchema(),
+        projects,
+        lastupdated=update_tag,
+        org_id=org_id,
+        gitlab_url=gitlab_url,
     )
+
+
+@timeit
+def cleanup_projects(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: dict[str, Any],
+    org_id: int,
+    gitlab_url: str,
+) -> None:
+    """
+    Remove stale GitLab projects from the graph for a specific organization.
+    Uses cascade delete to also remove child branches, dependency files, and dependencies.
+    """
+    logger.info(f"Running GitLab projects cleanup for organization {org_id}")
+    cleanup_params = {
+        **common_job_parameters,
+        "org_id": org_id,
+        "gitlab_url": gitlab_url,
+    }
+    GraphJob.from_node_schema(
+        GitLabProjectSchema(), cleanup_params, cascade_delete=True
+    ).run(neo4j_session)
+
+
+@timeit
+def sync_gitlab_projects(
+    neo4j_session: neo4j.Session,
+    gitlab_url: str,
+    token: str,
+    update_tag: int,
+    common_job_parameters: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    Sync GitLab projects for a specific organization.
+
+    The organization ID should be passed in common_job_parameters["ORGANIZATION_ID"].
+    This also fetches and stores language information for each project.
+
+    Returns the raw projects list to avoid redundant API calls in downstream sync functions.
+    """
+    organization_id = common_job_parameters.get("ORGANIZATION_ID")
+    if not organization_id:
+        raise ValueError("ORGANIZATION_ID must be provided in common_job_parameters")
+
+    logger.info(f"Syncing GitLab projects for organization {organization_id}")
+
+    # Fetch the organization to get its URL
+    org = get_organization(gitlab_url, token, organization_id)
+    org_url: str = org["web_url"]
+    org_name: str = org["name"]
+
+    logger.info(f"Syncing projects for organization: {org_name}")
+
+    # Fetch ALL projects for this organization at once (includes all nested groups)
+    raw_projects = get_projects(gitlab_url, token, organization_id)
+
+    if not raw_projects:
+        logger.info(f"No projects found for organization {org_name}")
+        return []
+
+    # Fetch languages for all projects concurrently
+    logger.debug("Fetching languages for %s projects", len(raw_projects))
+    languages_by_project = asyncio.run(
+        _fetch_all_languages(gitlab_url, token, raw_projects)
+    )
+    projects_with_languages = sum(1 for langs in languages_by_project.values() if langs)
+    logger.info(f"Found languages for {projects_with_languages} projects")
+
+    transformed_projects = transform_projects(
+        raw_projects, organization_id, org_url, gitlab_url, languages_by_project
+    )
+
+    if not transformed_projects:
+        logger.info(f"No group projects found for organization {org_name}")
+        return raw_projects
+
+    logger.info(
+        f"Found {len(transformed_projects)} projects in organization {org_name}"
+    )
+
+    load_projects(
+        neo4j_session,
+        transformed_projects,
+        organization_id,
+        gitlab_url,
+        update_tag,
+    )
+
+    logger.info("GitLab projects sync completed")
+    return raw_projects

@@ -1,0 +1,75 @@
+from dataclasses import dataclass
+
+from cartography.models.core.common import PropertyRef
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import TargetNodeMatcher
+
+
+@dataclass(frozen=True)
+class TrivyPackageNodeProperties(CartographyNodeProperties):
+    id: PropertyRef = PropertyRef("id")
+    installed_version: PropertyRef = PropertyRef("InstalledVersion")
+    name: PropertyRef = PropertyRef("PkgName")
+    version: PropertyRef = PropertyRef("InstalledVersion")
+    class_name: PropertyRef = PropertyRef("Class")
+    type: PropertyRef = PropertyRef("Type")
+    # Additional fields from Trivy scan results
+    purl: PropertyRef = PropertyRef("PURL")
+    pkg_id: PropertyRef = PropertyRef("PkgID")
+    # Normalized ID for cross-tool matching (format: {type}|{namespace/}{normalized_name}|{version})
+    # Namespace included when present (e.g., deb packages). Uses PEP 503 normalization for Python.
+    normalized_id: PropertyRef = PropertyRef("normalized_id", extra_index=True)
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class TrivyPackageToImageRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class TrivyPackageToOntologyImageRel(CartographyRelSchema):
+    target_node_label: str = "Image"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"_ont_digest": PropertyRef("ImageDigest")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "DEPLOYED"
+    properties: TrivyPackageToImageRelProperties = TrivyPackageToImageRelProperties()
+
+
+@dataclass(frozen=True)
+class TrivyPackageToFindingRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class TrivyPackageToFindingRel(CartographyRelSchema):
+    target_node_label: str = "TrivyImageFinding"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("FindingId")},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "AFFECTS"
+    properties: TrivyPackageToFindingRelProperties = (
+        TrivyPackageToFindingRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class TrivyPackageSchema(CartographyNodeSchema):
+    label: str = "TrivyPackage"
+    scoped_cleanup: bool = False
+    properties: TrivyPackageNodeProperties = TrivyPackageNodeProperties()
+    other_relationships: OtherRelationships = OtherRelationships(
+        [
+            TrivyPackageToOntologyImageRel(),
+            TrivyPackageToFindingRel(),
+        ],
+    )

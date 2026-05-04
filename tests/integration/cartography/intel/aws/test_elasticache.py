@@ -1,114 +1,239 @@
-import cartography.intel.aws.ec2.security_groups
-import cartography.intel.aws.elasticache
-import tests.data.aws.ec2.security_groups
-import tests.data.aws.elasticache
-from cartography.util import run_analysis_job
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-TEST_ACCOUNT_ID = '000000000000'
-TEST_REGION = 'us-east-1'
+import cartography.intel.aws.elasticache
+import tests.data.aws.elasticache
+from tests.integration.cartography.intel.aws.common import create_test_account
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
+
+TEST_ACCOUNT_ID = "000000000000"
+TEST_REGION = "us-east-1"
 TEST_UPDATE_TAG = 123456789
-TEST_WORKSPACE_ID = '12345'
 
 
 def test_load_clusters(neo4j_session):
-    neo4j_session.run(
-        """
-            MERGE (aws:AWSAccount{id: $aws_account_id})<-[:OWNER]-(:CloudanixWorkspace{id: $workspace_id})
-            ON CREATE SET aws.firstseen = timestamp()
-            SET aws.lastupdated = $aws_update_tag
-            """,
-        aws_account_id=TEST_ACCOUNT_ID,
-        aws_update_tag=TEST_UPDATE_TAG,
-        workspace_id=TEST_WORKSPACE_ID,
-    )
+    neo4j_session.run("MERGE(a:AWSAccount{id:$account});", account=TEST_ACCOUNT_ID)
     elasticache_data = tests.data.aws.elasticache.DESCRIBE_CACHE_CLUSTERS
-    clusters = elasticache_data['CacheClusters']
+    clusters = elasticache_data["CacheClusters"]
+
+    # Transform the data to extract both cluster and topic information
+    cluster_data, topic_data = (
+        cartography.intel.aws.elasticache.transform_elasticache_clusters(
+            clusters, TEST_REGION
+        )
+    )
+
     cartography.intel.aws.elasticache.load_elasticache_clusters(
         neo4j_session,
-        clusters,
+        cluster_data,
+        TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
-    expected_cluster_arns = {cluster['ARN'] for cluster in clusters}
+    # Also load the topics
+    cartography.intel.aws.elasticache.load_elasticache_topics(
+        neo4j_session,
+        topic_data,
+        TEST_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
+    )
+
+    expected_cluster_arns = {cluster["ARN"] for cluster in clusters}
     nodes = neo4j_session.run(
         """
         MATCH (r:ElasticacheCluster) RETURN r.arn
         """,
     )
-    actual_cluster_arns = {n['r.arn'] for n in nodes}
+    actual_cluster_arns = {n["r.arn"] for n in nodes}
     assert actual_cluster_arns == expected_cluster_arns
 
     # Test the connection to the account
-    expected_cluster_arns = {(cluster['ARN'], TEST_ACCOUNT_ID) for cluster in clusters}
+    expected_cluster_arns = {(cluster["ARN"], TEST_ACCOUNT_ID) for cluster in clusters}
     nodes = neo4j_session.run(
         """
         MATCH (r:ElasticacheCluster)<-[:RESOURCE]-(a:AWSAccount) RETURN r.arn, a.id
         """,
     )
-    actual_cluster_arns = {(n['r.arn'], n['a.id']) for n in nodes}
+    actual_cluster_arns = {(n["r.arn"], n["a.id"]) for n in nodes}
     assert actual_cluster_arns == expected_cluster_arns
 
     # Test undefined topic_arns
-    topic_arns_in_test_data = {cluster.get('NotificationConfiguration', {}).get('TopicArn') for cluster in clusters}
-    expected_topic_arns = {topic for topic in topic_arns_in_test_data if topic}  # Filter out Nones.
+    topic_arns_in_test_data = {
+        cluster.get("NotificationConfiguration", {}).get("TopicArn")
+        for cluster in clusters
+    }
+    expected_topic_arns = {
+        topic for topic in topic_arns_in_test_data if topic
+    }  # Filter out Nones.
     nodes = neo4j_session.run(
         """
         MATCH (r:ElasticacheTopic) RETURN r.arn
         """,
     )
-    actual_topic_arns = {n['r.arn'] for n in nodes}
+    actual_topic_arns = {n["r.arn"] for n in nodes}
     assert actual_topic_arns == expected_topic_arns
 
 
-def test_elasticache_cluster_analysis(neo4j_session):
-    neo4j_session.run(
-        """
-            MERGE (aws:AWSAccount{id: $aws_account_id})<-[:OWNER]-(:CloudanixWorkspace{id: $workspace_id})
-            ON CREATE SET aws.firstseen = timestamp()
-            SET aws.lastupdated = $aws_update_tag
-            """,
-        aws_account_id=TEST_ACCOUNT_ID,
-        aws_update_tag=TEST_UPDATE_TAG,
-        workspace_id=TEST_WORKSPACE_ID,
-    )
+@patch.object(
+    cartography.intel.aws.elasticache,
+    "get_elasticache_clusters",
+    return_value=tests.data.aws.elasticache.DESCRIBE_CACHE_CLUSTERS["CacheClusters"],
+)
+def test_sync_elasticache(mock_get_clusters, neo4j_session):
+    """
+    Test the full sync function to ensure clusters and topics are loaded correctly
+    """
+    # Arrange
+    boto3_session = MagicMock()
+    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
-    data = tests.data.aws.ec2.security_groups.DESCRIBE_SGS
-    cartography.intel.aws.ec2.security_groups.load_ec2_security_groupinfo(
+    # Act - Use the sync function instead of calling load directly
+    cartography.intel.aws.elasticache.sync(
         neo4j_session,
-        data,
+        boto3_session,
+        [TEST_REGION],
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        {"UPDATE_TAG": TEST_UPDATE_TAG, "AWS_ID": TEST_ACCOUNT_ID},
     )
 
-    elasticache_data = tests.data.aws.elasticache.DESCRIBE_CACHE_CLUSTERS
-    clusters = elasticache_data['CacheClusters']
-    cartography.intel.aws.elasticache.load_elasticache_clusters(
-        neo4j_session,
-        clusters,
-        TEST_ACCOUNT_ID,
-        TEST_UPDATE_TAG,
-    )
-    cartography.intel.aws.elasticache.attach_elasticache_clusters_to_security_groups(neo4j_session, clusters, TEST_UPDATE_TAG)
-
-    common_job_parameters = {
-        "UPDATE_TAG": TEST_UPDATE_TAG + 1,
-        "WORKSPACE_ID": TEST_WORKSPACE_ID,
-        "AWS_ID": TEST_ACCOUNT_ID,
+    # Assert Elasticache clusters exist with correct properties
+    # Note: id field is the ARN, cache_cluster_id is the cluster ID
+    assert check_nodes(
+        neo4j_session, "ElasticacheCluster", ["id", "cache_cluster_id"]
+    ) == {
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0001-001",
+            "test-group-0001-001",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0001-002",
+            "test-group-0001-002",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0002-001",
+            "test-group-0002-001",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0002-002",
+            "test-group-0002-002",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0003-001",
+            "test-group-0003-001",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0004-001",
+            "test-group-0004-001",
+        ),
     }
 
-    run_analysis_job(
-        'aws_elasticache_cluster_asset_exposure.json',
+    # Assert Elasticache topics exist
+    assert check_nodes(neo4j_session, "ElasticacheTopic", ["id", "arn"]) == {
+        (
+            "arn:aws:sns:us-east-1:123456789000:elasticache-events",
+            "arn:aws:sns:us-east-1:123456789000:elasticache-events",
+        ),
+    }
+
+    # Assert Elasticache clusters are connected to AWS account
+    assert check_rels(
         neo4j_session,
-        common_job_parameters,
-    )
+        "ElasticacheCluster",
+        "id",
+        "AWSAccount",
+        "id",
+        "RESOURCE",
+        rel_direction_right=False,
+    ) == {
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0001-001",
+            "000000000000",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0001-002",
+            "000000000000",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0002-001",
+            "000000000000",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0002-002",
+            "000000000000",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0003-001",
+            "000000000000",
+        ),
+        (
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0004-001",
+            "000000000000",
+        ),
+    }
 
-    nodes = neo4j_session.run(
-        """
-        MATCH (r:ElasticacheCluster{exposed_internet: true}) RETURN r.arn, r.exposed_internet_type
-        """,
-    )
-    actual_nodes = {(n['r.arn'], ",".join(n['r.exposed_internet_type'])) for n in nodes}
+    # Assert Elasticache topics are connected to AWS account
+    assert check_rels(
+        neo4j_session,
+        "ElasticacheTopic",
+        "id",
+        "AWSAccount",
+        "id",
+        "RESOURCE",
+        rel_direction_right=False,
+    ) == {
+        ("arn:aws:sns:us-east-1:123456789000:elasticache-events", "000000000000"),
+    }
 
-    expected_nodes = {('arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0001-001', 'direct_ipv4')}
-    assert actual_nodes == expected_nodes
+    # Assert Elasticache topics are connected to clusters (CACHE_CLUSTER relationship)
+    assert check_rels(
+        neo4j_session,
+        "ElasticacheTopic",
+        "id",
+        "ElasticacheCluster",
+        "id",
+        "CACHE_CLUSTER",
+        rel_direction_right=True,
+    ) == {
+        (
+            "arn:aws:sns:us-east-1:123456789000:elasticache-events",
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0001-001",
+        ),
+        (
+            "arn:aws:sns:us-east-1:123456789000:elasticache-events",
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0001-002",
+        ),
+        (
+            "arn:aws:sns:us-east-1:123456789000:elasticache-events",
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0002-001",
+        ),
+        (
+            "arn:aws:sns:us-east-1:123456789000:elasticache-events",
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0002-002",
+        ),
+        (
+            "arn:aws:sns:us-east-1:123456789000:elasticache-events",
+            "arn:aws:elasticache:us-east-1:123456789000:cluster:test-group-0003-001",
+        ),
+    }
+
+    # Verify that clusters have the expected properties
+    assert check_nodes(
+        neo4j_session,
+        "ElasticacheCluster",
+        ["cache_cluster_id", "engine", "cache_node_type", "cache_cluster_status"],
+    ) == {
+        ("test-group-0001-001", "redis", "cache.t3.medium", "available"),
+        ("test-group-0001-002", "redis", "cache.t3.medium", "available"),
+        ("test-group-0002-001", "redis", "cache.t3.medium", "available"),
+        ("test-group-0002-002", "redis", "cache.t3.medium", "available"),
+        ("test-group-0003-001", "redis", "cache.t3.medium", "available"),
+        ("test-group-0004-001", "redis", "cache.t3.medium", "available"),
+    }
+
+    # Verify that topics have the expected properties
+    assert check_nodes(neo4j_session, "ElasticacheTopic", ["id", "status"]) == {
+        ("arn:aws:sns:us-east-1:123456789000:elasticache-events", "active"),
+    }

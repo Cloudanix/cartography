@@ -1,0 +1,357 @@
+"""
+Framework and Fact execution logic for Cartography rules.
+"""
+
+from neo4j import Driver
+from neo4j import GraphDatabase
+
+from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.rules.data.rules import RULES
+from cartography.rules.formatters import _format_and_output_results
+from cartography.rules.formatters import _generate_neo4j_browser_url
+from cartography.rules.spec.model import Fact
+from cartography.rules.spec.model import Framework
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Rule
+from cartography.rules.spec.result import CounterResult
+from cartography.rules.spec.result import FactResult
+from cartography.rules.spec.result import RuleResult
+
+
+def get_all_frameworks() -> dict[str, list[Framework]]:
+    """
+    Get all unique frameworks from all rules, grouped by short_name.
+
+    Returns:
+        Dictionary mapping framework short_name to list of unique Framework objects.
+    """
+    frameworks_by_name: dict[str, set[Framework]] = {}
+    for rule in RULES.values():
+        for fw in rule.frameworks:
+            if fw.short_name not in frameworks_by_name:
+                frameworks_by_name[fw.short_name] = set()
+            frameworks_by_name[fw.short_name].add(fw)
+
+    # Convert sets to sorted lists
+    return {
+        name: sorted(fws, key=lambda f: (f.scope, f.revision, f.requirement))
+        for name, fws in sorted(frameworks_by_name.items())
+    }
+
+
+def _run_fact(
+    fact: Fact,
+    rule: Rule,
+    driver: Driver,
+    database: str,
+    counter: CounterResult,
+    output_format: str,
+    neo4j_uri: str,
+) -> FactResult:
+    """
+    Execute a single fact and return the result.
+
+    Args:
+        fact (Fact): The Fact to execute.
+        rule (Rule): The Rule that contains this Fact.
+        driver (Driver): The Neo4j driver instance.
+        database (str): The name of the Neo4j database to query.
+        counter (CounterResult): Counter object to track execution progress and totals.
+        output_format (str): Output format, either "text" or "json".
+        neo4j_uri (str): The Neo4j URI for generating browser links.
+
+    Returns:
+        FactResult: The result of executing the Fact, including findings and metrics.
+    """
+    if output_format == "text":
+        print(
+            f"\n\033[1mFact {counter.current_fact}/{counter.total_facts}: {fact.name}\033[0m"
+        )
+        # Display rule
+        print(f"  \033[36m{'Rule:':<12}\033[0m {rule.id} - {rule.name}")
+        # Display fact details
+        print(f"  \033[36m{'Fact ID:':<12}\033[0m {fact.id}")
+        print(f"  \033[36m{'Description:':<12}\033[0m {fact.description}")
+        print(f"  \033[36m{'Provider:':<12}\033[0m {fact.module.value}")
+        # Generate and display clickable Neo4j Browser URL
+        browser_url = _generate_neo4j_browser_url(neo4j_uri, fact.cypher_visual_query)
+        print(
+            f"  \033[36m{'Neo4j Query:':<12}\033[0m \033]8;;{browser_url}\033\\Click to run visual query\033]8;;\033\\"
+        )
+
+    with driver.session(database=database) as session:
+        raw_findings = session.execute_read(read_list_of_dicts_tx, fact.cypher_query)
+        findings = rule.parse_results(fact, raw_findings)
+        findings_count = len(findings)
+
+        # Execute count query to get total assets
+        total_assets = None
+        passing = None
+        # Count distinct assets if asset_id_field is set, otherwise count rows
+        if fact.asset_id_field and findings:
+            failing = len({getattr(f, fact.asset_id_field) for f in findings})
+        else:
+            failing = findings_count
+        if fact.cypher_count_query:
+            count_result = session.execute_read(
+                read_list_of_dicts_tx, fact.cypher_count_query
+            )
+            if count_result and "count" in count_result[0]:
+                total_assets = count_result[0]["count"]
+                passing = total_assets - failing
+
+    if output_format == "text":
+        # Display compliance metrics if available
+        if total_assets is not None:
+            print(f"  \033[36m{'Total:':<12}\033[0m {total_assets} asset(s)")
+            print(f"  \033[32m{'Passing:':<12}\033[0m {passing} asset(s)")
+            print(f"  \033[31m{'Failing:':<12}\033[0m {failing} asset(s)")
+        else:
+            print(f"  \033[36m{'Findings:':<12}\033[0m {findings_count} item(s) found")
+
+        if findings_count > 0:
+            # Show sample findings
+            print("    Sample results:")
+            for idx, finding in enumerate(findings[:3]):  # Show first 3
+                # Format rule output nicely
+                formatted_items = []
+                for key, value in finding.__class__.model_fields.items():
+                    if value is not None:
+                        # Truncate long values
+                        actual_value = getattr(finding, key)
+                        str_value = str(actual_value)
+                        if len(str_value) > 50:
+                            str_value = str_value[:47] + "..."
+                        formatted_items.append(f"{key}={str_value}")
+                if formatted_items:
+                    print(f"      {idx + 1}. {', '.join(formatted_items)}")
+
+            if findings_count > 3:
+                print(
+                    f"      ... and {findings_count - 3} more (use --output json to see all)"
+                )
+
+    # Create and return fact result
+    counter.total_findings += findings_count
+
+    # Update aggregate counters if we have asset metrics
+    if total_assets is not None and passing is not None:
+        counter.total_assets += total_assets
+        counter.total_failing += failing
+        counter.total_passing += passing
+
+    return FactResult(
+        fact_id=fact.id,
+        fact_name=fact.name,
+        fact_description=fact.description,
+        fact_provider=fact.module.value,
+        findings=findings,
+        total_assets=total_assets,
+        failing=failing,
+        passing=passing,
+    )
+
+
+def _run_single_rule(
+    rule_name: str,
+    driver: GraphDatabase.driver,
+    database: str,
+    output_format: str,
+    neo4j_uri: str,
+    fact_filter: str | None = None,
+    exclude_experimental: bool = False,
+) -> RuleResult:
+    """
+    Execute a single rule and return results.
+
+    Args:
+        rule_name (str): The name of the rule to execute.
+        driver (GraphDatabase.driver): The Neo4j driver instance.
+        database (str): The name of the Neo4j database to query.
+        output_format (str): Output format, either "text" or "json".
+        neo4j_uri (str): The Neo4j URI for generating browser links.
+        fact_filter (str | None): Optional fact ID to filter execution (case-insensitive).
+        exclude_experimental (bool): Whether to exclude experimental facts from execution.
+
+    Returns:
+        RuleResult: The result of executing the rule, including all fact results and counters.
+    """
+    rule = RULES[rule_name]
+    counter = CounterResult()
+
+    filtered_facts: list[Fact] = []
+    for fact in rule.facts:
+        if exclude_experimental and fact.maturity != Maturity.STABLE:
+            continue
+        if fact_filter:
+            if fact.id.lower() != fact_filter.lower():
+                continue
+        counter.total_facts += 1
+        filtered_facts.append(fact)
+
+    if output_format == "text":
+        print(f"Executing {rule.name} rule")
+        if fact_filter:
+            print(f"Filtered to fact: {fact_filter}")
+        print(f"Total facts: {counter.total_facts}")
+
+    # Execute requirements and collect results
+    rule_results = []
+
+    for fact in filtered_facts:
+        counter.current_fact += 1
+        fact_result = _run_fact(
+            fact,
+            rule,
+            driver,
+            database,
+            counter,
+            output_format,
+            neo4j_uri,
+        )
+        rule_results.append(fact_result)
+
+    # Create and return rule result
+    return RuleResult(
+        rule_id=rule.id,
+        rule_name=rule.name,
+        rule_description=rule.description,
+        facts=rule_results,
+        counter=counter,
+        rule_tags=rule.tags,
+        rule_frameworks=rule.frameworks,
+    )
+
+
+def filter_rules_by_framework(
+    rule_names: list[str],
+    framework_filter: str,
+) -> list[str]:
+    """
+    Filter rules by framework specification.
+
+    The framework filter supports the following formats (case-insensitive):
+    - "CIS" - Match any rule with a CIS framework
+    - "CIS:aws" - Match CIS frameworks with scope "aws"
+    - "CIS:aws:5.0" - Match CIS frameworks with scope "aws" and revision "5.0"
+
+    Args:
+        rule_names: List of rule names to filter.
+        framework_filter: Framework filter string.
+
+    Returns:
+        List of rule names that match the framework filter.
+    """
+    parts = framework_filter.split(":")
+    short_name = parts[0] if len(parts) >= 1 else None
+    scope = parts[1] if len(parts) >= 2 else None
+    revision = parts[2] if len(parts) >= 3 else None
+
+    filtered = []
+    for rule_name in rule_names:
+        if rule_name not in RULES:
+            continue
+        rule = RULES[rule_name]
+        if rule.has_framework(short_name, scope, revision):
+            filtered.append(rule_name)
+    return filtered
+
+
+def run_rules(
+    rule_names: list[str],
+    uri: str,
+    neo4j_user: str,
+    neo4j_password: str,
+    neo4j_database: str,
+    output_format: str = "text",
+    fact_filter: str | None = None,
+    exclude_experimental: bool = False,
+    framework_filter: str | None = None,
+):
+    """
+    Execute the specified rules and present results.
+
+    Args:
+        rule_names (list[str]): The names of the rules to execute.
+        uri (str): The URI of the Neo4j database.
+            E.g. "bolt://localhost:7687" or "neo4j+s://tenant123.databases.neo4j.io:7687"
+        neo4j_user (str): The username for the Neo4j database.
+        neo4j_password (str): The password for the Neo4j database.
+        neo4j_database (str): The name of the Neo4j database.
+        output_format (str): Either "text" or "json". Defaults to "text".
+        fact_filter (str | None): Optional fact ID to filter execution (case-insensitive).
+        exclude_experimental (bool): Whether to exclude experimental facts from execution.
+        framework_filter (str | None): Optional framework filter (e.g., "CIS", "CIS:aws", "CIS:aws:5.0").
+
+    Returns:
+        int: The exit code (0 for success, 1 for failure).
+    """
+    # Apply framework filter if specified
+    if framework_filter:
+        rule_names = filter_rules_by_framework(rule_names, framework_filter)
+        if not rule_names:
+            if output_format == "text":
+                print(f"No rules found matching framework filter: {framework_filter}")
+            return 1
+
+    # Validate all rules exist
+    for rule_name in rule_names:
+        if rule_name not in RULES:
+            if output_format == "text":
+                print(f"Unknown rule: {rule_name}")
+                print(f"Available rules: {', '.join(RULES.keys())}")
+            return 1
+
+    # Connect to Neo4j
+    if output_format == "text":
+        print(f"Connecting to Neo4j at {uri}...")
+    driver = GraphDatabase.driver(uri, auth=(neo4j_user, neo4j_password))
+
+    try:
+        driver.verify_connectivity()
+
+        # Execute rules
+        all_results = []
+        total_facts = 0
+        total_findings = 0
+        total_assets = 0
+        total_passing = 0
+        total_failing = 0
+
+        for i, rule_name in enumerate(rule_names):
+            if output_format == "text" and len(rule_names) > 1:
+                if i > 0:
+                    print("\n" + "=" * 60)
+                print(f"Executing rule {i + 1}/{len(rule_names)}: {rule_name}")
+
+            rule_result = _run_single_rule(
+                rule_name,
+                driver,
+                neo4j_database,
+                output_format,
+                uri,
+                fact_filter,
+                exclude_experimental,
+            )
+            all_results.append(rule_result)
+            total_facts += rule_result.counter.total_facts
+            total_findings += rule_result.counter.total_findings
+            total_assets += rule_result.counter.total_assets
+            total_passing += rule_result.counter.total_passing
+            total_failing += rule_result.counter.total_failing
+
+        # Output results
+        _format_and_output_results(
+            all_results,
+            rule_names,
+            output_format,
+            total_facts,
+            total_findings,
+            total_assets,
+            total_passing,
+            total_failing,
+        )
+
+        return 0
+    finally:
+        driver.close()

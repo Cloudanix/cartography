@@ -1,11 +1,10 @@
 import configparser
 import logging
 import time
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
-from string import Template
+from collections import defaultdict
+from collections import namedtuple
 from typing import Any
+from typing import cast
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -16,23 +15,53 @@ from packaging.requirements import InvalidRequirement
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
-from cartography.intel.github.util import describe_request_error
+from cartography.client.core.tx import load as load_data
+from cartography.graph.job import GraphJob
+from cartography.helpers import backoff_handler
 from cartography.intel.github.util import fetch_all
-from cartography.intel.github.util import get_retry_delay_seconds
-from cartography.intel.github.util import is_retryable_request_error
-from cartography.util import normalize_datetime
-from cartography.util import run_cleanup_job
+from cartography.intel.github.util import fetch_page
+from cartography.intel.github.util import handle_rate_limit_sleep
+from cartography.intel.github.util import PaginatedGraphqlData
+from cartography.intel.trivy.util import make_normalized_package_id
+from cartography.intel.trivy.util import parse_purl
+from cartography.models.github.branch_protection_rules import (
+    GitHubBranchProtectionRuleSchema,
+)
+from cartography.models.github.dependencies import GitHubDependencySchema
+from cartography.models.github.manifests import DependencyGraphManifestSchema
+from cartography.models.github.repos import GitHubBranchSchema
+from cartography.models.github.repos import GitHubOwnerOrganizationSchema
+from cartography.models.github.repos import GitHubOwnerUserSchema
+from cartography.models.github.repos import GitHubPythonLibrarySchema
+from cartography.models.github.repos import GitHubRepositorySchema
+from cartography.models.github.repos import make_github_collaborator_schema
+from cartography.models.github.repos import ProgrammingLanguageSchema
+from cartography.util import retries_with_backoff
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+
+# Representation of a user's permission level and affiliation to a GitHub repo. See:
+# - Permission: https://docs.github.com/en/graphql/reference/enums#repositorypermission
+# - Affiliation: https://docs.github.com/en/graphql/reference/enums#collaboratoraffiliation
+UserAffiliationAndRepoPermission = namedtuple(
+    "UserAffiliationAndRepoPermission",
+    [
+        "user",  # Dict
+        "permission",  # 'WRITE', 'MAINTAIN', 'ADMIN', etc
+        "affiliation",  # 'OUTSIDE', 'DIRECT'
+    ],
+)
+
+
 GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
-    query($login: String!, $cursor: String) {
+    query($login: String!, $cursor: String, $count: Int!) {
     organization(login: $login)
         {
             url
             login
-            repositories(first: 50, after: $cursor){
+            repositories(first: $count, after: $cursor){
                 pageInfo{
                     endCursor
                     hasNextPage
@@ -48,7 +77,6 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                     createdAt
                     description
                     updatedAt
-                    pushedAt
                     homepageUrl
                     languages(first: 25){
                         totalCount
@@ -57,28 +85,10 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                         }
                     }
                     defaultBranchRef{
-                        name
-                        id
-                    }
-                    refs(first: 100, refPrefix: "refs/heads/", after: null) {
-                        pageInfo {
-                            hasNextPage
-                            endCursor
-                        }
-                        edges {
-                            node {
-                                name
-                                id
-                                target {
-                                    ... on Commit {
-                                        committedDate
-                                    }
-                                }
-                            }
-                        }
+                      name
+                      id
                     }
                     isPrivate
-                    visibility
                     isArchived
                     isDisabled
                     isLocked
@@ -86,18 +96,6 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                         url
                         login
                         __typename
-                    }
-                    collaborators(affiliation: OUTSIDE, first: 50) {
-                        edges {
-                            permission
-                        }
-                        nodes {
-                            url
-                            login
-                            name
-                            email
-                            company
-                        }
                     }
                     requirements:object(expression: "HEAD:requirements.txt") {
                         ... on Blob {
@@ -117,9 +115,503 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
 # Note: In the above query, `HEAD` references the default branch.
 # See https://stackoverflow.com/questions/48935381/github-graphql-api-default-branch-in-repository
 
+GITHUB_ORG_REPOS_PRIVILEGED_PAGINATED_GRAPHQL = """
+    query($login: String!, $cursor: String, $count: Int!) {
+    organization(login: $login)
+        {
+            url
+            login
+            repositories(first: $count, after: $cursor){
+                pageInfo{
+                    endCursor
+                    hasNextPage
+                }
+                nodes{
+                    url
+                    directCollaborators: collaborators(first: 100, affiliation: DIRECT) {
+                        totalCount
+                    }
+                    outsideCollaborators: collaborators(first: 100, affiliation: OUTSIDE) {
+                        totalCount
+                    }
+                    branchProtectionRules(first: 50) {
+                        nodes {
+                            id
+                            pattern
+                            allowsDeletions
+                            allowsForcePushes
+                            dismissesStaleReviews
+                            isAdminEnforced
+                            requiresApprovingReviews
+                            requiredApprovingReviewCount
+                            requiresCodeOwnerReviews
+                            requiresCommitSignatures
+                            requiresLinearHistory
+                            requiresStatusChecks
+                            requiresStrictStatusChecks
+                            restrictsPushes
+                            restrictsReviewDismissals
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+
+GITHUB_REPO_COLLABS_PAGINATED_GRAPHQL = """
+    query($login: String!, $repo: String!, $affiliation: CollaboratorAffiliation!, $cursor: String) {
+        organization(login: $login) {
+            url
+            login
+            repository(name: $repo){
+                name
+                collaborators(first: 50, affiliation: $affiliation, after: $cursor) {
+                    edges {
+                        permission
+                    }
+                    nodes {
+                        url
+                        login
+                        name
+                        email
+                        company
+                    }
+                    pageInfo{
+                        endCursor
+                        hasNextPage
+                    }
+                }
+            }
+        }
+        rateLimit {
+            limit
+            cost
+            remaining
+            resetAt
+        }
+    }
+    """
+
+GITHUB_REPO_DEP_MANIFESTS_PAGINATED_GRAPHQL = """
+    query($login: String!, $repo: String!, $cursor: String, $depCursor: String) {
+        organization(login: $login) {
+            url
+            login
+            repository(name: $repo) {
+                dependencyGraphManifests(first: 1, after: $cursor) {
+                    pageInfo {
+                        endCursor
+                        hasNextPage
+                    }
+                    nodes {
+                        blobPath
+                        dependencies(first: 50, after: $depCursor) {
+                            pageInfo {
+                                endCursor
+                                hasNextPage
+                            }
+                            nodes {
+                                packageName
+                                packageUrl
+                                requirements
+                                packageManager
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        rateLimit {
+            limit
+            cost
+            remaining
+            resetAt
+        }
+    }
+    """
+
+
+def _fetch_manifest_page(
+    token: str,
+    api_url: str,
+    organization: str,
+    repo: str,
+    manifest_cursor: str | None,
+    dep_cursor: str | None = None,
+    retries: int = 3,
+) -> dict[str, Any] | None:
+    """
+    Fetch a single page from the dependency manifests endpoint with retry logic.
+    Retries on both HTTP errors and GraphQL-level timeouts (where GitHub returns
+    HTTP 200 but with errors and null data in the response body).
+    Returns the raw response dict, or None if all retries failed.
+    """
+    for attempt in range(retries):
+        try:
+            handle_rate_limit_sleep(token)
+            resp = fetch_page(
+                token,
+                api_url,
+                organization,
+                GITHUB_REPO_DEP_MANIFESTS_PAGINATED_GRAPHQL,
+                manifest_cursor,
+                repo=repo,
+                depCursor=dep_cursor,
+            )
+        except (
+            requests.exceptions.Timeout,
+            requests.exceptions.HTTPError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ChunkedEncodingError,
+        ):
+            if attempt + 1 >= retries:
+                return None
+            time.sleep(2 ** (attempt + 1))
+            continue
+
+        # Check for GraphQL-level timeout: HTTP 200 but dependencyGraphManifests is null
+        repository = (resp.get("data") or {}).get("organization", {}).get("repository")
+        dep_manifests = (
+            repository.get("dependencyGraphManifests") if repository else None
+        )
+        if dep_manifests is None and resp.get("errors"):
+            if attempt + 1 >= retries:
+                logger.warning(
+                    "GraphQL timeout fetching dependency manifests for repo %s after %d retries.",
+                    repo,
+                    retries,
+                )
+                return resp
+            logger.debug(
+                "GraphQL timeout for repo %s, retry %d/%d.",
+                repo,
+                attempt + 1,
+                retries,
+            )
+            time.sleep(2 ** (attempt + 1))
+            continue
+
+        return resp
+    return None
+
+
+def _get_repo_dep_manifests(
+    token: str,
+    api_url: str,
+    organization: str,
+    repo: str,
+) -> list[dict[str, Any]]:
+    """
+    Retrieve dependency graph manifests for a single repository.
+    Fetches one manifest at a time, and paginates dependencies within each manifest.
+    If a single manifest or dependency page times out, we keep what was already fetched
+    and move on to the next manifest.
+    :param token: The Github API token as string.
+    :param api_url: The Github v4 API endpoint as string.
+    :param organization: The name of the target Github organization as string.
+    :param repo: The name of the target Github repository as string.
+    :return: A list of manifest node dicts with all their dependencies collected.
+    """
+    manifest_cursor: str | None = None
+    has_next_manifest = True
+    manifests: list[dict[str, Any]] = []
+
+    while has_next_manifest:
+        # Save cursor before this manifest so we can re-query the same position
+        # when paginating its dependencies.
+        prev_manifest_cursor = manifest_cursor
+
+        resp = _fetch_manifest_page(
+            token,
+            api_url,
+            organization,
+            repo,
+            manifest_cursor,
+        )
+
+        if resp is None or "data" not in resp:
+            logger.warning(
+                "No data fetching manifest for repo %s; keeping %d manifests already fetched.",
+                repo,
+                len(manifests),
+            )
+            return manifests
+
+        repository = resp["data"]["organization"].get("repository")
+        dep_manifests = (
+            repository.get("dependencyGraphManifests") if repository else None
+        )
+
+        if dep_manifests is None:
+            logger.warning(
+                "GitHub API returned null dependencyGraphManifests for repo %s; "
+                "keeping %d manifests already fetched.",
+                repo,
+                len(manifests),
+            )
+            return manifests
+
+        manifest_page_info = dep_manifests.get("pageInfo", {})
+        manifest_cursor = manifest_page_info.get("endCursor")
+        has_next_manifest = manifest_page_info.get("hasNextPage", False)
+
+        manifest_nodes = dep_manifests.get("nodes") or []
+        if not manifest_nodes:
+            continue
+
+        manifest = manifest_nodes[0]
+        blob_path = manifest.get("blobPath", "?")
+
+        # Paginate dependencies within this manifest
+        deps_data = manifest.get("dependencies") or {}
+        all_dep_nodes = list(deps_data.get("nodes") or [])
+        deps_page_info = deps_data.get("pageInfo", {})
+
+        while deps_page_info.get("hasNextPage", False):
+            dep_cursor = deps_page_info.get("endCursor")
+            # Re-query the same manifest position using prev_manifest_cursor
+            dep_resp = _fetch_manifest_page(
+                token,
+                api_url,
+                organization,
+                repo,
+                prev_manifest_cursor,
+                dep_cursor,
+            )
+
+            if dep_resp is None or "data" not in dep_resp:
+                logger.warning(
+                    "Failed to fetch dependency page for %s in repo %s; "
+                    "keeping %d deps already fetched for this manifest.",
+                    blob_path,
+                    repo,
+                    len(all_dep_nodes),
+                )
+                break
+
+            dep_repository = dep_resp["data"]["organization"].get("repository")
+            dep_dep_manifests = (
+                dep_repository.get("dependencyGraphManifests")
+                if dep_repository
+                else None
+            )
+            if dep_dep_manifests is None:
+                logger.warning(
+                    "GitHub API timeout on dependency page for %s in repo %s; "
+                    "keeping %d deps already fetched for this manifest.",
+                    blob_path,
+                    repo,
+                    len(all_dep_nodes),
+                )
+                break
+
+            dep_nodes_list = dep_dep_manifests.get("nodes") or []
+            if not dep_nodes_list:
+                break
+
+            inner_deps = dep_nodes_list[0].get("dependencies") or {}
+            all_dep_nodes.extend(inner_deps.get("nodes") or [])
+            deps_page_info = inner_deps.get("pageInfo", {})
+
+        # Rebuild manifest with all collected dependencies
+        manifest["dependencies"] = {"nodes": all_dep_nodes}
+        manifests.append(manifest)
+        logger.debug(
+            "Fetched manifest %s for repo %s (%d deps).",
+            blob_path,
+            repo,
+            len(all_dep_nodes),
+        )
+
+    return manifests
+
+
+def _get_dep_manifests_for_repos(
+    repo_raw_data: list[dict[str, Any] | None],
+    org: str,
+    api_url: str,
+    token: str,
+) -> dict[str, dict[str, Any]]:
+    """
+    For every repo in the given list, retrieve its dependency graph manifests individually.
+    Fetches one manifest at a time so that a timeout on a single heavy manifest (e.g.
+    go.mod) doesn't prevent fetching other manifests for the same repo.
+    :param repo_raw_data: A list of dicts representing repos.
+    :param org: The name of the target Github organization as string.
+    :param api_url: The Github v4 API endpoint as string.
+    :param token: The Github API token as string.
+    :return: A dict mapping repo URL to its dependencyGraphManifests structure.
+    """
+    logger.info(
+        "Fetching dependency graph manifests for %d repos in org %s.",
+        len(repo_raw_data),
+        org,
+    )
+    result: dict[str, dict[str, Any]] = {}
+
+    for repo in repo_raw_data:
+        if repo is None:
+            continue
+        repo_name = repo.get("name")
+        repo_url = repo.get("url")
+        if not repo_name or not repo_url:
+            continue
+
+        try:
+            manifests = _get_repo_dep_manifests(token, api_url, org, repo_name)
+            if manifests:
+                result[repo_url] = {"nodes": manifests}
+                logger.debug(
+                    "Fetched %d dependency manifests for repo %s.",
+                    len(manifests),
+                    repo_name,
+                )
+        except requests.exceptions.RequestException:
+            logger.warning(
+                "Failed to fetch dependency manifests for repo %s; skipping.",
+                repo_name,
+                exc_info=True,
+            )
+
+    logger.debug("Fetched dependency manifests for %d repos.", len(result))
+    return result
+
+
+def _get_repo_collaborators_inner_func(
+    org: str,
+    api_url: str,
+    token: str,
+    repo_raw_data: list[dict[str, Any] | None],
+    affiliation: str,
+) -> dict[str, list[UserAffiliationAndRepoPermission]]:
+    result: dict[str, list[UserAffiliationAndRepoPermission]] = {}
+
+    for repo in repo_raw_data:
+        # GitHub can return null repo entries. See issues #1334 and #1404.
+        if repo is None:
+            logger.info(
+                "Skipping null repository entry while fetching %s collaborators.",
+                affiliation,
+            )
+            continue
+        repo_name = repo["name"]
+        repo_url = repo["url"]
+
+        # Guard against None when collaborator fields are not accessible due to permissions.
+        direct_info = repo.get("directCollaborators")
+        outside_info = repo.get("outsideCollaborators")
+
+        if affiliation == "OUTSIDE":
+            total_outside = 0 if not outside_info else outside_info.get("totalCount", 0)
+            if total_outside == 0:
+                # No outside collaborators or not permitted to view; skip API calls for this repo.
+                result[repo_url] = []
+                continue
+        else:  # DIRECT
+            total_direct = 0 if not direct_info else direct_info.get("totalCount", 0)
+            if total_direct == 0:
+                # No direct collaborators or not permitted to view; skip API calls for this repo.
+                result[repo_url] = []
+                continue
+
+        logger.info(f"Loading {affiliation} collaborators for repo {repo_name}.")
+        collaborators = _get_repo_collaborators(
+            token,
+            api_url,
+            org,
+            repo_name,
+            affiliation,
+        )
+
+        collab_users: List[dict[str, Any]] = []
+        collab_permission: List[str] = []
+
+        # nodes and edges are expected to always be present given that we only call for them if totalCount is > 0
+        # however sometimes GitHub returns None, as in issue 1334 and 1404.
+        for collab in collaborators.nodes or []:
+            collab_users.append(collab)
+
+        # The `or []` is because `.edges` can be None.
+        for perm in collaborators.edges or []:
+            collab_permission.append(perm["permission"])
+
+        result[repo_url] = [
+            UserAffiliationAndRepoPermission(user, permission, affiliation)
+            for user, permission in zip(collab_users, collab_permission)
+        ]
+    return result
+
+
+def _get_repo_collaborators_for_multiple_repos(
+    repo_raw_data: list[dict[str, Any] | None],
+    affiliation: str,
+    org: str,
+    api_url: str,
+    token: str,
+) -> dict[str, list[UserAffiliationAndRepoPermission]]:
+    """
+    For every repo in the given list, retrieve the collaborators.
+    :param repo_raw_data: A list of dicts representing repos. See tests.data.github.repos.GET_REPOS for data shape.
+    :param affiliation: The type of affiliation to retrieve collaborators for. Either 'DIRECT' or 'OUTSIDE'.
+      See https://docs.github.com/en/graphql/reference/enums#collaboratoraffiliation
+    :param org: The name of the target Github organization as string.
+    :param api_url: The Github v4 API endpoint as string.
+    :param token: The Github API token as string.
+    :return: A dictionary of repo URL to list of UserAffiliationAndRepoPermission
+    """
+    logger.info(
+        f'Retrieving repo collaborators for affiliation "{affiliation}" on org "{org}".',
+    )
+
+    result: dict[str, list[UserAffiliationAndRepoPermission]] = retries_with_backoff(
+        _get_repo_collaborators_inner_func,
+        TypeError,
+        5,
+        backoff_handler,
+    )(
+        org=org,
+        api_url=api_url,
+        token=token,
+        repo_raw_data=repo_raw_data,
+        affiliation=affiliation,
+    )
+    return result
+
+
+def _get_repo_collaborators(
+    token: str,
+    api_url: str,
+    organization: str,
+    repo: str,
+    affiliation: str,
+) -> PaginatedGraphqlData:
+    """
+    Retrieve a list of collaborators for a given repository, as described in
+    https://docs.github.com/en/graphql/reference/objects#repositorycollaboratorconnection.
+    :param token: The Github API token as string.
+    :param api_url: The Github v4 API endpoint as string.
+    :param organization: The name of the target Github organization as string.
+    :pram repo: The name of the target Github repository as string.
+    :param affiliation: The type of affiliation to retrieve collaborators for. Either 'DIRECT' or 'OUTSIDE'.
+      See https://docs.github.com/en/graphql/reference/enums#collaboratoraffiliation
+    :return: A list of dicts representing repos. See tests.data.github.repos for data shape.
+    """
+    collaborators, _ = fetch_all(
+        token,
+        api_url,
+        organization,
+        GITHUB_REPO_COLLABS_PAGINATED_GRAPHQL,
+        "repository",
+        resource_inner_type="collaborators",
+        repo=repo,
+        affiliation=affiliation,
+    )
+    return collaborators
+
 
 @timeit
-def get(token: str, api_url: str, organization: str) -> List[Dict]:
+def get(token: str, api_url: str, organization: str) -> List[Optional[Dict]]:
     """
     Retrieve a list of repos from a Github organization as described in
     https://docs.github.com/en/graphql/reference/objects#repository.
@@ -127,46 +619,156 @@ def get(token: str, api_url: str, organization: str) -> List[Dict]:
     :param api_url: The Github v4 API endpoint as string.
     :param organization: The name of the target Github organization as string.
     :return: A list of dicts representing repos. See tests.data.github.repos for data shape.
+        Note: The list may contain None entries per GraphQL spec when resolvers error
+        (permissions, rate limits, transient issues). See issues #1334 and #1404.
     """
-    # # TODO: link the Github organization to the repositories
-    # try:
-    #     repos, _ = fetch_all(
-    #         token,
-    #         api_url,
-    #         organization,
-    #         GITHUB_ORG_REPOS_PAGINATED_GRAPHQL,
-    #         "repositories",
-    #     )
-    #     return repos.nodes
-    # except requests.exceptions.RequestException as err:
-    #     if not is_retryable_request_error(err):
-    #         raise
-
-    #     logger.info(
-    #         (
-    #             f"GitHub GraphQL repository sync failed for org `{organization}` "
-    #             f"with {describe_request_error(err)}; falling back to REST repository listing."
-    #         ),
-    #         exc_info=True,
-    #     )
-
-    rest_repos = get_org_repos(organization, token, api_url)
-    return [_normalize_rest_repo(rest_repo) for rest_repo in rest_repos]
+    # TODO: link the Github organization to the repositories
+    repos, _ = fetch_all(
+        token,
+        api_url,
+        organization,
+        GITHUB_ORG_REPOS_PAGINATED_GRAPHQL,
+        "repositories",
+        count=50,
+    )
+    # Cast is needed because GitHub's GraphQL RepositoryConnection.nodes is typed [Repository] (not [Repository!])
+    # per GraphQL spec, allowing null entries when resolvers error (permissions, rate limits, transient issues).
+    # See https://github.com/cartography-cncf/cartography/issues/1334
+    # and https://github.com/cartography-cncf/cartography/issues/1404
+    return cast(List[Optional[Dict]], repos.nodes)
 
 
-def transform(repos_json: List[Dict]) -> Dict:
+def _repos_need_privileged_details(repos_json: List[Optional[Dict]]) -> bool:
+    """
+    Return True when repo objects are missing collaborator counts and/or branch protection fields.
+    """
+    non_null_repos = [repo for repo in repos_json if repo is not None]
+    if not non_null_repos:
+        return False
+
+    collaborator_counts_missing = any(
+        repo.get("directCollaborators") is None
+        or repo.get("outsideCollaborators") is None
+        for repo in non_null_repos
+    )
+    branch_rules_missing_everywhere = all(
+        repo.get("branchProtectionRules") is None for repo in non_null_repos
+    )
+    return collaborator_counts_missing or branch_rules_missing_everywhere
+
+
+def get_repo_privileged_details_by_url(
+    token: str,
+    api_url: str,
+    organization: str,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Retrieve collaborator counts + branch protection fields for repositories in an organization.
+    """
+    repos, _ = fetch_all(
+        token,
+        api_url,
+        organization,
+        GITHUB_ORG_REPOS_PRIVILEGED_PAGINATED_GRAPHQL,
+        "repositories",
+        count=50,
+    )
+    privileged_repo_data = {}
+    privileged_nodes = cast(List[Optional[Dict]], repos.nodes)
+    for repo in privileged_nodes:
+        # GitHub can return null repository entries.
+        if repo is None:
+            continue
+        repo_url = repo.get("url")
+        if not repo_url:
+            continue
+        privileged_repo_data[repo_url] = {
+            "directCollaborators": repo.get("directCollaborators"),
+            "outsideCollaborators": repo.get("outsideCollaborators"),
+            "branchProtectionRules": repo.get("branchProtectionRules"),
+        }
+    return privileged_repo_data
+
+
+def _merge_repos_with_privileged_details(
+    repo_raw_data: List[Optional[Dict]],
+    privileged_repo_data_by_url: Dict[str, Dict[str, Any]],
+) -> tuple[List[Optional[Dict]], int, int]:
+    """
+    Merge privileged repo fields by URL into the base repo list.
+    Returns merged repos + merged count + count still missing privileged details.
+    """
+    merged_repo_count = 0
+    repos_missing_privileged_details = 0
+    merged_repos: List[Optional[Dict]] = []
+
+    for repo in repo_raw_data:
+        # Preserve null entries as-is.
+        if repo is None:
+            merged_repos.append(None)
+            continue
+
+        merged_repo = dict(repo)
+        repo_url = merged_repo.get("url")
+        privileged_data: Dict[str, Any] = {}
+        if isinstance(repo_url, str):
+            privileged_data = privileged_repo_data_by_url.get(repo_url, {})
+        merged_fields = 0
+
+        for field_name in (
+            "directCollaborators",
+            "outsideCollaborators",
+            "branchProtectionRules",
+        ):
+            if merged_repo.get(field_name) is None and field_name in privileged_data:
+                merged_repo[field_name] = privileged_data.get(field_name)
+                merged_fields += 1
+
+        if merged_fields > 0:
+            merged_repo_count += 1
+
+        if (
+            merged_repo.get("directCollaborators") is None
+            or merged_repo.get("outsideCollaborators") is None
+            or merged_repo.get("branchProtectionRules") is None
+        ):
+            repos_missing_privileged_details += 1
+
+        merged_repos.append(merged_repo)
+
+    return merged_repos, merged_repo_count, repos_missing_privileged_details
+
+
+def transform(
+    repos_json: List[Optional[Dict]],
+    direct_collaborators: dict[str, List[UserAffiliationAndRepoPermission]],
+    outside_collaborators: dict[str, List[UserAffiliationAndRepoPermission]],
+) -> Dict:
     """
     Parses the JSON returned from GitHub API to create data for graph ingestion
-    :param repos_json: the list of individual repository nodes from GitHub. See tests.data.github.repos.GET_REPOS for
-    data shape.
+    :param repos_json: the list of individual repository nodes from GitHub.
+        See tests.data.github.repos.GET_REPOS for data shape.
+    :param direct_collaborators: dict of repo URL to list of direct collaborators.
+        See tests.data.github.repos.DIRECT_COLLABORATORS for data shape.
+    :param outside_collaborators: dict of repo URL to list of outside collaborators.
+        See tests.data.github.repos.OUTSIDE_COLLABORATORS for data shape.
     :return: Dict containing the repos, repo->language mapping, owners->repo mapping, outside collaborators->repo
-    mapping, and Python requirements files (if any) in a repo.
+    mapping, Python requirements files (if any) in a repo, manifests from GitHub's dependency graph, all
+    dependencies from GitHub's dependency graph, and branch protection rules.
     """
+    logger.info(f"Processing {len(repos_json)} GitHub repositories")
     transformed_repo_list: List[Dict] = []
     transformed_repo_languages: List[Dict] = []
     transformed_repo_owners: List[Dict] = []
     # See https://docs.github.com/en/graphql/reference/enums#repositorypermission
-    transformed_collaborators: Dict[str, List[Any]] = {
+    transformed_outside_collaborators: Dict[str, List[Any]] = {
+        "ADMIN": [],
+        "MAINTAIN": [],
+        "READ": [],
+        "TRIAGE": [],
+        "WRITE": [],
+    }
+    transformed_direct_collaborators: Dict[str, List[Any]] = {
         "ADMIN": [],
         "MAINTAIN": [],
         "READ": [],
@@ -174,102 +776,86 @@ def transform(repos_json: List[Dict]) -> Dict:
         "WRITE": [],
     }
     transformed_requirements_files: List[Dict] = []
-    transformed_branches: List[Dict] = []
+    transformed_dependencies: List[Dict] = []
+    transformed_manifests: List[Dict] = []
+    transformed_branch_protection_rules: List[Dict] = []
     for repo_object in repos_json:
-        _transform_repo_languages(repo_object["url"], repo_object, transformed_repo_languages)
+        # GitHub can return null repo entries. See issues #1334 and #1404.
+        if repo_object is None:
+            logger.debug("Skipping null repository entry during transformation.")
+            continue
+        _transform_repo_languages(
+            repo_object["url"],
+            repo_object,
+            transformed_repo_languages,
+        )
         _transform_repo_objects(repo_object, transformed_repo_list)
-        _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
-        _transform_collaborators(repo_object.get("collaborators"), repo_object["url"], transformed_collaborators)
-        _transform_branches(repo_object["url"], repo_object, transformed_branches)
-        # _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
-        # _transform_setup_cfg_requirements(repo_object["setupCfg"], repo_object["url"], transformed_requirements_files)
+        _transform_repo_owners(
+            repo_object["owner"]["url"],
+            repo_object,
+            transformed_repo_owners,
+        )
 
-    # Compute last_activity_at per repo from branch commit timestamps
-    # Priority: (1) default branch commit date, (2) max across all branches
-    branches_by_repo: Dict[str, List[Dict]] = {}
-    for b in transformed_branches:
-        branches_by_repo.setdefault(b["repo_id"], []).append(b)
+        # Allow sync to continue if we didn't have permissions to list collaborators
+        repo_url = repo_object["url"]
+        if repo_url in outside_collaborators:
+            _transform_collaborators(
+                repo_object["url"],
+                outside_collaborators[repo_object["url"]],
+                transformed_outside_collaborators,
+            )
+        if repo_url in direct_collaborators:
+            _transform_collaborators(
+                repo_object["url"],
+                direct_collaborators[repo_object["url"]],
+                transformed_direct_collaborators,
+            )
 
-    for repo in transformed_repo_list:
-        default_branch_name = repo.get("default_branch")
-        repo_branches = branches_by_repo.get(repo["id"], [])
-        last_activity_at = None
-        if default_branch_name:
-            for b in repo_branches:
-                if b["name"] == default_branch_name and b.get("last_commit_timestamp"):
-                    last_activity_at = b["last_commit_timestamp"]
-                    break
+        dependency_manifests = repo_object.get("dependencyGraphManifests")
+        has_dependency_graph = bool(
+            dependency_manifests and dependency_manifests.get("nodes"),
+        )
 
-        if last_activity_at is None:
-            all_dates = [b["last_commit_timestamp"] for b in repo_branches if b.get("last_commit_timestamp")]
-            last_activity_at = max(all_dates) if all_dates else None
+        if not has_dependency_graph:
+            _transform_requirements_txt(
+                repo_object["requirements"],
+                repo_url,
+                transformed_requirements_files,
+            )
+            _transform_setup_cfg_requirements(
+                repo_object["setupCfg"],
+                repo_url,
+                transformed_requirements_files,
+            )
 
-        # Fall back to repo's updatedAt when no branch commit timestamps are available
-        # (pushedDate is null for commits not created via a GitHub push event)
-        if last_activity_at is None:
-            last_activity_at = repo.get("pushedat") or repo.get("updatedat")
-
-        iso_str, ts_ms = normalize_datetime(last_activity_at)
-        repo["last_activity_at"] = iso_str
-        repo["last_activity_at_timestamp"] = ts_ms
-
+        _transform_dependency_manifests(
+            dependency_manifests,
+            repo_url,
+            transformed_manifests,
+        )
+        _transform_dependency_graph(
+            dependency_manifests,
+            repo_url,
+            transformed_dependencies,
+        )
+        _transform_branch_protection_rules(
+            repo_object.get("branchProtectionRules", {}).get("nodes", []),
+            repo_url,
+            transformed_branch_protection_rules,
+        )
     results = {
         "repos": transformed_repo_list,
         "repo_languages": transformed_repo_languages,
         "repo_owners": transformed_repo_owners,
-        "repo_collaborators": transformed_collaborators,
+        "repo_outside_collaborators": transformed_outside_collaborators,
+        "repo_direct_collaborators": transformed_direct_collaborators,
         "python_requirements": transformed_requirements_files,
-        "branches": transformed_branches,
+        "dependencies": transformed_dependencies,
+        "manifests": transformed_manifests,
+        "branch_protection_rules": transformed_branch_protection_rules,
     }
+
     return results
-
-
-def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Dict]) -> None:
-    """
-    Transform branch data and filter to include only:
-    - Branches active in the last 180 days
-    - Default branch (always included)
-    """
-    if not repo.get("refs"):
-        return
-
-    default_branch = repo.get("defaultBranchRef", {}).get("name") if repo.get("defaultBranchRef") else None
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
-
-    for edge in (repo["refs"].get("edges") or []):
-        node = edge["node"]
-        branch_name = node["name"]
-        target = node.get("target")
-        committed_date_str = target.get("committedDate") if target else None
-
-        # Always include default branch
-        if branch_name == default_branch:
-            transformed_branches.append({
-                "repo_id": repo_url,
-                "branch_id": f"{repo_url}:{node['id']}",
-                "name": branch_name,
-                "last_commit_timestamp": committed_date_str,
-            })
-            continue
-
-        # Filter by activity date
-        if committed_date_str:
-            committed_date = datetime.fromisoformat(committed_date_str.replace('Z', '+00:00'))
-            if committed_date >= cutoff_date:
-                transformed_branches.append({
-                    "repo_id": repo_url,
-                    "branch_id": f"{repo_url}:{node['id']}",
-                    "name": branch_name,
-                    "last_commit_timestamp": committed_date_str,
-                })
-        else:
-            # No date available, include the branch
-            transformed_branches.append({
-                "repo_id": repo_url,
-                "branch_id": f"{repo_url}:{node['id']}",
-                "name": branch_name,
-                "last_commit_timestamp": committed_date_str,
-            })
 
 
 def _create_default_branch_id(repo_url: str, default_branch_ref_id: str) -> str:
@@ -282,9 +868,16 @@ def _create_default_branch_id(repo_url: str, default_branch_ref_id: str) -> str:
 
 def _create_git_url_from_ssh_url(ssh_url: str) -> str:
     """
-    Return a git:// URL from the given ssh_url
+    Convert SSH URL to git:// URL.
+    Example:
+        git@github.com:cartography-cncf/cartography.git
+        -> git://github.com/cartography-cncf/cartography.git
     """
-    return ssh_url.replace("/", ":").replace("git@", "git://")
+    # Remove the user part (e.g., "git@")
+    _, host_and_path = ssh_url.split("@", 1)
+    # Replace first ':' (separating host and repo) with '/'
+    host, path = host_and_path.split(":", 1)
+    return f"git://{host}/{path}"
 
 
 def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) -> None:
@@ -299,17 +892,14 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
     dbr = input_repo_object["defaultBranchRef"]
     default_branch_name = dbr["name"] if dbr else None
     default_branch_id = (
-        _create_default_branch_id(input_repo_object["url"], dbr["id"])
-        if dbr and dbr.get("id")
-        else None
+        _create_default_branch_id(input_repo_object["url"], dbr["id"]) if dbr else None
     )
 
     # Create a git:// URL from the given SSH URL, if it exists.
     ssh_url = input_repo_object.get("sshUrl")
     git_url = _create_git_url_from_ssh_url(ssh_url) if ssh_url else None
-    visibility = input_repo_object.get("visibility")
-    if visibility is None:
-        visibility = "private" if input_repo_object["isPrivate"] else "public"
+    owner = input_repo_object["owner"]
+    owner_type = owner["__typename"]
 
     out_repo_list.append(
         {
@@ -318,14 +908,15 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
             "name": input_repo_object["name"],
             "fullname": input_repo_object["nameWithOwner"],
             "description": input_repo_object["description"],
-            "primary_language": (
-                input_repo_object["primaryLanguage"]["name"] if input_repo_object.get("primaryLanguage") else ""
-            ).lower(),
+            "primarylanguage": (
+                input_repo_object["primaryLanguage"]["name"]
+                if input_repo_object.get("primaryLanguage")
+                else None
+            ),
             "homepage": input_repo_object["homepageUrl"],
-            "default_branch": default_branch_name,
+            "defaultbranch": default_branch_name,
             "defaultbranchid": default_branch_id,
-            "is_private": input_repo_object["isPrivate"],
-            "visibility": visibility,
+            "private": input_repo_object["isPrivate"],
             "disabled": input_repo_object["isDisabled"],
             "archived": input_repo_object["isArchived"],
             "locked": input_repo_object["isLocked"],
@@ -333,7 +924,8 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
             "url": input_repo_object["url"],
             "sshurl": ssh_url,
             "updatedat": input_repo_object["updatedAt"],
-            "pushedat": input_repo_object["pushedAt"],
+            "owner_org_id": owner["url"] if owner_type == "Organization" else None,
+            "owner_user_id": owner["url"] if owner_type == "User" else None,
         },
     )
 
@@ -356,7 +948,11 @@ def _transform_repo_owners(owner_id: str, repo: Dict, repo_owners: List[Dict]) -
     )
 
 
-def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Dict]) -> None:
+def _transform_repo_languages(
+    repo_url: str,
+    repo: Dict,
+    repo_languages: List[Dict],
+) -> None:
     """
     Helper function to transform the languages in a GitHub repo.
     :param repo_url: The URL of the repo.
@@ -364,7 +960,7 @@ def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Di
     :param repo_languages: Output array to append transformed results to.
     :return: Nothing.
     """
-    if repo.get("languages") and repo["languages"]["totalCount"] > 0:
+    if repo["languages"]["totalCount"] > 0:
         for language in repo["languages"]["nodes"]:
             repo_languages.append(
                 {
@@ -374,11 +970,17 @@ def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Di
             )
 
 
-def _transform_collaborators(collaborators: Dict, repo_url: str, transformed_collaborators: Dict) -> None:
+def _transform_collaborators(
+    repo_url: str,
+    collaborators: List[UserAffiliationAndRepoPermission],
+    transformed_collaborators: Dict,
+) -> None:
     """
-    Performs data adjustments for outside collaborators in a GitHub repo.
+    Performs data adjustments for collaborators in a GitHub repo.
     Output data shape = [{permission, repo_url, url (the user's URL), login, name}, ...]
-    :param collaborators: See cartography.tests.data.github.repos for data shape.
+    :param collaborators: For data shape, see
+        cartography.tests.data.github.repos.DIRECT_COLLABORATORS
+        cartography.tests.data.github.repos.OUTSIDE_COLLABORATORS
     :param repo_url: The URL of the GitHub repo.
     :param transformed_collaborators: Output dict. Data shape =
     {'ADMIN': [{ user }, ...], 'MAINTAIN': [{ user }, ...], 'READ': [ ... ], 'TRIAGE': [ ... ], 'WRITE': [ ... ]}
@@ -386,10 +988,11 @@ def _transform_collaborators(collaborators: Dict, repo_url: str, transformed_col
     """
     # `collaborators` is sometimes None
     if collaborators:
-        for idx, user in enumerate(collaborators["nodes"]):
-            user_permission = collaborators["edges"][idx]["permission"]
+        for collaborator in collaborators:
+            user = collaborator.user
             user["repo_url"] = repo_url
-            transformed_collaborators[user_permission].append(user)
+            user["affiliation"] = collaborator.affiliation
+            transformed_collaborators[collaborator.permission].append(user)
 
 
 def _transform_requirements_txt(
@@ -407,7 +1010,11 @@ def _transform_requirements_txt(
     if req_file_contents and req_file_contents.get("text"):
         text_contents = req_file_contents["text"]
         requirements_list = text_contents.split("\n")
-        _transform_python_requirements(requirements_list, repo_url, out_requirements_files)
+        _transform_python_requirements(
+            requirements_list,
+            repo_url,
+            out_requirements_files,
+        )
 
 
 def _transform_setup_cfg_requirements(
@@ -438,6 +1045,164 @@ def _transform_setup_cfg_requirements(
     _transform_python_requirements(requirements_list, repo_url, out_requirements_files)
 
 
+def _transform_dependency_manifests(
+    dependency_manifests: Optional[Dict],
+    repo_url: str,
+    out_manifests_list: List[Dict],
+) -> None:
+    """
+    Transform GitHub dependency graph manifests into cartography manifest format.
+    :param dependency_manifests: dependencyGraphManifests from GitHub GraphQL API
+    :param repo_url: The URL of the GitHub repo
+    :param out_manifests_list: Output array to append transformed results to
+    :return: Nothing
+    """
+    if not dependency_manifests or not dependency_manifests.get("nodes"):
+        return
+
+    manifests_added = 0
+
+    for manifest in dependency_manifests["nodes"]:
+        blob_path = manifest.get("blobPath", "")
+        if not blob_path:
+            continue
+
+        # Count dependencies in this manifest
+        dependencies = manifest.get("dependencies", {})
+        dependencies_count = len(dependencies.get("nodes", []) if dependencies else [])
+
+        # Create unique manifest ID by combining repo URL and blob path
+        manifest_id = f"{repo_url}#{blob_path}"
+
+        # Extract filename from blob path
+        filename = blob_path.split("/")[-1] if blob_path else "None"
+
+        out_manifests_list.append(
+            {
+                "id": manifest_id,
+                "blob_path": blob_path,
+                "filename": filename,
+                "dependencies_count": dependencies_count,
+                "repo_url": repo_url,
+            }
+        )
+        manifests_added += 1
+
+    if manifests_added > 0:
+        repo_name = repo_url.split("/")[-1] if repo_url else "repository"
+        logger.info(f"Found {manifests_added} dependency manifests in {repo_name}")
+
+
+def _transform_dependency_graph(
+    dependency_manifests: Optional[Dict],
+    repo_url: str,
+    out_dependencies_list: List[Dict],
+) -> None:
+    """
+    Transform GitHub dependency graph manifests into cartography dependency format.
+    :param dependency_manifests: dependencyGraphManifests from GitHub GraphQL API
+    :param repo_url: The URL of the GitHub repo
+    :param out_dependencies_list: Output array to append transformed results to
+    :return: Nothing
+    """
+    if not dependency_manifests or not dependency_manifests.get("nodes"):
+        return
+
+    dependencies_added = 0
+
+    for manifest in dependency_manifests["nodes"]:
+        dependencies = manifest.get("dependencies", {})
+        if not dependencies or not dependencies.get("nodes"):
+            continue
+
+        manifest_path = manifest.get("blobPath", "")
+
+        for dep in dependencies["nodes"]:
+            package_name = dep.get("packageName")
+            if not package_name:
+                continue
+
+            requirements = dep.get("requirements", "")
+            package_manager = dep.get("packageManager", "").upper()
+
+            # Create ecosystem-specific canonical name
+            canonical_name = _canonicalize_dependency_name(
+                package_name, package_manager
+            )
+
+            # Create ecosystem identifier
+            ecosystem = package_manager.lower() if package_manager else "unknown"
+
+            # Create simple dependency ID using canonical name and requirements
+            # This allows the same dependency to be shared across multiple repos
+            requirements_for_id = (requirements or "").strip()
+            dependency_id = (
+                f"{canonical_name}|{requirements_for_id}"
+                if requirements_for_id
+                else canonical_name
+            )
+
+            # Normalize requirements field (prefer None over empty string)
+            normalized_requirements = requirements if requirements else None
+
+            # Create manifest ID for the HAS_DEP relationship
+            manifest_id = f"{repo_url}#{manifest_path}"
+
+            # Extract ontology fields from GitHub's native PURL
+            dep_purl = dep.get("packageUrl") or None
+            parsed = parse_purl(dep_purl)
+            dep_version = parsed["version"] if parsed else None
+            dep_type = parsed["type"] if parsed else None
+            dep_normalized_id = make_normalized_package_id(purl=dep_purl)
+
+            out_dependencies_list.append(
+                {
+                    "id": dependency_id,
+                    "name": canonical_name,
+                    "original_name": package_name,
+                    "requirements": normalized_requirements,
+                    "ecosystem": ecosystem,
+                    "package_manager": package_manager,
+                    "manifest_path": manifest_path,
+                    "manifest_id": manifest_id,
+                    "repo_url": repo_url,
+                    "manifest_file": (
+                        manifest_path.split("/")[-1] if manifest_path else ""
+                    ),
+                    "version": dep_version,
+                    "type": dep_type,
+                    "purl": dep_purl,
+                    "normalized_id": dep_normalized_id,
+                }
+            )
+            dependencies_added += 1
+
+    if dependencies_added > 0:
+        repo_name = repo_url.split("/")[-1] if repo_url else "repository"
+        logger.info(f"Found {dependencies_added} dependencies in {repo_name}")
+
+
+def _canonicalize_dependency_name(name: str, package_manager: Optional[str]) -> str:
+    """
+    Canonicalize dependency names based on ecosystem conventions.
+    """
+    if not name:
+        return name
+
+    # For Python packages, use existing canonicalization
+    if package_manager in ["PIP", "CONDA"]:
+        try:
+            from packaging.utils import canonicalize_name
+
+            return str(canonicalize_name(name))
+        except ImportError:
+            # Fallback if packaging not available
+            return name.lower().replace("_", "-")
+
+    # For other ecosystems, use lowercase
+    return name.lower()
+
+
 def _transform_python_requirements(
     requirements_list: List[str],
     repo_url: str,
@@ -450,13 +1215,41 @@ def _transform_python_requirements(
     :param out_requirements_files: Output array to append transformed results to.
     :return: Nothing.
     """
-    parsed_list = []
+    normalized_requirements: List[str] = []
+    current_line = ""
+
     for line in requirements_list:
         stripped_line = line.partition("#")[0].strip()
-        if stripped_line == "":
+        if not stripped_line:
+            if current_line:
+                normalized_requirements.append(current_line)
+                current_line = ""
             continue
+
+        continues = stripped_line.endswith("\\")
+        if continues:
+            stripped_line = stripped_line[:-1].rstrip()
+
+        is_option_line = stripped_line.startswith("-")
+        if not is_option_line and stripped_line:
+            current_line = (
+                f"{current_line} {stripped_line}".strip()
+                if current_line
+                else stripped_line
+            )
+
+        if not continues:
+            if current_line:
+                normalized_requirements.append(current_line)
+                current_line = ""
+
+    if current_line:
+        normalized_requirements.append(current_line)
+
+    parsed_list = []
+    for line in normalized_requirements:
         try:
-            req = Requirement(stripped_line)
+            req = Requirement(line)
             parsed_list.append(req)
         except InvalidRequirement:
             # INFO and not WARN/ERROR as we intentionally don't support all ways to specify Python requirements
@@ -480,7 +1273,9 @@ def _transform_python_requirements(
             spec = None
 
         canon_name = canonicalize_name(req.name)
-        requirement_id = f"{canon_name}|{pinned_version}" if pinned_version else canon_name
+        requirement_id = (
+            f"{canon_name}|{pinned_version}" if pinned_version else canon_name
+        )
 
         out_requirements_files.append(
             {
@@ -493,10 +1288,54 @@ def _transform_python_requirements(
         )
 
 
+def _transform_branch_protection_rules(
+    branch_protection_rules_data: List[Dict[str, Any]],
+    repo_url: str,
+    out_branch_protection_rules: List[Dict],
+) -> None:
+    """
+    Transforms GitHub branch protection rule data from API format to Cartography format.
+    :param branch_protection_rules_data: List of branch protection rule objects from GitHub's branchProtectionRules API.
+        See tests.data.github.branch_protection_rules for data shape.
+    :param repo_url: The URL of the GitHub repository.
+    :param out_branch_protection_rules: Output array to append transformed results to.
+    :return: Nothing.
+    """
+    for rule in branch_protection_rules_data:
+        out_branch_protection_rules.append(
+            {
+                "id": rule["id"],
+                "pattern": rule["pattern"],
+                "allows_deletions": rule["allowsDeletions"],
+                "allows_force_pushes": rule["allowsForcePushes"],
+                "dismisses_stale_reviews": rule["dismissesStaleReviews"],
+                "is_admin_enforced": rule["isAdminEnforced"],
+                "requires_approving_reviews": rule["requiresApprovingReviews"],
+                "required_approving_review_count": rule["requiredApprovingReviewCount"],
+                "requires_code_owner_reviews": rule["requiresCodeOwnerReviews"],
+                "requires_commit_signatures": rule["requiresCommitSignatures"],
+                "requires_linear_history": rule["requiresLinearHistory"],
+                "requires_status_checks": rule["requiresStatusChecks"],
+                "requires_strict_status_checks": rule["requiresStrictStatusChecks"],
+                "restricts_pushes": rule["restrictsPushes"],
+                "restricts_review_dismissals": rule["restrictsReviewDismissals"],
+                "repo_url": repo_url,
+            }
+        )
+
+
 def parse_setup_cfg(config: configparser.ConfigParser) -> List[str]:
     reqs: List[str] = []
-    reqs.extend(_parse_setup_cfg_requirements(config.get("options", "install_requires", fallback="")))
-    reqs.extend(_parse_setup_cfg_requirements(config.get("options", "setup_requires", fallback="")))
+    reqs.extend(
+        _parse_setup_cfg_requirements(
+            config.get("options", "install_requires", fallback=""),
+        ),
+    )
+    reqs.extend(
+        _parse_setup_cfg_requirements(
+            config.get("options", "setup_requires", fallback=""),
+        ),
+    )
     if config.has_section("options.extras_require"):
         for _, val in config.items("options.extras_require"):
             reqs.extend(_parse_setup_cfg_requirements(val))
@@ -515,7 +1354,11 @@ def _parse_setup_cfg_requirements(reqs: str, separator: str = ";") -> List[str]:
 
 
 @timeit
-def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: List[Dict]) -> None:
+def load_github_repos(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    repo_data: List[Dict],
+) -> None:
     """
     Ingest the GitHub repository information
     :param neo4j_session: Neo4J session object for server communication
@@ -523,53 +1366,62 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
     :param repo_data: repository data objects
     :return: None
     """
-    ingest_repo = """
-    UNWIND $RepoData as repository
-
-    MERGE (repo:GitHubRepository{id: repository.id})
-    ON CREATE SET repo.firstseen = timestamp(),
-    repo.createdat = repository.createdat
-
-    SET repo.name = repository.name,
-    repo.fullname = repository.fullname,
-    repo.description = repository.description,
-    repo.primary_language = repository.primary_language,
-    repo.homepage = repository.homepage,
-    repo.default_branch = repository.default_branch,
-    repo.defaultbranchid = repository.defaultbranchid,
-    repo.is_private = repository.is_private,
-    repo.visibility = repository.visibility,
-    repo.disabled = repository.disabled,
-    repo.archived = repository.archived,
-    repo.locked = repository.locked,
-    repo.giturl = repository.giturl,
-    repo.url = repository.url,
-    repo.sshurl = repository.sshurl,
-    repo.updatedat = repository.updatedat,
-    repo.last_activity_at = repository.last_activity_at,
-    repo.last_activity_at_timestamp = repository.last_activity_at_timestamp,
-    repo.lastupdated = $UpdateTag
-
-    WITH repo
-    WHERE repo.default_branch IS NOT NULL AND repo.defaultbranchid IS NOT NULL
-    MERGE (branch:GitHubBranch{id: repo.defaultbranchid})
-    ON CREATE SET branch.firstseen = timestamp()
-    SET branch.name = repo.default_branch,
-    branch.lastupdated = $UpdateTag
-
-    MERGE (repo)-[r:BRANCH]->(branch)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
-    """
-    neo4j_session.run(
-        ingest_repo,
-        RepoData=repo_data,
-        UpdateTag=update_tag,
+    load_data(
+        neo4j_session,
+        GitHubRepositorySchema(),
+        repo_data,
+        lastupdated=update_tag,
     )
 
 
+def _build_branch_data(repo_data: List[Dict]) -> List[Dict]:
+    branch_data = []
+    for repo in repo_data:
+        if (
+            repo.get("defaultbranch")
+            and repo.get("defaultbranchid")
+            and repo.get("owner_org_id")
+        ):
+            branch_data.append(
+                {
+                    "id": repo["defaultbranchid"],
+                    "name": repo["defaultbranch"],
+                    "repo_id": repo["id"],
+                    "owner_org_id": repo["owner_org_id"],
+                }
+            )
+    return branch_data
+
+
 @timeit
-def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_languages: List[Dict]) -> None:
+def load_github_branches(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    repo_data: List[Dict],
+) -> None:
+    branches_by_org = defaultdict(list)
+    for branch in _build_branch_data(repo_data):
+        owner_org_id = branch["owner_org_id"]
+        branches_by_org[owner_org_id].append(
+            {k: v for k, v in branch.items() if k != "owner_org_id"}
+        )
+
+    for owner_org_id, branch_data in branches_by_org.items():
+        load_data(
+            neo4j_session,
+            GitHubBranchSchema(),
+            branch_data,
+            lastupdated=update_tag,
+            owner_org_id=owner_org_id,
+        )
+
+
+@timeit
+def load_github_languages(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    repo_languages: List[Dict],
+) -> None:
     """
     Ingest the relationships for repo languages
     :param neo4j_session: Neo4J session object for server communication
@@ -577,29 +1429,20 @@ def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_la
     :param repo_languages: list of language to repo mappings
     :return: Nothing
     """
-    ingest_languages = """
-        UNWIND $Languages as lang
-
-        MERGE (pl:ProgrammingLanguage{id: lang.language_name})
-        ON CREATE SET pl.firstseen = timestamp(),
-        pl.name = lang.language_name
-        SET pl.lastupdated = $UpdateTag
-        WITH pl, lang
-
-        MATCH (repo:GitHubRepository{id: lang.repo_id})
-        MERGE (pl)<-[r:LANGUAGE]-(repo)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $UpdateTag"""
-
-    neo4j_session.run(
-        ingest_languages,
-        Languages=repo_languages,
-        UpdateTag=update_tag,
+    load_data(
+        neo4j_session,
+        ProgrammingLanguageSchema(),
+        repo_languages,
+        lastupdated=update_tag,
     )
 
 
 @timeit
-def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owners: List[Dict]) -> None:
+def load_github_owners(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    repo_owners: List[Dict],
+) -> None:
     """
     Ingest the relationships for repo owners
     :param neo4j_session: Neo4J session object for server communication
@@ -607,235 +1450,376 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
     :param repo_owners: list of owner to repo mappings
     :return: Nothing
     """
-    for owner in repo_owners:
-        ingest_owner_template = Template("""
-            MERGE (node:$account_type{id: $Id})
-            ON CREATE SET node.firstseen = timestamp()
-            SET node.username = $UserName,
-            node.lastupdated = $UpdateTag
-            WITH node
+    organization_owners = [
+        owner for owner in repo_owners if owner["type"] == "Organization"
+    ]
+    user_owners = [owner for owner in repo_owners if owner["type"] == "User"]
 
-            MATCH (repo:GitHubRepository{id: $RepoId})
-            MERGE (node)-[r:RESOURCE]->(repo)
-            ON CREATE SET r.firstseen = timestamp()
-            SET r.lastupdated = $UpdateTag""")
+    load_data(
+        neo4j_session,
+        GitHubOwnerOrganizationSchema(),
+        organization_owners,
+        lastupdated=update_tag,
+    )
+    load_data(
+        neo4j_session,
+        GitHubOwnerUserSchema(),
+        user_owners,
+        lastupdated=update_tag,
+    )
 
-        # INFO: Only Organization is supported
-        # account_type = {'User': "GitHubUser", 'Organization': "GitHubOrganization"}
-        account_type = {"Organization": "GitHubOrganization"}
 
-        neo4j_session.run(
-            ingest_owner_template.safe_substitute(account_type=account_type[owner["type"]]),
-            Id=owner["owner"],
-            UserName=owner["owner"],
-            RepoId=owner["repo_id"],
-            UpdateTag=update_tag,
+@timeit
+def load_collaborators(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    collaborators: Dict,
+    affiliation: str,
+) -> None:
+    for collab_type, collab_data in collaborators.items():
+        relationship_label = f"{affiliation}_COLLAB_{collab_type}"
+        load_data(
+            neo4j_session,
+            make_github_collaborator_schema(relationship_label),
+            collab_data,
+            lastupdated=update_tag,
         )
 
 
 @timeit
-def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborators: Dict) -> None:
-    query = Template("""
-    UNWIND $UserData as user
-
-    MERGE (u:GitHubUser{id: user.url})
-    ON CREATE SET u.firstseen = timestamp()
-    SET u.fullname = user.name,
-    u.username = user.login,
-    u.permission = user.permission,
-    u.email = user.email,
-    u.company = user.company,
-    u.lastupdated = $UpdateTag
-
-    WITH u, user
-    MATCH (repo:GitHubRepository{id: user.repo_url})
-    MERGE (repo)<-[o:$rel_label]-(u)
-    ON CREATE SET o.firstseen = timestamp()
-    SET o.lastupdated = $UpdateTag
-    """)
-    for collab_type in collaborators.keys():
-        relationship_label = f"OUTSIDE_COLLAB_{collab_type}"
-        neo4j_session.run(
-            query.safe_substitute(rel_label=relationship_label),
-            UserData=collaborators[collab_type],
-            UpdateTag=update_tag,
-        )
+def load_python_requirements(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    requirements_objects: List[Dict],
+) -> None:
+    load_data(
+        neo4j_session,
+        GitHubPythonLibrarySchema(),
+        requirements_objects,
+        lastupdated=update_tag,
+    )
 
 
 @timeit
-def load(neo4j_session: neo4j.Session, common_job_parameters: Dict, repo_data: Dict) -> None:
-    load_github_repos(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repos"])
-    load_github_branches(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["branches"])
-    load_github_owners(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_owners"])
-    load_github_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_languages"])
-    load_collaborators(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_collaborators"])
-    load_python_requirements(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["python_requirements"])
-
-
-@timeit
-def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_data: List[Dict]) -> None:
+def load_github_dependencies(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    dependencies: List[Dict],
+) -> None:
     """
-    Ingest the GitHub branch information
+    Ingest GitHub dependency data into Neo4j using the new data model
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
-    :param branch_data: branch data objects
-    :return: None
+    :param dependencies: List of dependency objects from GitHub's dependency graph
+    :return: Nothing
     """
-    ingest_branches = """
-    UNWIND $BranchData as branch_info
-    MERGE (branch:GitHubBranch{id: branch_info.branch_id})
-    ON CREATE SET branch.firstseen = timestamp()
-    SET branch.name = branch_info.name,
-    branch.last_commit_timestamp = branch_info.last_commit_timestamp,
-    branch.lastupdated = $UpdateTag
+    # Group dependencies by both repo_url and manifest_id for schema-based loading
+    dependencies_by_repo_and_manifest = defaultdict(list)
 
-    WITH branch, branch_info
-    MATCH (repo:GitHubRepository{id: branch_info.repo_id})
-    MERGE (repo)-[r:BRANCH]->(branch)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
+    for dep in dependencies:
+        repo_url = dep["repo_url"]
+        manifest_id = dep["manifest_id"]
+        # Create a key combining both repo_url and manifest_id
+        group_key = (repo_url, manifest_id)
+        # Remove repo_url and manifest_id from the dependency object since we'll pass them as kwargs
+        dep_without_kwargs = {
+            k: v for k, v in dep.items() if k not in ["repo_url", "manifest_id"]
+        }
+        dependencies_by_repo_and_manifest[group_key].append(dep_without_kwargs)
+
+    # Load dependencies for each repository/manifest combination separately
+    for (
+        repo_url,
+        manifest_id,
+    ), group_dependencies in dependencies_by_repo_and_manifest.items():
+        load_data(
+            neo4j_session,
+            GitHubDependencySchema(),
+            group_dependencies,
+            lastupdated=update_tag,
+            repo_url=repo_url,
+            manifest_id=manifest_id,
+        )
+
+
+@timeit
+def load_github_dependency_manifests(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    manifests: List[Dict],
+) -> None:
     """
-    neo4j_session.run(
-        ingest_branches,
-        BranchData=branch_data,
-        UpdateTag=update_tag,
+    Ingest GitHub dependency manifests into Neo4j
+    """
+    manifests_by_repo = defaultdict(list)
+
+    for manifest in manifests:
+        repo_url = manifest["repo_url"]
+        manifests_by_repo[repo_url].append(manifest)
+
+    # Load manifests for each repository separately
+    for repo_url, repo_manifests in manifests_by_repo.items():
+        load_data(
+            neo4j_session,
+            DependencyGraphManifestSchema(),
+            repo_manifests,
+            lastupdated=update_tag,
+            repo_url=repo_url,
+        )
+
+
+@timeit
+def cleanup_github_dependencies(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+    repo_urls: List[str],
+) -> None:
+    # Run cleanup for each repository separately
+    for repo_url in repo_urls:
+        cleanup_params = {**common_job_parameters, "repo_url": repo_url}
+        GraphJob.from_node_schema(GitHubDependencySchema(), cleanup_params).run(
+            neo4j_session
+        )
+
+
+@timeit
+def cleanup_github_manifests(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+    repo_urls: List[str],
+) -> None:
+    """
+    Delete GitHub dependency manifests and their relationships from the graph if they were not updated in the last sync.
+    :param neo4j_session: Neo4j session
+    :param common_job_parameters: Common job parameters containing UPDATE_TAG
+    :param repo_urls: List of repository URLs to clean up manifests for
+    """
+    # Run cleanup for each repository separately
+    for repo_url in repo_urls:
+        cleanup_params = {**common_job_parameters, "repo_url": repo_url}
+        GraphJob.from_node_schema(DependencyGraphManifestSchema(), cleanup_params).run(
+            neo4j_session
+        )
+
+
+@timeit
+def load_branch_protection_rules(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    branch_protection_rules: List[Dict],
+) -> None:
+    """
+    Ingest GitHub branch protection rules into Neo4j
+    :param neo4j_session: Neo4J session object for server communication
+    :param update_tag: Timestamp used to determine data freshness
+    :param branch_protection_rules: List of branch protection rule objects from GitHub's branchProtectionRules API
+    :return: Nothing
+    """
+    # Group branch protection rules by repo_url for schema-based loading
+    rules_by_repo = defaultdict(list)
+
+    for rule in branch_protection_rules:
+        repo_url = rule["repo_url"]
+        # Remove repo_url from the rule object since we'll pass it as kwargs
+        rule_without_kwargs = {k: v for k, v in rule.items() if k != "repo_url"}
+        rules_by_repo[repo_url].append(rule_without_kwargs)
+
+    # Load branch protection rules for each repository separately
+    for repo_url, repo_rules in rules_by_repo.items():
+        load_data(
+            neo4j_session,
+            GitHubBranchProtectionRuleSchema(),
+            repo_rules,
+            lastupdated=update_tag,
+            repo_url=repo_url,
+        )
+
+
+@timeit
+def cleanup_branch_protection_rules(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+    repo_urls: List[str],
+) -> None:
+    """
+    Delete GitHub branch protection rules from the graph if they were not updated in the last sync.
+    :param neo4j_session: Neo4j session
+    :param common_job_parameters: Common job parameters containing UPDATE_TAG
+    :param repo_urls: List of repository URLs to clean up branch protection rules for
+    """
+    # Run cleanup for each repository separately
+    for repo_url in repo_urls:
+        cleanup_params = {**common_job_parameters, "repo_url": repo_url}
+        GraphJob.from_node_schema(
+            GitHubBranchProtectionRuleSchema(), cleanup_params
+        ).run(neo4j_session)
+
+
+@timeit
+def cleanup_github_repos(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    GraphJob.from_node_schema(GitHubRepositorySchema(), common_job_parameters).run(
+        neo4j_session
     )
 
 
 @timeit
-def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requirements_objects: List[Dict]) -> None:
-    query = """
-    UNWIND $Requirements AS req
-        MERGE (lib:PythonLibrary:Dependency{id: req.id})
-        ON CREATE SET lib.firstseen = timestamp(),
-        lib.name = req.name
-        SET lib.lastupdated = $UpdateTag,
-        lib.version = req.version
+def cleanup_github_branches(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+    owner_org_id: str,
+) -> None:
+    cleanup_params = {**common_job_parameters, "owner_org_id": owner_org_id}
+    GraphJob.from_node_schema(GitHubBranchSchema(), cleanup_params).run(neo4j_session)
 
-        WITH lib, req
-        MATCH (repo:GitHubRepository{id: req.repo_url})
-        MERGE (repo)-[r:REQUIRES]->(lib)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $UpdateTag,
-        r.specifier = req.specifier
+
+# DEPRECATED: Remove this migration function when releasing v1
+def cleanup_orphaned_github_branches(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    """One-time migration: clean up orphaned GitHubBranch nodes without RESOURCE rel.
+
+    Before branch cleanup was scoped to orgs, branches from removed orgs were never cleaned up.
+    This must be called once per sync cycle (not per org) to avoid repeated full-graph scans.
     """
     neo4j_session.run(
-        query,
-        Requirements=requirements_objects,
-        UpdateTag=update_tag,
+        """
+        MATCH (n:GitHubBranch)
+        WHERE n.lastupdated <> $UPDATE_TAG
+          AND NOT (n)<-[:RESOURCE]-(:GitHubOrganization)
+        WITH n LIMIT $LIMIT_SIZE
+        DETACH DELETE n
+        """,
+        UPDATE_TAG=common_job_parameters["UPDATE_TAG"],
+        LIMIT_SIZE=100,
     )
 
 
-def _build_org_repos_url(api_url: str, org_name: str) -> str:
-    api_root = api_url.rstrip("/")
-    for suffix, replacement in (
-        ("/api/v3/graphql", "/api/v3"),
-        ("/api/graphql", "/api/v3"),
-        ("/graphql", ""),
-    ):
-        if api_root.endswith(suffix):
-            api_root = f"{api_root[:-len(suffix)]}{replacement}"
-            break
-
-    return f"{api_root}/orgs/{org_name}/repos"
-
-
-def _normalize_rest_repo(repo: Dict[str, Any]) -> Dict[str, Any]:
-    owner = repo.get("owner") or {}
-    owner_login = owner.get("login")
-    owner_url = owner.get("html_url") or (
-        f"https://github.com/{owner_login}" if owner_login else owner.get("url")
+@timeit
+def cleanup_github_languages(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    GraphJob.from_node_schema(ProgrammingLanguageSchema(), common_job_parameters).run(
+        neo4j_session
     )
-    default_branch_name = repo.get("default_branch")
-
-    return {
-        "name": repo["name"],
-        "nameWithOwner": repo.get("full_name") or repo["name"],
-        "primaryLanguage": {"name": repo["language"]} if repo.get("language") else None,
-        "url": repo["html_url"],
-        "sshUrl": repo.get("ssh_url"),
-        "createdAt": repo["created_at"],
-        "description": repo.get("description"),
-        "updatedAt": repo["updated_at"],
-        "pushedAt": repo["pushed_at"],
-        "homepageUrl": repo.get("homepage"),
-        "languages": {"totalCount": 0, "nodes": []},
-        "defaultBranchRef": (
-            {"name": default_branch_name, "id": None}
-            if default_branch_name
-            else None
-        ),
-        "isPrivate": repo["private"],
-        "visibility": repo.get("visibility") or ("private" if repo["private"] else "public"),
-        "isArchived": repo.get("archived", False),
-        "isDisabled": repo.get("disabled", False),
-        "isLocked": repo.get("locked", False),
-        "owner": {
-            "url": owner_url,
-            "login": owner_login,
-            "__typename": owner.get("type", "Organization"),
-        },
-        "collaborators": None,
-        "requirements": None,
-        "setupCfg": None,
-    }
 
 
-def get_org_repos(org_name: str, access_token: str, api_url: str, retries: int = 5) -> List[Dict[str, Any]]:
-    # GitHub API endpoint for listing organization repositories
-    url = _build_org_repos_url(api_url, org_name)
+@timeit
+def cleanup_github_owners(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    GraphJob.from_node_schema(
+        GitHubOwnerOrganizationSchema(), common_job_parameters
+    ).run(neo4j_session)
+    GraphJob.from_node_schema(GitHubOwnerUserSchema(), common_job_parameters).run(
+        neo4j_session
+    )
 
-    # Headers for authentication and API version
-    headers = {"Authorization": f"token {access_token}", "Accept": "application/vnd.github.v3+json"}
 
-    all_repos = []
-    page = 1
+@timeit
+def cleanup_github_collaborators(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    for affiliation in ("DIRECT", "OUTSIDE"):
+        for permission in ("ADMIN", "MAINTAIN", "READ", "TRIAGE", "WRITE"):
+            GraphJob.from_node_schema(
+                make_github_collaborator_schema(f"{affiliation}_COLLAB_{permission}"),
+                common_job_parameters,
+            ).run(neo4j_session)
 
-    while True:
-        retry = 0
-        repos = None
-        while retry < retries:
-            try:
-                response = requests.get(
-                    url,
-                    headers=headers,
-                    params={"page": page, "per_page": 100},
-                    timeout=(60, 60),
-                )
-                response.raise_for_status()
-                repos = response.json()
-                break
-            except (
-                requests.exceptions.Timeout,
-                requests.exceptions.HTTPError,
-                requests.exceptions.ChunkedEncodingError,
-                requests.exceptions.ConnectionError,
-            ) as err:
-                retry += 1
-                if retry >= retries or not is_retryable_request_error(err):
-                    logger.error(
-                        (
-                            f"GitHub REST repository fallback failed for org `{org_name}` "
-                            f"after {retry} attempts ({describe_request_error(err)})."
-                        ),
-                        exc_info=True,
-                    )
-                    raise
-                logger.warning(
-                    (
-                        f"GitHub REST repository fallback retry for org `{org_name}` "
-                        f"after {describe_request_error(err)} ({retry}/{retries})."
-                    ),
-                )
-                time.sleep(get_retry_delay_seconds(err, retry))
 
-        if not repos:
-            break
+@timeit
+def cleanup_python_requirements(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    GraphJob.from_node_schema(GitHubPythonLibrarySchema(), common_job_parameters).run(
+        neo4j_session
+    )
 
-        all_repos.extend(repos)
-        page += 1
 
-    return all_repos
+@timeit
+def cleanup_global_resources(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    """
+    Clean up stale GitHub resources that are not scoped to a single organization.
+
+    These schemas use global cleanup semantics, so running them after each org sync can
+    delete data for orgs that have not been processed yet in the current sync cycle.
+    """
+    cleanup_github_repos(neo4j_session, common_job_parameters)
+    cleanup_github_languages(neo4j_session, common_job_parameters)
+    cleanup_github_owners(neo4j_session, common_job_parameters)
+    cleanup_github_collaborators(neo4j_session, common_job_parameters)
+    cleanup_python_requirements(neo4j_session, common_job_parameters)
+
+
+@timeit
+def load(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict,
+    repo_data: Dict,
+) -> None:
+    load_github_repos(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["repos"],
+    )
+    load_github_branches(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["repos"],
+    )
+    load_github_owners(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["repo_owners"],
+    )
+    load_github_languages(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["repo_languages"],
+    )
+    load_collaborators(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["repo_direct_collaborators"],
+        "DIRECT",
+    )
+    load_collaborators(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["repo_outside_collaborators"],
+        "OUTSIDE",
+    )
+    load_python_requirements(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["python_requirements"],
+    )
+    load_github_dependency_manifests(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["manifests"],
+    )
+    load_github_dependencies(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["dependencies"],
+    )
+    load_branch_protection_rules(
+        neo4j_session,
+        common_job_parameters["UPDATE_TAG"],
+        repo_data["branch_protection_rules"],
+    )
 
 
 def sync(
@@ -854,16 +1838,105 @@ def sync(
     :param organization: The organization to query GitHub for
     :return: Nothing
     """
-    tic = time.perf_counter()
-    logger.info("Syncing GitHub Repositories instances in account %s - url %s", organization, github_url)
-
-    # repos_list = get_org_repos(organization, github_api_key)
+    logger.info("Syncing GitHub repos")
     repos_json = get(github_api_key, github_url, organization)
+    base_repo_count = sum(1 for repo in repos_json if repo is not None)
 
-    repo_data = transform(repos_json)
+    privileged_repo_data_by_url: dict[str, dict[str, Any]] = {}
+    if _repos_need_privileged_details(repos_json):
+        try:
+            privileged_repo_data_by_url = get_repo_privileged_details_by_url(
+                github_api_key,
+                github_url,
+                organization,
+            )
+        except (requests.exceptions.RequestException, ValueError):
+            logger.warning(
+                "Failed to fetch privileged GitHub repo details for org %s; "
+                "continuing without collaborator-count and branch-protection enrichment.",
+                organization,
+                exc_info=True,
+            )
+
+    repos_json, merged_repo_count, missing_privileged_repo_count = (
+        _merge_repos_with_privileged_details(repos_json, privileged_repo_data_by_url)
+    )
+    logger.info(
+        "GitHub repo sync summary for org %s: base_repos=%d privileged_details_fetched=%d merged_repos=%d repos_missing_privileged_details=%d",
+        organization,
+        base_repo_count,
+        len(privileged_repo_data_by_url),
+        merged_repo_count,
+        missing_privileged_repo_count,
+    )
+
+    direct_collabs: dict[str, list[UserAffiliationAndRepoPermission]] = {}
+    outside_collabs: dict[str, list[UserAffiliationAndRepoPermission]] = {}
+    try:
+        direct_collabs = _get_repo_collaborators_for_multiple_repos(
+            repos_json,
+            "DIRECT",
+            organization,
+            github_url,
+            github_api_key,
+        )
+        outside_collabs = _get_repo_collaborators_for_multiple_repos(
+            repos_json,
+            "OUTSIDE",
+            organization,
+            github_url,
+            github_api_key,
+        )
+    except TypeError:
+        # due to permission errors or transient network error or some other nonsense
+        logger.warning(
+            "Unable to list repo collaborators due to permission errors; continuing on.",
+            exc_info=True,
+        )
+
+    # Fetch dependency graph manifests per-repo to avoid 502s from heavy inline queries
+    dep_manifests_by_url = _get_dep_manifests_for_repos(
+        repos_json,
+        organization,
+        github_url,
+        github_api_key,
+    )
+    for repo in repos_json:
+        if repo is not None and repo.get("url") in dep_manifests_by_url:
+            repo["dependencyGraphManifests"] = dep_manifests_by_url[repo["url"]]
+
+    repo_data = transform(repos_json, direct_collabs, outside_collabs)
     load(neo4j_session, common_job_parameters, repo_data)
+    owner_org_id = next(
+        (
+            repo["owner_org_id"]
+            for repo in repo_data["repos"]
+            if repo.get("owner_org_id")
+        ),
+        f"https://github.com/{organization}",
+    )
+    cleanup_github_branches(neo4j_session, common_job_parameters, owner_org_id)
 
-    run_cleanup_job("github_repos_cleanup.json", neo4j_session, common_job_parameters)
+    # Collect repository URLs that have dependencies for cleanup
+    repo_urls_with_dependencies = list(
+        {dep["repo_url"] for dep in repo_data["dependencies"]}
+    )
+    cleanup_github_dependencies(
+        neo4j_session, common_job_parameters, repo_urls_with_dependencies
+    )
 
-    toc = time.perf_counter()
-    logger.info(f"Time to process GitHub repositories: {toc - tic:0.4f} seconds")
+    # Collect repository URLs that have manifests for cleanup
+    repo_urls_with_manifests = list(
+        {manifest["repo_url"] for manifest in repo_data["manifests"]}
+    )
+    cleanup_github_manifests(
+        neo4j_session, common_job_parameters, repo_urls_with_manifests
+    )
+
+    # Collect repository URLs that have branch protection rules for cleanup
+    repo_urls_with_branch_protection_rules = list(
+        {rule["repo_url"] for rule in repo_data["branch_protection_rules"]}
+    )
+    cleanup_branch_protection_rules(
+        neo4j_session, common_job_parameters, repo_urls_with_branch_protection_rules
+    )

@@ -11,6 +11,7 @@ from okta.framework.OktaError import OktaError
 from okta.framework.PagedResults import PagedResults
 from okta.models.usergroup import UserGroup
 
+from cartography.client.core.tx import run_write_query
 from cartography.intel.okta.sync_state import OktaSyncState
 from cartography.intel.okta.utils import check_rate_limit
 from cartography.intel.okta.utils import create_api_client
@@ -39,9 +40,9 @@ def _get_okta_groups(api_client: ApiClient) -> List[str]:
             paged_response = api_client.get(next_url)
         else:
             params = {
-                'limit': 10000,
+                "limit": 10000,
             }
-            paged_response = api_client.get_path('/', params)
+            paged_response = api_client.get_path("/", params)
 
         paged_results = PagedResults(paged_response, UserGroup)
 
@@ -75,9 +76,9 @@ def get_okta_group_members(api_client: ApiClient, group_id: str) -> List[Dict]:
                 paged_response = api_client.get(next_url)
             else:
                 params = {
-                    'limit': 1000,
+                    "limit": 1000,
                 }
-                paged_response = api_client.get_path(f'/{group_id}/users', params)
+                paged_response = api_client.get_path(f"/{group_id}/users", params)
         except OktaError:
             logger.error(f"OktaError while listing members of group {group_id}")
             raise
@@ -95,7 +96,9 @@ def get_okta_group_members(api_client: ApiClient, group_id: str) -> List[Dict]:
 
 
 @timeit
-def transform_okta_group_list(okta_group_list: List[UserGroup]) -> Tuple[List[Dict], List[str]]:
+def transform_okta_group_list(
+    okta_group_list: List[UserGroup],
+) -> Tuple[List[Dict], List[str]]:
     groups: List[Dict] = []
     groups_id: List[str] = []
 
@@ -128,7 +131,9 @@ def transform_okta_group(okta_group: UserGroup) -> Dict:
         group_props["dn"] = None
 
     if okta_group.profile.windowsDomainQualifiedName:
-        group_props["windows_domain_qualified_name"] = okta_group.profile.windowsDomainQualifiedName
+        group_props["windows_domain_qualified_name"] = (
+            okta_group.profile.windowsDomainQualifiedName
+        )
     else:
         group_props["windows_domain_qualified_name"] = None
 
@@ -146,27 +151,31 @@ def transform_okta_group_member_list(okta_member_list: List[Dict]) -> List[Dict]
     """
     transformed_member_list: List[Dict] = []
     for user in okta_member_list:
-        transformed_member_list.append({
-            'first_name': user['profile']['firstName'],
-            'last_name': user['profile']['lastName'],
-            'login': user['profile']['login'],
-            'email': user['profile']['email'],
-            'second_email': user['profile'].get('secondEmail'),
-            'id': user['id'],
-            'created': user['created'],
-            'activated': user.get('activated'),
-            'status_changed': user.get('status_changed'),
-            'last_login': user.get('last_login'),
-            'okta_last_updated': user.get('okta_last_updated'),
-            'password_changed': user.get('password_changed'),
-            'transition_to_status': user.get('transitioningToStatus'),
-        })
+        transformed_member_list.append(
+            {
+                "first_name": user["profile"]["firstName"],
+                "last_name": user["profile"]["lastName"],
+                "login": user["profile"]["login"],
+                "email": user["profile"]["email"],
+                "second_email": user["profile"].get("secondEmail"),
+                "id": user["id"],
+                "created": user["created"],
+                "activated": user.get("activated"),
+                "status_changed": user.get("status_changed"),
+                "last_login": user.get("last_login"),
+                "okta_last_updated": user.get("okta_last_updated"),
+                "password_changed": user.get("password_changed"),
+                "transition_to_status": user.get("transitioningToStatus"),
+            },
+        )
     return transformed_member_list
 
 
 @timeit
 def _load_okta_groups(
-    neo4j_session: neo4j.Session, okta_org_id: str, group_list: List[Dict],
+    neo4j_session: neo4j.Session,
+    okta_org_id: str,
+    group_list: List[Dict],
     okta_update_tag: int,
 ) -> None:
     """
@@ -189,14 +198,20 @@ def _load_okta_groups(
     new_group.dn = group_data.dn,
     new_group.windows_domain_qualified_name = group_data.windows_domain_qualified_name,
     new_group.external_id = group_data.external_id,
-    new_group.lastupdated = $okta_update_tag
+    new_group.lastupdated = $okta_update_tag,
+    new_group:UserGroup,
+    new_group._module_name = "cartography:okta",
+    new_group._ont_name = group_data.name,
+    new_group._ont_description = group_data.description,
+    new_group._ont_source = "okta"
     WITH new_group, org
     MERGE (org)-[org_r:RESOURCE]->(new_group)
     ON CREATE SET org_r.firstseen = timestamp()
     SET org_r.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_statement,
         ORG_ID=okta_org_id,
         GROUP_LIST=group_list,
@@ -206,7 +221,9 @@ def _load_okta_groups(
 
 @timeit
 def load_okta_group_members(
-    neo4j_session: neo4j.Session, group_id: str, member_list: List[Dict],
+    neo4j_session: neo4j.Session,
+    group_id: str,
+    member_list: List[Dict],
     okta_update_tag: int,
 ) -> None:
     """
@@ -240,8 +257,9 @@ def load_okta_group_members(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $okta_update_tag
     """
-    logging.info(f'Loading {len(member_list)} members of group {group_id}')
-    neo4j_session.run(
+    logging.info(f"Loading {len(member_list)} members of group {group_id}")
+    run_write_query(
+        neo4j_session,
         ingest,
         GROUP_ID=group_id,
         MEMBER_LIST=member_list,
@@ -251,7 +269,9 @@ def load_okta_group_members(
 
 @timeit
 def sync_okta_group_membership(
-    neo4j_session: neo4j.Session, api_client: ApiClient, group_list_info: List[Dict],
+    neo4j_session: neo4j.Session,
+    api_client: ApiClient,
+    group_list_info: List[Dict],
     okta_update_tag: int,
 ) -> None:
     """
@@ -266,14 +286,25 @@ def sync_okta_group_membership(
     for group_info in group_list_info:
         group_id = group_info["id"]
         members_data: List[Dict] = get_okta_group_members(api_client, group_id)
-        transformed_member_data: List[Dict] = transform_okta_group_member_list(members_data)
-        load_okta_group_members(neo4j_session, group_id, transformed_member_data, okta_update_tag)
+        transformed_member_data: List[Dict] = transform_okta_group_member_list(
+            members_data,
+        )
+        load_okta_group_members(
+            neo4j_session,
+            group_id,
+            transformed_member_data,
+            okta_update_tag,
+        )
 
 
 @timeit
 def sync_okta_groups(
-    neo4_session: neo4j.Session, okta_org_id: str, okta_update_tag: int, okta_api_key: str,
+    neo4_session: neo4j.Session,
+    okta_org_id: str,
+    okta_update_tag: int,
+    okta_api_key: str,
     sync_state: OktaSyncState,
+    okta_base_domain: str = "okta.com",
 ) -> None:
     """
     Synchronize okta groups
@@ -282,10 +313,13 @@ def sync_okta_groups(
     :param okta_update_tag: The timestamp value to set our new Neo4j resources with
     :param okta_api_key: Okta API key
     :param sync_state: Okta sync state
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: Nothing
     """
     logger.info("Syncing Okta groups")
-    api_client = create_api_client(okta_org_id, "/api/v1/groups", okta_api_key)
+    api_client = create_api_client(
+        okta_org_id, "/api/v1/groups", okta_api_key, okta_base_domain
+    )
 
     okta_group_data = _get_okta_groups(api_client)
     group_list_info, group_ids = transform_okta_group_list(okta_group_data)
@@ -295,4 +329,9 @@ def sync_okta_groups(
 
     _load_okta_groups(neo4_session, okta_org_id, group_list_info, okta_update_tag)
 
-    sync_okta_group_membership(neo4_session, api_client, group_list_info, okta_update_tag)
+    sync_okta_group_membership(
+        neo4_session,
+        api_client,
+        group_list_info,
+        okta_update_tag,
+    )

@@ -19,16 +19,19 @@ def is_last_page(response: PagedResults) -> bool:
     return not ("next" in response.links)
 
 
-def create_api_client(okta_org: str, path_name: str, api_key: str) -> ApiClient:
+def create_api_client(
+    okta_org: str, path_name: str, api_key: str, okta_base_domain: str = "okta.com"
+) -> ApiClient:
     """
     Create Okta ApiClient
     :param okta_org: Okta organization name
     :param path_name: API Path
     :param api_key: Okta api key
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: Instance of ApiClient
     """
     api_client = ApiClient(
-        base_url=f"https://{okta_org}.okta.com/",
+        base_url=f"https://{okta_org}.{okta_base_domain}/",
         pathname=path_name,
         api_token=api_key,
     )
@@ -43,9 +46,9 @@ def check_rate_limit(response: Response) -> None:
     """
     rate_limit_threshold = 0.1
 
-    remaining = response.headers.get('x-rate-limit-remaining')
-    limit = response.headers.get('x-rate-limit-limit')
-    reset_time = response.headers.get('x-rate-limit-reset')
+    remaining = response.headers.get("x-rate-limit-remaining")
+    limit = response.headers.get("x-rate-limit-limit")
+    reset_time = response.headers.get("x-rate-limit-reset")
 
     if remaining and limit and reset_time:
         if (int(remaining) / int(limit)) < rate_limit_threshold:
@@ -58,5 +61,7 @@ def check_rate_limit(response: Response) -> None:
                     f"Okta API limit exceeded. Sleep time of {sleep_time_seconds} would exceed one minute. Crashing "
                     f"Okta sync to avoid blocking.",
                 )
-            logger.warning(f"Okta rate limit threshold reached. Waiting {sleep_time_seconds} seconds.")
+            logger.warning(
+                f"Okta rate limit threshold reached. Waiting {sleep_time_seconds} seconds.",
+            )
             time.sleep(sleep_time_seconds)

@@ -1,186 +1,158 @@
-CLOUDRUN_AUTHORIZED_DOMAINS = [
+MOCK_SERVICES = {
+    "services": [
+        {
+            "name": "projects/test-project/locations/us-central1/services/test-service",
+            "labels": {
+                "env": "prod",
+                "team": "api",
+            },
+            "description": "Test Cloud Run service",
+            "uri": "https://test-service-abc123-uc.a.run.app",
+            "ingress": "INGRESS_TRAFFIC_ALL",
+            "latestReadyRevision": "projects/test-project/locations/us-central1/services/test-service/revisions/test-service-00001-abc",
+            "template": {
+                "serviceAccount": "test-sa@test-project.iam.gserviceaccount.com",
+                "containers": [
+                    {
+                        "image": "us-central1-docker.pkg.dev/test-project/runtime-repo/test-image:latest",
+                    },
+                ],
+            },
+        },
+    ],
+}
+
+MOCK_REVISIONS = {
+    "revisions": [
+        {
+            "name": "projects/test-project/locations/us-central1/services/test-service/revisions/test-service-00001-abc",
+            "service": "test-service",
+            "containers": [
+                {
+                    "image": "us-central1-docker.pkg.dev/test-project/runtime-repo/test-image:latest",
+                },
+            ],
+            "serviceAccount": "test-sa@test-project.iam.gserviceaccount.com",
+            "logUri": "https://console.cloud.google.com/logs/viewer?project=test-project",
+        },
+    ],
+}
+
+MOCK_JOBS = {
+    "jobs": [
+        {
+            "name": "projects/test-project/locations/us-west1/jobs/test-job",
+            "labels": {
+                "env": "staging",
+                "team": "batch",
+            },
+            "template": {
+                "template": {
+                    "containers": [
+                        {
+                            "image": "us-west1-docker.pkg.dev/test-project/runtime-repo/batch-processor:v1",
+                        },
+                    ],
+                    "serviceAccount": "batch-sa@test-project.iam.gserviceaccount.com",
+                },
+            },
+        },
+    ],
+}
+
+TEST_REVISION_PRIMARY_DIGEST = (
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+)
+TEST_REVISION_SIDECAR_DIGEST = (
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+)
+TEST_JOB_PRIMARY_DIGEST = (
+    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+)
+TEST_JOB_SIDECAR_DIGEST = (
+    "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+)
+
+MOCK_REVISION_WITH_DIGEST = [
     {
-        'id': 'example123.com',
-    },
-    {
-        'id': 'example456.com',
-    },
-]
-CLOUDRUN_CONFIGURATIONS = [
-    {
-        'id': 'configuration123',
-        'metadata': {
-            'name': 'configuration123',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/configuration123',
-            'uid': 'configuration123',
-            'resourceVersion': 'version1.1',
-            'creationTimestamp': '2020-10-02T15:01:23Z',
-            'deletionTimestamp': '2021-10-02T15:01:23Z',
-            'clusterName': 'cluster123',
-        },
-        'spec': {
-            'observedGeneration': 2,
-            'latestCreatedRevisionName': 'revision1',
-            'latestReadyRevisionName': 'revision2',
-        },
-    },
-    {
-        'id': 'configuration456',
-        'metadata': {
-            'name': 'configuration456',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/configuration456',
-            'uid': 'configuration456',
-            'resourceVersion': 'version1.2',
-            'creationTimestamp': '2019-10-02T15:01:23Z',
-            'deletionTimestamp': '2020-10-02T15:01:23Z',
-            'clusterName': 'cluster456',
-        },
-        'spec': {
-            'observedGeneration': 3,
-            'latestCreatedRevisionName': 'revision1',
-            'latestReadyRevisionName': 'revision2',
-        },
-    },
-]
-CLOUDRUN_DOMAIN_MAPPINGS = [
-    {
-        'id': 'domainmap123',
-        'metadata': {
-            'name': 'domainmap123',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/domainmap123',
-            'uid': 'domainmap123',
-            'resourceVersion': 'version1.1',
-            'creationTimestamp': '2020-10-02T15:01:23Z',
-            'deletionTimestamp': '2021-10-02T15:01:23Z',
-        },
-        'spec': {
-            'routeName': 'route123',
-            'certificateMode': 'AUTOMATIC',
-            'forceOverride': True,
-        },
-    },
-    {
-        'id': 'domainmap456',
-        'metadata': {
-            'name': 'domainmap456',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/domainmap456',
-            'uid': 'domainmap456',
-            'resourceVersion': 'version1.2',
-            'creationTimestamp': '2019-10-02T15:01:23Z',
-            'deletionTimestamp': '2020-10-02T15:01:23Z',
-        },
-        'spec': {
-            'routeName': 'route456',
-            'certificateMode': 'AUTOMATIC',
-            'forceOverride': True,
-        },
-    },
-]
-CLOUDRUN_REVISIONS = [
-    {
-        'id': 'revision123',
-        'metadata': {
-            'name': 'revision123',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/revision123',
-            'uid': 'revision123',
-            'resourceVersion': 'version1.1',
-            'creationTimestamp': '2020-10-02T15:01:23Z',
-            'deletionTimestamp': '2021-10-02T15:01:23Z',
-        },
-        'spec': {
-            'containerConcurrency': 80,
-            'timeoutSeconds': 300,
-        },
-    },
-    {
-        'id': 'revision456',
-        'metadata': {
-            'name': 'revision456',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/revision456',
-            'uid': 'revision456',
-            'resourceVersion': 'version1.2',
-            'creationTimestamp': '2019-10-02T15:01:23Z',
-            'deletionTimestamp': '2020-10-02T15:01:23Z',
-        },
-        'spec': {
-            'containerConcurrency': 80,
-            'timeoutSeconds': 300,
-        },
+        "name": "projects/test-project/locations/us-central1/services/test-service/revisions/test-service-00001-abc",
+        "service": "test-service",
+        "containers": [
+            {
+                "image": "us-central1-docker.pkg.dev/test-project/runtime-repo/test-image"
+                f"@{TEST_REVISION_PRIMARY_DIGEST}",
+            },
+            {
+                "image": "us-central1-docker.pkg.dev/test-project/runtime-repo/log-sidecar"
+                f"@{TEST_REVISION_SIDECAR_DIGEST}",
+            },
+        ],
+        "serviceAccount": "test-sa@test-project.iam.gserviceaccount.com",
+        "logUri": "https://console.cloud.google.com/logs/viewer?project=test-project",
     },
 ]
-CLOUDRUN_ROUTES = [
+
+# Service mock whose template mirrors MOCK_REVISION_WITH_DIGEST (the latestReadyRevision spec
+# is exposed inline as service.template in the v2 API).
+MOCK_SERVICE_WITH_DIGEST = [
     {
-        'id': 'route123',
-        'metadata': {
-            'name': 'route123',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/route123',
-            'uid': 'route123',
-            'resourceVersion': 'version1.1',
-            'creationTimestamp': '2020-10-02T15:01:23Z',
-            'deletionTimestamp': '2021-10-02T15:01:23Z',
-        },
-        'status': {
-            'observedGeneration': 2,
-            'url': 'example123.com',
-        },
-    },
-    {
-        'id': 'route456',
-        'metadata': {
-            'name': 'route456',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/route456',
-            'uid': 'route456',
-            'resourceVersion': 'version1.2',
-            'creationTimestamp': '2019-10-02T15:01:23Z',
-            'deletionTimestamp': '2020-10-02T15:01:23Z',
-        },
-        'status': {
-            'observedGeneration': 3,
-            'url': 'example123.com',
+        "name": "projects/test-project/locations/us-central1/services/test-service",
+        "labels": {},
+        "description": "Test Cloud Run service",
+        "uri": "https://test-service-abc123-uc.a.run.app",
+        "ingress": "INGRESS_TRAFFIC_ALL",
+        "latestReadyRevision": "projects/test-project/locations/us-central1/services/test-service/revisions/test-service-00001-abc",
+        "template": {
+            "serviceAccount": "test-sa@test-project.iam.gserviceaccount.com",
+            "containers": [
+                {
+                    "image": "us-central1-docker.pkg.dev/test-project/runtime-repo/test-image"
+                    f"@{TEST_REVISION_PRIMARY_DIGEST}",
+                },
+                {
+                    "image": "us-central1-docker.pkg.dev/test-project/runtime-repo/log-sidecar"
+                    f"@{TEST_REVISION_SIDECAR_DIGEST}",
+                },
+            ],
         },
     },
 ]
-CLOUDRUN_SERVICES = [
+
+MOCK_JOB_WITH_DIGEST = [
     {
-        'id': 'service123',
-        'metadata': {
-            'name': 'service123',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/service123',
-            'uid': 'service123',
-            'resourceVersion': 'version1.1',
-            'creationTimestamp': '2020-10-02T15:01:23Z',
-            'deletionTimestamp': '2021-10-02T15:01:23Z',
-        },
-        'status': {
-            'observedGeneration': 1,
-            'latestReadyRevisionName': 'revision1.1',
-            'latestCreatedRevisionName': 'revision1.2',
-        },
-    },
-    {
-        'id': 'service456',
-        'metadata': {
-            'name': 'service456',
-            'namespace': 'project123',
-            'selfLink': 'example123.com/service456',
-            'uid': 'service456',
-            'resourceVersion': 'version1.2',
-            'creationTimestamp': '2019-10-02T15:01:23Z',
-            'deletionTimestamp': '2020-10-02T15:01:23Z',
-        },
-        'status': {
-            'observedGeneration': 2,
-            'latestReadyRevisionName': 'revision1.2',
-            'latestCreatedRevisionName': 'revision1.3',
+        "name": "projects/test-project/locations/us-west1/jobs/test-job",
+        "labels": {},
+        "template": {
+            "template": {
+                "containers": [
+                    {
+                        "image": "us-west1-docker.pkg.dev/test-project/runtime-repo/batch-processor"
+                        f"@{TEST_JOB_PRIMARY_DIGEST}",
+                    },
+                    {
+                        "image": "us-west1-docker.pkg.dev/test-project/runtime-repo/otel-sidecar"
+                        f"@{TEST_JOB_SIDECAR_DIGEST}",
+                    },
+                ],
+                "serviceAccount": "batch-sa@test-project.iam.gserviceaccount.com",
+            },
         },
     },
 ]
+
+MOCK_EXECUTIONS = {
+    "executions": [
+        {
+            "name": "projects/test-project/locations/us-west1/jobs/test-job/executions/test-job-exec-001",
+            "cancelledCount": 0,
+            "failedCount": 0,
+            "succeededCount": 5,
+        },
+        {
+            "name": "projects/test-project/locations/us-west1/jobs/test-job/executions/test-job-exec-002",
+            "cancelledCount": 1,
+            "failedCount": 3,
+            "succeededCount": 2,
+        },
+    ],
+}

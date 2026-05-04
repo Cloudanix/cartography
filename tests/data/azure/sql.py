@@ -5,19 +5,10 @@ DESCRIBE_SERVERS = [
         "type": "Microsoft.Sql/servers",
         "location": "Central India",
         "kind": "v12.0",
-        "private_endpoint_connections": [
-            {
-                "id": "pec1",
-                "properties": {
-                    "provisioning_state": "Ready",
-                    "private_endpoint": {
-                        "id": "private-endpoint-name",
-                    },
-                },
-            },
-        ],
         "version": "12.0",
         "state": "Ready",
+        "tags": {"env": "prod", "service": "sql"},
+        "resourceGroup": "TestRG",
     },
     {
         "id": "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Sql/servers/testSQL2",
@@ -27,6 +18,8 @@ DESCRIBE_SERVERS = [
         "kind": "v12.0",
         "version": "12.0",
         "state": "Ready",
+        "tags": {"env": "prod", "dept": "finance"},
+        "resourceGroup": "TestRG",
     },
 ]
 
@@ -265,32 +258,28 @@ DESCRIBE_THREAT_DETECTION_POLICY = [
         "id": server1 + "/databases/testdb1/securityAlertPolicies/TDP1",
         "name": "TDP1",
         "type": "Microsoft.Sql/servers/databases/securityAlertPolicies",
-        "location": "Central India",
-        "kind": "V12",
         "state": "Enabled",
-        "email_account_admins": "Enabled",
-        "email_addresses": "test@microsoft.com;user@microsoft.com",
-        "disabled_alerts": "Usage_Anomaly",
+        "email_account_admins": True,
+        "email_addresses": ["test@microsoft.com", "user@microsoft.com"],
+        "disabled_alerts": ["Usage_Anomaly"],
         "retention_days": 0,
         "storageAccountAccessKey": "",
         "storage_endpoint": "",
-        "use_server_default": "Enabled",
+        "creation_time": "2024-01-15T10:30:00Z",
         "database_id": server1 + "/databases/testdb1",
     },
     {
         "id": server2 + "/databases/testdb2/securityAlertPolicies/TDP2",
         "name": "TDP2",
         "type": "Microsoft.Sql/servers/databases/securityAlertPolicies",
-        "location": "Central India",
-        "kind": "V12",
         "state": "Enabled",
-        "email_account_admins": "Enabled",
-        "email_addresses": "test@microsoft.com;user@microsoft.com",
-        "disabled_alerts": "Usage_Anomaly",
+        "email_account_admins": True,
+        "email_addresses": ["test@microsoft.com", "user@microsoft.com"],
+        "disabled_alerts": ["Usage_Anomaly"],
         "retention_days": 0,
         "storageAccountAccessKey": "",
         "storage_endpoint": "",
-        "use_server_default": "Enabled",
+        "creation_time": "2024-01-15T10:30:00Z",
         "database_id": server2 + "/databases/testdb2",
     },
 ]
@@ -334,26 +323,5 @@ DESCRIBE_TRANSPARENT_DATA_ENCRYPTIONS = [
         "type": "Microsoft.Sql/servers/databases/transparentDataEncryption",
         "status": "Enabled",
         "database_id": server2 + "/databases/testdb2",
-    },
-]
-
-DESCRIBE_FIREWALL_RULES = [
-    {
-        "id": "/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/firewallrulecrudtest-12/providers/Microsoft.Sql/servers/firewallrulecrudtest-6285/firewallRules/firewallrulecrudtest-2304",
-        "name": "firewallrulecrudtest-2304",
-        "type": "Microsoft.Sql/servers/firewallRules",
-        "location": "eastus1",
-        "server_id": server1,
-        "start_ip_address": "0.0.0.0",
-        "end_ip_address": "0.0.0.0",
-    },
-    {
-        "id": "/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/firewallrulecrudtest-12/providers/Microsoft.Sql/servers/firewallrulecrudtest-6285/firewallRules/firewallrulecrudtest-2305",
-        "name": "firewallrulecrudtest-2305",
-        "type": "Microsoft.Sql/servers/firewallRules",
-        "location": "eastus1",
-        "server_id": server2,
-        "start_ip_address": "14.65.46.34",
-        "end_ip_address": "0.0.0.0",
     },
 ]

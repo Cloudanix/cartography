@@ -7,6 +7,7 @@ from typing import List
 import neo4j
 from okta.framework.ApiClient import ApiClient
 
+from cartography.client.core.tx import run_write_query
 from cartography.intel.okta.utils import create_api_client
 from cartography.util import timeit
 
@@ -61,7 +62,9 @@ def transform_trusted_origins(data: str) -> List[Dict]:
 
 @timeit
 def _load_trusted_origins(
-    neo4j_session: neo4j.Session, okta_org_id: str, trusted_list: List[Dict],
+    neo4j_session: neo4j.Session,
+    okta_org_id: str,
+    trusted_list: List[Dict],
     okta_update_tag: int,
 ) -> None:
     """
@@ -94,7 +97,8 @@ def _load_trusted_origins(
     SET r.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest,
         ORG_ID=okta_org_id,
         TRUSTED_LIST=trusted_list,
@@ -104,8 +108,11 @@ def _load_trusted_origins(
 
 @timeit
 def sync_trusted_origins(
-    neo4j_session: neo4j.Session, okta_org_id: str, okta_update_tag: int,
+    neo4j_session: neo4j.Session,
+    okta_org_id: str,
+    okta_update_tag: int,
     okta_api_key: str,
+    okta_base_domain: str = "okta.com",
 ) -> None:
     """
     Sync trusted origins
@@ -113,12 +120,15 @@ def sync_trusted_origins(
     :param okta_org_id: okta organization id
     :param okta_update_tag: The timestamp value to set our new Neo4j resources with
     :param okta_api_key: okta api key
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: Nothing
     """
 
     logger.info("Syncing Okta Trusted Origins")
 
-    api_client = create_api_client(okta_org_id, "/api/v1/trustedOrigins", okta_api_key)
+    api_client = create_api_client(
+        okta_org_id, "/api/v1/trustedOrigins", okta_api_key, okta_base_domain
+    )
 
     trusted_data = _get_trusted_origins(api_client)
     trusted_list = transform_trusted_origins(trusted_data)

@@ -1,78 +1,115 @@
-from cartography.intel.aws.cloudtrail import load_trails
-from cartography.intel.aws.s3 import _load_s3_policies
-from cartography.intel.aws.s3 import load_s3_buckets
-from cartography.intel.aws.s3 import parse_policy
-from cartography.util import run_analysis_job
-from tests.data.aws.cloudtrail import DESCRIBE_TRAILS
-from tests.data.aws.s3 import LIST_BUCKETS
-from tests.data.aws.s3 import LIST_STATEMENTS
+import json
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-TEST_ACCOUNT_ID = '000000000000'
-TEST_REGION = 'us-east-1'
+import cartography.intel.aws.cloudtrail
+import cartography.intel.aws.cloudwatch
+from cartography.intel.aws.cloudtrail import sync
+from tests.data.aws.cloudtrail import BUCKETS
+from tests.data.aws.cloudtrail import DESCRIBE_CLOUDTRAIL_TRAILS
+from tests.data.aws.cloudwatch import GET_CLOUDWATCH_LOG_GROUPS
+from tests.integration.cartography.intel.aws.common import create_test_account
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
+
+TEST_ACCOUNT_ID = "123456789012"
+TEST_REGION = "eu-west-1"
 TEST_UPDATE_TAG = 123456789
-TEST_WORKSPACE_ID = '12345'
 
 
-def test_load_cloudtrails(neo4j_session):
-    neo4j_session.run(
-        """
-            MERGE (aws:AWSAccount{id: $aws_account_id})<-[:OWNER]-(:CloudanixWorkspace{id: $workspace_id})
-            ON CREATE SET aws.firstseen = timestamp()
-            SET aws.lastupdated = $aws_update_tag
-            """,
-        aws_account_id=TEST_ACCOUNT_ID,
-        aws_update_tag=TEST_UPDATE_TAG,
-        workspace_id=TEST_WORKSPACE_ID,
-    )
-    load_trails(neo4j_session, DESCRIBE_TRAILS, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-
-    nodes = neo4j_session.run(
-        """
-        MATCH (n:AWSCloudTrailTrail) return n.id
-        """,
+def _ensure_local_neo4j_has_test_buckets(neo4j_session):
+    cartography.intel.aws.s3.load_s3_buckets(
+        neo4j_session,
+        BUCKETS,
+        TEST_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
     )
 
-    actual_nodes = {n["n.id"] for n in nodes}
 
-    expected_nodes = {'trail1_arn', 'trail2_arn'}
-
-    assert expected_nodes == actual_nodes
-
-
-def test_cloudtrails_analysis(neo4j_session):
-    load_s3_buckets(neo4j_session, LIST_BUCKETS, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-    policy = parse_policy('bucket-1', LIST_STATEMENTS)
-    _load_s3_policies(neo4j_session, [policy], TEST_UPDATE_TAG)
-    load_trails(neo4j_session, DESCRIBE_TRAILS, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-
-    nodes = neo4j_session.run(
-        """
-        MATCH (s3:S3Bucket)<-[:HAS_BUCKET]-(n:AWSCloudTrailTrail) return s3.id, n.id
-        """,
+def _ensure_local_neo4j_has_test_cloudwatch_log_groups(neo4j_session):
+    cartography.intel.aws.cloudwatch.load_cloudwatch_log_groups(
+        neo4j_session,
+        GET_CLOUDWATCH_LOG_GROUPS,
+        TEST_REGION,
+        TEST_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
     )
 
-    actual_nodes = {(n["n.id"], n["s3.id"]) for n in nodes}
 
-    expected_nodes = {('trail1_arn', 'bucket-1'), ('trail2_arn', 'bucket-2')}
+@patch.object(
+    cartography.intel.aws.cloudtrail,
+    "get_cloudtrail_trails",
+    return_value=DESCRIBE_CLOUDTRAIL_TRAILS,
+)
+def test_sync_cloudtrail(mock_get_trails, neo4j_session):
+    # Arrange
+    boto3_session = MagicMock()
+    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+    _ensure_local_neo4j_has_test_buckets(neo4j_session)
+    _ensure_local_neo4j_has_test_cloudwatch_log_groups(neo4j_session)
 
-    assert expected_nodes == actual_nodes
+    # Compute expected value BEFORE sync, since transform mutates the data
+    expected_selectors = json.dumps(
+        DESCRIBE_CLOUDTRAIL_TRAILS[0]["EventSelectors"],
+    )
 
-    common_job_parameters = {
-        "UPDATE_TAG": TEST_UPDATE_TAG + 1,
-        "WORKSPACE_ID": TEST_WORKSPACE_ID,
-        "AWS_ID": TEST_ACCOUNT_ID,
+    # Act
+    sync(
+        neo4j_session,
+        boto3_session,
+        [TEST_REGION],
+        TEST_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
+        {"UPDATE_TAG": TEST_UPDATE_TAG, "AWS_ID": TEST_ACCOUNT_ID},
+    )
+
+    # Assert
+    assert check_nodes(
+        neo4j_session,
+        "CloudTrailTrail",
+        ["arn", "event_selectors"],
+    ) == {
+        (
+            "arn:aws:cloudtrail:us-east-1:123456789012:trail/test-trail",
+            expected_selectors,
+        ),
     }
 
-    run_analysis_job('aws_cloudtrail_asset_exposure.json', neo4j_session, common_job_parameters)
+    assert check_rels(
+        neo4j_session,
+        "AWSAccount",
+        "id",
+        "CloudTrailTrail",
+        "arn",
+        "RESOURCE",
+        rel_direction_right=True,
+    ) == {
+        (TEST_ACCOUNT_ID, "arn:aws:cloudtrail:us-east-1:123456789012:trail/test-trail"),
+    }
 
-    nodes = neo4j_session.run(
-        """
-        MATCH (n:AWSCloudTrailTrail{anonymous_access: true}) RETURN n.id
-        """,
-    )
+    assert check_rels(
+        neo4j_session,
+        "CloudTrailTrail",
+        "arn",
+        "S3Bucket",
+        "name",
+        "LOGS_TO",
+        rel_direction_right=True,
+    ) == {
+        ("arn:aws:cloudtrail:us-east-1:123456789012:trail/test-trail", "test-bucket"),
+    }
 
-    actual_nodes = {n["n.id"] for n in nodes}
-
-    expected_nodes = {'trail1_arn'}
-
-    assert expected_nodes == actual_nodes
+    assert check_rels(
+        neo4j_session,
+        "CloudTrailTrail",
+        "id",
+        "CloudWatchLogGroup",
+        "id",
+        "SENDS_LOGS_TO_CLOUDWATCH",
+        rel_direction_right=True,
+    ) == {
+        (
+            "arn:aws:cloudtrail:us-east-1:123456789012:trail/test-trail",
+            "arn:aws:logs:eu-west-1:123456789012:log-group:/aws/lambda/process-orders",
+        ),
+    }

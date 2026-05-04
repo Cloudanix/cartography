@@ -1,101 +1,140 @@
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 import cartography.intel.aws.cloudwatch
-from tests.data.aws.cloudwatch import DESCRIBE_EVENT_RULES_RESPONSE
-from tests.data.aws.cloudwatch import DESCRIBE_EVENTBUS_RESPONSE
-from tests.data.aws.cloudwatch import DESCRIBE_LOG_GROUPS_RESPONSE
-from tests.data.aws.cloudwatch import DESCRIBE_METRICS_RESPONSE
+from cartography.intel.aws.cloudwatch import sync
+from tests.data.aws.cloudwatch import GET_CLOUDWATCH_LOG_GROUPS
+from tests.data.aws.cloudwatch import GET_CLOUDWATCH_LOG_METRIC_FILTERS
+from tests.data.aws.cloudwatch import GET_CLOUDWATCH_METRIC_ALARMS
+from tests.integration.cartography.intel.aws.common import create_test_account
+from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
+
+TEST_ACCOUNT_ID = "000000000000"
+TEST_REGION = "eu-west-1"
 TEST_UPDATE_TAG = 123456789
 
 
-def test_load_cloudwatch_event_bus_data(neo4j_session):
-    _ensure_local_neo4j_has_test_cloudwatch_event_bus_data(neo4j_session)
-    expected_nodes = {
-        "arn:aws:cloudwatch:us-east-1:123456789012:eventbus/466df9e0-0dff-08e3-8e2f-5088487c4896",
+@patch.object(
+    cartography.intel.aws.cloudwatch,
+    "get_cloudwatch_metric_alarms",
+    return_value=GET_CLOUDWATCH_METRIC_ALARMS,
+)
+@patch.object(
+    cartography.intel.aws.cloudwatch,
+    "get_cloudwatch_log_metric_filters",
+    return_value=GET_CLOUDWATCH_LOG_METRIC_FILTERS,
+)
+@patch.object(
+    cartography.intel.aws.cloudwatch,
+    "get_cloudwatch_log_groups",
+    return_value=GET_CLOUDWATCH_LOG_GROUPS,
+)
+def test_sync_cloudwatch(
+    mock_get_log_groups,
+    mock_get_log_metric_filters,
+    moct_get_metric_alarms,
+    neo4j_session,
+):
+    # Arrange
+    boto3_session = MagicMock()
+    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+
+    # Act
+    sync(
+        neo4j_session,
+        boto3_session,
+        [TEST_REGION],
+        TEST_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
+        {"UPDATE_TAG": TEST_UPDATE_TAG, "AWS_ID": TEST_ACCOUNT_ID},
+    )
+
+    # Assert
+    assert check_nodes(neo4j_session, "CloudWatchLogGroup", ["arn"]) == {
+        ("arn:aws:logs:eu-west-1:123456789012:log-group:/aws/lambda/process-orders",),
+        (
+            "arn:aws:logs:eu-west-1:123456789012:log-group:/aws/codebuild/sample-project",
+        ),
     }
 
-    nodes = neo4j_session.run(
-        """
-        MATCH (n:AWSEventBridgeEventBus) RETURN n.id;
-        """,
-    )
-    actual_nodes = {n['n.id'] for n in nodes}
-
-    assert actual_nodes == expected_nodes
-
-
-def _ensure_local_neo4j_has_test_cloudwatch_event_bus_data(neo4j_session):
-    cartography.intel.aws.cloudwatch.load_event_buses(
-        neo4j_session,
-        DESCRIBE_EVENTBUS_RESPONSE,
-        '123456789012',
-        TEST_UPDATE_TAG,
-    )
-
-
-def test_load_cloudwatch_log_groups_data(neo4j_session):
-    _ensure_local_neo4j_has_test_cloudwatch_log_groups_data(neo4j_session)
-    expected_nodes = {
-        "arn:aws:logs:us-west-2:0123456789012:log-group:my-logs:*",
+    assert check_nodes(neo4j_session, "CloudWatchLogMetricFilter", ["id"]) == {
+        ("/aws/lambda/process-orders:HighErrorRate",),
+        ("/aws/codebuild/sample-project:AuthFailures",),
     }
-    nodes = neo4j_session.run(
-        """
-        MATCH (n:AWSCloudWatchLogGroup) RETURN n.id;
-        """,
-    )
-    actual_nodes = {n['n.id'] for n in nodes}
 
-    assert actual_nodes == expected_nodes
-
-
-def _ensure_local_neo4j_has_test_cloudwatch_log_groups_data(neo4j_session):
-    cartography.intel.aws.cloudwatch.load_log_groups(
-        neo4j_session,
-        DESCRIBE_LOG_GROUPS_RESPONSE,
-        '123456789012',
-        TEST_UPDATE_TAG,
-    )
-
-
-def test_load_cloudwatch_metrics_data(neo4j_session):
-    _ensure_local_neo4j_has_test_cloudwatch_metrics_data(neo4j_session)
-    expected_nodes = {
-        "PublishSize",
+    assert check_nodes(neo4j_session, "CloudWatchMetricAlarm", ["arn"]) == {
+        ("arn:aws:cloudwatch:us-east-1:123456789012:alarm:HighErrorCountAlarm",),
+        ("arn:aws:cloudwatch:us-east-1:123456789012:alarm:CompositeErrorRateAlarm",),
     }
-    nodes = neo4j_session.run(
-        """
-        MATCH (n:AWSCloudWatchMetric) RETURN n.id;
-        """,
-    )
-    actual_nodes = {n['n.id'] for n in nodes}
-    assert actual_nodes == expected_nodes
 
-
-def _ensure_local_neo4j_has_test_cloudwatch_metrics_data(neo4j_session):
-    cartography.intel.aws.cloudwatch.load_metrics(
+    # Assert
+    assert check_rels(
         neo4j_session,
-        DESCRIBE_METRICS_RESPONSE,
-        '123456789012',
-        TEST_UPDATE_TAG,
-    )
-
-
-def test_load_cloudwatch_event_rules_data(neo4j_session):
-    _ensure_local_neo4j_has_test_cloudwatch_event_rules_data(neo4j_session)
-    expected_nodes = {
-        "arn:aws:events:us-east-1:123456789012:rule/test",
+        "AWSAccount",
+        "id",
+        "CloudWatchLogGroup",
+        "arn",
+        "RESOURCE",
+        rel_direction_right=True,
+    ) == {
+        (
+            TEST_ACCOUNT_ID,
+            "arn:aws:logs:eu-west-1:123456789012:log-group:/aws/lambda/process-orders",
+        ),
+        (
+            TEST_ACCOUNT_ID,
+            "arn:aws:logs:eu-west-1:123456789012:log-group:/aws/codebuild/sample-project",
+        ),
     }
-    nodes = neo4j_session.run(
-        """
-        MATCH (n:AWSEventBridgeRule) RETURN n.id;
-        """,
-    )
-    actual_nodes = {n['n.id'] for n in nodes}
-    assert actual_nodes == expected_nodes
 
-
-def _ensure_local_neo4j_has_test_cloudwatch_event_rules_data(neo4j_session):
-    cartography.intel.aws.cloudwatch.load_event_rules(
+    assert check_rels(
         neo4j_session,
-        DESCRIBE_EVENT_RULES_RESPONSE,
-        '123456789012',
-        TEST_UPDATE_TAG,
-    )
+        "AWSAccount",
+        "id",
+        "CloudWatchLogMetricFilter",
+        "id",
+        "RESOURCE",
+        rel_direction_right=True,
+    ) == {
+        (TEST_ACCOUNT_ID, "/aws/lambda/process-orders:HighErrorRate"),
+        (TEST_ACCOUNT_ID, "/aws/codebuild/sample-project:AuthFailures"),
+    }
+
+    assert check_rels(
+        neo4j_session,
+        "CloudWatchLogMetricFilter",
+        "id",
+        "CloudWatchLogGroup",
+        "log_group_name",
+        "METRIC_FILTER_OF",
+        rel_direction_right=True,
+    ) == {
+        (
+            "/aws/lambda/process-orders:HighErrorRate",
+            "/aws/lambda/process-orders",
+        ),
+        (
+            "/aws/codebuild/sample-project:AuthFailures",
+            "/aws/codebuild/sample-project",
+        ),
+    }
+
+    assert check_rels(
+        neo4j_session,
+        "AWSAccount",
+        "id",
+        "CloudWatchMetricAlarm",
+        "arn",
+        "RESOURCE",
+        rel_direction_right=True,
+    ) == {
+        (
+            TEST_ACCOUNT_ID,
+            "arn:aws:cloudwatch:us-east-1:123456789012:alarm:HighErrorCountAlarm",
+        ),
+        (
+            TEST_ACCOUNT_ID,
+            "arn:aws:cloudwatch:us-east-1:123456789012:alarm:CompositeErrorRateAlarm",
+        ),
+    }
