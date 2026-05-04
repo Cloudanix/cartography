@@ -74,9 +74,7 @@ class Session:
             logger.warning(f"Failed execute_read for neo4j. Error - {e}", exc_info=True, stack_info=True)
         return None
 
-    # Legacy alias kept for any remaining callers
-    def write_transaction(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
-        return self.execute_write(transaction_function, *args, **kwargs)
+
 
     # ------------------------------------------------------------------
     # Lifecycle helpers

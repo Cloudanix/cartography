@@ -221,7 +221,7 @@ def load_vm_image_relations(neo4j_session: neo4j.Session, vm_list: List[Dict], u
 
 def _attach_vm_properties_public_ip(tx: neo4j.Transaction, vm_id: str, update_tag) -> None:
     ingest_vm_properties = """
-    MATCH (vm:AzureVirtualMachine{id: $vm_id})-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)-[:MEMBER_PUBLIC_IP_ADDRESS]->(ip:AzurePublicIPAddress)  # noqa: E501
+    MATCH (vm:AzureVirtualMachine{id: $vm_id})-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)-[:MEMBER_PUBLIC_IP_ADDRESS]->(ip:AzurePublicIPAddress)
     SET vm.public_ip=ip.ipAddress,
     vm.is_static_ip=ip.isStaticIp,
     vm.lastupdated= $update_tag
@@ -235,7 +235,7 @@ def _attach_vm_properties_public_ip(tx: neo4j.Transaction, vm_id: str, update_ta
 
 def _attach_vm_properties_private_ip(tx: neo4j.Transaction, vm_id: str, update_tag) -> None:
     ingest_vm_properties = """
-    MATCH (vm:AzureVirtualMachine{id: $vm_id})-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)-[:CONTAINS]->(ip:AzureNetworkInterfaceIPConfiguration)  # noqa: E501
+    MATCH (vm:AzureVirtualMachine{id: $vm_id})-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)-[:CONTAINS]->(ip:AzureNetworkInterfaceIPConfiguration)
     SET vm.private_ip=ip.private_ip_address,
     vm.lastupdated = $update_tag
     """
@@ -976,8 +976,8 @@ def link_compute_to_aks(neo4j_session: neo4j.Session, update_tag: int) -> None:
     # 2. Link VM Scale Sets and VMs to the AKS Node Pool (Agent Pool)
     pool_query = """
     MATCH (node) WHERE node:AzureVirtualMachine OR node:AzureVirtualMachineScaleSet
-    WITH node WHERE node.aks_cluster_name IS NOT NULL AND node.aks_pool_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL  # noqa: E501
-    MATCH (c:AzureCluster {name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg})-[:HAS]->(p:AzureClusterAgentPool {name: node.aks_pool_name})  # noqa: E501
+    WITH node WHERE node.aks_cluster_name IS NOT NULL AND node.aks_pool_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
+    MATCH (c:AzureCluster {name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg})-[:HAS]->(p:AzureClusterAgentPool {name: node.aks_pool_name})
     MERGE (p)-[r:HAS_NODE]->(node)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag

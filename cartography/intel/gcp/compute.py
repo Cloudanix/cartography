@@ -1255,6 +1255,7 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
     subnet.gateway_address = $GatewayAddress,
     subnet.ip_cidr_range = $IpCidrRange,
     subnet.private_ip_google_access = $PrivateIpGoogleAccess,
+    subnet.vpc_partial_uri = $VpcPartialUri,
     subnet.consolelink = $consolelink,
     subnet.lastupdated = $gcp_update_tag,
     subnet.is_default = $isDefault
