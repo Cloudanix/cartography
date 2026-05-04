@@ -798,6 +798,7 @@ def run_aws(request):
         partial=request.get("params", {}).get("partial", False),
         manual_run=request.get("params", {}).get("manualRun", False),
         dc=request.get("params", {}).get("dc", "US"),
+        aws_excluded_regions=request.get("awsExcludedRegions", []),
     )
 
     if request["logging"]["mode"] == "verbose":
