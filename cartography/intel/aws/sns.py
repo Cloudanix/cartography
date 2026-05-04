@@ -1,205 +1,225 @@
 import logging
-import time
+from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
-from botocore.exceptions import ClientError
-try:
-    from cloudconsolelink.clouds.aws import AWSLinker
-except ImportError:
-    AWSLinker = None
 
-from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.models.aws.sns.topic import SNSTopicSchema
+from cartography.models.aws.sns.topic_subscription import SNSTopicSubscriptionSchema
+from cartography.stats import get_stats_client
 from cartography.util import aws_handle_regions
-from cartography.util import run_cleanup_job
+from cartography.util import merge_module_sync_metadata
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker() if AWSLinker else None
+stat_handler = get_stats_client(__name__)
 
 
-@aws_handle_regions
 @timeit
-def list_subscriptions(boto3_session: boto3.session.Session, region):
-    # List all Subscriptions
-    subscriptions = []
+@aws_handle_regions
+def get_sns_topics(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+    """
+    Get all SNS Topics for a region.
+    """
+    client = create_boto3_client(boto3_session, "sns", region_name=region)
+    paginator = client.get_paginator("list_topics")
+    topics = []
+    for page in paginator.paginate():
+        topics.extend(page.get("Topics", []))
+
+    return topics
+
+
+@timeit
+def get_topic_attributes(
+    boto3_session: boto3.session.Session, topic_arn: str, region: str
+) -> Optional[Dict]:
+    """
+    Get attributes for an SNS Topic.
+    """
+    client = create_boto3_client(boto3_session, "sns", region_name=region)
     try:
-        client = boto3_session.client('sns', region_name=region, config=get_botocore_config())
-        paginator = client.get_paginator('list_subscriptions')
+        return client.get_topic_attributes(TopicArn=topic_arn)
+    except Exception as e:
+        logger.warning(f"Error getting attributes for SNS topic {topic_arn}: {e}")
+        return None
 
-        page_iterator = paginator.paginate()
-        for page in page_iterator:
-            subscriptions.extend(page.get('Subscriptions', []))
 
-    except ClientError as e:
-        logger.error(f'Failed to call SNS list_subscriptions: {region} - {e}')
+def transform_sns_topics(
+    topics: List[Dict], attributes: Dict[str, Dict], region: str
+) -> List[Dict]:
+    """
+    Transform SNS topic data for ingestion
+    """
+    transformed_topics = []
+    for topic in topics:
+        topic_arn = topic["TopicArn"]
+
+        # Extract topic name from ARN
+        # Format: arn:aws:sns:region:account-id:topic-name
+        topic_name = topic_arn.split(":")[-1]
+
+        # Get attributes
+        topic_attrs = attributes.get(topic_arn, {}).get("Attributes", {})
+
+        transformed_topic = {
+            "TopicArn": topic_arn,
+            "TopicName": topic_name,
+            "DisplayName": topic_attrs.get("DisplayName", ""),
+            "Owner": topic_attrs.get("Owner", ""),
+            "SubscriptionsPending": int(topic_attrs.get("SubscriptionsPending", "0")),
+            "SubscriptionsConfirmed": int(
+                topic_attrs.get("SubscriptionsConfirmed", "0")
+            ),
+            "SubscriptionsDeleted": int(topic_attrs.get("SubscriptionsDeleted", "0")),
+            "DeliveryPolicy": topic_attrs.get("DeliveryPolicy", ""),
+            "EffectiveDeliveryPolicy": topic_attrs.get("EffectiveDeliveryPolicy", ""),
+            "KmsMasterKeyId": topic_attrs.get("KmsMasterKeyId", ""),
+        }
+
+        transformed_topics.append(transformed_topic)
+
+    return transformed_topics
+
+
+@timeit
+def load_sns_topics(
+    neo4j_session: neo4j.Session,
+    data: List[Dict],
+    region: str,
+    aws_account_id: str,
+    update_tag: int,
+) -> None:
+    """
+    Load SNS Topics information into the graph
+    """
+    load(
+        neo4j_session,
+        SNSTopicSchema(),
+        data,
+        lastupdated=update_tag,
+        Region=region,
+        AWS_ID=aws_account_id,
+    )
+
+
+@timeit
+@aws_handle_regions
+def get_subscriptions(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict[str, Any]]:
+    """
+    Get all SNS Topics Subscriptions for a region.
+    """
+    client = create_boto3_client(boto3_session, "sns", region_name=region)
+    paginator = client.get_paginator("list_subscriptions")
+    subscriptions = []
+    for page in paginator.paginate():
+        subscriptions.extend(page.get("Subscriptions", []))
 
     return subscriptions
 
 
 @timeit
-def transform_subscriptions(subs: List[Dict], region: str) -> List[Dict]:
-    subscriptions = []
-    for subscription in subs:
-        # subscription arn - arn:aws:sns:<region>:<account_id>:<topic_name>:<subscription_id>
-        subscription['arn'] = subscription['SubscriptionArn']
-        # subscription['consolelink'] = aws_console_link.get_console_link(arn=subscription['arn'])
-        subscription['consolelink'] = ''
-        subscription['region'] = region
-        subscription['name'] = subscription['SubscriptionArn'].split(':')[-1]
-        subscriptions.append(subscription)
-
-    return subscriptions
-
-
-@timeit
-@aws_handle_regions
-def get_sns_topic(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
-    topics = []
-    try:
-        client = boto3_session.client('sns', region_name=region, config=get_botocore_config())
-        paginator = client.get_paginator('list_topics')
-
-        page_iterator = paginator.paginate()
-        for page in page_iterator:
-            topics.extend(page.get('Topics', []))
-
-        return topics
-
-    except ClientError as e:
-        logger.error(f'Failed to call SNS list_topics: {region} - {e}')
-        return topics
-
-
-@timeit
-def transform_topics(boto3_session: boto3.session.Session, tps: List[Dict], region: str) -> List[Dict]:
-    topics = []
-    try:
-        client = boto3_session.client('sns', region_name=region, config=get_botocore_config())
-        subs = list_subscriptions(boto3_session, region)
-        subscriptions = transform_subscriptions(subs, region)
-        for topic in tps:
-            topic['region'] = region
-            topic['name'] = topic['TopicArn'].split(':')[-1]
-            # topic['consolelink'] = aws_console_link.get_console_link(arn=topic['TopicArn'])
-            topic['consolelink'] = ''
-            topic['attributes'] = client.get_topic_attributes(TopicArn=topic['TopicArn']).get('Attributes', {})
-            topic['subscriptions'] = list(filter(lambda s: s['TopicArn'] == topic['TopicArn'], subscriptions))
-            topics.append(topic)
-
-        return topics
-    except ClientError as e:
-        logger.error(f'Failed to call SNS list_topics: {region} - {e}')
-        return topics
-
-
-def load_sns_topic(session: neo4j.Session, topics: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    session.write_transaction(_load_sns_topic_tx, topics, current_aws_account_id, aws_update_tag)
-
-
-@timeit
-def _load_sns_topic_tx(tx: neo4j.Transaction, topics: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    query: str = """
-    UNWIND $Records as record
-    MERGE (topic:AWSSNSTopic{id: record.TopicArn})
-    ON CREATE SET topic.firstseen = timestamp(),
-        topic.arn = record.TopicArn
-    SET topic.lastupdated = $aws_update_tag,
-        topic.name = record.name,
-        topic.consolelink = record.consolelink,
-        topic.region = record.region,
-        topic.subscriptions_confirmed = record.attributes.SubscriptionsConfirmed,
-        topic.display_name = record.attributes.DisplayName,
-        topic.subscriptions_deleted = record.attributes.SubscriptionsDeleted,
-        topic.owner = record.attributes.Owner,
-        topic.subscriptions_pending = record.attributes.SubscriptionsPending,
-        topic.kms_master_key_id = record.attributes.KmsMasterKeyId
-    WITH topic
-    MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
-    MERGE (owner)-[r:RESOURCE]->(topic)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
+def load_sns_topic_subscription(
+    neo4j_session: neo4j.Session,
+    data: List[Dict[str, Any]],
+    region: str,
+    aws_account_id: str,
+    update_tag: int,
+) -> None:
     """
+    Load SNS Topic Subscription information into the graph
+    """
+    logger.info(
+        f"Loading {len(data)} SNS topic subscription for region {region} into graph."
+    )
 
-    tx.run(
-        query,
-        Records=topics,
-        AWS_ACCOUNT_ID=current_aws_account_id,
-        aws_update_tag=aws_update_tag,
+    load(
+        neo4j_session,
+        SNSTopicSubscriptionSchema(),
+        data,
+        lastupdated=update_tag,
+        Region=region,
+        AWS_ID=aws_account_id,
     )
 
 
 @timeit
-def cleanup_sns_topic(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_sns_topic_cleanup.json', neo4j_session, common_job_parameters)
-
-
-@timeit
-def load_sns_subscription_topic(session: neo4j.Session, subscriptions: List[Dict], topic_arn: str, aws_update_tag: int) -> None:
-    session.write_transaction(_load_sns_topic_subscription_tx, subscriptions, topic_arn, aws_update_tag)
-
-
-@timeit
-def _load_sns_topic_subscription_tx(tx: neo4j.Transaction, subscriptions: List[Dict], topic_arn: str, aws_update_tag: int) -> None:
-    query: str = """
-    UNWIND $Records as record
-    MERGE (sub:AWSSNSTopicSubscription{id: record.SubscriptionArn})
-    ON CREATE SET sub.firstseen = timestamp(),
-        sub.arn = record.SubscriptionArn
-    SET sub.lastupdated = $aws_update_tag,
-        sub.name = record.name,
-        sub.region = record.region,
-        sub.consolelink = record.consolelink,
-        sub.Endpoint = record.Endpoint,
-        sub.Protocol = record.Protocol,
-        sub.owner = record.Owner
-    WITH sub
-    MATCH (owner:AWSSNSTopic{id: $Topic_ARN})
-    MERGE (owner)-[r:RESOURCE]->(sub)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
+def cleanup_sns(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """
+    Run SNS cleanup job
+    """
+    logger.debug("Running SNS cleanup job.")
+    cleanup_job = GraphJob.from_node_schema(SNSTopicSchema(), common_job_parameters)
+    cleanup_job.run(neo4j_session)
 
-    tx.run(
-        query,
-        Records=subscriptions,
-        Topic_ARN=topic_arn,
-        aws_update_tag=aws_update_tag,
+    cleanup_job = GraphJob.from_node_schema(
+        SNSTopicSubscriptionSchema(), common_job_parameters
     )
-
-
-@timeit
-def cleanup_sns_topic_subscription(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_sns_topic_subscription_cleanup.json', neo4j_session, common_job_parameters)
+    cleanup_job.run(neo4j_session)
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
-    tic = time.perf_counter()
-
-    logger.info("Syncing SNS for account '%s', at %s.", current_aws_account_id, tic)
-
-    topics = []
+    """
+    Sync SNS Topics and Subscriptions for all regions
+    """
     for region in regions:
-        logger.info("Syncing SNS for region '%s' in account '%s'.", region, current_aws_account_id)
+        logger.info(
+            f"Syncing SNS Topics for {region} in account {current_aws_account_id}"
+        )
+        topics = get_sns_topics(boto3_session, region)
 
-        tps = get_sns_topic(boto3_session, region)
-        topics.extend(transform_topics(boto3_session, tps, region))
+        topic_attributes = {}
+        for topic in topics:
+            topic_arn = topic["TopicArn"]
+            attrs = get_topic_attributes(boto3_session, topic_arn, region)
+            if attrs:
+                topic_attributes[topic_arn] = attrs
 
-    logger.info(f"Total SNS Topics: {len(topics)}")
+        transformed_topics = transform_sns_topics(topics, topic_attributes, region)
 
-    load_sns_topic(neo4j_session, topics, current_aws_account_id, update_tag)
+        load_sns_topics(
+            neo4j_session,
+            transformed_topics,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
 
-    for topic in topics:
-        load_sns_subscription_topic(neo4j_session, topic['subscriptions'], topic['TopicArn'], update_tag)
+        # Get and load subscriptions
+        subscriptions = get_subscriptions(boto3_session, region)
 
-    cleanup_sns_topic_subscription(neo4j_session, common_job_parameters)
-    cleanup_sns_topic(neo4j_session, common_job_parameters)
+        load_sns_topic_subscription(
+            neo4j_session,
+            subscriptions,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
 
-    toc = time.perf_counter()
-    logger.info(f"Time to process SNS: {toc - tic:0.4f} seconds")
+    # Cleanup and metadata update (outside region loop)
+    cleanup_sns(neo4j_session, common_job_parameters)
+
+    merge_module_sync_metadata(
+        neo4j_session,
+        group_type="AWSAccount",
+        group_id=current_aws_account_id,
+        synced_type="SNSTopic",
+        update_tag=update_tag,
+        stat_handler=stat_handler,
+    )

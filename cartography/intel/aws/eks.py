@@ -1,67 +1,64 @@
+import base64
+import binascii
 import logging
-import time
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
 
 import boto3
 import neo4j
-try:
-    from cloudconsolelink.clouds.aws import AWSLinker
-except ImportError:
-    AWSLinker = None
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.x509.extensions import ExtensionNotFound
+from cryptography.x509.oid import ExtensionOID
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.models.aws.eks.clusters import EKSClusterSchema
-from cartography.models.aws.eks.nodegroups import EKSClusterNodeGroupSchema
 from cartography.util import aws_handle_regions
-from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
 @aws_handle_regions
 def get_eks_clusters(boto3_session: boto3.session.Session, region: str) -> List[str]:
-    client = boto3_session.client('eks', region_name=region, config=get_botocore_config())
+    client = create_boto3_client(boto3_session, "eks", region_name=region)
     clusters: List[str] = []
-    paginator = client.get_paginator('list_clusters')
+    paginator = client.get_paginator("list_clusters")
     for page in paginator.paginate():
-        clusters.extend(page['clusters'])
-
-    clusters_data = []
-    for cluster in clusters:
-        cluster_data = {}
-        cluster_data['name'] = cluster
-        cluster_data['region'] = region
-        clusters_data.append(cluster_data)
-    return clusters_data
+        clusters.extend(page["clusters"])
+    return clusters
 
 
 @timeit
-def get_eks_describe_cluster(boto3_session: boto3.session.Session, region: str, cluster_name: str) -> Dict:
-    client = boto3_session.client('eks', region_name=region, config=get_botocore_config())
+def get_eks_describe_cluster(
+    boto3_session: boto3.session.Session,
+    region: str,
+    cluster_name: str,
+) -> Dict:
+    client = create_boto3_client(boto3_session, "eks", region_name=region)
     response = client.describe_cluster(name=cluster_name)
-    response['cluster']['region'] = region
-    response['cluster']['consolelink'] = aws_console_link.get_console_link(arn=response['cluster']['arn'])
-    return response['cluster']
+    return response["cluster"]
 
 
 @timeit
 def load_eks_clusters(
-        neo4j_session: neo4j.Session,
-        cluster_data: List[Dict[str, Any]],
-        current_aws_account_id: str,
-        aws_update_tag: int,
+    neo4j_session: neo4j.Session,
+    cluster_data: List[Dict[str, Any]],
+    region: str,
+    current_aws_account_id: str,
+    aws_update_tag: int,
 ) -> None:
     load(
         neo4j_session,
         EKSClusterSchema(),
         cluster_data,
+        Region=region,
         AWS_ID=current_aws_account_id,
         lastupdated=aws_update_tag,
     )
@@ -73,163 +70,194 @@ def _process_logging(cluster: Dict) -> bool:
     at least one entry has audit logging set to Enabled.
     """
     logging: bool = False
-    cluster_logging: Any = cluster.get('logging', {}).get('clusterLogging')
+    cluster_logging: Any = cluster.get("logging", {}).get("clusterLogging")
     if cluster_logging:
-        logging = any(filter(lambda x: 'audit' in x['types'] and x['enabled'], cluster_logging))  # type: ignore
+        logging = any(filter(lambda x: "audit" in x["types"] and x["enabled"], cluster_logging))  # type: ignore
     return logging
 
 
+def _ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _get_subject_key_identifier_hex(cert: x509.Certificate) -> str | None:
+    """
+    Return the SKI extension value when present on the certificate.
+
+    This intentionally does not derive SKI from the certificate's public key.
+    """
+    try:
+        ski = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_KEY_IDENTIFIER)
+    except ExtensionNotFound:
+        return None
+    return ski.value.digest.hex()
+
+
+def _get_authority_key_identifier_hex(cert: x509.Certificate) -> str | None:
+    """
+    Return the AKI key identifier extension value when present on the certificate.
+    """
+    try:
+        aki = cert.extensions.get_extension_for_oid(
+            ExtensionOID.AUTHORITY_KEY_IDENTIFIER
+        )
+    except ExtensionNotFound:
+        return None
+    if aki.value.key_identifier:
+        return aki.value.key_identifier.hex()
+    return None
+
+
+def _parse_certificate_authority_metadata(cluster: Dict[str, Any]) -> Dict[str, Any]:
+    cert_data = cluster.get("certificateAuthority", {}).get("data")
+    cert_metadata: Dict[str, Any] = {
+        "certificate_authority_data_present": bool(cert_data),
+        "certificate_authority_parse_status": "missing",
+        "certificate_authority_parse_error": None,
+        "certificate_authority_sha256_fingerprint": None,
+        "certificate_authority_subject": None,
+        "certificate_authority_issuer": None,
+        "certificate_authority_not_before": None,
+        "certificate_authority_not_after": None,
+        "certificate_authority_subject_key_identifier": None,
+        "certificate_authority_authority_key_identifier": None,
+    }
+
+    if not cert_data:
+        return cert_metadata
+
+    cluster_name = cluster.get("name", "<unknown>")
+    cluster_arn = cluster.get("arn", "<unknown>")
+
+    try:
+        cert_bytes = base64.b64decode(cert_data, validate=True)
+    except (ValueError, binascii.Error) as err:
+        cert_metadata["certificate_authority_parse_status"] = "invalid_base64"
+        cert_metadata["certificate_authority_parse_error"] = str(err)
+        logger.warning(
+            "Failed to decode EKS cluster certificate authority data for cluster %s (%s): "
+            "status=%s error=%s",
+            cluster_name,
+            cluster_arn,
+            cert_metadata["certificate_authority_parse_status"],
+            cert_metadata["certificate_authority_parse_error"],
+        )
+        return cert_metadata
+
+    cert: x509.Certificate
+    try:
+        cert = x509.load_der_x509_certificate(cert_bytes)
+    except ValueError:
+        try:
+            cert = x509.load_pem_x509_certificate(cert_bytes)
+        except ValueError as err:
+            cert_metadata["certificate_authority_parse_status"] = "invalid_certificate"
+            cert_metadata["certificate_authority_parse_error"] = str(err)
+            logger.warning(
+                "Failed to parse EKS cluster certificate authority certificate for cluster %s (%s): "
+                "status=%s error=%s",
+                cluster_name,
+                cluster_arn,
+                cert_metadata["certificate_authority_parse_status"],
+                cert_metadata["certificate_authority_parse_error"],
+            )
+            return cert_metadata
+
+    cert_metadata["certificate_authority_parse_status"] = "parsed"
+    cert_metadata["certificate_authority_sha256_fingerprint"] = cert.fingerprint(
+        hashes.SHA256(),
+    ).hex()
+    cert_metadata["certificate_authority_subject"] = cert.subject.rfc4514_string()
+    cert_metadata["certificate_authority_issuer"] = cert.issuer.rfc4514_string()
+
+    not_before_utc = (
+        cert.not_valid_before_utc
+        if hasattr(cert, "not_valid_before_utc")
+        else cert.not_valid_before
+    )
+    not_after_utc = (
+        cert.not_valid_after_utc
+        if hasattr(cert, "not_valid_after_utc")
+        else cert.not_valid_after
+    )
+    not_before_utc = _ensure_utc(not_before_utc)
+    not_after_utc = _ensure_utc(not_after_utc)
+    cert_metadata["certificate_authority_not_before"] = not_before_utc
+    cert_metadata["certificate_authority_not_after"] = not_after_utc
+
+    cert_metadata["certificate_authority_subject_key_identifier"] = (
+        _get_subject_key_identifier_hex(cert)
+    )
+    cert_metadata["certificate_authority_authority_key_identifier"] = (
+        _get_authority_key_identifier_hex(cert)
+    )
+
+    return cert_metadata
+
+
 @timeit
-def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+def cleanup(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
     logger.info("Running EKS cluster cleanup")
-    GraphJob.from_node_schema(EKSClusterSchema(), common_job_parameters).run(neo4j_session)
-    run_cleanup_job('aws_import_eks_cleanup.json', neo4j_session, common_job_parameters)
+    GraphJob.from_node_schema(EKSClusterSchema(), common_job_parameters).run(
+        neo4j_session,
+    )
 
 
 def transform(cluster_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     transformed_list = []
-    for cluster_dict in cluster_data:
+    for cluster_name, cluster_dict in cluster_data.items():
         transformed_dict = cluster_dict.copy()
-        transformed_dict['clusterLogging'] = _process_logging(transformed_dict)
-        transformed_dict['consolelink'] = aws_console_link.get_console_link(arn=transformed_dict.get('arn'))
-        transformed_dict['clusterEndpointPublic'] = transformed_dict.get('resourcesVpcConfig', {}).get(
-            'endpointPublicAccess',
+        transformed_dict["ClusterLogging"] = _process_logging(transformed_dict)
+        transformed_dict["ClusterEndpointPublic"] = transformed_dict.get(
+            "resourcesVpcConfig",
+            {},
+        ).get(
+            "endpointPublicAccess",
         )
-        if 'createdAt' in transformed_dict:
-            transformed_dict['created_at'] = str(transformed_dict['createdAt'])
+        if "createdAt" in transformed_dict:
+            transformed_dict["created_at"] = str(transformed_dict["createdAt"])
+        transformed_dict.update(_parse_certificate_authority_metadata(cluster_dict))
         transformed_list.append(transformed_dict)
     return transformed_list
 
 
 @timeit
-def get_eks_cluster_nodegroups(boto3_session: boto3.session.Session, region: str, cluster_name: str) -> List[str]:
-    client = boto3_session.client('eks', region_name=region, config=get_botocore_config())
-    nodegroups: List[str] = []
-    paginator = client.get_paginator('list_nodegroups')
-    for page in paginator.paginate(clusterName=cluster_name):
-        nodegroups.extend(page['nodegroups'])
-
-    nodegroups_data = []
-    for nodegroup in nodegroups:
-        nodegroup_data = {}
-        nodegroup_data['name'] = nodegroup
-        nodegroup_data['region'] = region
-        nodegroup_data.update(get_eks_describe_cluster_nodegroup(boto3_session, region, cluster_name, nodegroup))
-        nodegroups_data.append(nodegroup_data)
-    return nodegroups_data
-
-
-@timeit
-def get_eks_describe_cluster_nodegroup(boto3_session: boto3.session.Session, region: str, cluster_name: str, nodegroup_name: str) -> Dict:
-    client = boto3_session.client('eks', region_name=region, config=get_botocore_config())
-    response = client.describe_nodegroup(clusterName=cluster_name, nodegroupName=nodegroup_name)
-    return response['nodegroup']
-
-
-@timeit
-def load_eks_cluster_nodegroups(
-        neo4j_session: neo4j.Session,
-        nodegroups_data: List[Dict[str, Any]],
-        cluster_arn: str,
-        aws_update_tag: int,
-) -> None:
-    load(
-        neo4j_session,
-        EKSClusterNodeGroupSchema(),
-        nodegroups_data,
-        cluster_arn=cluster_arn,
-        lastupdated=aws_update_tag,
-    )
-
-
-@timeit
-@aws_handle_regions
-def get_auto_scaling_groups(boto3_session: boto3.session.Session, region: str, auto_scaling_groups: List[str]) -> List[Dict]:
-    client = boto3_session.client('autoscaling', region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator('describe_auto_scaling_groups')
-    asgs: List[Dict] = []
-    try:
-        for page in paginator.paginate(AutoScalingGroupNames=auto_scaling_groups):
-            asgs.extend(page['AutoScalingGroups'])
-
-    except Exception as e:
-        logger.warning(f"Failed retrieve autoscaling groups for region - {region}. Error - {e}")
-
-    return asgs
-
-
-@timeit
-def attact_autoscaling_groups_to_nodegroups(neo4j_session: neo4j.Session, nodegroup_arn: str, auto_scalin_groups: List[Dict], update_tag: int) -> None:
-    attach_autoscaling = """
-    UNWIND $auto_scalin_groups as agroup
-    MERGE (g:AutoScalingGroup{arn: agroup.AutoScalingGroupARN})
-    ON CREATE SET g.firstseen = timestamp()
-    SET g.lastupdated = $update_tag
-    WITH g
-    MATCH (ngroup:EKSClusterNodeGroup{arn: $GROUPARN})
-    MERGE (g)-[r:ASSOCIATED_WITH]->(ngroup)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
-    """
-    neo4j_session.run(
-        attach_autoscaling,
-        auto_scalin_groups=auto_scalin_groups,
-        GROUPARN=nodegroup_arn,
-        update_tag=update_tag,
-    )
-
-
-@timeit
-def sync_eks_cluster_nodegroups(
-        neo4j_session: neo4j.Session,
-        boto3_session: boto3.session.Session,
-        clusters_data: List[Dict],
-        update_tag: int,
-) -> None:
-    for cluster in clusters_data:
-        nodegroups = get_eks_cluster_nodegroups(boto3_session, cluster["region"], cluster["name"])
-        load_eks_cluster_nodegroups(neo4j_session, nodegroups, cluster["arn"], update_tag)
-        for nodegroup in nodegroups:
-            auto_scalin_groups = []
-            for auto_scalin_group in nodegroup.get("resources", {}).get("autoScalingGroups", []):
-                auto_scalin_groups.append(auto_scalin_group["name"])
-            if auto_scalin_groups:
-                auto_scalin_groups = get_auto_scaling_groups(boto3_session, cluster['region'], auto_scalin_groups)
-                attact_autoscaling_groups_to_nodegroups(neo4j_session, nodegroup["nodegroupArn"], auto_scalin_groups, update_tag)
-
-
-@timeit
 def sync(
-        neo4j_session: neo4j.Session,
-        boto3_session: boto3.session.Session,
-        regions: List[str],
-        current_aws_account_id: str,
-        update_tag: int,
-        common_job_parameters: Dict[str, Any],
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict[str, Any],
 ) -> None:
-    tic = time.perf_counter()
-
-    logger.info("Syncing EKS for account '%s', at %s.", current_aws_account_id, tic)
-
-    clusters = []
     for region in regions:
-        logger.info("Syncing EKS for region '%s' in account '%s'.", region, current_aws_account_id)
+        logger.info(
+            "Syncing EKS for region '%s' in account '%s'.",
+            region,
+            current_aws_account_id,
+        )
 
-        clusters.extend(get_eks_clusters(boto3_session, region))
+        clusters: List[str] = get_eks_clusters(boto3_session, region)
+        cluster_data = {}
+        for cluster_name in clusters:
+            cluster_data[cluster_name] = get_eks_describe_cluster(
+                boto3_session,
+                region,
+                cluster_name,
+            )
+        transformed_list = transform(cluster_data)
 
-    logger.info(f"Total EKS Clusters: {len(clusters)}")
-
-    cluster_data: List = []
-    for cluster in clusters:
-        cluster_data.append(get_eks_describe_cluster(boto3_session, cluster['region'], cluster['name']))
-
-    cluster_data = transform(cluster_data)
-
-    load_eks_clusters(neo4j_session, cluster_data, current_aws_account_id, update_tag)
-
-    sync_eks_cluster_nodegroups(neo4j_session, boto3_session, cluster_data, update_tag)
+        load_eks_clusters(
+            neo4j_session,
+            transformed_list,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
 
     cleanup(neo4j_session, common_job_parameters)
-
-    toc = time.perf_counter()
-    logger.info(f"Time to process EKS: {toc - tic:0.4f} seconds")

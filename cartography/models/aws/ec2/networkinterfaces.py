@@ -1,9 +1,17 @@
 from dataclasses import dataclass
 
-from cartography.models.aws.ec2.networkinterface_instance import EC2NetworkInterfaceToAWSAccount
-from cartography.models.aws.ec2.networkinterface_instance import EC2NetworkInterfaceToEC2Instance
-from cartography.models.aws.ec2.networkinterface_instance import EC2NetworkInterfaceToEC2SecurityGroup
-from cartography.models.aws.ec2.networkinterface_instance import EC2NetworkInterfaceToEC2Subnet
+from cartography.models.aws.ec2.networkinterface_instance import (
+    EC2NetworkInterfaceToAWSAccountRel,
+)
+from cartography.models.aws.ec2.networkinterface_instance import (
+    EC2NetworkInterfaceToEC2InstanceRel,
+)
+from cartography.models.aws.ec2.networkinterface_instance import (
+    EC2NetworkInterfaceToEC2SecurityGroupRel,
+)
+from cartography.models.aws.ec2.networkinterface_instance import (
+    EC2NetworkInterfaceToEC2SubnetRel,
+)
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import CartographyNodeProperties
 from cartography.models.core.nodes import CartographyNodeSchema
@@ -20,55 +28,63 @@ class EC2NetworkInterfaceNodeProperties(CartographyNodeProperties):
     """
     Network interface properties
     """
-    id: PropertyRef = PropertyRef('NetworkInterfaceId')
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-    description: PropertyRef = PropertyRef('Description')
-    mac_address: PropertyRef = PropertyRef('MacAddress', extra_index=True)
-    private_dns_name: PropertyRef = PropertyRef('PrivateDnsName')
-    private_ip_address: PropertyRef = PropertyRef('PrivateIpAddress', extra_index=True)
-    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True)
-    status: PropertyRef = PropertyRef('Status')
-    consolelink: PropertyRef = PropertyRef('consolelink')
-    arn: PropertyRef = PropertyRef('Arn')
+
+    id: PropertyRef = PropertyRef("NetworkInterfaceId")
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    description: PropertyRef = PropertyRef("Description")
+    mac_address: PropertyRef = PropertyRef("MacAddress", extra_index=True)
+    private_dns_name: PropertyRef = PropertyRef("PrivateDnsName")
+    private_ip_address: PropertyRef = PropertyRef("PrivateIpAddress", extra_index=True)
+    region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
+    status: PropertyRef = PropertyRef("Status")
+
     # Properties only returned by describe-network-interfaces
-    interface_type: PropertyRef = PropertyRef('InterfaceType')
-    public_ip: PropertyRef = PropertyRef('PublicIp', extra_index=True)
-    requester_id: PropertyRef = PropertyRef('RequesterId', extra_index=True)
-    requester_managed: PropertyRef = PropertyRef('RequesterManaged')
-    source_dest_check: PropertyRef = PropertyRef('SourceDestCheck')
-    subnetid: PropertyRef = PropertyRef('SubnetId', extra_index=True)
+    interface_type: PropertyRef = PropertyRef("InterfaceType")
+    public_ip: PropertyRef = PropertyRef("PublicIp", extra_index=True)
+    requester_id: PropertyRef = PropertyRef("RequesterId", extra_index=True)
+    requester_managed: PropertyRef = PropertyRef("RequesterManaged")
+    source_dest_check: PropertyRef = PropertyRef("SourceDestCheck")
+    # TODO: remove subnetid once we have migrated to subnet_id
+    subnetid: PropertyRef = PropertyRef("SubnetId", extra_index=True)
+    subnet_id: PropertyRef = PropertyRef("SubnetId", extra_index=True)
+    attach_time: PropertyRef = PropertyRef("AttachTime")
+    device_index: PropertyRef = PropertyRef("DeviceIndex")
 
 
 @dataclass(frozen=True)
-class EC2NetworkInterfaceToElbRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+class EC2NetworkInterfaceToElbRelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class EC2NetworkInterfaceToElb(CartographyRelSchema):
-    target_node_label: str = 'LoadBalancer'
+class EC2NetworkInterfaceToElbRel(CartographyRelSchema):
+    target_node_label: str = "AWSLoadBalancer"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'name': PropertyRef('ElbV1Id')},
+        {"name": PropertyRef("ElbV1Id")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "NETWORK_INTERFACE"
-    properties: EC2NetworkInterfaceToElbRelProperties = EC2NetworkInterfaceToElbRelProperties()
+    properties: EC2NetworkInterfaceToElbRelRelProperties = (
+        EC2NetworkInterfaceToElbRelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
-class EC2NetworkInterfaceToElbV2RelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+class EC2NetworkInterfaceToElbV2RelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class EC2NetworkInterfaceToElbV2(CartographyRelSchema):
-    target_node_label: str = 'LoadBalancerV2'
+class EC2NetworkInterfaceToElbV2Rel(CartographyRelSchema):
+    target_node_label: str = "AWSLoadBalancerV2"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('ElbV2Id')},
+        {"id": PropertyRef("ElbV2Id")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "NETWORK_INTERFACE"
-    properties: EC2NetworkInterfaceToElbV2RelProperties = EC2NetworkInterfaceToElbV2RelProperties()
+    properties: EC2NetworkInterfaceToElbV2RelRelProperties = (
+        EC2NetworkInterfaceToElbV2RelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
@@ -76,15 +92,18 @@ class EC2NetworkInterfaceSchema(CartographyNodeSchema):
     """
     Network interface as known by describe-network-interfaces.
     """
-    label: str = 'NetworkInterface'
+
+    label: str = "NetworkInterface"
     properties: EC2NetworkInterfaceNodeProperties = EC2NetworkInterfaceNodeProperties()
-    sub_resource_relationship: EC2NetworkInterfaceToAWSAccount = EC2NetworkInterfaceToAWSAccount()
+    sub_resource_relationship: EC2NetworkInterfaceToAWSAccountRel = (
+        EC2NetworkInterfaceToAWSAccountRel()
+    )
     other_relationships: OtherRelationships = OtherRelationships(
         [
-            EC2NetworkInterfaceToEC2Subnet(),
-            EC2NetworkInterfaceToEC2SecurityGroup(),
-            EC2NetworkInterfaceToElb(),
-            EC2NetworkInterfaceToElbV2(),
-            EC2NetworkInterfaceToEC2Instance(),
+            EC2NetworkInterfaceToEC2SubnetRel(),
+            EC2NetworkInterfaceToEC2SecurityGroupRel(),
+            EC2NetworkInterfaceToElbRel(),
+            EC2NetworkInterfaceToElbV2Rel(),
+            EC2NetworkInterfaceToEC2InstanceRel(),
         ],
     )

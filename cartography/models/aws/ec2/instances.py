@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import CartographyNodeProperties
 from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
 from cartography.models.core.relationships import CartographyRelProperties
 from cartography.models.core.relationships import CartographyRelSchema
 from cartography.models.core.relationships import LinkDirection
@@ -19,9 +20,6 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     publicdnsname: PropertyRef = PropertyRef("PublicDnsName", extra_index=True)
     privateipaddress: PropertyRef = PropertyRef("PrivateIpAddress")
     publicipaddress: PropertyRef = PropertyRef("PublicIpAddress")
-    ipv6address: PropertyRef = PropertyRef("Ipv6Address")
-    publicipownerid: PropertyRef = PropertyRef("PublicIpOwnerId")
-    isstaticip: PropertyRef = PropertyRef("IsStaticIp")
     imageid: PropertyRef = PropertyRef("ImageId")
     instancetype: PropertyRef = PropertyRef("InstanceType")
     monitoringstate: PropertyRef = PropertyRef("MonitoringState")
@@ -36,79 +34,110 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     hostresourcegrouparn: PropertyRef = PropertyRef("HostResourceGroupArn")
     platform: PropertyRef = PropertyRef("Platform")
     architecture: PropertyRef = PropertyRef("Architecture")
-    virtualizationtype: PropertyRef = PropertyRef("VirtualizationType")
-    hypervisor: PropertyRef = PropertyRef("Hypervisor")
     ebsoptimized: PropertyRef = PropertyRef("EbsOptimized")
     bootmode: PropertyRef = PropertyRef("BootMode")
     instancelifecycle: PropertyRef = PropertyRef("InstanceLifecycle")
     hibernationoptions: PropertyRef = PropertyRef("HibernationOption")
-    consolelink: PropertyRef = PropertyRef("consolelink")
-    arn: PropertyRef = PropertyRef("arn")
-    userdata: PropertyRef = PropertyRef("UserData")
-    eksclustername: PropertyRef = PropertyRef("EksClusterName")
-    eksnodegroupname: PropertyRef = PropertyRef("EksNodeGroupName")
-
-
-#    roleArn: PropertyRef = PropertyRef('RoleArn')
+    metadatahttptokens: PropertyRef = PropertyRef(
+        "MetadataHttpTokens", extra_index=True
+    )
+    metadatahttpputresponsehoplimit: PropertyRef = PropertyRef(
+        "MetadataHttpPutResponseHopLimit"
+    )
+    metadatahttpendpoint: PropertyRef = PropertyRef("MetadataHttpEndpoint")
+    metadatahttpprotocolipv6: PropertyRef = PropertyRef("MetadataHttpProtocolIpv6")
+    metadatainstancetags: PropertyRef = PropertyRef("MetadataInstanceTags")
+    imdsaccessmode: PropertyRef = PropertyRef("ImdsAccessMode")
+    imdsv1enabled: PropertyRef = PropertyRef("ImdsV1Enabled")
+    imdsv2required: PropertyRef = PropertyRef("ImdsV2Required")
+    eks_cluster_name: PropertyRef = PropertyRef("EksClusterName")
+    ipv6address: PropertyRef = PropertyRef("IPv6Address")
 
 
 @dataclass(frozen=True)
-class EC2InstanceToAwsAccountRelProperties(CartographyRelProperties):
+class EC2InstanceToAWSAccountRelRelProperties(CartographyRelProperties):
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class EC2InstanceToAWSAccount(CartographyRelSchema):
+class EC2InstanceToAWSAccountRel(CartographyRelSchema):
     target_node_label: str = "AWSAccount"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
         {"id": PropertyRef("AWS_ID", set_in_kwargs=True)},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "RESOURCE"
-    properties: EC2InstanceToAwsAccountRelProperties = EC2InstanceToAwsAccountRelProperties()
+    properties: EC2InstanceToAWSAccountRelRelProperties = (
+        EC2InstanceToAWSAccountRelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
-class EC2InstanceToEC2ReservationRelProperties(CartographyRelProperties):
+class EC2InstanceToEC2ReservationRelRelProperties(CartographyRelProperties):
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class EC2InstanceToEC2Reservation(CartographyRelSchema):
+class EC2InstanceToEC2ReservationRel(CartographyRelSchema):
     target_node_label: str = "EC2Reservation"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
         {"reservationid": PropertyRef("ReservationId")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "MEMBER_OF_EC2_RESERVATION"
-    properties: EC2InstanceToEC2ReservationRelProperties = EC2InstanceToEC2ReservationRelProperties()
+    properties: EC2InstanceToEC2ReservationRelRelProperties = (
+        EC2InstanceToEC2ReservationRelRelProperties()
+    )
 
 
-### TO DO  whenever  we are deploying to kubernetes we will uncomment this ###
+@dataclass(frozen=True)
+class EC2InstanceToInstanceProfileRelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
-# @dataclass(frozen=True)
-# class EC2InstanceToIAMRoleRelProperties(CartographyRelProperties):
-#     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
 
-# @dataclass(frozen=True)
-# class EC2InstanceToIAMRole(CartographyRelSchema):
-#     target_node_label: str = 'AWSRole'
-#     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-#         {'arn': PropertyRef('RoleArn')},
-#     )
-#     direction: LinkDirection = LinkDirection.OUTWARD
-#     rel_label: str = "USES"
-#     properties: EC2InstanceToIAMRoleRelProperties = EC2InstanceToIAMRoleRelProperties()
+@dataclass(frozen=True)
+class EC2InstanceToInstanceProfileRel(CartographyRelSchema):
+    target_node_label: str = "AWSInstanceProfile"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"arn": PropertyRef("IamInstanceProfile")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "INSTANCE_PROFILE"
+    properties: EC2InstanceToInstanceProfileRelRelProperties = (
+        EC2InstanceToInstanceProfileRelRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class EC2InstanceToEKSClusterRelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class EC2InstanceToEKSClusterRel(CartographyRelSchema):
+    target_node_label: str = "EKSCluster"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {
+            "name": PropertyRef("EksClusterName"),
+        },
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "MEMBER_OF_EKS_CLUSTER"
+    properties: EC2InstanceToEKSClusterRelRelProperties = (
+        EC2InstanceToEKSClusterRelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
 class EC2InstanceSchema(CartographyNodeSchema):
     label: str = "EC2Instance"
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels(["ComputeInstance"])
     properties: EC2InstanceNodeProperties = EC2InstanceNodeProperties()
-    sub_resource_relationship: EC2InstanceToAWSAccount = EC2InstanceToAWSAccount()
+    sub_resource_relationship: EC2InstanceToAWSAccountRel = EC2InstanceToAWSAccountRel()
     other_relationships: OtherRelationships = OtherRelationships(
         [
-            EC2InstanceToEC2Reservation(),
-            # EC2InstanceToIAMRole(),
+            EC2InstanceToEC2ReservationRel(),
+            EC2InstanceToInstanceProfileRel(),
+            EC2InstanceToEKSClusterRel(),
         ],
     )

@@ -1,148 +1,177 @@
 import logging
-import time
+from typing import Any
 from typing import Dict
+from typing import Iterator
 from typing import List
+from typing import Optional
 
 import boto3
+import botocore.exceptions
 import neo4j
-from botocore.exceptions import ClientError
-from botocore.exceptions import ConnectTimeoutError
-from botocore.exceptions import EndpointConnectionError
-try:
-    from cloudconsolelink.clouds.aws import AWSLinker
-except ImportError:
-    AWSLinker = None
 
-from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.models.aws.ses import SESEmailIdentitySchema
 from cartography.util import aws_handle_regions
-from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker() if AWSLinker else None
+
+
+def _iter_list_email_identities_pages(
+    client: Any,
+) -> Iterator[Dict[str, Any]]:
+    """
+    Yield pages from SESv2 list_email_identities.
+
+    Some botocore versions do not expose a paginator model for this operation,
+    so we fall back to manual NextToken pagination.
+    """
+    try:
+        paginator = client.get_paginator("list_email_identities")
+        yield from paginator.paginate()
+    except botocore.exceptions.OperationNotPageableError:
+        next_token = None
+        while True:
+            params: Dict[str, str] = {}
+            if next_token:
+                params["NextToken"] = next_token
+            page = client.list_email_identities(**params)
+            yield page
+            next_token = page.get("NextToken")
+            if not next_token:
+                break
 
 
 @timeit
 @aws_handle_regions
-def get_ses_identity(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
-    identity_names = []
-    try:
-        client = boto3_session.client('ses', region_name=region, config=get_botocore_config())
-        paginator = client.get_paginator('list_identities')
-
-        page_iterator = paginator.paginate()
-        for page in page_iterator:
-            identity_names.extend(page.get('Identities', []))
-
-        return identity_names
-
-    except (ClientError, ConnectTimeoutError, EndpointConnectionError) as e:
-        logger.error(f'Failed to call SES list_identities: {region} - {e}')
-        return identity_names
-
-
-@timeit
-def transform_identities(boto3_session: boto3.session.Session, ids_names: List[Dict], region: str, current_aws_account_id: str) -> List[Dict]:
-    resources = []
-    try:
-        client = boto3_session.client('ses', region_name=region, config=get_botocore_config())
-
-        identity_verifications: dict = {}
-        dkim_attributes: dict = {}
-
-        for i in range(0, len(ids_names), 100):
-            batch = ids_names[i:i + 100]
-
-            identity_verifications.update(
-                client.get_identity_verification_attributes(
-                    Identities=batch,
-                ).get('VerificationAttributes', {}),
+def get_ses_email_identities(
+    boto3_session: boto3.session.Session,
+    region: str,
+    current_aws_account_id: str,
+) -> List[Dict[str, Any]]:
+    client = create_boto3_client(
+        boto3_session,
+        "sesv2",
+        region_name=region,
+        config=get_botocore_config(),
+    )
+    identities: List[Dict[str, Any]] = []
+    for page in _iter_list_email_identities_pages(client):
+        for identity_info in page.get("EmailIdentities", []):
+            identity_name = identity_info["IdentityName"]
+            identity_type = identity_info["IdentityType"]
+            sending_enabled = identity_info.get("SendingEnabled", False)
+            identity_detail = _get_ses_email_identity_detail(
+                client,
+                identity_name,
             )
+            if identity_detail is None:
+                continue
+            dkim_attrs = identity_detail.get("DkimAttributes", {})
+            arn = (
+                f"arn:aws:ses:{region}:{current_aws_account_id}"
+                f":identity/{identity_name}"
+            )
+            identities.append(
+                {
+                    "Arn": arn,
+                    "IdentityName": identity_name,
+                    "IdentityType": identity_type,
+                    "SendingEnabled": sending_enabled,
+                    "VerificationStatus": identity_detail.get(
+                        "VerificationStatus",
+                    ),
+                    "DkimSigningEnabled": dkim_attrs.get(
+                        "SigningEnabled",
+                        False,
+                    ),
+                    "DkimStatus": dkim_attrs.get("Status"),
+                }
+            )
+    return identities
 
-            dkim_attributes.update(client.get_identity_dkim_attributes(Identities=ids_names).get('DkimAttributes', {}))
 
-        for identity_name in ids_names:
-            identity = {
-                'name': identity_name,
-                'arn': f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}",
-                'consolelink': aws_console_link.get_console_link(arn=f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}"),
-                'region': region,
-                'dkim': dkim_attributes.get(identity_name, {}),
-                'verification': identity_verifications.get(identity_name, {}),
-            }
-            resources.append(identity)
-
-    except (ClientError, ConnectTimeoutError, EndpointConnectionError) as e:
-        logger.error(f'Failed to call SES get_identity_dkim_attributes: {region} - {e}')
-
-    return resources
-
-
-def load_ses_identity(session: neo4j.Session, identities: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    session.write_transaction(_load_ses_identity_tx, identities, current_aws_account_id, aws_update_tag)
+def _get_ses_email_identity_detail(
+    client: Any,
+    identity_name: str,
+) -> Optional[Dict[str, Any]]:
+    try:
+        return client.get_email_identity(EmailIdentity=identity_name)
+    except botocore.exceptions.ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code == "NotFoundException":
+            logger.warning(
+                "SESv2 get_email_identity returned NotFoundException. "
+                "The identity may have been deleted after listing. Skipping.",
+            )
+            return None
+        raise
 
 
 @timeit
-def _load_ses_identity_tx(tx: neo4j.Transaction, identities: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    query: str = """
-    UNWIND $Records as record
-    MERGE (identity:AWSSESIdentity{id: record.arn})
-    ON CREATE SET identity.firstseen = timestamp(),
-        identity.arn = record.arn
-    SET identity.lastupdated = $aws_update_tag,
-        identity.name = record.name,
-        identity.region = record.region,
-        identity.consolelink = record.consolelink,
-        identity.dkim_enabled = record.dkim.DkimEnabled,
-        identity.dkim_verification_status = record.dkim.DkimVerificationStatus,
-        identity.verification_status = record.verification.VerificationStatus
-    WITH identity
-    MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
-    MERGE (owner)-[r:RESOURCE]->(identity)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
-    """
-
-    tx.run(
-        query,
-        Records=identities,
-        AWS_ACCOUNT_ID=current_aws_account_id,
-        aws_update_tag=aws_update_tag,
+def load_ses_email_identities(
+    neo4j_session: neo4j.Session,
+    identity_data: List[Dict[str, Any]],
+    region: str,
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    logger.info(
+        "Loading %d SES email identities for region '%s' into graph.",
+        len(identity_data),
+        region,
+    )
+    load(
+        neo4j_session,
+        SESEmailIdentitySchema(),
+        identity_data,
+        lastupdated=aws_update_tag,
+        Region=region,
+        AWS_ID=current_aws_account_id,
     )
 
 
 @timeit
-def cleanup_ses_identities(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_ses_identity_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    logger.debug("Running SES cleanup job.")
+    cleanup_job = GraphJob.from_node_schema(
+        SESEmailIdentitySchema(),
+        common_job_parameters,
+    )
+    cleanup_job.run(neo4j_session)
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
-
-
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict[str, Any],
 ) -> None:
-    tic = time.perf_counter()
-
-    logger.info("Syncing SES for account '%s', at %s.", current_aws_account_id, tic)
-
-    ses_enabled_regions = ["af-south-1", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ca-central-1", "eu-central-1", "eu-north-1", "eu-south-1", "eu-west-1", "eu-west-2", "eu-west-3", "il-central-1", "me-south-1", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"]
-
-    identities = []
     for region in regions:
-        logger.info("Syncing SES for region '%s' in account '%s'.", region, current_aws_account_id)
-
-        if region not in ses_enabled_regions:
-            continue
-
-        ids = get_ses_identity(boto3_session, region)
-        identities.extend(transform_identities(boto3_session, ids, region, current_aws_account_id))
-
-    logger.info(f"Total SES Identities: {len(identities)}")
-
-    load_ses_identity(neo4j_session, identities, current_aws_account_id, update_tag)
-    cleanup_ses_identities(neo4j_session, common_job_parameters)
-
-    toc = time.perf_counter()
-    logger.info(f"Time to process SES Service: {toc - tic:0.4f} seconds")
+        logger.info(
+            "Syncing SES for region '%s' in account '%s'.",
+            region,
+            current_aws_account_id,
+        )
+        identities = get_ses_email_identities(
+            boto3_session,
+            region,
+            current_aws_account_id,
+        )
+        load_ses_email_identities(
+            neo4j_session,
+            identities,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
+    cleanup(neo4j_session, common_job_parameters)

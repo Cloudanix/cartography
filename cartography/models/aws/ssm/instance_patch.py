@@ -13,59 +13,64 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 @dataclass(frozen=True)
 class SSMInstancePatchNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef('Id')
-    instance_id: PropertyRef = PropertyRef('_instance_id', extra_index=True)
-    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True)
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-    consolelink: PropertyRef = PropertyRef('consolelink')
-    title: PropertyRef = PropertyRef('Title', extra_index=True)
-    kb_id: PropertyRef = PropertyRef('KBId', extra_index=True)
-    classification: PropertyRef = PropertyRef('Classification')
-    severity: PropertyRef = PropertyRef('Severity')
-    state: PropertyRef = PropertyRef('State')
-    installed_time: PropertyRef = PropertyRef('InstalledTime')
-    cve_ids: PropertyRef = PropertyRef('CVEIds')
+    id: PropertyRef = PropertyRef("Id")
+    instance_id: PropertyRef = PropertyRef("_instance_id", extra_index=True)
+    region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    title: PropertyRef = PropertyRef("Title", extra_index=True)
+    kb_id: PropertyRef = PropertyRef("KBId", extra_index=True)
+    classification: PropertyRef = PropertyRef("Classification")
+    severity: PropertyRef = PropertyRef("Severity")
+    state: PropertyRef = PropertyRef("State")
+    installed_time: PropertyRef = PropertyRef("InstalledTime")
+    cve_ids: PropertyRef = PropertyRef("CVEIds")
 
 
 @dataclass(frozen=True)
-class SSMInstancePatchToAWSAccountRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+class SSMInstancePatchToAWSAccountRelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class SSMInstancePatchToAWSAccount(CartographyRelSchema):
-    target_node_label: str = 'AWSAccount'
+class SSMInstancePatchToAWSAccountRel(CartographyRelSchema):
+    target_node_label: str = "AWSAccount"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('AWS_ID', set_in_kwargs=True)},
+        {"id": PropertyRef("AWS_ID", set_in_kwargs=True)},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "RESOURCE"
-    properties: SSMInstancePatchToAWSAccountRelProperties = SSMInstancePatchToAWSAccountRelProperties()
+    properties: SSMInstancePatchToAWSAccountRelRelProperties = (
+        SSMInstancePatchToAWSAccountRelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
-class SSMInstancePatchToEC2InstanceRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+class SSMInstancePatchToEC2InstanceRelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class SSMInstancePatchToEC2Instance(CartographyRelSchema):
-    target_node_label: str = 'EC2Instance'
+class SSMInstancePatchToEC2InstanceRel(CartographyRelSchema):
+    target_node_label: str = "EC2Instance"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('_instance_id')},
+        {"id": PropertyRef("_instance_id")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "HAS_PATCH"
-    properties: SSMInstancePatchToEC2InstanceRelProperties = SSMInstancePatchToEC2InstanceRelProperties()
+    properties: SSMInstancePatchToEC2InstanceRelRelProperties = (
+        SSMInstancePatchToEC2InstanceRelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
 class SSMInstancePatchSchema(CartographyNodeSchema):
-    label: str = 'SSMInstancePatch'
+    label: str = "SSMInstancePatch"
     properties: SSMInstancePatchNodeProperties = SSMInstancePatchNodeProperties()
-    sub_resource_relationship: SSMInstancePatchToAWSAccount = SSMInstancePatchToAWSAccount()
+    sub_resource_relationship: SSMInstancePatchToAWSAccountRel = (
+        SSMInstancePatchToAWSAccountRel()
+    )
     other_relationships: OtherRelationships = OtherRelationships(
         [
-            SSMInstancePatchToEC2Instance(),
+            SSMInstancePatchToEC2InstanceRel(),
         ],
     )

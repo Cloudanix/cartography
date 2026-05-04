@@ -1,163 +1,132 @@
 import logging
-import time
-from typing import Dict
-from typing import List
+from typing import Any
 
 import boto3
 import neo4j
-try:
-    from cloudconsolelink.clouds.aws import AWSLinker
-except ImportError:
-    AWSLinker = None
 
-from .util import get_botocore_config
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.models.aws.ec2.internet_gateways import AWSInternetGatewaySchema
 from cartography.util import aws_handle_regions
-from cartography.util import run_cleanup_job
 from cartography.util import timeit
-# from cartography.intel.aws.util.common import get_default_vpc
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker() if AWSLinker else None
-
-
-def get_default_vpc(ec2_client):
-    try:
-        response = ec2_client.describe_vpcs(
-            Filters=[{'Name': 'isDefault', 'Values': ['true']}],
-        )
-        vpcs = response.get('Vpcs', [])
-
-        if not vpcs:
-            logger.info("No default VPC found.")
-            return {}
-
-        return vpcs[0]
-
-    except Exception as e:
-        logger.error(f"Error fetching default VPC: {e}")
-        return {}
 
 
 @timeit
 @aws_handle_regions
-def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
-    internet_gateways = []
-    try:
-        client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
-        internet_gateways = client.describe_internet_gateways()['InternetGateways']
+def get_internet_gateways(
+    boto3_session: boto3.session.Session,
+    region: str,
+) -> list[dict[str, Any]]:
+    client = create_boto3_client(
+        boto3_session,
+        "ec2",
+        region_name=region,
+        config=get_botocore_config(),
+    )
+    return client.describe_internet_gateways()["InternetGateways"]
 
-        default_vpc = get_default_vpc(client)
 
-        if default_vpc:
-            default_vpc_id = default_vpc.get('VpcId')
+def transform_internet_gateways(
+    internet_gateways: list[dict[str, Any]],
+    region: str,
+    current_aws_account_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Transform internet gateways data, flattening the Attachments list.
+    Each attachment becomes a separate entry to handle IGWs attached to multiple VPCs.
+    """
+    result = []
+    for igw in internet_gateways:
+        igw_id = igw["InternetGatewayId"]
+        owner_id = igw.get("OwnerId", current_aws_account_id)
+        # TODO: Right now this won't work in non-AWS commercial (GovCloud, China) as partition is hardcoded
+        arn = f"arn:aws:ec2:{region}:{owner_id}:internet-gateway/{igw_id}"
 
-            # fetching the creation time of the default VPC
-            vpc_response = client.describe_vpcs(VpcIds=[default_vpc_id])
-            vpc_creation_time = vpc_response['Vpcs'][0].get('CreateTime') if vpc_response['Vpcs'] else None
-
-            for igw in internet_gateways:
-                # marking the igw as user by default
-                igw['isDefault'] = False
-
-                vpc_attachments = igw.get('Attachments', [])
-                if vpc_attachments:
-                    # checking if IGW is attached to default VPC as the previous logic
-                    is_attached_to_default_vpc = any(
-                        attachment.get('VpcId') == default_vpc_id
-                        for attachment in vpc_attachments
-                    )
-
-                    if is_attached_to_default_vpc:
-                        # fetching the creation time of the igw if it is attached to the default VPC
-                        igw_response = client.describe_internet_gateways(
-                            InternetGatewayIds=[igw['InternetGatewayId']],
-                        )
-                        igw_creation_time = igw_response['InternetGateways'][0].get('CreateTime') if igw_response['InternetGateways'] else None
-
-                        # if IGW was created within 1 minute of default VPC creation, it would be set to as predefined
-                        if vpc_creation_time and igw_creation_time:
-                            time_difference = abs((igw_creation_time - vpc_creation_time).total_seconds())
-                            if time_difference <= 60:
-                                igw['isDefault'] = True
+        attachments = igw.get("Attachments", [])
+        if attachments:
+            # Create one entry per attachment to handle multiple VPCs
+            for attachment in attachments:
+                result.append(
+                    {
+                        "InternetGatewayId": igw_id,
+                        "OwnerId": owner_id,
+                        "Arn": arn,
+                        "VpcId": attachment.get("VpcId"),
+                    }
+                )
         else:
-            # if no default VPC exists, all IGWs are user-created
-            for igw in internet_gateways:
-                igw['isDefault'] = False
-
-    except Exception as e:
-        logger.warning(f"Failed to retrieve internet gateways for region - {region}. Error - {e}")
-
-    return internet_gateways
+            # IGW without attachments
+            result.append(
+                {
+                    "InternetGatewayId": igw_id,
+                    "OwnerId": owner_id,
+                    "Arn": arn,
+                    "VpcId": None,
+                }
+            )
+    return result
 
 
 @timeit
 def load_internet_gateways(
-    neo4j_session: neo4j.Session, internet_gateways: List[Dict], region: str,
-    current_aws_account_id: str, update_tag: int,
+    neo4j_session: neo4j.Session,
+    internet_gateways: list[dict[str, Any]],
+    region: str,
+    current_aws_account_id: str,
+    update_tag: int,
 ) -> None:
-    logger.info("Loading %d Internet Gateways in %s.", len(internet_gateways), region)
-    # TODO: Right now this won't work in non-AWS commercial (GovCloud, China) as partition is hardcoded
-    for igw in internet_gateways:
-        arn = f"arn:aws:ec2:{region}:{igw.get('OwnerId', '')}:internet-gateway/{igw['InternetGatewayId']}"
-        igw['consolelink'] = aws_console_link.get_console_link(arn=arn)
-    query = """
-    UNWIND $internet_gateways as igw
-        MERGE (ig:AWSInternetGateway{id: igw.InternetGatewayId})
-        ON CREATE SET
-            ig.firstseen = timestamp(),
-            ig.region = $region
-        SET
-            ig.ownerid = igw.OwnerId,
-            ig.lastupdated = $aws_update_tag,
-            ig.arn = "arn:aws:ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
-            ig.is_default = igw.isDefault,
-            ig.consolelink = igw.consolelink
-        WITH igw, ig
-
-        MATCH (awsAccount:AWSAccount {id: $aws_account_id})
-        MERGE (awsAccount)-[r:RESOURCE]->(ig)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $aws_update_tag
-        WITH igw, ig
-
-        UNWIND igw.Attachments as attachment
-        MATCH (vpc:AWSVpc{id: attachment.VpcId})
-        MERGE (vpc)-[r:ATTACHED_TO]->(ig)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $aws_update_tag
-    """
-
-    neo4j_session.run(
-        query,
-        internet_gateways=internet_gateways,
-        region=region,
-        aws_account_id=current_aws_account_id,
-        aws_update_tag=update_tag,
-    ).consume()
+    load(
+        neo4j_session,
+        AWSInternetGatewaySchema(),
+        internet_gateways,
+        lastupdated=update_tag,
+        Region=region,
+        AWS_ID=current_aws_account_id,
+    )
 
 
 @timeit
-def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+def cleanup(
+    neo4j_session: neo4j.Session, common_job_parameters: dict[str, Any]
+) -> None:
     logger.debug("Running Internet Gateway cleanup job.")
-    run_cleanup_job('aws_import_internet_gateways_cleanup.json', neo4j_session, common_job_parameters)
+    GraphJob.from_node_schema(
+        AWSInternetGatewaySchema(),
+        common_job_parameters,
+    ).run(neo4j_session)
 
 
 @timeit
 def sync_internet_gateways(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: list[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: dict[str, Any],
 ) -> None:
-    tic = time.perf_counter()
-    logger.info("Syncing EC2 Internet Gateways for account '%s', at %s.", current_aws_account_id, tic)
-
     for region in regions:
-        logger.info("Syncing Internet Gateways for region '%s' in account '%s'.", region, current_aws_account_id)
+        logger.info(
+            "Syncing Internet Gateways for region '%s' in account '%s'.",
+            region,
+            current_aws_account_id,
+        )
         internet_gateways = get_internet_gateways(boto3_session, region)
-
-        logger.info(f"Total Internet Gateways: {len(internet_gateways)} for {region}")
-
-        load_internet_gateways(neo4j_session, internet_gateways, region, current_aws_account_id, update_tag)
+        transformed_data = transform_internet_gateways(
+            internet_gateways,
+            region,
+            current_aws_account_id,
+        )
+        load_internet_gateways(
+            neo4j_session,
+            transformed_data,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
 
     cleanup(neo4j_session, common_job_parameters)
-    toc = time.perf_counter()
-    logger.info(f"Time to process EC2 Internet Gateways: {toc - tic:0.4f} seconds")

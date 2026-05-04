@@ -1,109 +1,221 @@
+import json
 import logging
-import time
+from typing import Any
 from typing import Dict
 from typing import List
 
 import boto3
 import neo4j
-try:
-    from cloudconsolelink.clouds.aws import AWSLinker
-except ImportError:
-    AWSLinker = None
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectionClosedError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import EndpointConnectionError
+from botocore.exceptions import ReadTimeoutError
+from botocore.parsers import ResponseParserError
 
-from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.models.aws.cloudtrail.trail import CloudTrailTrailSchema
 from cartography.util import aws_handle_regions
-from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker() if AWSLinker else None
+
+_RETRYABLE_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+class CloudTrailTransientRegionFailure(Exception):
+    pass
+
+
+def _is_retryable_cloudtrail_error(error: ClientError) -> bool:
+    error_code = error.response.get("Error", {}).get("Code", "")
+    status_code = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return (
+        error_code
+        in {
+            "RequestLimitExceeded",
+            "RequestThrottled",
+            "RequestTimeout",
+            "RequestTimeoutException",
+            "ServiceUnavailable",
+            "ServiceUnavailableException",
+            "Throttling",
+            "ThrottlingException",
+            "TooManyRequestsException",
+        }
+        or status_code in _RETRYABLE_HTTP_STATUS_CODES
+    )
 
 
 @timeit
 @aws_handle_regions
-def get_trails(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
-    client = boto3_session.client('cloudtrail', region_name=region, config=get_botocore_config())
-    response = client.describe_trails(includeShadowTrails=False)
-    return response.get('trailList', [])
+def get_cloudtrail_trails(
+    boto3_session: boto3.Session, region: str, current_aws_account_id: str
+) -> List[Dict[str, Any]]:
+    client = create_boto3_client(boto3_session, "cloudtrail", region_name=region)
 
+    try:
+        trails = client.describe_trails()["trailList"]
+    except ClientError as error:
+        if _is_retryable_cloudtrail_error(error):
+            raise CloudTrailTransientRegionFailure(
+                "AWS SDK retries were exhausted for transient DescribeTrails failure"
+            ) from error
+        raise
+    except (
+        ConnectionClosedError,
+        ConnectTimeoutError,
+        EndpointConnectionError,
+        ReadTimeoutError,
+        ResponseParserError,
+    ) as error:
+        raise CloudTrailTransientRegionFailure(
+            "Encountered a transient regional CloudTrail endpoint failure while calling DescribeTrails"
+        ) from error
 
-@timeit
-def transform_trails(trails: List[Dict]) -> List[Dict]:
+    trails_filtered = []
     for trail in trails:
-        trail['consolelink'] = aws_console_link.get_console_link(arn=trail['TrailARN'])
+        # Filter by home region to avoid duplicates across regions
+        if trail.get("HomeRegion") != region:
+            continue
+
+        # Filter to only trails owned by this account.
+        # Organization trails from other accounts are visible via describe_trails()
+        # but should not be linked as RESOURCE of this account.
+        # ARN format: arn:aws:cloudtrail:{region}:{account_id}:trail/{name}
+        trail_arn = trail.get("TrailARN", "")
+        arn_parts = trail_arn.split(":")
+        if len(arn_parts) >= 5:
+            trail_account_id = arn_parts[4]
+            if trail_account_id != current_aws_account_id:
+                logger.debug(
+                    f"Skipping trail {trail_arn} - owned by account {trail_account_id}, "
+                    f"not current account {current_aws_account_id}",
+                )
+                continue
+
+        try:
+            selectors = client.get_event_selectors(TrailName=trail["TrailARN"])
+            trail["EventSelectors"] = selectors.get("EventSelectors", [])
+            trail["AdvancedEventSelectors"] = selectors.get(
+                "AdvancedEventSelectors",
+                [],
+            )
+        except ClientError as error:
+            if _is_retryable_cloudtrail_error(error):
+                raise CloudTrailTransientRegionFailure(
+                    f"AWS SDK retries were exhausted for transient GetEventSelectors failure on trail {trail['TrailARN']}"
+                ) from error
+            raise
+        except (
+            ConnectionClosedError,
+            ConnectTimeoutError,
+            EndpointConnectionError,
+            ReadTimeoutError,
+            ResponseParserError,
+        ) as error:
+            raise CloudTrailTransientRegionFailure(
+                f"Encountered a transient regional CloudTrail endpoint failure while calling GetEventSelectors on trail {trail['TrailARN']}"
+            ) from error
+        trails_filtered.append(trail)
+
+    return trails_filtered
+
+
+def transform_cloudtrail_trails(
+    trails: List[Dict[str, Any]], region: str
+) -> List[Dict[str, Any]]:
+    """
+    Transform CloudTrail trail data for ingestion
+    """
+    for trail in trails:
+        arn = trail.get("CloudWatchLogsLogGroupArn")
+        if arn:
+            trail["CloudWatchLogsLogGroupArn"] = arn.split(":*")[0]
+        trail["EventSelectors"] = json.dumps(trail.get("EventSelectors", []))
+        trail["AdvancedEventSelectors"] = json.dumps(
+            trail.get("AdvancedEventSelectors", []),
+        )
 
     return trails
 
 
 @timeit
-def load_trails(neo4j_session: neo4j.Session, trails: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    query: str = """
-    UNWIND $Records as record
-    MERGE (trail:AWSCloudTrailTrail{id: record.TrailARN})
-    ON CREATE SET trail.firstseen = timestamp(),
-        trail.arn = record.TrailARN
-    SET trail.lastupdated = $aws_update_tag,
-        trail.name = record.Name,
-        trail.arn = record.TrailARN,
-        trail.consolelink = record.consolelink,
-        trail.region = record.HomeRegion,
-        trail.is_multi_region_trail = record.IsMultiRegionTrail,
-        trail.is_organization_trail = record.IsOrganizationTrail,
-        trail.s3bucket_name = record.S3BucketName,
-        trail.include_global_service_events = record.IncludeGlobalServiceEvents,
-        trail.log_file_validation_enabled = record.LogFileValidationEnabled,
-        trail.has_custom_event_selectors = record.HasCustomEventSelectors,
-        trail.has_insight_selectors = record.HasInsightSelectors
-    WITH trail
-    MERGE (bucket:S3Bucket{id: trail.s3bucket_name})
-    ON CREATE SET bucket.firstseen = timestamp()
-    SET bucket.lastupdated = $aws_update_tag
-    WITH trail, bucket
-    MERGE (bucket)<-[rel:HAS_BUCKET]-(trail)
-    ON CREATE SET rel.firstseen = timestamp()
-    SET rel.lastupdated = $aws_update_tag
-    WITH trail
-    MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
-    MERGE (owner)-[r:RESOURCE]->(trail)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
-    """
-
-    neo4j_session.run(
-        query,
-        Records=trails,
-        AWS_ACCOUNT_ID=current_aws_account_id,
-        aws_update_tag=aws_update_tag,
+def load_cloudtrail_trails(
+    neo4j_session: neo4j.Session,
+    data: List[Dict[str, Any]],
+    region: str,
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    logger.info(
+        f"Loading CloudTrail {len(data)} trails for region '{region}' into graph.",
+    )
+    load(
+        neo4j_session,
+        CloudTrailTrailSchema(),
+        data,
+        lastupdated=aws_update_tag,
+        Region=region,
+        AWS_ID=current_aws_account_id,
     )
 
 
 @timeit
-def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_cloudtrail_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    logger.debug("Running CloudTrail cleanup job.")
+    cleanup_job = GraphJob.from_node_schema(
+        CloudTrailTrailSchema(), common_job_parameters
+    )
+    cleanup_job.run(neo4j_session)
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict[str, Any],
 ) -> None:
-    tic = time.perf_counter()
-
-    logger.info("Syncing CloudTrail for account '%s', at %s.", current_aws_account_id, tic)
-
-    trails = []
+    cleanup_safe = True
     for region in regions:
-        logger.info("Syncing CloudTrail for region '%s' in account '%s'.", region, current_aws_account_id)
+        logger.info(
+            f"Syncing CloudTrail for region '{region}' in account '{current_aws_account_id}'.",
+        )
+        try:
+            trails_filtered = get_cloudtrail_trails(
+                boto3_session, region, current_aws_account_id
+            )
+        except CloudTrailTransientRegionFailure as error:
+            cleanup_safe = False
+            logger.warning(
+                "Skipping CloudTrail sync for account %s in region %s after transient CloudTrail failure: %s",
+                current_aws_account_id,
+                region,
+                error,
+            )
+            continue
+        trails = transform_cloudtrail_trails(trails_filtered, region)
 
-        trails.extend(get_trails(boto3_session, region))
+        load_cloudtrail_trails(
+            neo4j_session,
+            trails,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
 
-    logger.info(f"Total CloudTrail Trails: {len(trails)}")
-
-    trails = transform_trails(trails)
-
-    load_trails(neo4j_session, trails, current_aws_account_id, update_tag)
-
-    cleanup(neo4j_session, common_job_parameters)
-
-    toc = time.perf_counter()
-    logger.info(f"Time to process CloudTrail: {toc - tic:0.4f} seconds")
+    if cleanup_safe:
+        cleanup(neo4j_session, common_job_parameters)
+    else:
+        logger.warning(
+            "Skipping CloudTrail cleanup for account %s because one or more regions had transient CloudTrail failures. Preserving last-known-good CloudTrail state.",
+            current_aws_account_id,
+        )

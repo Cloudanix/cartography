@@ -1,112 +1,94 @@
 import logging
-import time
-from string import Template
-from typing import Dict
-from typing import List
+from typing import Any
 
 import boto3
 import neo4j
-from botocore.exceptions import ClientError
-try:
-    from cloudconsolelink.clouds.aws import AWSLinker
-except ImportError:
-    AWSLinker = None
 
-from .util import get_botocore_config
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.aws.util.botocore_config import create_boto3_client
+from cartography.intel.aws.util.botocore_config import get_botocore_config
+from cartography.models.aws.ec2.vpc import AWSVpcSchema
+from cartography.models.aws.ec2.vpc_cidr import AWSIPv4CidrBlockSchema
+from cartography.models.aws.ec2.vpc_cidr import AWSIPv6CidrBlockSchema
 from cartography.util import aws_handle_regions
-from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
 @aws_handle_regions
-def get_ec2_vpcs(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
-    client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
-    vpcs = []
-    try:
-        vpcs = client.describe_vpcs().get('Vpcs', [])
-        for vpc in vpcs:
-            is_default = vpc.get('IsDefault', False)
-            if is_default:
-                vpc['isDefault'] = True
-            else:
-                vpc['isDefault'] = False
-
-            vpc['region'] = region
-
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
-            logger.warning(
-                'ec2:describe_vpcs failed with AccessDeniedException; continuing sync.',
-                exc_info=True,
-            )
-        else:
-            raise
-
-    return vpcs
-
-
-def _get_cidr_association_statement(block_type: str) -> str:
-    INGEST_CIDR_TEMPLATE = Template("""
-    MATCH (vpc:AWSVpc{id: $VpcId})
-    WITH vpc
-    UNWIND $CidrBlock as block_data
-        MERGE (new_block:$block_label{id: $VpcId + '|' + block_data.$block_cidr})
-        ON CREATE SET new_block.firstseen = timestamp()
-        SET new_block.association_id = block_data.AssociationId,
-        new_block.cidr_block = block_data.$block_cidr,
-        new_block.block_state = block_data.$state_name.State,
-        new_block.block_state_message = block_data.$state_name.StatusMessage,
-        new_block.lastupdated = $update_tag
-        WITH vpc, new_block
-        MERGE (vpc)-[r:BLOCK_ASSOCIATION]->(new_block)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $update_tag""")
-
-    BLOCK_CIDR = "CidrBlock"
-    STATE_NAME = "CidrBlockState"
-
-    # base label type. We add the AWS ipv4 or 6 depending on block type
-    BLOCK_TYPE = "AWSCidrBlock"
-
-    if block_type == "ipv6":
-        BLOCK_CIDR = "Ipv6" + BLOCK_CIDR
-        STATE_NAME = "Ipv6" + STATE_NAME
-        BLOCK_TYPE = BLOCK_TYPE + ":AWSIpv6CidrBlock"
-    elif block_type == "ipv4":
-        BLOCK_TYPE = BLOCK_TYPE + ":AWSIpv4CidrBlock"
-    else:
-        raise ValueError(f"Unsupported block type specified - {block_type}")
-
-    return INGEST_CIDR_TEMPLATE.safe_substitute(block_label=BLOCK_TYPE, block_cidr=BLOCK_CIDR, state_name=STATE_NAME)
-
-
-@timeit
-def load_cidr_association_set(
-    neo4j_session: neo4j.Session, vpc_id: str, vpc_data: Dict, block_type: str,
-    update_tag: int,
-) -> None:
-    ingest_statement = _get_cidr_association_statement(block_type)
-
-    if block_type == "ipv6":
-        data = vpc_data.get("Ipv6CidrBlockAssociationSet", [])
-    else:
-        data = vpc_data.get("CidrBlockAssociationSet", [])
-
-    neo4j_session.run(
-        ingest_statement,
-        VpcId=vpc_id,
-        CidrBlock=data,
-        update_tag=update_tag,
+def get_ec2_vpcs(
+    boto3_session: boto3.session.Session,
+    region: str,
+) -> list[dict[str, Any]]:
+    client = create_boto3_client(
+        boto3_session,
+        "ec2",
+        region_name=region,
+        config=get_botocore_config(),
     )
+    return client.describe_vpcs().get("Vpcs", [])
+
+
+def transform_vpc_data(
+    vpc_list: list[dict[str, Any]], region: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+
+    vpc_data: list[dict[str, Any]] = []
+    ipv4_cidr_blocks: list[dict[str, Any]] = []
+    ipv6_cidr_blocks: list[dict[str, Any]] = []
+
+    for vpc in vpc_list:
+        vpc_record = {
+            "VpcId": vpc.get("VpcId"),
+            "InstanceTenancy": vpc.get("InstanceTenancy"),
+            "State": vpc.get("State"),
+            "IsDefault": vpc.get("IsDefault"),
+            "PrimaryCIDRBlock": vpc.get("CidrBlock"),
+            "DhcpOptionsId": vpc.get("DhcpOptionsId"),
+            "lastupdated": vpc.get("lastupdated"),
+        }
+        vpc_data.append(vpc_record)
+
+        ipv4_associations = vpc.get("CidrBlockAssociationSet", [])
+        for association in ipv4_associations:
+            ipv4_block = {
+                "Id": vpc["VpcId"] + "|" + association.get("CidrBlock"),
+                "VpcId": vpc["VpcId"],
+                "AssociationId": association.get("AssociationId"),
+                "CidrBlock": association.get("CidrBlock"),
+                "BlockState": association.get("CidrBlockState", {}).get("State"),
+                "BlockStateMessage": association.get("CidrBlockState", {}).get(
+                    "StatusMessage"
+                ),
+            }
+            ipv4_cidr_blocks.append(ipv4_block)
+
+        ipv6_associations = vpc.get("Ipv6CidrBlockAssociationSet", [])
+        for association in ipv6_associations:
+            ipv6_block = {
+                "Id": vpc["VpcId"] + "|" + association.get("Ipv6CidrBlock"),
+                "VpcId": vpc["VpcId"],
+                "AssociationId": association.get("AssociationId"),
+                "CidrBlock": association.get("Ipv6CidrBlock"),
+                "BlockState": association.get("Ipv6CidrBlockState", {}).get("State"),
+                "BlockStateMessage": association.get("Ipv6CidrBlockState", {}).get(
+                    "StatusMessage"
+                ),
+            }
+            ipv6_cidr_blocks.append(ipv6_block)
+
+    return vpc_data, ipv4_cidr_blocks, ipv6_cidr_blocks
 
 
 @timeit
 def load_ec2_vpcs(
-    neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
+    neo4j_session: neo4j.Session,
+    vpcs: list[dict[str, Any]],
+    region: str,
+    aws_account_id: str,
     update_tag: int,
 ) -> None:
     # https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-vpcs.html
@@ -137,95 +119,99 @@ def load_ec2_vpcs(
     #         }
     #     ]
     # }
-
-    ingest_vpc = """
-    MERGE (new_vpc:AWSVpc{id: $VpcId})
-    ON CREATE SET new_vpc.firstseen = timestamp(), new_vpc.vpcid =$VpcId
-    SET new_vpc.instance_tenancy = $InstanceTenancy,
-    new_vpc.state = $State,
-    new_vpc.is_default = $IsDefault,
-    new_vpc.primary_cidr_block = $PrimaryCIDRBlock,
-    new_vpc.dhcp_options_id = $DhcpOptionsId,
-    new_vpc.region = $Region,
-    new_vpc.lastupdated = $update_tag,
-    new_vpc.consolelink = $consolelink,
-    new_vpc.arn = $Arn,
-    new_vpc.is_default = $isDefault,
-    new_vpc.name = $Name
-    WITH new_vpc
-    MATCH (awsAccount:AWSAccount{id: $AWS_ACCOUNT_ID})
-    MERGE (awsAccount)-[r:RESOURCE]->(new_vpc)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag"""
-
-    for vpc in data:
-        region = vpc.get('region', '')
-        vpc_id = vpc["VpcId"]  # fail if not present
-        vpc_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:vpc/{vpc_id}"
-        consolelink = aws_console_link.get_console_link(arn=vpc_arn)
-        vpc_name = vpc_id
-        for tag in vpc.get("Tags", []):
-            if tag.get("Key") == "Name":
-                vpc_name = tag.get("Value")
-                break
-
-        neo4j_session.run(
-            ingest_vpc,
-            VpcId=vpc_id,
-            InstanceTenancy=vpc.get("InstanceTenancy", None),
-            State=vpc.get("State", None),
-            IsDefault=vpc.get("IsDefault", None),
-            PrimaryCIDRBlock=vpc.get("CidrBlock", None),
-            DhcpOptionsId=vpc.get("DhcpOptionsId", None),
-            Region=region,
-            consolelink=consolelink,
-            Arn=vpc_arn,
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            update_tag=update_tag,
-            isDefault=vpc.get("isDefault", None),
-            Name=vpc_name,
-        )
-
-        load_cidr_association_set(
-            neo4j_session,
-            vpc_id=vpc_id,
-            block_type="ipv4",
-            vpc_data=vpc,
-            update_tag=update_tag,
-        )
-
-        load_cidr_association_set(
-            neo4j_session,
-            vpc_id=vpc_id,
-            block_type="ipv6",
-            vpc_data=vpc,
-            update_tag=update_tag,
-        )
+    load(
+        neo4j_session,
+        AWSVpcSchema(),
+        vpcs,
+        lastupdated=update_tag,
+        Region=region,
+        AWS_ID=aws_account_id,
+    )
 
 
 @timeit
-def cleanup_ec2_vpcs(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_vpc_cleanup.json', neo4j_session, common_job_parameters)
+def load_ipv4_cidr_blocks(
+    neo4j_session: neo4j.Session,
+    ipv4_cidr_blocks: list[dict[str, Any]],
+    region: str,
+    aws_account_id: str,
+    update_tag: int,
+) -> None:
+    load(
+        neo4j_session,
+        AWSIPv4CidrBlockSchema(),
+        ipv4_cidr_blocks,
+        lastupdated=update_tag,
+    )
+
+
+@timeit
+def load_ipv6_cidr_blocks(
+    neo4j_session: neo4j.Session,
+    ipv6_cidr_blocks: list[dict[str, Any]],
+    region: str,
+    aws_account_id: str,
+    update_tag: int,
+) -> None:
+    load(
+        neo4j_session,
+        AWSIPv6CidrBlockSchema(),
+        ipv6_cidr_blocks,
+        lastupdated=update_tag,
+    )
+
+
+@timeit
+def cleanup(
+    neo4j_session: neo4j.Session, common_job_parameters: dict[str, Any]
+) -> None:
+    GraphJob.from_node_schema(AWSIPv6CidrBlockSchema(), common_job_parameters).run(
+        neo4j_session
+    )
+    GraphJob.from_node_schema(AWSIPv4CidrBlockSchema(), common_job_parameters).run(
+        neo4j_session
+    )
+    GraphJob.from_node_schema(AWSVpcSchema(), common_job_parameters).run(neo4j_session)
 
 
 @timeit
 def sync_vpc(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: list[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: dict[str, Any],
 ) -> None:
-    tic = time.perf_counter()
-
-    logger.info("Syncing EC2 VPC for account '%s', at %s.", current_aws_account_id, tic)
-
-    data = []
     for region in regions:
-        logger.info("Syncing EC2 VPC for region '%s' in account '%s'.", region, current_aws_account_id)
-        data.extend(get_ec2_vpcs(boto3_session, region))
-
-    logger.info(f"Total VPCs: {len(data)}")
-
-    load_ec2_vpcs(neo4j_session, data, current_aws_account_id, update_tag)
-    cleanup_ec2_vpcs(neo4j_session, common_job_parameters)
-
-    toc = time.perf_counter()
-    logger.info(f"Time to process EC2 VPC: {toc - tic:0.4f} seconds")
+        logger.info(
+            "Syncing EC2 VPC for region '%s' in account '%s'.",
+            region,
+            current_aws_account_id,
+        )
+        raw_vpc_data = get_ec2_vpcs(boto3_session, region)
+        vpc_data, ipv4_cidr_blocks, ipv6_cidr_blocks = transform_vpc_data(
+            raw_vpc_data, region
+        )
+        load_ec2_vpcs(
+            neo4j_session,
+            vpc_data,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
+        load_ipv4_cidr_blocks(
+            neo4j_session,
+            ipv4_cidr_blocks,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
+        load_ipv6_cidr_blocks(
+            neo4j_session,
+            ipv6_cidr_blocks,
+            region,
+            current_aws_account_id,
+            update_tag,
+        )
+    cleanup(neo4j_session, common_job_parameters)
