@@ -5,7 +5,10 @@ from typing import List
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.security import SecurityCenter
-from cloudconsolelink.clouds.azure import AzureLinker
+try:
+    from cloudconsolelink.clouds.azure import AzureLinker
+except ImportError:
+    AzureLinker = None
 
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
@@ -13,7 +16,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
+azure_console_link = AzureLinker() if AzureLinker else None
 
 
 def load_security_contacts(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:

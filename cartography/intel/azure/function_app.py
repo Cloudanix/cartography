@@ -5,7 +5,10 @@ from typing import List
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.web import WebSiteManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
+try:
+    from cloudconsolelink.clouds.azure import AzureLinker
+except ImportError:
+    AzureLinker = None
 from msrest.exceptions import DeserializationError
 
 from .util.credentials import Credentials
@@ -14,7 +17,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
+azure_console_link = AzureLinker() if AzureLinker else None
 
 
 def load_function_apps(

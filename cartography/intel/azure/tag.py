@@ -8,7 +8,10 @@ from typing import List
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.resource import ResourceManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
+try:
+    from cloudconsolelink.clouds.azure import AzureLinker
+except ImportError:
+    AzureLinker = None
 from neo4j import GraphDatabase
 
 from .util.credentials import Credentials
@@ -19,7 +22,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
+azure_console_link = AzureLinker() if AzureLinker else None
 
 
 def load_resource_groups(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:

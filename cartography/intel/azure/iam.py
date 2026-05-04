@@ -14,7 +14,10 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.authorization import AuthorizationManagementClient
 from azure.mgmt.msi import ManagedServiceIdentityClient
-from cloudconsolelink.clouds.azure import AzureLinker
+try:
+    from cloudconsolelink.clouds.azure import AzureLinker
+except ImportError:
+    AzureLinker = None
 from msgraph import GraphServiceClient
 from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
 from msgraph.generated.users.users_request_builder import UsersRequestBuilder
@@ -24,7 +27,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
+azure_console_link = AzureLinker() if AzureLinker else None
 
 scopes = ['https://graph.microsoft.com/.default']
 

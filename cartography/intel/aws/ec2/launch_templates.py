@@ -5,7 +5,10 @@ from typing import List
 
 import boto3
 import neo4j
-from cloudconsolelink.clouds.aws import AWSLinker
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None
 
 from .util import get_botocore_config
 from cartography.util import aws_handle_regions
@@ -13,7 +16,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker()
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit

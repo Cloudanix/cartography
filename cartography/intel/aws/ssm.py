@@ -5,7 +5,10 @@ from typing import List
 
 import boto3
 import neo4j
-from cloudconsolelink.clouds.aws import AWSLinker
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -17,7 +20,7 @@ from cartography.util import dict_date_to_epoch
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker()
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit

@@ -6,7 +6,10 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.keyvault.certificates import CertificateClient
 from azure.mgmt.keyvault import KeyVaultManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
+try:
+    from cloudconsolelink.clouds.azure import AzureLinker
+except ImportError:
+    AzureLinker = None
 
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
@@ -14,7 +17,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
+azure_console_link = AzureLinker() if AzureLinker else None
 
 
 def load_key_vaults(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
