@@ -68,7 +68,7 @@ def get_monitoring_alertpolicies(monitoring: Resource, project_id: str) -> List[
 def load_monitoring_alertpolicies(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_monitoring_alertpolicies_tx, data_list, project_id, update_tag
     )
 
@@ -203,7 +203,7 @@ def transform_metric_descriptors(
 def load_monitoring_metric_descriptors(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_monitoring_metric_descriptors_tx, data_list, project_id, update_tag
     )
 
@@ -327,7 +327,7 @@ def get_monitoring_notification_channels(
 def load_monitoring_notification_channels(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_monitoring_notification_channels_tx, data_list, project_id, update_tag
     )
 
@@ -460,7 +460,7 @@ def get_monitoring_uptimecheckconfigs(
 def load_monitoring_uptimecheckconfigs(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_monitoring_uptimecheckconfigs_tx, data_list, project_id, update_tag
     )
 

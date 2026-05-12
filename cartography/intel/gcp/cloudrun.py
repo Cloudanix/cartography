@@ -423,7 +423,7 @@ def load_cloudrun_authorized_domains(
     project_id: str,
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_cloudrun_authorized_domains_tx, data_list, project_id, update_tag
     )
 
@@ -482,7 +482,7 @@ def load_cloudrun_configurations(
     project_id: str,
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_cloudrun_configurations_tx, data_list, project_id, update_tag
     )
 
@@ -551,7 +551,7 @@ def load_cloudrun_domainmappings(
     project_id: str,
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_cloudrun_domainmappings_tx, data_list, project_id, update_tag
     )
 
@@ -615,7 +615,7 @@ def _load_cloudrun_domainmappings_tx(
 def load_cloudrun_revisions(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_cloudrun_revisions_tx, data_list, project_id, update_tag
     )
 
@@ -678,7 +678,7 @@ def _load_cloudrun_revisions_tx(
 def load_cloudrun_routes(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_cloudrun_routes_tx, data_list, project_id, update_tag
     )
 
@@ -741,7 +741,7 @@ def _load_cloudrun_routes_tx(
 def load_cloudrun_services(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_cloudrun_services_tx, data_list, project_id, update_tag
     )
 

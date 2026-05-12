@@ -336,7 +336,7 @@ def get_get_bigtable_tables(
 def load_bigtable_instances(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_bigtable_instances_tx, data_list, project_id, update_tag
     )
 
@@ -396,7 +396,7 @@ def _load_bigtable_instances_tx(
 def load_bigtable_clusters(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_bigtable_clusters_tx, data_list, project_id, update_tag
     )
 
@@ -458,7 +458,7 @@ def load_bigtable_cluster_backups(
     project_id: str,
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_bigtable_cluster_backups_tx, data_list, project_id, update_tag
     )
 
@@ -519,7 +519,7 @@ def _load_bigtable_cluster_backups_tx(
 def load_bigtable_tables(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_bigtable_tables_tx, data_list, project_id, update_tag
     )
 

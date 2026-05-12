@@ -3,6 +3,7 @@ import os
 import time
 
 import neo4j
+import neo4j.exceptions
 import pytest
 from testcontainers.core.container import DockerContainer
 
@@ -13,16 +14,34 @@ logging.getLogger("neo4j").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+def _neo4j_auth() -> neo4j.Auth | None:
+    user = os.environ.get("NEO4J_USER")
+    password = os.environ.get("NEO4J_PASSWORD")
+    if user and password:
+        return neo4j.basic_auth(user, password)
+    return None
+
+
+def _make_driver(uri: str) -> neo4j.Driver:
+    auth = _neo4j_auth()
+    return neo4j.GraphDatabase.driver(uri, auth=auth)
+
+
 def _wait_for_neo4j(uri: str, timeout_seconds: int = 60) -> None:
     """Block until Neo4j accepts Bolt connections."""
     deadline = time.monotonic() + timeout_seconds
     last_error = None
 
     while time.monotonic() < deadline:
-        driver = neo4j.GraphDatabase.driver(uri)
+        driver = _make_driver(uri)
         try:
             driver.verify_connectivity()
             return
+        except neo4j.exceptions.AuthError as exc:
+            raise RuntimeError(
+                f"Neo4j auth failed for {uri}. "
+                f"Set NEO4J_USER and NEO4J_PASSWORD env vars if auth is enabled."
+            ) from exc
         # This branch only executes if the container is still booting.
         except Exception as exc:  # pragma: no cover
             last_error = exc
@@ -68,7 +87,7 @@ def neo4j_url():
 
 @pytest.fixture(scope="module")
 def neo4j_session(neo4j_url):
-    driver = neo4j.GraphDatabase.driver(neo4j_url)
+    driver = _make_driver(neo4j_url)
     with driver.session() as session:
         yield session
         session.run("MATCH (n) DETACH DELETE n;")

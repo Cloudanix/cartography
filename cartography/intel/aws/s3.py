@@ -661,6 +661,7 @@ def load_s3_details(
     bucket_data: Dict,
     aws_account_id: str,
     update_tag: int,
+    common_job_parameters: Dict | None = None,
 ) -> None:
     """
     Merge bucket details with basic bucket data and load using composite schemas.
@@ -672,11 +673,12 @@ def load_s3_details(
     merged_data = _merge_bucket_details(bucket_data, s3_details_iter, aws_account_id)
 
     # cleanup existing policy properties set on S3 Buckets
-    run_cleanup_job(
-        "aws_s3_details.json",
-        neo4j_session,
-        {"UPDATE_TAG": update_tag, "AWS_ID": aws_account_id},
-    )
+    s3_cleanup_params = {
+        "UPDATE_TAG": update_tag,
+        "AWS_ID": aws_account_id,
+        **(common_job_parameters or {}),
+    }
+    run_cleanup_job("aws_s3_details.json", neo4j_session, s3_cleanup_params)
 
     # Load base bucket properties (always done for all buckets)
     load(
@@ -1344,6 +1346,7 @@ def sync(
         bucket_data,
         current_aws_account_id,
         update_tag,
+        common_job_parameters,
     )
     cleanup_s3_buckets(neo4j_session, common_job_parameters)
     cleanup_s3_bucket_acl_and_policy(neo4j_session, common_job_parameters)

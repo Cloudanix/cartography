@@ -72,7 +72,7 @@ def transform_instances(instances: List[Dict], project_id: str) -> List[Dict]:
 def load_spanner_instances(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_spanner_instances_tx, data_list, project_id, update_tag
     )
 
@@ -175,7 +175,7 @@ def transform_instance_configs(
 def load_spanner_instance_configs(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_spanner_instance_configs_tx, data_list, project_id, update_tag
     )
 
@@ -242,7 +242,7 @@ def transform_spanner_instance_configs_replicas(
 def load_spanner_instance_configs_replicas(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_spanner_instance_configs_replicas_tx, data_list, project_id, update_tag
     )
 
@@ -343,7 +343,7 @@ def transform_instances_databases(databases: List[Dict], project_id: str) -> Lis
 def load_spanner_instances_databases(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_spanner_instances_databases_tx, data_list, project_id, update_tag
     )
 
@@ -459,7 +459,7 @@ def transform_instances_backups(backups: List[Dict], project_id: str) -> List[Di
 def load_spanner_instances_backups(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_spanner_instances_backups_tx, data_list, project_id, update_tag
     )
 

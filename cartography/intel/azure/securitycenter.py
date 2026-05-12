@@ -21,7 +21,7 @@ azure_console_link = AzureLinker() if AzureLinker else None
 def load_security_contacts(
     session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_security_contacts_tx, subscription_id, data_list, update_tag
     )
 

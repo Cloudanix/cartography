@@ -26,7 +26,7 @@ azure_console_link = AzureLinker() if AzureLinker else None
 def load_resource_groups(
     session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_resource_groups_tx, subscription_id, data_list, update_tag
     )
 
@@ -39,7 +39,7 @@ def load_tags(
 ) -> None:
     logger.info(f"Loading instances  {len(data_list)}")
     for paginated_tags in batch(data_list, size=500):
-        session.write_transaction(
+        session.execute_write(
             _load_tags_tx, paginated_tags, update_tag, common_job_parameters
         )
 

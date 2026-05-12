@@ -600,7 +600,7 @@ def load_artifact_registry_repositories(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_artifact_registry_repositories_tx, project_id, data_list, update_tag
     )
 
@@ -611,7 +611,7 @@ def load_container_registry_repositories(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_container_registry_repositories_tx, project_id, data_list, update_tag
     )
 
@@ -622,7 +622,7 @@ def load_artifact_registry_packages(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_artifact_registry_packages_tx, repository_name, data_list, update_tag
     )
 
@@ -633,7 +633,7 @@ def load_artifact_registry_versions(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_artifact_registry_versions_tx, package_name, data_list, update_tag
     )
 
@@ -644,7 +644,7 @@ def load_container_registry_images(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_container_registry_images_tx, repository_name, data_list, update_tag
     )
 

@@ -461,7 +461,7 @@ def get_api_gateway_policy_entities(
 def load_apigateway_locations(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_apigateway_locations_tx, data_list, project_id, update_tag
     )
 
@@ -544,7 +544,7 @@ def cleanup_apigateway_locations(
 def load_apis(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_apis_tx, data_list, project_id, update_tag)
+    session.execute_write(load_apis_tx, data_list, project_id, update_tag)
 
 
 @timeit
@@ -623,7 +623,7 @@ def cleanup_apis(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> N
 def load_apis_entity_relation(
     session: neo4j.Session, api: Dict, update_tag: int
 ) -> None:
-    session.write_transaction(load_apis_entity_relation_tx, api, update_tag)
+    session.execute_write(load_apis_entity_relation_tx, api, update_tag)
 
 
 @timeit
@@ -666,7 +666,7 @@ def load_apis_entity_relation_tx(
 def load_gateway_entity_relation(
     session: neo4j.Session, gateway: Dict, update_tag: int
 ) -> None:
-    session.write_transaction(load_gateway_entity_relation_tx, gateway, update_tag)
+    session.execute_write(load_gateway_entity_relation_tx, gateway, update_tag)
 
 
 @timeit
@@ -709,7 +709,7 @@ def load_gateway_entity_relation_tx(
 def load_api_configs(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_api_configs_tx, data_list, project_id, update_tag)
+    session.execute_write(load_api_configs_tx, data_list, project_id, update_tag)
 
 
 @timeit
@@ -791,7 +791,7 @@ def cleanup_api_configs(
 def load_gateways(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_gateways_tx, data_list, project_id, update_tag)
+    session.execute_write(load_gateways_tx, data_list, project_id, update_tag)
 
 
 @timeit

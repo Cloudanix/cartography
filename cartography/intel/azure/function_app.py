@@ -25,7 +25,7 @@ def load_function_apps(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_function_apps_tx,
         subscription_id,
         data_list,
@@ -38,7 +38,7 @@ def load_function_apps_configurations(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_function_apps_configurations_tx,
         data_list,
         update_tag,
@@ -50,7 +50,7 @@ def load_function_apps_functions(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_function_apps_functions_tx,
         data_list,
         update_tag,
@@ -62,7 +62,7 @@ def load_function_apps_deployments(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_function_apps_deployments_tx,
         data_list,
         update_tag,
@@ -74,7 +74,7 @@ def load_function_apps_backups(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_function_apps_backups_tx,
         data_list,
         update_tag,
@@ -86,7 +86,7 @@ def load_function_apps_processes(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_function_apps_processes_tx,
         data_list,
         update_tag,
@@ -98,7 +98,7 @@ def load_function_apps_snapshots(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_function_apps_snapshots_tx,
         data_list,
         update_tag,
@@ -110,7 +110,7 @@ def load_function_apps_webjobs(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_function_apps_webjobs_tx,
         data_list,
         update_tag,

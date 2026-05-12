@@ -167,7 +167,7 @@ def transform_regional_health_checks(health_checks: List, project_id: str, regio
 def load_health_checks(
     session: neo4j.Session, health_checks: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_health_checks_tx, health_checks, project_id, update_tag
     )
 
@@ -409,7 +409,7 @@ def load_instance_groups(
     project_id: str,
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_instance_groups_tx, instance_groups, project_id, update_tag
     )
 
@@ -643,7 +643,7 @@ def transform_regional_url_maps(maps: List, region: str, project_id: str):
 def load_url_maps(
     session: neo4j.Session, url_maps: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_url_maps_tx, url_maps, project_id, update_tag)
+    session.execute_write(load_url_maps_tx, url_maps, project_id, update_tag)
 
 
 @timeit
@@ -795,7 +795,7 @@ def transform_ssl_policies(ssl_policies: List, project_id: str):
 def load_ssl_policies(
     session: neo4j.Session, ssl_policies: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_ssl_policies_tx, ssl_policies, project_id, update_tag
     )
 

@@ -65,7 +65,7 @@ def get_logging_metrics(logging: Resource, project_id: str) -> List[Dict]:
 def load_logging_metrics(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_logging_metrics_tx, data_list, project_id, update_tag
     )
 
@@ -179,7 +179,7 @@ def get_logging_sinks(logging: Resource, project_id: str) -> List[Dict]:
 def load_logging_sinks(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_logging_sinks_tx, data_list, project_id, update_tag)
+    session.execute_write(load_logging_sinks_tx, data_list, project_id, update_tag)
 
 
 @timeit

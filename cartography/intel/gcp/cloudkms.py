@@ -215,7 +215,7 @@ def transform_keryring_policy_bindings(
 def attach_keyring_to_binding(
     session: neo4j.Session, keyring_id: str, bindings: List[Dict], gcp_update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         attach_keyring_to_bindings_tx, bindings, keyring_id, gcp_update_tag
     )
 
@@ -333,7 +333,7 @@ def get_kms_crypto_keys(
 def load_kms_locations(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(_load_kms_locations_tx, data_list, project_id, update_tag)
+    session.execute_write(_load_kms_locations_tx, data_list, project_id, update_tag)
 
 
 def _load_kms_locations_tx(
@@ -385,7 +385,7 @@ def _load_kms_locations_tx(
 def load_kms_key_rings(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(_load_kms_key_rings_tx, data_list, project_id, update_tag)
+    session.execute_write(_load_kms_key_rings_tx, data_list, project_id, update_tag)
 
 
 def _load_kms_key_rings_tx(
@@ -439,7 +439,7 @@ def _load_kms_key_rings_tx(
 def load_keyring_entity_relation(
     session: neo4j.Session, keyring: Dict, update_tag: int
 ) -> None:
-    session.write_transaction(load_keyring_entity_relation_tx, keyring, update_tag)
+    session.execute_write(load_keyring_entity_relation_tx, keyring, update_tag)
 
 
 @timeit
@@ -482,7 +482,7 @@ def load_keyring_entity_relation_tx(
 def load_kms_crypto_keys(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_kms_crypto_keys_tx, data_list, project_id, update_tag
     )
 

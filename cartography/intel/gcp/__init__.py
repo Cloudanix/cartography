@@ -793,6 +793,11 @@ def start_gcp_ingestion(
     common_job_parameters = {
         "UPDATE_TAG": config.update_tag,
         "gcp_permission_relationships_file": config.gcp_permission_relationships_file,
+        # Cloudanix-specific params — None in non-cloudanix environments; cleanup jobs match nothing gracefully.
+        "WORKSPACE_ID": getattr(config, "workspace_id", None),
+        "GCP_ORGANIZATION_ID": getattr(config, "gcp_organization_id", None),
+        "GCP_PROJECT_ID": getattr(config, "gcp_project_id", None),
+        "LIMIT_SIZE": getattr(config, "cleanup_limit_size", 1000),
     }
 
     requested_syncs: Set[str] | None = None

@@ -166,7 +166,7 @@ def transform_dataset_accesses(
 def attach_dataset_to_accesses(
     session: neo4j.Session, dataset_id: str, accesses: List[Dict], gcp_update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         attach_dataset_to_accesses_tx, accesses, dataset_id, gcp_update_tag
     )
 
@@ -308,7 +308,7 @@ def get_table_info(bigquery, project_id, dataset_id, table_id):
 def load_bigquery_datasets(
     session: neo4j.Session, datasets: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_bigquery_datasets_tx, datasets, project_id, update_tag
     )
 
@@ -355,7 +355,7 @@ def load_bigquery_datasets_tx(
 def load_bigquery_tables(
     session: neo4j.Session, tables: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_bigquery_tables_tx, tables, project_id, update_tag)
+    session.execute_write(load_bigquery_tables_tx, tables, project_id, update_tag)
 
 
 @timeit

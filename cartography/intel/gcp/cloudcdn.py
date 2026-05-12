@@ -67,7 +67,7 @@ def get_backend_buckets(compute: Resource, project_id: str) -> List[Dict]:
 def load_backend_buckets(
     session: neo4j.Session, buckets: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_backend_buckets_tx, buckets, project_id, update_tag)
+    session.execute_write(load_backend_buckets_tx, buckets, project_id, update_tag)
 
 
 @timeit
@@ -289,7 +289,7 @@ def load_backend_services(
     project_id: str,
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_backend_services_tx, backend_services, project_id, update_tag
     )
 
@@ -498,7 +498,7 @@ def transform_global_url_maps(url_maps: List[Dict], project_id: str) -> List[Dic
 def load_url_maps(
     session: neo4j.Session, url_maps: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_url_maps_tx, url_maps, project_id, update_tag)
+    session.execute_write(load_url_maps_tx, url_maps, project_id, update_tag)
 
 
 @timeit

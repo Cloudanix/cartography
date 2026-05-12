@@ -416,6 +416,10 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "aws_cloudtrail_management_events_lookback_hours": config.aws_cloudtrail_management_events_lookback_hours,
         "experimental_aws_inspector_batch": config.experimental_aws_inspector_batch,
         "aws_tagging_api_cleanup_batch": config.aws_tagging_api_cleanup_batch,
+        # Cloudanix-specific params — None in non-cloudanix environments; cleanup jobs match nothing gracefully.
+        "WORKSPACE_ID": getattr(config, "workspace_id", None),
+        "ORGANIZATION_ID": getattr(config, "organization_id", None),
+        "LIMIT_SIZE": getattr(config, "cleanup_limit_size", 1000),
     }
     try:
         boto3_session = boto3.Session()

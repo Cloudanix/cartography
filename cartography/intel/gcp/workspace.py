@@ -197,7 +197,7 @@ def get_groups(admin: Resource) -> List[Dict]:
 def load_users(
     session: neo4j.Session, data_list: List[Dict], organization_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(_load_users_tx, data_list, organization_id, update_tag)
+    session.execute_write(_load_users_tx, data_list, organization_id, update_tag)
 
 
 @timeit
@@ -258,7 +258,7 @@ def cleanup_users(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 def load_groups(
     session: neo4j.Session, data_list: List[Dict], organization_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(_load_groups_tx, data_list, organization_id, update_tag)
+    session.execute_write(_load_groups_tx, data_list, organization_id, update_tag)
 
 
 @timeit

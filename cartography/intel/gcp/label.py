@@ -53,7 +53,7 @@ def load_labels(
             end = start + iteration_size
             labels = data_list[start:end]
 
-        session.write_transaction(
+        session.execute_write(
             _load_labels_tx, labels, update_tag, common_job_parameters, service_label
         )
 

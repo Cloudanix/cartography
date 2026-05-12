@@ -247,7 +247,7 @@ def get_sql_databases(sql: Resource, instance: Dict, project_id: str) -> List[Di
 def load_sql_instances(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(_load_sql_instances_tx, data_list, project_id, update_tag)
+    session.execute_write(_load_sql_instances_tx, data_list, project_id, update_tag)
 
 
 def load_sql_instances_vpc_network(
@@ -256,7 +256,7 @@ def load_sql_instances_vpc_network(
     project_id: str,
     update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_sql_instances_vpc_network_tx, data_list, project_id, update_tag
     )
 
@@ -349,7 +349,7 @@ def _load_sql_instances_tx(
 def load_sql_users(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(_load_sql_users_tx, data_list, project_id, update_tag)
+    session.execute_write(_load_sql_users_tx, data_list, project_id, update_tag)
 
 
 @timeit
@@ -403,14 +403,14 @@ def _load_sql_users_tx(
 def load_sql_databases(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(_load_sql_databases_tx, data_list, project_id, update_tag)
+    session.execute_write(_load_sql_databases_tx, data_list, project_id, update_tag)
 
 
 @timeit
 def load_public_ip_address(
     session: neo4j.Session, instance: Dict, project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_public_ip_address_tx, instance, project_id, update_tag
     )
 

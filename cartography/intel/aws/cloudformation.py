@@ -59,7 +59,7 @@ def load_cloudformation_stack(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_cloudformation_stack_tx, stacks, current_aws_account_id, aws_update_tag
     )
 

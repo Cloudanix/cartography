@@ -77,7 +77,7 @@ def transform_subscriptions(subscriptions: List[Dict], project_id: str) -> List[
 def load_pubsub_subscriptions(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_pubsub_subscriptions_tx, data_list, project_id, update_tag
     )
 
@@ -198,7 +198,7 @@ def transform_topics(topics: List[Dict], project_id: str) -> List[Dict]:
 def load_pubsub_topics(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(load_pubsub_topics_tx, data_list, project_id, update_tag)
+    session.execute_write(load_pubsub_topics_tx, data_list, project_id, update_tag)
 
 
 @timeit

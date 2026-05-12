@@ -91,7 +91,7 @@ def transform_pubsublite_topics(topics: List[Dict], project_id: str) -> List[Dic
 def load_pubsublite_topics(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_pubsublite_topics_tx, data_list, project_id, update_tag
     )
 
@@ -210,7 +210,7 @@ def transform_pubsublite_subscriptions(
 def load_pubsublite_subscriptions(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         load_pubsublite_subscriptions_tx, data_list, project_id, update_tag
     )
 

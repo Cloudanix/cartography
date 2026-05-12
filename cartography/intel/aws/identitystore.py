@@ -53,7 +53,7 @@ def load_identity_center_instance(
     update_tag: int,
     organization_id: str,
 ) -> None:
-    neo4j_session.write_transaction(
+    neo4j_session.execute_write(
         _load_identity_center_instance_tx, instance, update_tag, organization_id
     )
 
@@ -131,7 +131,7 @@ def load_identity_center_permissions_sets(
     permissions_sets_list: List[Dict],
     update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(
+    neo4j_session.execute_write(
         _load_identity_center_permissions_sets_tx,
         instance_arn,
         permissions_sets_list,
@@ -348,7 +348,7 @@ def load_identity_center_account_assignments(
                     f"{assignment['PrincipalId']}/{permissions_set['Name']}"
                 )
 
-                neo4j_session.write_transaction(
+                neo4j_session.execute_write(
                     _load_identity_center_account_assignments_tx,
                     assignment,
                     permissions_set,
@@ -645,7 +645,7 @@ def load_identity_center_users(
     users_list: List[Dict],
     update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(
+    neo4j_session.execute_write(
         _load_identity_center_users_tx, instance_arn, users_list, update_tag
     )
 
@@ -734,7 +734,7 @@ def load_identity_center_groups(
     groups_list: List[Dict],
     update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(
+    neo4j_session.execute_write(
         _load_identity_center_groups_tx, instance_arn, groups_list, update_tag
     )
 
@@ -808,7 +808,7 @@ def load_identity_center_group_memberships(
     memberships: List[Dict],
     update_tag: int,
 ) -> None:
-    neo4j_session.write_transaction(
+    neo4j_session.execute_write(
         _load_identity_center_group_memberships_tx, memberships, update_tag
     )
 

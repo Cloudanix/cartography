@@ -150,7 +150,7 @@ def load_waf_classic_web_acls(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_waf_classic_web_acls_tx, web_acls, current_aws_account_id, aws_update_tag
     )
 
@@ -340,7 +340,7 @@ def load_waf_v2_web_acls(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    session.write_transaction(
+    session.execute_write(
         _load_waf_v2_web_acls_tx, web_acls, current_aws_account_id, aws_update_tag
     )
 

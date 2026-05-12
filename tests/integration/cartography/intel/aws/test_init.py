@@ -20,7 +20,11 @@ TEST_ACCOUNTS = {
 }
 TEST_REGIONS = ["us-east-1", "us-west-2"]
 TEST_UPDATE_TAG = 123456789
-GRAPH_JOB_PARAMETERS = {"UPDATE_TAG": TEST_UPDATE_TAG}
+GRAPH_JOB_PARAMETERS = {
+    "UPDATE_TAG": TEST_UPDATE_TAG,
+    "WORKSPACE_ID": "test_workspace_id",
+    "ORGANIZATION_ID": "test_org_id",
+}
 
 # https://stackoverflow.com/a/56687648 - Allows us to test the RESOURCE_FUNCTIONS table.
 AWS_RESOURCE_FUNCTIONS_STUB: Dict[str, Callable] = {
@@ -40,13 +44,15 @@ def make_aws_sync_test_kwargs(
     Note: aioboto3_session is NOT included here because it's only used by ecr:image_layers, which has a different
     signature from the standard AWS sync functions.
     """
+    # Use a fresh copy so _sync_multiple_accounts doesn't mutate the shared module-level dict
+    # (it does `del common_job_parameters["AWS_ID"]` which poisons later tests).
     return {
         "neo4j_session": neo4j_session,
         "boto3_session": mock_boto3_session(),
         "current_aws_account_id": "1234",
         "update_tag": TEST_UPDATE_TAG,
         "regions": TEST_REGIONS,
-        "common_job_parameters": GRAPH_JOB_PARAMETERS,
+        "common_job_parameters": {**GRAPH_JOB_PARAMETERS, "AWS_ID": "1234"},
     }
 
 
@@ -279,6 +285,9 @@ def test_start_aws_ingestion(
             "aws_cloudtrail_management_events_lookback_hours": test_config.aws_cloudtrail_management_events_lookback_hours,
             "experimental_aws_inspector_batch": test_config.experimental_aws_inspector_batch,
             "aws_tagging_api_cleanup_batch": test_config.aws_tagging_api_cleanup_batch,
+            "WORKSPACE_ID": None,
+            "ORGANIZATION_ID": None,
+            "LIMIT_SIZE": 1000,
         },
     )
 
@@ -442,7 +451,7 @@ def test_sync_one_account_all_sync_functions(
                 TEST_REGIONS,
                 "1234",
                 TEST_UPDATE_TAG,
-                GRAPH_JOB_PARAMETERS,
+                aws_sync_test_kwargs["common_job_parameters"],
             )
         else:
             AWS_RESOURCE_FUNCTIONS_STUB[sync_name].assert_called_with(
@@ -488,7 +497,7 @@ def test_sync_one_account_just_iam_rels_and_tags(
         mock_boto3_session(),
         "1234",
         TEST_UPDATE_TAG,
-        GRAPH_JOB_PARAMETERS,
+        aws_sync_test_kwargs["common_job_parameters"],
         aws_requested_syncs=[
             "iam",
             "permission_relationships",
