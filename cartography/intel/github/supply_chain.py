@@ -60,7 +60,7 @@ def _get_unmatched_ghcr_image_owner_repos(
     query = """
     MATCH (org:GitHubOrganization {id: $org_url})-[:RESOURCE]->(img:GitHubContainerImage)
     WHERE img:Image
-      AND NOT exists((img)-[:PACKAGED_FROM {lastupdated: $update_tag}]->())
+      AND NOT (img)-[:PACKAGED_FROM {lastupdated: $update_tag}]->()
     MATCH (pkg:GitHubPackage)-[:HAS_IMAGE]->(img)
     MATCH (repo:GitHubRepository)-[:HAS_PACKAGE]->(pkg)
     WITH img, collect(DISTINCT repo.id) AS repo_ids
@@ -105,10 +105,10 @@ def get_unmatched_container_images_with_history(
         MATCH (img:Image)<-[:IMAGE]-(repo_img:ImageTag)<-[:REPO_IMAGE]-(repo:ContainerRegistry)
         WHERE img.layer_diff_ids IS NOT NULL
           AND size(img.layer_diff_ids) > 0
-          AND NOT exists((img)-[:PACKAGED_FROM {lastupdated: $update_tag}]->())
+          AND NOT (img)-[:PACKAGED_FROM {lastupdated: $update_tag}]->()
           AND (
-              NOT exists((img)-[:PACKAGED_FROM {_sub_resource_label: 'GitHubOrganization'}]->())
-              OR exists((img)-[:PACKAGED_FROM {_sub_resource_id: $organization}]->())
+              NOT (img)-[:PACKAGED_FROM {_sub_resource_label: 'GitHubOrganization'}]->()
+              OR (img)-[:PACKAGED_FROM {_sub_resource_id: $organization}]->()
           )
         WITH repo, img, repo_img
         ORDER BY

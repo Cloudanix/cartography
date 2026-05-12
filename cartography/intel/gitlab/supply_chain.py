@@ -62,20 +62,15 @@ def get_unmatched_gitlab_container_images_with_history(
           AND size(img.layer_diff_ids) > 0
           AND (
               NOT repo:GitLabContainerRepository
-              OR exists(
-                  (:GitLabOrganization {id: $organization_id, gitlab_url: $gitlab_url})
-                  -[:RESOURCE]->(repo)
-              )
+              OR (:GitLabOrganization {id: $organization_id, gitlab_url: $gitlab_url})-[:RESOURCE]->(repo)
           )
-          AND NOT exists((img)-[:PACKAGED_FROM {lastupdated: $update_tag}]->())
+          AND NOT (img)-[:PACKAGED_FROM {lastupdated: $update_tag}]->()
           AND (
-              NOT exists((img)-[:PACKAGED_FROM {_sub_resource_label: 'GitLabOrganization'}]->())
-              OR exists((
-                  img
-              )-[:PACKAGED_FROM {
+              NOT (img)-[:PACKAGED_FROM {_sub_resource_label: 'GitLabOrganization'}]->()
+              OR (img)-[:PACKAGED_FROM {
                   _sub_resource_label: 'GitLabOrganization',
                   _sub_resource_id: $organization_id
-              }]->())
+              }]->()
           )
         WITH repo, img, repo_img
         ORDER BY

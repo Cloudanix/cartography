@@ -1077,10 +1077,10 @@ def get_unmatched_gcp_images_with_history(
         MATCH (img:Image:GCPArtifactRegistryContainerImage)
         WHERE img.layer_diff_ids IS NOT NULL
           AND size(img.layer_diff_ids) > 0
-          AND NOT exists((img)-[:PACKAGED_FROM {lastupdated: $update_tag}]->())
+          AND NOT (img)-[:PACKAGED_FROM {lastupdated: $update_tag}]->()
           AND (
-              NOT exists((img)-[:PACKAGED_FROM {_sub_resource_label: $sub_resource_label}]->())
-              OR exists((img)-[:PACKAGED_FROM {_sub_resource_id: $sub_resource_id}]->())
+              NOT (img)-[:PACKAGED_FROM {_sub_resource_label: $sub_resource_label}]->()
+              OR (img)-[:PACKAGED_FROM {_sub_resource_id: $sub_resource_id}]->()
           )
         OPTIONAL MATCH (img)<-[:CONTAINS]-(gcpRepo:GCPArtifactRegistryRepository)
         WITH coalesce(gcpRepo.id, img.id) AS group_key, img
