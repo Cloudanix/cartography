@@ -35,47 +35,38 @@ SAMPLE_ANALYSIS_JOB = """
 
 
 def test_run_analysis_job_default_package(mocker):
-    read_text_mock = mocker.patch(
-        "cartography.util.read_text",
-        return_value=SAMPLE_ANALYSIS_JOB,
-    )
+    files_mock = mocker.patch("cartography.util.files")
+    files_mock.return_value.joinpath.return_value.read_text.return_value = SAMPLE_ANALYSIS_JOB
     neo4j_session = mocker.Mock()
 
     util.run_analysis_job("test.json", neo4j_session, {})
 
-    read_text_mock.assert_called_once_with(
-        "cartography.data.jobs.analysis",
-        "test.json",
-    )
+    files_mock.assert_called_once_with("cartography.data.jobs.analysis")
+    files_mock.return_value.joinpath.assert_called_once_with("test.json")
     neo4j_session.execute_write.assert_called_once()
 
 
 def test_run_analysis_job_custom_package(mocker):
-    read_text_mock = mocker.patch(
-        "cartography.util.read_text",
-        return_value=SAMPLE_ANALYSIS_JOB,
-    )
+    files_mock = mocker.patch("cartography.util.files")
+    files_mock.return_value.joinpath.return_value.read_text.return_value = SAMPLE_ANALYSIS_JOB
     neo4j_session = mocker.Mock()
 
     util.run_analysis_job("test.json", neo4j_session, {}, package="a.b.c")
 
-    read_text_mock.assert_called_once_with("a.b.c", "test.json")
+    files_mock.assert_called_once_with("a.b.c")
+    files_mock.return_value.joinpath.assert_called_once_with("test.json")
     neo4j_session.execute_write.assert_called_once()
 
 
 def test_run_scoped_analysis_job_default_package(mocker):
-    read_text_mock = mocker.patch(
-        "cartography.util.read_text",
-        return_value=SAMPLE_ANALYSIS_JOB,
-    )
+    files_mock = mocker.patch("cartography.util.files")
+    files_mock.return_value.joinpath.return_value.read_text.return_value = SAMPLE_ANALYSIS_JOB
     neo4j_session = mocker.Mock()
 
     util.run_scoped_analysis_job("test.json", neo4j_session, {})
 
-    read_text_mock.assert_called_once_with(
-        "cartography.data.jobs.scoped_analysis",
-        "test.json",
-    )
+    files_mock.assert_called_once_with("cartography.data.jobs.scoped_analysis")
+    files_mock.return_value.joinpath.assert_called_once_with("test.json")
     neo4j_session.execute_write.assert_called_once()
 
 

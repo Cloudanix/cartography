@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import ClassVar
 from typing import Optional
 
 from cartography.models.core.common import PropertyRef
@@ -51,6 +52,7 @@ class TestComputerProperties(CartographyNodeProperties):
 
 @dataclass(frozen=True)
 class TestComputer(CartographyNodeSchema):
+    __test__: ClassVar[bool] = False
     label: str = "TestComputer"
     properties: TestComputerProperties = TestComputerProperties()
     other_relationships: Optional[OtherRelationships] = OtherRelationships(

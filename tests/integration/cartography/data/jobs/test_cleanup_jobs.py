@@ -32,11 +32,12 @@ SAMPLE_CLEANUP_JOB = """
 SAMPLE_JOB_FILENAME = "/path/to/this/cleanupjob/mycleanupjob.json"
 
 
-@mock.patch.object(cartography.util, "read_text", return_value=SAMPLE_CLEANUP_JOB)
+@mock.patch.object(cartography.util, "files")
 def test_run_cleanup_job_on_relationships(
-    mock_read_text: mock.MagicMock,
+    mock_files: mock.MagicMock,
     neo4j_session,
 ):
+    mock_files.return_value.joinpath.return_value.read_text.return_value = SAMPLE_CLEANUP_JOB
     # Arrange: nodes id1 and id2 are connected to each other at time T2 via stale RELship r
     neo4j_session.run(
         """
@@ -76,11 +77,12 @@ def test_run_cleanup_job_on_relationships(
         ("id2", UPDATE_TAG_T2),
     }
     assert actual_nodes == expected_nodes
-    mock_read_text.assert_called_once()
+    mock_files.assert_called_once()
 
 
-@mock.patch.object(cartography.util, "read_text", return_value=SAMPLE_CLEANUP_JOB)
-def test_run_cleanup_job_on_nodes(mock_read_text: mock.MagicMock, neo4j_session):
+@mock.patch.object(cartography.util, "files")
+def test_run_cleanup_job_on_nodes(mock_files: mock.MagicMock, neo4j_session):
+    mock_files.return_value.joinpath.return_value.read_text.return_value = SAMPLE_CLEANUP_JOB
     # Arrange: we are now at time T3, and node id1 exists but node id2 no longer exists
     neo4j_session.run(
         """
@@ -104,14 +106,15 @@ def test_run_cleanup_job_on_nodes(mock_read_text: mock.MagicMock, neo4j_session)
         ("id1", UPDATE_TAG_T3),
     }
     assert actual_nodes == expected_nodes
-    mock_read_text.assert_called_once()
+    mock_files.assert_called_once()
 
 
-@mock.patch.object(cartography.util, "read_text", return_value=SAMPLE_CLEANUP_JOB)
+@mock.patch.object(cartography.util, "files")
 def test_run_cleanup_job_iterative_multiple_batches(
-    mock_read_text: mock.MagicMock,
+    mock_files: mock.MagicMock,
     neo4j_session,
 ):
+    mock_files.return_value.joinpath.return_value.read_text.return_value = SAMPLE_CLEANUP_JOB
     # Arrange: load 300 nodes to the graph
     for i in range(300):
         neo4j_session.run(
@@ -134,4 +137,4 @@ def test_run_cleanup_job_iterative_multiple_batches(
     )
     actual_nodes = {n["n.id"] for n in nodes}
     assert actual_nodes == set()
-    mock_read_text.assert_called_once()
+    mock_files.assert_called_once()

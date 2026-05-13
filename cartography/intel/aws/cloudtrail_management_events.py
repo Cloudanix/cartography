@@ -2,6 +2,7 @@ import json
 import logging
 from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
@@ -80,7 +81,7 @@ def get_assume_role_events(
     client = create_boto3_client(boto3_session, "cloudtrail", region_name=region)
 
     # Calculate time range
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
 
     logger.debug(
@@ -136,7 +137,7 @@ def get_saml_role_events(
     client = create_boto3_client(boto3_session, "cloudtrail", region_name=region)
 
     # Calculate time range
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
 
     logger.debug(
@@ -194,7 +195,7 @@ def get_web_identity_role_events(
     client = create_boto3_client(boto3_session, "cloudtrail", region_name=region)
 
     # Calculate time range
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
 
     logger.debug(

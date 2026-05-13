@@ -5,8 +5,7 @@ from datetime import datetime
 from datetime import timezone
 from functools import partial
 from functools import wraps
-from importlib.resources import open_binary
-from importlib.resources import read_text
+from importlib.resources import files
 from string import Template
 from typing import Any
 from typing import Awaitable
@@ -120,10 +119,7 @@ def run_analysis_job(
     """
     GraphJob.run_from_json(
         neo4j_session,
-        read_text(
-            package,
-            filename,
-        ),
+        files(package).joinpath(filename).read_text(encoding="utf-8"),
         common_job_parameters,
         get_job_shortname(filename),
     )
@@ -318,10 +314,7 @@ def run_cleanup_job(
     """
     GraphJob.run_from_json(
         neo4j_session,
-        read_text(
-            package,
-            filename,
-        ),
+        files(package).joinpath(filename).read_text(encoding="utf-8"),
         common_job_parameters,
         get_job_shortname(filename),
     )
@@ -424,7 +417,7 @@ def load_resource_binary(package: str, resource_name: str) -> BinaryIO:
         importlib-based resource systems. The returned file object should
         be properly closed after use.
     """
-    return open_binary(package, resource_name)
+    return files(package).joinpath(resource_name).open("rb")
 
 
 R = TypeVar("R")

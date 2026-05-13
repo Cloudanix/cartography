@@ -1,3 +1,5 @@
+import pytest
+
 from cartography.client.core.tx import ensure_indexes
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import read_list_of_tuples_tx
@@ -55,6 +57,7 @@ def test_read_single_value_tx(neo4j_session):
     assert value == 8
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
 def test_read_single_value_tx_assert_returns_first_of_list_only(neo4j_session):
     # Arrange
     _ensure_test_data(neo4j_session)
@@ -93,6 +96,7 @@ def test_read_single_dict_tx(neo4j_session):
     assert {"name": "Homer", "age": 39} == result
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
 def test_read_single_dict_tx_assert_return_first_of_list_only(neo4j_session):
     # Arrange
     _ensure_test_data(neo4j_session)
