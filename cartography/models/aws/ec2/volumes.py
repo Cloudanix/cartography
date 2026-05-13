@@ -1,18 +1,15 @@
 from dataclasses import dataclass
 
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import (
-    CartographyNodeProperties,
-    CartographyNodeSchema,
-)
-from cartography.models.core.relationships import (
-    CartographyRelProperties,
-    CartographyRelSchema,
-    LinkDirection,
-    OtherRelationships,
-    TargetNodeMatcher,
-    make_target_node_matcher,
-)
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import TargetNodeMatcher
 
 
 @dataclass(frozen=True)
@@ -98,6 +95,7 @@ class EBSVolumeSchema(CartographyNodeSchema):
 
     label: str = "EBSVolume"
     properties: EBSVolumeNodeProperties = EBSVolumeNodeProperties()
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels(["BlockStorage"])
     sub_resource_relationship: EBSVolumeToAWSAccountRel = EBSVolumeToAWSAccountRel()
     other_relationships: OtherRelationships = OtherRelationships(
         [
@@ -129,6 +127,7 @@ class EBSVolumeInstanceSchema(CartographyNodeSchema):
 
     label: str = "EBSVolume"
     properties: EBSVolumeInstanceProperties = EBSVolumeInstanceProperties()
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels(["BlockStorage"])
     sub_resource_relationship: EBSVolumeToAWSAccountRel = EBSVolumeToAWSAccountRel()
     other_relationships: OtherRelationships = OtherRelationships(
         [

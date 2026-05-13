@@ -38,6 +38,9 @@ from cartography.models.azure.sql.serveradadministrator import (
 from cartography.models.azure.sql.serverdnsalias import AzureServerDNSAliasSchema
 from cartography.models.azure.sql.sqldatabase import AzureSQLDatabaseSchema
 from cartography.models.azure.sql.sqlserver import AzureSQLServerSchema
+from cartography.models.azure.sql.sqlserver_firewall_rule import (
+    AzureSQLServerFirewallRuleSchema,
+)
 from cartography.models.azure.sql.transparentdataencryption import (
     AzureTransparentDataEncryptionSchema,
 )
@@ -81,6 +84,14 @@ def get_server_list(credentials: Credentials, subscription_id: str) -> List[Dict
     for server in server_list:
         x = server["id"].split("/")
         server["resourceGroup"] = x[x.index("resourceGroups") + 1]
+        # Azure SDK as_dict() may flatten or nest network/TLS fields under properties
+        server_props = server.get("properties", {})
+        server["public_network_access"] = server.get(
+            "public_network_access"
+        ) or server_props.get("public_network_access")
+        server["minimal_tls_version"] = server.get(
+            "minimal_tls_version"
+        ) or server_props.get("minimal_tls_version")
 
     return server_list
 
@@ -134,9 +145,10 @@ def get_server_details(
         fgs = get_failover_groups(credentials, subscription_id, server)
         elastic_pools = get_elastic_pools(credentials, subscription_id, server)
         databases = get_databases(credentials, subscription_id, server)
+        firewall_rules = get_firewall_rules(credentials, subscription_id, server)
         yield server["id"], server["name"], server[
             "resourceGroup"
-        ], dns_alias, ad_admins, r_databases, rd_databases, fgs, elastic_pools, databases
+        ], dns_alias, ad_admins, r_databases, rd_databases, fgs, elastic_pools, databases, firewall_rules
 
 
 @timeit
@@ -359,6 +371,42 @@ def get_elastic_pools(
 
 
 @timeit
+def get_firewall_rules(
+    credentials: Credentials,
+    subscription_id: str,
+    server: Dict,
+) -> List[Dict]:
+    """
+    Returns details of the firewall rules in a SQL server.
+    """
+    try:
+        client = get_client(credentials, subscription_id)
+        firewall_rules = list(
+            map(
+                lambda x: x.as_dict(),
+                client.firewall_rules.list_by_server(
+                    server["resourceGroup"],
+                    server["name"],
+                ),
+            ),
+        )
+
+    except ClientAuthenticationError as e:
+        logger.warning(
+            f"Client Authentication Error while retrieving firewall rules - {e}",
+        )
+        return []
+    except ResourceNotFoundError as e:
+        logger.warning(f"Firewall rules resource not found error - {e}")
+        return []
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving firewall rules - {e}")
+        return []
+
+    return firewall_rules
+
+
+@timeit
 def get_databases(
     credentials: Credentials,
     subscription_id: str,
@@ -399,7 +447,7 @@ def load_server_details(
     neo4j_session: neo4j.Session,
     credentials: Credentials,
     subscription_id: str,
-    details: Iterable[Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]],
+    details: Iterable[Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]],
     update_tag: int,
 ) -> None:
     dns_aliases = []
@@ -409,6 +457,7 @@ def load_server_details(
     failover_groups = []
     elastic_pools = []
     databases = []
+    firewall_rules: List[Dict] = []
 
     for (
         server_id,
@@ -421,6 +470,7 @@ def load_server_details(
         fg,
         elastic_pool,
         database,
+        firewall_rule,
     ) in details:
         if len(dns_alias) > 0:
             for alias in dns_alias:
@@ -465,6 +515,18 @@ def load_server_details(
                 db["resource_group_name"] = rg
                 databases.append(db)
 
+        if len(firewall_rule) > 0:
+            for fr in firewall_rule:
+                fr_props = fr.get("properties", {})
+                fr["start_ip_address"] = fr.get("start_ip_address") or fr_props.get(
+                    "start_ip_address"
+                )
+                fr["end_ip_address"] = fr.get("end_ip_address") or fr_props.get(
+                    "end_ip_address"
+                )
+                fr["server_id"] = server_id
+                firewall_rules.append(fr)
+
     _load_elastic_pools(neo4j_session, elastic_pools, subscription_id, update_tag)
     _load_failover_groups(neo4j_session, failover_groups, subscription_id, update_tag)
     _load_databases(neo4j_session, databases, subscription_id, update_tag)
@@ -479,6 +541,7 @@ def load_server_details(
     )
     _load_server_dns_aliases(neo4j_session, dns_aliases, subscription_id, update_tag)
     _load_server_ad_admins(neo4j_session, ad_admins, subscription_id, update_tag)
+    _load_firewall_rules(neo4j_session, firewall_rules, subscription_id, update_tag)
 
     sync_database_details(
         neo4j_session,
@@ -617,6 +680,25 @@ def _load_databases(
         neo4j_session,
         AzureSQLDatabaseSchema(),
         databases,
+        lastupdated=update_tag,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
+    )
+
+
+@timeit
+def _load_firewall_rules(
+    neo4j_session: neo4j.Session,
+    firewall_rules: List[Dict],
+    subscription_id: str,
+    update_tag: int,
+) -> None:
+    """
+    Ingest SQL Server firewall rule details into neo4j.
+    """
+    load(
+        neo4j_session,
+        AzureSQLServerFirewallRuleSchema(),
+        firewall_rules,
         lastupdated=update_tag,
         AZURE_SUBSCRIPTION_ID=subscription_id,
     )
@@ -970,6 +1052,7 @@ def cleanup_azure_sql_servers(
         AzureTransparentDataEncryptionSchema,
         AzureDatabaseThreatDetectionPolicySchema,
         AzureSQLDatabaseSchema,
+        AzureSQLServerFirewallRuleSchema,
         AzureElasticPoolSchema,
         AzureFailoverGroupSchema,
         AzureRecoverableDatabaseSchema,

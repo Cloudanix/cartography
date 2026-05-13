@@ -26,6 +26,8 @@ def test_analysis_jobs_cypher_syntax(neo4j_session):
         "DEFAULT_DATETIME": "2020-01-01T00:00:00",
         "NULL_STRINGS": [],
         "PUBLIC_PORTS": [80, 443],
+        "owner_org_id": "my_owner_org_id",
+        "org_url": "my_org_url",
     }
 
     for resource in files("cartography.data.jobs.analysis").iterdir():

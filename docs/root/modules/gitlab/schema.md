@@ -350,6 +350,9 @@ Representation of a software dependency from GitLab's dependency scanning artifa
 | **name** | Name of the dependency |
 | **version** | Version of the dependency |
 | **package_manager** | Package manager (npm, pip, maven, etc.) |
+| type | Package type derived from the PURL (e.g., `npm`, `pypi`, `maven`) |
+| purl | Package URL (e.g., `pkg:npm/express@4.18.2`) |
+| **normalized_id** | Normalized ID for cross-tool matching (format: `{type}\|{namespace/}{name}\|{version}`). Indexed. |
 
 #### Relationships
 
@@ -363,6 +366,12 @@ Representation of a software dependency from GitLab's dependency scanning artifa
 
     ```
     (GitLabDependencyFile)-[HAS_DEP]->(GitLabDependency)
+    ```
+
+- A canonical Package (ontology) is detected as a GitLabDependency.
+
+    ```
+    (Package)-[DETECTED_AS]->(GitLabDependency)
     ```
 
 ### GitLabContainerRepository
@@ -456,7 +465,7 @@ Representation of a tag within a GitLab container repository. Tags are human-rea
 
 Representation of a container image identified by its digest. Images are content-addressable and can be referenced by multiple tags. Manifest lists (multi-architecture images) contain references to platform-specific child images.
 
-> **Ontology Mapping**: This node has conditional extra labels based on the image type: `Image` for single-platform images (`type="image"`), or `ImageManifestList` for multi-architecture manifest lists (`type="manifest_list"`). These labels enable cross-platform queries for container images across different systems (e.g., ECRImage, GCPArtifactRegistryContainerImage).
+> **Ontology Mapping**: This node has conditional extra labels based on the image type: `Image` for single-platform images (`type="image"`), or `ImageManifestList` for multi-architecture manifest lists (`type="manifest_list"`). These labels enable cross-platform queries for container images across different systems (e.g., ECRImage, GCPArtifactRegistryImage).
 
 | Field | Description |
 |-------|--------------|
@@ -910,6 +919,8 @@ Representation of a project's parsed `.gitlab-ci.yml`. When the GitLab
 YAML (all `include:` references expanded by GitLab); otherwise the raw
 `.gitlab-ci.yml` is parsed as a fallback. The `is_merged` flag distinguishes
 the two cases.
+
+> **Ontology Mapping**: This node has the extra label `CICDPipeline` to enable cross-platform queries for CI/CD pipeline definitions across different systems (e.g., CodeBuildProject, GitHubWorkflow, SpaceliftStack).
 
 | Field | Description |
 |-------|-------------|
