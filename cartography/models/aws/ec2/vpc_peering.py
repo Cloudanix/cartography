@@ -14,6 +14,7 @@ from cartography.models.core.relationships import TargetNodeMatcher
 @dataclass(frozen=True)
 class VPCPeeringNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef("VpcPeeringConnectionId")
+    consolelink: PropertyRef = PropertyRef("consolelink")
     allow_dns_resolution_from_remote_vpc: PropertyRef = PropertyRef(
         "AllowDnsResolutionFromRemoteVpc",
     )

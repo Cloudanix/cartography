@@ -126,6 +126,7 @@ class LoadBalancerV2NodeProperties(CartographyNodeProperties):
     scheme: PropertyRef = PropertyRef("Scheme")
     arn: PropertyRef = PropertyRef("LoadBalancerArn", extra_index=True)
     createdtime: PropertyRef = PropertyRef("CreatedTime")
+    consolelink: PropertyRef = PropertyRef("consolelink")
 
 
 @dataclass(frozen=True)

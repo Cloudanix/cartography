@@ -3,6 +3,10 @@ from typing import Any
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -17,6 +21,8 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 def _get_route_id_and_target(
@@ -181,12 +187,16 @@ def _transform_route_table_routes(
 
 def transform_route_table_data(
     route_tables: list[dict[str, Any]],
+    region: str = "",
+    current_aws_account_id: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Transform route table data into a format suitable for cartography ingestion.
 
     Args:
         route_tables: List of route table data from AWS API
+        region: AWS region string (used for ARN/consolelink construction)
+        current_aws_account_id: AWS account ID (used for ARN/consolelink construction)
 
     Returns:
         Tuple of (transformed route table data, transformed association data, transformed route data)
@@ -213,6 +223,7 @@ def transform_route_table_data(
             )
             association_data.extend(associations)
 
+        arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:route-table/{route_table_id}"
         transformed_rt = {
             "id": route_table_id,
             "route_table_id": route_table_id,
@@ -227,6 +238,10 @@ def transform_route_table_data(
             "RouteIds": [route["id"] for route in current_routes],
             "tags": rt.get("Tags", []),
             "main": is_main,
+            "arn": arn,
+            "consolelink": (
+                aws_console_link.get_console_link(arn=arn) if aws_console_link else ""
+            ),
         }
         transformed_tables.append(transformed_rt)
 
@@ -318,7 +333,7 @@ def sync_route_tables(
         )
         route_tables = get_route_tables(boto3_session, region)
         transformed_tables, association_data, route_data = transform_route_table_data(
-            route_tables
+            route_tables, region, current_aws_account_id
         )
         load_routes(
             neo4j_session, route_data, region, current_aws_account_id, update_tag

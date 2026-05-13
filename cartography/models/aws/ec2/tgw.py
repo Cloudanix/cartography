@@ -35,6 +35,7 @@ class AWSTransitGatewayNodeProperties(CartographyNodeProperties):
     state: PropertyRef = PropertyRef("State")
     description: PropertyRef = PropertyRef("Description")
     region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
+    consolelink: PropertyRef = PropertyRef("consolelink")
 
 
 # (:AWSAccount)-[:RESOURCE]->(:AWSTransitGateway)
@@ -91,6 +92,7 @@ class AWSTransitGatewayAttachmentNodeProperties(CartographyNodeProperties):
     resource_type: PropertyRef = PropertyRef("ResourceType")
     state: PropertyRef = PropertyRef("State")
     region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
+    consolelink: PropertyRef = PropertyRef("consolelink")
 
 
 # (:AWSAccount)-[:RESOURCE]->(:AWSTransitGatewayAttachment)

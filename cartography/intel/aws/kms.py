@@ -9,6 +9,10 @@ import boto3
 import botocore
 import neo4j
 from botocore.exceptions import ClientError
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 from policyuniverse.policy import Policy
 
 from cartography.client.core.tx import load
@@ -22,6 +26,7 @@ from cartography.util import dict_date_to_epoch
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -158,6 +163,7 @@ def transform_kms_keys(keys: List[Dict], policy_data: Dict[str, Dict]) -> List[D
 
         # Add policy analysis
         transformed.update(policy_data[key["KeyId"]])
+        transformed["consolelink"] = (aws_console_link.get_console_link(arn=key.get("Arn", "")) if aws_console_link else "")
 
         transformed_data.append(transformed)
     return transformed_data

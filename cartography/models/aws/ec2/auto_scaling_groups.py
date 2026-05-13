@@ -34,6 +34,7 @@ class AutoScalingGroupNodeProperties(CartographyNodeProperties):
     )
     region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
     status: PropertyRef = PropertyRef("Status")
+    consolelink: PropertyRef = PropertyRef("consolelink")
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 

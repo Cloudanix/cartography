@@ -3,6 +3,10 @@ from typing import Any
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -16,6 +20,7 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -62,6 +67,7 @@ def transform_elasticache_clusters(
             "AtRestEncryptionEnabled": cluster.get("AtRestEncryptionEnabled"),
             "TopicArn": topic_arn,
             "Region": region,
+            "consolelink": (aws_console_link.get_console_link(arn=cluster.get("ARN", "")) if aws_console_link else ""),
         }
         cluster_data.append(cluster_record)
 

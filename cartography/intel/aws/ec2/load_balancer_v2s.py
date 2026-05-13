@@ -7,6 +7,10 @@ import boto3
 import botocore
 import neo4j
 from botocore.exceptions import ClientError
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 from botocore.exceptions import ConnectTimeoutError
 from botocore.exceptions import EndpointConnectionError
 from botocore.exceptions import ReadTimeoutError
@@ -33,6 +37,7 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 class ELBV2TransientRegionFailure(Exception):
@@ -221,6 +226,7 @@ def _transform_load_balancer_v2_data(
                 "SecurityGroupIds": lb.get("SecurityGroups", []),
                 # Subnets as list for one_to_many relationship
                 "SubnetIds": subnet_ids,
+                "consolelink": (aws_console_link.get_console_link(arn=lb.get("LoadBalancerArn", "")) if aws_console_link else ""),
             }
         )
 

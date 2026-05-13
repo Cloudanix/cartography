@@ -6,6 +6,10 @@ from typing import Tuple
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -19,6 +23,7 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -157,6 +162,9 @@ def transform_vpc_peering_data(
                 ),
                 "ACCEPTER_CIDR_BLOCK_IDS": accepter_cidr_ids,
                 "REQUESTER_CIDR_BLOCK_IDS": requester_cidr_ids,
+                "consolelink": (aws_console_link.get_console_link(
+                    arn=f"arn:aws:ec2:::{peering.get('VpcPeeringConnectionId', '')}",
+                ) if aws_console_link else ""),
             },
         )
 

@@ -29,6 +29,7 @@ class LaunchConfigurationNodeProperties(CartographyNodeProperties):
     ebs_optimized: PropertyRef = PropertyRef("EbsOptimized")
     associate_public_ip_address: PropertyRef = PropertyRef("AssociatePublicIpAddress")
     placement_tenancy: PropertyRef = PropertyRef("PlacementTenancy")
+    consolelink: PropertyRef = PropertyRef("consolelink")
     region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
 
 

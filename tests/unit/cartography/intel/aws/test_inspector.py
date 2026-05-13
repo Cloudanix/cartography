@@ -29,6 +29,7 @@ def test_transform_inspector_findings_network():
             "portrangebegin": 123,
             "type": "NETWORK_REACHABILITY",
             "status": "ACTIVE",
+            "consolelink": "",
         },
     ]
 
@@ -68,6 +69,7 @@ def test_transform_inspector_findings_package():
                 "kernel-tools|0:4.9.17-6.29.amzn1.X86_64",
                 "kernel|0:4.9.17-6.29.amzn1.X86_64",
             ],
+            "consolelink": "",
         },
         {
             "id": "arn:aws:test789",
@@ -95,6 +97,7 @@ def test_transform_inspector_findings_package():
             "vulnerablepackageids": [
                 "openssl|0:1.0.2k-1.amzn2.X86_64",
             ],
+            "consolelink": "",
         },
     ]
     # The order of packages is not guaranteed because it comes from a set.

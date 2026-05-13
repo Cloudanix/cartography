@@ -16,6 +16,7 @@ class SecurityHubNodeProperties(CartographyNodeProperties):
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     subscribed_at: PropertyRef = PropertyRef("SubscribedAt")
     auto_enable_controls: PropertyRef = PropertyRef("AutoEnableControls")
+    consolelink: PropertyRef = PropertyRef("consolelink")
 
 
 @dataclass(frozen=True)

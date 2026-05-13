@@ -34,6 +34,7 @@ class ElasticacheClusterNodeProperties(CartographyNodeProperties):
     transit_encryption_enabled: PropertyRef = PropertyRef("TransitEncryptionEnabled")
     at_rest_encryption_enabled: PropertyRef = PropertyRef("AtRestEncryptionEnabled")
     topic_arn: PropertyRef = PropertyRef("TopicArn")
+    consolelink: PropertyRef = PropertyRef("consolelink")
     region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 

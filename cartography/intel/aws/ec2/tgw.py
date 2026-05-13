@@ -4,6 +4,10 @@ from typing import Any
 import boto3
 import botocore.exceptions
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.client.core.tx import run_write_query
@@ -16,6 +20,7 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -105,6 +110,7 @@ def transform_transit_gateways(
         tgw["_shared_with_account_id"] = (
             current_aws_account_id if tgw["OwnerId"] != current_aws_account_id else None
         )
+        tgw["consolelink"] = (aws_console_link.get_console_link(arn=tgw.get("TransitGatewayArn", "")) if aws_console_link else "")
     return data
 
 
@@ -130,7 +136,12 @@ def transform_tgw_attachments(
             vpc_att.setdefault("ResourceType", None)
             attachments_by_id[att_id] = dict(vpc_att)
 
-    return list(attachments_by_id.values())
+    result = list(attachments_by_id.values())
+    for att in result:
+        att_id = att.get("TransitGatewayAttachmentId", "")
+        att_arn = att.get("TransitGatewayArn") or f"tgw-attach/{att_id}"
+        att["consolelink"] = (aws_console_link.get_console_link(arn=att_arn) if aws_console_link else "")
+    return result
 
 
 @timeit

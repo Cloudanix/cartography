@@ -5,6 +5,10 @@ from typing import List
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -19,6 +23,8 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -100,8 +106,9 @@ def transform_metric_alarms(
     """
     transformed_alarms = []
     for alarm in metric_alarms:
+        alarm_arn = alarm["AlarmArn"]
         transformed_alarm = {
-            "AlarmArn": alarm["AlarmArn"],
+            "AlarmArn": alarm_arn,
             "AlarmName": alarm.get("AlarmName"),
             "AlarmDescription": alarm.get("AlarmDescription"),
             "StateValue": alarm.get("StateValue"),
@@ -109,6 +116,9 @@ def transform_metric_alarms(
             "ActionsEnabled": alarm.get("ActionsEnabled"),
             "ComparisonOperator": alarm.get("ComparisonOperator"),
             "Region": region,
+            "consolelink": (
+                aws_console_link.get_console_link(arn=alarm_arn) if aws_console_link else ""
+            ),
         }
         transformed_alarms.append(transformed_alarm)
     return transformed_alarms
@@ -209,6 +219,11 @@ def sync(
             f"Syncing CloudWatch for region '{region}' in account '{current_aws_account_id}'.",
         )
         logGroups = get_cloudwatch_log_groups(boto3_session, region)
+        for lg in logGroups:
+            lg["consolelink"] = (
+                aws_console_link.get_console_link(arn=lg.get("arn", ""))
+                if aws_console_link else ""
+            )
 
         load_cloudwatch_log_groups(
             neo4j_session,

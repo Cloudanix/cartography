@@ -21,6 +21,7 @@ class LaunchTemplateNodeProperties(CartographyNodeProperties):
     latest_version_number: PropertyRef = PropertyRef("LatestVersionNumber")
     region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    consolelink: PropertyRef = PropertyRef("consolelink")
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,10 @@ from typing import List
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -21,6 +25,8 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+aws_console_link = AWSLinker() if AWSLinker else None
 
 # Custom models are only supported in us-east-1 and us-west-2.
 # See https://docs.aws.amazon.com/bedrock/latest/userguide/custom-model-supported.html
@@ -86,6 +92,12 @@ def transform_custom_models(
             # Parse bucket name from s3://bucket-name/path
             bucket_name = training_s3_uri.split("/")[2]
             model["training_data_bucket_name"] = bucket_name
+
+        model_arn = model.get("modelArn", "")
+        model["consolelink"] = (
+            aws_console_link.get_console_link(arn=model_arn)
+            if aws_console_link and model_arn else ""
+        )
 
     return models
 

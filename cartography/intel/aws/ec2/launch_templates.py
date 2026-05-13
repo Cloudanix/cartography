@@ -4,6 +4,10 @@ from typing import Any
 import boto3
 import botocore
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -17,6 +21,7 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -94,6 +99,11 @@ def transform_launch_templates(
         current = template.copy()
         # Convert CreateTime to timestamp string
         current["CreateTime"] = str(int(current["CreateTime"].timestamp()))
+        lt_id = current.get("LaunchTemplateId", "")
+        # Note: requires region/account for full ARN but we don't have them here
+        current["consolelink"] = (aws_console_link.get_console_link(
+            arn=f"arn:aws:ec2:::launch-template/{lt_id}",
+        ) if aws_console_link else "")
         result.append(current)
     return result
 

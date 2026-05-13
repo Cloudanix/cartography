@@ -7,6 +7,10 @@ from collections import namedtuple
 from typing import Any
 
 import neo4j
+try:
+    from cloudconsolelink.clouds.gcp import GCPLinker
+except ImportError:
+    GCPLinker = None  # type: ignore
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
@@ -46,6 +50,8 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 InstanceUriPrefix = namedtuple("InstanceUriPrefix", "zone_name project_id")
+
+gcp_console_link = GCPLinker() if GCPLinker else None
 
 
 @timeit
@@ -271,6 +277,15 @@ def transform_gcp_instances(response_objects: list[dict]) -> list[dict]:
             instance["partial_uri"] = f"{prefix}/{instance['name']}"
             instance["project_id"] = prefix_fields.project_id
             instance["zone_name"] = prefix_fields.zone_name
+            instance["consolelink"] = (
+                gcp_console_link.get_console_link(
+                    resource_name="compute_instance",
+                    instance_name=instance["name"],
+                    project_id=prefix_fields.project_id,
+                    zone=prefix_fields.zone_name,
+                )
+                if gcp_console_link else ""
+            )
 
             for nic in instance.get("networkInterfaces", []):
                 nic["subnet_partial_uri"] = _parse_compute_full_uri_to_partial_uri(

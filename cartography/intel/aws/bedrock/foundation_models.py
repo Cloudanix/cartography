@@ -12,6 +12,10 @@ from typing import List
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -24,6 +28,8 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -59,6 +65,11 @@ def transform_foundation_models(
     """
     for model in models:
         model["Region"] = region
+        model_arn = model.get("modelArn", "")
+        model["consolelink"] = (
+            aws_console_link.get_console_link(arn=model_arn)
+            if aws_console_link and model_arn else ""
+        )
 
     return models
 

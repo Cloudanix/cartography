@@ -59,6 +59,8 @@ def test_load_instance_information(mock_get_instances, neo4j_session):
     # Act
     data_list = cartography.intel.aws.ssm.transform_instance_information(
         tests.data.aws.ssm.INSTANCE_INFORMATION,
+        TEST_REGION,
+        TEST_ACCOUNT_ID,
     )
     cartography.intel.aws.ssm.load_instance_information(
         neo4j_session,
@@ -125,6 +127,8 @@ def test_load_instance_patches(mock_get_instances, neo4j_session):
     # Act
     data_list = cartography.intel.aws.ssm.transform_instance_patches(
         tests.data.aws.ssm.INSTANCE_PATCHES,
+        TEST_REGION,
+        TEST_ACCOUNT_ID,
     )
     cartography.intel.aws.ssm.load_instance_patches(
         neo4j_session,

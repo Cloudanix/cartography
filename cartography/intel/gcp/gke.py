@@ -5,6 +5,10 @@ from typing import List
 
 import neo4j
 from googleapiclient.discovery import HttpError, Resource
+try:
+    from cloudconsolelink.clouds.gcp import GCPLinker
+except ImportError:
+    GCPLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -16,6 +20,8 @@ from cartography.models.gcp.gke import GCPGKEClusterSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+gcp_console_link = GCPLinker() if GCPLinker else None
 
 
 @timeit
@@ -62,7 +68,7 @@ def load_gke_clusters(
     """
     Ingest GCP GKE clusters using the data model loader.
     """
-    clusters: List[Dict[str, Any]] = transform_gke_clusters(cluster_resp)
+    clusters: List[Dict[str, Any]] = transform_gke_clusters(cluster_resp, project_id)
 
     if not clusters:
         return
@@ -132,7 +138,7 @@ def sync_gke_clusters(
     """
     logger.info("Syncing GKE clusters for project %s.", project_id)
     gke_res = get_gke_clusters(container, project_id)
-    clusters = transform_gke_clusters(gke_res)
+    clusters = transform_gke_clusters(gke_res, project_id)
     if clusters:
         load(
             neo4j_session,
@@ -152,7 +158,9 @@ def sync_gke_clusters(
     cleanup_gke_clusters(neo4j_session, common_job_parameters)
 
 
-def transform_gke_clusters(api_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+def transform_gke_clusters(
+    api_result: Dict[str, Any], project_id: str = ""
+) -> List[Dict[str, Any]]:
     """
     Transform GKE API response into a list of dicts suitable for the data model loader.
     """
@@ -203,6 +211,15 @@ def transform_gke_clusters(api_result: Dict[str, Any]) -> List[Dict[str, Any]]:
             "masterauth_username": (c.get("masterAuth", {}) or {}).get("username"),
             "masterauth_password": (c.get("masterAuth", {}) or {}).get("password"),
             "resourceLabels": c.get("resourceLabels", {}),
+            "consolelink": (
+                gcp_console_link.get_console_link(
+                    resource_name="gke_cluster",
+                    project_id=project_id,
+                    zone=c.get("zone", ""),
+                    gke_cluster_name=c.get("name", ""),
+                )
+                if gcp_console_link else ""
+            ),
         }
         result.append(transformed)
     return result

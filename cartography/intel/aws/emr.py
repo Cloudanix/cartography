@@ -5,6 +5,10 @@ from typing import Any, Dict, List
 import boto3
 import botocore.exceptions
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -14,6 +18,7 @@ from cartography.models.aws.emr import EMRClusterSchema
 from cartography.util import aws_handle_regions, timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 # EMR API is subject to aggressive throttling, so we need to sleep a second between each call.
 LIST_SLEEP = 1
@@ -77,6 +82,8 @@ def load_emr_clusters(
     logger.info(
         f"Loading EMR {len(cluster_data)} clusters for region '{region}' into graph.",
     )
+    for cluster in cluster_data:
+        cluster['consolelink'] = (aws_console_link.get_console_link(arn=cluster.get('ClusterArn', '')) if aws_console_link else "")
     load(
         neo4j_session,
         EMRClusterSchema(),

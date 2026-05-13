@@ -18,6 +18,7 @@ class AWSInternetGatewayNodeProperties(CartographyNodeProperties):
     region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
     ownerid: PropertyRef = PropertyRef("OwnerId")
     arn: PropertyRef = PropertyRef("Arn", extra_index=True)
+    consolelink: PropertyRef = PropertyRef("consolelink")
 
 
 @dataclass(frozen=True)

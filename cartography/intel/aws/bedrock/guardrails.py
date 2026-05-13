@@ -11,6 +11,10 @@ from typing import List
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -21,6 +25,8 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -64,6 +70,11 @@ def transform_guardrails(
         # Construct full ARN from the id if not already present
         if "arn" in guardrail and "guardrailArn" not in guardrail:
             guardrail["guardrailArn"] = guardrail["arn"]
+        guardrail_arn = guardrail.get("guardrailArn", guardrail.get("arn", ""))
+        guardrail["consolelink"] = (
+            aws_console_link.get_console_link(arn=guardrail_arn)
+            if aws_console_link and guardrail_arn else ""
+        )
 
     return guardrails
 

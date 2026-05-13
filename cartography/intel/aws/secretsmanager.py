@@ -4,6 +4,10 @@ from typing import Dict, List
 import boto3
 import neo4j
 from botocore.exceptions import ClientError
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -20,6 +24,7 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -59,6 +64,7 @@ def transform_secrets(
                     "AutomaticallyAfterDays"
                 ]
 
+        transformed["consolelink"] = (aws_console_link.get_console_link(arn=secret.get("ARN", "")) if aws_console_link else "")
         transformed_data.append(transformed)
 
     return transformed_data

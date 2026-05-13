@@ -7,6 +7,10 @@ from typing import List
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.client.core.tx import read_list_of_values_tx
@@ -20,6 +24,7 @@ from cartography.util import dict_date_to_epoch
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -63,6 +68,8 @@ def get_instance_information(
 
 def transform_instance_information(
     data_list: List[Dict[str, Any]],
+    region: str = "",
+    current_aws_account_id: str = "",
 ) -> List[Dict[str, Any]]:
     for ii in data_list:
         ii["LastPingDateTime"] = dict_date_to_epoch(ii, "LastPingDateTime")
@@ -75,6 +82,9 @@ def transform_instance_information(
             ii,
             "LastSuccessfulAssociationExecutionDate",
         )
+        if region and current_aws_account_id:
+            arn = f"arn:aws:ssm:{region}:{current_aws_account_id}:managed-instance/{ii['InstanceId']}"
+            ii["consolelink"] = (aws_console_link.get_console_link(arn=arn) if aws_console_link else "")
     return data_list
 
 
@@ -99,13 +109,20 @@ def get_instance_patches(
     return instance_patches
 
 
-def transform_instance_patches(data_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def transform_instance_patches(
+    data_list: List[Dict[str, Any]],
+    region: str = "",
+    current_aws_account_id: str = "",
+) -> List[Dict[str, Any]]:
     for p in data_list:
         p["Id"] = f"{p['_instance_id']}-{p['Title']}"
         p["InstalledTime"] = dict_date_to_epoch(p, "InstalledTime")
         # Split the comma separated CVEIds, if they exist, and strip
         # the empty string from the list if not.
         p["CVEIds"] = list(filter(None, p.get("CVEIds", "").split(",")))
+        if region and current_aws_account_id:
+            arn = f"arn:aws:ssm:{region}:{current_aws_account_id}:managed-instance/{p['_instance_id']}"
+            p["consolelink"] = (aws_console_link.get_console_link(arn=arn) if aws_console_link else "")
     return data_list
 
 
@@ -234,7 +251,7 @@ def sync(
         )
         instance_ids = get_instance_ids(neo4j_session, region, current_aws_account_id)
         data = get_instance_information(boto3_session, region, instance_ids)
-        data = transform_instance_information(data)
+        data = transform_instance_information(data, region, current_aws_account_id)
         load_instance_information(
             neo4j_session,
             data,
@@ -244,7 +261,7 @@ def sync(
         )
 
         data = get_instance_patches(boto3_session, region, instance_ids)
-        data = transform_instance_patches(data)
+        data = transform_instance_patches(data, region, current_aws_account_id)
         load_instance_patches(
             neo4j_session,
             data,

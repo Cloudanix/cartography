@@ -3,6 +3,10 @@ from typing import Any
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 from dateutil import parser
 
 from cartography.client.core.tx import load
@@ -12,6 +16,7 @@ from cartography.models.aws.securityhub import SecurityHubSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -31,6 +36,7 @@ def transform_hub(hub_data: dict) -> None:
         hub_data["SubscribedAt"] = int(subbed_at.timestamp())
     else:
         hub_data["SubscribedAt"] = None
+    hub_data["consolelink"] = (aws_console_link.get_console_link(arn=hub_data.get("HubArn", "")) if aws_console_link else "")
 
 
 @timeit

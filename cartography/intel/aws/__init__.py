@@ -468,6 +468,11 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     else:
         regions = None
 
+    if getattr(config, 'aws_excluded_regions', None) and regions:
+        excluded = set(config.aws_excluded_regions)
+        regions = [r for r in regions if r not in excluded]
+        logger.info(f"Excluding regions: {excluded}. Remaining regions: {regions}")
+
     sync_successful = _sync_multiple_accounts(
         neo4j_session,
         aws_accounts,

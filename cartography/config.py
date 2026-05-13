@@ -485,6 +485,7 @@ class Config:
         jumpcloud_api_key=None,
         jumpcloud_org_id=None,
         socketdev_token=None,
+        aws_excluded_regions=None,
         neo4j_connection_timeout=None,
         neo4j_keep_alive=None,
         neo4j_max_transaction_retry_time=None,
@@ -678,3 +679,4 @@ class Config:
         self.jumpcloud_api_key = jumpcloud_api_key
         self.jumpcloud_org_id = jumpcloud_org_id
         self.socketdev_token = socketdev_token
+        self.aws_excluded_regions = aws_excluded_regions or []

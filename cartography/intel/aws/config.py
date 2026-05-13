@@ -3,6 +3,10 @@ from typing import Any
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -14,6 +18,8 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -63,6 +69,7 @@ def transform_configuration_recorders(
     result: list[dict[str, Any]] = []
     for recorder in recorders:
         recording_group = recorder.get("recordingGroup", {})
+        arn = f"arn:aws:config:{region}:{current_aws_account_id}:configuration-recorder/{recorder['name']}"
         result.append(
             {
                 "id": f'{recorder["name"]}:{current_aws_account_id}:{region}',
@@ -73,6 +80,9 @@ def transform_configuration_recorders(
                     "includeGlobalResourceTypes",
                 ),
                 "recording_group_resource_types": recording_group.get("resourceTypes"),
+                "consolelink": (
+                    aws_console_link.get_console_link(arn=arn) if aws_console_link else ""
+                ),
             }
         )
     return result
@@ -85,6 +95,7 @@ def transform_delivery_channels(
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for channel in channels:
+        arn = f"arn:aws:config:{region}:{current_aws_account_id}:delivery-channel/{channel['name']}"
         result.append(
             {
                 "id": f'{channel["name"]}:{current_aws_account_id}:{region}',
@@ -97,6 +108,9 @@ def transform_delivery_channels(
                     "configSnapshotDeliveryProperties",
                     {},
                 ).get("deliveryFrequency"),
+                "consolelink": (
+                    aws_console_link.get_console_link(arn=arn) if aws_console_link else ""
+                ),
             }
         )
     return result
@@ -111,6 +125,7 @@ def transform_config_rules(rules: list[dict]) -> list[dict[str, Any]]:
         if source.get("SourceDetails"):
             for detail in source["SourceDetails"]:
                 source_details.append(f"{detail}")
+        config_rule_arn = rule.get("ConfigRuleArn", "")
         result.append(
             {
                 **rule,
@@ -121,6 +136,10 @@ def transform_config_rules(rules: list[dict]) -> list[dict[str, Any]]:
                 "source_owner": source.get("Owner"),
                 "source_identifier": source.get("SourceIdentifier"),
                 "source_details": source_details,
+                "consolelink": (
+                    aws_console_link.get_console_link(arn=config_rule_arn)
+                    if aws_console_link and config_rule_arn else ""
+                ),
             }
         )
     return result

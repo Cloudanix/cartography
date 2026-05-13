@@ -9,6 +9,10 @@ from typing import Tuple
 import boto3
 import botocore
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.client.core.tx import load_matchlinks
@@ -25,6 +29,7 @@ from cartography.util import is_service_control_policy_explicit_deny
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker() if AWSLinker else None
 
 # As of 7/1/25, Inspector is only available in the below regions. We will need to update this hardcoded list here over
 # time. :\ https://docs.aws.amazon.com/general/latest/gr/inspector2.html
@@ -136,6 +141,7 @@ def transform_inspector_findings(
         finding["description"] = f["description"]
         finding["type"] = f["type"]
         finding["status"] = f["status"]
+        finding["consolelink"] = (aws_console_link.get_console_link(arn=f["findingArn"]) if aws_console_link else "")
         if f.get("inspectorScoreDetails"):
             finding["cvssscore"] = f["inspectorScoreDetails"]["adjustedCvss"]["score"]
         if f["resources"][0]["type"] == "AWS_EC2_INSTANCE":

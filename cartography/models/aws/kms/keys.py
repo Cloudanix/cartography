@@ -49,6 +49,7 @@ class KMSKeyNodeProperties(CartographyNodeProperties):
     anonymous_access: PropertyRef = PropertyRef("anonymous_access")
     anonymous_actions: PropertyRef = PropertyRef("anonymous_actions")
 
+    consolelink: PropertyRef = PropertyRef("consolelink")
     region: PropertyRef = PropertyRef("Region", set_in_kwargs=True)
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 

@@ -11,6 +11,10 @@ from typing import List
 
 import boto3
 import neo4j
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None  # type: ignore
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -21,6 +25,8 @@ from cartography.util import aws_handle_regions
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
@@ -112,6 +118,12 @@ def transform_agents(
     """
     for agent in agents:
         agent["Region"] = region
+
+        # Add consolelink
+        agent_arn = agent.get("agentArn", f"arn:aws:bedrock:{region}:{account_id}:agent/{agent.get('agentId', '')}")
+        agent["consolelink"] = (
+            aws_console_link.get_console_link(arn=agent_arn) if aws_console_link else ""
+        )
 
         # Parse foundationModel to set appropriate relationship fields
         model_identifier = agent.get("foundationModel")
