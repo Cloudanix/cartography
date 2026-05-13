@@ -7,6 +7,7 @@ from typing import List
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -84,7 +85,9 @@ def transform_instance_information(
         )
         if region and current_aws_account_id:
             arn = f"arn:aws:ssm:{region}:{current_aws_account_id}:managed-instance/{ii['InstanceId']}"
-            ii["consolelink"] = (aws_console_link.get_console_link(arn=arn) if aws_console_link else "")
+            ii["consolelink"] = (
+                aws_console_link.get_console_link(arn=arn) if aws_console_link else ""
+            )
     return data_list
 
 
@@ -122,7 +125,9 @@ def transform_instance_patches(
         p["CVEIds"] = list(filter(None, p.get("CVEIds", "").split(",")))
         if region and current_aws_account_id:
             arn = f"arn:aws:ssm:{region}:{current_aws_account_id}:managed-instance/{p['_instance_id']}"
-            p["consolelink"] = (aws_console_link.get_console_link(arn=arn) if aws_console_link else "")
+            p["consolelink"] = (
+                aws_console_link.get_console_link(arn=arn) if aws_console_link else ""
+            )
     return data_list
 
 

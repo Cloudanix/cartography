@@ -4,6 +4,7 @@ from typing import Any
 import boto3
 import botocore
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -101,9 +102,13 @@ def transform_launch_templates(
         current["CreateTime"] = str(int(current["CreateTime"].timestamp()))
         lt_id = current.get("LaunchTemplateId", "")
         # Note: requires region/account for full ARN but we don't have them here
-        current["consolelink"] = (aws_console_link.get_console_link(
-            arn=f"arn:aws:ec2:::launch-template/{lt_id}",
-        ) if aws_console_link else "")
+        current["consolelink"] = (
+            aws_console_link.get_console_link(
+                arn=f"arn:aws:ec2:::launch-template/{lt_id}",
+            )
+            if aws_console_link
+            else ""
+        )
         result.append(current)
     return result
 

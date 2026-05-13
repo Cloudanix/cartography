@@ -1,10 +1,12 @@
 import logging
 import math
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 import neo4j
 
-from cartography.util import run_cleanup_job, timeit
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 

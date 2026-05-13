@@ -1,4 +1,6 @@
-from marshmallow import Schema, fields, post_load
+from marshmallow import fields
+from marshmallow import post_load
+from marshmallow import Schema
 
 from cartography.driftdetect.model import State
 from cartography.driftdetect.shortcut import Shortcut

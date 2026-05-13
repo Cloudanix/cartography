@@ -3,6 +3,7 @@ from typing import Any
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -36,7 +37,11 @@ def transform_hub(hub_data: dict) -> None:
         hub_data["SubscribedAt"] = int(subbed_at.timestamp())
     else:
         hub_data["SubscribedAt"] = None
-    hub_data["consolelink"] = (aws_console_link.get_console_link(arn=hub_data.get("HubArn", "")) if aws_console_link else "")
+    hub_data["consolelink"] = (
+        aws_console_link.get_console_link(arn=hub_data.get("HubArn", ""))
+        if aws_console_link
+        else ""
+    )
 
 
 @timeit

@@ -11,6 +11,7 @@ from typing import List
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -73,7 +74,8 @@ def transform_guardrails(
         guardrail_arn = guardrail.get("guardrailArn", guardrail.get("arn", ""))
         guardrail["consolelink"] = (
             aws_console_link.get_console_link(arn=guardrail_arn)
-            if aws_console_link and guardrail_arn else ""
+            if aws_console_link and guardrail_arn
+            else ""
         )
 
     return guardrails

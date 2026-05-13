@@ -1,22 +1,23 @@
 import logging
 import time
 from typing import *
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 import boto3
 import neo4j
-from botocore.exceptions import (
-    ClientError,
-    ConnectTimeoutError,
-    EndpointConnectionError,
-)
+from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectTimeoutError
+from botocore.exceptions import EndpointConnectionError
 
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
     AWSLinker = None
 
-from cartography.util import aws_handle_regions, run_cleanup_job, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker() if AWSLinker else None

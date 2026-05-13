@@ -4,6 +4,7 @@ from typing import Any
 import boto3
 import botocore.exceptions
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -110,7 +111,11 @@ def transform_transit_gateways(
         tgw["_shared_with_account_id"] = (
             current_aws_account_id if tgw["OwnerId"] != current_aws_account_id else None
         )
-        tgw["consolelink"] = (aws_console_link.get_console_link(arn=tgw.get("TransitGatewayArn", "")) if aws_console_link else "")
+        tgw["consolelink"] = (
+            aws_console_link.get_console_link(arn=tgw.get("TransitGatewayArn", ""))
+            if aws_console_link
+            else ""
+        )
     return data
 
 
@@ -140,7 +145,9 @@ def transform_tgw_attachments(
     for att in result:
         att_id = att.get("TransitGatewayAttachmentId", "")
         att_arn = att.get("TransitGatewayArn") or f"tgw-attach/{att_id}"
-        att["consolelink"] = (aws_console_link.get_console_link(arn=att_arn) if aws_console_link else "")
+        att["consolelink"] = (
+            aws_console_link.get_console_link(arn=att_arn) if aws_console_link else ""
+        )
     return result
 
 

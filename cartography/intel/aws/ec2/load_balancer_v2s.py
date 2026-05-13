@@ -7,6 +7,7 @@ import boto3
 import botocore
 import neo4j
 from botocore.exceptions import ClientError
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -246,7 +247,11 @@ def _transform_load_balancer_v2_data(
                 "SecurityGroupIds": lb.get("SecurityGroups", []),
                 # Subnets as list for one_to_many relationship
                 "SubnetIds": subnet_ids,
-                "consolelink": (aws_console_link.get_console_link(arn=lb.get("LoadBalancerArn", "")) if aws_console_link else ""),
+                "consolelink": (
+                    aws_console_link.get_console_link(arn=lb.get("LoadBalancerArn", ""))
+                    if aws_console_link
+                    else ""
+                ),
             }
         )
 

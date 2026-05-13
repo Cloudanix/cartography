@@ -1,7 +1,12 @@
 import abc
-from dataclasses import dataclass, field, make_dataclass
-from enum import Enum, auto
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from dataclasses import field
+from dataclasses import make_dataclass
+from enum import auto
+from enum import Enum
+from typing import Dict
+from typing import List
+from typing import Optional
 
 
 class LinkDirection(Enum):

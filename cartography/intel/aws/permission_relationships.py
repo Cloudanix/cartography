@@ -2,7 +2,11 @@ import logging
 import os
 import re
 from string import Template
-from typing import Any, Dict, List, Pattern, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Pattern
+from typing import Tuple
 
 import boto3
 import neo4j

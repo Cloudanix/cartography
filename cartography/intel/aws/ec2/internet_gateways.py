@@ -3,6 +3,7 @@ from typing import Any
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -51,7 +52,9 @@ def transform_internet_gateways(
         # TODO: Right now this won't work in non-AWS commercial (GovCloud, China) as partition is hardcoded
         arn = f"arn:aws:ec2:{region}:{owner_id}:internet-gateway/{igw_id}"
 
-        consolelink = (aws_console_link.get_console_link(arn=arn) if aws_console_link else "")
+        consolelink = (
+            aws_console_link.get_console_link(arn=arn) if aws_console_link else ""
+        )
         attachments = igw.get("Attachments", [])
         if attachments:
             # Create one entry per attachment to handle multiple VPCs

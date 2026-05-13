@@ -2,7 +2,8 @@ import logging
 import os
 import sys
 
-from utils.sentry import capture_error, capture_warning
+from utils.sentry import capture_error
+from utils.sentry import capture_warning
 
 
 class Logger:

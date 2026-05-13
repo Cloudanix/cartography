@@ -1,7 +1,8 @@
 import json
 import logging
 import time
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 import neo4j
 
@@ -9,9 +10,11 @@ try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError, Resource
+from googleapiclient.discovery import HttpError
+from googleapiclient.discovery import Resource
 
-from cartography.util import run_cleanup_job, timeit
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 from . import label
 
@@ -167,9 +170,7 @@ def transform_regional_health_checks(health_checks: List, project_id: str, regio
 def load_health_checks(
     session: neo4j.Session, health_checks: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.execute_write(
-        load_health_checks_tx, health_checks, project_id, update_tag
-    )
+    session.execute_write(load_health_checks_tx, health_checks, project_id, update_tag)
 
 
 @timeit
@@ -795,9 +796,7 @@ def transform_ssl_policies(ssl_policies: List, project_id: str):
 def load_ssl_policies(
     session: neo4j.Session, ssl_policies: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.execute_write(
-        load_ssl_policies_tx, ssl_policies, project_id, update_tag
-    )
+    session.execute_write(load_ssl_policies_tx, ssl_policies, project_id, update_tag)
 
 
 @timeit

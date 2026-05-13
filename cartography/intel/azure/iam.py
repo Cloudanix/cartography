@@ -2,7 +2,13 @@ import asyncio
 import logging
 import math
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, TypedDict, Union
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
+from typing import TypedDict
+from typing import Union
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
@@ -17,7 +23,8 @@ from msgraph import GraphServiceClient
 from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
 from msgraph.generated.users.users_request_builder import UsersRequestBuilder
 
-from cartography.util import run_cleanup_job, timeit
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 from .util.credentials import Credentials
 
@@ -50,9 +57,7 @@ def load_tenant_users(
             end = start + iteration_size
             paged_users = data_list[start:end]
 
-        session.execute_write(
-            _load_tenant_users_tx, tenant_id, paged_users, update_tag
-        )
+        session.execute_write(_load_tenant_users_tx, tenant_id, paged_users, update_tag)
 
         logger.info(
             f"Iteration {counter + 1} of {total_iterations}. {start} - {end} - {len(paged_users)}"
@@ -80,9 +85,7 @@ def load_roles(
 def load_managed_identities(
     session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int
 ) -> None:
-    session.execute_write(
-        _load_managed_identities_tx, tenant_id, data_list, update_tag
-    )
+    session.execute_write(_load_managed_identities_tx, tenant_id, data_list, update_tag)
 
 
 def load_tenant_groups(

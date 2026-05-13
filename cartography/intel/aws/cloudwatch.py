@@ -5,6 +5,7 @@ from typing import List
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -117,7 +118,9 @@ def transform_metric_alarms(
             "ComparisonOperator": alarm.get("ComparisonOperator"),
             "Region": region,
             "consolelink": (
-                aws_console_link.get_console_link(arn=alarm_arn) if aws_console_link else ""
+                aws_console_link.get_console_link(arn=alarm_arn)
+                if aws_console_link
+                else ""
             ),
         }
         transformed_alarms.append(transformed_alarm)
@@ -222,7 +225,8 @@ def sync(
         for lg in logGroups:
             lg["consolelink"] = (
                 aws_console_link.get_console_link(arn=lg.get("arn", ""))
-                if aws_console_link else ""
+                if aws_console_link
+                else ""
             )
 
         load_cloudwatch_log_groups(

@@ -1,7 +1,10 @@
 import datetime
 import logging
 import traceback
-from typing import Any, Dict, Iterable, List
+from typing import Any
+from typing import Dict
+from typing import Iterable
+from typing import List
 
 import aioboto3
 import boto3
@@ -468,7 +471,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     else:
         regions = None
 
-    if getattr(config, 'aws_excluded_regions', None) and regions:
+    if getattr(config, "aws_excluded_regions", None) and regions:
         excluded = set(config.aws_excluded_regions)
         regions = [r for r in regions if r not in excluded]
         logger.info(f"Excluding regions: {excluded}. Remaining regions: {regions}")

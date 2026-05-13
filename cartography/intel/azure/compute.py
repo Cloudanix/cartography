@@ -6,6 +6,7 @@ from typing import Tuple
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.compute import ComputeManagementClient
+
 try:
     from cloudconsolelink.clouds.azure import AzureLinker
 except ImportError:
@@ -223,13 +224,16 @@ def sync_virtual_machine(
     common_job_parameters: Dict,
 ) -> None:
     vm_list = get_vm_list(credentials, subscription_id)
-    primary_ad_domain_name = common_job_parameters.get("Azure_Primary_AD_Domain_Name", "")
+    primary_ad_domain_name = common_job_parameters.get(
+        "Azure_Primary_AD_Domain_Name", ""
+    )
     for vm in vm_list:
         vm["consolelink"] = (
             azure_console_link.get_console_link(
                 id=vm["id"], primary_ad_domain_name=primary_ad_domain_name
             )
-            if azure_console_link else ""
+            if azure_console_link
+            else ""
         )
     transformed_vm_list, transformed_data_disk_list = transform_vm_list(vm_list)
     load_vms(neo4j_session, subscription_id, transformed_vm_list, update_tag)
@@ -252,13 +256,16 @@ def sync_disk(
     common_job_parameters: Dict,
 ) -> None:
     disk_list = get_disks(credentials, subscription_id)
-    primary_ad_domain_name = common_job_parameters.get("Azure_Primary_AD_Domain_Name", "")
+    primary_ad_domain_name = common_job_parameters.get(
+        "Azure_Primary_AD_Domain_Name", ""
+    )
     for disk in disk_list:
         disk["consolelink"] = (
             azure_console_link.get_console_link(
                 id=disk["id"], primary_ad_domain_name=primary_ad_domain_name
             )
-            if azure_console_link else ""
+            if azure_console_link
+            else ""
         )
     load_disks(neo4j_session, subscription_id, disk_list, update_tag)
     cleanup_disks(neo4j_session, common_job_parameters)
@@ -272,13 +279,16 @@ def sync_snapshot(
     common_job_parameters: Dict,
 ) -> None:
     snapshots = get_snapshots_list(credentials, subscription_id)
-    primary_ad_domain_name = common_job_parameters.get("Azure_Primary_AD_Domain_Name", "")
+    primary_ad_domain_name = common_job_parameters.get(
+        "Azure_Primary_AD_Domain_Name", ""
+    )
     for snapshot in snapshots:
         snapshot["consolelink"] = (
             azure_console_link.get_console_link(
                 id=snapshot["id"], primary_ad_domain_name=primary_ad_domain_name
             )
-            if azure_console_link else ""
+            if azure_console_link
+            else ""
         )
     load_snapshots(neo4j_session, subscription_id, snapshots, update_tag)
     cleanup_snapshot(neo4j_session, common_job_parameters)

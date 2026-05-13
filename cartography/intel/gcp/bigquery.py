@@ -1,7 +1,8 @@
 import json
 import logging
 import time
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 import neo4j
 
@@ -9,9 +10,11 @@ try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
     GCPLinker = None
-from googleapiclient.discovery import HttpError, Resource
+from googleapiclient.discovery import HttpError
+from googleapiclient.discovery import Resource
 
-from cartography.util import run_cleanup_job, timeit
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 from . import label
 
@@ -308,9 +311,7 @@ def get_table_info(bigquery, project_id, dataset_id, table_id):
 def load_bigquery_datasets(
     session: neo4j.Session, datasets: List[Dict], project_id: str, update_tag: int
 ) -> None:
-    session.execute_write(
-        load_bigquery_datasets_tx, datasets, project_id, update_tag
-    )
+    session.execute_write(load_bigquery_datasets_tx, datasets, project_id, update_tag)
 
 
 @timeit

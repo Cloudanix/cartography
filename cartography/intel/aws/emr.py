@@ -1,10 +1,13 @@
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import boto3
 import botocore.exceptions
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -15,7 +18,8 @@ from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.botocore_config import create_boto3_client
 from cartography.intel.aws.util.botocore_config import get_botocore_config
 from cartography.models.aws.emr import EMRClusterSchema
-from cartography.util import aws_handle_regions, timeit
+from cartography.util import aws_handle_regions
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker() if AWSLinker else None
@@ -83,7 +87,11 @@ def load_emr_clusters(
         f"Loading EMR {len(cluster_data)} clusters for region '{region}' into graph.",
     )
     for cluster in cluster_data:
-        cluster['consolelink'] = (aws_console_link.get_console_link(arn=cluster.get('ClusterArn', '')) if aws_console_link else "")
+        cluster["consolelink"] = (
+            aws_console_link.get_console_link(arn=cluster.get("ClusterArn", ""))
+            if aws_console_link
+            else ""
+        )
     load(
         neo4j_session,
         EMRClusterSchema(),

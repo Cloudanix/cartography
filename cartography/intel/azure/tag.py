@@ -1,7 +1,9 @@
 import logging
 import math
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List
+from concurrent.futures import as_completed
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict
+from typing import List
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
@@ -15,7 +17,9 @@ from neo4j import GraphDatabase
 
 from cartography.config import Config
 from cartography.graph.session import Session
-from cartography.util import batch, run_cleanup_job, timeit
+from cartography.util import batch
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 from .util.credentials import Credentials
 

@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
@@ -11,7 +12,9 @@ except ImportError:
     AzureLinker = None
 from msrest.exceptions import DeserializationError
 
-from cartography.util import get_azure_resource_group_name, run_cleanup_job, timeit
+from cartography.util import get_azure_resource_group_name
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 from .util.credentials import Credentials
 

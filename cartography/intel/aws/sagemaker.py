@@ -1,6 +1,7 @@
 import logging
 import time
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 import boto3
 import neo4j
@@ -11,7 +12,8 @@ except ImportError:
     AWSLinker = None
 
 from cartography.intel.aws.ec2.util import get_botocore_config
-from cartography.util import run_cleanup_job, timeit
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker() if AWSLinker else None

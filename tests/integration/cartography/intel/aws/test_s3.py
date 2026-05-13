@@ -50,7 +50,12 @@ def test_sync_s3(
         [TEST_REGION],
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
-        {"UPDATE_TAG": TEST_UPDATE_TAG, "AWS_ID": TEST_ACCOUNT_ID, "WORKSPACE_ID": "test_workspace", "ORGANIZATION_ID": "test_org"},
+        {
+            "UPDATE_TAG": TEST_UPDATE_TAG,
+            "AWS_ID": TEST_ACCOUNT_ID,
+            "WORKSPACE_ID": "test_workspace",
+            "ORGANIZATION_ID": "test_org",
+        },
     )
 
     # Assert - S3Bucket nodes exist

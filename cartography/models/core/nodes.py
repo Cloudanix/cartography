@@ -5,10 +5,8 @@ from typing import Optional
 from typing import Union
 
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.relationships import (
-    CartographyRelSchema,
-    OtherRelationships,
-)
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import OtherRelationships
 
 
 @dataclass(frozen=True)

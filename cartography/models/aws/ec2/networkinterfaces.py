@@ -13,18 +13,14 @@ from cartography.models.aws.ec2.networkinterface_instance import (
     EC2NetworkInterfaceToEC2SubnetRel,
 )
 from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import (
-    CartographyNodeProperties,
-    CartographyNodeSchema,
-)
-from cartography.models.core.relationships import (
-    CartographyRelProperties,
-    CartographyRelSchema,
-    LinkDirection,
-    OtherRelationships,
-    TargetNodeMatcher,
-    make_target_node_matcher,
-)
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import TargetNodeMatcher
 
 
 @dataclass(frozen=True)

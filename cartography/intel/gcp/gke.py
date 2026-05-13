@@ -4,7 +4,9 @@ from typing import Dict
 from typing import List
 
 import neo4j
-from googleapiclient.discovery import HttpError, Resource
+from googleapiclient.discovery import HttpError
+from googleapiclient.discovery import Resource
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
@@ -218,7 +220,8 @@ def transform_gke_clusters(
                     zone=c.get("zone", ""),
                     gke_cluster_name=c.get("name", ""),
                 )
-                if gcp_console_link else ""
+                if gcp_console_link
+                else ""
             ),
         }
         result.append(transformed)

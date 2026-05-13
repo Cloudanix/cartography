@@ -3,7 +3,8 @@ import logging
 import uuid
 
 from azure.core.credentials import AzureKeyCredential
-from azure.eventgrid import EventGridEvent, EventGridPublisherClient
+from azure.eventgrid import EventGridEvent
+from azure.eventgrid import EventGridPublisherClient
 
 logger = logging.getLogger(__name__)
 

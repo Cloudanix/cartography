@@ -9,6 +9,7 @@ from typing import Tuple
 import boto3
 import botocore
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -141,7 +142,11 @@ def transform_inspector_findings(
         finding["description"] = f["description"]
         finding["type"] = f["type"]
         finding["status"] = f["status"]
-        finding["consolelink"] = (aws_console_link.get_console_link(arn=f["findingArn"]) if aws_console_link else "")
+        finding["consolelink"] = (
+            aws_console_link.get_console_link(arn=f["findingArn"])
+            if aws_console_link
+            else ""
+        )
         if f.get("inspectorScoreDetails"):
             finding["cvssscore"] = f["inspectorScoreDetails"]["adjustedCvss"]["score"]
         if f["resources"][0]["type"] == "AWS_EC2_INSTANCE":

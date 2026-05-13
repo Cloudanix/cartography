@@ -7,6 +7,7 @@ from collections import namedtuple
 from typing import Any
 
 import neo4j
+
 try:
     from cloudconsolelink.clouds.gcp import GCPLinker
 except ImportError:
@@ -294,7 +295,8 @@ def transform_gcp_instances(response_objects: list[dict]) -> list[dict]:
                     project_id=prefix_fields.project_id,
                     zone=prefix_fields.zone_name,
                 )
-                if gcp_console_link else ""
+                if gcp_console_link
+                else ""
             )
             machine_type = instance.get("machineType")
             instance["machine_type"] = (

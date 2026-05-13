@@ -1,11 +1,15 @@
 # Copyright (c) 2020, Oracle and/or its affiliates.
 import logging
 from collections import namedtuple
-from typing import Any, Dict, NamedTuple
+from typing import Any
+from typing import Dict
+from typing import NamedTuple
 
 import neo4j
 import oci
-from oci.exceptions import ConfigFileNotFound, InvalidConfig, ProfileNotFound
+from oci.exceptions import ConfigFileNotFound
+from oci.exceptions import InvalidConfig
+from oci.exceptions import ProfileNotFound
 
 from cartography.config import Config
 

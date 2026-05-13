@@ -3,6 +3,7 @@ from typing import Any
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -67,7 +68,11 @@ def transform_elasticache_clusters(
             "AtRestEncryptionEnabled": cluster.get("AtRestEncryptionEnabled"),
             "TopicArn": topic_arn,
             "Region": region,
-            "consolelink": (aws_console_link.get_console_link(arn=cluster.get("ARN", "")) if aws_console_link else ""),
+            "consolelink": (
+                aws_console_link.get_console_link(arn=cluster.get("ARN", ""))
+                if aws_console_link
+                else ""
+            ),
         }
         cluster_data.append(cluster_record)
 

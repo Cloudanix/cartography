@@ -7,13 +7,12 @@ from typing import List
 from typing import Tuple
 
 import neo4j
-from azure.core.exceptions import (
-    ClientAuthenticationError,
-    HttpResponseError,
-    ResourceNotFoundError,
-)
+from azure.core.exceptions import ClientAuthenticationError
+from azure.core.exceptions import HttpResponseError
+from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.sql import SqlManagementClient
-from azure.mgmt.sql.models import SecurityAlertPolicyName, TransparentDataEncryptionName
+from azure.mgmt.sql.models import SecurityAlertPolicyName
+from azure.mgmt.sql.models import TransparentDataEncryptionName
 from msrestazure.azure_exceptions import CloudError
 
 from cartography.client.core.tx import load

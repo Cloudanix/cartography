@@ -1,7 +1,9 @@
 import logging
 import re
 from collections import namedtuple
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import boto3
 import neo4j

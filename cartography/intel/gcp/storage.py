@@ -4,7 +4,8 @@ from typing import List
 from typing import Tuple
 
 import neo4j
-from googleapiclient.discovery import HttpError, Resource
+from googleapiclient.discovery import HttpError
+from googleapiclient.discovery import Resource
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob

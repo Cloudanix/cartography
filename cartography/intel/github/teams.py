@@ -9,7 +9,8 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
-from cartography.intel.github.util import PaginatedGraphqlData, fetch_all
+from cartography.intel.github.util import fetch_all
+from cartography.intel.github.util import PaginatedGraphqlData
 from cartography.models.github.teams import GitHubTeamSchema
 from cartography.util import retries_with_backoff
 from cartography.util import timeit

@@ -3,6 +3,7 @@ from typing import Any
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -81,7 +82,9 @@ def transform_configuration_recorders(
                 ),
                 "recording_group_resource_types": recording_group.get("resourceTypes"),
                 "consolelink": (
-                    aws_console_link.get_console_link(arn=arn) if aws_console_link else ""
+                    aws_console_link.get_console_link(arn=arn)
+                    if aws_console_link
+                    else ""
                 ),
             }
         )
@@ -109,7 +112,9 @@ def transform_delivery_channels(
                     {},
                 ).get("deliveryFrequency"),
                 "consolelink": (
-                    aws_console_link.get_console_link(arn=arn) if aws_console_link else ""
+                    aws_console_link.get_console_link(arn=arn)
+                    if aws_console_link
+                    else ""
                 ),
             }
         )
@@ -138,7 +143,8 @@ def transform_config_rules(rules: list[dict]) -> list[dict[str, Any]]:
                 "source_details": source_details,
                 "consolelink": (
                     aws_console_link.get_console_link(arn=config_rule_arn)
-                    if aws_console_link and config_rule_arn else ""
+                    if aws_console_link and config_rule_arn
+                    else ""
                 ),
             }
         )

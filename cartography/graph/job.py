@@ -3,7 +3,12 @@ import logging
 import string
 from pathlib import Path
 from string import Template
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
+from typing import Union
 
 import neo4j
 

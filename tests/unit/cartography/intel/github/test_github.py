@@ -2,9 +2,11 @@ import json
 import typing
 from base64 import b64encode
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
 from datetime import timezone as tz
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
 import pytest
 from requests import Response

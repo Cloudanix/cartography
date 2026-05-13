@@ -9,6 +9,7 @@ import boto3
 import botocore
 import neo4j
 from botocore.exceptions import ClientError
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -163,7 +164,11 @@ def transform_kms_keys(keys: List[Dict], policy_data: Dict[str, Dict]) -> List[D
 
         # Add policy analysis
         transformed.update(policy_data[key["KeyId"]])
-        transformed["consolelink"] = (aws_console_link.get_console_link(arn=key.get("Arn", "")) if aws_console_link else "")
+        transformed["consolelink"] = (
+            aws_console_link.get_console_link(arn=key.get("Arn", ""))
+            if aws_console_link
+            else ""
+        )
 
         transformed_data.append(transformed)
     return transformed_data

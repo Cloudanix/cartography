@@ -11,6 +11,7 @@ from typing import List
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -120,7 +121,10 @@ def transform_agents(
         agent["Region"] = region
 
         # Add consolelink
-        agent_arn = agent.get("agentArn", f"arn:aws:bedrock:{region}:{account_id}:agent/{agent.get('agentId', '')}")
+        agent_arn = agent.get(
+            "agentArn",
+            f"arn:aws:bedrock:{region}:{account_id}:agent/{agent.get('agentId', '')}",
+        )
         agent["consolelink"] = (
             aws_console_link.get_console_link(arn=agent_arn) if aws_console_link else ""
         )

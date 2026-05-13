@@ -1,9 +1,11 @@
 import logging
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 import boto3
 import neo4j
 from botocore.exceptions import ClientError
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -64,7 +66,11 @@ def transform_secrets(
                     "AutomaticallyAfterDays"
                 ]
 
-        transformed["consolelink"] = (aws_console_link.get_console_link(arn=secret.get("ARN", "")) if aws_console_link else "")
+        transformed["consolelink"] = (
+            aws_console_link.get_console_link(arn=secret.get("ARN", ""))
+            if aws_console_link
+            else ""
+        )
         transformed_data.append(transformed)
 
     return transformed_data

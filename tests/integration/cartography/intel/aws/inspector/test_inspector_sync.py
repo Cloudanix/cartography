@@ -1,6 +1,5 @@
-from unittest.mock import MagicMock, patch
-
-import botocore.exceptions
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import botocore.exceptions
 

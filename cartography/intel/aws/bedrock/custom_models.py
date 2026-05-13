@@ -11,6 +11,7 @@ from typing import List
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -96,7 +97,8 @@ def transform_custom_models(
         model_arn = model.get("modelArn", "")
         model["consolelink"] = (
             aws_console_link.get_console_link(arn=model_arn)
-            if aws_console_link and model_arn else ""
+            if aws_console_link and model_arn
+            else ""
         )
 
     return models

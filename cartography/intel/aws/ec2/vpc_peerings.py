@@ -6,6 +6,7 @@ from typing import Tuple
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -162,9 +163,13 @@ def transform_vpc_peering_data(
                 ),
                 "ACCEPTER_CIDR_BLOCK_IDS": accepter_cidr_ids,
                 "REQUESTER_CIDR_BLOCK_IDS": requester_cidr_ids,
-                "consolelink": (aws_console_link.get_console_link(
-                    arn=f"arn:aws:ec2:::{peering.get('VpcPeeringConnectionId', '')}",
-                ) if aws_console_link else ""),
+                "consolelink": (
+                    aws_console_link.get_console_link(
+                        arn=f"arn:aws:ec2:::{peering.get('VpcPeeringConnectionId', '')}",
+                    )
+                    if aws_console_link
+                    else ""
+                ),
             },
         )
 

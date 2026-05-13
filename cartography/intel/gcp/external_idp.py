@@ -8,13 +8,11 @@ import yaml
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
 
-from cartography.intel.gcp.workspace import (
-    cleanup_groups,
-    cleanup_users,
-    load_groups,
-    load_groups_members,
-    load_users,
-)
+from cartography.intel.gcp.workspace import cleanup_groups
+from cartography.intel.gcp.workspace import cleanup_users
+from cartography.intel.gcp.workspace import load_groups
+from cartography.intel.gcp.workspace import load_groups_members
+from cartography.intel.gcp.workspace import load_users
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

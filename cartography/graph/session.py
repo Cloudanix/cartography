@@ -11,7 +11,6 @@ from neo4j.exceptions import TransactionError
 from neo4j.exceptions import TransactionNestingError
 from neo4j.exceptions import WriteServiceUnavailable
 
-
 logger = logging.getLogger(__name__)
 
 _NEO4J_WRITE_EXCEPTIONS = (
@@ -47,31 +46,63 @@ class Session:
         try:
             return self.neo4j_session.run(query, parameters, **kwparameters)
         except _NEO4J_WRITE_EXCEPTIONS as e:
-            logger.warning(f"Failed run neo4j cypher query. Error - {e}", exc_info=True, stack_info=True)
+            logger.warning(
+                f"Failed run neo4j cypher query. Error - {e}",
+                exc_info=True,
+                stack_info=True,
+            )
         except Exception as e:
-            logger.warning(f"Failed run neo4j cypher query. Error - {e}", exc_info=True, stack_info=True)
+            logger.warning(
+                f"Failed run neo4j cypher query. Error - {e}",
+                exc_info=True,
+                stack_info=True,
+            )
         return self
 
     # ------------------------------------------------------------------
     # Transaction helpers (used by cartography.graph.job / statement)
     # ------------------------------------------------------------------
 
-    def execute_write(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
+    def execute_write(
+        self, transaction_function: Callable, *args: Any, **kwargs: Any
+    ) -> Any:
         try:
-            return self.neo4j_session.execute_write(transaction_function, *args, **kwargs)
+            return self.neo4j_session.execute_write(
+                transaction_function, *args, **kwargs
+            )
         except _NEO4J_WRITE_EXCEPTIONS as e:
-            logger.warning(f"Failed execute_write for neo4j. Error - {e}", exc_info=True, stack_info=True)
+            logger.warning(
+                f"Failed execute_write for neo4j. Error - {e}",
+                exc_info=True,
+                stack_info=True,
+            )
         except Exception as e:
-            logger.warning(f"Failed execute_write for neo4j. Error - {e}", exc_info=True, stack_info=True)
+            logger.warning(
+                f"Failed execute_write for neo4j. Error - {e}",
+                exc_info=True,
+                stack_info=True,
+            )
         return None
 
-    def execute_read(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
+    def execute_read(
+        self, transaction_function: Callable, *args: Any, **kwargs: Any
+    ) -> Any:
         try:
-            return self.neo4j_session.execute_read(transaction_function, *args, **kwargs)
+            return self.neo4j_session.execute_read(
+                transaction_function, *args, **kwargs
+            )
         except _NEO4J_WRITE_EXCEPTIONS as e:
-            logger.warning(f"Failed execute_read for neo4j. Error - {e}", exc_info=True, stack_info=True)
+            logger.warning(
+                f"Failed execute_read for neo4j. Error - {e}",
+                exc_info=True,
+                stack_info=True,
+            )
         except Exception as e:
-            logger.warning(f"Failed execute_read for neo4j. Error - {e}", exc_info=True, stack_info=True)
+            logger.warning(
+                f"Failed execute_read for neo4j. Error - {e}",
+                exc_info=True,
+                stack_info=True,
+            )
         return None
 
     # ------------------------------------------------------------------

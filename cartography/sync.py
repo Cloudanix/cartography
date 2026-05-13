@@ -13,7 +13,8 @@ from statsd import StatsClient
 
 from cartography.config import Config
 from cartography.stats import set_stats_client
-from cartography.util import STATUS_FAILURE, STATUS_SUCCESS
+from cartography.util import STATUS_FAILURE
+from cartography.util import STATUS_SUCCESS
 
 logger = logging.getLogger(__name__)
 

@@ -36,7 +36,9 @@ SAMPLE_ANALYSIS_JOB = """
 
 def test_run_analysis_job_default_package(mocker):
     files_mock = mocker.patch("cartography.util.files")
-    files_mock.return_value.joinpath.return_value.read_text.return_value = SAMPLE_ANALYSIS_JOB
+    files_mock.return_value.joinpath.return_value.read_text.return_value = (
+        SAMPLE_ANALYSIS_JOB
+    )
     neo4j_session = mocker.Mock()
 
     util.run_analysis_job("test.json", neo4j_session, {})
@@ -48,7 +50,9 @@ def test_run_analysis_job_default_package(mocker):
 
 def test_run_analysis_job_custom_package(mocker):
     files_mock = mocker.patch("cartography.util.files")
-    files_mock.return_value.joinpath.return_value.read_text.return_value = SAMPLE_ANALYSIS_JOB
+    files_mock.return_value.joinpath.return_value.read_text.return_value = (
+        SAMPLE_ANALYSIS_JOB
+    )
     neo4j_session = mocker.Mock()
 
     util.run_analysis_job("test.json", neo4j_session, {}, package="a.b.c")
@@ -60,7 +64,9 @@ def test_run_analysis_job_custom_package(mocker):
 
 def test_run_scoped_analysis_job_default_package(mocker):
     files_mock = mocker.patch("cartography.util.files")
-    files_mock.return_value.joinpath.return_value.read_text.return_value = SAMPLE_ANALYSIS_JOB
+    files_mock.return_value.joinpath.return_value.read_text.return_value = (
+        SAMPLE_ANALYSIS_JOB
+    )
     neo4j_session = mocker.Mock()
 
     util.run_scoped_analysis_job("test.json", neo4j_session, {})

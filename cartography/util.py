@@ -1072,6 +1072,7 @@ def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
         awaitables complete. For web applications or other async contexts,
         prefer using await directly with asyncio.gather().
     """
+
     async def _gather() -> List[Any]:
         return list(await asyncio.gather(*awaitables))
 

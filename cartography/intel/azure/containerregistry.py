@@ -1,6 +1,8 @@
 import logging
 import time
-from typing import Dict, List, Optional
+from typing import Dict
+from typing import List
+from typing import Optional
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
@@ -11,7 +13,9 @@ try:
 except ImportError:
     AzureLinker = None
 
-from cartography.util import get_azure_resource_group_name, run_cleanup_job, timeit
+from cartography.util import get_azure_resource_group_name
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
 
 from .util.credentials import Credentials
 
@@ -300,9 +304,7 @@ def _load_images_tx(
 def load_registries(
     session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int
 ) -> None:
-    session.execute_write(
-        _load_registries_tx, subscription_id, data_list, update_tag
-    )
+    session.execute_write(_load_registries_tx, subscription_id, data_list, update_tag)
 
 
 def load_repositories(

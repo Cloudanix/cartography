@@ -4,6 +4,7 @@ from typing import Any
 
 import boto3
 import neo4j
+
 try:
     from cloudconsolelink.clouds.aws import AWSLinker
 except ImportError:
@@ -99,9 +100,13 @@ def transform_launch_configurations(
                 "IamInstanceProfile": config.get("IamInstanceProfile"),
                 "EbsOptimized": config.get("EbsOptimized"),
                 "PlacementTenancy": config.get("PlacementTenancy"),
-                "consolelink": (aws_console_link.get_console_link(
-                    arn=config.get("LaunchConfigurationARN", ""),
-                ) if aws_console_link else ""),
+                "consolelink": (
+                    aws_console_link.get_console_link(
+                        arn=config.get("LaunchConfigurationARN", ""),
+                    )
+                    if aws_console_link
+                    else ""
+                ),
             },
         )
     return transformed_configurations
@@ -137,9 +142,13 @@ def transform_auto_scaling_groups(groups: list[dict[str, Any]]) -> AsgData:
                     "NewInstancesProtectedFromScaleIn",
                 ),
                 "Status": group.get("Status"),
-                "consolelink": (aws_console_link.get_console_link(
-                    arn=group.get("AutoScalingGroupARN", ""),
-                ) if aws_console_link else ""),
+                "consolelink": (
+                    aws_console_link.get_console_link(
+                        arn=group.get("AutoScalingGroupARN", ""),
+                    )
+                    if aws_console_link
+                    else ""
+                ),
             },
         )
 
