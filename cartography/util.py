@@ -1021,7 +1021,7 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
         wrapper,
     )
     call = partial(wrapped, *args, **kwargs)
-    return asyncio.get_event_loop().run_in_executor(None, call)
+    return asyncio.get_running_loop().run_in_executor(None, call)
 
 
 def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
@@ -1079,7 +1079,10 @@ def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
         awaitables complete. For web applications or other async contexts,
         prefer using await directly with asyncio.gather().
     """
-    return asyncio.get_event_loop().run_until_complete(asyncio.gather(*awaitables))
+    async def _gather() -> List[Any]:
+        return list(await asyncio.gather(*awaitables))
+
+    return asyncio.run(_gather())
 
 
 def to_datetime(value: Any) -> Union[datetime, None]:

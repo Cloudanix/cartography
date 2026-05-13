@@ -530,13 +530,7 @@ def sync(
     """
     logger.info("Starting supply chain sync for GCP project %s", project_id)
 
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    enrichments, fetch_failures = loop.run_until_complete(
+    enrichments, fetch_failures = asyncio.run(
         _fetch_all_image_provenance(credentials, docker_artifacts_raw, project_id),
     )
 
