@@ -18,6 +18,7 @@ from cartography.intel.aws.permission_relationships import parse_statement_node
 from cartography.intel.aws.permission_relationships import principal_allowed_on_resource
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
+from trustline import main
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
@@ -321,41 +322,42 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
 
 
 @timeit
-def get_external_access_roles(boto3_session: boto3.session.Session, common_job_parameters: Dict) -> List[Dict]:
+def get_external_access_roles(boto3_session: boto3.session.Session, common_job_parameters: Dict) -> Dict:
+    findings: Dict = {}
     try:
-        analyzer_client = boto3_session.client("accessanalyzer", region_name=common_job_parameters.get("DEFAULT_REGION", None))
-        # AWS allow to create only one analyzer per account per region with type (ACCOUNT, ORGANIZATION, ACCOUNT_UNUSED_ACCESS, and ORGANIZTAION_UNUSED_ACCESS) thats why uses analyzers_list index 0
-        analyzers_list = analyzer_client.list_analyzers(type="ACCOUNT").get("analyzers", [])
-        findings: List = []
-        if analyzers_list:
-            paginator = analyzer_client.get_paginator("list_findings_v2")
-            for page in paginator.paginate(
-                analyzerArn=analyzers_list[0].get("arn"),
-                filter={"resourceType": {"eq": ["AWS::IAM::Role"]}},
-            ):
-                findings.extend(page.get("findings", []))
-            return findings
-        else:
-            analyzer_client.create_analyzer(
-                analyzerName="cdx_analyzer",
-                type="ACCOUNT",
-                tags={"owner": "cloudanix", "project": "iam-entitlements-analyzer"},
-            )
-            return findings
+        findings = main(argv=["--skip-s3"], boto3_session=boto3_session)
+        return findings
     except (ClientError, Exception) as e:
         logger.warning(f"Failed to get external roles. {e}")
-        return []
+        return findings
 
 
 @timeit
 def transform_roles(
     boto3_session: boto3.session.Session,
-    roles: List[Dict],
+    roles_data: List[Dict],
     external_access_roles: List[Dict],
     common_job_parameters: Dict,
 ) -> Dict:
-    external_access_roles_arn_list = [d["resource"] for d in external_access_roles if "resource" in d]
+    iam_known_vendors = {}
+    for vendor, roles in external_access_roles.get("iam_known_vendors", {}).items():
+        for role in roles:
+            vendors = iam_known_vendors.get(role, [])
+            if vendor not in vendors:
+                vendors.append(vendor)
+                iam_known_vendors[role] = vendors
 
+    iam_unknown_accounts = {}
+    for account, roles in external_access_roles.get("iam_unknown_accounts", {}).items():
+        for role in roles:
+            accounts = iam_unknown_accounts.get(role, [])
+            if account not in accounts:
+                accounts.append(account)
+                iam_unknown_accounts[role] = accounts
+
+    iam_vulnerable_roles = []
+    for account, roles in external_access_roles.get("iam_vulnerable_roles", {}).items():
+        iam_vulnerable_roles.extend(roles.get("roles", []))
     try:
         client = boto3_session.client("organizations")
         response = client.list_accounts()
@@ -363,9 +365,9 @@ def transform_roles(
     except Exception:
         internal_accounts = []
 
-    for role in roles:
+    for role in roles_data:
         ExternalAccountPrincipals = []
-        if role["Arn"] in external_access_roles_arn_list:
+        if role["RoleName"] in iam_unknown_accounts:
             for statement in role["AssumeRolePolicyDocument"]["Statement"]:
                 principal_entries = _parse_principal_entries(statement["Principal"])
                 for principal_type, principal in principal_entries:
@@ -404,10 +406,22 @@ def transform_roles(
                                 "principal": principal,
                             },
                         )
+        if role["RoleName"] in iam_known_vendors:
+            for vendor in iam_known_vendors[role["RoleName"]]:
+                ExternalAccountPrincipals.append(
+                    {
+                        "access_type": "Vendor",
+                        "account_id": vendor,
+                        "principal": vendor,
+                    },
+                )
+        if role["RoleName"] in iam_vulnerable_roles:
+            role["isVulnerable"] = True
+            role["missingExternalId"] = True
 
         role["ExternalAccountPrincipals"] = ExternalAccountPrincipals
 
-    return {"Roles": roles}
+    return {"Roles": roles_data}
 
 
 @timeit
@@ -596,6 +610,8 @@ def load_roles(
     SET rnode.name = $RoleName, rnode.path = $Path,
     rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
     rnode.is_service_role = $IsServiceRole,
+    rnode.is_vulnerable = $IsVulnerable,
+    rnode.missing_external_id = $MissingExternalId,
     rnode.is_sso_reserved_role = $IsSSOReservedRole,
     rnode.type = $Type
     SET rnode.lastupdated = $aws_update_tag
@@ -640,6 +656,8 @@ def load_roles(
             RoleId=role.get("RoleId", None),
             CreateDate=str(role["CreateDate"]),
             RoleName=role["RoleName"],
+            IsVulnerable=role.get("isVulnerable", None),
+            MissingExternalId=role.get("missingExternalId", None),
             Path=role["Path"],
             IsServiceRole=role.get("isServiceRole", False),
             IsSSOReservedRole=role.get("isSSOReservedRole", False),
