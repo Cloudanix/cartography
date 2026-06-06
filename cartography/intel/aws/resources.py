@@ -11,6 +11,7 @@ from . import dynamodb
 from . import ecr
 from . import ecs
 from . import eks
+from . import elasticbeanstalk
 from . import elasticache
 from . import elasticsearch
 from . import emr
@@ -62,6 +63,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'ecr': ecr.sync,
     'ecs': ecs.sync,
     'eks': eks.sync,
+    'elasticbeanstalk': elasticbeanstalk.sync,
     'emr': emr.sync,
     'kms': kms.sync,
     'apigateway': apigateway.sync,
