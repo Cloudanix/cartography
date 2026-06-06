@@ -34,6 +34,7 @@ class EC2ImageNodeProperties(CartographyNodeProperties):
     sriov_net_support: PropertyRef = PropertyRef('SriovNetSupport')
     bootmode: PropertyRef = PropertyRef('BootMode')
     owner: PropertyRef = PropertyRef('OwnerId')
+    block_device_encrypted: PropertyRef = PropertyRef('block_device_encrypted')
     image_owner_alias: PropertyRef = PropertyRef('ImageOwnerAlias')
     kernel_id: PropertyRef = PropertyRef('KernelId')
     ramdisk_id: PropertyRef = PropertyRef('RamdiskId')

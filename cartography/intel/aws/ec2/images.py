@@ -69,6 +69,13 @@ def transform_images(boto3_session: boto3.session.Session, imags: List[Dict], im
                     console_arn = f"arn:aws:ec2:{region}:{account_id}:image/{image['ImageId']}"
                     image['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
                     image['region'] = region
+                    # Derived: True only when every EBS block device of the AMI is encrypted (drives
+                    # the AMI-encryption compliance check without storing the full mapping list).
+                    image['block_device_encrypted'] = all(
+                        bdm.get('Ebs', {}).get('Encrypted', False)
+                        for bdm in image.get('BlockDeviceMappings', [])
+                        if bdm.get('Ebs')
+                    )
                     images.append(image)
     except ClientError as e:
         logger.warning(f"Failed retrieve images for region - {region}. Error - {e}")
@@ -94,6 +101,7 @@ def load_images(
     i.rootdevicetype = image.RootDeviceType, i.virtualizationtype = image.VirtualizationType,
     i.sriov_net_support = image.SriovNetSupport,
     i.bootmode = image.BootMode, i.owner = image.OwnerId, i.image_owner_alias = image.ImageOwnerAlias,
+    i.block_device_encrypted = image.block_device_encrypted,
     i.kernel_id = image.KernelId, i.ramdisk_id = image.RamdiskId,
     i.region=image.region, i.arn=image.arn
     WITH i
