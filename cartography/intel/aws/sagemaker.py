@@ -33,6 +33,17 @@ def get_notebook_instances_list(boto3_session: boto3.session.Session, region: st
         for instance in instances:
             instance["region"] = region
             instance["consolelink"] = aws_console_link.get_console_link(arn=instance['NotebookInstanceArn'])
+            # list_notebook_instances summaries omit KmsKeyId; describe to capture it for the
+            # at-rest encryption / CMK compliance checks.
+            try:
+                described = client.describe_notebook_instance(
+                    NotebookInstanceName=instance["NotebookInstanceName"],
+                )
+                instance["KmsKeyId"] = described.get("KmsKeyId")
+            except Exception as e:
+                logger.warning(
+                    f"Could not describe sagemaker notebook instance {instance.get('NotebookInstanceName')}. - {e}",
+                )
 
     except Exception as e:
         logger.warning(
@@ -69,6 +80,7 @@ def _load_notebook_instances_tx(
     i.status = instance.NotebookInstanceStatus,
     i.url = instance.Url,
     i.instancetype = instance.InstanceType,
+    i.kms_key_id = instance.KmsKeyId,
     i.defaultcoderepository = instance.DefaultCodeRepository,
     i.lastupdated =$aws_update_tag,
     i.region = instance.region,
