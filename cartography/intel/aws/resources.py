@@ -1,6 +1,7 @@
 from typing import Dict
 
 from . import apigateway
+from . import backup
 from . import bedrock
 from . import cloudformation
 from . import cloudfront
@@ -108,6 +109,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'inspector': inspector.sync,
     'config': config.sync,
     'securityhub': securityhub.sync,
+    'backup': backup.sync,
     'permission_relationships': permission_relationships.sync,
     'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
 }
