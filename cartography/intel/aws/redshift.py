@@ -173,6 +173,7 @@ def load_redshift_cluster_data(
     cluster.number_of_nodes = $NumberOfNodes,
     cluster.publicly_accessible = $PubliclyAccessible,
     cluster.vpc_id = $VpcId,
+    cluster.kms_key_id = $KmsKeyId,
     cluster.lastupdated = $aws_update_tag,
     cluster.region = $Region
     WITH cluster
@@ -207,6 +208,7 @@ def load_redshift_cluster_data(
             NumberOfNodes=cluster.get("NumberOfNodes"),
             PubliclyAccessible=cluster.get("PubliclyAccessible"),
             VpcId=cluster.get("VpcId"),
+            KmsKeyId=cluster.get("KmsKeyId"),
             Region=cluster.get("region"),
             AWS_ACCOUNT_ID=current_aws_account_id,
             aws_update_tag=aws_update_tag,

@@ -327,6 +327,7 @@ def load_kms_keys(
     kmskey.keystate = k.KeyState,
     kmskey.customkeystoreid = k.CustomKeyStoreId,
     kmskey.cloudhsmclusterid = k.CloudHsmClusterId,
+    kmskey.key_manager = k.KeyManager,
     kmskey.lastupdated =$aws_update_tag,
     kmskey.region = k.region,
     kmskey.consolelink = k.consolelink
