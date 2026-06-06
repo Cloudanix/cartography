@@ -8,6 +8,7 @@ from . import cloudfront
 from . import cloudtrail
 from . import cloudwatch
 from . import config
+from . import dms
 from . import dynamodb
 from . import ecr
 from . import ecs
@@ -102,6 +103,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'ec2:network_interface': sync_network_interfaces,
     'waf': waf.sync,
     'rds': rds.sync,
+    'dms': dms.sync,
     'redshift': redshift.sync,
     'elasticache': elasticache.sync,
     'elasticsearch': elasticsearch.sync,
