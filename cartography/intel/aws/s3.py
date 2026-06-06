@@ -837,6 +837,41 @@ def cleanup_s3_bucket_acl_and_policy(neo4j_session: neo4j.Session, common_job_pa
 
 
 @timeit
+@timeit
+def get_account_public_access_block(boto3_session: boto3.session.Session, current_aws_account_id: str) -> Dict:
+    """Account-level S3 Public Access Block (s3control). Account-global; empty on absence/error."""
+    try:
+        client = boto3_session.client('s3control')
+        response = client.get_public_access_block(AccountId=current_aws_account_id)
+        return response.get('PublicAccessBlockConfiguration', {}) or {}
+    except (ClientError, EndpointConnectionError) as e:
+        logger.warning(f"Failed to get account public access block for {current_aws_account_id} - {e}")
+        return {}
+
+
+@timeit
+def load_s3_account_public_access_block(
+    neo4j_session: neo4j.Session, current_aws_account_id: str, pab: Dict, update_tag: int,
+) -> None:
+    query = """
+    MATCH (a:AWSAccount{id: $AccountId})
+    SET a.s3_account_block_public_acls = $BlockPublicAcls,
+        a.s3_account_ignore_public_acls = $IgnorePublicAcls,
+        a.s3_account_block_public_policy = $BlockPublicPolicy,
+        a.s3_account_restrict_public_buckets = $RestrictPublicBuckets,
+        a.s3_account_pab_lastupdated = $update_tag
+    """
+    neo4j_session.run(
+        query,
+        AccountId=current_aws_account_id,
+        BlockPublicAcls=pab.get('BlockPublicAcls'),
+        IgnorePublicAcls=pab.get('IgnorePublicAcls'),
+        BlockPublicPolicy=pab.get('BlockPublicPolicy'),
+        RestrictPublicBuckets=pab.get('RestrictPublicBuckets'),
+        update_tag=update_tag,
+    )
+
+
 def sync(
     neo4j_session: neo4j.Session,
     boto3_session: boto3.session.Session,
@@ -853,6 +888,11 @@ def sync(
     t1 = time.perf_counter()
     load_s3_buckets(neo4j_session, bucket_data, current_aws_account_id, update_tag)
     logger.info(f"s3 account={current_aws_account_id}: bucket load done in {time.perf_counter() - t1:0.4f}s")
+
+    # Account-level Public Access Block (s3control) is account-global and overrides per-bucket PAB;
+    # stored on the AWSAccount node for the block-public-access / public-via-policy compliance checks.
+    account_pab = get_account_public_access_block(boto3_session, current_aws_account_id)
+    load_s3_account_public_access_block(neo4j_session, current_aws_account_id, account_pab, update_tag)
 
     t1 = time.perf_counter()
     acl_and_policy_data_iter = get_s3_bucket_details(boto3_session, bucket_data)
