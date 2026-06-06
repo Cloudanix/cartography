@@ -24,6 +24,7 @@ from . import identitystore
 from . import inspector
 from . import kms
 from . import lambda_function
+from . import macie
 from . import permission_relationships
 from . import rds
 from . import redshift
@@ -113,6 +114,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'inspector': inspector.sync,
     'config': config.sync,
     'securityhub': securityhub.sync,
+    'macie': macie.sync,
     'backup': backup.sync,
     'efs': efs.sync,
     'fsx': fsx.sync,
