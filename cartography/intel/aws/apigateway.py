@@ -333,6 +333,7 @@ def _load_apigateway_stages(
     s.cacheclusterstatus = stage.cacheClusterStatus,
     s.tracingenabled = stage.tracingEnabled,
     s.webaclarn = stage.webAclArn,
+    s.method_settings = stage.method_settings_json,
     s.lastupdated = $UpdateTag,
     s.arn = stage.arn
     WITH s, stage
@@ -348,6 +349,8 @@ def _load_apigateway_stages(
         stage['createdDate'] = str(stage['createdDate'])
         stage['arn'] = f"arn:aws:apigateway:{stage['region']}::restapis/{stage['apiId']}/stages/{stage['stageName']}"
         stage['consolelink'] = aws_console_link.get_console_link(arn=stage['arn'])
+        # Per-method cache settings as JSON (neo4j stores scalars) for the cache-encryption check.
+        stage['method_settings_json'] = json.dumps(stage.get('methodSettings', {}))
 
     neo4j_session.run(
         ingest_stages,
