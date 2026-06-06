@@ -1428,6 +1428,57 @@ def sync_policies(
 
 
 @timeit
+@timeit
+def get_root_credential_data(boto3_session: boto3.session.Session) -> Dict:
+    """Root row of the IAM credential report (account-global). Empty on error/not-ready.
+
+    The root account has no IAM user node, so its password-rotation age lives only in the credential
+    report; surfaced on the AWSAccount node for the root-password-rotation compliance check.
+    """
+    import csv
+    import io
+
+    client = boto3_session.client('iam')
+    try:
+        client.generate_credential_report()
+    except Exception:  # already-generating / generated is fine; we poll get below
+        pass
+    content = None
+    for _ in range(10):
+        try:
+            content = client.get_credential_report()['Content'].decode('utf-8')
+            break
+        except Exception:
+            time.sleep(2)
+    if not content:
+        return {}
+    for row in csv.DictReader(io.StringIO(content)):
+        if row.get('user') == '<root_account>':
+            return {
+                'password_last_changed': row.get('password_last_changed'),
+                'password_last_used': row.get('password_last_used'),
+            }
+    return {}
+
+
+@timeit
+def load_root_credential_data(
+    neo4j_session: neo4j.Session, current_aws_account_id: str, data: Dict, update_tag: int,
+) -> None:
+    neo4j_session.run(
+        """
+        MATCH (a:AWSAccount{id: $AccountId})
+        SET a.root_password_last_changed = $PasswordLastChanged,
+            a.root_password_last_used = $PasswordLastUsed,
+            a.root_credential_lastupdated = $update_tag
+        """,
+        AccountId=current_aws_account_id,
+        PasswordLastChanged=data.get('password_last_changed'),
+        PasswordLastUsed=data.get('password_last_used'),
+        update_tag=update_tag,
+    )
+
+
 def sync(
     neo4j_session: neo4j.Session,
     boto3_session: boto3.session.Session,
@@ -1439,6 +1490,13 @@ def sync(
     tic = time.perf_counter()
 
     logger.info("Syncing IAM for account '%s', at %s.", current_aws_account_id, tic)
+    try:
+        load_root_credential_data(
+            neo4j_session, current_aws_account_id,
+            get_root_credential_data(boto3_session), update_tag,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to sync root credential data for {current_aws_account_id} - {e}")
     # This module only syncs IAM information that is in use.
     # As such only policies that are attached to a user, role or group are synced
     sync_users(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
