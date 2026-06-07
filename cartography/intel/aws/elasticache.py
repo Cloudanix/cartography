@@ -68,7 +68,13 @@ def load_elasticache_clusters(
             cluster.cache_cluster_id = elasticache_cluster.CacheClusterId,
             cluster.region = elasticache_cluster.region
         SET cluster.lastupdated = $aws_update_tag,
-            cluster.consolelink = elasticache_cluster.consolelink
+            cluster.consolelink = elasticache_cluster.consolelink,
+            cluster.engine = elasticache_cluster.Engine,
+            cluster.engine_version = elasticache_cluster.EngineVersion,
+            cluster.cache_cluster_status = elasticache_cluster.CacheClusterStatus,
+            cluster.replication_group_id = elasticache_cluster.ReplicationGroupId,
+            cluster.at_rest_encryption_enabled = elasticache_cluster.AtRestEncryptionEnabled,
+            cluster.transit_encryption_enabled = elasticache_cluster.TransitEncryptionEnabled
 
         WITH cluster, elasticache_cluster
         MATCH (owner:AWSAccount{id: $aws_account_id})
@@ -124,6 +130,42 @@ def attach_elasticache_clusters_to_security_groups(neo4j_session: neo4j.Session,
 
 
 @timeit
+@aws_handle_regions
+def get_elasticache_replication_groups(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+    client = boto3_session.client('elasticache', region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator('describe_replication_groups')
+    groups: List[Dict] = []
+    for page in paginator.paginate():
+        groups.extend(page.get('ReplicationGroups', []))
+    for group in groups:
+        group['region'] = region
+    return groups
+
+
+@timeit
+def load_elasticache_replication_groups(
+    neo4j_session: neo4j.Session, groups: List[Dict], aws_account_id: str, update_tag: int,
+) -> None:
+    query = """
+    UNWIND $groups as rg
+        MERGE (n:ElasticacheReplicationGroup{id: rg.ARN})
+        ON CREATE SET n.firstseen = timestamp(), n.arn = rg.ARN
+        SET n.lastupdated = $aws_update_tag,
+            n.region = rg.region,
+            n.replication_group_id = rg.ReplicationGroupId,
+            n.at_rest_encryption_enabled = rg.AtRestEncryptionEnabled,
+            n.transit_encryption_enabled = rg.TransitEncryptionEnabled,
+            n.status = rg.Status
+        WITH n
+        MATCH (owner:AWSAccount{id: $aws_account_id})
+        MERGE (owner)-[r:RESOURCE]->(n)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $aws_update_tag
+    """
+    neo4j_session.run(query, groups=groups, aws_update_tag=update_tag, aws_account_id=aws_account_id)
+
+
+@timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job(
         'aws_import_elasticache_cleanup.json',
@@ -150,6 +192,13 @@ def sync(
 
     load_elasticache_clusters(neo4j_session, clusters, current_aws_account_id, update_tag)
     attach_elasticache_clusters_to_security_groups(neo4j_session, clusters, update_tag)
+
+    replication_groups = []
+    for region in regions:
+        replication_groups.extend(get_elasticache_replication_groups(boto3_session, region))
+    logger.info(f"Total Elasticache Replication Groups: {len(replication_groups)}")
+    load_elasticache_replication_groups(neo4j_session, replication_groups, current_aws_account_id, update_tag)
+
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
