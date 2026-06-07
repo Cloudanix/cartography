@@ -666,7 +666,8 @@ def load_roles(
     rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
     rnode.is_service_role = $IsServiceRole,
     rnode.is_sso_reserved_role = $IsSSOReservedRole,
-    rnode.type = $Type
+    rnode.type = $Type,
+    rnode.trust_policy = $TrustPolicy
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -713,6 +714,7 @@ def load_roles(
             IsServiceRole=role.get("isServiceRole", False),
             IsSSOReservedRole=role.get("isSSOReservedRole", False),
             Type=role.get("type", None),
+            TrustPolicy=json.dumps(role.get("AssumeRolePolicyDocument", {})),
             region="global",
             LastUsedDate=role["RoleLastUsed"].get("LastUsedDate") if "RoleLastUsed" in role else None,
             LastUsedRegion=role["RoleLastUsed"].get("Region") if "RoleLastUsed" in role else None,
@@ -1427,7 +1429,6 @@ def sync_policies(
     run_cleanup_job("aws_import_policy_cleanup.json", neo4j_session, common_job_parameters)
 
 
-@timeit
 @timeit
 def get_root_credential_data(boto3_session: boto3.session.Session) -> Dict:
     """Root row of the IAM credential report (account-global). Empty on error/not-ready.
