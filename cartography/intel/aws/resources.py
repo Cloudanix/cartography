@@ -44,6 +44,7 @@ from . import sqs
 from . import ssm
 from . import waf
 from .ec2.auto_scaling_groups import sync_ec2_auto_scaling_groups
+from .ec2.ebs_encryption import sync_ebs_encryption_by_default
 from .ec2.elastic_ip_addresses import sync_elastic_ip_addresses
 from .ec2.images import sync_ec2_images
 from .ec2.instances import sync_ec2_instances
@@ -105,6 +106,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'ec2:instance': sync_ec2_instances,
     'ec2:images': sync_ec2_images,
     'ec2:volumes': sync_ebs_volumes,
+    'ec2:ebs_encryption': sync_ebs_encryption_by_default,
     'ec2:snapshots': sync_ebs_snapshots,
     'ec2:autoscalinggroup': sync_ec2_auto_scaling_groups,
     'ec2:load_balancer': sync_load_balancers,
