@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from typing import *
@@ -210,13 +211,31 @@ def get_waf_v2_web_acl_details(
         response = client.get_web_acl(Name=acl["Name"], Scope=scope, Id=acl["Id"])
         acl_details = response.get("WebACL", {})
 
+        arn = acl.get("ARN", "")
+        logging_enabled = False
+        try:
+            log_resp = client.get_logging_configuration(ResourceArn=arn)
+            logging_enabled = bool(
+                log_resp.get("LoggingConfiguration", {}).get("LogDestinationConfigs"),
+            )
+        except Exception:
+            logging_enabled = False
+
         return {
             "Name": acl.get("Name", ""),
             "Id": acl.get("Id", ""),
-            "ARN": acl.get("ARN", ""),
+            "ARN": arn,
             "region": region,
             "scope": scope,
             "default_action": acl_details.get("DefaultAction", {}).get("Type", ""),
+            # Full Rules + DefaultAction (JSON) drive the count-mode / default-action / rule-presence
+            # compliance checks; VisibilityConfig + logging drive the logging check.
+            "rules": json.dumps(acl_details.get("Rules", [])),
+            "default_action_json": json.dumps(acl_details.get("DefaultAction", {})),
+            "cloudwatch_metrics_enabled": acl_details.get("VisibilityConfig", {}).get(
+                "CloudWatchMetricsEnabled", False,
+            ),
+            "logging_enabled": logging_enabled,
             "rules_count": str(len(acl_details.get("Rules", []))),
             "capacity": str(acl_details.get("Capacity", 0)),
         }
@@ -301,6 +320,10 @@ def _load_waf_v2_web_acls_tx(tx: neo4j.Transaction, web_acls: List[Dict], curren
         web_acl.consolelink = record.consolelink,
         web_acl.scope = record.scope,
         web_acl.default_action = record.default_action,
+        web_acl.rules = record.rules,
+        web_acl.default_action_json = record.default_action_json,
+        web_acl.cloudwatch_metrics_enabled = record.cloudwatch_metrics_enabled,
+        web_acl.logging_enabled = record.logging_enabled,
         web_acl.rules_count = record.rules_count,
         web_acl.capacity = record.capacity
     WITH web_acl
@@ -324,6 +347,53 @@ def cleanup_waf_v2_web_acls(neo4j_session: neo4j.Session, common_job_parameters:
 
 
 @timeit
+@aws_handle_regions
+def get_waf_v2_rule_groups_for_scope(client: boto3.client, scope: str, region: str) -> List[Dict]:
+    """List WAFv2 rule groups for a scope (account-level; the compliance checks treat the account's
+    rule groups as the candidate set per WebACL)."""
+    groups: List[Dict] = []
+    try:
+        resp = client.list_rule_groups(Scope=scope)
+        groups.extend(resp.get("RuleGroups", []))
+        while resp.get("NextMarker"):
+            resp = client.list_rule_groups(Scope=scope, NextMarker=resp.get("NextMarker"))
+            groups.extend(resp.get("RuleGroups", []))
+    except ClientError as e:
+        logger.error(f"Failed to list WAFv2 rule groups for scope {scope} in {region}: {e}")
+    out = []
+    for g in groups:
+        out.append({
+            "arn": g.get("ARN"),
+            "name": g.get("Name"),
+            "id": g.get("Id"),
+            "scope": scope,
+            "region": region,
+            "consolelink": aws_console_link.get_console_link(arn=g.get("ARN", "")),
+        })
+    return out
+
+
+@timeit
+def load_waf_v2_rule_groups(session: neo4j.Session, groups: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
+    query = """
+    UNWIND $Records as record
+    MERGE (n:AWSWAFv2RuleGroup{id: record.arn})
+    ON CREATE SET n.firstseen = timestamp(), n.arn = record.arn
+    SET n.lastupdated = $aws_update_tag,
+        n.name = record.name,
+        n.scope = record.scope,
+        n.region = record.region,
+        n.consolelink = record.consolelink
+    WITH n
+    MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (owner)-[r:RESOURCE]->(n)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+    session.run(query, Records=groups, AWS_ACCOUNT_ID=current_aws_account_id, aws_update_tag=aws_update_tag)
+
+
+@timeit
 def sync_waf_v2(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     update_tag: int, common_job_parameters: Dict,
@@ -343,6 +413,18 @@ def sync_waf_v2(
     transformed_acls = transform_waf_v2_web_acls(all_web_acls)
     load_waf_v2_web_acls(neo4j_session, transformed_acls, current_aws_account_id, update_tag)
     cleanup_waf_v2_web_acls(neo4j_session, common_job_parameters)
+
+    # Rule groups (account-level per scope) — the candidate set the protection/rule-group checks read.
+    rule_groups = get_waf_v2_rule_groups_for_scope(
+        boto3_session.client("wafv2", region_name="us-east-1"), "CLOUDFRONT", "global",
+    )
+    for region in regions:
+        rule_groups.extend(
+            get_waf_v2_rule_groups_for_scope(
+                boto3_session.client("wafv2", region_name=region), "REGIONAL", region,
+            ),
+        )
+    load_waf_v2_rule_groups(neo4j_session, rule_groups, current_aws_account_id, update_tag)
 
 
 @timeit
