@@ -101,6 +101,62 @@ def _load_notebook_instances_tx(
 
 
 @timeit
+def get_endpoint_configs_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+    configs: List[Dict] = []
+    try:
+        client = get_boto3_client(boto3_session, "sagemaker", region)
+        paginator = client.get_paginator("list_endpoint_configs")
+        summaries = []
+        for page in paginator.paginate():
+            summaries.extend(page.get("EndpointConfigs", []))
+        for summary in summaries:
+            try:
+                detail = client.describe_endpoint_config(
+                    EndpointConfigName=summary["EndpointConfigName"],
+                )
+            except Exception as e:
+                logger.warning(f"Could not describe endpoint config {summary.get('EndpointConfigName')} - {e}")
+                continue
+            arn = detail.get("EndpointConfigArn", summary.get("EndpointConfigArn", ""))
+            configs.append({
+                "arn": arn,
+                "name": detail.get("EndpointConfigName"),
+                "region": region,
+                "consolelink": aws_console_link.get_console_link(arn=arn),
+                "kms_key_id": detail.get("KmsKeyId"),
+                "production_variant_instance_types": [
+                    v.get("InstanceType") for v in detail.get("ProductionVariants", []) if v.get("InstanceType")
+                ],
+            })
+    except Exception as e:
+        logger.warning(f"Could not list sagemaker endpoint configs. skipping. - {e}")
+    return configs
+
+
+@timeit
+def load_endpoint_configs(
+    neo4j_session: neo4j.Session, configs: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
+    query = """
+    UNWIND $Configs as c
+    MERGE (n:AWSSagemakerEndpointConfig{id: c.arn})
+    ON CREATE SET n.firstseen = timestamp(), n.arn = c.arn
+    SET n.lastupdated = $aws_update_tag,
+        n.name = c.name,
+        n.region = c.region,
+        n.consolelink = c.consolelink,
+        n.kms_key_id = c.kms_key_id,
+        n.production_variant_instance_types = c.production_variant_instance_types
+    WITH n
+    MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (owner)-[r:RESOURCE]->(n)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+    neo4j_session.run(query, Configs=configs, AWS_ACCOUNT_ID=current_aws_account_id, aws_update_tag=aws_update_tag)
+
+
+@timeit
 def get_endpoints_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     endpoints: List[Dict] = []
     try:
@@ -450,6 +506,12 @@ def sync_sagemaker(
     logger.info(f"Total endpoints: {len(endpoints_list)}")
 
     load_endpoints(neo4j_session, endpoints_list, current_aws_account_id, aws_update_tag)
+
+    endpoint_configs_list = []
+    for region in regions:
+        endpoint_configs_list.extend(get_endpoint_configs_list(boto3_session, region))
+    logger.info(f"Total endpoint configs: {len(endpoint_configs_list)}")
+    load_endpoint_configs(neo4j_session, endpoint_configs_list, current_aws_account_id, aws_update_tag)
 
     training_jobs_list = []
     for region in regions:
