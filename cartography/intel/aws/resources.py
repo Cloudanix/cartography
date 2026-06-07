@@ -11,6 +11,7 @@ from . import cloudwatch
 from . import config
 from . import dms
 from . import dynamodb
+from . import firehose
 from . import ecr
 from . import ecs
 from . import eks
@@ -24,6 +25,7 @@ from . import iam
 from . import identitystore
 from . import inspector
 from . import kms
+from . import kinesis
 from . import lambda_function
 from . import macie
 from . import permission_relationships
@@ -65,6 +67,8 @@ RESOURCE_FUNCTIONS: Dict = {
     'iam': iam.sync,
     's3': s3.sync,
     'dynamodb': dynamodb.sync,
+    'kinesis': kinesis.sync,
+    'firehose': firehose.sync,
     'lambda_function': lambda_function.sync,
     'ecr': ecr.sync,
     'ecs': ecs.sync,
