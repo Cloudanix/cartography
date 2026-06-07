@@ -1,5 +1,6 @@
 from typing import Dict
 
+from . import acm
 from . import apigateway
 from . import backup
 from . import bedrock
@@ -72,6 +73,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'emr': emr.sync,
     'kms': kms.sync,
     'apigateway': apigateway.sync,
+    'acm': acm.sync,
     'secretsmanager': secretsmanager.sync,
     'sqs': sqs.sync,
     'sns': sns.sync,
