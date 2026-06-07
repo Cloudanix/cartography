@@ -221,6 +221,16 @@ def get_waf_v2_web_acl_details(
         except Exception:
             logging_enabled = False
 
+        # Protected ALB ARNs (REGIONAL only) — drives the ELB-WAF compliance check.
+        resources: List[str] = []
+        if scope == "REGIONAL":
+            try:
+                resources = client.list_resources_for_web_acl(
+                    WebACLArn=arn, ResourceType="APPLICATION_LOAD_BALANCER",
+                ).get("ResourceArns", [])
+            except Exception:
+                resources = []
+
         return {
             "Name": acl.get("Name", ""),
             "Id": acl.get("Id", ""),
@@ -236,6 +246,7 @@ def get_waf_v2_web_acl_details(
                 "CloudWatchMetricsEnabled", False,
             ),
             "logging_enabled": logging_enabled,
+            "resources": resources,
             "rules_count": str(len(acl_details.get("Rules", []))),
             "capacity": str(acl_details.get("Capacity", 0)),
         }
@@ -324,6 +335,7 @@ def _load_waf_v2_web_acls_tx(tx: neo4j.Transaction, web_acls: List[Dict], curren
         web_acl.default_action_json = record.default_action_json,
         web_acl.cloudwatch_metrics_enabled = record.cloudwatch_metrics_enabled,
         web_acl.logging_enabled = record.logging_enabled,
+        web_acl.resources = record.resources,
         web_acl.rules_count = record.rules_count,
         web_acl.capacity = record.capacity
     WITH web_acl
