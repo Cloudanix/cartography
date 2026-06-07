@@ -2,6 +2,7 @@ from typing import Dict
 
 from . import acm
 from . import apigateway
+from . import appsync
 from . import backup
 from . import bedrock
 from . import cloudformation
@@ -78,6 +79,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'kms': kms.sync,
     'apigateway': apigateway.sync,
     'acm': acm.sync,
+    'appsync': appsync.sync,
     'secretsmanager': secretsmanager.sync,
     'sqs': sqs.sync,
     'sns': sns.sync,
