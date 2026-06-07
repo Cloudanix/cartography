@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from typing import Dict
@@ -410,6 +411,8 @@ def transform_alarms(alms: List[Dict], region: str) -> List[Dict]:
         alarm["arn"] = alarm["AlarmArn"]
         alarm["consolelink"] = aws_console_link.get_console_link(arn=alarm["arn"])
         alarm["region"] = region
+        ts = alarm.get("AlarmConfigurationUpdatedTimestamp")
+        alarm["AlarmConfigurationUpdatedTimestampStr"] = str(ts) if ts else None
         alarms.append(alarm)
 
     return alarms
@@ -446,6 +449,9 @@ def _load_cloudwatch_alarm_tx(
         alarm.state_value = record.StateValue,
         alarm.statistic = record.Statistic,
         alarm.actions_enabled = record.ActionsEnabled,
+        alarm.ok_actions = record.OKActions,
+        alarm.insufficient_data_actions = record.InsufficientDataActions,
+        alarm.alarm_configuration_updated_timestamp = record.AlarmConfigurationUpdatedTimestampStr,
         alarm.metric_name = record.MetricName
     WITH alarm
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -549,6 +555,50 @@ def cleanup_cloudwatch_flowlogs(neo4j_session: neo4j.Session, common_job_paramet
 
 
 @timeit
+@timeit
+@aws_handle_regions
+def get_metric_filters(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+    client = boto3_session.client('logs', region_name=region, config=get_botocore_config())
+    filters: List[Dict] = []
+    paginator = client.get_paginator('describe_metric_filters')
+    for page in paginator.paginate():
+        filters.extend(page.get('metricFilters', []))
+    out = []
+    for mf in filters:
+        out.append({
+            'id': f"{region}:{mf.get('logGroupName')}:{mf.get('filterName')}",
+            'region': region,
+            'log_group_name': mf.get('logGroupName'),
+            'filter_name': mf.get('filterName'),
+            'filter_pattern': mf.get('filterPattern'),
+            'metric_transformations': json.dumps(mf.get('metricTransformations', [])),
+        })
+    return out
+
+
+@timeit
+def load_metric_filters(
+    neo4j_session: neo4j.Session, filters: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
+    query = """
+    UNWIND $Filters as f
+    MERGE (n:AWSCloudWatchMetricFilter{id: f.id})
+    ON CREATE SET n.firstseen = timestamp()
+    SET n.lastupdated = $aws_update_tag,
+        n.region = f.region,
+        n.log_group_name = f.log_group_name,
+        n.filter_name = f.filter_name,
+        n.filter_pattern = f.filter_pattern,
+        n.metric_transformations = f.metric_transformations
+    WITH n
+    MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (owner)-[r:RESOURCE]->(n)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+    neo4j_session.run(query, Filters=filters, AWS_ACCOUNT_ID=current_aws_account_id, aws_update_tag=aws_update_tag)
+
+
 def sync(
     neo4j_session: neo4j.Session,
     boto3_session: boto3.session.Session,
@@ -565,6 +615,7 @@ def sync(
     flowlogs = []
     event_buses = []
     log_groups = []
+    metric_filters = []
     # metrics = []
     rules = []
     for region in regions:
@@ -578,6 +629,7 @@ def sync(
         event_buses.extend(transform_event_buses(ebs, region))
         log_g = get_log_groups(boto3_session, region)
         log_groups.extend(transform_log_groups(boto3_session, log_g, region))
+        metric_filters.extend(get_metric_filters(boto3_session, region))
         # mets = get_metrics(boto3_session, region)
         # metrics.extend(transform_metrics(mets, current_aws_account_id, region))
 
@@ -608,6 +660,9 @@ def sync(
     load_log_groups(neo4j_session, log_groups, current_aws_account_id, update_tag)
 
     cleanup_log_groups(neo4j_session, common_job_parameters)
+
+    logger.info(f"Total Cloudwatch Metric Filters: {len(metric_filters)}")
+    load_metric_filters(neo4j_session, metric_filters, current_aws_account_id, update_tag)
 
     # load_metrics(neo4j_session, metrics, current_aws_account_id, update_tag)
 
