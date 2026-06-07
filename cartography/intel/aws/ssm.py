@@ -143,7 +143,58 @@ def cleanup_ssm(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, A
     GraphJob.from_node_schema(SSMInstancePatchSchema(), common_job_parameters).run(neo4j_session)
 
 
+aws_console_link = AWSLinker()
+
+
 @timeit
+@aws_handle_regions
+def get_ssm_sessions(boto3_session: boto3.session.Session, region: str, current_aws_account_id: str) -> List[Dict]:
+    """Active Session Manager sessions. NOTE: describe_sessions returns only ACTIVE sessions, so this
+    is inherently a point-in-time snapshot — the SCHEDULED-scan staleness caveat (§9.10) applies."""
+    client = boto3_session.client('ssm', region_name=region, config=get_botocore_config())
+    sessions: List[Dict] = []
+    paginator = client.get_paginator('describe_sessions')
+    for page in paginator.paginate(State='Active'):
+        sessions.extend(page.get('Sessions', []))
+    out = []
+    for s in sessions:
+        arn = f"arn:aws:ssm:{region}:{current_aws_account_id}:session/{s.get('SessionId')}"
+        out.append({
+            'arn': arn,
+            'region': region,
+            'session_id': s.get('SessionId'),
+            'target': s.get('Target'),
+            'owner': s.get('Owner'),
+            'start_date': str(s.get('StartDate')) if s.get('StartDate') else None,
+            'consolelink': aws_console_link.get_console_link(arn=arn),
+        })
+    return out
+
+
+@timeit
+def load_ssm_sessions(
+    neo4j_session: neo4j.Session, sessions: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
+    query = """
+    UNWIND $Sessions as s
+    MERGE (n:AWSSSMSession{id: s.arn})
+    ON CREATE SET n.firstseen = timestamp(), n.arn = s.arn
+    SET n.lastupdated = $aws_update_tag,
+        n.region = s.region,
+        n.session_id = s.session_id,
+        n.target = s.target,
+        n.owner = s.owner,
+        n.start_date = s.start_date,
+        n.consolelink = s.consolelink
+    WITH n
+    MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (owner)-[r:RESOURCE]->(n)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+    neo4j_session.run(query, Sessions=sessions, AWS_ACCOUNT_ID=current_aws_account_id, aws_update_tag=aws_update_tag)
+
+
 def sync(
         neo4j_session: neo4j.Session,
         boto3_session: boto3.session.Session,
@@ -165,6 +216,11 @@ def sync(
         data = get_instance_patches(boto3_session, region, instance_ids)
         data = transform_instance_patches(data, region, current_aws_account_id)
         load_instance_patches(neo4j_session, data, region, current_aws_account_id, update_tag)
+
+        load_ssm_sessions(
+            neo4j_session, get_ssm_sessions(boto3_session, region, current_aws_account_id),
+            current_aws_account_id, update_tag,
+        )
         logger.info(f"ssm account={current_aws_account_id} region={region}: done in {time.perf_counter() - t_region:0.4f}s")
 
     cleanup_ssm(neo4j_session, common_job_parameters)
