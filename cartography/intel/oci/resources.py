@@ -1,6 +1,7 @@
 from typing import Dict
 
 from . import compute
+from . import database
 from . import encryption
 from . import iam
 from . import monitoring
@@ -19,4 +20,5 @@ RESOURCE_FUNCTIONS: Dict = {
     "storage": storage.sync,
     "oke": oke.sync,
     "logging": audit_logging.sync,
+    "database": database.sync,
 }

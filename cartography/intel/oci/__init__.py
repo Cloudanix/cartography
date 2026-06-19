@@ -15,6 +15,7 @@ from oci.exceptions import InvalidConfig
 from oci.exceptions import ProfileNotFound
 
 from . import compartment
+from . import database
 from . import iam
 from . import organizations
 from . import storage
@@ -26,7 +27,7 @@ from cartography.intel.oci.util.common import parse_and_validate_oci_requested_s
 # from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
-Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging')
+Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging database')
 
 
 def _sync_one_compartment(
@@ -266,6 +267,17 @@ def _get_oke_resource(credentials: Dict[str, Any]) -> oci.container_engine.Conta
     return oci.container_engine.ContainerEngineClient(credentials)
 
 
+def _get_database_resource(credentials: Dict[str, Any]) -> oci.database.DatabaseClient:
+    """
+    Instantiates a OCI DatabaseClient resource object to call the Database
+    service API (Autonomous Database, Base Database System, DB Homes / Nodes).
+    See https://docs.oracle.com/en-us/iaas/Content/Database/Concepts/databaseoverview.htm.
+    :param credentials: The OCI Credentials object
+    :return: A DatabaseClient resource object
+    """
+    return oci.database.DatabaseClient(credentials)
+
+
 def _initialize_resources(credentials: Dict[str, Any]) -> Resources:
     """
     Create namedtuple of all resource objects necessary for OCI data gathering.
@@ -281,6 +293,7 @@ def _initialize_resources(credentials: Dict[str, Any]) -> Resources:
         network=_get_network_resource(credentials),
         storage=_get_storage_resource(credentials),
         oke=_get_oke_resource(credentials),
+        database=_get_database_resource(credentials),
     )
 
 
