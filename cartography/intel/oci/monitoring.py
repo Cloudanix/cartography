@@ -13,6 +13,7 @@ import oci.monitoring
 import oci.ons
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -54,44 +55,48 @@ def load_alarms(
     Ingest OCI Monitoring Alarm data into Neo4j.
     """
     ingest_alarm = """
-    MERGE (a:OCIMonitoringAlarm{id: $OCID})
-    ON CREATE SET a.firstseen = timestamp()
-    SET a.ocid = $OCID,
-    a.display_name = $DISPLAY_NAME,
-    a.compartment_id = $COMPARTMENT_ID,
-    a.resource_type = 'oci-monitoring-alarm',
-    a.namespace = $NAMESPACE,
-    a.query = $QUERY,
-    a.severity = $SEVERITY,
-    a.is_enabled = $IS_ENABLED,
-    a.lifecycle_state = $LIFECYCLE_STATE,
-    a.metric_compartment_id = $METRIC_COMPARTMENT_ID,
-    a.destinations = $DESTINATIONS,
-    a.region = $REGION,
-    a.lastupdated = $oci_update_tag
-    WITH a
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(a)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS alarm
+        MERGE (a:OCIMonitoringAlarm{id: alarm.ocid})
+        ON CREATE SET a.firstseen = timestamp()
+        SET a.ocid = alarm.ocid,
+        a.display_name = alarm.display_name,
+        a.compartment_id = alarm.compartment_id,
+        a.resource_type = 'oci-monitoring-alarm',
+        a.namespace = alarm.namespace,
+        a.query = alarm.query,
+        a.severity = alarm.severity,
+        a.is_enabled = alarm.is_enabled,
+        a.lifecycle_state = alarm.lifecycle_state,
+        a.metric_compartment_id = alarm.metric_compartment_id,
+        a.destinations = alarm.destinations,
+        a.region = $REGION,
+        a.lastupdated = $oci_update_tag
+        WITH a, alarm
+        MATCH (cc:OCICompartment{id: alarm.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(a)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for alarm in alarms:
-        neo4j_session.run(
-            ingest_alarm,
-            OCID=alarm.get("id"),
-            DISPLAY_NAME=alarm.get("display-name"),
-            COMPARTMENT_ID=alarm.get("compartment-id", compartment_id),
-            NAMESPACE=alarm.get("namespace", ""),
-            QUERY=alarm.get("query", ""),
-            SEVERITY=alarm.get("severity", ""),
-            IS_ENABLED=alarm.get("is-enabled", False),
-            LIFECYCLE_STATE=alarm.get("lifecycle-state"),
-            METRIC_COMPARTMENT_ID=alarm.get("metric-compartment-id", ""),
-            DESTINATIONS=alarm.get("destinations", []),
-            REGION=region,
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": alarm.get("id"),
+            "display_name": alarm.get("display-name"),
+            "compartment_id": alarm.get("compartment-id", compartment_id),
+            "namespace": alarm.get("namespace", ""),
+            "query": alarm.get("query", ""),
+            "severity": alarm.get("severity", ""),
+            "is_enabled": alarm.get("is-enabled", False),
+            "lifecycle_state": alarm.get("lifecycle-state"),
+            "metric_compartment_id": alarm.get("metric-compartment-id", ""),
+            "destinations": alarm.get("destinations", []),
+        }
+        for alarm in alarms
+    ]
+    load_graph_data(
+        neo4j_session, ingest_alarm, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_alarms(
@@ -229,40 +234,44 @@ def load_event_rules(
     Ingest OCI Events Rule data into Neo4j.
     """
     ingest_rule = """
-    MERGE (er:OCIEventRule{id: $OCID})
-    ON CREATE SET er.firstseen = timestamp(),
-    er.createdate = $TIME_CREATED
-    SET er.ocid = $OCID,
-    er.display_name = $DISPLAY_NAME,
-    er.compartment_id = $COMPARTMENT_ID,
-    er.resource_type = 'oci-monitoring-event-rule',
-    er.condition = $CONDITION,
-    er.is_enabled = $IS_ENABLED,
-    er.lifecycle_state = $LIFECYCLE_STATE,
-    er.description = $DESCRIPTION,
-    er.region = $REGION,
-    er.lastupdated = $oci_update_tag
-    WITH er
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(er)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS rule
+        MERGE (er:OCIEventRule{id: rule.ocid})
+        ON CREATE SET er.firstseen = timestamp(),
+        er.createdate = rule.time_created
+        SET er.ocid = rule.ocid,
+        er.display_name = rule.display_name,
+        er.compartment_id = rule.compartment_id,
+        er.resource_type = 'oci-monitoring-event-rule',
+        er.condition = rule.condition,
+        er.is_enabled = rule.is_enabled,
+        er.lifecycle_state = rule.lifecycle_state,
+        er.description = rule.description,
+        er.region = $REGION,
+        er.lastupdated = $oci_update_tag
+        WITH er, rule
+        MATCH (cc:OCICompartment{id: rule.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(er)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for rule in rules:
-        neo4j_session.run(
-            ingest_rule,
-            OCID=rule.get("id"),
-            DISPLAY_NAME=rule.get("display-name"),
-            COMPARTMENT_ID=rule.get("compartment-id", compartment_id),
-            CONDITION=rule.get("condition", ""),
-            IS_ENABLED=rule.get("is-enabled", False),
-            LIFECYCLE_STATE=rule.get("lifecycle-state"),
-            DESCRIPTION=rule.get("description", ""),
-            REGION=region,
-            TIME_CREATED=str(rule.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": rule.get("id"),
+            "display_name": rule.get("display-name"),
+            "compartment_id": rule.get("compartment-id", compartment_id),
+            "condition": rule.get("condition", ""),
+            "is_enabled": rule.get("is-enabled", False),
+            "lifecycle_state": rule.get("lifecycle-state"),
+            "description": rule.get("description", ""),
+            "time_created": str(rule.get("time-created", "")),
+        }
+        for rule in rules
+    ]
+    load_graph_data(
+        neo4j_session, ingest_rule, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_event_rules(
@@ -320,40 +329,44 @@ def load_notification_topics(
     Ingest OCI Notification Topic data into Neo4j.
     """
     ingest_topic = """
-    MERGE (t:OCINotificationTopic{id: $OCID})
-    ON CREATE SET t.firstseen = timestamp(),
-    t.createdate = $TIME_CREATED
-    SET t.ocid = $OCID,
-    t.display_name = $NAME,
-    t.compartment_id = $COMPARTMENT_ID,
-    t.resource_type = 'oci-monitoring-notification-topic',
-    t.topic_id = $TOPIC_ID,
-    t.lifecycle_state = $LIFECYCLE_STATE,
-    t.description = $DESCRIPTION,
-    t.api_endpoint = $API_ENDPOINT,
-    t.region = $REGION,
-    t.lastupdated = $oci_update_tag
-    WITH t
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(t)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS topic
+        MERGE (t:OCINotificationTopic{id: topic.ocid})
+        ON CREATE SET t.firstseen = timestamp(),
+        t.createdate = topic.time_created
+        SET t.ocid = topic.ocid,
+        t.display_name = topic.name,
+        t.compartment_id = topic.compartment_id,
+        t.resource_type = 'oci-monitoring-notification-topic',
+        t.topic_id = topic.topic_id,
+        t.lifecycle_state = topic.lifecycle_state,
+        t.description = topic.description,
+        t.api_endpoint = topic.api_endpoint,
+        t.region = $REGION,
+        t.lastupdated = $oci_update_tag
+        WITH t, topic
+        MATCH (cc:OCICompartment{id: topic.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(t)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for topic in topics:
-        neo4j_session.run(
-            ingest_topic,
-            OCID=topic.get("topic-id", topic.get("id", "")),
-            NAME=topic.get("name", ""),
-            COMPARTMENT_ID=topic.get("compartment-id", compartment_id),
-            TOPIC_ID=topic.get("topic-id", ""),
-            LIFECYCLE_STATE=topic.get("lifecycle-state"),
-            DESCRIPTION=topic.get("description", ""),
-            API_ENDPOINT=topic.get("api-endpoint", ""),
-            REGION=region,
-            TIME_CREATED=str(topic.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": topic.get("topic-id", topic.get("id", "")),
+            "name": topic.get("name", ""),
+            "compartment_id": topic.get("compartment-id", compartment_id),
+            "topic_id": topic.get("topic-id", ""),
+            "lifecycle_state": topic.get("lifecycle-state"),
+            "description": topic.get("description", ""),
+            "api_endpoint": topic.get("api-endpoint", ""),
+            "time_created": str(topic.get("time-created", "")),
+        }
+        for topic in topics
+    ]
+    load_graph_data(
+        neo4j_session, ingest_topic, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_notification_topics(
