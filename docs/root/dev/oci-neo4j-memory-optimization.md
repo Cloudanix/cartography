@@ -96,9 +96,36 @@ concurrency, more lock/transaction churn.
 ### Not a factor
 - **No `DETACH DELETE` anywhere in OCI** — cleanup is not contributing here.
 
-## Phase B — Convert loaders to batched writes
+## Phase B — Convert loaders to batched writes (DONE)
 
 Goal: cap the size of any single OCI write transaction and cut transaction count.
+
+All loaders across the 10 OCI modules now write through `load_graph_data`
+(500-row batches, managed write transactions with transient-error retry).
+One commit per module:
+
+| Module | Loaders converted | Commit |
+|--------|-------------------|--------|
+| storage.py | 8 (A1 fat) | `146f8bf` |
+| oke.py | 3 (A1 fat) | `c1f4647` |
+| compartment.py | 1 | `e16c8b3` |
+| organizations.py | 1 | `2fd42be` |
+| encryption.py | 2 | `bf3a50d` |
+| monitoring.py | 3 | `da292d6` |
+| audit_logging.py | 4 (incl. the crash site) | `55c4477` |
+| iam.py | 6 | `36cfa4b` |
+| compute.py | 7 | `317e482` |
+| network.py | 10 + 2 subnet linkers | `61cf547` |
+
+Left unconverted by design: single-record loaders (`load_cloud_guard`,
+`load_audit_configuration`, `load_logging_configuration`), set-based linkers
+keyed on `lastupdated` (storage `link_instances*`, audit `mark_unlogged_buckets`),
+per-statement policy-reference loaders, and the graph-read queries that drive
+the syncs. Every converted loader has an integration test under
+`tests/integration/cartography/intel/oci/`.
+
+### Original plan
+
 
 - **A1 (fat) loaders first** — they are the ones that can grow large. Either
   migrate to `load_graph_data` (preferred, batches at 500) or wrap the existing
@@ -115,18 +142,24 @@ Order within B:
 3. A2 modules: `network.py`, `compute.py`, `iam.py`, `audit_logging.py`,
    `monitoring.py`, `encryption.py`, `compartment.py`, `organizations.py`.
 
-## Phase Indexes — MERGE lookup coverage
+## Phase Indexes — MERGE/MATCH lookup coverage (DONE)
 
-`indexes.cypher` has 40 OCI entries (plain `id` indexes). A `MERGE` on a label
-with no matching index does a full label scan — slower and more transaction
-state buffered.
+A `MERGE`/`MATCH` on a label+property with no matching index does a full label
+scan — slower and more transaction state buffered.
 
-- Audit: every OCI node label that appears in a `MERGE (x:Label{id:...})` must
-  have a `CREATE INDEX ... FOR (n:Label) ON (n.id)` in `indexes.cypher`.
-- Already covered: `OCIStorageBucket`, `OCIVolumeBackup`, `OCILoggingService`.
-- Add any missing labels surfaced by the audit.
-- Consider upgrading hot labels from plain index to a uniqueness constraint
-  (adds dedupe + locking) where a label's `id` is guaranteed unique.
+- **`id` coverage: complete.** All 40 OCI node labels that appear in a
+  `MERGE (x:Label{id:...})` already have an `id` index in `indexes.cypher`.
+  No gaps.
+- **Non-`id` MATCH coverage: 4 gaps found and fixed.** The relationship-
+  resolution MATCHes that key on a non-`id` field had no supporting index, so
+  each linking loader full-scanned its label per batch. Added (commit with the
+  Phase B docs update):
+  - `OCIVnicAttachment(vnic_id)` — network `load_vnics`
+  - `OCIBootVolumeAttachment(boot_volume_id)` — compute `load_boot_volumes`
+  - `OCIVolumeAttachment(volume_id)` — compute `load_block_volumes`
+  - `OCIMountTarget(export_set_id)` — storage `load_exports`
+- Future: consider upgrading hot labels from plain index to a uniqueness
+  constraint (adds dedupe + locking) where a label's `id` is guaranteed unique.
 
 ## Execution rules
 
