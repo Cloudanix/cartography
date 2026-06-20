@@ -11,6 +11,7 @@ import neo4j
 import oci
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -305,7 +306,7 @@ def load_clusters(
     via the standard RESOURCE relationship.
     """
     ingest_clusters = """
-    UNWIND $clusters AS c
+    UNWIND $DictList AS c
         MERGE (cl:OCIOKECluster{id: c.id})
         ON CREATE SET cl.firstseen = timestamp(),
                       cl.createdate = c.time_created
@@ -342,9 +343,10 @@ def load_clusters(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_clusters,
-        clusters=clusters,
+        clusters,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -367,7 +369,7 @@ def load_node_pools(
     than creating empty placeholder nodes.
     """
     ingest_pools = """
-    UNWIND $pools AS p
+    UNWIND $DictList AS p
         MERGE (np:OCIOKENodePool{id: p.id})
         ON CREATE SET np.firstseen = timestamp(),
                       np.createdate = p.time_created
@@ -407,9 +409,10 @@ def load_node_pools(
         ON CREATE SET r2.firstseen = timestamp()
         SET r2.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_pools,
-        pools=node_pools,
+        node_pools,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -426,14 +429,14 @@ def load_node_pools(
 
     if node_links:
         link_compute = """
-        UNWIND $links AS link
+        UNWIND $DictList AS link
             MATCH (np:OCIOKENodePool{id: link.pool_ocid})
             MATCH (i:OCIInstance{id: link.node_ocid})
             MERGE (np)-[r:CONTAINS_NODE]->(i)
             ON CREATE SET r.firstseen = timestamp()
             SET r.lastupdated = $oci_update_tag
         """
-        neo4j_session.run(link_compute, links=node_links, oci_update_tag=oci_update_tag)
+        load_graph_data(neo4j_session, link_compute, node_links, oci_update_tag=oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
