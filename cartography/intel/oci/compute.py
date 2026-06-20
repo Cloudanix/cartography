@@ -13,6 +13,7 @@ import oci.core
 import oci.identity
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -50,31 +51,33 @@ def load_instances(
     Ingest OCI Compute Instance data into Neo4j.
     """
     ingest_instance = """
-    MERGE (inode:OCIInstance{id: $OCID})
-    ON CREATE SET inode.firstseen = timestamp(),
-    inode.createdate = $TIME_CREATED
-    SET inode.ocid = $OCID,
-    inode.display_name = $DISPLAY_NAME,
-    inode.compartment_id = $COMPARTMENT_ID,
-    inode.resource_type = 'oci-compute-vm-instance',
-    inode.availability_domain = $AVAILABILITY_DOMAIN,
-    inode.fault_domain = $FAULT_DOMAIN,
-    inode.shape = $SHAPE,
-    inode.lifecycle_state = $LIFECYCLE_STATE,
-    inode.region = $REGION,
-    inode.image_id = $IMAGE_ID,
-    inode.are_legacy_imds_endpoints_disabled = $ARE_LEGACY_IMDS_ENDPOINTS_DISABLED,
-    inode.is_secure_boot_enabled = $IS_SECURE_BOOT_ENABLED,
-    inode.is_pv_encryption_in_transit_enabled = $IS_PV_ENCRYPTION_IN_TRANSIT_ENABLED,
-    inode.is_monitoring_disabled = $IS_MONITORING_DISABLED,
-    inode.lastupdated = $oci_update_tag
-    WITH inode
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(inode)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS instance
+        MERGE (inode:OCIInstance{id: instance.ocid})
+        ON CREATE SET inode.firstseen = timestamp(),
+        inode.createdate = instance.time_created
+        SET inode.ocid = instance.ocid,
+        inode.display_name = instance.display_name,
+        inode.compartment_id = instance.compartment_id,
+        inode.resource_type = 'oci-compute-vm-instance',
+        inode.availability_domain = instance.availability_domain,
+        inode.fault_domain = instance.fault_domain,
+        inode.shape = instance.shape,
+        inode.lifecycle_state = instance.lifecycle_state,
+        inode.region = $REGION,
+        inode.image_id = instance.image_id,
+        inode.are_legacy_imds_endpoints_disabled = instance.are_legacy_imds_endpoints_disabled,
+        inode.is_secure_boot_enabled = instance.is_secure_boot_enabled,
+        inode.is_pv_encryption_in_transit_enabled = instance.is_pv_encryption_in_transit_enabled,
+        inode.is_monitoring_disabled = instance.is_monitoring_disabled,
+        inode.lastupdated = $oci_update_tag
+        WITH inode, instance
+        MATCH (cc:OCICompartment{id: instance.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(inode)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
+    rows = []
     for instance in instances:
         # Nested config objects (may be absent depending on shape/image).
         instance_options = instance.get("instance-options", {}) or {}
@@ -82,24 +85,26 @@ def load_instances(
         launch_options = instance.get("launch-options", {}) or {}
         agent_config = instance.get("agent-config", {}) or {}
 
-        neo4j_session.run(
-            ingest_instance,
-            OCID=instance.get("id"),
-            DISPLAY_NAME=instance.get("display-name"),
-            COMPARTMENT_ID=instance.get("compartment-id", compartment_id),
-            AVAILABILITY_DOMAIN=instance.get("availability-domain"),
-            FAULT_DOMAIN=instance.get("fault-domain"),
-            SHAPE=instance.get("shape"),
-            LIFECYCLE_STATE=instance.get("lifecycle-state"),
-            REGION=region,
-            IMAGE_ID=instance.get("image-id"),
-            ARE_LEGACY_IMDS_ENDPOINTS_DISABLED=instance_options.get("are-legacy-imds-endpoints-disabled"),
-            IS_SECURE_BOOT_ENABLED=platform_config.get("is-secure-boot-enabled"),
-            IS_PV_ENCRYPTION_IN_TRANSIT_ENABLED=launch_options.get("is-pv-encryption-in-transit-enabled"),
-            IS_MONITORING_DISABLED=agent_config.get("is-monitoring-disabled"),
-            TIME_CREATED=str(instance.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+        rows.append({
+            "ocid": instance.get("id"),
+            "display_name": instance.get("display-name"),
+            "compartment_id": instance.get("compartment-id", compartment_id),
+            "availability_domain": instance.get("availability-domain"),
+            "fault_domain": instance.get("fault-domain"),
+            "shape": instance.get("shape"),
+            "lifecycle_state": instance.get("lifecycle-state"),
+            "image_id": instance.get("image-id"),
+            "are_legacy_imds_endpoints_disabled": instance_options.get("are-legacy-imds-endpoints-disabled"),
+            "is_secure_boot_enabled": platform_config.get("is-secure-boot-enabled"),
+            "is_pv_encryption_in_transit_enabled": launch_options.get("is-pv-encryption-in-transit-enabled"),
+            "is_monitoring_disabled": agent_config.get("is-monitoring-disabled"),
+            "time_created": str(instance.get("time-created", "")),
+        })
+
+    load_graph_data(
+        neo4j_session, ingest_instance, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def get_vnic_attachment_list_data(
@@ -132,40 +137,45 @@ def load_vnic_attachments(
     Ingest OCI VNIC Attachment data into Neo4j and link to instances.
     """
     ingest_vnic_attachment = """
-    MERGE (vnic:OCIVnicAttachment{id: $OCID})
-    ON CREATE SET vnic.firstseen = timestamp(),
-    vnic.createdate = $TIME_CREATED
-    SET vnic.ocid = $OCID,
-    vnic.display_name = $DISPLAY_NAME,
-    vnic.compartment_id = $COMPARTMENT_ID,
-    vnic.availability_domain = $AVAILABILITY_DOMAIN,
-    vnic.lifecycle_state = $LIFECYCLE_STATE,
-    vnic.vnic_id = $VNIC_ID,
-    vnic.subnet_id = $SUBNET_ID,
-    vnic.nic_index = $NIC_INDEX,
-    vnic.lastupdated = $oci_update_tag
-    WITH vnic
-    MATCH (inode:OCIInstance{id: $INSTANCE_ID})
-    MERGE (inode)-[r:OCI_VNIC_ATTACHMENT]->(vnic)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS att
+        MERGE (vnic:OCIVnicAttachment{id: att.ocid})
+        ON CREATE SET vnic.firstseen = timestamp(),
+        vnic.createdate = att.time_created
+        SET vnic.ocid = att.ocid,
+        vnic.display_name = att.display_name,
+        vnic.compartment_id = att.compartment_id,
+        vnic.availability_domain = att.availability_domain,
+        vnic.lifecycle_state = att.lifecycle_state,
+        vnic.vnic_id = att.vnic_id,
+        vnic.subnet_id = att.subnet_id,
+        vnic.nic_index = att.nic_index,
+        vnic.lastupdated = $oci_update_tag
+        WITH vnic, att
+        MATCH (inode:OCIInstance{id: att.instance_id})
+        MERGE (inode)-[r:OCI_VNIC_ATTACHMENT]->(vnic)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for attachment in vnic_attachments:
-        neo4j_session.run(
-            ingest_vnic_attachment,
-            OCID=attachment.get("id"),
-            DISPLAY_NAME=attachment.get("display-name"),
-            COMPARTMENT_ID=attachment.get("compartment-id"),
-            AVAILABILITY_DOMAIN=attachment.get("availability-domain"),
-            LIFECYCLE_STATE=attachment.get("lifecycle-state"),
-            VNIC_ID=attachment.get("vnic-id"),
-            SUBNET_ID=attachment.get("subnet-id"),
-            NIC_INDEX=attachment.get("nic-index"),
-            INSTANCE_ID=attachment.get("instance-id"),
-            TIME_CREATED=str(attachment.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": attachment.get("id"),
+            "display_name": attachment.get("display-name"),
+            "compartment_id": attachment.get("compartment-id"),
+            "availability_domain": attachment.get("availability-domain"),
+            "lifecycle_state": attachment.get("lifecycle-state"),
+            "vnic_id": attachment.get("vnic-id"),
+            "subnet_id": attachment.get("subnet-id"),
+            "nic_index": attachment.get("nic-index"),
+            "instance_id": attachment.get("instance-id"),
+            "time_created": str(attachment.get("time-created", "")),
+        }
+        for attachment in vnic_attachments
+    ]
+    load_graph_data(
+        neo4j_session, ingest_vnic_attachment, rows,
+        oci_update_tag=oci_update_tag,
+    )
 
 
 def get_image_list_data(
@@ -199,37 +209,42 @@ def load_images(
     Ingest OCI Image data into Neo4j.
     """
     ingest_image = """
-    MERGE (img:OCIImage{id: $OCID})
-    ON CREATE SET img.firstseen = timestamp(),
-    img.createdate = $TIME_CREATED
-    SET img.ocid = $OCID,
-    img.display_name = $DISPLAY_NAME,
-    img.compartment_id = $COMPARTMENT_ID,
-    img.operating_system = $OPERATING_SYSTEM,
-    img.operating_system_version = $OPERATING_SYSTEM_VERSION,
-    img.lifecycle_state = $LIFECYCLE_STATE,
-    img.size_in_mbs = $SIZE_IN_MBS,
-    img.lastupdated = $oci_update_tag
-    WITH img
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(img)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS image
+        MERGE (img:OCIImage{id: image.ocid})
+        ON CREATE SET img.firstseen = timestamp(),
+        img.createdate = image.time_created
+        SET img.ocid = image.ocid,
+        img.display_name = image.display_name,
+        img.compartment_id = image.compartment_id,
+        img.operating_system = image.operating_system,
+        img.operating_system_version = image.operating_system_version,
+        img.lifecycle_state = image.lifecycle_state,
+        img.size_in_mbs = image.size_in_mbs,
+        img.lastupdated = $oci_update_tag
+        WITH img, image
+        MATCH (cc:OCICompartment{id: image.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(img)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for image in images:
-        neo4j_session.run(
-            ingest_image,
-            OCID=image.get("id"),
-            DISPLAY_NAME=image.get("display-name"),
-            COMPARTMENT_ID=image.get("compartment-id") if image.get("compartment-id") else compartment_id,
-            OPERATING_SYSTEM=image.get("operating-system"),
-            OPERATING_SYSTEM_VERSION=image.get("operating-system-version"),
-            LIFECYCLE_STATE=image.get("lifecycle-state"),
-            SIZE_IN_MBS=image.get("size-in-mbs"),
-            TIME_CREATED=str(image.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": image.get("id"),
+            "display_name": image.get("display-name"),
+            "compartment_id": image.get("compartment-id") if image.get("compartment-id") else compartment_id,
+            "operating_system": image.get("operating-system"),
+            "operating_system_version": image.get("operating-system-version"),
+            "lifecycle_state": image.get("lifecycle-state"),
+            "size_in_mbs": image.get("size-in-mbs"),
+            "time_created": str(image.get("time-created", "")),
+        }
+        for image in images
+    ]
+    load_graph_data(
+        neo4j_session, ingest_image, rows,
+        oci_update_tag=oci_update_tag,
+    )
 
 
 def get_boot_volume_attachment_list_data(
@@ -266,36 +281,41 @@ def load_boot_volume_attachments(
     Ingest OCI Boot Volume Attachment data into Neo4j and link to instances.
     """
     ingest_boot_volume_attachment = """
-    MERGE (bva:OCIBootVolumeAttachment{id: $OCID})
-    ON CREATE SET bva.firstseen = timestamp(),
-    bva.createdate = $TIME_CREATED
-    SET bva.ocid = $OCID,
-    bva.display_name = $DISPLAY_NAME,
-    bva.compartment_id = $COMPARTMENT_ID,
-    bva.availability_domain = $AVAILABILITY_DOMAIN,
-    bva.lifecycle_state = $LIFECYCLE_STATE,
-    bva.boot_volume_id = $BOOT_VOLUME_ID,
-    bva.lastupdated = $oci_update_tag
-    WITH bva
-    MATCH (inode:OCIInstance{id: $INSTANCE_ID})
-    MERGE (inode)-[r:OCI_BOOT_VOLUME_ATTACHMENT]->(bva)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS att
+        MERGE (bva:OCIBootVolumeAttachment{id: att.ocid})
+        ON CREATE SET bva.firstseen = timestamp(),
+        bva.createdate = att.time_created
+        SET bva.ocid = att.ocid,
+        bva.display_name = att.display_name,
+        bva.compartment_id = att.compartment_id,
+        bva.availability_domain = att.availability_domain,
+        bva.lifecycle_state = att.lifecycle_state,
+        bva.boot_volume_id = att.boot_volume_id,
+        bva.lastupdated = $oci_update_tag
+        WITH bva, att
+        MATCH (inode:OCIInstance{id: att.instance_id})
+        MERGE (inode)-[r:OCI_BOOT_VOLUME_ATTACHMENT]->(bva)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for attachment in boot_volume_attachments:
-        neo4j_session.run(
-            ingest_boot_volume_attachment,
-            OCID=attachment.get("id"),
-            DISPLAY_NAME=attachment.get("display-name"),
-            COMPARTMENT_ID=attachment.get("compartment-id"),
-            AVAILABILITY_DOMAIN=attachment.get("availability-domain"),
-            LIFECYCLE_STATE=attachment.get("lifecycle-state"),
-            BOOT_VOLUME_ID=attachment.get("boot-volume-id"),
-            INSTANCE_ID=attachment.get("instance-id"),
-            TIME_CREATED=str(attachment.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": attachment.get("id"),
+            "display_name": attachment.get("display-name"),
+            "compartment_id": attachment.get("compartment-id"),
+            "availability_domain": attachment.get("availability-domain"),
+            "lifecycle_state": attachment.get("lifecycle-state"),
+            "boot_volume_id": attachment.get("boot-volume-id"),
+            "instance_id": attachment.get("instance-id"),
+            "time_created": str(attachment.get("time-created", "")),
+        }
+        for attachment in boot_volume_attachments
+    ]
+    load_graph_data(
+        neo4j_session, ingest_boot_volume_attachment, rows,
+        oci_update_tag=oci_update_tag,
+    )
 
 
 def get_volume_attachment_list_data(
@@ -328,40 +348,45 @@ def load_volume_attachments(
     Ingest OCI Volume Attachment data into Neo4j and link to instances.
     """
     ingest_volume_attachment = """
-    MERGE (va:OCIVolumeAttachment{id: $OCID})
-    ON CREATE SET va.firstseen = timestamp(),
-    va.createdate = $TIME_CREATED
-    SET va.ocid = $OCID,
-    va.display_name = $DISPLAY_NAME,
-    va.compartment_id = $COMPARTMENT_ID,
-    va.availability_domain = $AVAILABILITY_DOMAIN,
-    va.lifecycle_state = $LIFECYCLE_STATE,
-    va.volume_id = $VOLUME_ID,
-    va.attachment_type = $ATTACHMENT_TYPE,
-    va.is_read_only = $IS_READ_ONLY,
-    va.lastupdated = $oci_update_tag
-    WITH va
-    MATCH (inode:OCIInstance{id: $INSTANCE_ID})
-    MERGE (inode)-[r:OCI_VOLUME_ATTACHMENT]->(va)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS att
+        MERGE (va:OCIVolumeAttachment{id: att.ocid})
+        ON CREATE SET va.firstseen = timestamp(),
+        va.createdate = att.time_created
+        SET va.ocid = att.ocid,
+        va.display_name = att.display_name,
+        va.compartment_id = att.compartment_id,
+        va.availability_domain = att.availability_domain,
+        va.lifecycle_state = att.lifecycle_state,
+        va.volume_id = att.volume_id,
+        va.attachment_type = att.attachment_type,
+        va.is_read_only = att.is_read_only,
+        va.lastupdated = $oci_update_tag
+        WITH va, att
+        MATCH (inode:OCIInstance{id: att.instance_id})
+        MERGE (inode)-[r:OCI_VOLUME_ATTACHMENT]->(va)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for attachment in volume_attachments:
-        neo4j_session.run(
-            ingest_volume_attachment,
-            OCID=attachment.get("id"),
-            DISPLAY_NAME=attachment.get("display-name"),
-            COMPARTMENT_ID=attachment.get("compartment-id"),
-            AVAILABILITY_DOMAIN=attachment.get("availability-domain"),
-            LIFECYCLE_STATE=attachment.get("lifecycle-state"),
-            VOLUME_ID=attachment.get("volume-id"),
-            ATTACHMENT_TYPE=attachment.get("attachment-type"),
-            IS_READ_ONLY=attachment.get("is-read-only"),
-            INSTANCE_ID=attachment.get("instance-id"),
-            TIME_CREATED=str(attachment.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": attachment.get("id"),
+            "display_name": attachment.get("display-name"),
+            "compartment_id": attachment.get("compartment-id"),
+            "availability_domain": attachment.get("availability-domain"),
+            "lifecycle_state": attachment.get("lifecycle-state"),
+            "volume_id": attachment.get("volume-id"),
+            "attachment_type": attachment.get("attachment-type"),
+            "is_read_only": attachment.get("is-read-only"),
+            "instance_id": attachment.get("instance-id"),
+            "time_created": str(attachment.get("time-created", "")),
+        }
+        for attachment in volume_attachments
+    ]
+    load_graph_data(
+        neo4j_session, ingest_volume_attachment, rows,
+        oci_update_tag=oci_update_tag,
+    )
 
 
 def get_availability_domains(
@@ -440,55 +465,59 @@ def load_boot_volumes(
     owning instance via its boot volume attachment.
     """
     ingest_boot_volume = """
-    MERGE (bv:OCIBootVolume{id: $OCID})
-    ON CREATE SET bv.firstseen = timestamp(),
-    bv.createdate = $TIME_CREATED
-    SET bv.ocid = $OCID,
-    bv.display_name = $DISPLAY_NAME,
-    bv.compartment_id = $COMPARTMENT_ID,
-    bv.resource_type = 'oci-storage-blockstorage-bootvolume',
-    bv.availability_domain = $AVAILABILITY_DOMAIN,
-    bv.lifecycle_state = $LIFECYCLE_STATE,
-    bv.size_in_gbs = $SIZE_IN_GBS,
-    bv.kms_key_id = $KMS_KEY_ID,
-    bv.is_hydrated = $IS_HYDRATED,
-    bv.vpus_per_gb = $VPUS_PER_GB,
-    bv.image_id = $IMAGE_ID,
-    bv.has_backup_policy = $HAS_BACKUP_POLICY,
-    bv.region = $REGION,
-    bv.lastupdated = $oci_update_tag
-    WITH bv
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(bv)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
-    WITH bv
-    OPTIONAL MATCH (inode:OCIInstance)-[:OCI_BOOT_VOLUME_ATTACHMENT]->(:OCIBootVolumeAttachment{boot_volume_id: $OCID})
-    FOREACH (_ IN CASE WHEN inode IS NULL THEN [] ELSE [1] END |
-        MERGE (inode)-[ri:OCI_BOOT_VOLUME]->(bv)
-        ON CREATE SET ri.firstseen = timestamp()
-        SET ri.lastupdated = $oci_update_tag
-    )
+    UNWIND $DictList AS vol
+        MERGE (bv:OCIBootVolume{id: vol.ocid})
+        ON CREATE SET bv.firstseen = timestamp(),
+        bv.createdate = vol.time_created
+        SET bv.ocid = vol.ocid,
+        bv.display_name = vol.display_name,
+        bv.compartment_id = vol.compartment_id,
+        bv.resource_type = 'oci-storage-blockstorage-bootvolume',
+        bv.availability_domain = vol.availability_domain,
+        bv.lifecycle_state = vol.lifecycle_state,
+        bv.size_in_gbs = vol.size_in_gbs,
+        bv.kms_key_id = vol.kms_key_id,
+        bv.is_hydrated = vol.is_hydrated,
+        bv.vpus_per_gb = vol.vpus_per_gb,
+        bv.image_id = vol.image_id,
+        bv.has_backup_policy = vol.has_backup_policy,
+        bv.region = $REGION,
+        bv.lastupdated = $oci_update_tag
+        WITH bv, vol
+        MATCH (cc:OCICompartment{id: vol.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(bv)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
+        WITH bv, vol
+        OPTIONAL MATCH (inode:OCIInstance)-[:OCI_BOOT_VOLUME_ATTACHMENT]->(:OCIBootVolumeAttachment{boot_volume_id: vol.ocid})
+        FOREACH (_ IN CASE WHEN inode IS NULL THEN [] ELSE [1] END |
+            MERGE (inode)-[ri:OCI_BOOT_VOLUME]->(bv)
+            ON CREATE SET ri.firstseen = timestamp()
+            SET ri.lastupdated = $oci_update_tag
+        )
     """
 
-    for volume in boot_volumes:
-        neo4j_session.run(
-            ingest_boot_volume,
-            OCID=volume.get("id"),
-            DISPLAY_NAME=volume.get("display-name"),
-            COMPARTMENT_ID=volume.get("compartment-id", compartment_id),
-            AVAILABILITY_DOMAIN=volume.get("availability-domain", ""),
-            LIFECYCLE_STATE=volume.get("lifecycle-state"),
-            SIZE_IN_GBS=volume.get("size-in-gbs"),
-            KMS_KEY_ID=volume.get("kms-key-id", ""),
-            IS_HYDRATED=volume.get("is-hydrated"),
-            VPUS_PER_GB=volume.get("vpus-per-gb"),
-            IMAGE_ID=volume.get("image-id", ""),
-            HAS_BACKUP_POLICY=volume.get("_has_backup_policy", False),
-            REGION=region,
-            TIME_CREATED=str(volume.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": volume.get("id"),
+            "display_name": volume.get("display-name"),
+            "compartment_id": volume.get("compartment-id", compartment_id),
+            "availability_domain": volume.get("availability-domain", ""),
+            "lifecycle_state": volume.get("lifecycle-state"),
+            "size_in_gbs": volume.get("size-in-gbs"),
+            "kms_key_id": volume.get("kms-key-id", ""),
+            "is_hydrated": volume.get("is-hydrated"),
+            "vpus_per_gb": volume.get("vpus-per-gb"),
+            "image_id": volume.get("image-id", ""),
+            "has_backup_policy": volume.get("_has_backup_policy", False),
+            "time_created": str(volume.get("time-created", "")),
+        }
+        for volume in boot_volumes
+    ]
+    load_graph_data(
+        neo4j_session, ingest_boot_volume, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def get_block_volume_list_data(
@@ -524,53 +553,57 @@ def load_block_volumes(
     ATTACHED_TO relationship to the instance via its volume attachment.
     """
     ingest_block_volume = """
-    MERGE (bv:OCIBlockVolume{id: $OCID})
-    ON CREATE SET bv.firstseen = timestamp(),
-    bv.createdate = $TIME_CREATED
-    SET bv.ocid = $OCID,
-    bv.display_name = $DISPLAY_NAME,
-    bv.compartment_id = $COMPARTMENT_ID,
-    bv.resource_type = 'oci-storage-blockstorage-volume',
-    bv.availability_domain = $AVAILABILITY_DOMAIN,
-    bv.lifecycle_state = $LIFECYCLE_STATE,
-    bv.size_in_gbs = $SIZE_IN_GBS,
-    bv.kms_key_id = $KMS_KEY_ID,
-    bv.is_hydrated = $IS_HYDRATED,
-    bv.vpus_per_gb = $VPUS_PER_GB,
-    bv.has_backup_policy = $HAS_BACKUP_POLICY,
-    bv.region = $REGION,
-    bv.lastupdated = $oci_update_tag
-    WITH bv
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(bv)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
-    WITH bv
-    OPTIONAL MATCH (inode:OCIInstance)-[:OCI_VOLUME_ATTACHMENT]->(:OCIVolumeAttachment{volume_id: $OCID})
-    FOREACH (_ IN CASE WHEN inode IS NULL THEN [] ELSE [1] END |
-        MERGE (bv)-[ri:ATTACHED_TO]->(inode)
-        ON CREATE SET ri.firstseen = timestamp()
-        SET ri.lastupdated = $oci_update_tag
-    )
+    UNWIND $DictList AS vol
+        MERGE (bv:OCIBlockVolume{id: vol.ocid})
+        ON CREATE SET bv.firstseen = timestamp(),
+        bv.createdate = vol.time_created
+        SET bv.ocid = vol.ocid,
+        bv.display_name = vol.display_name,
+        bv.compartment_id = vol.compartment_id,
+        bv.resource_type = 'oci-storage-blockstorage-volume',
+        bv.availability_domain = vol.availability_domain,
+        bv.lifecycle_state = vol.lifecycle_state,
+        bv.size_in_gbs = vol.size_in_gbs,
+        bv.kms_key_id = vol.kms_key_id,
+        bv.is_hydrated = vol.is_hydrated,
+        bv.vpus_per_gb = vol.vpus_per_gb,
+        bv.has_backup_policy = vol.has_backup_policy,
+        bv.region = $REGION,
+        bv.lastupdated = $oci_update_tag
+        WITH bv, vol
+        MATCH (cc:OCICompartment{id: vol.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(bv)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
+        WITH bv, vol
+        OPTIONAL MATCH (inode:OCIInstance)-[:OCI_VOLUME_ATTACHMENT]->(:OCIVolumeAttachment{volume_id: vol.ocid})
+        FOREACH (_ IN CASE WHEN inode IS NULL THEN [] ELSE [1] END |
+            MERGE (bv)-[ri:ATTACHED_TO]->(inode)
+            ON CREATE SET ri.firstseen = timestamp()
+            SET ri.lastupdated = $oci_update_tag
+        )
     """
 
-    for volume in block_volumes:
-        neo4j_session.run(
-            ingest_block_volume,
-            OCID=volume.get("id"),
-            DISPLAY_NAME=volume.get("display-name"),
-            COMPARTMENT_ID=volume.get("compartment-id", compartment_id),
-            AVAILABILITY_DOMAIN=volume.get("availability-domain", ""),
-            LIFECYCLE_STATE=volume.get("lifecycle-state"),
-            SIZE_IN_GBS=volume.get("size-in-gbs"),
-            KMS_KEY_ID=volume.get("kms-key-id", ""),
-            IS_HYDRATED=volume.get("is-hydrated"),
-            VPUS_PER_GB=volume.get("vpus-per-gb"),
-            HAS_BACKUP_POLICY=volume.get("_has_backup_policy", False),
-            REGION=region,
-            TIME_CREATED=str(volume.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": volume.get("id"),
+            "display_name": volume.get("display-name"),
+            "compartment_id": volume.get("compartment-id", compartment_id),
+            "availability_domain": volume.get("availability-domain", ""),
+            "lifecycle_state": volume.get("lifecycle-state"),
+            "size_in_gbs": volume.get("size-in-gbs"),
+            "kms_key_id": volume.get("kms-key-id", ""),
+            "is_hydrated": volume.get("is-hydrated"),
+            "vpus_per_gb": volume.get("vpus-per-gb"),
+            "has_backup_policy": volume.get("_has_backup_policy", False),
+            "time_created": str(volume.get("time-created", "")),
+        }
+        for volume in block_volumes
+    ]
+    load_graph_data(
+        neo4j_session, ingest_block_volume, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_boot_volume_attachments(
