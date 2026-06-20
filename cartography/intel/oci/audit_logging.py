@@ -27,6 +27,7 @@ import oci.logging
 import oci.object_storage
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -171,36 +172,40 @@ def load_log_groups(
     Ingest OCI Log Group nodes into Neo4j.
     """
     ingest_log_group = """
-    MERGE (lg:OCILogGroup{id: $OCID})
-    ON CREATE SET lg.firstseen = timestamp(),
-                  lg.createdate = $TIME_CREATED
-    SET lg.ocid = $OCID,
-        lg.resource_type = 'oci-logging-log-group',
-        lg.display_name = $DISPLAY_NAME,
-        lg.compartment_id = $COMPARTMENT_ID,
-        lg.description = $DESCRIPTION,
-        lg.lifecycle_state = $LIFECYCLE_STATE,
-        lg.region = $REGION,
-        lg.lastupdated = $oci_update_tag
-    WITH lg
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(lg)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS lg
+        MERGE (g:OCILogGroup{id: lg.ocid})
+        ON CREATE SET g.firstseen = timestamp(),
+                      g.createdate = lg.time_created
+        SET g.ocid = lg.ocid,
+            g.resource_type = 'oci-logging-log-group',
+            g.display_name = lg.display_name,
+            g.compartment_id = lg.compartment_id,
+            g.description = lg.description,
+            g.lifecycle_state = lg.lifecycle_state,
+            g.region = $REGION,
+            g.lastupdated = $oci_update_tag
+        WITH g, lg
+        MATCH (cc:OCICompartment{id: lg.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(g)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for lg in log_groups:
-        neo4j_session.run(
-            ingest_log_group,
-            OCID=lg.get("id"),
-            DISPLAY_NAME=lg.get("display-name", ""),
-            COMPARTMENT_ID=lg.get("compartment-id", compartment_id),
-            DESCRIPTION=lg.get("description", ""),
-            LIFECYCLE_STATE=lg.get("lifecycle-state", ""),
-            REGION=region,
-            TIME_CREATED=str(lg.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": lg.get("id"),
+            "display_name": lg.get("display-name", ""),
+            "compartment_id": lg.get("compartment-id", compartment_id),
+            "description": lg.get("description", ""),
+            "lifecycle_state": lg.get("lifecycle-state", ""),
+            "time_created": str(lg.get("time-created", "")),
+        }
+        for lg in log_groups
+    ]
+    load_graph_data(
+        neo4j_session, ingest_log_group, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def load_logs(
@@ -214,50 +219,53 @@ def load_logs(
     Ingest individual OCI Log nodes within a log group.
     """
     ingest_log = """
-    MERGE (l:OCILog{id: $OCID})
-    ON CREATE SET l.firstseen = timestamp(),
-                  l.createdate = $TIME_CREATED
-    SET l.ocid = $OCID,
-        l.resource_type = 'oci-logging-log',
-        l.display_name = $DISPLAY_NAME,
-        l.log_group_id = $LOG_GROUP_ID,
-        l.log_type = $LOG_TYPE,
-        l.is_enabled = $IS_ENABLED,
-        l.lifecycle_state = $LIFECYCLE_STATE,
-        l.retention_duration = $RETENTION_DURATION,
-        l.compartment_id = $COMPARTMENT_ID,
-        l.source_service = $SOURCE_SERVICE,
-        l.source_resource = $SOURCE_RESOURCE,
-        l.source_category = $SOURCE_CATEGORY,
-        l.region = $REGION,
-        l.lastupdated = $oci_update_tag
-    WITH l
-    MATCH (lg:OCILogGroup{id: $LOG_GROUP_ID})
-    MERGE (lg)-[r:OCI_LOG]->(l)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS log
+        MERGE (l:OCILog{id: log.ocid})
+        ON CREATE SET l.firstseen = timestamp(),
+                      l.createdate = log.time_created
+        SET l.ocid = log.ocid,
+            l.resource_type = 'oci-logging-log',
+            l.display_name = log.display_name,
+            l.log_group_id = $LOG_GROUP_ID,
+            l.log_type = log.log_type,
+            l.is_enabled = log.is_enabled,
+            l.lifecycle_state = log.lifecycle_state,
+            l.retention_duration = log.retention_duration,
+            l.compartment_id = log.compartment_id,
+            l.source_service = log.source_service,
+            l.source_resource = log.source_resource,
+            l.source_category = log.source_category,
+            l.region = $REGION,
+            l.lastupdated = $oci_update_tag
+        WITH l
+        MATCH (lg:OCILogGroup{id: $LOG_GROUP_ID})
+        MERGE (lg)-[r:OCI_LOG]->(l)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
+    rows = []
     for log_entry in logs:
         config = log_entry.get("configuration", {}) or {}
         source = config.get("source", {}) or {}
-        neo4j_session.run(
-            ingest_log,
-            OCID=log_entry.get("id"),
-            DISPLAY_NAME=log_entry.get("display-name", ""),
-            LOG_GROUP_ID=log_group_id,
-            LOG_TYPE=log_entry.get("log-type", ""),
-            IS_ENABLED=log_entry.get("is-enabled", False),
-            LIFECYCLE_STATE=log_entry.get("lifecycle-state", ""),
-            RETENTION_DURATION=log_entry.get("retention-duration", 30),
-            COMPARTMENT_ID=log_entry.get("compartment-id", ""),
-            SOURCE_SERVICE=source.get("service", ""),
-            SOURCE_RESOURCE=source.get("resource", ""),
-            SOURCE_CATEGORY=source.get("category", ""),
-            REGION=region,
-            TIME_CREATED=str(log_entry.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+        rows.append({
+            "ocid": log_entry.get("id"),
+            "display_name": log_entry.get("display-name", ""),
+            "log_type": log_entry.get("log-type", ""),
+            "is_enabled": log_entry.get("is-enabled", False),
+            "lifecycle_state": log_entry.get("lifecycle-state", ""),
+            "retention_duration": log_entry.get("retention-duration", 30),
+            "compartment_id": log_entry.get("compartment-id", ""),
+            "source_service": source.get("service", ""),
+            "source_resource": source.get("resource", ""),
+            "source_category": source.get("category", ""),
+            "time_created": str(log_entry.get("time-created", "")),
+        })
+
+    load_graph_data(
+        neo4j_session, ingest_log, rows,
+        LOG_GROUP_ID=log_group_id, REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_log_groups(
@@ -326,23 +334,25 @@ def load_logging_services(
     Each service represents a logging-capable OCI service (e.g., objectstorage, flowlogs).
     """
     ingest_service = """
-    MERGE (ls:OCILoggingService{id: $SERVICE_ID})
-    ON CREATE SET ls.firstseen = timestamp()
-    SET ls.resource_type = 'oci-logging-service',
-        ls.name = $NAME,
-        ls.service_id = $SERVICE_ID,
-        ls.namespace = $NAMESPACE,
-        ls.resource_types = $RESOURCE_TYPES,
-        ls.compartment_id = $COMPARTMENT_ID,
-        ls.region = $REGION,
-        ls.lastupdated = $oci_update_tag
-    WITH ls
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(ls)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS svc
+        MERGE (ls:OCILoggingService{id: svc.service_id})
+        ON CREATE SET ls.firstseen = timestamp()
+        SET ls.resource_type = 'oci-logging-service',
+            ls.name = svc.name,
+            ls.service_id = svc.service_id,
+            ls.namespace = svc.namespace,
+            ls.resource_types = svc.resource_types,
+            ls.compartment_id = $COMPARTMENT_ID,
+            ls.region = $REGION,
+            ls.lastupdated = $oci_update_tag
+        WITH ls
+        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MERGE (cc)-[r:RESOURCE]->(ls)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
+    rows = []
     for svc in services:
         resource_types = []
         for rt in (svc.get("resource-types", []) or []):
@@ -352,16 +362,17 @@ def load_logging_services(
                 resource_types.append(rt)
 
         svc_id = svc.get("id") or svc.get("service-type") or svc.get("name", "")
-        neo4j_session.run(
-            ingest_service,
-            SERVICE_ID=f"oci.logging.service.{svc_id}.{region}",
-            NAME=svc.get("name", "") or svc.get("service-type", ""),
-            NAMESPACE=svc.get("namespace", ""),
-            RESOURCE_TYPES=resource_types,
-            COMPARTMENT_ID=compartment_id,
-            REGION=region,
-            oci_update_tag=oci_update_tag,
-        )
+        rows.append({
+            "service_id": f"oci.logging.service.{svc_id}.{region}",
+            "name": svc.get("name", "") or svc.get("service-type", ""),
+            "namespace": svc.get("namespace", ""),
+            "resource_types": resource_types,
+        })
+
+    load_graph_data(
+        neo4j_session, ingest_service, rows,
+        COMPARTMENT_ID=compartment_id, REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_logging_services(
@@ -518,26 +529,29 @@ def enrich_bucket_logging_status(
 
         # Update bucket nodes with logging status
         update_bucket_logging = """
-        MATCH (b:OCIStorageBucket)
-        WHERE b.compartment_id = $COMPARTMENT_ID AND b.region = $REGION
-          AND (b.ocid = $BUCKET_ID OR b.name = $BUCKET_ID)
-        SET b.write_logging_enabled = $WRITE_LOGGING_ENABLED,
-            b.read_logging_enabled = $READ_LOGGING_ENABLED,
-            b.logging_enabled = $LOGGING_ENABLED,
-            b.logging_resource_type = 'oci-storage-objectstorage-bucket'
+        UNWIND $DictList AS bkt
+            MATCH (b:OCIStorageBucket)
+            WHERE b.compartment_id = $COMPARTMENT_ID AND b.region = $REGION
+              AND (b.ocid = bkt.bucket_id OR b.name = bkt.bucket_id)
+            SET b.write_logging_enabled = bkt.write_logging_enabled,
+                b.read_logging_enabled = bkt.read_logging_enabled,
+                b.logging_enabled = bkt.logging_enabled,
+                b.logging_resource_type = 'oci-storage-objectstorage-bucket'
         """
+        rows = []
         for bucket_id, categories in bucket_log_categories.items():
             write_enabled = "write" in categories
             read_enabled = "read" in categories
-            neo4j_session.run(
-                update_bucket_logging,
-                COMPARTMENT_ID=compartment_id,
-                REGION=region,
-                BUCKET_ID=bucket_id,
-                WRITE_LOGGING_ENABLED=write_enabled,
-                READ_LOGGING_ENABLED=read_enabled,
-                LOGGING_ENABLED=(write_enabled or read_enabled),
-            )
+            rows.append({
+                "bucket_id": bucket_id,
+                "write_logging_enabled": write_enabled,
+                "read_logging_enabled": read_enabled,
+                "logging_enabled": (write_enabled or read_enabled),
+            })
+        load_graph_data(
+            neo4j_session, update_bucket_logging, rows,
+            COMPARTMENT_ID=compartment_id, REGION=region,
+        )
 
         # Mark buckets without any logging as not enabled
         mark_unlogged_buckets = """
