@@ -743,16 +743,44 @@ def _sync_single_project(
     )
 
 
+def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpError) -> bool:
+    """
+    Return True when the HttpError is GCP reporting that the API is not enabled / has never been used on the project
+    (403 accessNotConfigured). Any other error returns False so it is not silently swallowed.
+    """
+    try:
+        error = json.loads(http_error.content.decode("utf-8")).get("error", {})
+    except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
+        return False
+
+    reasons = {detail.get("reason") for detail in error.get("errors", []) if isinstance(detail, dict)}
+    if "accessNotConfigured" in reasons:
+        return True
+
+    message = error.get("message", "")
+    return bool(message) and ("has not been used in project" in message or "is disabled" in message)
+
+
 def get_all_regions(compute: Resource, project_id: str):
     regions = []
 
-    req = compute.regions().list(project=project_id)
-    while req is not None:
-        res = req.execute()
-        for rg in res.get("items", []):
-            regions.append(rg["name"])
+    try:
+        req = compute.regions().list(project=project_id)
+        while req is not None:
+            res = req.execute()
+            for rg in res.get("items", []):
+                regions.append(rg["name"])
 
-        req = compute.regions().list_next(previous_request=req, previous_response=res)
+            req = compute.regions().list_next(previous_request=req, previous_response=res)
+    except googleapiclient.discovery.HttpError as http_error:
+        # Only swallow the "Compute Engine API not enabled" case. Log at `info` so it is not reported to Sentry as an
+        # error (CDX-CARTOGRAPHY-INVENTORY-25B); without the API there are no regions/compute resources to sync. Any
+        # other HttpError is unexpected and re-raised so it still surfaces.
+        if not _is_service_not_enabled_error(http_error):
+            raise
+        logger.info(
+            f"Compute Engine API not enabled on project {project_id}; skipping region lookup. Details: {http_error}",
+        )
 
     return regions
 
