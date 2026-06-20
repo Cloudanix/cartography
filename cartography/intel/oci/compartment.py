@@ -9,6 +9,7 @@ import oci
 
 from . import utils
 from .iam import _oci_compartment_managed_type
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -85,38 +86,45 @@ def load_oci_compartments(
     Ingest OCI compartments into Neo4j and link to tenancy via OWNER relationship.
     """
     query = """
-    MERGE (t:OCITenancy{id: $TENANCY_ID})
-    ON CREATE SET t.firstseen = timestamp()
-    SET t.ocid = $TENANCY_ID, t.lastupdated = $update_tag
-    WITH t
-    MERGE (c:OCICompartment{id: $COMPARTMENT_ID})
-    ON CREATE SET c.firstseen = timestamp(),
-    c.createdate = $TIME_CREATED
-    SET c.ocid = $COMPARTMENT_ID,
-    c.lastupdated = $update_tag,
-    c.name = $COMPARTMENT_NAME,
-    c.description = $DESCRIPTION,
-    c.lifecycle_state = $LIFECYCLE_STATE,
-    c.compartmentid = $PARENT_COMPARTMENT_ID,
-    c.managed_type = $MANAGED_TYPE
-    WITH t, c
-    MERGE (t)-[r:OWNER]->(c)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    UNWIND $DictList AS comp
+        MERGE (t:OCITenancy{id: $TENANCY_ID})
+        ON CREATE SET t.firstseen = timestamp()
+        SET t.ocid = $TENANCY_ID, t.lastupdated = $update_tag
+        WITH t, comp
+        MERGE (c:OCICompartment{id: comp.id})
+        ON CREATE SET c.firstseen = timestamp(),
+        c.createdate = comp.time_created
+        SET c.ocid = comp.id,
+        c.lastupdated = $update_tag,
+        c.name = comp.name,
+        c.description = comp.description,
+        c.lifecycle_state = comp.lifecycle_state,
+        c.compartmentid = comp.parent_compartment_id,
+        c.managed_type = comp.managed_type
+        WITH t, c
+        MERGE (t)-[r:OWNER]->(c)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
     """
-    for comp in compartments:
-        neo4j_session.run(
-            query,
-            TENANCY_ID=tenancy_id,
-            COMPARTMENT_ID=comp['compartmentId'],
-            COMPARTMENT_NAME=comp['name'],
-            DESCRIPTION=comp.get('description', ''),
-            LIFECYCLE_STATE=comp.get('lifecycleState', ''),
-            TIME_CREATED=comp.get('timeCreated', ''),
-            PARENT_COMPARTMENT_ID=comp.get('parentCompartmentId', tenancy_id),
-            MANAGED_TYPE=_oci_compartment_managed_type(comp, tenancy_id),
-            update_tag=update_tag,
-        )
+    rows = [
+        {
+            'id': comp['compartmentId'],
+            'name': comp['name'],
+            'description': comp.get('description', ''),
+            'lifecycle_state': comp.get('lifecycleState', ''),
+            'time_created': comp.get('timeCreated', ''),
+            'parent_compartment_id': comp.get('parentCompartmentId', tenancy_id),
+            'managed_type': _oci_compartment_managed_type(comp, tenancy_id),
+        }
+        for comp in compartments
+    ]
+    load_graph_data(
+        neo4j_session,
+        query,
+        rows,
+        TENANCY_ID=tenancy_id,
+        update_tag=update_tag,
+    )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
