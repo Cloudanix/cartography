@@ -12,6 +12,7 @@ import neo4j
 import oci
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -94,34 +95,37 @@ def load_compartments(
     oci_update_tag: int,
 ) -> None:
     ingest_compartment = """
-    MERGE (cnode:OCICompartment{id: $OCID})
-    ON CREATE SET cnode:OCICompartment, cnode.firstseen = timestamp(),
-    cnode.createdate = $CREATE_DATE
-    SET cnode.ocid = $OCID, cnode.name = $NAME, cnode.compartmentid = $COMPARTMENT_ID,
-    cnode.managed_type = $MANAGED_TYPE,
-    cnode.lastupdated = $oci_update_tag
-    WITH cnode
-    MATCH (tenancy:OCITenancy{id: $OCI_TENANCY_ID})
-    MERGE (tenancy)-[r:OWNER]->(cnode)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS comp
+        MERGE (cnode:OCICompartment{id: comp.ocid})
+        ON CREATE SET cnode:OCICompartment, cnode.firstseen = timestamp(),
+        cnode.createdate = comp.create_date
+        SET cnode.ocid = comp.ocid, cnode.name = comp.name, cnode.compartmentid = comp.compartment_id,
+        cnode.managed_type = comp.managed_type,
+        cnode.lastupdated = $oci_update_tag
+        WITH cnode
+        MATCH (tenancy:OCITenancy{id: $OCI_TENANCY_ID})
+        MERGE (tenancy)-[r:OWNER]->(cnode)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for compartment in compartments:
-        neo4j_session.run(
-            ingest_compartment,
-            OCID=compartment["id"],
-            COMPARTMENT_ID=compartment["compartment-id"],
-            DESCRIPTION=compartment["description"],
-            NAME=compartment["name"],
-            MANAGED_TYPE=_oci_compartment_managed_type(
+    rows = [
+        {
+            "ocid": compartment["id"],
+            "compartment_id": compartment["compartment-id"],
+            "name": compartment["name"],
+            "managed_type": _oci_compartment_managed_type(
                 {"id": compartment["id"], "name": compartment["name"], "compartmentId": compartment["compartment-id"]},
                 current_oci_tenancy_id,
             ),
-            CREATE_DATE=compartment["time-created"],
-            OCI_TENANCY_ID=current_oci_tenancy_id,
-            oci_update_tag=oci_update_tag,
-        )
+            "create_date": compartment["time-created"],
+        }
+        for compartment in compartments
+    ]
+    load_graph_data(
+        neo4j_session, ingest_compartment, rows,
+        OCI_TENANCY_ID=current_oci_tenancy_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def load_users(
@@ -131,44 +135,50 @@ def load_users(
     oci_update_tag: int,
 ) -> None:
     ingest_user = """
-    MERGE (unode:OCIUser{id: $OCID})
-    ON CREATE SET unode:OCIUser, unode.firstseen = timestamp(),
-    unode.createdate = $CREATE_DATE
-    SET unode.ocid = $OCID, unode.name = $USERNAME, unode.compartmentid = $COMPARTMENT_ID, unode.description = $DESCRIPTION,
-    unode.email = $EMAIL, unode.lifecycle_state = $LIFECYCLE_STATE, unode.is_mfa_activated = $IS_MFA_ACTIVATED,
-    unode.can_use_api_keys = $CAN_USE_API_KEYS, unode.can_use_auth_tokens = $CAN_USE_AUTH_TOKENS,
-    unode.can_use_console_password = $CAN_USE_CONSOLE_PASSWORD,
-    unode.can_use_customer_secret_keys = $CAN_USE_CUSTOMER_SECRET_KEYS,
-    unode.can_use_smtp_credentials = $CAN_USE_SMTP_CREDENTIALS,
-    unode.managed_type = $MANAGED_TYPE,
-    unode.lastupdated = $oci_update_tag
-    WITH unode
-    MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
-    MERGE (aa)-[r:RESOURCE]->(unode)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS user
+        MERGE (unode:OCIUser{id: user.ocid})
+        ON CREATE SET unode:OCIUser, unode.firstseen = timestamp(),
+        unode.createdate = user.create_date
+        SET unode.ocid = user.ocid, unode.name = user.username, unode.compartmentid = user.compartment_id,
+        unode.description = user.description,
+        unode.email = user.email, unode.lifecycle_state = user.lifecycle_state,
+        unode.is_mfa_activated = user.is_mfa_activated,
+        unode.can_use_api_keys = user.can_use_api_keys, unode.can_use_auth_tokens = user.can_use_auth_tokens,
+        unode.can_use_console_password = user.can_use_console_password,
+        unode.can_use_customer_secret_keys = user.can_use_customer_secret_keys,
+        unode.can_use_smtp_credentials = user.can_use_smtp_credentials,
+        unode.managed_type = user.managed_type,
+        unode.lastupdated = $oci_update_tag
+        WITH unode
+        MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
+        MERGE (aa)-[r:RESOURCE]->(unode)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for user in users:
-        neo4j_session.run(
-            ingest_user,
-            OCID=user["id"],
-            CREATE_DATE=str(user["time-created"]),
-            USERNAME=user["name"],
-            DESCRIPTION=user["description"],
-            EMAIL=user["email"],
-            LIFECYCLE_STATE=user["lifecycle-state"],
-            IS_MFA_ACTIVATED=user["is-mfa-activated"],
-            CAN_USE_API_KEYS=user["capabilities"]["can-use-api-keys"],
-            CAN_USE_AUTH_TOKENS=user["capabilities"]["can-use-auth-tokens"],
-            CAN_USE_CONSOLE_PASSWORD=user["capabilities"]["can-use-console-password"],
-            CAN_USE_CUSTOMER_SECRET_KEYS=user["capabilities"]["can-use-customer-secret-keys"],
-            CAN_USE_SMTP_CREDENTIALS=user["capabilities"]["can-use-smtp-credentials"],
-            COMPARTMENT_ID=user["compartment-id"],
-            MANAGED_TYPE=MANAGED_TYPE_CUSTOM,
-            OCI_TENANCY_ID=current_oci_tenancy_id,
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": user["id"],
+            "create_date": str(user["time-created"]),
+            "username": user["name"],
+            "description": user["description"],
+            "email": user["email"],
+            "lifecycle_state": user["lifecycle-state"],
+            "is_mfa_activated": user["is-mfa-activated"],
+            "can_use_api_keys": user["capabilities"]["can-use-api-keys"],
+            "can_use_auth_tokens": user["capabilities"]["can-use-auth-tokens"],
+            "can_use_console_password": user["capabilities"]["can-use-console-password"],
+            "can_use_customer_secret_keys": user["capabilities"]["can-use-customer-secret-keys"],
+            "can_use_smtp_credentials": user["capabilities"]["can-use-smtp-credentials"],
+            "compartment_id": user["compartment-id"],
+            "managed_type": MANAGED_TYPE_CUSTOM,
+        }
+        for user in users
+    ]
+    load_graph_data(
+        neo4j_session, ingest_user, rows,
+        OCI_TENANCY_ID=current_oci_tenancy_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def get_user_list_data(
@@ -209,30 +219,35 @@ def load_groups(
     oci_update_tag: int,
 ) -> None:
     ingest_group = """
-    MERGE (gnode:OCIGroup{id: $OCID})
-    ON CREATE SET gnode.firstseen = timestamp(), gnode.createdate = $CREATE_DATE
-    SET gnode.ocid = $OCID, gnode.name = $GROUP_NAME, gnode.compartmentid = $COMPARTMENT_ID, gnode.lastupdated = $oci_update_tag,
-    gnode.managed_type = $MANAGED_TYPE,
-    gnode.description = $DESCRIPTION
-    WITH gnode
-    MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
-    MERGE (aa)-[r:RESOURCE]->(gnode)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS grp
+        MERGE (gnode:OCIGroup{id: grp.ocid})
+        ON CREATE SET gnode.firstseen = timestamp(), gnode.createdate = grp.create_date
+        SET gnode.ocid = grp.ocid, gnode.name = grp.group_name, gnode.compartmentid = grp.compartment_id,
+        gnode.lastupdated = $oci_update_tag,
+        gnode.managed_type = grp.managed_type,
+        gnode.description = grp.description
+        WITH gnode
+        MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
+        MERGE (aa)-[r:RESOURCE]->(gnode)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for group in groups:
-        neo4j_session.run(
-            ingest_group,
-            OCID=group["id"],
-            CREATE_DATE=str(group["time-created"]),
-            GROUP_NAME=group["name"],
-            COMPARTMENT_ID=group["compartment-id"],
-            DESCRIPTION=group["description"],
-            MANAGED_TYPE=_oci_group_managed_type(group),
-            OCI_TENANCY_ID=current_tenancy_id,
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": group["id"],
+            "create_date": str(group["time-created"]),
+            "group_name": group["name"],
+            "compartment_id": group["compartment-id"],
+            "description": group["description"],
+            "managed_type": _oci_group_managed_type(group),
+        }
+        for group in groups
+    ]
+    load_graph_data(
+        neo4j_session, ingest_group, rows,
+        OCI_TENANCY_ID=current_tenancy_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_groups(
@@ -289,22 +304,25 @@ def load_group_memberships(
     oci_update_tag: int,
 ) -> None:
     ingest_membership = """
-    MATCH (group:OCIGroup{id: $GROUP_OCID})
-    WITH group
-    MATCH (user:OCIUser{id: $USER_OCID})
-    MERGE (user)-[r:MEMBER_OCID_GROUP]->(group)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS m
+        MATCH (group:OCIGroup{id: m.group_ocid})
+        WITH group, m
+        MATCH (user:OCIUser{id: m.user_ocid})
+        MERGE (user)-[r:MEMBER_OCID_GROUP]->(group)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
+    rows = []
     for group_ocid, membership_data in group_memberships.items():
         for info in membership_data["GroupMemberships"]:
-            neo4j_session.run(
-                ingest_membership,
-                COMPARTMENT_ID=info["compartment-id"],
-                GROUP_OCID=info["group-id"],
-                USER_OCID=info["user-id"],
-                oci_update_tag=oci_update_tag,
-            )
+            rows.append({
+                "group_ocid": info["group-id"],
+                "user_ocid": info["user-id"],
+            })
+    load_graph_data(
+        neo4j_session, ingest_membership, rows,
+        oci_update_tag=oci_update_tag,
+    )
 
 
 def load_policies(
@@ -314,33 +332,38 @@ def load_policies(
     oci_update_tag: int,
 ) -> None:
     ingest_policy = """
-    MERGE (pnode:OCIPolicy{id: $OCID})
-    ON CREATE SET pnode.firstseen = timestamp(), pnode.createdate = $CREATE_DATE
-    SET pnode.ocid = $OCID, pnode.name = $POLICY_NAME, pnode.compartmentid = $COMPARTMENT_ID, pnode.description = $DESCRIPTION,
-    pnode.statements = $STATEMENTS,
-    pnode.managed_type = $MANAGED_TYPE,
-    pnode.updatedate = $POLICY_UPDATE, pnode.lastupdated = $oci_update_tag
-    With pnode
-    MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
-    MERGE (aa)-[r:RESOURCE]->(pnode)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS policy
+        MERGE (pnode:OCIPolicy{id: policy.ocid})
+        ON CREATE SET pnode.firstseen = timestamp(), pnode.createdate = policy.create_date
+        SET pnode.ocid = policy.ocid, pnode.name = policy.policy_name, pnode.compartmentid = policy.compartment_id,
+        pnode.description = policy.description,
+        pnode.statements = policy.statements,
+        pnode.managed_type = policy.managed_type,
+        pnode.updatedate = policy.policy_update, pnode.lastupdated = $oci_update_tag
+        With pnode
+        MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
+        MERGE (aa)-[r:RESOURCE]->(pnode)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for policy in policies:
-        neo4j_session.run(
-            ingest_policy,
-            OCID=policy["id"],
-            POLICY_NAME=policy["name"],
-            COMPARTMENT_ID=policy["compartment-id"],
-            DESCRIPTION=policy["description"],
-            STATEMENTS=policy["statements"],
-            MANAGED_TYPE=_oci_policy_managed_type(policy),
-            CREATE_DATE=str(policy["time-created"]),
-            POLICY_UPDATE=str(policy["version-date"]),
-            OCI_TENANCY_ID=current_tenancy_id,
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": policy["id"],
+            "policy_name": policy["name"],
+            "compartment_id": policy["compartment-id"],
+            "description": policy["description"],
+            "statements": policy["statements"],
+            "managed_type": _oci_policy_managed_type(policy),
+            "create_date": str(policy["time-created"]),
+            "policy_update": str(policy["version-date"]),
+        }
+        for policy in policies
+    ]
+    load_graph_data(
+        neo4j_session, ingest_policy, rows,
+        OCI_TENANCY_ID=current_tenancy_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def get_policy_list_data(
@@ -461,25 +484,31 @@ def load_region_subscriptions(
     oci_update_tag: int,
 ) -> None:
     query = """
-    MERGE (aa:OCIRegion{id: $REGION_KEY})
-    ON CREATE SET aa.firstseen = timestamp()
-    SET aa.key = $REGION_KEY, aa.ocid = $REGION_KEY, aa.lastupdated = $oci_update_tag, aa.name = $REGION_NAME,
-    aa.managed_type = $MANAGED_TYPE
-    WITH aa
-    MATCH (bb:OCITenancy{id: $OCI_TENANCY_ID})
-    MERGE (bb)-[r:OCI_REGION_SUBSCRIPTION]->(aa)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS region
+        MERGE (aa:OCIRegion{id: region.region_key})
+        ON CREATE SET aa.firstseen = timestamp()
+        SET aa.key = region.region_key, aa.ocid = region.region_key, aa.lastupdated = $oci_update_tag,
+        aa.name = region.region_name,
+        aa.managed_type = $MANAGED_TYPE
+        WITH aa
+        MATCH (bb:OCITenancy{id: $OCI_TENANCY_ID})
+        MERGE (bb)-[r:OCI_REGION_SUBSCRIPTION]->(aa)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
-    for region in regions:
-        neo4j_session.run(
-            query,
-            REGION_KEY=region["region-key"],
-            REGION_NAME=region["region-name"],
-            MANAGED_TYPE=MANAGED_TYPE_PREDEFINED,
-            oci_update_tag=oci_update_tag,
-            OCI_TENANCY_ID=tenancy_id,
-        )
+    rows = [
+        {
+            "region_key": region["region-key"],
+            "region_name": region["region-name"],
+        }
+        for region in regions
+    ]
+    load_graph_data(
+        neo4j_session, query, rows,
+        MANAGED_TYPE=MANAGED_TYPE_PREDEFINED,
+        oci_update_tag=oci_update_tag,
+        OCI_TENANCY_ID=tenancy_id,
+    )
 
 
 def sync_region_subscriptions(
