@@ -11,6 +11,7 @@ import oci
 import oci.key_management
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -52,40 +53,44 @@ def load_vaults(
     Ingest OCI KMS Vault data into Neo4j.
     """
     ingest_vault = """
-    MERGE (v:OCIKmsVault{id: $OCID})
-    ON CREATE SET v.firstseen = timestamp(),
-    v.createdate = $TIME_CREATED
-    SET v.ocid = $OCID,
-    v.display_name = $DISPLAY_NAME,
-    v.compartment_id = $COMPARTMENT_ID,
-    v.resource_type = 'oci-kms-vault',
-    v.vault_type = $VAULT_TYPE,
-    v.lifecycle_state = $LIFECYCLE_STATE,
-    v.crypto_endpoint = $CRYPTO_ENDPOINT,
-    v.management_endpoint = $MANAGEMENT_ENDPOINT,
-    v.region = $REGION,
-    v.lastupdated = $oci_update_tag
-    WITH v
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(v)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS vault
+        MERGE (v:OCIKmsVault{id: vault.ocid})
+        ON CREATE SET v.firstseen = timestamp(),
+        v.createdate = vault.time_created
+        SET v.ocid = vault.ocid,
+        v.display_name = vault.display_name,
+        v.compartment_id = vault.compartment_id,
+        v.resource_type = 'oci-kms-vault',
+        v.vault_type = vault.vault_type,
+        v.lifecycle_state = vault.lifecycle_state,
+        v.crypto_endpoint = vault.crypto_endpoint,
+        v.management_endpoint = vault.management_endpoint,
+        v.region = $REGION,
+        v.lastupdated = $oci_update_tag
+        WITH v, vault
+        MATCH (cc:OCICompartment{id: vault.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(v)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for vault in vaults:
-        neo4j_session.run(
-            ingest_vault,
-            OCID=vault.get("id"),
-            DISPLAY_NAME=vault.get("display-name"),
-            COMPARTMENT_ID=vault.get("compartment-id", compartment_id),
-            VAULT_TYPE=vault.get("vault-type", ""),
-            LIFECYCLE_STATE=vault.get("lifecycle-state"),
-            CRYPTO_ENDPOINT=vault.get("crypto-endpoint", ""),
-            MANAGEMENT_ENDPOINT=vault.get("management-endpoint", ""),
-            REGION=region,
-            TIME_CREATED=str(vault.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": vault.get("id"),
+            "display_name": vault.get("display-name"),
+            "compartment_id": vault.get("compartment-id", compartment_id),
+            "vault_type": vault.get("vault-type", ""),
+            "lifecycle_state": vault.get("lifecycle-state"),
+            "crypto_endpoint": vault.get("crypto-endpoint", ""),
+            "management_endpoint": vault.get("management-endpoint", ""),
+            "time_created": str(vault.get("time-created", "")),
+        }
+        for vault in vaults
+    ]
+    load_graph_data(
+        neo4j_session, ingest_vault, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_vaults(
@@ -173,42 +178,45 @@ def load_keys(
     Ingest OCI KMS Key data into Neo4j and link to vault.
     """
     ingest_key = """
-    MERGE (k:OCIKmsKey{id: $OCID})
-    ON CREATE SET k.firstseen = timestamp(),
-    k.createdate = $TIME_CREATED
-    SET k.ocid = $OCID,
-    k.display_name = $DISPLAY_NAME,
-    k.compartment_id = $COMPARTMENT_ID,
-    k.resource_type = 'oci-kms-key',
-    k.vault_id = $VAULT_ID,
-    k.algorithm = $ALGORITHM,
-    k.protection_mode = $PROTECTION_MODE,
-    k.lifecycle_state = $LIFECYCLE_STATE,
-    k.current_key_version = $CURRENT_KEY_VERSION,
-    k.region = $REGION,
-    k.lastupdated = $oci_update_tag
-    WITH k
-    MATCH (v:OCIKmsVault{id: $VAULT_ID})
-    MERGE (v)-[r:OCI_KMS_KEY]->(k)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS key
+        MERGE (k:OCIKmsKey{id: key.ocid})
+        ON CREATE SET k.firstseen = timestamp(),
+        k.createdate = key.time_created
+        SET k.ocid = key.ocid,
+        k.display_name = key.display_name,
+        k.compartment_id = key.compartment_id,
+        k.resource_type = 'oci-kms-key',
+        k.vault_id = $VAULT_ID,
+        k.algorithm = key.algorithm,
+        k.protection_mode = key.protection_mode,
+        k.lifecycle_state = key.lifecycle_state,
+        k.current_key_version = key.current_key_version,
+        k.region = $REGION,
+        k.lastupdated = $oci_update_tag
+        WITH k
+        MATCH (v:OCIKmsVault{id: $VAULT_ID})
+        MERGE (v)-[r:OCI_KMS_KEY]->(k)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for key in keys:
-        neo4j_session.run(
-            ingest_key,
-            OCID=key.get("id"),
-            DISPLAY_NAME=key.get("display-name"),
-            COMPARTMENT_ID=key.get("compartment-id", compartment_id),
-            VAULT_ID=vault_id,
-            ALGORITHM=key.get("algorithm", ""),
-            PROTECTION_MODE=key.get("protection-mode", ""),
-            LIFECYCLE_STATE=key.get("lifecycle-state"),
-            CURRENT_KEY_VERSION=key.get("current-key-version", ""),
-            REGION=region,
-            TIME_CREATED=str(key.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": key.get("id"),
+            "display_name": key.get("display-name"),
+            "compartment_id": key.get("compartment-id", compartment_id),
+            "algorithm": key.get("algorithm", ""),
+            "protection_mode": key.get("protection-mode", ""),
+            "lifecycle_state": key.get("lifecycle-state"),
+            "current_key_version": key.get("current-key-version", ""),
+            "time_created": str(key.get("time-created", "")),
+        }
+        for key in keys
+    ]
+    load_graph_data(
+        neo4j_session, ingest_key, rows,
+        VAULT_ID=vault_id, REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_keys(
