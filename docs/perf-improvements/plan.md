@@ -58,6 +58,32 @@ Recorded authoritatively; phase sections below follow these.
 
 ---
 
+## Phase status
+
+Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 | Query/index fixes + `ensure_indexes` managed-tx wrap | 🔵 in progress |
+| 2 | Integration EXPLAIN plan guard (+ self-test) | ⚪ not started |
+| 3 | Migrate per-item loaders to `tx.load()` | ⛔ deferred — gated on Phase 2 |
+| 4 | PROFILE unanchored cleanup queries | ⚪ not started |
+
+### Phase 1 checklist
+
+| # | Change | Test | Unit/lint here | Integration (CI) | Commit |
+|---|--------|------|----------------|------------------|--------|
+| 1.1 | `ensure_indexes` raw `run` → `execute_write` (`tx.py:234`) | unit (mock session) | ⚪ | n/a | ⚪ |
+| 1.2 | `gcp/compute.py:1501` `MATCH (nic)` → `:GCPNetworkInterface` | existing `test_compute.py:346` | n/a | ⚪ pending | ⚪ |
+| 1.3 | `gcp/spanner.py:157` + index `GCPSpannerInstance(config)` | existing `test_spanner.py` | n/a | ⚪ pending | ⚪ |
+| 1.4 | `azure/compute.py` AKS templated UNION + `AzureCluster(name)` index | new red-first `test_aks.py` (9A) | n/a | ⚪ pending | ⚪ |
+
+> **Validation note:** neo4j/docker unavailable in the dev sandbox, so integration tests can't
+> run here (decision: unit-validate + lint locally, run `make test_integration` in CI). Each
+> Phase 1 commit notes its integration test as pending CI.
+
+---
+
 ## How data flows today (baseline)
 
 The modern, efficient path already exists and is the migration target:
