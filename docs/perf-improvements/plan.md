@@ -75,7 +75,7 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 |---|--------|------|----------------|------------------|--------|
 | 1.1 | `ensure_indexes` raw `run` → `execute_write` (`tx.py:234`) | unit (mock session) | ✅ 3 pass | n/a | ✅ |
 | 1.2 | `gcp/compute.py:1501` `MATCH (nic)` → `:GCPNetworkInterface` | existing `test_compute.py:346` | flake8 ✅ | ⏳ pending CI | ✅ |
-| 1.3 | `gcp/spanner.py:157` + index `GCPSpannerInstance(config)` | existing `test_spanner.py` | n/a | ⚪ pending | ⚪ |
+| 1.3 | `gcp/spanner.py:157` + index `GCPSpannerInstance(config)` | existing `test_spanner.py` | n/a | ⏳ pending CI | ✅ |
 | 1.4 | `azure/compute.py` AKS templated UNION + `AzureCluster(name)` index | new red-first `test_aks.py` (9A) | n/a | ⚪ pending | ⚪ |
 
 > **Validation note:** neo4j/docker unavailable in the dev sandbox, so integration tests can't
