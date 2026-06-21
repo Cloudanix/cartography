@@ -73,7 +73,7 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 
 | # | Change | Test | Unit/lint here | Integration (CI) | Commit |
 |---|--------|------|----------------|------------------|--------|
-| 1.1 | `ensure_indexes` raw `run` → `execute_write` (`tx.py:234`) | unit (mock session) | ⚪ | n/a | ⚪ |
+| 1.1 | `ensure_indexes` raw `run` → `execute_write` (`tx.py:234`) | unit (mock session) | ✅ 3 pass | n/a | ✅ |
 | 1.2 | `gcp/compute.py:1501` `MATCH (nic)` → `:GCPNetworkInterface` | existing `test_compute.py:346` | n/a | ⚪ pending | ⚪ |
 | 1.3 | `gcp/spanner.py:157` + index `GCPSpannerInstance(config)` | existing `test_spanner.py` | n/a | ⚪ pending | ⚪ |
 | 1.4 | `azure/compute.py` AKS templated UNION + `AzureCluster(name)` index | new red-first `test_aks.py` (9A) | n/a | ⚪ pending | ⚪ |
