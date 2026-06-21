@@ -984,28 +984,36 @@ def sync_snapshot(
 def link_compute_to_aks(neo4j_session: neo4j.Session, update_tag: int) -> None:
     """Links Azure VMs and VM Scale Sets to AKS Clusters and Node Pools based on tags."""
 
-    # 1. Link VM Scale Sets and VMs to the AKS Cluster
+    # AzureVirtualMachine and AzureVirtualMachineScaleSet are both AKS node types. The old query
+    # used `MATCH (node) WHERE node:A OR node:B`, which is an AllNodesScan (no anchoring label).
+    # Run one labelled query per type instead so the planner uses the label index.
+    # ponytail: template + loop, not UNION — Cypher forbids UNION around write clauses (MERGE).
+    # Labels are trusted module constants, so str.format injection is safe.
+    aks_node_labels = ("AzureVirtualMachine", "AzureVirtualMachineScaleSet")
+
+    # 1. Link VMs / VM Scale Sets to the AKS Cluster
     cluster_query = """
-    MATCH (node) WHERE node:AzureVirtualMachine OR node:AzureVirtualMachineScaleSet
-    WITH node WHERE node.aks_cluster_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
-    MATCH (c:AzureCluster {name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg})
+    MATCH (node:{label})
+    WHERE node.aks_cluster_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
+    MATCH (c:AzureCluster {{name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg}})
     MERGE (c)-[r:HAS_NODE]->(node)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
 
-    # 2. Link VM Scale Sets and VMs to the AKS Node Pool (Agent Pool)
+    # 2. Link VMs / VM Scale Sets to the AKS Node Pool (Agent Pool)
     pool_query = """
-    MATCH (node) WHERE node:AzureVirtualMachine OR node:AzureVirtualMachineScaleSet
-    WITH node WHERE node.aks_cluster_name IS NOT NULL AND node.aks_pool_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
-    MATCH (c:AzureCluster {name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg})-[:HAS]->(p:AzureClusterAgentPool {name: node.aks_pool_name})
+    MATCH (node:{label})
+    WHERE node.aks_cluster_name IS NOT NULL AND node.aks_pool_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
+    MATCH (c:AzureCluster {{name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg}})-[:HAS]->(p:AzureClusterAgentPool {{name: node.aks_pool_name}})
     MERGE (p)-[r:HAS_NODE]->(node)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(cluster_query, update_tag=update_tag)
-    neo4j_session.run(pool_query, update_tag=update_tag)
+    for label in aks_node_labels:
+        neo4j_session.run(cluster_query.format(label=label), update_tag=update_tag)
+        neo4j_session.run(pool_query.format(label=label), update_tag=update_tag)
 
 
 @timeit

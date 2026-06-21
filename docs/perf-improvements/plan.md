@@ -64,7 +64,7 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 1 | Query/index fixes + `ensure_indexes` managed-tx wrap | 🔵 in progress |
+| 1 | Query/index fixes + `ensure_indexes` managed-tx wrap | ✅ done (integration tests pending CI) |
 | 2 | Integration EXPLAIN plan guard (+ self-test) | ⚪ not started |
 | 3 | Migrate per-item loaders to `tx.load()` | ⛔ deferred — gated on Phase 2 |
 | 4 | PROFILE unanchored cleanup queries | ⚪ not started |
@@ -76,7 +76,12 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 | 1.1 | `ensure_indexes` raw `run` → `execute_write` (`tx.py:234`) | unit (mock session) | ✅ 3 pass | n/a | ✅ |
 | 1.2 | `gcp/compute.py:1501` `MATCH (nic)` → `:GCPNetworkInterface` | existing `test_compute.py:346` | flake8 ✅ | ⏳ pending CI | ✅ |
 | 1.3 | `gcp/spanner.py:157` + index `GCPSpannerInstance(config)` | existing `test_spanner.py` | n/a | ⏳ pending CI | ✅ |
-| 1.4 | `azure/compute.py` AKS templated UNION + `AzureCluster(name)` index | new red-first `test_aks.py` (9A) | n/a | ⚪ pending | ⚪ |
+| 1.4 | `azure/compute.py` AKS per-label queries + `AzureCluster(name,resourcegroup)` index | new red-first `test_aks.py::test_link_compute_to_aks` (9A) | flake8 ✅ (net −1 E501), compile ✅ | ⏳ pending CI | ✅ |
+
+> **1.4 note:** Cypher forbids `UNION` around write clauses, so decision 7A's "templated UNION"
+> is realized as a template run once per label (same DRY win, valid Cypher). Azure modules can't
+> be imported in the dev sandbox (missing `cloudconsolelink`), so the rewrite is validated by the
+> new integration test in CI; locally confirmed via flake8 + byte-compile + `.format` render check.
 
 > **Validation note:** neo4j/docker unavailable in the dev sandbox, so integration tests can't
 > run here (decision: unit-validate + lint locally, run `make test_integration` in CI). Each
