@@ -65,8 +65,8 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Query/index fixes + `ensure_indexes` managed-tx wrap | ✅ done (integration tests pending CI) |
-| 2 | Integration EXPLAIN plan guard (+ self-test) | ⚪ not started |
-| 3 | Migrate per-item loaders to `tx.load()` | ⛔ deferred — gated on Phase 2 |
+| 2 | Integration EXPLAIN plan guard (+ self-test) | ✅ done (unit green; integration pending CI) |
+| 3 | Migrate per-item loaders to `tx.load()` | ⛔ deferred — unblocks once Phase 2 guard is green in CI |
 | 4 | PROFILE unanchored cleanup queries | ⚪ not started |
 
 ### Phase 1 checklist
@@ -86,6 +86,29 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 > **Validation note:** neo4j/docker unavailable in the dev sandbox, so integration tests can't
 > run here (decision: unit-validate + lint locally, run `make test_integration` in CI). Each
 > Phase 1 commit notes its integration test as pending CI.
+
+### Phase 2 checklist — EXPLAIN plan guard
+
+| # | Item | Decision | Status |
+|---|------|----------|--------|
+| 2.1 | Pure plan-walk + banned-operator detection (`plan_guard.py`) | 1A | ✅ unit 5/5 |
+| 2.2 | Enumerate all generated ingestion + cleanup queries | 13A | ✅ unit (37 schemas, all build) |
+| 2.3 | Guard self-test: label-less fails, indexed passes | 10A | ✅ unit fixtures; ⏳ real-EXPLAIN fixtures in CI |
+| 2.4 | Sweep all generated queries via real EXPLAIN, fail on `AllNodesScan` | 13A | ⏳ pending CI (`test_query_plans.py`) |
+
+> **Phase 2 notes:**
+> - Detection logic is neo4j-free (`tests/integration/.../graph/plan_guard.py`) so it unit-tests
+>   without a database; the integration test only adds real `EXPLAIN` execution.
+> - `BANNED_OPERATORS = {AllNodesScan}` only. `NodeByLabelScan` is **not** banned — a bounded
+>   label scan (anchored cleanup) is fine (consistent with the Phase 4 correction).
+> - `ensure_indexes(schema)` runs before each EXPLAIN so the plan reflects production indexes
+>   (decisions 1A/12A). Per-schema row seeding is skipped — index presence, not row count, is
+>   what flips `AllNodesScan`→`NodeIndexSeek` for these `MERGE`-on-id queries.
+> - The sweep is a **hard gate** (`KNOWN_OFFENDERS = set()`). If CI surfaces an existing schema
+>   that plans `AllNodesScan`, triage it (fix the query, or allowlist with a TODO) — that is the
+>   guard doing its job (decisions 6A/12A).
+> - **Migrate-OOM gate (12A):** Phase 3 migrations run this sweep on the new ingestion query and
+>   must show zero `*Scan` before merge — prevents reproducing CDX-INVENTORY-887.
 
 ---
 
