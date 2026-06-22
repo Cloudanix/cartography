@@ -5,6 +5,37 @@ See `docs/perf-improvements/plan.md` for the full plan and decisions.
 
 ---
 
+## 0. Triage plan-guard offenders surfaced by the first CI run
+
+**What:** Run `make test_integration` (specifically
+`tests/integration/cartography/graph/test_query_plans.py::test_generated_queries_have_no_allnodesscan`)
+and triage every generated query the sweep reports as planning an `AllNodesScan`.
+
+**Why:** The Phase 2 guard is a hard gate (`KNOWN_OFFENDERS = set()`), but it has never run
+against a live neo4j (no database in the dev sandbox). Existing schemas may already plan
+`AllNodesScan` — the sweep will list them by label (e.g. `ingest:FooSchema`,
+`cleanup:BarSchema:0`). Each is a real perf problem the guard is designed to catch; leaving them
+unhandled means the gate is red and blocks Phase 3.
+
+**Context:**
+- The test asserts `offenders == {}` and prints `{label: [banned operators]}` on failure — that
+  list is the triage worklist.
+- For each offender, two valid resolutions:
+  1. **Fix the query** — add the missing label/index so it no longer scans (preferred; same class
+     as the Phase 1 fixes). For schema-driven queries, the fix is usually a missing
+     `PropertyRef(extra_index=True)` or a `TargetNodeMatcher` field, not a query edit.
+  2. **Allowlist + TODO** — add the schema name to `KNOWN_OFFENDERS` in `test_query_plans.py` with
+     an inline comment linking a follow-up, ONLY to unblock CI while the fix is in flight. Do not
+     let the allowlist grow silently.
+- The two self-test cases (`test_guard_detects_allnodesscan`, `test_guard_passes_indexed_lookup`)
+  prove the guard logic is correct independently of the sweep — if they fail, the guard itself is
+  broken, not the schemas.
+
+**Depends on / blocked by:** A reachable neo4j for `make test_integration`. This is the gating
+step before Phase 3 (decisions 6A/12A: the guard must be green in CI before migrations start).
+
+---
+
 ## 1. Phase 3 — migrate per-item loaders to `tx.load()`
 
 **What:** Replace hand-written per-item `session.run()` write loops in AWS / GCP / Azure
