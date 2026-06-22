@@ -688,7 +688,14 @@ def _sync_single_project(
 
         # Determine the resources available on the project.
         enabled_services = _services_enabled_on_project(resources.serviceusage, project_id)
-        parallel_requests = [r for r in requested_syncs if r in RESOURCE_FUNCTIONS]
+        # Proactively skip services whose API is known-disabled (saves the wasted call). Defensive: an empty/failed
+        # enabled_services set or an unmapped service is never gated - those still run and rely on the reactive catch.
+        gated_out = _gated_out_services(requested_syncs, enabled_services)
+        for _svc in gated_out:
+            logger.info(
+                f"gcp project={project_id}: skipping {_svc}; API {_GATEABLE_SERVICE_APIS[_svc]} not enabled",
+            )
+        parallel_requests = [r for r in requested_syncs if r in RESOURCE_FUNCTIONS and r not in gated_out]
         neo4j_auth = (config.neo4j_user, config.neo4j_password)
         shared_driver = GraphDatabase.driver(
             config.neo4j_uri,
@@ -795,6 +802,65 @@ def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpErro
             "has not been enabled",
         )
     )
+
+
+# Map a sync func name (key in RESOURCE_FUNCTIONS) to the single ServiceUsage API it needs, so we can proactively
+# skip a service whose API is known-disabled instead of making a call we know will 403/400. Derived from the
+# googleapiclient.discovery.build(...) call each _get_<svc>_resource uses: build's first arg + ".googleapis.com" is
+# the ServiceUsage config.name.
+#
+# Deliberately EXCLUDED (left to always run + the reactive _is_service_not_enabled_error catch):
+#   - "admin" (workspace): Admin SDK is org/directory-scoped, not a per-project ServiceUsage API.
+#   - "iam": needs several APIs (iam + cloudresourcemanager + policyanalyzer + apikeys); a single-key gate could
+#     wrongly skip it. It is core and almost always enabled.
+#   - "artifacts" (containerregistry): ambiguous API name and no matching Resources field; not confident enough.
+_GATEABLE_SERVICE_APIS: Dict[str, str] = {
+    "compute": "compute.googleapis.com",
+    "cloudcdn": "compute.googleapis.com",
+    "loadbalancer": "compute.googleapis.com",
+    "storage": "storage.googleapis.com",
+    "gke": "container.googleapis.com",
+    "dns": "dns.googleapis.com",
+    "sql": "sqladmin.googleapis.com",
+    "bigtable": "bigtableadmin.googleapis.com",
+    "firestore": "firestore.googleapis.com",
+    "cloudkms": "cloudkms.googleapis.com",
+    "cloudrun": "run.googleapis.com",
+    "apigateway": "apigateway.googleapis.com",
+    "cloudfunction": "cloudfunctions.googleapis.com",
+    "pubsub": "pubsub.googleapis.com",
+    "cloud_logging": "logging.googleapis.com",
+    "cloudmonitoring": "monitoring.googleapis.com",
+    "dataproc": "dataproc.googleapis.com",
+    "bigquery": "bigquery.googleapis.com",
+    "spanner": "spanner.googleapis.com",
+    "dataflow": "dataflow.googleapis.com",
+    "pubsublite": "pubsublite.googleapis.com",
+    "cloudtasks": "cloudtasks.googleapis.com",
+}
+
+
+def _gated_out_services(requested_syncs: List[str], enabled_services: Set[str]) -> Set[str]:
+    """
+    Return the subset of requested sync func names to proactively skip because their API is known-disabled.
+
+    Defensive by construction - skips a service ONLY when ALL hold:
+      - `enabled_services` is non-empty. An empty set means the ServiceUsage lookup returned nothing or failed
+        (it swallows HttpError and returns set()); treating that as "skip everything" would silently drop an entire
+        project, so an empty set disables the gate entirely.
+      - the func is in `_GATEABLE_SERVICE_APIS`. Unmapped funcs (iam, workspace, artifacts) are never gated.
+      - its mapped API is absent from `enabled_services`.
+
+    Anything not skipped here still runs and is protected by the reactive `_is_service_not_enabled_error` catch, so a
+    stale/wrong entry can at worst cost one extra API call - it cannot silently hide a service that is actually enabled
+    unless that entry is wrong AND the API is enabled, which the canonical names avoid.
+    """
+    if not enabled_services:
+        return set()
+    return {
+        r for r in requested_syncs
+        if (api := _GATEABLE_SERVICE_APIS.get(r)) is not None and api not in enabled_services
+    }
 
 
 def get_all_regions(compute: Resource, project_id: str):
