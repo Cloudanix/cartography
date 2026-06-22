@@ -649,9 +649,17 @@ def _sync_single_project(
                             regions,
                         )
                 except Exception as e:
-                    _svc_status = "error"
-                    _svc_err = {"error_type": type(e).__name__, "error_message": str(e)}
-                    logger.warning(f"error to process service {func_name} - {e}")
+                    if isinstance(e, googleapiclient.discovery.HttpError) and _is_service_not_enabled_error(e):
+                        # API not enabled on this project - nothing to sync. Mirror the parallel path so the
+                        # serial/LOCAL_RUN path also skips quietly instead of recording an error.
+                        _svc_status = "skipped"
+                        logger.info(
+                            f"Service {func_name} not enabled on project {project_id}; skipping. Details: {e}",
+                        )
+                    else:
+                        _svc_status = "error"
+                        _svc_err = {"error_type": type(e).__name__, "error_message": str(e)}
+                        logger.warning(f"error to process service {func_name} - {e}")
                 finally:
                     _svc_elapsed = round(time.perf_counter() - _svc_tic, 4)
                     _service_timings[func_name] = _svc_elapsed
@@ -753,25 +761,39 @@ def _sync_single_project(
 
 def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpError) -> bool:
     """
-    Return True when the HttpError is GCP reporting that the API is not enabled / has never been used on the project
-    (403 accessNotConfigured). Any other error returns False so it is not silently swallowed.
+    Return True when the HttpError is GCP reporting that the API is not enabled / has never been used on the project.
+
+    GCP signals this inconsistently across services, so all known shapes are matched centrally:
+      - 403 with reason `accessNotConfigured` in the legacy `errors[]` array (e.g. Compute).
+      - 403 PERMISSION_DENIED with reason `SERVICE_DISABLED` in the newer `details[]` (ErrorInfo) array.
+      - 400 reason `invalid` with a "...has not enabled <API>" message (e.g. BigQuery).
+      - any message saying the API "has not been used in project ... or it is disabled".
+
+    Any other error returns False so it is re-raised / logged as an error and not silently swallowed.
     """
     try:
         error = json.loads(http_error.content.decode("utf-8")).get("error", {})
     except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
         return False
 
-    reasons = {detail.get("reason") for detail in error.get("errors", []) if isinstance(detail, dict)}
-    if "accessNotConfigured" in reasons:
+    # Reason codes live in `errors[]` (legacy) and/or `details[]` (ErrorInfo) depending on the API.
+    reason_entries = (error.get("errors") or []) + (error.get("details") or [])
+    reasons = {entry.get("reason") for entry in reason_entries if isinstance(entry, dict)}
+    if reasons & {"accessNotConfigured", "SERVICE_DISABLED"}:
         return True
 
-    # Some APIs (e.g. BigQuery) report a disabled service as 400 reason=invalid with a "has not enabled <X>" message
-    # instead of 403 accessNotConfigured, so match on the message too.
+    # Fall back to message text for APIs that don't set a recognizable reason code.
     message = error.get("message", "")
-    return bool(message) and (
-        "has not been used in project" in message
-        or "is disabled" in message
-        or "has not enabled" in message
+    if not message:
+        return False
+    return any(
+        needle in message
+        for needle in (
+            "has not been used in project",
+            "is disabled",
+            "has not enabled",
+            "has not been enabled",
+        )
     )
 
 
