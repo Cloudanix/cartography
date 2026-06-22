@@ -547,13 +547,21 @@ def concurrent_execution(
             )
         _result = round(time.perf_counter() - tic, 4)
     except Exception as e:
-        _status = "error"
-        _err = {"error_type": type(e).__name__, "error_message": str(e)}
-        logger.error(
-            f"error to process service {service} project={project_id} - {e}",
-            exc_info=True,
-            stack_info=True,
-        )
+        if isinstance(e, googleapiclient.discovery.HttpError) and _is_service_not_enabled_error(e):
+            # API not enabled on this (often external) project - nothing to sync. Log at info so it is not reported to
+            # Sentry as an error. Covers every service routed through here (BigQuery, etc.), not just compute.
+            _status = "skipped"
+            logger.info(
+                f"Service {service} not enabled on project {project_id}; skipping. Details: {e}",
+            )
+        else:
+            _status = "error"
+            _err = {"error_type": type(e).__name__, "error_message": str(e)}
+            logger.error(
+                f"error to process service {service} project={project_id} - {e}",
+                exc_info=True,
+                stack_info=True,
+            )
     finally:
         _elapsed = _result if _result is not None else round(time.perf_counter() - tic, 4)
         _ev: Dict = {
@@ -757,8 +765,14 @@ def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpErro
     if "accessNotConfigured" in reasons:
         return True
 
+    # Some APIs (e.g. BigQuery) report a disabled service as 400 reason=invalid with a "has not enabled <X>" message
+    # instead of 403 accessNotConfigured, so match on the message too.
     message = error.get("message", "")
-    return bool(message) and ("has not been used in project" in message or "is disabled" in message)
+    return bool(message) and (
+        "has not been used in project" in message
+        or "is disabled" in message
+        or "has not enabled" in message
+    )
 
 
 def get_all_regions(compute: Resource, project_id: str):

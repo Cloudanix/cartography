@@ -3,11 +3,18 @@ from unittest.mock import MagicMock
 import pytest
 from googleapiclient.discovery import HttpError
 
+from cartography.intel.gcp import _is_service_not_enabled_error
 from cartography.intel.gcp import get_all_regions
 
 SERVICE_DISABLED_CONTENT = (
     b'{"error": {"code": 403, "message": "Compute Engine API has not been used in '
     b'project canvas before or it is disabled.", "errors": [{"reason": "accessNotConfigured"}]}}'
+)
+
+# BigQuery reports a disabled service as 400 reason=invalid + "has not enabled BigQuery" (CDX example).
+BIGQUERY_NOT_ENABLED_CONTENT = (
+    b'{"error": {"code": 400, "message": "The project canvas has not enabled BigQuery.", '
+    b'"errors": [{"message": "The project canvas has not enabled BigQuery.", "reason": "invalid"}]}}'
 )
 
 
@@ -46,3 +53,10 @@ def test_get_all_regions_reraises_other_http_errors():
 
     with pytest.raises(HttpError):
         get_all_regions(compute, "no-perms")
+
+
+def test_is_service_not_enabled_matches_bigquery_400():
+    # Regression: BigQuery's 400 reason=invalid "has not enabled" must be treated as service-not-enabled so
+    # concurrent_execution downgrades it to info instead of an error (Sentry).
+    err = HttpError(resp=MagicMock(status=400), content=BIGQUERY_NOT_ENABLED_CONTENT)
+    assert _is_service_not_enabled_error(err) is True
