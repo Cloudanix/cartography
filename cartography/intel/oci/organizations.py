@@ -121,7 +121,7 @@ def load_oci_accounts(
         WITH w, acct
         MERGE (aa:OCITenancy{id: acct.tenancy_id})
         ON CREATE SET aa.firstseen = timestamp()
-        SET aa.ocid = acct.tenancy_id, aa.lastupdated = $oci_update_tag, aa.name = acct.account_name
+        SET aa.ocid = acct.tenancy_id, aa.unique_id = acct.unique_id, aa.lastupdated = $oci_update_tag, aa.name = acct.account_name
         WITH w, aa
         MERGE (w)-[r:OWNER]->(aa)
         ON CREATE SET r.firstseen = timestamp()
@@ -137,7 +137,7 @@ def load_oci_accounts(
             tenancy_details = get_tenancy_details(identity_client, tenancy_id)
             account_name = tenancy_details.get("name", name)
 
-        rows.append({"tenancy_id": tenancy_id, "account_name": account_name})
+        rows.append({"tenancy_id": tenancy_id, "unique_id": f"tenancy/{tenancy_id}", "account_name": account_name})
 
     load_graph_data(
         neo4j_session,
