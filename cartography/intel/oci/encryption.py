@@ -7,7 +7,6 @@ from typing import Dict
 from typing import List
 
 import neo4j
-import oci
 import oci.key_management
 
 from . import utils

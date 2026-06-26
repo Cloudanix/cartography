@@ -1,5 +1,6 @@
 from typing import Dict
 
+from . import audit_logging
 from . import compute
 from . import encryption
 from . import iam
@@ -7,7 +8,6 @@ from . import monitoring
 from . import network
 from . import oke
 from . import storage
-from . import audit_logging
 
 
 RESOURCE_FUNCTIONS: Dict = {
