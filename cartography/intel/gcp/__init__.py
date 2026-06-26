@@ -696,54 +696,60 @@ def _sync_single_project(
                 f"gcp project={project_id}: skipping {_svc}; API {_GATEABLE_SERVICE_APIS[_svc]} not enabled",
             )
         parallel_requests = [r for r in requested_syncs if r in RESOURCE_FUNCTIONS and r not in gated_out]
-        neo4j_auth = (config.neo4j_user, config.neo4j_password)
-        shared_driver = GraphDatabase.driver(
-            config.neo4j_uri,
-            auth=neo4j_auth,
-            max_connection_lifetime=config.neo4j_max_connection_lifetime,
-        )
-        try:
-            with ThreadPoolExecutor(max_workers=min(8, len(parallel_requests))) as executor:
-                futures_map: Dict = {}
-                for request in parallel_requests:
-                    try:
-                        _f = executor.submit(
-                            concurrent_execution,
-                            request,
-                            RESOURCE_FUNCTIONS[request],
-                            config,
-                            getattr(resources, request),
-                            common_job_parameters,
-                            gcp_update_tag,
-                            project_id,
-                            resources.policyanalyzer,
-                            resources.crm_v1,
-                            resources.crm_v2,
-                            resources.apikey,
-                            resources.compute,
-                            regions,
-                            shared_driver,
-                        )
-                        futures_map[_f] = request
-                    except Exception as e:
-                        logger.warning(f"error to append service {request} in futures - {e}")
 
-                for request in requested_syncs:
-                    if request not in RESOURCE_FUNCTIONS:
-                        logger.warning(
-                            f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?',
-                        )
+        for request in requested_syncs:
+            if request not in RESOURCE_FUNCTIONS:
+                logger.warning(
+                    f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?',
+                )
 
-                for future in as_completed(futures_map):
-                    _fn = futures_map.get(future)
-                    _elapsed = future.result()
-                    if _fn:
-                        if _elapsed is not None:
-                            _service_timings[_fn] = _elapsed
-                        else:
-                            _failed_services[_fn] = "error"
-        finally:
-            shared_driver.close()
+        # Nothing left to run (all requested syncs gated out / unknown) - skip the pool. ThreadPoolExecutor raises
+        # ValueError when max_workers is 0, so an empty parallel_requests must never reach it.
+        if parallel_requests:
+            neo4j_auth = (config.neo4j_user, config.neo4j_password)
+            shared_driver = GraphDatabase.driver(
+                config.neo4j_uri,
+                auth=neo4j_auth,
+                max_connection_lifetime=config.neo4j_max_connection_lifetime,
+            )
+            try:
+                with ThreadPoolExecutor(max_workers=min(8, len(parallel_requests))) as executor:
+                    futures_map: Dict = {}
+                    for request in parallel_requests:
+                        try:
+                            _f = executor.submit(
+                                concurrent_execution,
+                                request,
+                                RESOURCE_FUNCTIONS[request],
+                                config,
+                                getattr(resources, request),
+                                common_job_parameters,
+                                gcp_update_tag,
+                                project_id,
+                                resources.policyanalyzer,
+                                resources.crm_v1,
+                                resources.crm_v2,
+                                resources.apikey,
+                                resources.compute,
+                                regions,
+                                shared_driver,
+                            )
+                            futures_map[_f] = request
+                        except Exception as e:
+                            logger.warning(f"error to append service {request} in futures - {e}")
+
+                    for future in as_completed(futures_map):
+                        _fn = futures_map.get(future)
+                        _elapsed = future.result()
+                        if _fn:
+                            if _elapsed is not None:
+                                _service_timings[_fn] = _elapsed
+                            else:
+                                _failed_services[_fn] = "error"
+            finally:
+                shared_driver.close()
+        else:
+            logger.info(f"gcp project={project_id}: no enabled services to sync in parallel; skipping")
 
         # END - Parallel Run
 
