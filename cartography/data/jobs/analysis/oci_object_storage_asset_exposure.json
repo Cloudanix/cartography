@@ -1,0 +1,26 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OCI object storage buckets in scope",
+      "query": "MATCH (n:OCIStorageBucket)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Mark buckets as exposed if they allow anonymous read + list access (ObjectRead)",
+      "query": "MATCH (b:OCIStorageBucket{public_access_type: 'ObjectRead'})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET b.exposed_internet = true, (CASE WHEN NOT 'public_read' IN coalesce(b.exposed_internet_type, []) THEN b END).exposed_internet_type = coalesce(b.exposed_internet_type, []) + 'public_read'",
+      "iterative": false
+    },
+    {
+      "__comment": "Mark buckets as exposed if they allow anonymous read without list access (ObjectReadWithoutList)",
+      "query": "MATCH (b:OCIStorageBucket{public_access_type: 'ObjectReadWithoutList'})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET b.exposed_internet = true, (CASE WHEN NOT 'public_read_no_list' IN coalesce(b.exposed_internet_type, []) THEN b END).exposed_internet_type = coalesce(b.exposed_internet_type, []) + 'public_read_no_list'",
+      "iterative": false
+    },
+    {
+      "__comment": "Build publicContext JSON for exposed buckets",
+      "query": "MATCH (b:OCIStorageBucket)<-[:RESOURCE]-(c:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE b.exposed_internet = true WITH b, c SET b.publicContext = apoc.convert.toJson([{resource: b.id, resourceType: 'oci-storage-bucket', context: [{bucketId: b.id, bucketName: b.name, namespace: b.namespace, compartmentId: c.id, publicAccessType: b.public_access_type, exposureTypes: b.exposed_internet_type, versioning: b.versioning, region: b.region}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "OCI object storage asset internet exposure"
+}
