@@ -282,7 +282,7 @@ def load_boot_volume_attachments(
     """
     ingest_boot_volume_attachment = """
     UNWIND $DictList AS att
-        MERGE (bva:OCIBootVolumeAttachment{id: att.ocid})
+        MERGE (bva:OCIBootVolumeAttachment{id: att.bva_id})
         ON CREATE SET bva.firstseen = timestamp(),
         bva.createdate = att.time_created
         SET bva.ocid = att.ocid,
@@ -291,6 +291,7 @@ def load_boot_volume_attachments(
         bva.availability_domain = att.availability_domain,
         bva.lifecycle_state = att.lifecycle_state,
         bva.boot_volume_id = att.boot_volume_id,
+        bva.instance_id = att.instance_id,
         bva.lastupdated = $oci_update_tag
         WITH bva, att
         MATCH (inode:OCIInstance{id: att.instance_id})
@@ -299,19 +300,28 @@ def load_boot_volume_attachments(
         SET r.lastupdated = $oci_update_tag
     """
 
-    rows = [
-        {
+    rows = []
+    for attachment in boot_volume_attachments:
+        boot_volume_id = attachment.get("boot-volume-id", "")
+        instance_id = attachment.get("instance-id", "")
+        # OCI API returns instance OCID as the attachment's "id", so we use a
+        # composite key to avoid colliding with OCIInstance nodes.
+        bva_id = f"{instance_id}::{boot_volume_id}" if boot_volume_id else attachment.get("id")
+        logger.debug(
+            "Boot volume attachment id=%s, instance-id=%s, boot-volume-id=%s, using bva_id=%s",
+            attachment.get("id"), instance_id, boot_volume_id, bva_id,
+        )
+        rows.append({
+            "bva_id": bva_id,
             "ocid": attachment.get("id"),
             "display_name": attachment.get("display-name"),
             "compartment_id": attachment.get("compartment-id"),
             "availability_domain": attachment.get("availability-domain"),
             "lifecycle_state": attachment.get("lifecycle-state"),
-            "boot_volume_id": attachment.get("boot-volume-id"),
-            "instance_id": attachment.get("instance-id"),
+            "boot_volume_id": boot_volume_id,
+            "instance_id": instance_id,
             "time_created": str(attachment.get("time-created", "")),
-        }
-        for attachment in boot_volume_attachments
-    ]
+        })
     load_graph_data(
         neo4j_session, ingest_boot_volume_attachment, rows,
         oci_update_tag=oci_update_tag,
