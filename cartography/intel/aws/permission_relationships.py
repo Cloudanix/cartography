@@ -308,11 +308,12 @@ def load_principal_mappings(
 
 def cleanup_rpr(
     neo4j_session: neo4j.Session, node_label: str, relationship_name: str, update_tag: int,
-    current_aws_id: str,
+    current_aws_id: str, organization_id: str, workspace_id: str,
 ) -> None:
     logger.info("Cleaning up relationship '%s' for node label '%s'", relationship_name, node_label)
     cleanup_rpr_query = Template("""
-        MATCH (:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(principal:AWSPrincipal)-[r:$relationship_name]->
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})
+        -[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(principal:AWSPrincipal)-[r:$relationship_name]->
         (resource:$node_label)
         WHERE r.lastupdated <> $UPDATE_TAG
         WITH r LIMIT $LIMIT_SIZE  DELETE (r) return COUNT(*) as TotalCompleted
@@ -323,7 +324,13 @@ def cleanup_rpr(
     )
 
     statement = GraphStatement(
-        cleanup_rpr_query_template, {'UPDATE_TAG': update_tag, 'AWS_ID': current_aws_id},
+        cleanup_rpr_query_template,
+        {
+            'UPDATE_TAG': update_tag,
+            'AWS_ID': current_aws_id,
+            'ORGANIZATION_ID': organization_id,
+            'WORKSPACE_ID': workspace_id,
+        },
         True, 1000,
     )
     statement.run(neo4j_session)
@@ -387,7 +394,10 @@ def sync(
             neo4j_session, allowed_mappings,
             target_label, relationship_name, update_tag,
         )
-        cleanup_rpr(neo4j_session, target_label, relationship_name, update_tag, current_aws_account_id)
+        cleanup_rpr(
+            neo4j_session, target_label, relationship_name, update_tag, current_aws_account_id,
+            common_job_parameters["ORGANIZATION_ID"], common_job_parameters["WORKSPACE_ID"],
+        )
 
     toc = time.perf_counter()
     logger.info(f"Time to process Permission Relationships: {toc - tic:0.4f} seconds")
