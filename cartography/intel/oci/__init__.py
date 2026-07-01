@@ -141,6 +141,10 @@ def _sync_one_compartment(
         'oci_iam_policy_analysis.json',
         'oci_encryption_analysis.json',
         'oci_monitoring_analysis.json',
+        'oci_containerregistry_asset_exposure.json',
+        'oci_object_storage_asset_exposure.json',
+        'oci_file_storage_asset_exposure.json',
+        'oci_logging_analysis.json',
     ]
     for job_file in _oci_analysis_jobs:
         try:
