@@ -11,16 +11,6 @@
                   "iterationsize": 100
             },
             {
-                  "query": "MATCH (n:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-                  "iterative": true,
-                  "iterationsize": 100
-            },
-            {
-                  "query": "MATCH (:AzureSQLServer)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
-                  "iterative": true,
-                  "iterationsize": 100
-            },
-            {
                   "query": "MATCH (n:AzureServerPrivateEndpointConnection)<-[:HAS]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
                   "iterative": true,
                   "iterationsize": 100
@@ -146,21 +136,6 @@
                   "iterationsize": 100
             },
             {
-                  "query": "MATCH (:AzureResourceGroup)<-[r:RESOURCE_GROUP]-(:AzureSQLDatabase)<-[:RESOURCE]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
-                  "iterative": true,
-                  "iterationsize": 100
-            },
-            {
-                  "query": "MATCH (n:AzureSQLDatabase)<-[:RESOURCE]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-                  "iterative": true,
-                  "iterationsize": 100
-            },
-            {
-                  "query": "MATCH (:AzureSQLDatabase)<-[r:RESOURCE]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
-                  "iterative": true,
-                  "iterationsize": 100
-            },
-            {
                   "query": "MATCH (:AzureResourceGroup)<-[r:RESOURCE_GROUP]-(:AzureReplicationLink)<-[:CONTAINS]-(:AzureSQLDatabase)<-[:RESOURCE]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
                   "iterative": true,
                   "iterationsize": 100
@@ -217,6 +192,31 @@
             },
             {
                   "query": "MATCH (:AzureTransparentDataEncryption)<-[r:CONTAINS]-(:AzureSQLDatabase)<-[:RESOURCE]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+                  "iterative": true,
+                  "iterationsize": 100
+            },
+            {
+                  "query": "MATCH (:AzureResourceGroup)<-[r:RESOURCE_GROUP]-(:AzureSQLDatabase)<-[:RESOURCE]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+                  "iterative": true,
+                  "iterationsize": 100
+            },
+            {
+                  "query": "MATCH (n:AzureSQLDatabase)<-[:RESOURCE]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+                  "iterative": true,
+                  "iterationsize": 100
+            },
+            {
+                  "query": "MATCH (:AzureSQLDatabase)<-[r:RESOURCE]-(:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+                  "iterative": true,
+                  "iterationsize": 100
+            },
+            {
+                  "query": "MATCH (n:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+                  "iterative": true,
+                  "iterationsize": 100
+            },
+            {
+                  "query": "MATCH (:AzureSQLServer)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
                   "iterative": true,
                   "iterationsize": 100
             }
