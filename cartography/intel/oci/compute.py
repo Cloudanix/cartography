@@ -18,6 +18,82 @@ from cartography.util import run_cleanup_job
 logger = logging.getLogger(__name__)
 
 
+def get_vnic_data(
+    network_client: oci.core.virtual_network_client.VirtualNetworkClient,
+    vnic_id: str,
+) -> Dict[str, Any]:
+    """
+    Get details of a single VNIC by its OCID.
+    Returns the VNIC as a dict, or empty dict on failure.
+    See https://docs.oracle.com/en-us/iaas/api/#/en/iaas/latest/Vnic/GetVnic
+    """
+    try:
+        response = network_client.get_vnic(vnic_id=vnic_id)
+        return utils.oci_single_object_to_json(response.data)
+    except oci.exceptions.ServiceError as e:
+        logger.warning(
+            "Could not retrieve VNIC '%s': %s", vnic_id, e.message,
+        )
+        return {}
+
+
+def get_instance_ip_addresses(
+    network_client: oci.core.virtual_network_client.VirtualNetworkClient,
+    vnic_attachments: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, str]]:
+    """
+    For a list of VNIC attachments, fetch the VNIC details to extract private and
+    public IPs. Returns a mapping of instance_id -> {'private_ip': ..., 'public_ip': ...}.
+    Only the primary VNIC (first found per instance) is used for the instance-level IPs.
+    """
+    instance_ips: Dict[str, Dict[str, str]] = {}
+    for attachment in vnic_attachments:
+        instance_id = attachment.get("instance-id", "")
+        vnic_id = attachment.get("vnic-id", "")
+        # Skip if we already have IPs for this instance (use the first/primary VNIC)
+        if instance_id in instance_ips:
+            continue
+        if not vnic_id:
+            continue
+        vnic_data = get_vnic_data(network_client, vnic_id)
+        if vnic_data:
+            instance_ips[instance_id] = {
+                "private_ip": vnic_data.get("private-ip", ""),
+                "public_ip": vnic_data.get("public-ip", ""),
+            }
+    return instance_ips
+
+
+def load_instance_ip_addresses(
+    neo4j_session: neo4j.Session,
+    instance_ips: Dict[str, Dict[str, str]],
+    oci_update_tag: int,
+) -> None:
+    """
+    Update OCIInstance nodes with their private and public IP addresses.
+    """
+    update_ips = """
+    UNWIND $DictList AS item
+        MATCH (inode:OCIInstance{id: item.instance_id})
+        SET inode.private_ip = item.private_ip,
+        inode.public_ip = item.public_ip,
+        inode.lastupdated = $oci_update_tag
+    """
+    rows = [
+        {
+            "instance_id": instance_id,
+            "private_ip": ips.get("private_ip", ""),
+            "public_ip": ips.get("public_ip", ""),
+        }
+        for instance_id, ips in instance_ips.items()
+    ]
+    if rows:
+        load_graph_data(
+            neo4j_session, update_ips, rows,
+            oci_update_tag=oci_update_tag,
+        )
+
+
 def get_instance_list_data(
     compute: oci.core.compute_client.ComputeClient,
     compartment_id: str,
@@ -717,18 +793,34 @@ def sync_vnic_attachments(
     tenancy_id: str,
     oci_update_tag: int,
     common_job_parameters: Dict[str, Any],
+    network_client: oci.core.virtual_network_client.VirtualNetworkClient = None,
 ) -> None:
     """
     Sync all VNIC attachments across all compartments in the tenancy.
+    If a network_client is provided, also fetches VNIC details to populate
+    public and private IP addresses on OCIInstance nodes.
     """
     tic = time.perf_counter()
     logger.debug("Syncing OCI VNIC attachments for tenancy '%s'.", tenancy_id)
     total = 0
+    all_attachments: List[Dict[str, Any]] = []
     for compartment in compartments:
         data = get_vnic_attachment_list_data(compute, compartment["ocid"])
         if data["VnicAttachments"]:
             total += len(data["VnicAttachments"])
+            all_attachments.extend(data["VnicAttachments"])
             load_vnic_attachments(neo4j_session, data["VnicAttachments"], tenancy_id, oci_update_tag)
+
+    # Fetch VNIC details and update instance IP addresses
+    if network_client and all_attachments:
+        instance_ips = get_instance_ip_addresses(network_client, all_attachments)
+        if instance_ips:
+            load_instance_ip_addresses(neo4j_session, instance_ips, oci_update_tag)
+            logger.info(
+                "Updated IP addresses for %d instances in tenancy '%s'.",
+                len(instance_ips), tenancy_id,
+            )
+
     logger.info(f"Time to process OCI VNIC attachments for tenancy '{tenancy_id}' ({total} attachments): {time.perf_counter() - tic:0.4f} seconds")
 
 
@@ -809,12 +901,17 @@ def sync(
         config=compute.base_client.config,
         signer=getattr(compute.base_client, "signer", None),
     )
+    network_client = oci.core.VirtualNetworkClient(
+        config=compute.base_client.config,
+        signer=getattr(compute.base_client, "signer", None),
+    )
 
     for region in regions:
         logger.info("Syncing OCI Compute in region '%s' for compartment '%s'.", region, compartment_ocid)
         compute.base_client.set_region(region)
         blockstorage.base_client.set_region(region)
         identity.base_client.set_region(region)
+        network_client.base_client.set_region(region)
 
         # Availability domains are needed to scope boot volume / boot volume attachment listing.
         availability_domains: List[str] = []
@@ -827,7 +924,7 @@ def sync(
         sync_instances(neo4j_session, compute, compartments, tenancy_id, region, oci_update_tag, common_job_parameters)
 
         # Sync VNIC attachments (links instances to network interfaces)
-        sync_vnic_attachments(neo4j_session, compute, compartments, tenancy_id, oci_update_tag, common_job_parameters)
+        sync_vnic_attachments(neo4j_session, compute, compartments, tenancy_id, oci_update_tag, common_job_parameters, network_client)
 
         # Sync images
         sync_images(neo4j_session, compute, compartments, tenancy_id, oci_update_tag, common_job_parameters)
