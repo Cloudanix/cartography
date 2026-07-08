@@ -70,6 +70,14 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
                         (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIMARY"),
                         None,
                     )
+                    item["public_ip"] = next(
+                        (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIMARY"),
+                        None,
+                    )
+                    item["private_ip"] = next(
+                        (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIVATE"),
+                        None,
+                    )
                     item["pscEnabled"] = False
                     if regions is None or len(regions) == 0:
                         sql_instances.append(item)
@@ -274,6 +282,8 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
         i.engine = instance.engine,
         i.engineVersion = instance.engineVersion,
         i.endpoint = instance.endpoint,
+        i.public_ip = instance.public_ip,
+        i.private_ip = instance.private_ip,
         i.pscEnabled = instance.pscEnabled,
         i.port = instance.port,
         i.name = instance.name,
