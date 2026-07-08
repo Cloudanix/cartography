@@ -1,5 +1,6 @@
 import ipaddress
 import logging
+import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -79,6 +80,43 @@ def _extract_engine_info(server: Dict) -> Tuple[str, str, int]:
     return engine, version, port
 
 
+def _resolve_dns(hostname: str) -> List[str]:
+    """
+    Resolve a hostname to all IP addresses (IPv4 + IPv6).
+    """
+    if not hostname:
+        return []
+    ip_addresses = set()
+    try:
+        results = socket.getaddrinfo(hostname, None)
+        for result in results:
+            ip = result[4][0]
+            ip_addresses.add(ip)
+    except socket.gaierror:
+        return []
+    return list(ip_addresses)
+
+
+def _check_ip_type(ip: str) -> Dict[str, Any]:
+    """
+    Check whether an IP is private or public.
+    """
+    ip_obj = ipaddress.ip_address(ip)
+    return {
+        "ip": ip,
+        "is_private": ip_obj.is_private,
+        "is_public": not ip_obj.is_private,
+    }
+
+
+def _dns_lookup_with_ip_type(hostname: str) -> List[Dict[str, Any]]:
+    """
+    Resolve DNS and classify each IP as public or private.
+    """
+    ips = _resolve_dns(hostname)
+    return [_check_ip_type(ip) for ip in ips]
+
+
 def _extract_endpoint_info(
     server: Dict,
     credentials: Credentials,
@@ -86,10 +124,22 @@ def _extract_endpoint_info(
 ) -> Dict:
     endpoint_info = {
         'public_endpoint': None,
+        'public_ip': None,
+        'private_ip': None,
     }
 
     # Public endpoint - fully qualified domain name
-    endpoint_info['public_endpoint'] = server.get('fully_qualified_domain_name')
+    fqdn = server.get('fully_qualified_domain_name')
+    endpoint_info['public_endpoint'] = fqdn
+
+    # Resolve the FQDN to actual IP addresses and classify them
+    if fqdn:
+        ips = _dns_lookup_with_ip_type(fqdn)
+        for ip_info in ips:
+            if ip_info.get("is_private") and not endpoint_info['private_ip']:
+                endpoint_info['private_ip'] = ip_info.get("ip")
+            if ip_info.get("is_public") and not endpoint_info['public_ip']:
+                endpoint_info['public_ip'] = ip_info.get("ip")
 
     return endpoint_info
 
@@ -243,6 +293,8 @@ def _enrich_server_data(
 
     endpoint_info = _extract_endpoint_info(server, credentials, subscription_id)
     server['endpoint'] = endpoint_info['public_endpoint']
+    server['public_ip'] = endpoint_info['public_ip']
+    server['private_ip'] = endpoint_info['private_ip']
 
     return server
 
@@ -281,6 +333,8 @@ def load_server_data(
     s.engine = server.engine,
     s.engineVersion = server.engineVersion,
     s.endpoint = server.endpoint,
+    s.public_ip = server.public_ip,
+    s.private_ip = server.private_ip,
     s.port = server.port
     WITH s
     MATCH (owner:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})
