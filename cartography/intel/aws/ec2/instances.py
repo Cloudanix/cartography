@@ -249,7 +249,7 @@ def transform_ec2_instances(
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
                     "HibernationOptions": instance.get("HibernationOptions", {}).get("Configured"),
                     "Region": region,
-                    "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
+                    "consolelink": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
                     "IamRoles": iam_roles,
                     # "UserData": user_data,
