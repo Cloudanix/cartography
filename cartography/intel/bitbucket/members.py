@@ -32,17 +32,32 @@ def get_workspace_members(access_token: str, workspace: str) -> List[Dict]:
 
 
 def transform_members(workspace_members: List[Dict], workspace: str) -> List[Dict]:
+    transformed_members = []
     for member in workspace_members:
-        member['workspace']['uuid'] = member['workspace']['uuid'].replace('{', '').replace('}', '')
-        member['user']['uuid'] = member['user']['uuid'].replace('{', '').replace('}', '')
+        try:
+            member['workspace']['uuid'] = member['workspace']['uuid'].replace('{', '').replace('}', '')
+            member['user']['uuid'] = member['user']['uuid'].replace('{', '').replace('}', '')
 
-        data = {
-            "workspace": workspace,
-            "member": cleanse_string(member["user"]["nickname"]),
-        }
-        member['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="member")
+            member_name = (
+                member["user"].get("nickname")
+                or member["user"].get("display_name")
+                or member["user"].get("uuid")
+            )
+            data = {
+                "workspace": workspace,
+                "member": cleanse_string(member_name),
+            }
+            member['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="member")
+            transformed_members.append(member)
 
-    return workspace_members
+        except Exception as e:
+            logger.warning(
+                f"skipping malformed bitbucket member record for workspace={workspace}: {e}",
+                extra={"member": member},
+            )
+            continue
+
+    return transformed_members
 
 
 def load_members_data(session: neo4j.Session, members_data: List[Dict], common_job_parameters: Dict) -> None:
