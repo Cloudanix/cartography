@@ -211,3 +211,21 @@ LIST_GROUP_MEMBERSHIPS = {
         },
     ],
 }
+
+
+LIST_REGION_SUBSCRIPTIONS = {
+    'RegionSubscriptions': [
+        {
+            'region-key': 'PHX',
+            'region-name': 'us-phoenix-1',
+            'status': 'READY',
+            'is-home-region': True,
+        },
+        {
+            'region-key': 'IAD',
+            'region-name': 'us-ashburn-1',
+            'status': 'READY',
+            'is-home-region': False,
+        },
+    ],
+}

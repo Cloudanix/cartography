@@ -1498,7 +1498,7 @@ def _attach_gcp_nic_access_configs(
     :return: Nothing
     """
     query = """
-    MATCH (nic{id: $NicId})
+    MATCH (nic:GCPNetworkInterface{id: $NicId})
     MERGE (ac:GCPNicAccessConfig{id: $AccessConfigId})
     ON CREATE SET ac.firstseen = timestamp(),
     ac.access_config_id = $AccessConfigId

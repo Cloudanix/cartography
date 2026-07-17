@@ -1,4 +1,5 @@
 from cartography.intel.azure import aks
+from cartography.intel.azure import compute
 from tests.data.azure.aks import DESCRIBE_CLUSTERS
 from tests.data.azure.aks import DESCRIBE_CONTAINERGROUPS
 from tests.data.azure.aks import DESCRIBE_CONTAINERREGISTRIES
@@ -512,3 +513,51 @@ def test_load_container_relationships(neo4j_session):
     actual = {(r['n1.id'], r['n2.id']) for r in result}
 
     assert actual == expected
+
+
+def test_link_compute_to_aks(neo4j_session):
+    # Guards link_compute_to_aks: BOTH AzureVirtualMachine and AzureVirtualMachineScaleSet,
+    # when tagged with aks_cluster_name/_rg/_pool_name, must link via HAS_NODE to the AKS
+    # cluster and its agent pool. This fails if the per-label query rewrite drops a label.
+    #
+    #   (AzureCluster)-[:HAS_NODE]->(vm / vmss)
+    #   (AzureCluster)-[:HAS]->(AzureClusterAgentPool)-[:HAS_NODE]->(vm / vmss)
+    #
+    # Unique ids so this is isolated from the other (module-scoped) tests in this file.
+    neo4j_session.run(
+        """
+        MERGE (c:AzureCluster {id: 'aks-link-cluster', name: 'AksLinkCluster', resourcegroup: 'AksLinkRG'})
+        MERGE (p:AzureClusterAgentPool {id: 'aks-link-pool', name: 'akslinkpool'})
+        MERGE (c)-[:HAS]->(p)
+        MERGE (:AzureVirtualMachine {
+            id: 'aks-link-vm',
+            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'akslinkpool'
+        })
+        MERGE (:AzureVirtualMachineScaleSet {
+            id: 'aks-link-vmss',
+            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'akslinkpool'
+        })
+        """,
+    )
+
+    compute.link_compute_to_aks(neo4j_session, TEST_UPDATE_TAG)
+
+    cluster_linked = {
+        r['nid'] for r in neo4j_session.run(
+            """
+            MATCH (c:AzureCluster {id: 'aks-link-cluster'})-[:HAS_NODE]->(node)
+            RETURN node.id AS nid;
+            """,
+        )
+    }
+    pool_linked = {
+        r['nid'] for r in neo4j_session.run(
+            """
+            MATCH (p:AzureClusterAgentPool {id: 'aks-link-pool'})-[:HAS_NODE]->(node)
+            RETURN node.id AS nid;
+            """,
+        )
+    }
+
+    assert cluster_linked == {'aks-link-vm', 'aks-link-vmss'}
+    assert pool_linked == {'aks-link-vm', 'aks-link-vmss'}

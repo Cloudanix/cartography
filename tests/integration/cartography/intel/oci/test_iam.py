@@ -3,6 +3,7 @@ import tests.data.oci.iam
 from cartography.intel.oci import iam
 from cartography.intel.oci import utils
 from tests.integration.util import check_nodes
+from tests.integration.util import check_rels
 
 
 TEST_TENANCY_ID = "ocid1.user.oc1..nqilyrb1l5t6gnmlcjgeim8q47vccnklev8k2ud9skn78eapu116oyv9wcr0"
@@ -118,3 +119,50 @@ def test_load_group_memberships(neo4j_session):
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
     )
+
+
+def test_load_group_memberships_links_users(neo4j_session):
+    # Load users and the group first, then membership edges; assert both users
+    # are wired to the group via MEMBER_OCID_GROUP through the batched loader.
+    iam.load_users(
+        neo4j_session, tests.data.oci.iam.LIST_USERS['Users'], TEST_TENANCY_ID, TEST_UPDATE_TAG,
+    )
+    iam.load_groups(
+        neo4j_session, tests.data.oci.iam.LIST_GROUPS['Groups'], TEST_TENANCY_ID, TEST_UPDATE_TAG,
+    )
+    group_ocid = "ocid1.group.oc1..wa03xlg35zi0tb33qyrjteen36zrkauzhjz8pi0yzt4d2b78uo745h5ze6at"
+    iam.load_group_memberships(
+        neo4j_session,
+        {group_ocid: tests.data.oci.iam.LIST_GROUP_MEMBERSHIPS},
+        TEST_UPDATE_TAG,
+    )
+    assert check_rels(
+        neo4j_session, "OCIUser", "id", "OCIGroup", "id", "MEMBER_OCID_GROUP",
+    ) == {
+        ("ocid1.user.oc1..m5oaceraqeiq47zqstzy6ickbbfkw7vg4srozp4sskn78eapu116oyv9wcr0", group_ocid),
+        ("ocid1.user.oc1..srozp4sskn78eapu116oyv9wcr06ickbbfkw7vg4m5oaceraqeiq47zqstzy", group_ocid),
+    }
+
+
+def test_load_region_subscriptions(neo4j_session):
+    neo4j_session.run(
+        "MERGE (t:OCITenancy{id: $id}) SET t.lastupdated = $tag",
+        id=TEST_TENANCY_ID,
+        tag=TEST_UPDATE_TAG,
+    )
+    iam.load_region_subscriptions(
+        neo4j_session,
+        tests.data.oci.iam.LIST_REGION_SUBSCRIPTIONS['RegionSubscriptions'],
+        TEST_TENANCY_ID,
+        TEST_UPDATE_TAG,
+    )
+    assert check_nodes(neo4j_session, "OCIRegion", ["id", "name"]) == {
+        ("PHX", "us-phoenix-1"),
+        ("IAD", "us-ashburn-1"),
+    }
+    assert check_rels(
+        neo4j_session, "OCITenancy", "id", "OCIRegion", "id", "OCI_REGION_SUBSCRIPTION",
+    ) == {
+        (TEST_TENANCY_ID, "PHX"),
+        (TEST_TENANCY_ID, "IAD"),
+    }
