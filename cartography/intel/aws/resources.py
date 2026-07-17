@@ -18,6 +18,7 @@ from . import iam
 from . import identitystore
 from . import inspector
 from . import kms
+from . import kinesis
 from . import lambda_function
 from . import permission_relationships
 from . import rds
@@ -64,6 +65,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'eks': eks.sync,
     'emr': emr.sync,
     'kms': kms.sync,
+    'kinesis': kinesis.sync,
     'apigateway': apigateway.sync,
     'secretsmanager': secretsmanager.sync,
     'sqs': sqs.sync,
