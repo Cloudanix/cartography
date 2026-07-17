@@ -1,40 +1,16 @@
 import logging
 import re
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Set
-
-from cartography.intel.aws.resources import RESOURCE_FUNCTIONS
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
-
-
-def parse_and_validate_aws_requested_syncs(aws_requested_syncs: str) -> List[str]:
-    validated_resources: List[str] = []
-    for resource in aws_requested_syncs.split(','):
-        resource = resource.strip()
-
-        if resource in RESOURCE_FUNCTIONS:
-            validated_resources.append(resource)
-        else:
-            valid_syncs: str = ', '.join(RESOURCE_FUNCTIONS.keys())
-            raise ValueError(
-                f'Error parsing `aws-requested-syncs`. You specified "{aws_requested_syncs}". '
-                f'Please check that your string is formatted properly. '
-                f'Example valid input looks like "s3,iam,rds" or "s3, ec2:instance, dynamodb". '
-                f'Our full list of valid values is: {valid_syncs}.',
-            )
-    return validated_resources
 
 
 def get_default_vpc(ec2_client):
     try:
         response = ec2_client.describe_vpcs(
-            Filters=[{'Name': 'isDefault', 'Values': ['true']}],
+            Filters=[{"Name": "isDefault", "Values": ["true"]}],
         )
-        vpcs = response.get('Vpcs', [])
+        vpcs = response.get("Vpcs", [])
 
         if not vpcs:
             logger.info("No default VPC found.")
@@ -85,7 +61,7 @@ def build_trusted_accounts(
 def is_cross_account_statement(
     statement: Dict[str, Any],
     trusted_accounts: Set[str],
-    trusted_organisations: Optional[Set[str]] = None,
+    trusted_organizations: Optional[Set[str]] = None,
     iam_unique_ids: Optional[Set[str]] = None,
 ) -> bool:
     """
@@ -94,14 +70,14 @@ def is_cross_account_statement(
     Args:
         statement: A single IAM policy statement dict.
         trusted_accounts: Set of account IDs considered trusted (own account + internal accounts).
-        trusted_organisations: Optional set of trusted organization IDs.
+        trusted_organizations: Optional set of trusted organization IDs.
         iam_unique_ids: Optional set of known IAM unique IDs (user/role/group IDs) for the account.
 
     Returns:
         True if the statement grants access to an account outside the trusted set.
     """
-    if trusted_organisations is None:
-        trusted_organisations = set()
+    if trusted_organizations is None:
+        trusted_organizations = set()
 
     if iam_unique_ids is None:
         iam_unique_ids = set()
@@ -124,7 +100,7 @@ def is_cross_account_statement(
 
     condition = statement.get("Condition", {})
     if condition and isinstance(condition, dict):
-        cond_result = _evaluate_condition_accounts(condition, normalized_trusted, trusted_organisations)
+        cond_result = _evaluate_condition_accounts(condition, normalized_trusted, trusted_organizations)
         if cond_result == "restricted":
             return False
         elif cond_result == "cross_account":
@@ -233,7 +209,7 @@ def _principal_is_cross_account(
 def _evaluate_condition_accounts(
     condition: Dict[str, Any],
     trusted_accounts: Set[str],
-    trusted_organisations: Optional[Set[str]] = None,
+    trusted_organizations: Optional[Set[str]] = None,
 ) -> str:
     """
     Evaluate condition keys related to account restrictions.
@@ -243,8 +219,8 @@ def _evaluate_condition_accounts(
         'cross_account' - condition explicitly references untrusted accounts
         'neutral' - no account-related conditions found
     """
-    if trusted_organisations is None:
-        trusted_organisations = set()
+    if trusted_organizations is None:
+        trusted_organizations = set()
 
     account_condition_keys = {
         "aws:principalaccount",
@@ -294,11 +270,11 @@ def _evaluate_condition_accounts(
                 has_account_key = True
                 if is_negated:
                     has_negated = True
-                elif trusted_organisations:
+                elif trusted_organizations:
                     orgs = value if isinstance(value, list) else [value]
                     all_trusted = True
                     for org in orgs:
-                        if not isinstance(org, str) or org not in trusted_organisations:
+                        if not isinstance(org, str) or org not in trusted_organizations:
                             has_untrusted = True
                             has_untrusted_account_key = True
                             all_trusted = False

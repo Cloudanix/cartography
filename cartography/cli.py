@@ -11,7 +11,7 @@ import cartography.config
 import cartography.sync
 import cartography.util
 from cartography.config import Config
-from cartography.intel.aws.util.common import parse_and_validate_aws_requested_syncs
+from cartography.intel.aws.resources import parse_and_validate_aws_requested_syncs
 
 
 logger = logging.getLogger(__name__)

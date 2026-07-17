@@ -18,11 +18,11 @@ from neo4j import GraphDatabase
 from . import ec2
 from . import organizations
 from .ec2.util import get_botocore_config
+from .resources import parse_and_validate_aws_requested_syncs
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph.session import Session
 from cartography.intel.aws.ec2.util import get_botocore_config
-from cartography.intel.aws.util.common import parse_and_validate_aws_requested_syncs
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_analysis_job
