@@ -2,6 +2,7 @@ from typing import Dict
 
 from . import audit_logging
 from . import compute
+from . import database
 from . import containerregistry
 from . import encryption
 from . import iam
@@ -22,4 +23,5 @@ RESOURCE_FUNCTIONS: Dict = {
     "logging": ocilogging.sync,
     "containerregistry": containerregistry.sync,
     "logging": audit_logging.sync,
+    "database": database.sync,
 }
