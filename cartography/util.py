@@ -491,6 +491,9 @@ def make_requests_url(url: str, access_token: str, return_raw: bool = False) -> 
         )
 
         if response.status_code != 200:
+            logger.warning(
+                f"non-200 response calling {url}: status={response.status_code} body={response.text[:100]!r}",
+            )
             return {}
 
         if return_raw:
@@ -499,5 +502,5 @@ def make_requests_url(url: str, access_token: str, return_raw: bool = False) -> 
         return response.json()
 
     except RequestException as e:
-        logger.info(f"failed to get response: {e}")
+        logger.info(f"failed to get response from {url}: {e}")
         return {}
