@@ -7,6 +7,7 @@ from cartography.models.core.relationships import CartographyRelProperties
 from cartography.models.core.relationships import CartographyRelSchema
 from cartography.models.core.relationships import LinkDirection
 from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
 from cartography.models.core.relationships import TargetNodeMatcher
 
 
@@ -58,7 +59,29 @@ class EC2ImageToAWSAccount(CartographyRelSchema):
 
 
 @dataclass(frozen=True)
+class EC2ImageToEC2InstanceRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# (:EC2Instance)-[:CHILDREN]->(:EC2Image)
+class EC2ImageToEC2Instance(CartographyRelSchema):
+    target_node_label: str = 'EC2Instance'
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {'imageid': PropertyRef('ImageId')},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "CHILDREN"
+    properties: EC2ImageToEC2InstanceRelProperties = EC2ImageToEC2InstanceRelProperties()
+
+
+@dataclass(frozen=True)
 class EC2ImageSchema(CartographyNodeSchema):
     label: str = 'EC2Image'
     properties: EC2ImageNodeProperties = EC2ImageNodeProperties()
     sub_resource_relationship: EC2ImageToAWSAccount = EC2ImageToAWSAccount()
+    other_relationships: OtherRelationships = OtherRelationships(
+        [
+            EC2ImageToEC2Instance(),
+        ],
+    )
