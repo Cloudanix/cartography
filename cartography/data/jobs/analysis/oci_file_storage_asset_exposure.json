@@ -1,0 +1,52 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OCI mount targets in scope",
+      "query": "MATCH (n:OCIMountTarget)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Reset exposed_internet properties on all OCI file systems in scope",
+      "query": "MATCH (n:OCIFileSystem)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Mark mount targets as exposed if they sit in a public subnet (allows public IPs on VNICs)",
+      "query": "MATCH (mt:OCIMountTarget)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (subnet:OCISubnet{ocid: mt.subnet_id, prohibit_public_ip_on_vnic: false}) SET mt.exposed_internet = true, (CASE WHEN NOT 'public_subnet' IN coalesce(mt.exposed_internet_type, []) THEN mt END).exposed_internet_type = coalesce(mt.exposed_internet_type, []) + 'public_subnet'",
+      "iterative": false
+    },
+    {
+      "__comment": "Mark mount targets as exposed if their subnet route table targets an Internet Gateway",
+      "query": "MATCH (mt:OCIMountTarget)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (subnet:OCISubnet{ocid: mt.subnet_id})-[:OCI_ROUTE_TABLE]->(rt:OCIRouteTable) WHERE rt.route_rules CONTAINS 'internet-gateway' SET mt.exposed_internet = true, (CASE WHEN NOT 'igw_route_rule' IN coalesce(mt.exposed_internet_type, []) THEN mt END).exposed_internet_type = coalesce(mt.exposed_internet_type, []) + 'igw_route_rule'",
+      "iterative": false
+    },
+    {
+      "__comment": "Mark mount targets as exposed if their subnet security list allows unrestricted ingress from 0.0.0.0/0",
+      "query": "MATCH (mt:OCIMountTarget)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (subnet:OCISubnet{ocid: mt.subnet_id})-[:OCI_SECURITY_LIST]->(sl:OCISecurityList) WHERE sl.ingress_security_rules CONTAINS '0.0.0.0/0' SET mt.exposed_internet = true, (CASE WHEN NOT 'unrestricted_securitylist_ingress' IN coalesce(mt.exposed_internet_type, []) THEN mt END).exposed_internet_type = coalesce(mt.exposed_internet_type, []) + 'unrestricted_securitylist_ingress'",
+      "iterative": false
+    },
+    {
+      "__comment": "Mark mount targets as exposed if an attached NSG allows unrestricted ingress from 0.0.0.0/0",
+      "query": "MATCH (mt:OCIMountTarget)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (nsg:OCINetworkSecurityGroup)-[:OCI_NSG_RULE]->(rule:OCINsgSecurityRule{direction: 'INGRESS', source: '0.0.0.0/0'}) WHERE nsg.ocid IN coalesce(mt.nsg_ids, []) SET mt.exposed_internet = true, (CASE WHEN NOT 'unrestricted_nsg_ingress' IN coalesce(mt.exposed_internet_type, []) THEN mt END).exposed_internet_type = coalesce(mt.exposed_internet_type, []) + 'unrestricted_nsg_ingress'",
+      "iterative": false
+    },
+    {
+      "__comment": "Propagate exposure from an exposed mount target to the file systems it exports",
+      "query": "MATCH (mt:OCIMountTarget)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE mt.exposed_internet = true MATCH (mt)-[:OCI_EXPORT]->(fs:OCIFileSystem) SET fs.exposed_internet = true, fs.exposed_internet_type = coalesce(mt.exposed_internet_type, [])",
+      "iterative": false
+    },
+    {
+      "__comment": "Build publicContext JSON for exposed mount targets",
+      "query": "MATCH (mt:OCIMountTarget)<-[:RESOURCE]-(c:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE mt.exposed_internet = true WITH mt, c OPTIONAL MATCH (mt)-[:OCI_EXPORT]->(fs:OCIFileSystem) WITH mt, c, collect(DISTINCT {fileSystemId: fs.id, fileSystemName: fs.display_name}) as fileSystems SET mt.publicContext = apoc.convert.toJson([{resource: mt.id, resourceType: 'oci-filestorage-mounttarget', context: [{mountTargetId: mt.id, mountTargetName: mt.display_name, compartmentId: c.id, subnetId: mt.subnet_id, nsgIds: coalesce(mt.nsg_ids, []), exposureTypes: mt.exposed_internet_type, fileSystems: fileSystems, region: mt.region}]}])",
+      "iterative": false
+    },
+    {
+      "__comment": "Build publicContext JSON for file systems exposed via their mount target",
+      "query": "MATCH (fs:OCIFileSystem)<-[:RESOURCE]-(c:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE fs.exposed_internet = true WITH fs, c SET fs.publicContext = apoc.convert.toJson([{resource: fs.id, resourceType: 'oci-filestorage-filesystem', context: [{fileSystemId: fs.id, fileSystemName: fs.display_name, compartmentId: c.id, availabilityDomain: fs.availability_domain, exposureTypes: fs.exposed_internet_type, region: fs.region}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "OCI file storage asset internet exposure"
+}
