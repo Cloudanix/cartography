@@ -36,22 +36,36 @@ def get_lambda_data(boto3_session: boto3.session.Session, region: str) -> List[D
         for each_function in page["Functions"]:
             each_function["region"] = region
             each_function["consolelink"] = aws_console_link.get_console_link(arn=each_function["FunctionArn"])
-            each_function["FunctionUrl"] = get_lambda_function_url_config(
+            url_config = get_lambda_function_url_config(
                 boto3_session,
                 each_function["FunctionName"],
                 region,
             )
+            if url_config:
+                each_function["FunctionUrl"] = url_config["FunctionUrl"]
+                each_function["FunctionUrlAuthType"] = url_config["AuthType"]
+            else:
+                each_function["FunctionUrl"] = None
+                each_function["FunctionUrlAuthType"] = None
             lambda_functions.append(each_function)
 
     return lambda_functions
 
 
 @timeit
-def get_lambda_function_url_config(boto3_session: boto3.session.Session, function_name: str, region: str) -> str:
+def get_lambda_function_url_config(boto3_session: boto3.session.Session, function_name: str, region: str) -> Dict:
+    """
+    Fetch the Function URL configuration including the auth type.
+    Returns a dict with 'FunctionUrl' and 'AuthType' keys, or None if no URL is configured.
+    AuthType is 'NONE' (public) or 'AWS_IAM' (requires IAM auth).
+    """
     client = boto3_session.client("lambda", region_name=region, config=get_botocore_config())
     try:
         url_config = client.get_function_url_config(FunctionName=function_name)
-        return url_config["FunctionUrl"]
+        return {
+            "FunctionUrl": url_config.get("FunctionUrl"),
+            "AuthType": url_config.get("AuthType"),
+        }
 
     except client.exceptions.ResourceNotFoundException as e:
         logger.debug(f"unable to fetch function url - ResourceNotFoundException: {region} - {function_name} - {e}")
@@ -62,20 +76,95 @@ def get_lambda_function_url_config(boto3_session: boto3.session.Session, functio
         return None
 
 
+# Services in resource-based policy SourceArn that indicate a public-facing trigger
+PUBLIC_FACING_TRIGGER_SERVICES = {
+    "elasticloadbalancing": "alb",
+    "execute-api": "apigateway",
+    "apigateway": "apigateway",
+    "cloudfront": "cloudfront",
+    "cognito-idp": "cognito",
+    "iot": "iot",
+}
+
+
+def _extract_public_trigger_sources(policy_document: Dict) -> List[str]:
+    """
+    Parse a Lambda resource-based policy and identify public-facing trigger sources.
+
+    Examines each policy statement's Condition.ArnLike.AWS:SourceArn (or SourceArn in Principal)
+    to detect services that can invoke the Lambda from the public internet, such as:
+    - API Gateway (execute-api)
+    - Application Load Balancer (elasticloadbalancing)
+    - CloudFront
+    - IoT Rules
+    - Cognito User Pools
+
+    Returns a deduplicated list of trigger source types (e.g., ['apigateway', 'alb']).
+    """
+    trigger_sources = set()
+
+    statements = policy_document.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+
+    for statement in statements:
+        if statement.get("Effect") != "Allow":
+            continue
+
+        # Check the Principal - if it's a service like elasticloadbalancing.amazonaws.com
+        principal = statement.get("Principal", {})
+        if isinstance(principal, str):
+            principal = {"AWS": principal}
+
+        service_principal = principal.get("Service", "")
+        if isinstance(service_principal, list):
+            service_principals = service_principal
+        else:
+            service_principals = [service_principal] if service_principal else []
+
+        for svc in service_principals:
+            svc_lower = svc.lower()
+            for key, trigger_type in PUBLIC_FACING_TRIGGER_SERVICES.items():
+                if key in svc_lower:
+                    trigger_sources.add(trigger_type)
+
+        # Check Condition -> ArnLike -> AWS:SourceArn
+        condition = statement.get("Condition", {})
+        for condition_operator in ("ArnLike", "ArnEquals", "StringLike", "StringEquals"):
+            condition_block = condition.get(condition_operator, {})
+            source_arn = condition_block.get("AWS:SourceArn") or condition_block.get("aws:SourceArn") or ""
+            if isinstance(source_arn, list):
+                source_arns = source_arn
+            else:
+                source_arns = [source_arn] if source_arn else []
+
+            for arn in source_arns:
+                arn_lower = arn.lower()
+                for key, trigger_type in PUBLIC_FACING_TRIGGER_SERVICES.items():
+                    if key in arn_lower:
+                        trigger_sources.add(trigger_type)
+
+    return sorted(trigger_sources)
+
+
 @timeit
 @aws_handle_regions
 def get_lambda_policies(boto3_session: boto3.session.Session, region: str, lambda_functions: List[Dict]) -> List[Dict]:
     """
-    Fetch policies for lambdas
+    Fetch policies for lambdas and extract public-facing trigger sources.
     """
     client = boto3_session.client("lambda", region_name=region, config=get_botocore_config())
     for lambda_function in lambda_functions:
         try:
             policy = client.get_policy(FunctionName=lambda_function["FunctionArn"])
             if policy is not None:
-                parsed_policy = Policy(json.loads(policy["Policy"]))
+                policy_document = json.loads(policy["Policy"])
+                parsed_policy = Policy(policy_document)
                 lambda_function["anonymous_access"] = parsed_policy.is_internet_accessible()
                 lambda_function["anonymous_actions"] = list(parsed_policy.internet_accessible_actions())
+                lambda_function["public_trigger_sources"] = _extract_public_trigger_sources(policy_document)
+            else:
+                lambda_function["public_trigger_sources"] = []
 
         except ClientError as e:
             if e.response["Error"]["Code"] in ("ResourceNotFoundException"):
@@ -132,6 +221,8 @@ def load_lambda_functions(
     lambda.masterarn = lf.MasterArn,
     lambda.kmskeyarn = lf.KMSKeyArn,
     lambda.functionurl = lf.FunctionUrl,
+    lambda.functionurl_auth_type = lf.FunctionUrlAuthType,
+    lambda.public_trigger_sources = lf.public_trigger_sources,
     lambda.lastupdated = $aws_update_tag,
     lambda.vpc_id = CASE WHEN lf.VpcConfig.VpcId is not null then lf.VpcConfig.VpcId ELSE lambda.vpc_id END
     WITH lambda, lf
