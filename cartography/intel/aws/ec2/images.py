@@ -12,6 +12,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.common import build_trusted_accounts
+from cartography.intel.aws.util.common import is_cross_account_statement
 from cartography.models.aws.ec2.images import EC2ImageSchema
 from cartography.util import aws_handle_regions
 from cartography.util import timeit
@@ -56,6 +58,80 @@ def get_images(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
 
 
 @timeit
+def get_image_launch_permissions(
+    boto3_session: boto3.session.Session, image_id: str, region: str,
+) -> List[Dict]:
+    """
+    Fetch launch permissions for a given AMI using describe_image_attribute.
+    Returns a list of permission dicts, e.g.:
+      [{"UserId": "123456789012"}, {"Group": "all"}]
+    """
+    client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
+    try:
+        response = client.describe_image_attribute(
+            Attribute='launchPermission',
+            ImageId=image_id,
+        )
+        return response.get('LaunchPermissions', [])
+    except ClientError as e:
+        logger.debug(f"Failed to get launch permissions for image {image_id} in {region}: {e}")
+        return []
+
+
+@timeit
+def check_image_cross_account_access(
+    launch_permissions: List[Dict],
+    current_aws_account_id: str,
+    internal_accounts: List[str],
+    image_arn: str = "",
+) -> bool:
+    """
+    Determine if an AMI has cross-account access based on its launch permissions.
+
+    A launch permission grants cross-account access if:
+    - Group is 'all' (public AMI)
+    - UserId references an account outside the trusted set
+
+    Args:
+        launch_permissions: List of launch permission dicts from describe_image_attribute.
+        current_aws_account_id: The AWS account that owns the image.
+        internal_accounts: List of internal/trusted account IDs.
+        image_arn: The ARN of the image (used for trusted account resolution).
+
+    Returns:
+        True if the image has cross-account access.
+    """
+    if not launch_permissions:
+        return False
+
+    trusted = build_trusted_accounts(
+        aws_ids_arns=[current_aws_account_id],
+        internal_accounts=internal_accounts,
+        resource_arn=image_arn,
+        own_account=current_aws_account_id,
+    )
+
+    for permission in launch_permissions:
+        group = permission.get("Group", "")
+        user_id = permission.get("UserId", "")
+
+        # Public AMI - cross-account by definition
+        if group == "all":
+            return True
+
+        # Check if the UserId is a cross-account reference
+        if user_id:
+            stmt = {
+                "Effect": "Allow",
+                "Principal": {"AWS": user_id},
+            }
+            if is_cross_account_statement(stmt, trusted):
+                return True
+
+    return False
+
+
+@timeit
 def transform_images(boto3_session: boto3.session.Session, imags: List[Dict], image_ids: List[str], region: str, account_id: str) -> List[Dict]:
     images = []
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
@@ -69,6 +145,9 @@ def transform_images(boto3_session: boto3.session.Session, imags: List[Dict], im
                     console_arn = f"arn:aws:ec2:{region}:{account_id}:image/{image['ImageId']}"
                     image['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
                     image['region'] = region
+                    # Images in use but not self-owned don't need cross-account check
+                    # (they are already external images being used by this account)
+                    image['has_cross_account_access'] = None
                     images.append(image)
     except ClientError as e:
         logger.warning(f"Failed retrieve images for region - {region}. Error - {e}")
@@ -95,7 +174,8 @@ def load_images(
     i.sriov_net_support = image.SriovNetSupport,
     i.bootmode = image.BootMode, i.owner = image.OwnerId, i.image_owner_alias = image.ImageOwnerAlias,
     i.kernel_id = image.KernelId, i.ramdisk_id = image.RamdiskId,
-    i.region=image.region, i.arn=image.arn
+    i.region=image.region, i.arn=image.arn,
+    i.has_cross_account_access = image.has_cross_account_access
     WITH i
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(i)
@@ -155,11 +235,28 @@ def sync_ec2_images(
 
     logger.info("Syncing images for account '%s', at %s.", current_aws_account_id, tic)
 
+    internal_accounts = common_job_parameters.get("INTERNAL_ACCOUNTS", [])
+
     data = []
     for region in regions:
         logger.info("Syncing images for region '%s' in account '%s'.", region, current_aws_account_id)
         images_in_use = get_images_in_use(neo4j_session, region, current_aws_account_id)
         imgs = get_images(boto3_session, region)
+
+        # Check cross-account access for self-owned images
+        for image in imgs:
+            image['region'] = region
+            console_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:image/{image['ImageId']}"
+            image['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
+            launch_permissions = get_image_launch_permissions(boto3_session, image['ImageId'], region)
+            image['has_cross_account_access'] = check_image_cross_account_access(
+                launch_permissions,
+                current_aws_account_id,
+                internal_accounts,
+                image_arn=console_arn,
+            )
+
+        data.extend(imgs)
         data.extend(transform_images(boto3_session, imgs, images_in_use, region, current_aws_account_id))
 
     logger.info(f"Total EC2 Images: {len(data)}")

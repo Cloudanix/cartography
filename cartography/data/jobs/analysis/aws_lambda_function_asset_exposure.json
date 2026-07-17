@@ -19,7 +19,27 @@
       "iterative": false
     },
     {
-      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.exposed_internet = true OR lf.anonymous_access = true WITH lf SET lf.publicContext = apoc.convert.toJson([{resource: lf.arn, resourceType: 'aws-compute-lambda-function', context: [{functionArn: lf.arn, functionName: lf.name, functionUrl: lf.functionurl, runtime: lf.runtime, vpcId: lf.vpc_id, exposureTypes: coalesce(lf.exposed_internet_type, []), anonymousAccess: coalesce(lf.anonymous_access, false), anonymousAccessType: coalesce(lf.anonymous_access_type, []), memorySize: lf.memorysize, timeout: lf.timeout}]}])",
+      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.functionurl IS NOT NULL AND lf.functionurl_auth_type = 'NONE' SET lf.exposed_internet = true, (CASE WHEN NOT 'function_url_public' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'function_url_public';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.public_trigger_sources IS NOT NULL AND size(lf.public_trigger_sources) > 0 AND 'apigateway' IN lf.public_trigger_sources SET lf.exposed_internet = true, (CASE WHEN NOT 'apigateway_trigger' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'apigateway_trigger';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.public_trigger_sources IS NOT NULL AND size(lf.public_trigger_sources) > 0 AND 'alb' IN lf.public_trigger_sources SET lf.exposed_internet = true, (CASE WHEN NOT 'alb_trigger' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'alb_trigger';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.public_trigger_sources IS NOT NULL AND size(lf.public_trigger_sources) > 0 AND 'cloudfront' IN lf.public_trigger_sources SET lf.exposed_internet = true, (CASE WHEN NOT 'cloudfront_trigger' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'cloudfront_trigger';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.public_trigger_sources IS NOT NULL AND size(lf.public_trigger_sources) > 0 AND 'iot' IN lf.public_trigger_sources SET lf.exposed_internet = true, (CASE WHEN NOT 'iot_trigger' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'iot_trigger';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.exposed_internet = true OR lf.anonymous_access = true WITH lf SET lf.publicContext = apoc.convert.toJson([{resource: lf.arn, resourceType: 'aws-compute-lambda-function', context: [{functionArn: lf.arn, functionName: lf.name, functionUrl: lf.functionurl, functionUrlAuthType: lf.functionurl_auth_type, runtime: lf.runtime, vpcId: lf.vpc_id, exposureTypes: coalesce(lf.exposed_internet_type, []), publicTriggerSources: coalesce(lf.public_trigger_sources, []), anonymousAccess: coalesce(lf.anonymous_access, false), anonymousAccessType: coalesce(lf.anonymous_access_type, []), memorySize: lf.memorysize, timeout: lf.timeout}]}])",
       "iterative": false
     }
   ],
