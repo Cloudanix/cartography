@@ -638,6 +638,7 @@ def publish_response(logger, body, resp, params):
         "response": resp,
         "services": body.get("params", {}).get("services", []),
         "runTimestamp": resp.get("updateTag", None),
+        "dc": body.get("params", {}).get("workspace").get("data_center"),
     }
 
     pubsub_helper = PubSubLibrary()

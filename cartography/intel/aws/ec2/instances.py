@@ -54,7 +54,7 @@ def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], r
 
         try:
             response = client.describe_images(ImageIds=batch)
-            images = response.get("Image", [])
+            images = response.get("Images", [])
             image_details.update({image["ImageId"]: image for image in images})
         except ClientError as e:
             logger.error(f"Error fetching image details for batch {i // 1000 + 1}: {e}")
@@ -249,7 +249,7 @@ def transform_ec2_instances(
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
                     "HibernationOptions": instance.get("HibernationOptions", {}).get("Configured"),
                     "Region": region,
-                    "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
+                    "consolelink": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
                     "IamRoles": iam_roles,
                     # "UserData": user_data,

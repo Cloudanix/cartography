@@ -10,6 +10,10 @@ from typing import List
 
 import neo4j
 import oci
+import oci.artifacts
+import oci.key_management
+import oci.logging
+import oci.monitoring
 from oci.exceptions import ConfigFileNotFound
 from oci.exceptions import InvalidConfig
 from oci.exceptions import ProfileNotFound
@@ -23,11 +27,11 @@ from . import utils
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.intel.oci.util.common import parse_and_validate_oci_requested_syncs
-# from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job
 # from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
-Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging database')
+Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging containerregistry database')
 
 
 def _sync_one_compartment(
@@ -129,6 +133,26 @@ def _sync_one_compartment(
             logger.warning(
                 'OCI sync function "%s" was specified but does not exist. Did you misspell it?', func_name,
             )
+
+    # Run analysis jobs after all resource syncs complete
+    _oci_analysis_jobs = [
+        'oci_subnet_asset_exposure.json',
+        'oci_instance_asset_exposure.json',
+        'oci_iam_user_analysis.json',
+        'oci_iam_policy_analysis.json',
+        'oci_encryption_analysis.json',
+        'oci_monitoring_analysis.json',
+        'oci_containerregistry_asset_exposure.json',
+        'oci_object_storage_asset_exposure.json',
+        'oci_file_storage_asset_exposure.json',
+        'oci_logging_analysis.json',
+    ]
+    for job_file in _oci_analysis_jobs:
+        try:
+            run_analysis_job(job_file, neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.error("Error running OCI analysis job '%s': %s", job_file, e, exc_info=True)
+
     logger.info(
         json.dumps({
             "event": "oci_compartment_timing_summary",
@@ -241,6 +265,16 @@ def _get_logging_resource(credentials: Dict[str, Any]) -> oci.logging.LoggingMan
     return oci.logging.LoggingManagementClient(credentials)
 
 
+def _get_containerregistry_resource(credentials: Dict[str, Any]) -> oci.artifacts.ArtifactsClient:
+    """
+    Instantiates an OCI ArtifactsClient resource object to call the Container Registry API.
+    See https://docs.oracle.com/en-us/iaas/Content/Registry/Concepts/registryoverview.htm.
+    :param credentials: OCI Credentials object
+    :return: An ArtifactsClient resource object
+    """
+    return oci.artifacts.ArtifactsClient(credentials)
+
+
 def _get_storage_resource(credentials: Dict[str, Any]) -> storage.OCIStorageClients:
     """
     Bundle the three OCI SDK clients used by the storage sync (Object Storage,
@@ -286,6 +320,7 @@ def _initialize_resources(credentials: Dict[str, Any]) -> Resources:
     """
     return Resources(
         compute=_get_compute_resource(credentials),
+        containerregistry=_get_containerregistry_resource(credentials),
         encryption=_get_encryption_resource(credentials),
         iam=_get_iam_resource(credentials),
         logging=_get_logging_resource(credentials),

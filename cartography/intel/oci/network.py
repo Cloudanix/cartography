@@ -8,10 +8,10 @@ from typing import Dict
 from typing import List
 
 import neo4j
-import oci
 import oci.logging
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -53,38 +53,42 @@ def load_vcns(
     Ingest OCI VCN data into Neo4j.
     """
     ingest_vcn = """
-    MERGE (vcn:OCIVcn{id: $OCID})
-    ON CREATE SET vcn.firstseen = timestamp(),
-    vcn.createdate = $TIME_CREATED
-    SET vcn.ocid = $OCID,
-    vcn.display_name = $DISPLAY_NAME,
-    vcn.compartment_id = $COMPARTMENT_ID,
-    vcn.resource_type = 'oci-vcn',
-    vcn.cidr_block = $CIDR_BLOCK,
-    vcn.dns_label = $DNS_LABEL,
-    vcn.lifecycle_state = $LIFECYCLE_STATE,
-    vcn.region = $REGION,
-    vcn.lastupdated = $oci_update_tag
-    WITH vcn
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
-    MERGE (cc)-[r:RESOURCE]->(vcn)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS vcn
+        MERGE (v:OCIVcn{id: vcn.ocid})
+        ON CREATE SET v.firstseen = timestamp(),
+        v.createdate = vcn.time_created
+        SET v.ocid = vcn.ocid,
+        v.display_name = vcn.display_name,
+        v.compartment_id = vcn.compartment_id,
+        v.resource_type = 'oci-vcn',
+        v.cidr_block = vcn.cidr_block,
+        v.dns_label = vcn.dns_label,
+        v.lifecycle_state = vcn.lifecycle_state,
+        v.region = $REGION,
+        v.lastupdated = $oci_update_tag
+        WITH v, vcn
+        MATCH (cc:OCICompartment{id: vcn.compartment_id})
+        MERGE (cc)-[r:RESOURCE]->(v)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for vcn in vcns:
-        neo4j_session.run(
-            ingest_vcn,
-            OCID=vcn.get("id"),
-            DISPLAY_NAME=vcn.get("display-name"),
-            COMPARTMENT_ID=vcn.get("compartment-id", compartment_id),
-            CIDR_BLOCK=vcn.get("cidr-block", ""),
-            DNS_LABEL=vcn.get("dns-label", ""),
-            LIFECYCLE_STATE=vcn.get("lifecycle-state"),
-            REGION=region,
-            TIME_CREATED=str(vcn.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": vcn.get("id"),
+            "display_name": vcn.get("display-name"),
+            "compartment_id": vcn.get("compartment-id", compartment_id),
+            "cidr_block": vcn.get("cidr-block", ""),
+            "dns_label": vcn.get("dns-label", ""),
+            "lifecycle_state": vcn.get("lifecycle-state"),
+            "time_created": str(vcn.get("time-created", "")),
+        }
+        for vcn in vcns
+    ]
+    load_graph_data(
+        neo4j_session, ingest_vcn, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_vcns(
@@ -142,50 +146,54 @@ def load_subnets(
     Ingest OCI Subnet data into Neo4j and link to VCN.
     """
     ingest_subnet = """
-    MERGE (subnet:OCISubnet{id: $OCID})
-    ON CREATE SET subnet.firstseen = timestamp(),
-    subnet.createdate = $TIME_CREATED
-    SET subnet.ocid = $OCID,
-    subnet.display_name = $DISPLAY_NAME,
-    subnet.compartment_id = $COMPARTMENT_ID,
-    subnet.resource_type = 'oci-subnet',
-    subnet.cidr_block = $CIDR_BLOCK,
-    subnet.availability_domain = $AVAILABILITY_DOMAIN,
-    subnet.dns_label = $DNS_LABEL,
-    subnet.lifecycle_state = $LIFECYCLE_STATE,
-    subnet.vcn_id = $VCN_ID,
-    subnet.route_table_id = $ROUTE_TABLE_ID,
-    subnet.security_list_ids = $SECURITY_LIST_IDS,
-    subnet.subnet_domain_name = $SUBNET_DOMAIN_NAME,
-    subnet.prohibit_public_ip_on_vnic = $PROHIBIT_PUBLIC_IP,
-    subnet.region = $REGION,
-    subnet.lastupdated = $oci_update_tag
-    WITH subnet
-    MATCH (vcn:OCIVcn{id: $VCN_ID})
-    MERGE (vcn)-[r:OCI_SUBNET]->(subnet)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS subnet
+        MERGE (s:OCISubnet{id: subnet.ocid})
+        ON CREATE SET s.firstseen = timestamp(),
+        s.createdate = subnet.time_created
+        SET s.ocid = subnet.ocid,
+        s.display_name = subnet.display_name,
+        s.compartment_id = subnet.compartment_id,
+        s.resource_type = 'oci-subnet',
+        s.cidr_block = subnet.cidr_block,
+        s.availability_domain = subnet.availability_domain,
+        s.dns_label = subnet.dns_label,
+        s.lifecycle_state = subnet.lifecycle_state,
+        s.vcn_id = subnet.vcn_id,
+        s.route_table_id = subnet.route_table_id,
+        s.security_list_ids = subnet.security_list_ids,
+        s.subnet_domain_name = subnet.subnet_domain_name,
+        s.prohibit_public_ip_on_vnic = subnet.prohibit_public_ip,
+        s.region = $REGION,
+        s.lastupdated = $oci_update_tag
+        WITH s, subnet
+        MATCH (vcn:OCIVcn{id: subnet.vcn_id})
+        MERGE (vcn)-[r:OCI_SUBNET]->(s)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for subnet in subnets:
-        neo4j_session.run(
-            ingest_subnet,
-            OCID=subnet.get("id"),
-            DISPLAY_NAME=subnet.get("display-name"),
-            COMPARTMENT_ID=subnet.get("compartment-id", compartment_id),
-            CIDR_BLOCK=subnet.get("cidr-block", ""),
-            AVAILABILITY_DOMAIN=subnet.get("availability-domain", ""),
-            DNS_LABEL=subnet.get("dns-label", ""),
-            LIFECYCLE_STATE=subnet.get("lifecycle-state"),
-            VCN_ID=subnet.get("vcn-id", ""),
-            ROUTE_TABLE_ID=subnet.get("route-table-id", ""),
-            SECURITY_LIST_IDS=subnet.get("security-list-ids", []) or [],
-            SUBNET_DOMAIN_NAME=subnet.get("subnet-domain-name", ""),
-            PROHIBIT_PUBLIC_IP=subnet.get("prohibit-public-ip-on-vnic", False),
-            REGION=region,
-            TIME_CREATED=str(subnet.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": subnet.get("id"),
+            "display_name": subnet.get("display-name"),
+            "compartment_id": subnet.get("compartment-id", compartment_id),
+            "cidr_block": subnet.get("cidr-block", ""),
+            "availability_domain": subnet.get("availability-domain", ""),
+            "dns_label": subnet.get("dns-label", ""),
+            "lifecycle_state": subnet.get("lifecycle-state"),
+            "vcn_id": subnet.get("vcn-id", ""),
+            "route_table_id": subnet.get("route-table-id", ""),
+            "security_list_ids": subnet.get("security-list-ids", []) or [],
+            "subnet_domain_name": subnet.get("subnet-domain-name", ""),
+            "prohibit_public_ip": subnet.get("prohibit-public-ip-on-vnic", False),
+            "time_created": str(subnet.get("time-created", "")),
+        }
+        for subnet in subnets
+    ]
+    load_graph_data(
+        neo4j_session, ingest_subnet, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_subnets(
@@ -243,42 +251,45 @@ def load_security_lists(
     Ingest OCI Security List data into Neo4j and link to VCN.
     """
     ingest_security_list = """
-    MERGE (sl:OCISecurityList{id: $OCID})
-    ON CREATE SET sl.firstseen = timestamp(),
-    sl.createdate = $TIME_CREATED
-    SET sl.ocid = $OCID,
-    sl.display_name = $DISPLAY_NAME,
-    sl.compartment_id = $COMPARTMENT_ID,
-    sl.resource_type = 'oci-security-list',
-    sl.vcn_id = $VCN_ID,
-    sl.lifecycle_state = $LIFECYCLE_STATE,
-    sl.ingress_security_rules = $INGRESS_RULES,
-    sl.egress_security_rules = $EGRESS_RULES,
-    sl.region = $REGION,
-    sl.lastupdated = $oci_update_tag
-    WITH sl
-    MATCH (vcn:OCIVcn{id: $VCN_ID})
-    MERGE (vcn)-[r:OCI_SECURITY_LIST]->(sl)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS sl
+        MERGE (s:OCISecurityList{id: sl.ocid})
+        ON CREATE SET s.firstseen = timestamp(),
+        s.createdate = sl.time_created
+        SET s.ocid = sl.ocid,
+        s.display_name = sl.display_name,
+        s.compartment_id = sl.compartment_id,
+        s.resource_type = 'oci-security-list',
+        s.vcn_id = sl.vcn_id,
+        s.lifecycle_state = sl.lifecycle_state,
+        s.ingress_security_rules = sl.ingress_rules,
+        s.egress_security_rules = sl.egress_rules,
+        s.region = $REGION,
+        s.lastupdated = $oci_update_tag
+        WITH s, sl
+        MATCH (vcn:OCIVcn{id: sl.vcn_id})
+        MERGE (vcn)-[r:OCI_SECURITY_LIST]->(s)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
+    rows = []
     for sl in security_lists:
         ingress_rules = sl.get("ingress-security-rules", [])
         egress_rules = sl.get("egress-security-rules", [])
-        neo4j_session.run(
-            ingest_security_list,
-            OCID=sl.get("id"),
-            DISPLAY_NAME=sl.get("display-name"),
-            COMPARTMENT_ID=sl.get("compartment-id", compartment_id),
-            VCN_ID=sl.get("vcn-id", ""),
-            LIFECYCLE_STATE=sl.get("lifecycle-state"),
-            INGRESS_RULES=json.dumps(ingress_rules) if ingress_rules else "[]",
-            EGRESS_RULES=json.dumps(egress_rules) if egress_rules else "[]",
-            REGION=region,
-            TIME_CREATED=str(sl.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+        rows.append({
+            "ocid": sl.get("id"),
+            "display_name": sl.get("display-name"),
+            "compartment_id": sl.get("compartment-id", compartment_id),
+            "vcn_id": sl.get("vcn-id", ""),
+            "lifecycle_state": sl.get("lifecycle-state"),
+            "ingress_rules": json.dumps(ingress_rules) if ingress_rules else "[]",
+            "egress_rules": json.dumps(egress_rules) if egress_rules else "[]",
+            "time_created": str(sl.get("time-created", "")),
+        })
+    load_graph_data(
+        neo4j_session, ingest_security_list, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_security_lists(
@@ -338,36 +349,40 @@ def load_network_security_groups(
     Ingest OCI Network Security Group data into Neo4j and link to VCN.
     """
     ingest_nsg = """
-    MERGE (nsg:OCINetworkSecurityGroup{id: $OCID})
-    ON CREATE SET nsg.firstseen = timestamp(),
-    nsg.createdate = $TIME_CREATED
-    SET nsg.ocid = $OCID,
-    nsg.display_name = $DISPLAY_NAME,
-    nsg.compartment_id = $COMPARTMENT_ID,
-    nsg.resource_type = 'oci-network-security-group',
-    nsg.vcn_id = $VCN_ID,
-    nsg.lifecycle_state = $LIFECYCLE_STATE,
-    nsg.region = $REGION,
-    nsg.lastupdated = $oci_update_tag
-    WITH nsg
-    MATCH (vcn:OCIVcn{id: $VCN_ID})
-    MERGE (vcn)-[r:OCI_NETWORK_SECURITY_GROUP]->(nsg)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS nsg
+        MERGE (g:OCINetworkSecurityGroup{id: nsg.ocid})
+        ON CREATE SET g.firstseen = timestamp(),
+        g.createdate = nsg.time_created
+        SET g.ocid = nsg.ocid,
+        g.display_name = nsg.display_name,
+        g.compartment_id = nsg.compartment_id,
+        g.resource_type = 'oci-network-security-group',
+        g.vcn_id = nsg.vcn_id,
+        g.lifecycle_state = nsg.lifecycle_state,
+        g.region = $REGION,
+        g.lastupdated = $oci_update_tag
+        WITH g, nsg
+        MATCH (vcn:OCIVcn{id: nsg.vcn_id})
+        MERGE (vcn)-[r:OCI_NETWORK_SECURITY_GROUP]->(g)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for nsg in nsgs:
-        neo4j_session.run(
-            ingest_nsg,
-            OCID=nsg.get("id"),
-            DISPLAY_NAME=nsg.get("display-name"),
-            COMPARTMENT_ID=nsg.get("compartment-id", compartment_id),
-            VCN_ID=nsg.get("vcn-id", ""),
-            LIFECYCLE_STATE=nsg.get("lifecycle-state"),
-            REGION=region,
-            TIME_CREATED=str(nsg.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": nsg.get("id"),
+            "display_name": nsg.get("display-name"),
+            "compartment_id": nsg.get("compartment-id", compartment_id),
+            "vcn_id": nsg.get("vcn-id", ""),
+            "lifecycle_state": nsg.get("lifecycle-state"),
+            "time_created": str(nsg.get("time-created", "")),
+        }
+        for nsg in nsgs
+    ]
+    load_graph_data(
+        neo4j_session, ingest_nsg, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_network_security_groups(
@@ -427,34 +442,36 @@ def load_nsg_security_rules(
     Ingest OCI NSG Security Rule data into Neo4j and link to NSG.
     """
     ingest_rule = """
-    MERGE (rule:OCINsgSecurityRule{id: $OCID})
-    ON CREATE SET rule.firstseen = timestamp()
-    SET rule.ocid = $OCID,
-    rule.direction = $DIRECTION,
-    rule.protocol = $PROTOCOL,
-    rule.description = $DESCRIPTION,
-    rule.source = $SOURCE,
-    rule.source_type = $SOURCE_TYPE,
-    rule.destination = $DESTINATION,
-    rule.destination_type = $DESTINATION_TYPE,
-    rule.is_stateless = $IS_STATELESS,
-    rule.is_valid = $IS_VALID,
-    rule.tcp_dest_port_min = $TCP_DEST_PORT_MIN,
-    rule.tcp_dest_port_max = $TCP_DEST_PORT_MAX,
-    rule.tcp_src_port_min = $TCP_SRC_PORT_MIN,
-    rule.tcp_src_port_max = $TCP_SRC_PORT_MAX,
-    rule.udp_dest_port_min = $UDP_DEST_PORT_MIN,
-    rule.udp_dest_port_max = $UDP_DEST_PORT_MAX,
-    rule.icmp_type = $ICMP_TYPE,
-    rule.icmp_code = $ICMP_CODE,
-    rule.lastupdated = $oci_update_tag
-    WITH rule
-    MATCH (nsg:OCINetworkSecurityGroup{id: $NSG_ID})
-    MERGE (nsg)-[r:OCI_NSG_RULE]->(rule)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS rule
+        MERGE (rl:OCINsgSecurityRule{id: rule.ocid})
+        ON CREATE SET rl.firstseen = timestamp()
+        SET rl.ocid = rule.ocid,
+        rl.direction = rule.direction,
+        rl.protocol = rule.protocol,
+        rl.description = rule.description,
+        rl.source = rule.source,
+        rl.source_type = rule.source_type,
+        rl.destination = rule.destination,
+        rl.destination_type = rule.destination_type,
+        rl.is_stateless = rule.is_stateless,
+        rl.is_valid = rule.is_valid,
+        rl.tcp_dest_port_min = rule.tcp_dest_port_min,
+        rl.tcp_dest_port_max = rule.tcp_dest_port_max,
+        rl.tcp_src_port_min = rule.tcp_src_port_min,
+        rl.tcp_src_port_max = rule.tcp_src_port_max,
+        rl.udp_dest_port_min = rule.udp_dest_port_min,
+        rl.udp_dest_port_max = rule.udp_dest_port_max,
+        rl.icmp_type = rule.icmp_type,
+        rl.icmp_code = rule.icmp_code,
+        rl.lastupdated = $oci_update_tag
+        WITH rl
+        MATCH (nsg:OCINetworkSecurityGroup{id: $NSG_ID})
+        MERGE (nsg)-[r:OCI_NSG_RULE]->(rl)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
+    rows = []
     for rule in rules:
         # Extract TCP options
         tcp_options = rule.get("tcp-options", {}) or {}
@@ -468,29 +485,31 @@ def load_nsg_security_rules(
         # Extract ICMP options
         icmp_options = rule.get("icmp-options", {}) or {}
 
-        neo4j_session.run(
-            ingest_rule,
-            OCID=rule.get("id"),
-            DIRECTION=rule.get("direction", ""),
-            PROTOCOL=rule.get("protocol", ""),
-            DESCRIPTION=rule.get("description", ""),
-            SOURCE=rule.get("source", ""),
-            SOURCE_TYPE=rule.get("source-type", ""),
-            DESTINATION=rule.get("destination", ""),
-            DESTINATION_TYPE=rule.get("destination-type", ""),
-            IS_STATELESS=rule.get("is-stateless", False),
-            IS_VALID=rule.get("is-valid", True),
-            TCP_DEST_PORT_MIN=tcp_dest_range.get("min"),
-            TCP_DEST_PORT_MAX=tcp_dest_range.get("max"),
-            TCP_SRC_PORT_MIN=tcp_src_range.get("min"),
-            TCP_SRC_PORT_MAX=tcp_src_range.get("max"),
-            UDP_DEST_PORT_MIN=udp_dest_range.get("min"),
-            UDP_DEST_PORT_MAX=udp_dest_range.get("max"),
-            ICMP_TYPE=icmp_options.get("type"),
-            ICMP_CODE=icmp_options.get("code"),
-            NSG_ID=nsg_id,
-            oci_update_tag=oci_update_tag,
-        )
+        rows.append({
+            "ocid": rule.get("id"),
+            "direction": rule.get("direction", ""),
+            "protocol": rule.get("protocol", ""),
+            "description": rule.get("description", ""),
+            "source": rule.get("source", ""),
+            "source_type": rule.get("source-type", ""),
+            "destination": rule.get("destination", ""),
+            "destination_type": rule.get("destination-type", ""),
+            "is_stateless": rule.get("is-stateless", False),
+            "is_valid": rule.get("is-valid", True),
+            "tcp_dest_port_min": tcp_dest_range.get("min"),
+            "tcp_dest_port_max": tcp_dest_range.get("max"),
+            "tcp_src_port_min": tcp_src_range.get("min"),
+            "tcp_src_port_max": tcp_src_range.get("max"),
+            "udp_dest_port_min": udp_dest_range.get("min"),
+            "udp_dest_port_max": udp_dest_range.get("max"),
+            "icmp_type": icmp_options.get("type"),
+            "icmp_code": icmp_options.get("code"),
+        })
+
+    load_graph_data(
+        neo4j_session, ingest_rule, rows,
+        NSG_ID=nsg_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_nsg_security_rules(
@@ -557,38 +576,42 @@ def load_internet_gateways(
     Ingest OCI Internet Gateway data into Neo4j and link to VCN.
     """
     ingest_igw = """
-    MERGE (igw:OCIInternetGateway{id: $OCID})
-    ON CREATE SET igw.firstseen = timestamp(),
-    igw.createdate = $TIME_CREATED
-    SET igw.ocid = $OCID,
-    igw.display_name = $DISPLAY_NAME,
-    igw.compartment_id = $COMPARTMENT_ID,
-    igw.resource_type = 'oci-internet-gateway',
-    igw.vcn_id = $VCN_ID,
-    igw.is_enabled = $IS_ENABLED,
-    igw.lifecycle_state = $LIFECYCLE_STATE,
-    igw.region = $REGION,
-    igw.lastupdated = $oci_update_tag
-    WITH igw
-    MATCH (vcn:OCIVcn{id: $VCN_ID})
-    MERGE (vcn)-[r:OCI_INTERNET_GATEWAY]->(igw)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS gw
+        MERGE (igw:OCIInternetGateway{id: gw.ocid})
+        ON CREATE SET igw.firstseen = timestamp(),
+        igw.createdate = gw.time_created
+        SET igw.ocid = gw.ocid,
+        igw.display_name = gw.display_name,
+        igw.compartment_id = gw.compartment_id,
+        igw.resource_type = 'oci-internet-gateway',
+        igw.vcn_id = gw.vcn_id,
+        igw.is_enabled = gw.is_enabled,
+        igw.lifecycle_state = gw.lifecycle_state,
+        igw.region = $REGION,
+        igw.lastupdated = $oci_update_tag
+        WITH igw, gw
+        MATCH (vcn:OCIVcn{id: gw.vcn_id})
+        MERGE (vcn)-[r:OCI_INTERNET_GATEWAY]->(igw)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for gw in gateways:
-        neo4j_session.run(
-            ingest_igw,
-            OCID=gw.get("id"),
-            DISPLAY_NAME=gw.get("display-name"),
-            COMPARTMENT_ID=gw.get("compartment-id", compartment_id),
-            VCN_ID=gw.get("vcn-id", ""),
-            IS_ENABLED=gw.get("is-enabled", True),
-            LIFECYCLE_STATE=gw.get("lifecycle-state"),
-            REGION=region,
-            TIME_CREATED=str(gw.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": gw.get("id"),
+            "display_name": gw.get("display-name"),
+            "compartment_id": gw.get("compartment-id", compartment_id),
+            "vcn_id": gw.get("vcn-id", ""),
+            "is_enabled": gw.get("is-enabled", True),
+            "lifecycle_state": gw.get("lifecycle-state"),
+            "time_created": str(gw.get("time-created", "")),
+        }
+        for gw in gateways
+    ]
+    load_graph_data(
+        neo4j_session, ingest_igw, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_internet_gateways(
@@ -648,39 +671,43 @@ def load_nat_gateways(
     Ingest OCI NAT Gateway data into Neo4j and link to VCN.
     """
     ingest_nat = """
-    MERGE (nat:OCINatGateway{id: $OCID})
-    ON CREATE SET nat.firstseen = timestamp(),
-    nat.createdate = $TIME_CREATED
-    SET nat.ocid = $OCID,
-    nat.display_name = $DISPLAY_NAME,
-    nat.compartment_id = $COMPARTMENT_ID,
-    nat.vcn_id = $VCN_ID,
-    nat.nat_ip = $NAT_IP,
-    nat.block_traffic = $BLOCK_TRAFFIC,
-    nat.lifecycle_state = $LIFECYCLE_STATE,
-    nat.region = $REGION,
-    nat.lastupdated = $oci_update_tag
-    WITH nat
-    MATCH (vcn:OCIVcn{id: $VCN_ID})
-    MERGE (vcn)-[r:OCI_NAT_GATEWAY]->(nat)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS gw
+        MERGE (nat:OCINatGateway{id: gw.ocid})
+        ON CREATE SET nat.firstseen = timestamp(),
+        nat.createdate = gw.time_created
+        SET nat.ocid = gw.ocid,
+        nat.display_name = gw.display_name,
+        nat.compartment_id = gw.compartment_id,
+        nat.vcn_id = gw.vcn_id,
+        nat.nat_ip = gw.nat_ip,
+        nat.block_traffic = gw.block_traffic,
+        nat.lifecycle_state = gw.lifecycle_state,
+        nat.region = $REGION,
+        nat.lastupdated = $oci_update_tag
+        WITH nat, gw
+        MATCH (vcn:OCIVcn{id: gw.vcn_id})
+        MERGE (vcn)-[r:OCI_NAT_GATEWAY]->(nat)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
-    for gw in gateways:
-        neo4j_session.run(
-            ingest_nat,
-            OCID=gw.get("id"),
-            DISPLAY_NAME=gw.get("display-name"),
-            COMPARTMENT_ID=gw.get("compartment-id", compartment_id),
-            VCN_ID=gw.get("vcn-id", ""),
-            NAT_IP=gw.get("nat-ip", ""),
-            BLOCK_TRAFFIC=gw.get("block-traffic", False),
-            LIFECYCLE_STATE=gw.get("lifecycle-state"),
-            REGION=region,
-            TIME_CREATED=str(gw.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": gw.get("id"),
+            "display_name": gw.get("display-name"),
+            "compartment_id": gw.get("compartment-id", compartment_id),
+            "vcn_id": gw.get("vcn-id", ""),
+            "nat_ip": gw.get("nat-ip", ""),
+            "block_traffic": gw.get("block-traffic", False),
+            "lifecycle_state": gw.get("lifecycle-state"),
+            "time_created": str(gw.get("time-created", "")),
+        }
+        for gw in gateways
+    ]
+    load_graph_data(
+        neo4j_session, ingest_nat, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_nat_gateways(
@@ -740,39 +767,42 @@ def load_route_tables(
     Ingest OCI Route Table data into Neo4j and link to VCN.
     """
     ingest_rt = """
-    MERGE (rt:OCIRouteTable{id: $OCID})
-    ON CREATE SET rt.firstseen = timestamp(),
-    rt.createdate = $TIME_CREATED
-    SET rt.ocid = $OCID,
-    rt.display_name = $DISPLAY_NAME,
-    rt.compartment_id = $COMPARTMENT_ID,
-    rt.resource_type = 'oci-route-table',
-    rt.vcn_id = $VCN_ID,
-    rt.lifecycle_state = $LIFECYCLE_STATE,
-    rt.route_rules = $ROUTE_RULES,
-    rt.region = $REGION,
-    rt.lastupdated = $oci_update_tag
-    WITH rt
-    MATCH (vcn:OCIVcn{id: $VCN_ID})
-    MERGE (vcn)-[r:OCI_ROUTE_TABLE]->(rt)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS rt
+        MERGE (t:OCIRouteTable{id: rt.ocid})
+        ON CREATE SET t.firstseen = timestamp(),
+        t.createdate = rt.time_created
+        SET t.ocid = rt.ocid,
+        t.display_name = rt.display_name,
+        t.compartment_id = rt.compartment_id,
+        t.resource_type = 'oci-route-table',
+        t.vcn_id = rt.vcn_id,
+        t.lifecycle_state = rt.lifecycle_state,
+        t.route_rules = rt.route_rules,
+        t.region = $REGION,
+        t.lastupdated = $oci_update_tag
+        WITH t, rt
+        MATCH (vcn:OCIVcn{id: rt.vcn_id})
+        MERGE (vcn)-[r:OCI_ROUTE_TABLE]->(t)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
+    rows = []
     for rt in route_tables:
         route_rules = rt.get("route-rules", [])
-        neo4j_session.run(
-            ingest_rt,
-            OCID=rt.get("id"),
-            DISPLAY_NAME=rt.get("display-name"),
-            COMPARTMENT_ID=rt.get("compartment-id", compartment_id),
-            VCN_ID=rt.get("vcn-id", ""),
-            LIFECYCLE_STATE=rt.get("lifecycle-state"),
-            ROUTE_RULES=json.dumps(route_rules) if route_rules else "[]",
-            REGION=region,
-            TIME_CREATED=str(rt.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+        rows.append({
+            "ocid": rt.get("id"),
+            "display_name": rt.get("display-name"),
+            "compartment_id": rt.get("compartment-id", compartment_id),
+            "vcn_id": rt.get("vcn-id", ""),
+            "lifecycle_state": rt.get("lifecycle-state"),
+            "route_rules": json.dumps(route_rules) if route_rules else "[]",
+            "time_created": str(rt.get("time-created", "")),
+        })
+    load_graph_data(
+        neo4j_session, ingest_rt, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_route_tables(
@@ -815,18 +845,20 @@ def sync_subnet_associations(
     """
     logger.debug("Syncing OCI subnet associations for tenancy '%s', region '%s'.", tenancy_id, region)
     link_subnet_route_table = """
-    MATCH (subnet:OCISubnet{id: $SUBNET_ID})
-    MATCH (rt:OCIRouteTable{id: $ROUTE_TABLE_ID})
-    MERGE (subnet)-[r:OCI_ROUTE_TABLE]->(rt)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS row
+        MATCH (subnet:OCISubnet{id: row.subnet_id})
+        MATCH (rt:OCIRouteTable{id: row.route_table_id})
+        MERGE (subnet)-[r:OCI_ROUTE_TABLE]->(rt)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
     link_subnet_security_list = """
-    MATCH (subnet:OCISubnet{id: $SUBNET_ID})
-    MATCH (sl:OCISecurityList{id: $SECURITY_LIST_ID})
-    MERGE (subnet)-[r:OCI_SECURITY_LIST]->(sl)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS row
+        MATCH (subnet:OCISubnet{id: row.subnet_id})
+        MATCH (sl:OCISecurityList{id: row.security_list_id})
+        MERGE (subnet)-[r:OCI_SECURITY_LIST]->(sl)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
 
     query = (
@@ -838,22 +870,16 @@ def sync_subnet_associations(
     )
     for compartment in compartments:
         subnets = neo4j_session.run(query, COMPARTMENT_ID=compartment["ocid"], REGION=region)
+        rt_rows = []
+        sl_rows = []
         for subnet in subnets:
             route_table_id = subnet["route_table_id"]
             if route_table_id:
-                neo4j_session.run(
-                    link_subnet_route_table,
-                    SUBNET_ID=subnet["ocid"],
-                    ROUTE_TABLE_ID=route_table_id,
-                    oci_update_tag=oci_update_tag,
-                )
+                rt_rows.append({"subnet_id": subnet["ocid"], "route_table_id": route_table_id})
             for security_list_id in (subnet["security_list_ids"] or []):
-                neo4j_session.run(
-                    link_subnet_security_list,
-                    SUBNET_ID=subnet["ocid"],
-                    SECURITY_LIST_ID=security_list_id,
-                    oci_update_tag=oci_update_tag,
-                )
+                sl_rows.append({"subnet_id": subnet["ocid"], "security_list_id": security_list_id})
+        load_graph_data(neo4j_session, link_subnet_route_table, rt_rows, oci_update_tag=oci_update_tag)
+        load_graph_data(neo4j_session, link_subnet_security_list, sl_rows, oci_update_tag=oci_update_tag)
 
 
 # ============================================================
@@ -889,58 +915,62 @@ def load_vnics(
     via its VNIC attachment.
     """
     ingest_vnic = """
-    MERGE (vnic:OCIVnic{id: $OCID})
-    ON CREATE SET vnic.firstseen = timestamp(),
-    vnic.createdate = $TIME_CREATED
-    SET vnic.ocid = $OCID,
-    vnic.display_name = $DISPLAY_NAME,
-    vnic.compartment_id = $COMPARTMENT_ID,
-    vnic.availability_domain = $AVAILABILITY_DOMAIN,
-    vnic.lifecycle_state = $LIFECYCLE_STATE,
-    vnic.private_ip = $PRIVATE_IP,
-    vnic.public_ip = $PUBLIC_IP,
-    vnic.is_primary = $IS_PRIMARY,
-    vnic.hostname_label = $HOSTNAME_LABEL,
-    vnic.mac_address = $MAC_ADDRESS,
-    vnic.skip_source_dest_check = $SKIP_SOURCE_DEST_CHECK,
-    vnic.subnet_id = $SUBNET_ID,
-    vnic.region = $REGION,
-    vnic.lastupdated = $oci_update_tag
-    WITH vnic
-    OPTIONAL MATCH (subnet:OCISubnet{id: $SUBNET_ID})
-    FOREACH (_ IN CASE WHEN subnet IS NULL THEN [] ELSE [1] END |
-        MERGE (subnet)-[rs:OCI_VNIC]->(vnic)
-        ON CREATE SET rs.firstseen = timestamp()
-        SET rs.lastupdated = $oci_update_tag
-    )
-    WITH vnic
-    OPTIONAL MATCH (attachment:OCIVnicAttachment{vnic_id: $OCID})
-    FOREACH (_ IN CASE WHEN attachment IS NULL THEN [] ELSE [1] END |
-        MERGE (attachment)-[ra:OCI_VNIC]->(vnic)
-        ON CREATE SET ra.firstseen = timestamp()
-        SET ra.lastupdated = $oci_update_tag
-    )
+    UNWIND $DictList AS vnic
+        MERGE (v:OCIVnic{id: vnic.ocid})
+        ON CREATE SET v.firstseen = timestamp(),
+        v.createdate = vnic.time_created
+        SET v.ocid = vnic.ocid,
+        v.display_name = vnic.display_name,
+        v.compartment_id = vnic.compartment_id,
+        v.availability_domain = vnic.availability_domain,
+        v.lifecycle_state = vnic.lifecycle_state,
+        v.private_ip = vnic.private_ip,
+        v.public_ip = vnic.public_ip,
+        v.is_primary = vnic.is_primary,
+        v.hostname_label = vnic.hostname_label,
+        v.mac_address = vnic.mac_address,
+        v.skip_source_dest_check = vnic.skip_source_dest_check,
+        v.subnet_id = vnic.subnet_id,
+        v.region = $REGION,
+        v.lastupdated = $oci_update_tag
+        WITH v, vnic
+        OPTIONAL MATCH (subnet:OCISubnet{id: vnic.subnet_id})
+        FOREACH (_ IN CASE WHEN subnet IS NULL THEN [] ELSE [1] END |
+            MERGE (subnet)-[rs:OCI_VNIC]->(v)
+            ON CREATE SET rs.firstseen = timestamp()
+            SET rs.lastupdated = $oci_update_tag
+        )
+        WITH v, vnic
+        OPTIONAL MATCH (attachment:OCIVnicAttachment{vnic_id: vnic.ocid})
+        FOREACH (_ IN CASE WHEN attachment IS NULL THEN [] ELSE [1] END |
+            MERGE (attachment)-[ra:OCI_VNIC]->(v)
+            ON CREATE SET ra.firstseen = timestamp()
+            SET ra.lastupdated = $oci_update_tag
+        )
     """
 
-    for vnic in vnics:
-        neo4j_session.run(
-            ingest_vnic,
-            OCID=vnic.get("id"),
-            DISPLAY_NAME=vnic.get("display-name"),
-            COMPARTMENT_ID=vnic.get("compartment-id", ""),
-            AVAILABILITY_DOMAIN=vnic.get("availability-domain", ""),
-            LIFECYCLE_STATE=vnic.get("lifecycle-state"),
-            PRIVATE_IP=vnic.get("private-ip", ""),
-            PUBLIC_IP=vnic.get("public-ip", ""),
-            IS_PRIMARY=vnic.get("is-primary", False),
-            HOSTNAME_LABEL=vnic.get("hostname-label", ""),
-            MAC_ADDRESS=vnic.get("mac-address", ""),
-            SKIP_SOURCE_DEST_CHECK=vnic.get("skip-source-dest-check", False),
-            SUBNET_ID=vnic.get("subnet-id", ""),
-            REGION=region,
-            TIME_CREATED=str(vnic.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+    rows = [
+        {
+            "ocid": vnic.get("id"),
+            "display_name": vnic.get("display-name"),
+            "compartment_id": vnic.get("compartment-id", ""),
+            "availability_domain": vnic.get("availability-domain", ""),
+            "lifecycle_state": vnic.get("lifecycle-state"),
+            "private_ip": vnic.get("private-ip", ""),
+            "public_ip": vnic.get("public-ip", ""),
+            "is_primary": vnic.get("is-primary", False),
+            "hostname_label": vnic.get("hostname-label", ""),
+            "mac_address": vnic.get("mac-address", ""),
+            "skip_source_dest_check": vnic.get("skip-source-dest-check", False),
+            "subnet_id": vnic.get("subnet-id", ""),
+            "time_created": str(vnic.get("time-created", "")),
+        }
+        for vnic in vnics
+    ]
+    load_graph_data(
+        neo4j_session, ingest_vnic, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_vnics(
@@ -1031,56 +1061,60 @@ def load_flow_logs(
     are configured for.
     """
     ingest_flow_log = """
-    MERGE (fl:OCIFlowLog:OCILog{id: $OCID})
-    ON CREATE SET fl.firstseen = timestamp(),
-    fl.createdate = $TIME_CREATED
-    SET fl.ocid = $OCID,
-    fl.display_name = $DISPLAY_NAME,
-    fl.compartment_id = $COMPARTMENT_ID,
-    fl.log_group_id = $LOG_GROUP_ID,
-    fl.log_type = $LOG_TYPE,
-    fl.is_enabled = $IS_ENABLED,
-    fl.lifecycle_state = $LIFECYCLE_STATE,
-    fl.source_service = $SOURCE_SERVICE,
-    fl.source_category = $SOURCE_CATEGORY,
-    fl.source_resource = $SOURCE_RESOURCE,
-    fl.region = $REGION,
-    fl.lastupdated = $oci_update_tag
-    WITH fl, $SOURCE_RESOURCE as source_resource
-    OPTIONAL MATCH (subnet:OCISubnet{id: source_resource})
-    FOREACH (_ IN CASE WHEN subnet IS NULL THEN [] ELSE [1] END |
-        MERGE (subnet)-[rs:OCI_FLOW_LOG]->(fl)
-        ON CREATE SET rs.firstseen = timestamp()
-        SET rs.lastupdated = $oci_update_tag
-    )
-    WITH fl, source_resource
-    OPTIONAL MATCH (vcn:OCIVcn{id: source_resource})
-    FOREACH (_ IN CASE WHEN vcn IS NULL THEN [] ELSE [1] END |
-        MERGE (vcn)-[rv:OCI_FLOW_LOG]->(fl)
-        ON CREATE SET rv.firstseen = timestamp()
-        SET rv.lastupdated = $oci_update_tag
-    )
+    UNWIND $DictList AS log
+        MERGE (fl:OCIFlowLog:OCILog{id: log.ocid})
+        ON CREATE SET fl.firstseen = timestamp(),
+        fl.createdate = log.time_created
+        SET fl.ocid = log.ocid,
+        fl.display_name = log.display_name,
+        fl.compartment_id = log.compartment_id,
+        fl.log_group_id = log.log_group_id,
+        fl.log_type = log.log_type,
+        fl.is_enabled = log.is_enabled,
+        fl.lifecycle_state = log.lifecycle_state,
+        fl.source_service = log.source_service,
+        fl.source_category = log.source_category,
+        fl.source_resource = log.source_resource,
+        fl.region = $REGION,
+        fl.lastupdated = $oci_update_tag
+        WITH fl, log.source_resource as source_resource
+        OPTIONAL MATCH (subnet:OCISubnet{id: source_resource})
+        FOREACH (_ IN CASE WHEN subnet IS NULL THEN [] ELSE [1] END |
+            MERGE (subnet)-[rs:OCI_FLOW_LOG]->(fl)
+            ON CREATE SET rs.firstseen = timestamp()
+            SET rs.lastupdated = $oci_update_tag
+        )
+        WITH fl, source_resource
+        OPTIONAL MATCH (vcn:OCIVcn{id: source_resource})
+        FOREACH (_ IN CASE WHEN vcn IS NULL THEN [] ELSE [1] END |
+            MERGE (vcn)-[rv:OCI_FLOW_LOG]->(fl)
+            ON CREATE SET rv.firstseen = timestamp()
+            SET rv.lastupdated = $oci_update_tag
+        )
     """
 
+    rows = []
     for log in logs:
         configuration = log.get("configuration", {}) or {}
         source = configuration.get("source", {}) or {}
-        neo4j_session.run(
-            ingest_flow_log,
-            OCID=log.get("id"),
-            DISPLAY_NAME=log.get("display-name"),
-            COMPARTMENT_ID=log.get("compartment-id", ""),
-            LOG_GROUP_ID=log.get("log-group-id", log_group_id),
-            LOG_TYPE=log.get("log-type", ""),
-            IS_ENABLED=log.get("is-enabled", False),
-            LIFECYCLE_STATE=log.get("lifecycle-state"),
-            SOURCE_SERVICE=source.get("service", ""),
-            SOURCE_CATEGORY=source.get("category", ""),
-            SOURCE_RESOURCE=source.get("resource", ""),
-            REGION=region,
-            TIME_CREATED=str(log.get("time-created", "")),
-            oci_update_tag=oci_update_tag,
-        )
+        rows.append({
+            "ocid": log.get("id"),
+            "display_name": log.get("display-name"),
+            "compartment_id": log.get("compartment-id", ""),
+            "log_group_id": log.get("log-group-id", log_group_id),
+            "log_type": log.get("log-type", ""),
+            "is_enabled": log.get("is-enabled", False),
+            "lifecycle_state": log.get("lifecycle-state"),
+            "source_service": source.get("service", ""),
+            "source_category": source.get("category", ""),
+            "source_resource": source.get("resource", ""),
+            "time_created": str(log.get("time-created", "")),
+        })
+
+    load_graph_data(
+        neo4j_session, ingest_flow_log, rows,
+        REGION=region, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_flow_logs(

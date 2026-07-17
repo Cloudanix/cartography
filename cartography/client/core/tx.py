@@ -191,6 +191,20 @@ def write_list_of_dicts_tx(
     tx.run(query, kwargs)
 
 
+def write_query_tx(
+        tx: neo4j.Transaction,
+        query: str,
+) -> None:
+    """
+    Runs a single parameter-less write query inside a managed transaction. Used for DDL such as
+    `CREATE INDEX` where there is no `$DictList` payload.
+    :param tx: The neo4j write transaction.
+    :param query: The Neo4j write query to run.
+    :return: None
+    """
+    tx.run(query)
+
+
 def load_graph_data(
         neo4j_session: neo4j.Session,
         query: str,
@@ -231,7 +245,8 @@ def ensure_indexes(neo4j_session: neo4j.Session, node_schema: CartographyNodeSch
     for query in queries:
         if not query.startswith('CREATE INDEX IF NOT EXISTS'):
             raise ValueError('Query provided to `ensure_indexes()` does not start with "CREATE INDEX IF NOT EXISTS".')
-        neo4j_session.run(query)
+        # Managed transaction so index creation retries on TransientError instead of failing the sync.
+        neo4j_session.execute_write(write_query_tx, query)
 
 
 def load(

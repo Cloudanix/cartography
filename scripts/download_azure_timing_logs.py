@@ -72,28 +72,28 @@ _SERVICE_TIMING_EVENTS: Dict[str, str] = {
 
 _SUMMARY_EVENTS: Dict[str, str] = {
     "azure_subscription_timing_summary": "azure",
-    "aws_account_timing_summary":        "aws",
-    "gcp_project_timing_summary":        "gcp",
-    "github_org_timing_summary":         "github",
-    "gitlab_group_timing_summary":       "gitlab",
+    "aws_account_timing_summary": "aws",
+    "gcp_project_timing_summary": "gcp",
+    "github_org_timing_summary": "github",
+    "gitlab_group_timing_summary": "gitlab",
     "bitbucket_workspace_timing_summary": "bitbucket",
-    "azuredevops_org_timing_summary":    "azuredevops",
-    "oci_compartment_timing_summary":    "oci",
-    "oci_tenancy_timing_summary":        "oci",
+    "azuredevops_org_timing_summary": "azuredevops",
+    "oci_compartment_timing_summary": "oci",
+    "oci_tenancy_timing_summary": "oci",
 }
 
 _ALL_KNOWN_EVENTS: Dict[str, str] = {**_SERVICE_TIMING_EVENTS, **_SUMMARY_EVENTS}
 
 # Primary scope key per provider (used to extract scope_id from events)
 _PROVIDER_SCOPE_KEY: Dict[str, str] = {
-    "azure":       "subscription_id",
-    "aws":         "account_id",
-    "gcp":         "project_id",
-    "github":      "org",
-    "gitlab":      "group",
-    "bitbucket":   "workspace",
+    "azure": "subscription_id",
+    "aws": "account_id",
+    "gcp": "project_id",
+    "github": "org",
+    "gitlab": "group",
+    "bitbucket": "workspace",
     "azuredevops": "org",
-    "oci":         "tenancy",
+    "oci": "tenancy",
 }
 
 ALL_PROVIDERS = ["azure", "aws", "gcp", "github", "gitlab", "bitbucket", "azuredevops", "oci"]
@@ -105,14 +105,14 @@ ALL_PROVIDERS = ["azure", "aws", "gcp", "github", "gitlab", "bitbucket", "azured
 # ---------------------------------------------------------------------------
 
 _PROVIDER_FILTER: Dict[str, str] = {
-    "azure":       '?"azure_service_timing" ?"azure_subscription_timing_summary"',
-    "aws":         '?"aws_service_timing" ?"aws_account_timing_summary"',
-    "gcp":         '?"gcp_service_timing" ?"gcp_project_timing_summary"',
-    "github":      '?"github_service_timing" ?"github_org_timing_summary"',
-    "gitlab":      '?"gitlab_service_timing" ?"gitlab_group_timing_summary"',
-    "bitbucket":   '?"bitbucket_service_timing" ?"bitbucket_workspace_timing_summary"',
+    "azure": '?"azure_service_timing" ?"azure_subscription_timing_summary"',
+    "aws": '?"aws_service_timing" ?"aws_account_timing_summary"',
+    "gcp": '?"gcp_service_timing" ?"gcp_project_timing_summary"',
+    "github": '?"github_service_timing" ?"github_org_timing_summary"',
+    "gitlab": '?"gitlab_service_timing" ?"gitlab_group_timing_summary"',
+    "bitbucket": '?"bitbucket_service_timing" ?"bitbucket_workspace_timing_summary"',
     "azuredevops": '?"azuredevops_service_timing" ?"azuredevops_org_timing_summary"',
-    "oci":         '?"oci_service_timing" ?"oci_compartment_timing_summary" ?"oci_tenancy_timing_summary"',
+    "oci": '?"oci_service_timing" ?"oci_compartment_timing_summary" ?"oci_tenancy_timing_summary"',
     # All providers: match any JSON line containing "_service_timing" or "_timing_summary"
     "all": '?"_service_timing" ?"_timing_summary"',
 }
@@ -144,10 +144,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--log-stream-prefix", default=None, help="Filter by log stream prefix")
     p.add_argument("--hours", type=float, default=24, help="Look back N hours from now (default: 24)")
     p.add_argument("--start", default=None, help="Start time UTC (YYYY-MM-DD HH:MM)")
-    p.add_argument("--end",   default=None, help="End time UTC (YYYY-MM-DD HH:MM), defaults to now")
-    p.add_argument("--output",    default=None, help="Save full JSON to this file (default: stdout)")
+    p.add_argument("--end", default=None, help="End time UTC (YYYY-MM-DD HH:MM), defaults to now")
+    p.add_argument("--output", default=None, help="Save full JSON to this file (default: stdout)")
     p.add_argument("--from-file", default=None, help="Analyze a previously saved JSON file (no CloudWatch fetch)")
-    p.add_argument("--region",  default=None, help="AWS region (default: from env/profile)")
+    p.add_argument("--region", default=None, help="AWS region (default: from env/profile)")
     p.add_argument("--profile", default=None, help="AWS profile name")
     p.add_argument(
         "--provider",
@@ -155,9 +155,9 @@ def parse_args() -> argparse.Namespace:
         choices=ALL_PROVIDERS + ["all"],
         help="Provider to fetch/analyze (default: all)",
     )
-    p.add_argument("--summary-only",   action="store_true", help="Only show total/summary events, skip service-level")
+    p.add_argument("--summary-only", action="store_true", help="Only show total/summary events, skip service-level")
     p.add_argument("--throttled-only", action="store_true", help="Azure: only services with throttle_count > 0")
-    p.add_argument("--failed-only",    action="store_true", help="Only show events with errors")
+    p.add_argument("--failed-only", action="store_true", help="Only show events with errors")
     p.add_argument("--service", default=None, help="Restrict stats to a single service name")
     p.add_argument("--top", type=int, default=None, help="Show top N slowest services per provider")
     return p.parse_args()
@@ -336,7 +336,7 @@ def print_azure_service_stats(events: List[Dict], args: argparse.Namespace) -> N
         )
 
     throttled = [(r[0], r[7]) for r in rows if r[7] > 0]
-    failed    = [(r[0], r[2]) for r in rows if r[2] > 0]
+    failed = [(r[0], r[2]) for r in rows if r[2] > 0]
     if throttled or failed:
         err("")
         for svc, count in throttled:
@@ -358,11 +358,11 @@ def print_azure_subscription_stats(events: List[Dict]) -> None:
     )
     err("  {}", "-" * 105)
     for e in sorted(sub_evs, key=lambda x: x.get("total_duration_seconds", 0), reverse=True):
-        sub     = e.get("subscription_id", "?")
-        total   = e.get("total_duration_seconds", 0)
-        mode    = e.get("run_mode", "?")
+        sub = e.get("subscription_id", "?")
+        total = e.get("total_duration_seconds", 0)
+        mode = e.get("run_mode", "?")
         slowest = e.get("slowest_service") or "?"
-        failed  = e.get("failed_services", {})
+        failed = e.get("failed_services", {})
         failed_str = ", ".join(f"{s}({t})" for s, t in failed.items()) if failed else "none"
         err("  {:<{w}} {:>10.1f} {:>10} {:<22} {}", sub, total, mode, slowest, failed_str, w=38)
 
@@ -429,9 +429,9 @@ def print_provider_stats(events: List[Dict], provider: str, args: argparse.Names
         for e in sum_sorted:
             # oci has both tenancy and compartment keys; fall back gracefully
             scope_id = e.get(scope_key) or e.get("compartment", "?")
-            total    = e.get("total_duration_seconds", 0)
-            slowest  = e.get("slowest_service") or "?"
-            failed   = e.get("failed_services", {})
+            total = e.get("total_duration_seconds", 0)
+            slowest = e.get("slowest_service") or "?"
+            failed = e.get("failed_services", {})
             failed_str = ", ".join(str(s) for s in failed) if failed else "none"
             err("  {:<{w}} {:>10.1f} {:>22} {}", scope_id, total, slowest, failed_str, w=38)
 
@@ -442,15 +442,15 @@ def print_error_details(events: List[Dict]) -> None:
         return
     err("\nFailed events:")
     for e in errors:
-        prov     = e.get("provider", "?")
-        svc      = e.get("service", e.get("event", "?"))
+        prov = e.get("provider", "?")
+        svc = e.get("service", e.get("event", "?"))
         scope_key = _PROVIDER_SCOPE_KEY.get(prov, "scope")
-        scope_id  = e.get(scope_key) or e.get("subscription_id", "?")
-        scope     = f"{scope_key}={scope_id}"
-        ts        = e.get("_timestamp", "?")
-        etype     = e.get("error_type", "")
-        emsg      = e.get("error_message", "")
-        suffix    = f" — {etype}({emsg})" if etype else ""
+        scope_id = e.get(scope_key) or e.get("subscription_id", "?")
+        scope = f"{scope_key}={scope_id}"
+        ts = e.get("_timestamp", "?")
+        etype = e.get("error_type", "")
+        emsg = e.get("error_message", "")
+        suffix = f" — {etype}({emsg})" if etype else ""
         err("  [{}] {} {} {}{}", ts, prov, scope, svc, suffix)
 
 
@@ -472,7 +472,7 @@ def main() -> None:
 
         err("Loaded {} events from {}", len(all_events), args.from_file)
         start_str = meta.get("start", "?")
-        end_str   = meta.get("end", "?")
+        end_str = meta.get("end", "?")
         log_group_label = meta.get("log_group", args.from_file)
         err("Time range: {} → {}", start_str, end_str)
 
@@ -486,11 +486,11 @@ def main() -> None:
             sys.exit(1)
 
         session = boto3.Session(profile_name=args.profile, region_name=args.region)
-        client  = session.client("logs")
+        client = session.client("logs")
 
         start_ms, end_ms = resolve_time_range(args)
         start_str = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).isoformat()
-        end_str   = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).isoformat()
+        end_str = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).isoformat()
         log_group_label = args.log_group
         err("Time range: {} → {}", start_str, end_str)
         err("Provider filter: {}", args.provider)
@@ -516,7 +516,7 @@ def main() -> None:
 
     err("")
     for prov in sorted(by_provider):
-        evs   = by_provider[prov]
+        evs = by_provider[prov]
         n_svc = sum(1 for e in evs if e.get("event", "").endswith("_service_timing"))
         n_sum = sum(1 for e in evs if e.get("event", "").endswith("_timing_summary"))
         err("  {:<14} service={:<5}  summary={}", prov, n_svc, n_sum)
@@ -540,12 +540,12 @@ def main() -> None:
     if not args.from_file:
         output = {
             "meta": {
-                "start":           start_str,
-                "end":             end_str,
-                "log_group":       log_group_label,
+                "start": start_str,
+                "end": end_str,
+                "log_group": log_group_label,
                 "provider_filter": args.provider,
-                "total_events":    len(all_events),
-                "by_provider":     {p: len(evs) for p, evs in by_provider.items()},
+                "total_events": len(all_events),
+                "by_provider": {p: len(evs) for p, evs in by_provider.items()},
             },
             "events": all_events,
         }

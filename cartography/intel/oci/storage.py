@@ -17,6 +17,7 @@ import neo4j
 import oci
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,7 @@ def load_buckets(
     OCICompartment via the standard RESOURCE relationship.
     """
     ingest_buckets = """
-    UNWIND $buckets AS bucket
+    UNWIND $DictList AS bucket
         MERGE (b:OCIStorageBucket{id: bucket.id})
         ON CREATE SET b.firstseen = timestamp(),
                       b.createdate = bucket.time_created
@@ -210,9 +211,10 @@ def load_buckets(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_buckets,
-        buckets=buckets,
+        buckets,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -328,7 +330,7 @@ def load_block_volumes(
     nodes) via OCI_VOLUME_ATTACHMENT.
     """
     ingest_volumes = """
-    UNWIND $volumes AS v
+    UNWIND $DictList AS v
         MERGE (vol:OCIBlockVolume{id: v.id})
         ON CREATE SET vol.firstseen = timestamp(),
                       vol.createdate = v.time_created
@@ -356,9 +358,10 @@ def load_block_volumes(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_volumes,
-        volumes=volumes,
+        volumes,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -487,7 +490,7 @@ def load_boot_volumes(
     oci_update_tag: int,
 ) -> None:
     ingest_boot_volumes = """
-    UNWIND $boot_volumes AS v
+    UNWIND $DictList AS v
         MERGE (bv:OCIBootVolume{id: v.id})
         ON CREATE SET bv.firstseen = timestamp(),
                       bv.createdate = v.time_created
@@ -514,9 +517,10 @@ def load_boot_volumes(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_boot_volumes,
-        boot_volumes=boot_volumes,
+        boot_volumes,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -675,7 +679,7 @@ def load_volume_backups(
     source_kind so each MATCH lands on a single, well-typed parent label.
     """
     ingest_backups = """
-    UNWIND $backups AS bk
+    UNWIND $DictList AS bk
         MERGE (b:OCIVolumeBackup{id: bk.id})
         ON CREATE SET b.firstseen = timestamp(),
                       b.createdate = bk.time_created
@@ -698,10 +702,10 @@ def load_volume_backups(
             b.region = bk.region,
             b.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(ingest_backups, backups=backups, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, ingest_backups, backups, oci_update_tag=oci_update_tag)
 
     link_block = """
-    UNWIND $backups AS bk
+    UNWIND $DictList AS bk
         WITH bk WHERE bk.source_kind = 'BLOCK' AND bk.parent_volume_id IS NOT NULL
         MATCH (parent:OCIBlockVolume{id: bk.parent_volume_id})
         MATCH (b:OCIVolumeBackup{id: bk.id})
@@ -709,10 +713,10 @@ def load_volume_backups(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(link_block, backups=backups, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, link_block, backups, oci_update_tag=oci_update_tag)
 
     link_boot = """
-    UNWIND $backups AS bk
+    UNWIND $DictList AS bk
         WITH bk WHERE bk.source_kind = 'BOOT' AND bk.parent_volume_id IS NOT NULL
         MATCH (parent:OCIBootVolume{id: bk.parent_volume_id})
         MATCH (b:OCIVolumeBackup{id: bk.id})
@@ -720,7 +724,7 @@ def load_volume_backups(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(link_boot, backups=backups, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, link_boot, backups, oci_update_tag=oci_update_tag)
 
 
 def sync_volume_backups(
@@ -898,7 +902,7 @@ def load_file_systems(
     oci_update_tag: int,
 ) -> None:
     ingest_fs = """
-    UNWIND $file_systems AS fs
+    UNWIND $DictList AS fs
         MERGE (f:OCIFileSystem{id: fs.id})
         ON CREATE SET f.firstseen = timestamp(),
                       f.createdate = fs.time_created
@@ -922,9 +926,10 @@ def load_file_systems(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_fs,
-        file_systems=file_systems,
+        file_systems,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -937,7 +942,7 @@ def load_mount_targets(
     oci_update_tag: int,
 ) -> None:
     ingest_mt = """
-    UNWIND $mount_targets AS mt
+    UNWIND $DictList AS mt
         MERGE (m:OCIMountTarget{id: mt.id})
         ON CREATE SET m.firstseen = timestamp(),
                       m.createdate = mt.time_created
@@ -958,9 +963,10 @@ def load_mount_targets(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_mt,
-        mount_targets=mount_targets,
+        mount_targets,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -978,7 +984,7 @@ def load_exports(
     reason about reachability without traversing an export-set node.
     """
     ingest_exports = """
-    UNWIND $exports AS ex
+    UNWIND $DictList AS ex
         WITH ex WHERE ex.export_set_id IS NOT NULL AND ex.file_system_id IS NOT NULL
         MATCH (mt:OCIMountTarget{export_set_id: ex.export_set_id})
         MATCH (fs:OCIFileSystem{id: ex.file_system_id})
@@ -989,7 +995,7 @@ def load_exports(
             r.createdate = ex.time_created,
             r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(ingest_exports, exports=exports, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, ingest_exports, exports, oci_update_tag=oci_update_tag)
 
 
 def link_instances_to_file_systems(

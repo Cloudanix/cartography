@@ -12,6 +12,7 @@ from oci.exceptions import ConfigFileNotFound
 from oci.exceptions import InvalidConfig
 from oci.exceptions import ProfileNotFound
 
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -114,17 +115,19 @@ def load_oci_accounts(
     identity_client: oci.identity.identity_client.IdentityClient = None,
 ) -> None:
     query = """
-    MERGE (w:CloudanixWorkspace{id: $WORKSPACE_ID})
-    SET w.lastupdated = $oci_update_tag
-    WITH w
-    MERGE (aa:OCITenancy{id: $TENANCY_ID})
-    ON CREATE SET aa.firstseen = timestamp()
-    SET aa.ocid = $TENANCY_ID, aa.lastupdated = $oci_update_tag, aa.name = $ACCOUNT_NAME
-    WITH w, aa
-    MERGE (w)-[r:OWNER]->(aa)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    UNWIND $DictList AS acct
+        MERGE (w:CloudanixWorkspace{id: $WORKSPACE_ID})
+        SET w.lastupdated = $oci_update_tag
+        WITH w, acct
+        MERGE (aa:OCITenancy{id: acct.tenancy_id})
+        ON CREATE SET aa.firstseen = timestamp()
+        SET aa.ocid = acct.tenancy_id, aa.unique_id = acct.unique_id, aa.lastupdated = $oci_update_tag, aa.name = acct.account_name
+        WITH w, aa
+        MERGE (w)-[r:OWNER]->(aa)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
     """
+    rows = []
     for name in oci_accounts:
         tenancy_id = oci_accounts[name]["tenancy"]
 
@@ -134,13 +137,15 @@ def load_oci_accounts(
             tenancy_details = get_tenancy_details(identity_client, tenancy_id)
             account_name = tenancy_details.get("name", name)
 
-        neo4j_session.run(
-            query,
-            WORKSPACE_ID=common_job_parameters.get("WORKSPACE_ID", ""),
-            TENANCY_ID=tenancy_id,
-            ACCOUNT_NAME=account_name,
-            oci_update_tag=oci_update_tag,
-        )
+        rows.append({"tenancy_id": tenancy_id, "unique_id": f"tenancy/{tenancy_id}", "account_name": account_name})
+
+    load_graph_data(
+        neo4j_session,
+        query,
+        rows,
+        WORKSPACE_ID=common_job_parameters.get("WORKSPACE_ID", ""),
+        oci_update_tag=oci_update_tag,
+    )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
