@@ -85,10 +85,11 @@ def load_container_repositories(
     Ingest OCI Container Repository data into Neo4j.
     """
     ingest_repo = """
-    MERGE (repo:OCIContainerRepository{ocid: $OCID})
+    MERGE (repo:OCIContainerRepository{id: $OCID})
     ON CREATE SET repo.firstseen = timestamp(),
     repo.createdate = $TIME_CREATED
-    SET repo.display_name = $DISPLAY_NAME,
+    SET repo.ocid = $OCID,
+    repo.display_name = $DISPLAY_NAME,
     repo.compartment_id = $COMPARTMENT_ID,
     repo.resource_type = 'oci-containerregistry-repository',
     repo.image_count = $IMAGE_COUNT,
@@ -102,7 +103,7 @@ def load_container_repositories(
     repo.region = $REGION,
     repo.lastupdated = $oci_update_tag
     WITH repo
-    MATCH (cc:OCICompartment{ocid: $COMPARTMENT_ID})
+    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (cc)-[r:RESOURCE]->(repo)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -196,10 +197,11 @@ def load_container_images(
     Ingest OCI Container Image data into Neo4j and link to repository.
     """
     ingest_image = """
-    MERGE (img:OCIContainerImage{ocid: $OCID})
+    MERGE (img:OCIContainerImage{id: $OCID})
     ON CREATE SET img.firstseen = timestamp(),
     img.createdate = $TIME_CREATED
-    SET img.display_name = $DISPLAY_NAME,
+    SET img.ocid = $OCID,
+    img.display_name = $DISPLAY_NAME,
     img.compartment_id = $COMPARTMENT_ID,
     img.resource_type = 'oci-containerregistry-image',
     img.digest = $DIGEST,
@@ -213,7 +215,7 @@ def load_container_images(
     img.region = $REGION,
     img.lastupdated = $oci_update_tag
     WITH img
-    MATCH (repo:OCIContainerRepository{ocid: $REPOSITORY_ID})
+    MATCH (repo:OCIContainerRepository{id: $REPOSITORY_ID})
     MERGE (repo)-[r:OCI_CONTAINER_IMAGE]->(img)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag

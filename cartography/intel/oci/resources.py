@@ -20,7 +20,6 @@ RESOURCE_FUNCTIONS: Dict = {
     "monitoring": monitoring.sync,
     "storage": storage.sync,
     "oke": oke.sync,
-    "logging": ocilogging.sync,
     "containerregistry": containerregistry.sync,
     "logging": audit_logging.sync,
     "database": database.sync,
