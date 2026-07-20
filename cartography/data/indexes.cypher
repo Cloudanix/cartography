@@ -470,6 +470,10 @@ CREATE INDEX IF NOT EXISTS FOR (n:OCIMonitoringAlarm) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCICloudGuard) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIEventRule) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCINotificationTopic) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:OCIAutonomousDatabase) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:OCIDbSystem) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:OCIDbHome) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:OCIDbNode) ON (n.id);
 // Property indexes for relationship-resolution MATCHes that key on a non-id field.
 // Without these, the loaders that link attachments/exports to their parents do a
 // full label scan per batch, buffering scan state into the write transaction.

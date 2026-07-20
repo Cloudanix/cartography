@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "Sentry": {
+      "autoApprove": [
+        "get_issue_details"
+      ],
+      "url": "https://mcp.sentry.dev/mcp"
+    }
+  }
+}
