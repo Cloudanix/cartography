@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import time
 from typing import Dict
@@ -14,6 +15,34 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+
+def is_valid_elastic_ip(address: Dict) -> bool:
+    """
+    An AWS Elastic IP Address is only meaningful if `PublicIp` is a real, globally-routable
+    IPv4 address.
+
+    Exception: AWS Outposts customer-owned IPs (CoIP) are a legitimate EIP allocation where
+    `PublicIp` is intentionally absent and `CustomerOwnedIp` (drawn from the customer's own,
+    often private, on-premises address space) is used instead
+    https://docs.aws.amazon.com/outposts/latest/userguide/coip-pools.html.
+    """
+    if address.get('CustomerOwnedIp'):
+        return True
+
+    public_ip = address.get('PublicIp')
+    if not public_ip:
+        return False
+    try:
+        return ipaddress.IPv4Address(public_ip).is_global
+    except ValueError:
+        # PublicIp isn't a parseable IPv4 address at all - warn and treat as invalid, but never
+        # let this raise and interrupt the sync.
+        logger.warning(
+            "Elastic IP Address %s (AllocationId=%s) has a PublicIp that is not a valid IPv4 address.",
+            public_ip, address.get('AllocationId'),
+        )
+        return False
 
 
 @timeit
@@ -36,10 +65,20 @@ def get_elastic_ip_addresses(boto3_session: boto3.session.Session, region: str) 
 def transform_elastic_ip_addresses(elastic_ip_addresses: List[Dict], current_aws_account_id: str) -> List[Dict]:
     addresses: List[Dict] = []
     for address in elastic_ip_addresses:
+        if not address.get('AllocationId'):
+            continue
+
+        if not is_valid_elastic_ip(address):
+            logger.warning(
+                "Skipping Elastic IP Address %s (AllocationId=%s) - PublicIp is missing or is not a valid, "
+                "globally-routable IPv4 address.",
+                address.get('PublicIp'), address.get('AllocationId'),
+            )
+            continue
+
         address['arn'] = f"arn:aws:ec2:{address.get('region')}:{current_aws_account_id}:elastic-ip/{address.get('AllocationId')}"
         address['consolelink'] = aws_console_link.get_console_link(arn=address['arn'])
-        if address.get('AllocationId'):
-            addresses.append(address)
+        addresses.append(address)
 
     return addresses
 
