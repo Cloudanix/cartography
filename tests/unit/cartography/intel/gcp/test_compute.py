@@ -63,3 +63,25 @@ def test_transform_gcp_firewall():
     assert sample_fw_icmp_rule['fromport'] is None
     assert sample_fw_icmp_rule['toport'] is None
     assert sample_fw_icmp_rule['protocol'] == 'icmp'
+
+
+def test_sync_compute_disks_syncs_labels(mocker):
+    """Disk labels must flow into label.sync_labels as GCPLabel nodes."""
+    from unittest.mock import MagicMock
+
+    compute_mod = cartography.intel.gcp.compute
+    disks = [{'id': 'projects/p/disks/d1', 'labels': {'env': 'prod'}}]
+    mocker.patch.object(compute_mod, 'get_compute_disks', return_value=disks)
+    mocker.patch.object(compute_mod, 'load_compute_disks')
+    mocker.patch.object(compute_mod, 'cleanup_compute_disks')
+    sync_labels = mocker.patch.object(compute_mod.label, 'sync_labels')
+
+    compute_mod.sync_compute_disks(
+        MagicMock(), MagicMock(), 'p', [{'name': 'us-east1-b'}], 1,
+        {'service_labels': []},
+    )
+
+    sync_labels.assert_called_once()
+    args = sync_labels.call_args[0]
+    assert args[1] == disks
+    assert args[5] == 'GCPComputeDisk'
