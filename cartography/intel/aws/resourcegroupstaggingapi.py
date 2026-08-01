@@ -65,6 +65,22 @@ def get_short_id_from_lb2_arn(alb_arn: str) -> str:
     return alb_arn.split('/')[-2]
 
 
+def get_hosted_zone_id_from_arn(zone_arn: str) -> str:
+    """
+    AWSDNSZone.zoneid holds the raw Route53 API Id ("/hostedzone/Z123"), so map
+    "arn:aws:route53:::hostedzone/Z123" back to that form.
+    """
+    return '/hostedzone/' + zone_arn.split('/')[-1]
+
+
+def get_log_group_arn_with_wildcard(arn: str) -> str:
+    """
+    AWSCloudWatchLogGroup.id comes from describe-log-groups, whose ARNs end in
+    ':*'; the tagging API returns the same ARN without the suffix.
+    """
+    return arn if arn.endswith(':*') else arn + ':*'
+
+
 # We maintain a mapping from AWS resource types to their associated labels and unique identifiers.
 # label: the node label used in cartography for this resource type
 # property: the field of this node that uniquely identified this resource type
@@ -142,6 +158,39 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     's3': {'label': 'S3Bucket', 'property': 'id', 'id_func': get_bucket_name_from_arn},
     'secretsmanager:secret': {'label': 'SecretsManagerSecret', 'property': 'id'},
     'sqs': {'label': 'SQSQueue', 'property': 'id'},
+    'bedrock:agent': {'label': 'AWSBedrockAgent', 'property': 'arn'},
+    'bedrock:custom-model': {'label': 'AWSBedrockCustomModel', 'property': 'arn'},
+    'bedrock:guardrail': {'label': 'AWSBedrockGuardRail', 'property': 'arn'},
+    'bedrock:model-customization-job': {'label': 'AWSBedrockCustomisationJob', 'property': 'arn'},
+    'cloudformation:stack': {'label': 'AWSCloudformationStack', 'property': 'id'},
+    'cloudfront:distribution': {'label': 'AWSCloudfrontDistribution', 'property': 'id'},
+    'cloudtrail:trail': {'label': 'AWSCloudTrailTrail', 'property': 'id'},
+    'config:config-rule': {'label': 'AWSConfigRule', 'property': 'id'},
+    'ec2:image': {'label': 'EC2Image', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'ec2:launch-template': {'label': 'LaunchTemplate', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'ec2:route-table': {'label': 'EC2RouteTable', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'ec2:snapshot': {'label': 'EBSSnapshot', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'ecs:service': {
+        'label': 'ECSService', 'property': 'id',
+        'path': '-[:RESOURCE]->(:ECSCluster)-[:HAS_SERVICE]->',
+    },
+    'eks:nodegroup': {
+        'label': 'EKSClusterNodeGroup', 'property': 'id',
+        'path': '-[:RESOURCE]->(:EKSCluster)<-[:ASSOCIATED_WITH]-',
+    },
+    'kinesis:stream': {'label': 'KinesisStream', 'property': 'id'},
+    'logs:log-group': {'label': 'AWSCloudWatchLogGroup', 'property': 'id', 'id_func': get_log_group_arn_with_wildcard},
+    'route53:hostedzone': {'label': 'AWSDNSZone', 'property': 'zoneid', 'id_func': get_hosted_zone_id_from_arn},
+    'sagemaker:cluster': {'label': 'AWSSagemakerCluster', 'property': 'arn'},
+    'sagemaker:domain': {'label': 'AWSSagemakerDomain', 'property': 'arn'},
+    'sagemaker:endpoint': {'label': 'AWSSagemakerEndpoint', 'property': 'arn'},
+    'sagemaker:model': {'label': 'AWSSagemakerModel', 'property': 'arn'},
+    'sagemaker:notebook-instance': {'label': 'AWSSagemakerNotebookInstance', 'property': 'arn'},
+    'sagemaker:training-job': {'label': 'AWSSagemakerTrainingJob', 'property': 'arn'},
+    'ses:identity': {'label': 'AWSSESIdentity', 'property': 'id'},
+    'sns': {'label': 'AWSSNSTopic', 'property': 'id'},
+    'waf-regional:webacl': {'label': 'AWSWAFClassicWebACL', 'property': 'id'},
+    'wafv2': {'label': 'AWSWAFv2WebACL', 'property': 'id'},
 }
 
 

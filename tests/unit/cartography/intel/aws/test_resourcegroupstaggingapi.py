@@ -71,6 +71,59 @@ def test_elbv2_listener_mapping_matches_node_id():
         assert rgta.compute_resource_id({'ResourceARN': arn}, resource_type) == arn
 
 
+def test_get_hosted_zone_id_from_arn():
+    arn = 'arn:aws:route53:::hostedzone/Z0ABCDEF'
+    assert rgta.get_hosted_zone_id_from_arn(arn) == '/hostedzone/Z0ABCDEF'
+
+
+def test_get_log_group_arn_with_wildcard():
+    arn = 'arn:aws:logs:us-east-1:1234:log-group:/aws/lambda/foo'
+    assert rgta.get_log_group_arn_with_wildcard(arn) == arn + ':*'
+    assert rgta.get_log_group_arn_with_wildcard(arn + ':*') == arn + ':*'
+
+
+def test_expanded_mappings_present():
+    # phase-2 coverage additions — data stores, workloads, edge, AI/ML, governance
+    expected = {
+        'kinesis:stream': 'KinesisStream',
+        'ec2:snapshot': 'EBSSnapshot',
+        'ec2:image': 'EC2Image',
+        'ec2:route-table': 'EC2RouteTable',
+        'ec2:launch-template': 'LaunchTemplate',
+        'ecs:service': 'ECSService',
+        'eks:nodegroup': 'EKSClusterNodeGroup',
+        'cloudformation:stack': 'AWSCloudformationStack',
+        'cloudfront:distribution': 'AWSCloudfrontDistribution',
+        'cloudtrail:trail': 'AWSCloudTrailTrail',
+        'config:config-rule': 'AWSConfigRule',
+        'logs:log-group': 'AWSCloudWatchLogGroup',
+        'route53:hostedzone': 'AWSDNSZone',
+        'ses:identity': 'AWSSESIdentity',
+        'sns': 'AWSSNSTopic',
+        'wafv2': 'AWSWAFv2WebACL',
+        'waf-regional:webacl': 'AWSWAFClassicWebACL',
+        'sagemaker:notebook-instance': 'AWSSagemakerNotebookInstance',
+        'sagemaker:endpoint': 'AWSSagemakerEndpoint',
+        'sagemaker:model': 'AWSSagemakerModel',
+        'sagemaker:domain': 'AWSSagemakerDomain',
+        'sagemaker:cluster': 'AWSSagemakerCluster',
+        'sagemaker:training-job': 'AWSSagemakerTrainingJob',
+        'bedrock:agent': 'AWSBedrockAgent',
+        'bedrock:custom-model': 'AWSBedrockCustomModel',
+        'bedrock:guardrail': 'AWSBedrockGuardRail',
+        'bedrock:model-customization-job': 'AWSBedrockCustomisationJob',
+    }
+    for resource_type, label in expected.items():
+        assert resource_type in rgta.TAG_RESOURCE_TYPE_MAPPINGS, resource_type
+        assert rgta.TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['label'] == label
+
+
+def test_every_mapping_has_label_and_property():
+    for resource_type, mapping in rgta.TAG_RESOURCE_TYPE_MAPPINGS.items():
+        assert mapping.get('label'), resource_type
+        assert mapping.get('property') in ('id', 'arn', 'name', 'subnetid', 'zoneid'), resource_type
+
+
 def test_untaggable_types_removed():
     # ecs:container and classic elasticloadbalancing:listener are not taggable
     # resource types; keeping them only wasted API calls every sync
