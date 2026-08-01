@@ -64,14 +64,13 @@ def _load_tags_tx(
     # always a hardcoded literal at the call site, never user input.
     ingest_tags = """
     UNWIND $data AS tag
+    MATCH (r:""" + resource_label + """{id: tag.resource_id})
+    <-[:RESOURCE]-(:OCICompartment)<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
     MERGE (t:OCITag{id: tag.id})
     ON CREATE SET t.firstseen = timestamp()
     SET t.lastupdated = $update_tag,
     t.key = tag.key,
     t.value = tag.value
-    WITH t, tag
-    MATCH (r:""" + resource_label + """{id: tag.resource_id})
-    <-[:RESOURCE]-(:OCICompartment)<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
     MERGE (r)-[rel:TAGGED]->(t)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag

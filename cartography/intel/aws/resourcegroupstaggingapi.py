@@ -193,6 +193,13 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     'wafv2': {'label': 'AWSWAFv2WebACL', 'property': 'id'},
 }
 
+# Global services are only reported by the tagging API in us-east-1; querying
+# them in every region wastes an API call sequence + a Neo4j session per region.
+GLOBAL_RESOURCE_TYPES = frozenset({
+    'cloudfront:distribution',
+    'route53:hostedzone',
+})
+
 
 @timeit
 @aws_handle_regions
@@ -376,7 +383,11 @@ def sync(
         for region in regions:
             logger.info("Syncing AWS tags for region '%s'.", region)
             for resource_type in tag_resource_type_mappings.keys():
+                if resource_type in GLOBAL_RESOURCE_TYPES:
+                    continue
                 sync_tags(neo4j_session, boto3_session, region, resource_type, current_aws_account_id, update_tag)
+        for resource_type in GLOBAL_RESOURCE_TYPES & tag_resource_type_mappings.keys():
+            sync_tags(neo4j_session, boto3_session, 'us-east-1', resource_type, current_aws_account_id, update_tag)
 
     else:
         if len(regions) == 0:
@@ -400,7 +411,11 @@ def sync(
             for region in regions:
                 logger.info("Syncing AWS tags for region '%s'.", region)
                 for resource_type in tag_resource_type_mappings.keys():
+                    if resource_type in GLOBAL_RESOURCE_TYPES:
+                        continue
                     futures.append(executor.submit(concurrent_execution, config, region, resource_type, current_aws_account_id, update_tag))
+            for resource_type in GLOBAL_RESOURCE_TYPES & tag_resource_type_mappings.keys():
+                futures.append(executor.submit(concurrent_execution, config, 'us-east-1', resource_type, current_aws_account_id, update_tag))
 
             for future in as_completed(futures):
                 logger.info(f'Result from Future - Tags Processing: {future.result()}')

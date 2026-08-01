@@ -131,6 +131,33 @@ def test_untaggable_types_removed():
     assert 'elasticloadbalancing:listener' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
 
 
+def test_global_resource_types_synced_once_in_us_east_1(mocker, monkeypatch):
+    """
+    Global services (CloudFront, Route53) are reported by the tagging API only
+    in us-east-1 — one sync per account, not one per region.
+    """
+    monkeypatch.setenv('LOCAL_RUN', '1')
+    sync_tags = mocker.patch.object(rgta, 'sync_tags')
+    mocker.patch.object(rgta, 'cleanup')
+    mappings = {
+        'sqs': {'label': 'SQSQueue', 'property': 'id'},
+        'cloudfront:distribution': {'label': 'AWSCloudfrontDistribution', 'property': 'id'},
+        'route53:hostedzone': {'label': 'AWSDNSZone', 'property': 'zoneid'},
+    }
+
+    rgta.sync(
+        mocker.MagicMock(), mocker.MagicMock(), mocker.MagicMock(),
+        ['us-east-1', 'eu-west-1'], '1234', 111, {},
+        tag_resource_type_mappings=mappings,
+    )
+
+    calls = [(c.args[2], c.args[3]) for c in sync_tags.call_args_list]
+    assert calls.count(('us-east-1', 'sqs')) == 1
+    assert calls.count(('eu-west-1', 'sqs')) == 1
+    assert [c for c in calls if c[1] == 'cloudfront:distribution'] == [('us-east-1', 'cloudfront:distribution')]
+    assert [c for c in calls if c[1] == 'route53:hostedzone'] == [('us-east-1', 'route53:hostedzone')]
+
+
 def test_load_query_uses_mapping_path(mocker):
     tx = mocker.MagicMock()
     tag_data = [{

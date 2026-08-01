@@ -71,6 +71,9 @@ def test_load_tags_tx_interpolates_label_and_scopes_query():
     assert 'MERGE (t:OCITag{id: tag.id})' in query
     assert '(r:OCIInstance{id: tag.resource_id})' in query
     assert 'MERGE (r)-[rel:TAGGED]->(t)' in query
+    # MATCH must precede MERGE so tags for absent resources create no orphan
+    # OCITag nodes and no wasted MERGE work
+    assert query.index('MATCH') < query.index('MERGE (t:OCITag')
     kwargs = tx.run.call_args[1]
     assert kwargs['OCI_TENANCY_ID'] == 'ocid1.tenancy.oc1..t'
     assert kwargs['WORKSPACE_ID'] == 'ws-1'
