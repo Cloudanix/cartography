@@ -92,9 +92,14 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     'ec2:volume': {'label': 'EBSVolume', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ec2:elastic-ip-address': {'label': 'ElasticIPAddress', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ecs:cluster': {'label': 'ECSCluster', 'property': 'id'},
-    'ecs:container': {'label': 'ECSContainer', 'property': 'id'},
-    'ecs:container-instance': {'label': 'ECSContainerInstance', 'property': 'id'},
-    'ecs:task': {'label': 'ECSTask', 'property': 'id'},
+    'ecs:container-instance': {
+        'label': 'ECSContainerInstance', 'property': 'id',
+        'path': '-[:RESOURCE]->(:ECSCluster)-[:HAS_CONTAINER_INSTANCE]->',
+    },
+    'ecs:task': {
+        'label': 'ECSTask', 'property': 'id',
+        'path': '-[:RESOURCE]->(:ECSCluster)-[:HAS_TASK]->',
+    },
     'ecs:task-definition': {'label': 'ECSTaskDefinition', 'property': 'id'},
     'eks:cluster': {'label': 'EKSCluster', 'property': 'id'},
     'elasticache:cluster': {'label': 'ElasticacheCluster', 'property': 'arn'},
@@ -110,17 +115,13 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
         'label': 'LoadBalancerV2',
         'property': 'name', 'id_func': get_short_id_from_lb2_arn,
     },
-    'elasticloadbalancing:listener': {
-        'label': 'ELBListener', 'property':
-        'name', 'id_func': get_short_id_from_elb_arn,
-    },
     'elasticloadbalancing:listener/app': {
-        'label': 'ELBV2Listener',
-        'property': 'name', 'id_func': get_short_id_from_lb2_arn,
+        'label': 'ELBV2Listener', 'property': 'id',
+        'path': '-[:RESOURCE]->(:LoadBalancerV2)-[:ELBV2_LISTENER]->',
     },
     'elasticloadbalancing:listener/net': {
-        'label': 'ELBV2Listener',
-        'property': 'name', 'id_func': get_short_id_from_lb2_arn,
+        'label': 'ELBV2Listener', 'property': 'id',
+        'path': '-[:RESOURCE]->(:LoadBalancerV2)-[:ELBV2_LISTENER]->',
     },
     'elasticmapreduce:cluster': {'label': 'EMRCluster', 'property': 'arn'},
     'es:domain': {'label': 'ESDomain', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
@@ -184,7 +185,7 @@ def _load_tags_tx(
     UNWIND $TagData as tag_mapping
         UNWIND tag_mapping.Tags as input_tag
             MATCH
-            (a:AWSAccount{id:$Account})-[res:RESOURCE]->(resource:$resource_label{$property:tag_mapping.resource_id})
+            (a:AWSAccount{id:$Account})$path(resource:$resource_label{$property:tag_mapping.resource_id})
             MERGE
             (aws_tag:AWSTag:Tag{id:input_tag.Key + ":" + input_tag.Value})
             ON CREATE SET aws_tag.firstseen = timestamp()
@@ -201,6 +202,7 @@ def _load_tags_tx(
     query = INGEST_TAG_TEMPLATE.safe_substitute(
         resource_label=TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['label'],
         property=TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['property'],
+        path=TAG_RESOURCE_TYPE_MAPPINGS[resource_type].get('path', '-[res:RESOURCE]->'),
     )
     tx.run(
         query,

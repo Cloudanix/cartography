@@ -44,3 +44,51 @@ def test_transform_tags():
     assert 'resource_id' not in get_resources_response[0]
     rgta.transform_tags(get_resources_response, 'ec2:instance')
     assert 'resource_id' in get_resources_response[0]
+
+
+def test_mappings_reachable_from_account():
+    """
+    The default load query requires a direct (:AWSAccount)-[:RESOURCE]->
+    edge. Sub-resources (ECS tasks/container instances, ELBV2 listeners) hang
+    off their parent, so they must declare an explicit 'path' or their tags
+    are fetched from AWS and silently dropped.
+    """
+    sub_resource_labels = {'ECSTask', 'ECSContainerInstance', 'ELBV2Listener'}
+    for resource_type, mapping in rgta.TAG_RESOURCE_TYPE_MAPPINGS.items():
+        if mapping['label'] in sub_resource_labels:
+            assert 'path' in mapping, f"{resource_type} needs an explicit path"
+            assert mapping['path'].startswith('-[:RESOURCE]->')
+
+
+def test_elbv2_listener_mapping_matches_node_id():
+    # ELBV2Listener nodes are created with id = ListenerArn, so the mapping
+    # must key the full ARN on 'id' (no id_func shortening)
+    for resource_type in ('elasticloadbalancing:listener/app', 'elasticloadbalancing:listener/net'):
+        mapping = rgta.TAG_RESOURCE_TYPE_MAPPINGS[resource_type]
+        assert mapping['property'] == 'id'
+        assert 'id_func' not in mapping
+        arn = 'arn:aws:elasticloadbalancing:us-east-1:1234:listener/app/foo/abc/def'
+        assert rgta.compute_resource_id({'ResourceARN': arn}, resource_type) == arn
+
+
+def test_untaggable_types_removed():
+    # ecs:container and classic elasticloadbalancing:listener are not taggable
+    # resource types; keeping them only wasted API calls every sync
+    assert 'ecs:container' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+    assert 'elasticloadbalancing:listener' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+
+
+def test_load_query_uses_mapping_path(mocker):
+    tx = mocker.MagicMock()
+    tag_data = [{
+        'ResourceARN': 'arn:aws:ecs:us-east-1:1234:task/cluster/abc',
+        'resource_id': 'arn:aws:ecs:us-east-1:1234:task/cluster/abc',
+        'Tags': [{'Key': 'k', 'Value': 'v'}],
+    }]
+    rgta._load_tags_tx(tx, tag_data, 'ecs:task', 'us-east-1', '1234', 111)
+    query = tx.run.call_args[0][0]
+    assert '-[:RESOURCE]->(:ECSCluster)-[:HAS_TASK]->(resource:ECSTask' in query
+
+    rgta._load_tags_tx(tx, tag_data, 'ec2:instance', 'us-east-1', '1234', 111)
+    query = tx.run.call_args[0][0]
+    assert '-[res:RESOURCE]->(resource:EC2Instance' in query

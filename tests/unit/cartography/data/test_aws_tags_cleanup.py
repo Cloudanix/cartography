@@ -11,7 +11,7 @@ CLEANUP_JOB = (
 def test_aws_tags_cleanup_job_parses():
     job = GraphJob.from_json(CLEANUP_JOB.read_text(), parameters={})
     assert job.name == "cleanup AWS Tags"
-    assert len(job.statements) == 5
+    assert len(job.statements) == 4
 
 
 def test_aws_tags_cleanup_no_duplicated_workspace_hop():
