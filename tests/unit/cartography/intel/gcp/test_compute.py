@@ -17,17 +17,20 @@ def test_transform_gcp_vpcs():
     assert vpc['routing_config_routing_mode'] == 'REGIONAL'
 
 
-def test_transform_gcp_subnets():
+def test_transform_gcp_subnets(mocker):
     """
     Ensure that transform_gcp_subnets() returns a list of subnets with correct partial_uris and tests for the presence
     of some key members.
     """
-    subnet_list = cartography.intel.gcp.compute.transform_gcp_subnets(VPC_SUBNET_RESPONSE)
+    mocker.patch.object(cartography.intel.gcp.compute, 'get_default_vpc', return_value=None)
+    subnet_list = cartography.intel.gcp.compute.transform_gcp_subnets(
+        VPC_SUBNET_RESPONSE, 'project-abc', mocker.MagicMock(),
+    )
     assert len(subnet_list) == 1
 
     subnet = subnet_list[0]
     assert subnet['ip_cidr_range'] == '10.0.0.0/20'
-    assert subnet['partial_uri'] == 'projects/project-abc/regions/europe-west2/subnetworks/default'
+    assert subnet['partial_uri'] == 'projects/project-abc/locations/europe-west2/subnetworks/default'
     assert subnet['region'] == 'europe-west2'
     assert not subnet['private_ip_google_access']
 
