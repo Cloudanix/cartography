@@ -6,12 +6,17 @@
             "iterationsize": 100
         },
         {
-            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:ECSCluster)-[:HAS_CONTAINER_INSTANCE|HAS_TASK]->(m)-[r:TAGGED]->(:AWSTag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:ECSCluster)-[:HAS_CONTAINER_INSTANCE|HAS_TASK|HAS_SERVICE]->(m)-[r:TAGGED]->(:AWSTag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
             "iterative": true,
             "iterationsize": 100
         },
         {
             "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:LoadBalancerV2)-[:ELBV2_LISTENER]->(m:ELBV2Listener)-[r:TAGGED]->(:AWSTag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:EKSCluster)<-[:ASSOCIATED_WITH]-(m:EKSClusterNodeGroup)-[r:TAGGED]->(:AWSTag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
             "iterative": true,
             "iterationsize": 100
         },
