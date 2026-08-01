@@ -476,6 +476,8 @@ def transform_sql_instances(sql_instances: List[Dict]) -> List[Dict]:
     transformed_instances = []
     for instance in sql_instances:
         transformed_instance = instance.copy()
+        # Cloud SQL returns labels at settings.userLabels; label.sync_labels reads 'labels'
+        transformed_instance["labels"] = instance.get("settings", {}).get("userLabels", {})
 
         if not instance.get("pscServiceAttachmentLink"):
             transformed_instance["pscEnabled"] = False
