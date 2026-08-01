@@ -108,23 +108,18 @@ def concurrent_execution(config: Config, client: ResourceManagementClient, resou
                 [tagname], 'type': 'Microsoft.Resources/tags', 'resource_id': resource_group['id'],
                 'resource_group': resource_group['name'],
             }]
+    # No per-resource graph existence check here: _load_tags_tx MATCHes the
+    # resource before MERGEing the tag, so unmatched resources produce nothing.
     for resource in client.resources.list_by_resource_group(resource_group_name=resource_group['name']):
-        query = """
-        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->
-        (:AzureTenant{id: $AZURE_TENANT_ID})-[:RESOURCE]->
-        (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[*]->(n)
-        WHERE n.id=$resource_id return count(*)
-        """
-        if Session(neo4j_driver).run(query, resource_id=resource.id, WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'], AZURE_TENANT_ID=common_job_parameters['AZURE_TENANT_ID'], AZURE_SUBSCRIPTION_ID=common_job_parameters['AZURE_SUBSCRIPTION_ID']).single().value() == 1:
-            if resource.tags:
-                for tagname in resource.tags:
-                    tags_list = tags_list + \
-                        [{
-                            'id': resource.id + "/providers/Microsoft.Resources/tags/" + tagname,
-                            'key': tagname, 'value': resource.tags[tagname],
-                            'type': 'Microsoft.Resources/tags',
-                            'resource_id': resource.id, 'resource_group': resource_group['name'],
-                        }]
+        if resource.tags:
+            for tagname in resource.tags:
+                tags_list = tags_list + \
+                    [{
+                        'id': resource.id + "/providers/Microsoft.Resources/tags/" + tagname,
+                        'key': tagname, 'value': resource.tags[tagname],
+                        'type': 'Microsoft.Resources/tags',
+                        'resource_id': resource.id, 'resource_group': resource_group['name'],
+                    }]
 
     load_tags(Session(neo4j_driver), tags_list, update_tag, common_job_parameters)
 
@@ -138,7 +133,7 @@ def get_tags_list(
 ) -> List[Dict]:
     try:
         if len(resource_groups_list) > 0:
-            with ThreadPoolExecutor(max_workers=len(resource_groups_list)) as executor:
+            with ThreadPoolExecutor(max_workers=min(8, len(resource_groups_list))) as executor:
                 futures = []
                 for resource_group in resource_groups_list:
                     futures.append(executor.submit(concurrent_execution, config, client, resource_group, update_tag, common_job_parameters))
@@ -154,6 +149,10 @@ def get_tags_list(
 def _load_tags_tx(tx: neo4j.Transaction, tags_list: List[Dict], update_tag: int, common_job_parameters: Dict) -> None:
     ingest_tag = """
     UNWIND $tags_list AS tag
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->
+    (:AzureTenant{id: $AZURE_TENANT_ID})-[:RESOURCE]->
+    (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[*]->(l)
+    where l.id = tag.resource_id
     MERGE (t:AzureTag{id: tag.id})
     ON CREATE SET t.firstseen = timestamp(),
     t.type = tag.type,
@@ -162,11 +161,6 @@ def _load_tags_tx(tx: neo4j.Transaction, tags_list: List[Dict], update_tag: int,
     SET t.lastupdated = $update_tag,
     t.value = tag.value,
     t.key = tag.key
-    WITH t,tag
-    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->
-    (:AzureTenant{id: $AZURE_TENANT_ID})-[:RESOURCE]->
-    (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[*]->(l)
-    where l.id = tag.resource_id
     MERGE (l)-[r:TAGGED]->(t)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag

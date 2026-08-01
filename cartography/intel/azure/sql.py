@@ -25,6 +25,7 @@ from msrestazure.azure_exceptions import CloudError
 from netaddr import *
 
 from . import network
+from . import tag as azure_tag
 from .util.credentials import Credentials
 from .util.timing import get_timing_policy
 from cartography.util import get_azure_resource_group_name
@@ -739,6 +740,7 @@ def load_server_details(
     _load_failover_groups(neo4j_session, failover_groups, update_tag)
     _load_elastic_pools(neo4j_session, elastic_pools, update_tag)
     _load_databases(neo4j_session, databases, update_tag)
+    _load_database_tags(neo4j_session, databases, update_tag, common_job_parameters)
     _load_firewall_rules(neo4j_session, fw_rules, update_tag)
 
     network_client = network.get_network_client(credentials, subscription_id)
@@ -1207,6 +1209,29 @@ def _load_databases(
     for database in databases:
         resource_group = get_azure_resource_group_name(database.get('id'))
         _attach_resource_group_restorable_database(neo4j_session, database['id'], resource_group, update_tag)
+
+
+@timeit
+def _load_database_tags(
+        neo4j_session: neo4j.Session, databases: List[Dict], update_tag: int, common_job_parameters: Dict,
+) -> None:
+    """
+    SQL databases are ARM child resources, so tag.py's resource-group crawl
+    never sees them; harvest their tags from the list_by_server payload here.
+    """
+    tags_list: List[Dict] = []
+    for db in databases:
+        for tag_name, tag_value in (db.get('tags') or {}).items():
+            tags_list.append({
+                'id': db['id'] + "/providers/Microsoft.Resources/tags/" + tag_name,
+                'key': tag_name,
+                'value': tag_value,
+                'type': 'Microsoft.Resources/tags',
+                'resource_id': db['id'],
+                'resource_group': db.get('resource_group_name'),
+            })
+    if tags_list:
+        azure_tag.load_tags(neo4j_session, tags_list, update_tag, common_job_parameters)
 
 
 def _attach_resource_group_restorable_database(neo4j_session: neo4j.Session, database_id: str, resource_group: str, update_tag: int) -> None:
