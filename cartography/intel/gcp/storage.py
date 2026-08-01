@@ -84,7 +84,7 @@ def transform_gcp_buckets(bucket_res: Dict, project_id: str, regions: list) -> L
             b.get('iamConfiguration', {}).get('bucketPolicyOnly', {}).get('enabled', None)
         bucket['id'] = f"projects/{project_id}/locations/{str(b['location']).lower()}/buckets/{b['name']}"
         bucket['name'] = b['name']
-        bucket['labels'] = [(key, val) for (key, val) in b.get('labels', {}).items()]
+        bucket['labels'] = b.get('labels', {})
         bucket['owner_entity'] = b.get('owner', {}).get('entity')
         bucket['owner_entity_id'] = b.get('owner', {}).get('entityId')
         bucket['kind'] = b.get('kind')
