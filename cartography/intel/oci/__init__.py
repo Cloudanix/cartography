@@ -23,6 +23,7 @@ from . import database
 from . import iam
 from . import organizations
 from . import storage
+from . import tags
 from . import utils
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
@@ -201,6 +202,13 @@ def _sync_multiple_compartments(
         )
 
         del common_job_parameters["OCI_COMPARTMENT_ID"]
+
+    # Tags cleanup is tenancy-wide, so it must run only after every compartment
+    # in this run has been synced with the current update tag.
+    try:
+        tags.cleanup_tags(neo4j_session, common_job_parameters)
+    except Exception as e:
+        logger.error("Error cleaning up OCI tags: %s", e, exc_info=True)
 
 
 def _get_network_resource(credentials: Dict[str, Any]) -> oci.core.virtual_network_client.VirtualNetworkClient:

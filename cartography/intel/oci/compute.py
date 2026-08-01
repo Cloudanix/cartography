@@ -11,6 +11,7 @@ import neo4j
 import oci.core
 import oci.identity
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
@@ -737,6 +738,7 @@ def sync_boot_volumes(
                 load_boot_volumes(
                     neo4j_session, data["BootVolumes"], tenancy_id, compartment["ocid"], region, oci_update_tag,
                 )
+                tags.sync_tags(neo4j_session, data["BootVolumes"], 'OCIBootVolume', oci_update_tag, common_job_parameters)
 
 
 def sync_block_volumes(
@@ -761,6 +763,7 @@ def sync_block_volumes(
             load_block_volumes(
                 neo4j_session, data["Volumes"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["Volumes"], 'OCIBlockVolume', oci_update_tag, common_job_parameters)
 
 
 def sync_instances(
@@ -783,6 +786,7 @@ def sync_instances(
         if data["Instances"]:
             total += len(data["Instances"])
             load_instances(neo4j_session, data["Instances"], tenancy_id, compartment["ocid"], region, oci_update_tag)
+            tags.sync_tags(neo4j_session, data["Instances"], 'OCIInstance', oci_update_tag, common_job_parameters)
     logger.info(f"Time to process OCI compute instances for tenancy '{tenancy_id}' region '{region}' ({total} instances): {time.perf_counter() - tic:0.4f} seconds")
 
 

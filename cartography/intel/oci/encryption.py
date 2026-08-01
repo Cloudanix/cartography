@@ -9,6 +9,7 @@ from typing import List
 import neo4j
 import oci.key_management
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
@@ -112,6 +113,7 @@ def sync_vaults(
                 neo4j_session, data["Vaults"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["Vaults"], 'OCIKmsVault', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -254,6 +256,7 @@ def sync_keys(
                     neo4j_session, data["Keys"], vault["ocid"],
                     tenancy_id, compartment["ocid"], region, oci_update_tag,
                 )
+                tags.sync_tags(neo4j_session, data["Keys"], 'OCIKmsKey', oci_update_tag, common_job_parameters)
 
 
 # ============================================================

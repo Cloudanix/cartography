@@ -10,6 +10,7 @@ from typing import List
 import neo4j
 import oci.logging
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
@@ -108,6 +109,7 @@ def sync_vcns(
         data = get_vcn_list_data(network_client, compartment["ocid"])
         if data["Vcns"]:
             load_vcns(neo4j_session, data["Vcns"], tenancy_id, compartment["ocid"], region, oci_update_tag)
+            tags.sync_tags(neo4j_session, data["Vcns"], 'OCIVcn', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -213,6 +215,7 @@ def sync_subnets(
         data = get_subnet_list_data(network_client, compartment["ocid"])
         if data["Subnets"]:
             load_subnets(neo4j_session, data["Subnets"], tenancy_id, compartment["ocid"], region, oci_update_tag)
+            tags.sync_tags(neo4j_session, data["Subnets"], 'OCISubnet', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -311,6 +314,7 @@ def sync_security_lists(
             load_security_lists(
                 neo4j_session, data["SecurityLists"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["SecurityLists"], 'OCISecurityList', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -405,6 +409,7 @@ def sync_network_security_groups(
                 neo4j_session, data["NetworkSecurityGroups"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["NetworkSecurityGroups"], 'OCINetworkSecurityGroup', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -633,6 +638,7 @@ def sync_internet_gateways(
             load_internet_gateways(
                 neo4j_session, data["InternetGateways"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["InternetGateways"], 'OCIInternetGateway', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -729,6 +735,7 @@ def sync_nat_gateways(
             load_nat_gateways(
                 neo4j_session, data["NatGateways"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["NatGateways"], 'OCINatGateway', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -824,6 +831,7 @@ def sync_route_tables(
             load_route_tables(
                 neo4j_session, data["RouteTables"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["RouteTables"], 'OCIRouteTable', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
