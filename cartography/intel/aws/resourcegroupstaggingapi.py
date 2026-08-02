@@ -204,8 +204,10 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
 
 # Global services are only reported by the tagging API in us-east-1; querying
 # them in every region wastes an API call sequence + a Neo4j session per region.
+# 'iam:role' is served by get_role_tags() (IAM is global), so it belongs here too.
 GLOBAL_RESOURCE_TYPES = frozenset({
     'cloudfront:distribution',
+    'iam:role',
     'route53:hostedzone',
 })
 

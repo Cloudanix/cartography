@@ -193,3 +193,28 @@ def test_reserved_instance_mapping_uses_short_id():
     # EC2ReservedInstance nodes are created with id = ReservedInstancesId, not the ARN
     arn = 'arn:aws:ec2:us-east-1:1234:reserved-instances/ri-abcd'
     assert rgta.compute_resource_id({'ResourceARN': arn}, 'ec2:reserved-instances') == 'ri-abcd'
+
+
+def test_iam_role_is_a_global_resource_type():
+    # get_role_tags() is region-independent, so running it per region is wasted work
+    assert 'iam:role' in rgta.GLOBAL_RESOURCE_TYPES
+    assert 'iam:role' in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+
+
+def test_iam_role_tags_fetched_once_per_account(mocker, monkeypatch):
+    monkeypatch.setenv('LOCAL_RUN', '1')
+    sync_tags = mocker.patch.object(rgta, 'sync_tags')
+    mocker.patch.object(rgta, 'cleanup')
+    mappings = {
+        'sqs': {'label': 'SQSQueue', 'property': 'id'},
+        'iam:role': {'label': 'AWSRole', 'property': 'arn'},
+    }
+
+    rgta.sync(
+        mocker.MagicMock(), mocker.MagicMock(), mocker.MagicMock(),
+        ['us-east-1', 'eu-west-1'], '1234', 111, {},
+        tag_resource_type_mappings=mappings,
+    )
+
+    calls = [(c.args[2], c.args[3]) for c in sync_tags.call_args_list]
+    assert [c for c in calls if c[1] == 'iam:role'] == [('us-east-1', 'iam:role')]
