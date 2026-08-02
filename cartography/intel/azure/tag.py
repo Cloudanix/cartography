@@ -102,24 +102,27 @@ def concurrent_execution(config: Config, client: ResourceManagementClient, resou
     tags_list: List[Dict] = []
     if "tags" in resource_group.keys() and len(resource_group['tags']) != 0:
         for tagname in resource_group['tags']:
-            tags_list = tags_list + [{
+            tags_list.append({
                 'id': resource_group['id'] + "/providers/Microsoft.Resources/tags/" + tagname,
-                'key': tagname, 'value': resource_group['tags']
-                [tagname], 'type': 'Microsoft.Resources/tags', 'resource_id': resource_group['id'],
+                'key': tagname,
+                'value': resource_group['tags'][tagname],
+                'type': 'Microsoft.Resources/tags',
+                'resource_id': resource_group['id'],
                 'resource_group': resource_group['name'],
-            }]
+            })
     # No per-resource graph existence check here: _load_tags_tx MATCHes the
     # resource before MERGEing the tag, so unmatched resources produce nothing.
     for resource in client.resources.list_by_resource_group(resource_group_name=resource_group['name']):
         if resource.tags:
             for tagname in resource.tags:
-                tags_list = tags_list + \
-                    [{
-                        'id': resource.id + "/providers/Microsoft.Resources/tags/" + tagname,
-                        'key': tagname, 'value': resource.tags[tagname],
-                        'type': 'Microsoft.Resources/tags',
-                        'resource_id': resource.id, 'resource_group': resource_group['name'],
-                    }]
+                tags_list.append({
+                    'id': resource.id + "/providers/Microsoft.Resources/tags/" + tagname,
+                    'key': tagname,
+                    'value': resource.tags[tagname],
+                    'type': 'Microsoft.Resources/tags',
+                    'resource_id': resource.id,
+                    'resource_group': resource_group['name'],
+                })
 
     load_tags(Session(neo4j_driver), tags_list, update_tag, common_job_parameters)
 
