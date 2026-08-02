@@ -255,7 +255,9 @@ def get_gcp_bucket_iam_policy(storage: Resource, bucket: str) -> Dict:
 
 
 @timeit
-def transform_gcp_bucket_iam_policy_bindings(bindings: Dict, project_id: str, bucket_id: str) -> List[Dict]:
+def transform_gcp_bucket_iam_policy_bindings(
+    bindings: List[Dict], project_id: str, bucket_id: str,
+) -> List[Dict]:
     for binding in bindings:
         binding['id'] = f"projects/{project_id}/buckets/{bucket_id}/role/{binding['role']}"
     return bindings
