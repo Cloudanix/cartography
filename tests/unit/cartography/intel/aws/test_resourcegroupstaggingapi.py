@@ -172,3 +172,24 @@ def test_load_query_uses_mapping_path(mocker):
     rgta._load_tags_tx(tx, tag_data, 'ec2:instance', 'us-east-1', '1234', 111)
     query = tx.run.call_args[0][0]
     assert '-[res:RESOURCE]->(resource:EC2Instance' in query
+
+
+def test_phase2_remainder_mappings_present():
+    # remaining taggable types added after the first phase-2 batch
+    expected = {
+        'cloudwatch:alarm': 'AWSCloudWatchAlarm',
+        'events:rule': 'AWSEventBridgeRule',
+        'events:event-bus': 'AWSEventBridgeEventBus',
+        'rds:ri': 'RDSReservedDBInstance',
+        'ec2:reserved-instances': 'EC2ReservedInstance',
+        'securityhub:hub': 'SecurityHub',
+    }
+    for resource_type, label in expected.items():
+        assert resource_type in rgta.TAG_RESOURCE_TYPE_MAPPINGS, resource_type
+        assert rgta.TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['label'] == label
+
+
+def test_reserved_instance_mapping_uses_short_id():
+    # EC2ReservedInstance nodes are created with id = ReservedInstancesId, not the ARN
+    arn = 'arn:aws:ec2:us-east-1:1234:reserved-instances/ri-abcd'
+    assert rgta.compute_resource_id({'ResourceARN': arn}, 'ec2:reserved-instances') == 'ri-abcd'
