@@ -17,6 +17,7 @@ import neo4j
 import oci
 import oci.artifacts
 
+from . import tags
 from . import utils
 from cartography.util import run_cleanup_job
 
@@ -149,6 +150,10 @@ def sync_container_repositories(
             load_container_repositories(
                 neo4j_session, data["Repositories"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
+            )
+            tags.sync_tags(
+                neo4j_session, data["Repositories"], 'OCIContainerRepository',
+                oci_update_tag, common_job_parameters,
             )
 
 

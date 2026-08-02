@@ -740,6 +740,7 @@ def sync_volume_backups(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any],
 ) -> None:
     logger.debug(
         "Syncing OCI volume backups for compartment '%s', region '%s'.",
@@ -750,6 +751,10 @@ def sync_volume_backups(
     backups = transform_volume_backups(block_backups, boot_backups, region)
     if backups:
         load_volume_backups(neo4j_session, backups, oci_update_tag)
+        tags.sync_tags(
+            neo4j_session, block_backups + boot_backups, 'OCIVolumeBackup',
+            oci_update_tag, common_job_parameters,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1168,6 +1173,7 @@ def sync(
             sync_volume_backups(
                 neo4j_session, storage_clients.blockstorage,
                 tenancy_id, compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI volume backups: %s", e, exc_info=True)

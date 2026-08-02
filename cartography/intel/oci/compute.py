@@ -847,6 +847,7 @@ def sync_images(
         if data["Images"]:
             total += len(data["Images"])
             load_images(neo4j_session, data["Images"], tenancy_id, compartment["ocid"], oci_update_tag)
+            tags.sync_tags(neo4j_session, data["Images"], 'OCIImage', oci_update_tag, common_job_parameters)
     logger.info(f"Time to process OCI images for tenancy '{tenancy_id}' ({total} images): {time.perf_counter() - tic:0.4f} seconds")
 
 

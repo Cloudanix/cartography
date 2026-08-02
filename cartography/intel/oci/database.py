@@ -807,12 +807,14 @@ def sync_db_systems(
         tags.sync_tags(neo4j_session, raw_systems, 'OCIDbSystem', oci_update_tag, common_job_parameters)
 
     all_homes: List[Dict[str, Any]] = []
+    all_homes_raw: List[Dict[str, Any]] = []
     all_nodes: List[Dict[str, Any]] = []
     for sys in db_systems:
         sys_id = sys["id"]
         homes_raw = get_db_home_list_data(
             database_client, compartment_id, sys_id,
         )["DbHomes"]
+        all_homes_raw.extend(homes_raw)
         all_homes.extend(transform_db_homes(homes_raw, region))
 
         nodes_raw = get_db_node_list_data(
@@ -822,6 +824,8 @@ def sync_db_systems(
 
     if all_homes:
         load_db_homes(neo4j_session, all_homes, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, all_homes_raw, 'OCIDbHome', oci_update_tag, common_job_parameters)
     if all_nodes:
         load_db_nodes(neo4j_session, all_nodes, oci_update_tag)
 
