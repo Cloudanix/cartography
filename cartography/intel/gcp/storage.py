@@ -65,12 +65,13 @@ def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -
 
 
 @timeit
-def transform_gcp_buckets(bucket_res: Dict, project_id: str, regions: list) -> List[Dict]:
+def transform_gcp_buckets(bucket_res: List[Dict], project_id: str, regions: list) -> List[Dict]:
     '''
     Transform the GCP Storage Bucket response object for Neo4j ingestion
 
-    :type bucket_res: The GCP storage resource object (https://cloud.google.com/storage/docs/json_api/v1/buckets)
-    :param bucket_res: The return data
+    :type bucket_res: List of GCP storage bucket resource objects
+        (https://cloud.google.com/storage/docs/json_api/v1/buckets)
+    :param bucket_res: The bucket items returned by get_gcp_buckets()
 
     :rtype: list
     :return: List of buckets ready for ingestion to Neo4j
