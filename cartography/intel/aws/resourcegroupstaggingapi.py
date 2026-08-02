@@ -242,7 +242,7 @@ def get_tags(boto3_session: boto3.session.Session, resource_type: str, region: s
 
 def _load_tags_tx(
     tx: neo4j.Transaction,
-    tag_data: Dict,
+    tag_data: List[Dict],
     resource_type: str,
     region: str,
     current_aws_account_id: str,
@@ -283,7 +283,7 @@ def _load_tags_tx(
 @timeit
 def load_tags(
     neo4j_session: neo4j.Session,
-    tag_data: Dict,
+    tag_data: List[Dict],
     resource_type: str,
     region: str,
     current_aws_account_id: str,
@@ -301,7 +301,7 @@ def load_tags(
 
 
 @timeit
-def transform_tags(tag_data: Dict, resource_type: str) -> None:
+def transform_tags(tag_data: List[Dict], resource_type: str) -> None:
     for tag_mapping in tag_data:
         tag_mapping['resource_id'] = compute_resource_id(tag_mapping, resource_type)
 
