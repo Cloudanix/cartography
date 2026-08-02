@@ -147,12 +147,19 @@ def get_tags_list(
 
 
 def _load_tags_tx(tx: neo4j.Transaction, tags_list: List[Dict], update_tag: int, common_job_parameters: Dict) -> None:
+    # ARM resource ids are case-insensitive, but cartography modules normalize them
+    # inconsistently (this module lowercases resource group names, others don't), so
+    # an exact id match silently drops tags. Compare lowercased on both sides; doing
+    # it here rather than at each producer keeps every caller of load_tags correct.
+    for tag in tags_list:
+        tag['resource_id_lower'] = (tag.get('resource_id') or '').lower()
+
     ingest_tag = """
     UNWIND $tags_list AS tag
     MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->
     (:AzureTenant{id: $AZURE_TENANT_ID})-[:RESOURCE]->
-    (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[*]->(l)
-    where l.id = tag.resource_id
+    (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[*1..4]->(l)
+    WHERE toLower(l.id) = tag.resource_id_lower
     MERGE (t:AzureTag{id: tag.id})
     ON CREATE SET t.firstseen = timestamp(),
     t.type = tag.type,

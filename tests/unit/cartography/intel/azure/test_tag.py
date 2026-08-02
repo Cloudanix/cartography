@@ -54,3 +54,27 @@ def test_load_database_tags_noop_without_tags(mocker):
     load_tags = mocker.patch.object(sql.azure_tag, 'load_tags')
     sql._load_database_tags(MagicMock(), [{'id': 'x', 'tags': {}}], 1, COMMON_JOB_PARAMETERS)
     load_tags.assert_not_called()
+
+
+def test_tag_match_is_case_insensitive_and_bounded():
+    """
+    ARM ids are case-insensitive; an exact match dropped tags for any module that
+    normalized ids differently. The descent is also bounded — the old unbounded
+    -[*]-> walked the whole subscription subgraph for every tag row.
+    """
+    tx = MagicMock()
+    resource_id = '/subscriptions/S/resourceGroups/RG/providers/Microsoft.Compute/virtualMachines/VM1'
+    tags_list = [{
+        'id': resource_id + '/providers/Microsoft.Resources/tags/env',
+        'key': 'env', 'value': 'prod', 'type': 'Microsoft.Resources/tags',
+        'resource_id': resource_id, 'resource_group': 'rg',
+    }]
+
+    tag._load_tags_tx(tx, tags_list, 123, COMMON_JOB_PARAMETERS)
+
+    query = tx.run.call_args[0][0]
+    assert 'toLower(l.id) = tag.resource_id_lower' in query
+    assert '-[*]->' not in query
+    assert '-[*1..4]->' in query
+    # the lowercased id is derived centrally, so every producer stays correct
+    assert tx.run.call_args[1]['tags_list'][0]['resource_id_lower'] == resource_id.lower()
