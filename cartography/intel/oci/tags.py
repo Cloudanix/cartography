@@ -16,6 +16,21 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+# Cypher fragment walking from a tagged resource back to its owning OCICompartment.
+# Most resources hang directly off the compartment; the ones below are owned by a
+# parent resource instead, so a direct-only MATCH silently drops their tags.
+# Keys are node labels; every entry here needs a matching stale-relationship
+# statement in oci_import_tags_cleanup.json (asserted by the unit tests).
+DEFAULT_OWNERSHIP_PATH = '<-[:RESOURCE]-'
+OWNERSHIP_PATHS: Dict[str, str] = {
+    'OCIKmsKey': '<-[:OCI_KMS_KEY]-(:OCIKmsVault)<-[:RESOURCE]-',
+    'OCIDbHome': '<-[:HAS_DB_HOME]-(:OCIDbSystem)<-[:RESOURCE]-',
+    'OCILog': '<-[:OCI_LOG]-(:OCILogGroup)<-[:RESOURCE]-',
+    # Backups hang off either an OCIBlockVolume or an OCIBootVolume, so the parent
+    # node is left unlabeled rather than duplicating the mapping per volume kind.
+    'OCIVolumeBackup': '<-[:OCI_VOLUME_BACKUP]-()<-[:RESOURCE]-',
+}
+
 
 def get_tags_list(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -60,12 +75,14 @@ def _load_tags_tx(
     update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    # Neo4j cannot parameterize labels, so resource_label is interpolated. It is
-    # always a hardcoded literal at the call site, never user input.
+    # Neo4j cannot parameterize labels or relationship types, so resource_label and
+    # the ownership path are interpolated. Both are hardcoded literals — the label
+    # comes from the call site, the path from OWNERSHIP_PATHS — never user input.
+    ownership_path = OWNERSHIP_PATHS.get(resource_label, DEFAULT_OWNERSHIP_PATH)
     ingest_tags = """
     UNWIND $data AS tag
     MATCH (r:""" + resource_label + """{id: tag.resource_id})
-    <-[:RESOURCE]-(:OCICompartment)<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
+    """ + ownership_path + """(:OCICompartment)<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
     MERGE (t:OCITag{id: tag.id})
     ON CREATE SET t.firstseen = timestamp()
     SET t.lastupdated = $update_tag,

@@ -6,6 +6,26 @@
             "iterationsize": 100
         },
         {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIKmsVault)-[:OCI_KMS_KEY]->(m:OCIKmsKey)-[r:TAGGED]->(:OCITag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIDbSystem)-[:HAS_DB_HOME]->(m:OCIDbHome)-[r:TAGGED]->(:OCITag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCILogGroup)-[:OCI_LOG]->(m:OCILog)-[r:TAGGED]->(:OCITag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->()-[:OCI_VOLUME_BACKUP]->(m:OCIVolumeBackup)-[r:TAGGED]->(:OCITag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
             "query": "MATCH (n:OCITag) WHERE NOT (n)--() AND n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
             "iterative": true,
             "iterationsize": 100

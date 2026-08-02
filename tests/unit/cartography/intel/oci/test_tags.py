@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from cartography.intel.oci import tags
@@ -84,3 +85,39 @@ def test_sync_tags_noop_without_tags():
     session = MagicMock()
     tags.sync_tags(session, [{'id': 'x', 'freeform-tags': {}}], 'OCIInstance', 1, {})
     session.execute_write.assert_not_called()
+
+
+def test_kms_key_tags_match_through_their_vault():
+    # regression: OCIKmsKey hangs off OCIKmsVault, not off the compartment, so a
+    # direct-only MATCH fetched key tags from OCI and silently dropped them
+    tx = MagicMock()
+    common_job_parameters = {'OCI_TENANCY_ID': 'ocid1.tenancy.oc1..t', 'WORKSPACE_ID': 'ws-1'}
+
+    tags._load_tags_tx(tx, [{
+        'id': 'k/tag/env', 'key': 'env', 'value': 'prod', 'resource_id': 'k',
+    }], 'OCIKmsKey', 123, common_job_parameters)
+
+    query = tx.run.call_args[0][0]
+    assert '(r:OCIKmsKey{id: tag.resource_id})' in query
+    assert '<-[:OCI_KMS_KEY]-(:OCIKmsVault)<-[:RESOURCE]-(:OCICompartment)' in query
+
+
+def test_direct_resources_keep_the_default_path():
+    tx = MagicMock()
+    tags._load_tags_tx(tx, [{
+        'id': 'i/tag/env', 'key': 'env', 'value': 'prod', 'resource_id': 'i',
+    }], 'OCIInstance', 123, {'OCI_TENANCY_ID': 't', 'WORKSPACE_ID': 'w'})
+
+    query = tx.run.call_args[0][0]
+    assert '(r:OCIInstance{id: tag.resource_id})\n    <-[:RESOURCE]-(:OCICompartment)' in query
+
+
+def test_every_nested_path_has_cleanup_coverage():
+    # a nested resource whose stale TAGGED edges the cleanup job cannot reach
+    # would keep serving tags the provider has already removed
+    cleanup = (
+        Path(__file__).resolve().parents[5]
+        / 'cartography' / 'data' / 'jobs' / 'cleanup' / 'oci_import_tags_cleanup.json'
+    ).read_text()
+    for label in tags.OWNERSHIP_PATHS:
+        assert f'(m:{label})-[r:TAGGED]->' in cleanup, label
