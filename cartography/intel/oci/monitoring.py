@@ -11,6 +11,7 @@ import oci.events
 import oci.monitoring
 import oci.ons
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
@@ -114,6 +115,10 @@ def sync_alarms(
             load_alarms(
                 neo4j_session, data["Alarms"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
+            )
+            tags.sync_tags(
+                neo4j_session, data["Alarms"], 'OCIMonitoringAlarm',
+                oci_update_tag, common_job_parameters,
             )
 
 
@@ -290,6 +295,10 @@ def sync_event_rules(
                 neo4j_session, data["Rules"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(
+                neo4j_session, data["Rules"], 'OCIEventRule',
+                oci_update_tag, common_job_parameters,
+            )
 
 
 # ============================================================
@@ -387,6 +396,10 @@ def sync_notification_topics(
             load_notification_topics(
                 neo4j_session, data["Topics"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
+            )
+            tags.sync_tags(
+                neo4j_session, data["Topics"], 'OCINotificationTopic',
+                oci_update_tag, common_job_parameters,
             )
 
 

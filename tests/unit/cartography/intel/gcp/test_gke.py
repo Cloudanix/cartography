@@ -11,6 +11,7 @@ GKE_CLUSTERS is imported from tests/data/gke.py.
 """
 from cartography.intel.gcp.compute import load_gcp_instances
 from cartography.intel.gcp.compute import transform_gcp_instances
+from cartography.intel.gcp.gke import get_gke_clusters
 from cartography.intel.gcp.gke import load_gke_clusters
 from cartography.intel.gcp.gke import load_gke_node_pools
 from tests.data.gcp.gke import GKE_CLUSTERS
@@ -405,3 +406,61 @@ def test_load_gcp_instances_plain_vm_gke_properties_are_null(neo4j_session):
     assert len(result) == 1
     assert result[0]["cn"] is None
     assert result[0]["pn"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_gke_clusters – resourceLabels → labels mapping
+# ---------------------------------------------------------------------------
+
+def _mock_container(mocker, clusters):
+    container = mocker.MagicMock()
+    (
+        container.projects.return_value
+        .zones.return_value
+        .clusters.return_value
+        .list.return_value
+        .execute.return_value
+    ) = {"clusters": clusters}
+    return container
+
+
+def test_get_gke_clusters_maps_resource_labels(mocker):
+    """
+    GKE returns cluster labels under resourceLabels; label.sync_labels reads
+    'labels', so get_gke_clusters must remap or GKE labels are silently dropped.
+    """
+    mocker.patch(
+        "cartography.intel.gcp.gke.gcp_console_link.get_console_link",
+        return_value="https://console.cloud.google.com/fake",
+    )
+    raw = {
+        "name": "test-cluster",
+        "location": "europe-west2",
+        "zone": "europe-west2-a",
+        "resourceLabels": {"env": "prod", "team": "platform"},
+    }
+    container = _mock_container(mocker, [raw])
+
+    clusters = get_gke_clusters(container, TEST_PROJECT_ID, [], {})
+
+    assert len(clusters) == 1
+    assert clusters[0]["labels"] == {"env": "prod", "team": "platform"}
+
+
+def test_get_gke_clusters_no_resource_labels(mocker):
+    """Clusters without resourceLabels must get an empty labels dict, not raise."""
+    mocker.patch(
+        "cartography.intel.gcp.gke.gcp_console_link.get_console_link",
+        return_value="https://console.cloud.google.com/fake",
+    )
+    raw = {
+        "name": "test-cluster",
+        "location": "europe-west2",
+        "zone": "europe-west2-a",
+    }
+    container = _mock_container(mocker, [raw])
+
+    clusters = get_gke_clusters(container, TEST_PROJECT_ID, [], {})
+
+    assert len(clusters) == 1
+    assert clusters[0]["labels"] == {}

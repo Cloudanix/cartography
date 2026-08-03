@@ -11,6 +11,16 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+# Cypher fragment walking from a labeled resource back to its owning GCPProject.
+# Most resources hang directly off the project; the ones below are owned by a
+# parent resource instead, so a direct-only MATCH silently drops their labels.
+# Every entry here needs a matching statement in gcp_labels_cleanup.json
+# (asserted by the unit tests).
+DEFAULT_OWNERSHIP_PATH = '<-[:RESOURCE]-'
+OWNERSHIP_PATHS: Dict[str, str] = {
+    'GCPKMSCryptoKey': '<-[:RESOURCE]-(:GCPKMSKeyRing)<-[:RESOURCE]-',
+}
+
 
 @timeit
 def get_labels_list(data: List[Dict]) -> List[Dict]:
@@ -56,16 +66,19 @@ def load_labels(session: neo4j.Session, data_list: List[Dict], update_tag: int, 
 
 
 def _load_labels_tx(tx: neo4j.Transaction, labels: List[Dict], update_tag: int, common_job_parameters: Dict, service_label: str) -> None:
+    # Neo4j cannot parameterize labels or relationship types, so service_label and
+    # the ownership path are interpolated. Both are hardcoded literals — the label
+    # comes from the call site, the path from OWNERSHIP_PATHS — never user input.
+    ownership_path = OWNERSHIP_PATHS.get(service_label, DEFAULT_OWNERSHIP_PATH)
     ingest_label = """
     UNWIND $data AS label
+    MATCH (r:""" + service_label + """{id:label.resource_id})
+    """ + ownership_path + """(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
     MERGE (l:GCPLabel{id: label.id})
     ON CREATE SET l.firstseen = timestamp()
     SET l.lastupdated = $update_tag,
     l.value = label.value,
     l.key = label.key
-    WITH l,label
-    MATCH (r:""" + service_label + """{id:label.resource_id})
-    <-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
     MERGE (r)-[lb:LABELED]->(l)
     ON CREATE SET lb.firstseen = timestamp()
     SET lb.lastupdated = $update_tag

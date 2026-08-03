@@ -10,6 +10,7 @@ from typing import Optional
 import neo4j
 import oci
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
@@ -449,6 +450,7 @@ def sync_clusters(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetch -> transform -> load OKE clusters for a compartment in a region.
@@ -475,6 +477,8 @@ def sync_clusters(
     clusters = transform_clusters(summaries, details_by_id, region)
     if clusters:
         load_clusters(neo4j_session, clusters, compartment_id, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, summaries, 'OCIOKECluster', oci_update_tag, common_job_parameters)
     return clusters
 
 
@@ -485,6 +489,7 @@ def sync_node_pools(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any] = None,
 ) -> None:
     """
     For each cluster fetched in this region, list its node pools, fetch each
@@ -519,6 +524,8 @@ def sync_node_pools(
     node_pools = transform_node_pools(all_summaries, pool_details_by_id, region)
     if node_pools:
         load_node_pools(neo4j_session, node_pools, compartment_id, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, all_summaries, 'OCIOKENodePool', oci_update_tag, common_job_parameters)
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
@@ -557,6 +564,7 @@ def sync(
         try:
             clusters = sync_clusters(
                 neo4j_session, container_engine, compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI OKE clusters: %s", e, exc_info=True)
@@ -566,6 +574,7 @@ def sync(
             sync_node_pools(
                 neo4j_session, container_engine, clusters,
                 compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI OKE node pools: %s", e, exc_info=True)

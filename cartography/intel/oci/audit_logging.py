@@ -25,6 +25,7 @@ import oci.audit
 import oci.logging
 import oci.object_storage
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
@@ -288,6 +289,10 @@ def sync_log_groups(
                 neo4j_session, log_groups, tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(
+                neo4j_session, log_groups, 'OCILogGroup',
+                oci_update_tag, common_job_parameters,
+            )
             # For each log group, fetch and load its individual logs
             for lg in log_groups:
                 lg_id = lg.get("id")
@@ -295,6 +300,10 @@ def sync_log_groups(
                     logs = get_logs_for_log_group(logging_client, lg_id)
                     if logs:
                         load_logs(neo4j_session, logs, lg_id, region, oci_update_tag)
+                        tags.sync_tags(
+                            neo4j_session, logs, 'OCILog',
+                            oci_update_tag, common_job_parameters,
+                        )
 
 
 # ============================================================

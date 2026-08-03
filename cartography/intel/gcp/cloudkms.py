@@ -501,6 +501,10 @@ def sync(
     label.sync_labels(neo4j_session, key_rings, gcp_update_tag, common_job_parameters, 'keyrings', 'GCPKMSKeyRing')
     crypto_keys = get_kms_crypto_keys(kms, key_rings, project_id)
     load_kms_crypto_keys(neo4j_session, crypto_keys, project_id, gcp_update_tag)
+    label.sync_labels(
+        neo4j_session, crypto_keys, gcp_update_tag, common_job_parameters,
+        'crypto_keys', 'GCPKMSCryptoKey',
+    )
     cleanup_gcp_kms(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

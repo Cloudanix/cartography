@@ -16,6 +16,7 @@ from typing import Optional
 import neo4j
 import oci
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
@@ -165,6 +166,8 @@ def transform_buckets(
             "approximate_size": merged.get("approximate-size"),
             "time_created": str(merged.get("time-created", "")),
             "region": region,
+            "freeform-tags": merged.get("freeform-tags") or {},
+            "defined-tags": merged.get("defined-tags") or {},
         })
     return transformed
 
@@ -227,6 +230,7 @@ def sync_buckets(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any] = None,
 ) -> None:
     """
     Fetch → transform → load Object Storage buckets for one compartment.
@@ -259,6 +263,8 @@ def sync_buckets(
     buckets = transform_buckets(summaries, details_by_name, namespace, region)
     if buckets:
         load_buckets(neo4j_session, buckets, compartment_id, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, buckets, 'OCIStorageBucket', oci_update_tag, common_job_parameters)
 
 
 # ---------------------------------------------------------------------------
@@ -734,6 +740,7 @@ def sync_volume_backups(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any],
 ) -> None:
     logger.debug(
         "Syncing OCI volume backups for compartment '%s', region '%s'.",
@@ -744,6 +751,10 @@ def sync_volume_backups(
     backups = transform_volume_backups(block_backups, boot_backups, region)
     if backups:
         load_volume_backups(neo4j_session, backups, oci_update_tag)
+        tags.sync_tags(
+            neo4j_session, block_backups + boot_backups, 'OCIVolumeBackup',
+            oci_update_tag, common_job_parameters,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1034,6 +1045,7 @@ def sync_file_storage(
     availability_domains: List[str],
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any] = None,
 ) -> None:
     """
     Sync File Storage Service: file systems, mount targets, exports, and the
@@ -1055,8 +1067,12 @@ def sync_file_storage(
 
     if file_systems:
         load_file_systems(neo4j_session, file_systems, compartment_id, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, fs_raw, 'OCIFileSystem', oci_update_tag, common_job_parameters)
     if mount_targets:
         load_mount_targets(neo4j_session, mount_targets, compartment_id, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, mt_raw, 'OCIMountTarget', oci_update_tag, common_job_parameters)
 
     # Pull exports compartment-wide, then transform & load.
     exports_raw = get_export_list_data(file_storage, compartment_id)["Exports"]
@@ -1128,6 +1144,7 @@ def sync(
             sync_buckets(
                 neo4j_session, storage_clients.object_storage,
                 tenancy_id, compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI Object Storage buckets: %s", e, exc_info=True)
@@ -1156,6 +1173,7 @@ def sync(
             sync_volume_backups(
                 neo4j_session, storage_clients.blockstorage,
                 tenancy_id, compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI volume backups: %s", e, exc_info=True)
@@ -1166,6 +1184,7 @@ def sync(
                 neo4j_session, storage_clients.file_storage,
                 tenancy_id, compartment_id, availability_domains,
                 region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI File Storage: %s", e, exc_info=True)

@@ -10,6 +10,7 @@ from typing import Optional
 import neo4j
 import oci
 
+from . import tags
 from . import utils
 from cartography.util import run_cleanup_job
 
@@ -296,6 +297,7 @@ def sync_autonomous_databases(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any] = None,
 ) -> None:
     logger.debug(
         "Syncing OCI Autonomous Databases for compartment '%s', region '%s'.",
@@ -305,6 +307,8 @@ def sync_autonomous_databases(
     items = transform_autonomous_databases(raw, region)
     if items:
         load_autonomous_databases(neo4j_session, items, compartment_id, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, raw, 'OCIAutonomousDatabase', oci_update_tag, common_job_parameters)
 
 
 # ---------------------------------------------------------------------------
@@ -787,6 +791,7 @@ def sync_db_systems(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any] = None,
 ) -> None:
     logger.debug(
         "Syncing OCI DB Systems for compartment '%s', region '%s'.",
@@ -798,14 +803,18 @@ def sync_db_systems(
         return
 
     load_db_systems(neo4j_session, db_systems, compartment_id, oci_update_tag)
+    if common_job_parameters:
+        tags.sync_tags(neo4j_session, raw_systems, 'OCIDbSystem', oci_update_tag, common_job_parameters)
 
     all_homes: List[Dict[str, Any]] = []
+    all_homes_raw: List[Dict[str, Any]] = []
     all_nodes: List[Dict[str, Any]] = []
     for sys in db_systems:
         sys_id = sys["id"]
         homes_raw = get_db_home_list_data(
             database_client, compartment_id, sys_id,
         )["DbHomes"]
+        all_homes_raw.extend(homes_raw)
         all_homes.extend(transform_db_homes(homes_raw, region))
 
         nodes_raw = get_db_node_list_data(
@@ -815,6 +824,8 @@ def sync_db_systems(
 
     if all_homes:
         load_db_homes(neo4j_session, all_homes, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, all_homes_raw, 'OCIDbHome', oci_update_tag, common_job_parameters)
     if all_nodes:
         load_db_nodes(neo4j_session, all_nodes, oci_update_tag)
 
@@ -863,6 +874,7 @@ def sync(
         try:
             sync_autonomous_databases(
                 neo4j_session, database_client, compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI Autonomous Databases: %s", e, exc_info=True)
@@ -870,6 +882,7 @@ def sync(
         try:
             sync_db_systems(
                 neo4j_session, database_client, compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI DB Systems: %s", e, exc_info=True)

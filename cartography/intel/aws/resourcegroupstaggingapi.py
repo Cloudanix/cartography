@@ -65,6 +65,22 @@ def get_short_id_from_lb2_arn(alb_arn: str) -> str:
     return alb_arn.split('/')[-2]
 
 
+def get_hosted_zone_id_from_arn(zone_arn: str) -> str:
+    """
+    AWSDNSZone.zoneid holds the raw Route53 API Id ("/hostedzone/Z123"), so map
+    "arn:aws:route53:::hostedzone/Z123" back to that form.
+    """
+    return '/hostedzone/' + zone_arn.split('/')[-1]
+
+
+def get_log_group_arn_with_wildcard(arn: str) -> str:
+    """
+    AWSCloudWatchLogGroup.id comes from describe-log-groups, whose ARNs end in
+    ':*'; the tagging API returns the same ARN without the suffix.
+    """
+    return arn if arn.endswith(':*') else arn + ':*'
+
+
 # We maintain a mapping from AWS resource types to their associated labels and unique identifiers.
 # label: the node label used in cartography for this resource type
 # property: the field of this node that uniquely identified this resource type
@@ -92,9 +108,14 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     'ec2:volume': {'label': 'EBSVolume', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ec2:elastic-ip-address': {'label': 'ElasticIPAddress', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ecs:cluster': {'label': 'ECSCluster', 'property': 'id'},
-    'ecs:container': {'label': 'ECSContainer', 'property': 'id'},
-    'ecs:container-instance': {'label': 'ECSContainerInstance', 'property': 'id'},
-    'ecs:task': {'label': 'ECSTask', 'property': 'id'},
+    'ecs:container-instance': {
+        'label': 'ECSContainerInstance', 'property': 'id',
+        'path': '-[:RESOURCE]->(:ECSCluster)-[:HAS_CONTAINER_INSTANCE]->',
+    },
+    'ecs:task': {
+        'label': 'ECSTask', 'property': 'id',
+        'path': '-[:RESOURCE]->(:ECSCluster)-[:HAS_TASK]->',
+    },
     'ecs:task-definition': {'label': 'ECSTaskDefinition', 'property': 'id'},
     'eks:cluster': {'label': 'EKSCluster', 'property': 'id'},
     'elasticache:cluster': {'label': 'ElasticacheCluster', 'property': 'arn'},
@@ -110,17 +131,13 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
         'label': 'LoadBalancerV2',
         'property': 'name', 'id_func': get_short_id_from_lb2_arn,
     },
-    'elasticloadbalancing:listener': {
-        'label': 'ELBListener', 'property':
-        'name', 'id_func': get_short_id_from_elb_arn,
-    },
     'elasticloadbalancing:listener/app': {
-        'label': 'ELBV2Listener',
-        'property': 'name', 'id_func': get_short_id_from_lb2_arn,
+        'label': 'ELBV2Listener', 'property': 'id',
+        'path': '-[:RESOURCE]->(:LoadBalancerV2)-[:ELBV2_LISTENER]->',
     },
     'elasticloadbalancing:listener/net': {
-        'label': 'ELBV2Listener',
-        'property': 'name', 'id_func': get_short_id_from_lb2_arn,
+        'label': 'ELBV2Listener', 'property': 'id',
+        'path': '-[:RESOURCE]->(:LoadBalancerV2)-[:ELBV2_LISTENER]->',
     },
     'elasticmapreduce:cluster': {'label': 'EMRCluster', 'property': 'arn'},
     'es:domain': {'label': 'ESDomain', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
@@ -141,7 +158,58 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     's3': {'label': 'S3Bucket', 'property': 'id', 'id_func': get_bucket_name_from_arn},
     'secretsmanager:secret': {'label': 'SecretsManagerSecret', 'property': 'id'},
     'sqs': {'label': 'SQSQueue', 'property': 'id'},
+    'bedrock:agent': {'label': 'AWSBedrockAgent', 'property': 'arn'},
+    'bedrock:custom-model': {'label': 'AWSBedrockCustomModel', 'property': 'arn'},
+    'bedrock:guardrail': {'label': 'AWSBedrockGuardRail', 'property': 'arn'},
+    'bedrock:model-customization-job': {'label': 'AWSBedrockCustomisationJob', 'property': 'arn'},
+    'cloudformation:stack': {'label': 'AWSCloudformationStack', 'property': 'id'},
+    'cloudfront:distribution': {'label': 'AWSCloudfrontDistribution', 'property': 'id'},
+    'cloudtrail:trail': {'label': 'AWSCloudTrailTrail', 'property': 'id'},
+    'cloudwatch:alarm': {'label': 'AWSCloudWatchAlarm', 'property': 'id'},
+    'config:config-rule': {'label': 'AWSConfigRule', 'property': 'id'},
+    'ec2:image': {'label': 'EC2Image', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'ec2:launch-template': {'label': 'LaunchTemplate', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'ec2:reserved-instances': {
+        'label': 'EC2ReservedInstance', 'property': 'id',
+        'id_func': get_short_id_from_ec2_arn,
+    },
+    'ec2:route-table': {'label': 'EC2RouteTable', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'ec2:snapshot': {'label': 'EBSSnapshot', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'events:event-bus': {'label': 'AWSEventBridgeEventBus', 'property': 'id'},
+    'events:rule': {'label': 'AWSEventBridgeRule', 'property': 'id'},
+    'ecs:service': {
+        'label': 'ECSService', 'property': 'id',
+        'path': '-[:RESOURCE]->(:ECSCluster)-[:HAS_SERVICE]->',
+    },
+    'eks:nodegroup': {
+        'label': 'EKSClusterNodeGroup', 'property': 'id',
+        'path': '-[:RESOURCE]->(:EKSCluster)<-[:ASSOCIATED_WITH]-',
+    },
+    'kinesis:stream': {'label': 'KinesisStream', 'property': 'id'},
+    'rds:ri': {'label': 'RDSReservedDBInstance', 'property': 'id'},
+    'logs:log-group': {'label': 'AWSCloudWatchLogGroup', 'property': 'id', 'id_func': get_log_group_arn_with_wildcard},
+    'route53:hostedzone': {'label': 'AWSDNSZone', 'property': 'zoneid', 'id_func': get_hosted_zone_id_from_arn},
+    'sagemaker:cluster': {'label': 'AWSSagemakerCluster', 'property': 'arn'},
+    'sagemaker:domain': {'label': 'AWSSagemakerDomain', 'property': 'arn'},
+    'sagemaker:endpoint': {'label': 'AWSSagemakerEndpoint', 'property': 'arn'},
+    'sagemaker:model': {'label': 'AWSSagemakerModel', 'property': 'arn'},
+    'sagemaker:notebook-instance': {'label': 'AWSSagemakerNotebookInstance', 'property': 'arn'},
+    'sagemaker:training-job': {'label': 'AWSSagemakerTrainingJob', 'property': 'arn'},
+    'securityhub:hub': {'label': 'SecurityHub', 'property': 'id'},
+    'ses:identity': {'label': 'AWSSESIdentity', 'property': 'id'},
+    'sns': {'label': 'AWSSNSTopic', 'property': 'id'},
+    'waf-regional:webacl': {'label': 'AWSWAFClassicWebACL', 'property': 'id'},
+    'wafv2': {'label': 'AWSWAFv2WebACL', 'property': 'id'},
 }
+
+# Global services are only reported by the tagging API in us-east-1; querying
+# them in every region wastes an API call sequence + a Neo4j session per region.
+# 'iam:role' is served by get_role_tags() (IAM is global), so it belongs here too.
+GLOBAL_RESOURCE_TYPES = frozenset({
+    'cloudfront:distribution',
+    'iam:role',
+    'route53:hostedzone',
+})
 
 
 @timeit
@@ -174,7 +242,7 @@ def get_tags(boto3_session: boto3.session.Session, resource_type: str, region: s
 
 def _load_tags_tx(
     tx: neo4j.Transaction,
-    tag_data: Dict,
+    tag_data: List[Dict],
     resource_type: str,
     region: str,
     current_aws_account_id: str,
@@ -184,7 +252,7 @@ def _load_tags_tx(
     UNWIND $TagData as tag_mapping
         UNWIND tag_mapping.Tags as input_tag
             MATCH
-            (a:AWSAccount{id:$Account})-[res:RESOURCE]->(resource:$resource_label{$property:tag_mapping.resource_id})
+            (a:AWSAccount{id:$Account})$path(resource:$resource_label{$property:tag_mapping.resource_id})
             MERGE
             (aws_tag:AWSTag:Tag{id:input_tag.Key + ":" + input_tag.Value})
             ON CREATE SET aws_tag.firstseen = timestamp()
@@ -201,6 +269,7 @@ def _load_tags_tx(
     query = INGEST_TAG_TEMPLATE.safe_substitute(
         resource_label=TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['label'],
         property=TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['property'],
+        path=TAG_RESOURCE_TYPE_MAPPINGS[resource_type].get('path', '-[res:RESOURCE]->'),
     )
     tx.run(
         query,
@@ -214,7 +283,7 @@ def _load_tags_tx(
 @timeit
 def load_tags(
     neo4j_session: neo4j.Session,
-    tag_data: Dict,
+    tag_data: List[Dict],
     resource_type: str,
     region: str,
     current_aws_account_id: str,
@@ -232,7 +301,7 @@ def load_tags(
 
 
 @timeit
-def transform_tags(tag_data: Dict, resource_type: str) -> None:
+def transform_tags(tag_data: List[Dict], resource_type: str) -> None:
     for tag_mapping in tag_data:
         tag_mapping['resource_id'] = compute_resource_id(tag_mapping, resource_type)
 
@@ -325,7 +394,11 @@ def sync(
         for region in regions:
             logger.info("Syncing AWS tags for region '%s'.", region)
             for resource_type in tag_resource_type_mappings.keys():
+                if resource_type in GLOBAL_RESOURCE_TYPES:
+                    continue
                 sync_tags(neo4j_session, boto3_session, region, resource_type, current_aws_account_id, update_tag)
+        for resource_type in GLOBAL_RESOURCE_TYPES & tag_resource_type_mappings.keys():
+            sync_tags(neo4j_session, boto3_session, 'us-east-1', resource_type, current_aws_account_id, update_tag)
 
     else:
         if len(regions) == 0:
@@ -349,7 +422,11 @@ def sync(
             for region in regions:
                 logger.info("Syncing AWS tags for region '%s'.", region)
                 for resource_type in tag_resource_type_mappings.keys():
+                    if resource_type in GLOBAL_RESOURCE_TYPES:
+                        continue
                     futures.append(executor.submit(concurrent_execution, config, region, resource_type, current_aws_account_id, update_tag))
+            for resource_type in GLOBAL_RESOURCE_TYPES & tag_resource_type_mappings.keys():
+                futures.append(executor.submit(concurrent_execution, config, 'us-east-1', resource_type, current_aws_account_id, update_tag))
 
             for future in as_completed(futures):
                 logger.info(f'Result from Future - Tags Processing: {future.result()}')

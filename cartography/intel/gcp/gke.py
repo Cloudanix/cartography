@@ -36,6 +36,8 @@ def get_gke_clusters(container: Resource, project_id: str, regions: list, common
         for item in res.get("clusters", []):
             item["region"] = get_region_from_location(item["location"])
             item["id"] = f"projects/{project_id}/locations/{item['region']}/clusters/{item['name']}"
+            # GKE returns cluster labels as resourceLabels; label.sync_labels reads 'labels'
+            item["labels"] = item.get("resourceLabels", {})
             item["consolelink"] = gcp_console_link.get_console_link(
                 resource_name="gke_cluster",
                 project_id=project_id,

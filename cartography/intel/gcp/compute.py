@@ -149,6 +149,9 @@ def sync_compute_disks(
 
     load_compute_disks(neo4j_session, disks, project_id, gcp_update_tag)
     cleanup_compute_disks(neo4j_session, common_job_parameters)
+    label.sync_labels(
+        neo4j_session, disks, gcp_update_tag, common_job_parameters, 'compute disks', 'GCPComputeDisk',
+    )
 
 
 @timeit
