@@ -26,6 +26,7 @@ tmp
 node_modules
 .serverless
 .venv
+.venv*
 */venv_cartography_test/
 
 package/*
@@ -51,4 +52,7 @@ config/*
 !config/*.example.json
 
 # Added by code-review-graph
+.code-review-graph
 .code-review-graph/
+
+.ruff_cache
