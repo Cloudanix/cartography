@@ -14,22 +14,14 @@ packaging~=26.0
 netaddr~=0.8.0
 maya~=0.6.1
 pytz~=2022.6
-google-cloud-pubsub>=2.3.0
-click<8.0,>=7.0
-pyparsing==2.4.7
-markupsafe==2.0.1
 
 cloudconsolelink~=4.0.1
 sentry-sdk~=2.60.0
 clouduniqueid~=1.0.3
 
 # Azure specific packages
-azure-eventgrid~=4.1.1
-azure-functions~=1.6.0
 adal>=1.2.4
 azure-core<2.0.0,>=1.15.0
-azure-cli-core>=2.33.0
-azure-devops~=7.1.0b4
 azure-keyvault~=4.2.0
 azure-keyvault-certificates~=4.6.0
 azure-mgmt-compute>=5.0.0
@@ -46,8 +38,6 @@ azure-mgmt-containerservice>=4.4.0
 azure-mgmt-keyvault>=1.1.0
 azure-graphrbac==0.61.1
 azure-mgmt-authorization==1.0.0
-azure-mgmt-msi~=7.0.0
-azure-mgmt-resource>=10.2.0
 azure-mgmt-rdbms>=10.0.0
 azure-mgmt-monitor~=5.0.1
 azure-mgmt-security~=3.0.0
