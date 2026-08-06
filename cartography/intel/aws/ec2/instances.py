@@ -539,7 +539,8 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
     cleanup_query = """
     MATCH (node:EC2Instance)<-[r:HAS_NODE]-(s)
     WHERE (s:EKSCluster OR s:EKSClusterNodeGroup)
-      AND (s)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
+      AND (s)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})
+        <-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
       AND r.lastupdated <> $UPDATE_TAG
     DELETE r
     """
@@ -547,6 +548,24 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
         cleanup_query,
         UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
         AWS_ID=common_job_parameters['AWS_ID'],
+        ORGANIZATION_ID=common_job_parameters['ORGANIZATION_ID'],
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+    )
+
+    # Clean up stale EC2Instance -[:USES]-> AWSRole relationships. These are created by a
+    # raw MERGE in load_ec2_roles() and are not modeled on EC2InstanceSchema, so the
+    # schema-based cleanup above does not cover them.
+    cleanup_uses_query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})
+      -[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:EC2Instance)-[r:USES]->(:AWSRole)
+    WHERE r.lastupdated <> $UPDATE_TAG
+    DELETE r
+    """
+    neo4j_session.run(
+        cleanup_uses_query,
+        UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
+        AWS_ID=common_job_parameters['AWS_ID'],
+        ORGANIZATION_ID=common_job_parameters['ORGANIZATION_ID'],
         WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
     )
 

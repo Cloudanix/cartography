@@ -17,6 +17,18 @@
                   "iterative": true,
                   "iterationsize": 100,
                   "__comment__": "If an RDS instance still exists and is no longer a member of an RDS cluster, delete the relationship between them."
+            },
+            {
+                  "query": "MATCH (:AWSPrincipal)<-[r:RDS_ASSUMEROLE_ALLOW]-(:RDSCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+                  "iterative": true,
+                  "iterationsize": 100,
+                  "__comment__": "If an RDS cluster still exists but can no longer assume a previously set IAM role, delete the relationship between them."
+            },
+            {
+                  "query": "MATCH (:DBSubnetGroup)<-[r:ATTACHED_TO]-(:RDSCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+                  "iterative": true,
+                  "iterationsize": 100,
+                  "__comment__": "If an RDS cluster still exists but is no longer attached to its old DB Subnet Group, delete the relationship between them."
             }
       ],
       "name": "cleanup RDSCluster"
