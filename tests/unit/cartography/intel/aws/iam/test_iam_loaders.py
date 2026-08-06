@@ -141,3 +141,58 @@ class TestLoadGroups:
         session = MagicMock()
         iam.load_groups(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
         session.execute_write.assert_not_called()
+
+
+class TestLoadGroupMemberships:
+    def test_single_batched_write(self):
+        session = MagicMock()
+        memberships = {
+            "arn:aws:iam::1234:group/admins": {"Users": [{"Arn": "arn:aws:iam::1234:user/alice"}]},
+            "arn:aws:iam::1234:group/devs": {
+                "Users": [{"Arn": "arn:aws:iam::1234:user/alice"}, {"Arn": "arn:aws:iam::1234:user/bob"}],
+            },
+        }
+
+        iam.load_group_memberships(session, memberships, TEST_UPDATE_TAG)
+
+        assert session.execute_write.call_count == 1
+        rows = session.execute_write.call_args.kwargs["DictList"]
+        assert len(rows) == 3
+        assert {"group_arn": "arn:aws:iam::1234:group/devs", "principal_arn": "arn:aws:iam::1234:user/bob"} in rows
+
+    def test_empty_memberships_write_nothing(self):
+        session = MagicMock()
+        iam.load_group_memberships(session, {}, TEST_UPDATE_TAG)
+        session.execute_write.assert_not_called()
+
+
+class TestLoadUserAccessKeys:
+    def test_single_batched_write_skips_keyless_entries(self):
+        session = MagicMock()
+        access_keys = {
+            "arn:aws:iam::1234:user/alice": {
+                "AccessKeyMetadata": [
+                    {"AccessKeyId": "AKIA1", "Status": "Active", "CreateDate": "2024-01-01"},
+                    {"Status": "Inactive"},  # no AccessKeyId -> skipped, as before
+                ],
+            },
+        }
+
+        iam.load_user_access_keys(session, access_keys, TEST_UPDATE_TAG, "https://console")
+
+        assert session.execute_write.call_count == 1
+        call = session.execute_write.call_args
+        assert call.kwargs["DictList"] == [{
+            "arn": "arn:aws:iam::1234:user/alice",
+            "accesskeyid": "AKIA1",
+            "lastuseddate": "",
+            "createdate": "2024-01-01",
+            "keyage": "",
+            "status": "Active",
+        }]
+        assert call.kwargs["consolelink"] == "https://console"
+
+    def test_empty_keys_write_nothing(self):
+        session = MagicMock()
+        iam.load_user_access_keys(session, {}, TEST_UPDATE_TAG, "https://console")
+        session.execute_write.assert_not_called()

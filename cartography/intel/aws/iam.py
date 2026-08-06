@@ -818,9 +818,10 @@ def load_roles(
 @timeit
 def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict, aws_update_tag: int) -> None:
     ingest_membership = """
-    MATCH (group:AWSGroup{arn: $GroupArn})
-    WITH group
-    MATCH (user:AWSPrincipal{arn: $PrincipalArn})
+    UNWIND $DictList AS item
+    MATCH (group:AWSGroup{arn: item.group_arn})
+    WITH group, item
+    MATCH (user:AWSPrincipal{arn: item.principal_arn})
     WHERE user:AWSUser OR user:AWSServiceAccount
     MERGE (user)-[r:MEMBER_AWS_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
@@ -831,15 +832,12 @@ def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict
     SET r2.lastupdated = $aws_update_tag
     """
 
-    for group_arn, membership_data in group_memberships.items():
-        for info in membership_data.get("Users", []):
-            principal_arn = info["Arn"]
-            neo4j_session.run(
-                ingest_membership,
-                GroupArn=group_arn,
-                PrincipalArn=principal_arn,
-                aws_update_tag=aws_update_tag,
-            )
+    membership_rows = [
+        {"group_arn": group_arn, "principal_arn": info["Arn"]}
+        for group_arn, membership_data in group_memberships.items()
+        for info in membership_data.get("Users", [])
+    ]
+    load_graph_data(neo4j_session, ingest_membership, membership_rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
@@ -881,9 +879,10 @@ def sync_assumerole_relationships(
     """
 
     ingest_policies_assume_role = """
-    MATCH (source:AWSPrincipal{arn: $SourceArn})
-    WITH source
-    MATCH (role:AWSRole{arn: $TargetArn})
+    UNWIND $DictList AS item
+    MATCH (source:AWSPrincipal{arn: item.source_arn})
+    WITH source, item
+    MATCH (role:AWSRole{arn: item.target_arn})
     WITH role, source
     MERGE (source)-[r:STS_ASSUMEROLE_ALLOW]->(role)
     ON CREATE SET r.firstseen = timestamp()
@@ -895,15 +894,14 @@ def sync_assumerole_relationships(
         AccountId=current_aws_account_id,
     )
     potential_matches = [(r["source_arn"], r["target_arn"]) for r in results]
-    for source_arn, target_arn in potential_matches:
-        policies = get_policies_for_principal(neo4j_session, source_arn)
-        if principal_allowed_on_resource(policies, target_arn, ["sts:AssumeRole"]):
-            neo4j_session.run(
-                ingest_policies_assume_role,
-                SourceArn=source_arn,
-                TargetArn=target_arn,
-                aws_update_tag=aws_update_tag,
-            )
+    allowed_rows = [
+        {"source_arn": source_arn, "target_arn": target_arn}
+        for source_arn, target_arn in potential_matches
+        if principal_allowed_on_resource(
+            get_policies_for_principal(neo4j_session, source_arn), target_arn, ["sts:AssumeRole"],
+        )
+    ]
+    load_graph_data(neo4j_session, ingest_policies_assume_role, allowed_rows, aws_update_tag=aws_update_tag)
     run_cleanup_job(
         "aws_import_roles_policy_cleanup.json",
         neo4j_session,
@@ -922,18 +920,19 @@ def load_user_access_keys(
     # To rotate key there is no option in aws. we need to create new and delete existing key that's why rotatedate same as createdate
     # TODO change the node label to reflect that this is a user access key, not an account access key
     ingest_account_key = """
-    MATCH (user:AWSPrincipal{arn: $ARN})
+    UNWIND $DictList AS item
+    MATCH (user:AWSPrincipal{arn: item.arn})
     WHERE user:AWSUser OR user:AWSServiceAccount
-    WITH user
-    MERGE (key:AccountAccessKey{accesskeyid: $AccessKeyId})
+    WITH user, item
+    MERGE (key:AccountAccessKey{accesskeyid: item.accesskeyid})
     ON CREATE SET key.firstseen = timestamp(),
-    key.region = $region,
-    key.createdate = $CreateDate,
-    key.rotatedate = $CreateDate,
+    key.region = 'global',
+    key.createdate = item.createdate,
+    key.rotatedate = item.createdate,
     key.consolelink = $consolelink
-    SET key.status = $Status,
-    key.keyage = $KeyAge,
-    key.lastuseddate = $LastUsedDate,
+    SET key.status = item.status,
+    key.keyage = item.keyage,
+    key.lastuseddate = item.lastuseddate,
     key.lastupdated = $aws_update_tag
     WITH user,key
     MERGE (user)-[r:AWS_ACCESS_KEY]->(key)
@@ -941,21 +940,23 @@ def load_user_access_keys(
     SET r.lastupdated = $aws_update_tag
     """
 
-    for arn, access_keys in user_access_keys.items():
-        for key in access_keys["AccessKeyMetadata"]:
-            if key.get("AccessKeyId"):
-                neo4j_session.run(
-                    ingest_account_key,
-                    consolelink=consolelink,
-                    ARN=arn,
-                    AccessKeyId=key["AccessKeyId"],
-                    LastUsedDate=str(key.get("LastUsedDate", "")),
-                    CreateDate=str(key.get("CreateDate", "")),
-                    KeyAge=str(key.get("KeyAge", "")),
-                    Status=key["Status"],
-                    region="global",
-                    aws_update_tag=aws_update_tag,
-                )
+    access_key_rows = [
+        {
+            "arn": arn,
+            "accesskeyid": key["AccessKeyId"],
+            "lastuseddate": str(key.get("LastUsedDate", "")),
+            "createdate": str(key.get("CreateDate", "")),
+            "keyage": str(key.get("KeyAge", "")),
+            "status": key["Status"],
+        }
+        for arn, access_keys in user_access_keys.items()
+        for key in access_keys["AccessKeyMetadata"]
+        if key.get("AccessKeyId")
+    ]
+    load_graph_data(
+        neo4j_session, ingest_account_key, access_key_rows,
+        consolelink=consolelink, aws_update_tag=aws_update_tag,
+    )
 
 
 def ensure_list(obj: Any) -> List[Any]:
@@ -1163,6 +1164,98 @@ def load_policy_statements(
     ).consume()
 
 
+def _batch_load_policies(
+    neo4j_session: neo4j.Session,
+    policy_rows: List[Dict],
+    policy_type: str,
+    aws_update_tag: int,
+) -> None:
+    """
+    Batched equivalent of _load_policy_tx: one UNWIND write linking policies to
+    principals matched by arn, and one matching principals by id (SSO principals).
+    """
+    if policy_type == PolicyType.managed.value:
+        create_clause = """
+        ON CREATE SET
+        policy.firstseen = timestamp()
+        """
+    else:
+        create_clause = """
+        ON CREATE SET
+        policy.firstseen = timestamp(),
+        policy.type = $PolicyType,
+        policy.region = 'global',
+        policy.name = item.policy_name,
+        policy.arn = item.policy_arn,
+        policy.managed_type = $ManagedType,
+        policy.consolelink = item.consolelink
+        """
+
+    ingest_policy = f"""
+    UNWIND $DictList AS item
+    MERGE (policy:AWSPolicy{{id: item.policy_id}})
+    {create_clause}
+    SET policy.lastupdated = $aws_update_tag
+    WITH policy, item
+    MATCH (principal:AWSPrincipal{{arn: item.principal_arn}})
+    MERGE (policy) <-[r:POLICY]-(principal)
+    SET r.lastupdated = $aws_update_tag
+    """
+    ingest_sso_policy = f"""
+    UNWIND $DictList AS item
+    MERGE (policy:AWSPolicy{{id: item.policy_id}})
+    {create_clause}
+    SET policy.lastupdated = $aws_update_tag
+    WITH policy, item
+    MATCH (principal:AWSPrincipal{{id: item.principal_arn}})
+    MERGE (policy) <-[r:POLICY]-(principal)
+    SET r.lastupdated = $aws_update_tag
+    """
+    for query in (ingest_policy, ingest_sso_policy):
+        load_graph_data(
+            neo4j_session,
+            query,
+            policy_rows,
+            PolicyType=policy_type,
+            ManagedType=MANAGED_TYPE_CUSTOM,
+            aws_update_tag=aws_update_tag,
+        )
+
+
+def _batch_load_policy_statements(
+    neo4j_session: neo4j.Session,
+    statement_rows: List[Dict],
+    aws_update_tag: int,
+    consolelink: str,
+) -> None:
+    """Batched equivalent of load_policy_statements: one write for all policies."""
+    ingest_policy_statement = """
+        UNWIND $DictList AS item
+        MATCH (policy:AWSPolicy{id: item.policy_id})
+        WITH policy, item
+        UNWIND item.statements as statement_data
+        MERGE (statement:AWSPolicyStatement{id: statement_data.id})
+        SET
+        statement.effect = statement_data.Effect,
+        statement.action = statement_data.Action,
+        statement.region = 'global',
+        statement.consolelink = $consolelink,
+        statement.notaction = statement_data.NotAction,
+        statement.resource = statement_data.Resource,
+        statement.notresource = statement_data.NotResource,
+        statement.condition = statement_data.Condition,
+        statement.sid = statement_data.Sid,
+        statement.lastupdated = $aws_update_tag
+        MERGE (policy)-[r:STATEMENT]->(statement)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $aws_update_tag
+        """
+    load_graph_data(
+        neo4j_session, ingest_policy_statement, statement_rows,
+        consolelink=consolelink, aws_update_tag=aws_update_tag,
+    )
+
+
 @timeit
 def load_policy_data(
     neo4j_session: neo4j.Session,
@@ -1171,21 +1264,25 @@ def load_policy_data(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
+    policy_rows = []
+    statement_rows = []
     for principal_arn, policy_list in policy_map.items():
         logger.debug(f"Syncing IAM policies for principal {principal_arn}")
         for policy_name, statements in policy_list.items():
-            consolelink = ""
             policy_id = transform_policy_id(current_aws_account_id, policy_type, policy_name)
-            load_policy(
-                neo4j_session,
-                policy_id,
-                policy_name,
-                policy_type,
-                principal_arn,
-                current_aws_account_id,
-                aws_update_tag,
-            )
-            load_policy_statements(neo4j_session, policy_id, policy_name, statements, aws_update_tag, consolelink)
+            policy = policy_name.split("/")[-1]
+            policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
+            policy_rows.append({
+                "policy_id": policy_id,
+                "policy_name": policy_name,
+                "principal_arn": principal_arn,
+                "policy_arn": policy_arn,
+                "consolelink": aws_console_link.get_console_link(arn=policy_arn),
+            })
+            statement_rows.append({"policy_id": policy_id, "statements": statements})
+
+    _batch_load_policies(neo4j_session, policy_rows, policy_type, aws_update_tag)
+    _batch_load_policy_statements(neo4j_session, statement_rows, aws_update_tag, consolelink="")
 
 
 @timeit
