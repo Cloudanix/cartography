@@ -34,6 +34,12 @@ class FakeUserToRoleMatchLink(CartographyRelSchema):
     properties: FakeUserToRoleRelProps = FakeUserToRoleRelProps()
 
 
+# Same link but INWARD: (:FakeUser)<-[:HAS_ROLE]-(:FakeRole)
+@dataclass(frozen=True)
+class FakeUserToRoleMatchLinkInward(FakeUserToRoleMatchLink):
+    direction: LinkDirection = LinkDirection.INWARD
+
+
 # Missing source_node_matcher/source_node_label: valid as a nested rel schema but
 # invalid for load_matchlinks().
 @dataclass(frozen=True)
