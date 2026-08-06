@@ -18,6 +18,26 @@ from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
 
+# Lifecycle states we treat as live compute worth ingesting.
+# Keep STOPPED (still configured, billable boot volume / security surface).
+# Drop TERMINATED / TERMINATING / CREATING tombstones and in-flight creates.
+ACTIVE_INSTANCE_LIFECYCLE_STATES: List[str] = [
+    "RUNNING",
+    "STARTING",
+    "STOPPING",
+    "STOPPED",
+    "PROVISIONING",
+    "MOVING",
+]
+
+
+def filter_active_oci_instances(instances: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep instances in live lifecycle states only."""
+    return [
+        instance for instance in instances
+        if instance.get("lifecycle-state") in ACTIVE_INSTANCE_LIFECYCLE_STATES
+    ]
+
 
 def get_vnic_data(
     network_client: oci.core.virtual_network_client.VirtualNetworkClient,
@@ -100,14 +120,15 @@ def get_instance_list_data(
     compartment_id: str,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Get all compute instances in a compartment.
+    Get live compute instances in a compartment.
     See https://docs.oracle.com/en-us/iaas/api/#/en/iaas/latest/Instance/ListInstances
     """
     try:
         response = oci.pagination.list_call_get_all_results(
             compute.list_instances, compartment_id=compartment_id,
         )
-        return {'Instances': utils.oci_object_to_json(response.data)}
+        instances = filter_active_oci_instances(utils.oci_object_to_json(response.data))
+        return {'Instances': instances}
     except oci.exceptions.ServiceError as e:
         logger.warning(
             "Could not retrieve compute instances for compartment '%s': %s", compartment_id, e.message,
