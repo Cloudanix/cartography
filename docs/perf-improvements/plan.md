@@ -68,8 +68,8 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 | 1 | Query/index fixes + `ensure_indexes` managed-tx wrap | ✅ done — unit + integration green in CI |
 | 2 | Integration EXPLAIN plan guard (+ self-test) | ✅ done — unit + real-EXPLAIN sweep green in CI |
 | 3.0 | Foundation: `session.py` silent-fail fix, `graph_write_seconds` split, upstream `tx.py` backport (batch 10k + retry + matchlinks), `ensure_indexes` memoize | ✅ done 2026-08-06 — unit tests green locally; integration pending CI |
-| 3 | Migrate per-item loaders to `tx.load()` (re-scoped 2026-08-06) | ⚪ not started — **unblocked, next up** (after 3.0 CI run) |
-| 4 | PROFILE unanchored cleanup queries | ⚪ not started — after Phase 3 |
+| 3 | Batch per-item loaders + wrap already-UNWIND raw writes (re-scoped 2026-08-06) | ✅ done 2026-08-06 — unit tests green locally; integration + guard sweep pending CI |
+| 4 | PROFILE unanchored cleanup queries | ⚪ not started — **next up** (after Phase 3 CI run) |
 
 > **CI update (2026-08-06):** the integration suite has run for Phases 1 and 2. Every item
 > previously marked ⏳ pending CI is green. The Phase 2 sweep is a hard gate
@@ -246,13 +246,23 @@ definitions as donor code where the fork has no custom logic (Option 3, selectiv
 
 | # | Module | Per-item writes | Est. | Status |
 |---|--------|----------------:|------|--------|
-| 3.1 | `gcp/compute.py` (instance/NIC/subnet/VPC/tag chain) | 11 (incl. nested) | L | ⚪ |
-| 3.2 | `aws/iam.py` (user/group/role/policy/access-key chain) | 10 | L | ⚪ |
-| 3.3 | `aws/ec2/security_groups.py` | 5 | S | ⚪ |
-| 3.4 | `aws/ec2/load_balancers.py` + `load_balancer_v2s.py` | 9 | M | ⚪ |
-| 3.5 | `aws/redshift.py` | 5 | S | ⚪ |
-| 3.6 | `github/repos.py`, `aws/rds.py`, `azure/subscription.py`, `digitalocean/compute.py` | 1–2 each | S | ⚪ |
-| 3.7 | Already-UNWIND raw writes: wrap in `execute_write` **and** chunk the list at 500 (azure ×3, aws s3/route53, gcp spanner, pagerduty) — buys retry + OOM safety without a schema | n/a | M | ⚪ |
+| 3.1 | `gcp/compute.py` (instance/NIC/subnet/VPC/tag chain) | 11 (incl. nested) | L | ✅ `2d318fc17`..`37dfbfb07` (5 commits) |
+| 3.2 | `aws/iam.py` (user/group/role/policy/access-key chain) | 10 | L | ✅ `b6bdc8cf2`, `1abf8046e`, `dc8bf7393` |
+| 3.3 | `aws/ec2/security_groups.py` | 5 | S | ✅ `38fda6601` |
+| 3.4 | `aws/ec2/load_balancers.py` + `load_balancer_v2s.py` | 9 | M | ✅ `64cf92c2b`, `1da1d1ad1` |
+| 3.5 | `aws/redshift.py` | 5 | S | ✅ `dcfeb5caa` |
+| 3.6 | `github/repos.py`, `aws/rds.py`, `azure/subscription.py`, `digitalocean/compute.py` | 1–2 each | S | ✅ `dcd217064` |
+| 3.7 | Already-UNWIND raw writes → `load_graph_data` (10k chunks + retry) / `run_write_query` (azure ×3, aws s3/route53, gcp spanner, pagerduty) | n/a | M | ✅ `3f637d91c`, `affa89d32`, `05de80069` |
+
+> **Phase 3 implementation notes (2026-08-06):** executed via the plan §1.3 "intermediate
+> win": each per-item loop rewritten as one UNWIND batch through `load_graph_data`
+> (managed tx, retry, 10k-row chunks), preserving query text, labels, and consolelink
+> props — not full schema migrations (those remain available selectively via upstream
+> donors). Public loader signatures used by integration tests are preserved. ~30 new
+> unit tests over row builders and write batching; the full unit suite shows zero new
+> failures vs the pre-Phase-3 baseline (one pre-existing failure fixed:
+> `test_principal_policies`). Integration suite + Phase 2 guard sweep must run in CI
+> before Phase 4.
 
 ---
 
