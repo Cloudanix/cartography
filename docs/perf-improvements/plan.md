@@ -67,8 +67,9 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 |-------|-------|--------|
 | 1 | Query/index fixes + `ensure_indexes` managed-tx wrap | ✅ done — unit + integration green in CI |
 | 2 | Integration EXPLAIN plan guard (+ self-test) | ✅ done — unit + real-EXPLAIN sweep green in CI |
-| 3 | Migrate per-item loaders to `tx.load()` | ⚪ not started — **unblocked**, and **re-scoped 2026-08-06** (see below) |
-| 4 | PROFILE unanchored cleanup queries | ⚪ not started — next up |
+| 3.0 | Foundation: `session.py` silent-fail fix, `graph_write_seconds` split, upstream `tx.py` backport (batch 10k + retry + matchlinks), `ensure_indexes` memoize | ⚪ not started — **next up; blocks 3.1+** |
+| 3 | Migrate per-item loaders to `tx.load()` (re-scoped 2026-08-06) | ⚪ not started — blocked on 3.0 |
+| 4 | PROFILE unanchored cleanup queries | ⚪ not started — after Phase 3 |
 
 > **CI update (2026-08-06):** the integration suite has run for Phases 1 and 2. Every item
 > previously marked ⏳ pending CI is green. The Phase 2 sweep is a hard gate
@@ -207,10 +208,31 @@ per-item writes; count `UNWIND` occurrences = already-batched queries):
   loops, e.g. `_attach_gcp_vpc_tags` (`gcp/compute.py:1427`) runs one query per
   `instance × tag × network-interface`, so round-trips grow multiplicatively, not linearly.
 
+### Phase 3.0 checklist — foundation (do first)
+
+Implements the **Recommended order** step 1 (strategic Options 2 + 5 + the `session.py`
+fix — see Strategic options section). Blocks 3.1+: migrations cannot be verified while
+writes fail silently, and the `tx.py` backport changes the target they migrate onto.
+
+| # | Task | Scope / key files | Est. | Status |
+|---|------|-------------------|------|--------|
+| 3.0.1 | Fix silent exception swallowing — every wrapper that logs + `return self` must re-raise (or retry, then raise): `run()`, `execute_write()`, `execute_read()` | `cartography/graph/session.py` | S | ⚪ |
+| 3.0.2 | Split graph-write time from API time: emit `graph_write_seconds` alongside `duration_seconds` via `ServiceTimingContext`; then re-rank remaining work with real numbers | provider timing contexts (`docs/azure-timing-instrumentation.md`) | S | ⚪ |
+| 3.0.3 | Backport upstream `client/core/tx.py`: `batch_size=10000` tunable per call (supersedes decision 14A), retry classification (network, `TransientError`, `BufferError`, `EntityNotFound`), empty-input short-circuit | `cartography/client/core/tx.py` + call sites | M | ⚪ |
+| 3.0.4 | Backport `load_matchlinks()` + `build_matchlink_query()` — relationship-only loader; migration target for hand-written linkers (AKS, route53) | `tx.py`, `querybuilder.py` | S | ⚪ |
+| 3.0.5 | Memoize `ensure_indexes()` per process (Option 5) | `tx.py:232` | XS | ⚪ |
+
+> **3.0.1 scope note (2026-08-06):** `session.py` has since gained a `TransientError`
+> retry loop (`session.py:50-63`), but the retry returns `self` on exhaustion instead of
+> raising, non-transient exceptions are still swallowed (`:64-69`), and the
+> `execute_write`/`execute_read` wrappers (`:76+`) swallow too. Scope = all of them —
+> log, then **raise**.
+
 ### Phase 3 checklist
 
-Chain-migrate whole dependency chains atomically (decisions 4, 8). Guard sweep green
-before each merge (12A).
+Prereq: **Phase 3.0 complete.** Chain-migrate whole dependency chains atomically
+(decisions 4, 8). Guard sweep green before each merge (12A). Use upstream's schema
+definitions as donor code where the fork has no custom logic (Option 3, selectively).
 
 | # | Module | Per-item writes | Est. | Status |
 |---|--------|----------------:|------|--------|
@@ -430,12 +452,21 @@ CI** (2026-08-06); line numbers updated to their post-fix locations.
 - EXPLAIN plan-guard test over querybuilder + cleanupbuilder outputs.
 - Index-coverage enforced by the guard (decision 6A — no separate static lint).
 
-**Phase 3 — migration (incremental, weeks):** ⚪ next
+**Phase 3.0 — foundation (days):** ⚪ next up
+- Fix `session.py` swallowed exceptions (all wrappers) — prerequisite: migrations cannot
+  be verified while writes fail silently.
+- Add `graph_write_seconds` timing split; re-rank remaining work with real numbers.
+- Backport upstream `tx.py` (batch 10k tunable, retry classification, `load_matchlinks`,
+  empty short-circuit); memoize `ensure_indexes()`. Tracked in the **Phase 3.0 checklist**.
+
+**Phase 3 — migration (incremental, weeks):** ⚪ after 3.0
 - Migrate **per-item** loaders to `tx.load()`, ranked by measured per-item write count:
-  `gcp/compute.py` → `aws/iam.py` → AWS ELB/SG/redshift → misc. Then wrap the
-  already-batched raw writes (Azure, s3, route53, spanner, pagerduty) in `execute_write`.
-  Each migration removes raw writes (§2) and gains UNWIND batching (§1) + auto-indexes (§3)
-  at once. Full ranking and checklist: **Phase 3 re-scope** section above.
+  `gcp/compute.py` → `aws/iam.py` → AWS ELB/SG/redshift → misc, taking upstream's schema
+  definitions as the starting point where the fork has no custom logic (Option 3,
+  selectively). Then wrap the already-batched raw writes (Azure, s3, route53, spanner,
+  pagerduty) in `execute_write` (3.7). Each migration removes raw writes (§2) and gains
+  UNWIND batching (§1) + auto-indexes (§3) at once. Full ranking and checklist:
+  **Phase 3 re-scope** section above.
 
 **Phase 4 — cleanup-scan optimization (narrowed, after measurement):**
 - PROFILE only the generated `cleanupbuilder.py` queries + any unanchored hand-written job.
@@ -543,6 +574,9 @@ independent of which option below is chosen.
 2. **Option 1**, module by module, taking upstream's schema definitions as the starting
    point wherever the fork has not customised the module (Option 3 applied selectively).
 3. **Option 4** for the remaining already-UNWIND raw writes.
+
+Status is tracked at task level in the **Phase 3.0 checklist** (foundation) and the
+**Phase 3 checklist** (migrations) above — update those tables as code lands.
 
 ### The measurement gap that ranks 1 vs 2
 
