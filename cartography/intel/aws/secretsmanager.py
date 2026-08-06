@@ -17,15 +17,20 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
+def filter_active_secrets(secrets: List[Dict]) -> List[Dict]:
+    """Exclude secrets scheduled for deletion."""
+    return [secret for secret in secrets if not secret.get('DeletedDate')]
+
+
 @timeit
 @aws_handle_regions
 def get_secret_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     client = boto3_session.client('secretsmanager', region_name=region, config=get_botocore_config())
     paginator = client.get_paginator('list_secrets')
     secrets: List[Dict] = []
-    for page in paginator.paginate():
+    for page in paginator.paginate(IncludePlannedDeletion=False):
         secrets.extend(page['SecretList'])
-    return secrets
+    return filter_active_secrets(secrets)
 
 
 @timeit
