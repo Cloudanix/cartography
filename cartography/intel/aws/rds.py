@@ -267,6 +267,11 @@ def sync_rds_security_groups(
     cleanup_rds_security_groups(neo4j_session, common_job_parameters)
 
 
+def filter_available_rds_snapshots(snapshots: List[Dict]) -> List[Dict]:
+    """Keep only available RDS snapshots (drop creating/error)."""
+    return [snapshot for snapshot in snapshots if snapshot.get('Status') == 'available']
+
+
 @timeit
 @aws_handle_regions
 def get_rds_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Any]:
@@ -275,7 +280,7 @@ def get_rds_snapshots(boto3_session: boto3.session.Session, region: str) -> List
     snapshots: List[Any] = []
     for page in paginator.paginate():
         snapshots.extend(page['DBSnapshots'])
-    return snapshots
+    return filter_available_rds_snapshots(snapshots)
 
 
 @timeit
