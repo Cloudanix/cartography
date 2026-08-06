@@ -59,6 +59,53 @@ class TestLoadGcpVpcs:
         session.execute_write.assert_not_called()
 
 
+class TestLoadGcpForwardingRules:
+    def test_batches_and_partitions_attachments(self):
+        session = MagicMock()
+        subnet_rule = {
+            "partial_uri": "projects/p1/regions/us-east1/forwardingRules/a",
+            "ip_address": "10.0.0.9",
+            "ip_protocol": "TCP",
+            "load_balancing_scheme": "INTERNAL",
+            "name": "a",
+            "project_id": "p1",
+            "self_link": "https://selflink/a",
+            "target": "projects/p1/targets/t1",
+            "subnetwork": "https://subnet",
+            "subnetwork_partial_uri": "projects/p1/regions/us-east1/subnetworks/default",
+            "network": "https://net",
+            "network_partial_uri": "projects/p1/global/networks/default",
+        }
+        vpc_rule = {
+            "partial_uri": "projects/p1/regions/us-east1/forwardingRules/b",
+            "ip_address": "10.0.0.10",
+            "ip_protocol": "TCP",
+            "load_balancing_scheme": "EXTERNAL",
+            "name": "b",
+            "project_id": "p1",
+            "self_link": "https://selflink/b",
+            "target": "projects/p1/targets/t2",
+            "network": "https://net",
+            "network_partial_uri": "projects/p1/global/networks/default",
+        }
+
+        compute.load_gcp_forwarding_rules(session, [subnet_rule, vpc_rule], TEST_UPDATE_TAG)
+
+        # one write for the rules, one for the subnet attachment batch, one for the vpc batch
+        assert session.execute_write.call_count == 3
+        main, subnet_attach, vpc_attach = session.execute_write.call_args_list
+        assert main.kwargs["DictList"] == [subnet_rule, vpc_rule]
+        assert subnet_attach.kwargs["DictList"] == [subnet_rule]
+        assert "GCPSubnet" in subnet_attach.args[1]
+        assert vpc_attach.kwargs["DictList"] == [vpc_rule]
+        assert "GCPVpc" in vpc_attach.args[1]
+
+    def test_empty_list_writes_nothing(self):
+        session = MagicMock()
+        compute.load_gcp_forwarding_rules(session, [], TEST_UPDATE_TAG)
+        session.execute_write.assert_not_called()
+
+
 class TestLoadGcpSubnets:
     def test_single_batched_write(self):
         session = MagicMock()

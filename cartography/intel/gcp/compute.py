@@ -1270,102 +1270,75 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
     """
 
     query = """
-        MERGE (fwd:GCPForwardingRule{id: $PartialUri})
+        UNWIND $DictList AS item
+        MERGE (fwd:GCPForwardingRule{id: item.partial_uri})
         ON CREATE SET fwd.firstseen = timestamp(),
-        fwd.partial_uri = $PartialUri
-        SET fwd.ip_address = $IPAddress,
-        fwd.ip_protocol = $IPProtocol,
-        fwd.load_balancing_scheme = $LoadBalancingScheme,
-        fwd.name = $Name,
-        fwd.network = $NetworkPartialUri,
-        fwd.port_range = $PortRange,
-        fwd.ports = $Ports,
-        fwd.project_id = $ProjectId,
-        fwd.region = $Region,
-        fwd.self_link = $SelfLink,
-        fwd.subnetwork = $SubNetworkPartialUri,
-        fwd.target = $TargetPartialUri,
-        fwd.consolelink = $consolelink,
+        fwd.partial_uri = item.partial_uri
+        SET fwd.ip_address = item.ip_address,
+        fwd.ip_protocol = item.ip_protocol,
+        fwd.load_balancing_scheme = item.load_balancing_scheme,
+        fwd.name = item.name,
+        fwd.network = item.network_partial_uri,
+        fwd.port_range = item.port_range,
+        fwd.ports = item.ports,
+        fwd.project_id = item.project_id,
+        fwd.region = coalesce(item.region, 'global'),
+        fwd.self_link = item.self_link,
+        fwd.subnetwork = item.subnetwork_partial_uri,
+        fwd.target = item.target,
+        fwd.consolelink = item.consolelink,
         fwd.lastupdated = $gcp_update_tag
     """
+    load_graph_data(neo4j_session, query, fwd_rules, gcp_update_tag=gcp_update_tag)
 
-    for fwd in fwd_rules:
-        network = fwd.get("network", None)
-        subnetwork = fwd.get("subnetwork", None)
-
-        neo4j_session.run(
-            query,
-            PartialUri=fwd["partial_uri"],
-            IPAddress=fwd["ip_address"],
-            IPProtocol=fwd["ip_protocol"],
-            LoadBalancingScheme=fwd["load_balancing_scheme"],
-            Name=fwd["name"],
-            Network=network,
-            NetworkPartialUri=fwd.get("network_partial_uri", None),
-            PortRange=fwd.get("port_range", None),
-            Ports=fwd.get("ports", None),
-            ProjectId=fwd["project_id"],
-            Region=fwd.get("region", "global"),
-            SelfLink=fwd["self_link"],
-            SubNetwork=subnetwork,
-            SubNetworkPartialUri=fwd.get("subnetwork_partial_uri", None),
-            TargetPartialUri=fwd["target"],
-            consolelink=fwd.get("consolelink", None),
-            gcp_update_tag=gcp_update_tag,
-        )
-
-        if subnetwork:
-            _attach_fwd_rule_to_subnet(neo4j_session, fwd, gcp_update_tag)
-        elif network:
-            _attach_fwd_rule_to_vpc(neo4j_session, fwd, gcp_update_tag)
+    _attach_fwd_rules_to_subnets(
+        neo4j_session,
+        [fwd for fwd in fwd_rules if fwd.get("subnetwork")],
+        gcp_update_tag,
+    )
+    _attach_fwd_rules_to_vpcs(
+        neo4j_session,
+        [fwd for fwd in fwd_rules if not fwd.get("subnetwork") and fwd.get("network")],
+        gcp_update_tag,
+    )
 
 
 @timeit
-def _attach_fwd_rule_to_subnet(neo4j_session: neo4j.Session, fwd: Dict, gcp_update_tag: int) -> None:
+def _attach_fwd_rules_to_subnets(neo4j_session: neo4j.Session, fwd_rules: List[Dict], gcp_update_tag: int) -> None:
     query = """
-        MERGE (subnet:GCPSubnet{id: $SubNetworkPartialUri})
+        UNWIND $DictList AS item
+        MERGE (subnet:GCPSubnet{id: item.subnetwork_partial_uri})
         ON CREATE SET subnet.firstseen = timestamp(),
-        subnet.partial_uri = $SubNetworkPartialUri
+        subnet.partial_uri = item.subnetwork_partial_uri
         SET subnet.lastupdated = $gcp_update_tag
 
-        WITH subnet
-        MATCH(fwd:GCPForwardingRule{id: $PartialUri})
+        WITH subnet, item
+        MATCH(fwd:GCPForwardingRule{id: item.partial_uri})
 
         MERGE (subnet)-[p:RESOURCE]->(fwd)
         ON CREATE SET p.firstseen = timestamp()
         SET p.lastupdated = $gcp_update_tag
     """
-
-    neo4j_session.run(
-        query,
-        PartialUri=fwd["partial_uri"],
-        SubNetworkPartialUri=fwd.get("subnetwork_partial_uri", None),
-        gcp_update_tag=gcp_update_tag,
-    )
+    load_graph_data(neo4j_session, query, fwd_rules, gcp_update_tag=gcp_update_tag)
 
 
 @timeit
-def _attach_fwd_rule_to_vpc(neo4j_session: neo4j.Session, fwd: Dict, gcp_update_tag: int) -> None:
+def _attach_fwd_rules_to_vpcs(neo4j_session: neo4j.Session, fwd_rules: List[Dict], gcp_update_tag: int) -> None:
     query = """
-        MERGE (vpc:GCPVpc{id: $NetworkPartialUri})
+        UNWIND $DictList AS item
+        MERGE (vpc:GCPVpc{id: item.network_partial_uri})
         ON CREATE SET vpc.firstseen = timestamp(),
-        vpc.partial_uri = $NetworkPartialUri
+        vpc.partial_uri = item.network_partial_uri
         SET vpc.lastupdated = $gcp_update_tag
 
-        WITH vpc
-        MATCH (fwd:GCPForwardingRule{id: $PartialUri})
+        WITH vpc, item
+        MATCH (fwd:GCPForwardingRule{id: item.partial_uri})
 
         MERGE (vpc)-[r:RESOURCE]->(fwd)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $gcp_update_tag
     """
-
-    neo4j_session.run(
-        query,
-        PartialUri=fwd["partial_uri"],
-        NetworkPartialUri=fwd.get("network_partial_uri", None),
-        gcp_update_tag=gcp_update_tag,
-    )
+    load_graph_data(neo4j_session, query, fwd_rules, gcp_update_tag=gcp_update_tag)
 
 
 @timeit
