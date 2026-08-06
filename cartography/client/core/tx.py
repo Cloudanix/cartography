@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from functools import partial
 from typing import Any
@@ -357,17 +358,35 @@ def load_graph_data(
         )
 
 
+# Schema classes whose indexes were already ensured in this process. load() runs per
+# region x account x schema, so without this every load re-issues 6-8 CREATE INDEX
+# round-trips that are no-ops after the first.
+_ensured_index_schemas: set = set()
+_ensured_index_schemas_lock = threading.Lock()
+
+
+def reset_ensured_indexes_cache() -> None:
+    """Forget which schemas had their indexes ensured (tests / long-lived processes)."""
+    with _ensured_index_schemas_lock:
+        _ensured_index_schemas.clear()
+
+
 def ensure_indexes(neo4j_session: neo4j.Session, node_schema: CartographyNodeSchema) -> None:
     """
     Creates indexes if they don't exist for the given CartographyNodeSchema object, as well as for all of the
     relationships defined on its `other_relationships` and `sub_resource_relationship` fields. This operation is
-    idempotent.
+    idempotent and memoized per schema class for the lifetime of the process.
 
     This ensures that every time we need to MATCH on a node to draw a relationship to it, the field used for the MATCH
     will be indexed, making the operation fast.
     :param neo4j_session: The neo4j session
     :param node_schema: The node_schema object to create indexes for.
     """
+    schema_key = f"{type(node_schema).__module__}.{type(node_schema).__qualname__}"
+    with _ensured_index_schemas_lock:
+        if schema_key in _ensured_index_schemas:
+            return
+
     queries = build_create_index_queries(node_schema)
 
     for query in queries:
@@ -385,6 +404,12 @@ def ensure_indexes(neo4j_session: neo4j.Session, node_schema: CartographyNodeSch
                 logger.debug(f"Index already exists (created by a parallel sync): {query}")
                 continue
             raise
+
+    # Memoize only after every query succeeded so a failed run is retried next load().
+    # Two workers may both run the queries for one schema before either memoizes; that
+    # is harmless (CREATE INDEX IF NOT EXISTS) and cheaper than holding the lock on I/O.
+    with _ensured_index_schemas_lock:
+        _ensured_index_schemas.add(schema_key)
 
 
 def load(

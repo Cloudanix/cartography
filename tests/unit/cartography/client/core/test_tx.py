@@ -13,14 +13,31 @@ from cartography.client.core.tx import ensure_indexes
 from cartography.client.core.tx import execute_write_with_retry
 from cartography.client.core.tx import load
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import reset_ensured_indexes_cache
 from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import write_query_tx
+
+
+@pytest.fixture(autouse=True)
+def _reset_index_cache():
+    # ensure_indexes memoizes per schema class per process; isolate tests from each other.
+    reset_ensured_indexes_cache()
+    yield
+    reset_ensured_indexes_cache()
 
 
 def entity_not_found_error():
     err = ClientError("entity gone")
     err.code = "Neo.ClientError.Statement.EntityNotFound"
     return err
+
+
+class FakeSchemaA:
+    pass
+
+
+class FakeSchemaB:
+    pass
 
 
 def test_write_query_tx_runs_query_without_params():
@@ -266,3 +283,52 @@ def test_load_graph_data_retries_transient_batch_failure(mock_sleep):
     load_graph_data(session, "UNWIND $DictList AS item RETURN item", [{"id": 1}])
 
     assert session.execute_write.call_count == 2
+
+
+class TestEnsureIndexesMemoization:
+    @patch("cartography.client.core.tx.build_create_index_queries")
+    def test_second_call_for_same_schema_class_is_skipped(self, mock_build):
+        mock_build.return_value = ["CREATE INDEX IF NOT EXISTS FOR (n:Foo) ON (n.id)"]
+        session = MagicMock()
+
+        ensure_indexes(session, FakeSchemaA())
+        ensure_indexes(session, FakeSchemaA())
+
+        mock_build.assert_called_once()
+        assert session.execute_write.call_count == 1
+
+    @patch("cartography.client.core.tx.build_create_index_queries")
+    def test_different_schema_classes_each_run(self, mock_build):
+        mock_build.return_value = ["CREATE INDEX IF NOT EXISTS FOR (n:Foo) ON (n.id)"]
+        session = MagicMock()
+
+        ensure_indexes(session, FakeSchemaA())
+        ensure_indexes(session, FakeSchemaB())
+
+        assert mock_build.call_count == 2
+        assert session.execute_write.call_count == 2
+
+    @patch("cartography.client.core.tx.build_create_index_queries")
+    def test_failed_run_is_not_memoized(self, mock_build):
+        mock_build.return_value = ["CREATE INDEX IF NOT EXISTS FOR (n:Foo) ON (n.id)"]
+        session = MagicMock()
+        err = ClientError("denied")
+        err.code = "Neo.ClientError.Security.Forbidden"
+        session.execute_write.side_effect = [err, None]
+
+        with pytest.raises(ClientError):
+            ensure_indexes(session, FakeSchemaA())
+        ensure_indexes(session, FakeSchemaA())  # retried, succeeds this time
+
+        assert session.execute_write.call_count == 2
+
+    @patch("cartography.client.core.tx.build_create_index_queries")
+    def test_reset_clears_memoization(self, mock_build):
+        mock_build.return_value = ["CREATE INDEX IF NOT EXISTS FOR (n:Foo) ON (n.id)"]
+        session = MagicMock()
+
+        ensure_indexes(session, FakeSchemaA())
+        reset_ensured_indexes_cache()
+        ensure_indexes(session, FakeSchemaA())
+
+        assert session.execute_write.call_count == 2
