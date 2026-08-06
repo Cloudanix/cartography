@@ -953,105 +953,90 @@ def load_gcp_instances(session: neo4j.Session, instances_list: List[Dict], gcp_u
     for paginated_instances in batch(instances_list, size=500):
         session.execute_write(load_gcp_instances_tx, paginated_instances, gcp_update_tag)
 
-    for instance in instances_list:
-        _attach_instance_tags(session, instance, gcp_update_tag)
-        _attach_gcp_nics(session, instance, gcp_update_tag)
-        _attach_gcp_vpc(session, instance["partial_uri"], gcp_update_tag)
-        _attach_instance_service_account(session, instance, gcp_update_tag)
-        # Link to GKE cluster and node pool when the instance carries GKE metadata labels.
-        # These labels (goog-gke-cluster-name, goog-gke-nodepool) are attached automatically
-        # by GCP to every Compute instance that is a GKE node.
-        if instance.get("gke_cluster_name"):
-            _link_instance_to_gke_cluster(session, instance, gcp_update_tag)
-        if instance.get("gke_cluster_name") and instance.get("gke_node_pool_name"):
-            _link_instance_to_gke_node_pool(session, instance, gcp_update_tag)
+    _attach_instance_tags(session, instances_list, gcp_update_tag)
+    _attach_gcp_nics(session, instances_list, gcp_update_tag)
+    _attach_gcp_nic_access_configs(session, instances_list, gcp_update_tag)
+    _attach_gcp_vpc(session, [i["partial_uri"] for i in instances_list], gcp_update_tag)
+    _attach_instance_service_account(session, instances_list, gcp_update_tag)
+    # Link to GKE cluster and node pool when an instance carries GKE metadata labels.
+    # These labels (goog-gke-cluster-name, goog-gke-nodepool) are attached automatically
+    # by GCP to every Compute instance that is a GKE node.
+    _link_instance_to_gke_cluster(session, instances_list, gcp_update_tag)
+    _link_instance_to_gke_node_pool(session, instances_list, gcp_update_tag)
 
     load_gcp_instance_image_relations(session, instances_list, gcp_update_tag)
 
 
+def _gke_cluster_id(instance: Dict) -> str:
+    """Same format as get_gke_clusters(): projects/{project}/locations/{region}/clusters/{name}."""
+    return (
+        f"projects/{instance['project_id']}/locations/{instance['region']}"
+        f"/clusters/{instance['gke_cluster_name']}"
+    )
+
+
+def _build_gke_cluster_link_rows(instances_list: List[Dict]) -> List[Dict]:
+    return [
+        {"cluster_id": _gke_cluster_id(i), "instance_id": i["partial_uri"]}
+        for i in instances_list if i.get("gke_cluster_name")
+    ]
+
+
+def _build_gke_node_pool_link_rows(instances_list: List[Dict]) -> List[Dict]:
+    return [
+        {
+            "node_pool_id": f"{_gke_cluster_id(i)}/nodePools/{i['gke_node_pool_name']}",
+            "instance_id": i["partial_uri"],
+        }
+        for i in instances_list
+        if i.get("gke_cluster_name") and i.get("gke_node_pool_name")
+    ]
+
+
 @timeit
 def _link_instance_to_gke_cluster(
-    neo4j_session: neo4j.Session, instance: Dict, gcp_update_tag: int,
+    neo4j_session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int,
 ) -> None:
     """
-    Create a (GKECluster)-[:HAS_NODE]->(GCPInstance) relationship.
+    Create (GKECluster)-[:HAS_NODE]->(GCPInstance) relationships for every instance that
+    carries GKE metadata labels.
 
     Uses MATCH for GKECluster (not MERGE) so that if the GKE sync has not yet
     run for this project the relationship is simply skipped rather than creating
     a dangling, property-less GKECluster stub.
-
-    The cluster ID is reconstructed with the same format as get_gke_clusters():
-        projects/{project_id}/locations/{region}/clusters/{cluster_name}
-
-    :type neo4j_session: neo4j.Session
-    :param neo4j_session: The Neo4j session
-    :type instance: Dict
-    :param instance: A single transformed GCP instance dict.
-                     Must contain 'project_id', 'region', and 'gke_cluster_name'.
-    :type gcp_update_tag: int
-    :param gcp_update_tag: Timestamp to stamp on the relationship
-    :rtype: NoneType
-    :return: Nothing
     """
     query = """
-    MATCH (cluster:GKECluster{id: $ClusterId})
-    MATCH (i:GCPInstance{id: $InstanceId})
+    UNWIND $DictList AS item
+    MATCH (cluster:GKECluster{id: item.cluster_id})
+    MATCH (i:GCPInstance{id: item.instance_id})
     MERGE (cluster)-[r:HAS_NODE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    cluster_id = (
-        f"projects/{instance['project_id']}/locations/{instance['region']}"
-        f"/clusters/{instance['gke_cluster_name']}"
-    )
-    neo4j_session.run(
-        query,
-        ClusterId=cluster_id,
-        InstanceId=instance["partial_uri"],
-        gcp_update_tag=gcp_update_tag,
-    )
+    load_graph_data(neo4j_session, query, _build_gke_cluster_link_rows(instances_list), gcp_update_tag=gcp_update_tag)
 
 
 @timeit
 def _link_instance_to_gke_node_pool(
-    neo4j_session: neo4j.Session, instance: Dict, gcp_update_tag: int,
+    neo4j_session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int,
 ) -> None:
     """
-    Create a (GKENodePool)-[:HAS_NODE]->(GCPInstance) relationship.
+    Create (GKENodePool)-[:HAS_NODE]->(GCPInstance) relationships for every instance that
+    carries GKE cluster + node pool metadata labels.
 
     Uses MATCH for GKENodePool (not MERGE) so that if the GKE sync has not yet
     run for this project the relationship is simply skipped.
-
-    The node pool ID is reconstructed with the same format as _load_gke_node_pools_tx():
-        projects/{project_id}/locations/{region}/clusters/{cluster_name}/nodePools/{pool_name}
-
-    :type neo4j_session: neo4j.Session
-    :param neo4j_session: The Neo4j session
-    :type instance: Dict
-    :param instance: A single transformed GCP instance dict.
-                     Must contain 'project_id', 'region', 'gke_cluster_name', and 'gke_node_pool_name'.
-    :type gcp_update_tag: int
-    :param gcp_update_tag: Timestamp to stamp on the relationship
-    :rtype: NoneType
-    :return: Nothing
     """
     query = """
-    MATCH (pool:GKENodePool{id: $NodePoolId})
-    MATCH (i:GCPInstance{id: $InstanceId})
+    UNWIND $DictList AS item
+    MATCH (pool:GKENodePool{id: item.node_pool_id})
+    MATCH (i:GCPInstance{id: item.instance_id})
     MERGE (pool)-[r:HAS_NODE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    cluster_id = (
-        f"projects/{instance['project_id']}/locations/{instance['region']}"
-        f"/clusters/{instance['gke_cluster_name']}"
-    )
-    node_pool_id = f"{cluster_id}/nodePools/{instance['gke_node_pool_name']}"
-    neo4j_session.run(
-        query,
-        NodePoolId=node_pool_id,
-        InstanceId=instance["partial_uri"],
-        gcp_update_tag=gcp_update_tag,
+    load_graph_data(
+        neo4j_session, query, _build_gke_node_pool_link_rows(instances_list), gcp_update_tag=gcp_update_tag,
     )
 
 
@@ -1341,21 +1326,37 @@ def _attach_fwd_rules_to_vpcs(neo4j_session: neo4j.Session, fwd_rules: List[Dict
     load_graph_data(neo4j_session, query, fwd_rules, gcp_update_tag=gcp_update_tag)
 
 
+def _build_instance_tag_rows(instances_list: List[Dict]) -> List[Dict]:
+    """One row per instance x tag x network-interface (this was a nested per-item loop)."""
+    rows = []
+    for instance in instances_list:
+        for tag in instance.get("tags", {}).get("items", []):
+            for nic in instance.get("networkInterfaces", []):
+                rows.append({
+                    "instance_id": instance["partial_uri"],
+                    "tag_id": _create_gcp_network_tag_id(nic["vpc_partial_uri"], tag),
+                    "tag_value": tag,
+                    "vpc_partial_uri": nic["vpc_partial_uri"],
+                })
+    return rows
+
+
 @timeit
-def _attach_instance_tags(neo4j_session: neo4j.Session, instance: Resource, gcp_update_tag: int) -> None:
+def _attach_instance_tags(neo4j_session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int) -> None:
     """
-    Attach tags to GCP instance and to the VPCs that they are defined in.
+    Attach tags to GCP instances and to the VPCs that they are defined in.
     :param neo4j_session: The session
-    :param instance: The instance object
+    :param instances_list: The transformed instance dicts
     :param gcp_update_tag: The timestamp
     :return: Nothing
     """
     query = """
-    MATCH (i:GCPInstance{id: $InstanceId})
+    UNWIND $DictList AS item
+    MATCH (i:GCPInstance{id: item.instance_id})
 
-    MERGE (t:GCPNetworkTag{id: $TagId})
-    ON CREATE SET t.tag_id = $TagId,
-    t.value = $TagValue,
+    MERGE (t:GCPNetworkTag{id: item.tag_id})
+    ON CREATE SET t.tag_id = item.tag_id,
+    t.value = item.tag_value,
     t.firstseen = timestamp()
     SET t.lastupdated = $gcp_update_tag
 
@@ -1363,171 +1364,176 @@ def _attach_instance_tags(neo4j_session: neo4j.Session, instance: Resource, gcp_
     ON CREATE SET h.firstseen = timestamp()
     SET h.lastupdated = $gcp_update_tag
 
-    WITH t
-    MATCH (vpc:GCPVpc{id: $VpcPartialUri})
+    WITH t, item
+    MATCH (vpc:GCPVpc{id: item.vpc_partial_uri})
 
     MERGE (vpc)<-[d:DEFINED_IN]-(t)
     ON CREATE SET d.firstseen = timestamp()
     SET d.lastupdated = $gcp_update_tag
     """
-    for tag in instance.get("tags", {}).get("items", []):
+    load_graph_data(neo4j_session, query, _build_instance_tag_rows(instances_list), gcp_update_tag=gcp_update_tag)
+
+
+def _nic_id(instance: Dict, nic: Dict) -> str:
+    """GCP doesn't define an ID for network interfaces, so make one to uniquely identify them."""
+    return f"{instance['partial_uri']}/networkinterfaces/{nic['name']}"
+
+
+def _build_nic_rows(instances_list: List[Dict]) -> List[Dict]:
+    return [
+        {
+            "instance_id": instance["partial_uri"],
+            "nic_id": _nic_id(instance, nic),
+            "network": nic.get("network"),
+            "name": nic["name"],
+            "consolelink": nic.get("consolelink"),
+            "subnet_partial_uri": nic["subnet_partial_uri"],
+        }
+        for instance in instances_list
+        for nic in instance.get("networkInterfaces", [])
+    ]
+
+
+def _build_access_config_rows(instances_list: List[Dict]) -> List[Dict]:
+    rows = []
+    for instance in instances_list:
         for nic in instance.get("networkInterfaces", []):
-            tag_id = _create_gcp_network_tag_id(nic["vpc_partial_uri"], tag)
-            neo4j_session.run(
-                query,
-                InstanceId=instance["partial_uri"],
-                TagId=tag_id,
-                TagValue=tag,
-                VpcPartialUri=nic["vpc_partial_uri"],
-                gcp_update_tag=gcp_update_tag,
-            )
+            nic_id = _nic_id(instance, nic)
+            for ac in nic.get("accessConfigs", []):
+                # GCP doesn't define an ID for access configs either.
+                rows.append({
+                    "nic_id": nic_id,
+                    "access_config_id": f"{nic_id}/accessconfigs/{ac['type']}",
+                    "type": ac["type"],
+                    "name": ac["name"],
+                    "consolelink": ac.get("consolelink"),
+                    "nat_ip": ac.get("natIP"),
+                    "set_public_ptr": ac.get("setPublicPtr"),
+                    "public_ptr_domain_name": ac.get("publicPtrDomainName"),
+                    "network_tier": ac.get("networkTier"),
+                })
+    return rows
+
+
+def _build_service_account_rows(instances_list: List[Dict]) -> List[Dict]:
+    return [
+        {"instance_id": instance["partial_uri"], "email": account.get("email", "")}
+        for instance in instances_list
+        for account in instance.get("serviceAccounts", [])
+    ]
 
 
 @timeit
-def _attach_gcp_nics(neo4j_session: neo4j.Session, instance: Resource, gcp_update_tag: int) -> None:
+def _attach_gcp_nics(neo4j_session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int) -> None:
     """
     Attach GCP Network Interfaces to GCP Instances and GCP Subnets.
-    Then, attach GCP Instances directly to VPCs.
     :param neo4j_session: The Neo4j session
-    :param instance: The GCP instance
+    :param instances_list: The transformed GCP instance dicts
     :param gcp_update_tag: Timestamp to set the nodes
     :return: Nothing
     """
     query = """
-    MATCH (i:GCPInstance{id: $InstanceId})
-    MERGE (nic:GCPNetworkInterface{id: $NicId})
+    UNWIND $DictList AS item
+    MATCH (i:GCPInstance{id: item.instance_id})
+    MERGE (nic:GCPNetworkInterface{id: item.nic_id})
     ON CREATE SET nic.firstseen = timestamp(),
-    nic.nic_id = $NicId
-    SET nic.network = $Network,
-    nic.consolelink=$ConsoleLink,
-    nic.name = $NicName,
+    nic.nic_id = item.nic_id
+    SET nic.network = item.network,
+    nic.consolelink = item.consolelink,
+    nic.name = item.name,
     nic.lastupdated = $gcp_update_tag
     MERGE (i)-[r:NETWORK_INTERFACE]->(nic)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
 
-    MERGE (subnet:GCPSubnet{id: $SubnetPartialUri})
+    MERGE (subnet:GCPSubnet{id: item.subnet_partial_uri})
     ON CREATE SET subnet.firstseen = timestamp(),
-    subnet.partial_uri = $SubnetPartialUri
+    subnet.partial_uri = item.subnet_partial_uri
     SET subnet.lastupdated = $gcp_update_tag
 
     MERGE (nic)-[p:PART_OF_SUBNET]->(subnet)
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = $gcp_update_tag
     """
-    for nic in instance.get("networkInterfaces", []):
-        # Make an ID for GCPNetworkInterface nodes because GCP doesn't define one but we need to uniquely identify them
-        nic_id = f"{instance['partial_uri']}/networkinterfaces/{nic['name']}"
-        neo4j_session.run(
-            query,
-            InstanceId=instance["partial_uri"],
-            NicId=nic_id,
-            NetworkIP=nic.get("networkIP"),
-            Network=nic.get("network"),
-            NicName=nic["name"],
-            ConsoleLink=nic.get("consolelink"),
-            gcp_update_tag=gcp_update_tag,
-            SubnetPartialUri=nic["subnet_partial_uri"],
-        )
-        _attach_gcp_nic_access_configs(neo4j_session, nic_id, nic, gcp_update_tag)
+    load_graph_data(neo4j_session, query, _build_nic_rows(instances_list), gcp_update_tag=gcp_update_tag)
 
 
 @timeit
 def _attach_gcp_nic_access_configs(
     neo4j_session: neo4j.Session,
-    nic_id: str,
-    nic: Resource,
+    instances_list: List[Dict],
     gcp_update_tag: int,
 ) -> None:
     """
-    Attach an access configuration to the GCP NIC.
+    Attach access configurations to the GCP NICs.
     :param neo4j_session: The Neo4j session
-    :param instance: The GCP instance
+    :param instances_list: The transformed GCP instance dicts
     :param gcp_update_tag: The timestamp to set updated nodes to
     :return: Nothing
     """
     query = """
-    MATCH (nic:GCPNetworkInterface{id: $NicId})
-    MERGE (ac:GCPNicAccessConfig{id: $AccessConfigId})
+    UNWIND $DictList AS item
+    MATCH (nic:GCPNetworkInterface{id: item.nic_id})
+    MERGE (ac:GCPNicAccessConfig{id: item.access_config_id})
     ON CREATE SET ac.firstseen = timestamp(),
-    ac.access_config_id = $AccessConfigId
-    SET ac.type=$Type,
-    ac.name = $Name,
-    ac.consolelink=$ConsoleLink,
-    ac.public_ip =  $NatIP,
-    ac.set_public_ptr = $SetPublicPtr,
-    ac.public_ptr_domain_name = $PublicPtrDomainName,
-    ac.network_tier = $NetworkTier,
+    ac.access_config_id = item.access_config_id
+    SET ac.type = item.type,
+    ac.name = item.name,
+    ac.consolelink = item.consolelink,
+    ac.public_ip = item.nat_ip,
+    ac.set_public_ptr = item.set_public_ptr,
+    ac.public_ptr_domain_name = item.public_ptr_domain_name,
+    ac.network_tier = item.network_tier,
     ac.lastupdated = $gcp_update_tag
 
     MERGE (nic)-[r:RESOURCE]->(ac)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    for ac in nic.get("accessConfigs", []):
-        # Make an ID for GCPNicAccessConfig nodes because GCP doesn't define one but we need to uniquely identify them
-        access_config_id = f"{nic_id}/accessconfigs/{ac['type']}"
-        neo4j_session.run(
-            query,
-            NicId=nic_id,
-            AccessConfigId=access_config_id,
-            Type=ac["type"],
-            Name=ac["name"],
-            ConsoleLink=ac.get("consolelink"),
-            NatIP=ac.get("natIP", None),
-            SetPublicPtr=ac.get("setPublicPtr", None),
-            PublicPtrDomainName=ac.get("publicPtrDomainName", None),
-            NetworkTier=ac.get("networkTier", None),
-            gcp_update_tag=gcp_update_tag,
-        )
+    load_graph_data(neo4j_session, query, _build_access_config_rows(instances_list), gcp_update_tag=gcp_update_tag)
 
 
 @timeit
-def _attach_gcp_vpc(neo4j_session: neo4j.Session, instance_id: str, gcp_update_tag: int) -> None:
+def _attach_gcp_vpc(neo4j_session: neo4j.Session, instance_ids: List[str], gcp_update_tag: int) -> None:
     """
-    Attach a GCP instance directly to a VPC
+    Attach GCP instances directly to their VPCs.
     :param neo4j_session: neo4j_session
-    :param instance: The GCP instance object
+    :param instance_ids: The instance partial_uris
     :param gcp_update_tag:
     :return: Nothing
     """
     query = """
-    MATCH (i:GCPInstance{id: $InstanceId})-[:NETWORK_INTERFACE]->(nic:GCPNetworkInterface)
+    UNWIND $DictList AS item
+    MATCH (i:GCPInstance{id: item.instance_id})-[:NETWORK_INTERFACE]->(nic:GCPNetworkInterface)
           -[p:PART_OF_SUBNET]->(sn:GCPSubnet)<-[r:RESOURCE]-(vpc:GCPVpc)
     MERGE (i)-[m:MEMBER_OF_GCP_VPC]->(vpc)
     ON CREATE SET m.firstseen = timestamp()
     SET m.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
-        query,
-        InstanceId=instance_id,
-        gcp_update_tag=gcp_update_tag,
-    )
+    rows = [{"instance_id": instance_id} for instance_id in instance_ids]
+    load_graph_data(neo4j_session, query, rows, gcp_update_tag=gcp_update_tag)
 
 
 @timeit
-def _attach_instance_service_account(neo4j_session: neo4j.Session, instance: Resource, gcp_update_tag: int) -> None:
+def _attach_instance_service_account(
+    neo4j_session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int,
+) -> None:
     """
-    Attach service account to GCP instance
+    Attach service accounts to GCP instances.
     :param neo4j_session: The session
-    :param instance: The instance object
+    :param instances_list: The transformed GCP instance dicts
     :param gcp_update_tag: The timestamp
     :return: Nothing
     """
     query = """
-    MATCH (i:GCPInstance{id: $InstanceId})
-    MERGE (sa:GCPServiceAccount{email: $AccountEmail})
+    UNWIND $DictList AS item
+    MATCH (i:GCPInstance{id: item.instance_id})
+    MERGE (sa:GCPServiceAccount{email: item.email})
     MERGE (i)-[r:USES]->(sa)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    for account in instance.get("serviceAccounts", []):
-        neo4j_session.run(
-            query,
-            InstanceId=instance["partial_uri"],
-            AccountEmail=account.get("email", ""),
-            gcp_update_tag=gcp_update_tag,
-        )
+    load_graph_data(neo4j_session, query, _build_service_account_rows(instances_list), gcp_update_tag=gcp_update_tag)
 
 
 @timeit
