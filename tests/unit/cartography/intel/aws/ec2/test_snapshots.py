@@ -1,16 +1,12 @@
-from cartography.intel.aws.ec2.snapshots import filter_completed_ebs_snapshots
+from cartography.intel.aws.ec2.snapshots import EBS_SNAPSHOT_FILTERS
 
 
-def test_filter_completed_ebs_snapshots_keeps_completed_only():
-    snapshots = [
-        {'SnapshotId': 'snap-done', 'State': 'completed'},
-        {'SnapshotId': 'snap-pending', 'State': 'pending'},
-        {'SnapshotId': 'snap-error', 'State': 'error'},
-        {'SnapshotId': 'snap-missing'},
-    ]
-    filtered = filter_completed_ebs_snapshots(snapshots)
-    assert [s['SnapshotId'] for s in filtered] == ['snap-done']
-
-
-def test_filter_completed_ebs_snapshots_empty():
-    assert filter_completed_ebs_snapshots([]) == []
+def test_ebs_snapshot_filters_request_completed_self_owned():
+    assert {
+        'Name': 'state',
+        'Values': ['completed'],
+    } in EBS_SNAPSHOT_FILTERS
+    assert {
+        'Name': 'owner-alias',
+        'Values': ['self'],
+    } in EBS_SNAPSHOT_FILTERS

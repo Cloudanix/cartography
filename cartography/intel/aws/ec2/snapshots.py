@@ -16,10 +16,17 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
-
-def filter_completed_ebs_snapshots(snapshots: List[Dict]) -> List[Dict]:
-    """Keep only completed EBS snapshots (drop pending/error)."""
-    return [snapshot for snapshot in snapshots if snapshot.get('State') == 'completed']
+# Applied at describe_snapshots so pending/error never leave the API.
+EBS_SNAPSHOT_FILTERS = [
+    {
+        "Name": "owner-alias",
+        "Values": ["self"],
+    },
+    {
+        "Name": "state",
+        "Values": ["completed"],
+    },
+]
 
 
 @timeit
@@ -32,21 +39,9 @@ def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dic
 
         snapshots: List[Dict] = []
 
-        page_iterator = paginator.paginate(
-            Filters=[
-                {
-                    "Name": "owner-alias",
-                    "Values": ["self"],
-                },
-                {
-                    "Name": "state",
-                    "Values": ["completed"],
-                },
-            ],
-        )
+        page_iterator = paginator.paginate(Filters=EBS_SNAPSHOT_FILTERS)
         for page in page_iterator:
             snapshots.extend(page['Snapshots'])
-        snapshots = filter_completed_ebs_snapshots(snapshots)
         for snapshot in snapshots:
             snapshot['region'] = region
             volume_permissions = get_snapshot_attribute(client=client, attribute_name='createVolumePermissions', snapshot_id=snapshot['SnapshotId'])
