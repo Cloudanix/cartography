@@ -20,6 +20,12 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
+# Applied at describe_images so non-available AMIs never leave the API.
+EC2_IMAGE_FILTERS = [{
+    'Name': 'state',
+    'Values': ['available'],
+}]
+
 
 def get_images_in_use(neo4j_session: neo4j.Session, region: str, current_aws_account_id: str) -> List[str]:
     # We use OPTIONAL here to allow query chaining with queries that may not match.
@@ -44,11 +50,6 @@ def get_images_in_use(neo4j_session: neo4j.Session, region: str, current_aws_acc
     return images
 
 
-def filter_available_ec2_images(images: List[Dict]) -> List[Dict]:
-    """Keep only available AMIs (drop pending/failed/invalid)."""
-    return [image for image in images if image.get('State') == 'available']
-
-
 @timeit
 @aws_handle_regions
 def get_images(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
@@ -57,12 +58,9 @@ def get_images(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     try:
         self_images = client.describe_images(
             Owners=['self'],
-            Filters=[{
-                'Name': 'state',
-                'Values': ['available'],
-            }],
+            Filters=EC2_IMAGE_FILTERS,
         )['Images']
-        images.extend(filter_available_ec2_images(self_images))
+        images.extend(self_images)
     except ClientError as e:
         logger.warning(f"Failed retrieve images for region - {region}. Error - {e}")
     return images
