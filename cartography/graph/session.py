@@ -51,23 +51,20 @@ class Session:
             try:
                 return self.neo4j_session.run(query, parameters, **kwparameters)
             except TransientError as e:
-                if attempt < max_retries:
-                    wait = random.uniform(0, min(2 ** attempt, 30))
-                    logger.warning(
-                        "Transient Neo4j error (attempt %d/%d), retrying in %.2fs: %s",
-                        attempt + 1, max_retries, wait, e,
-                    )
-                    time.sleep(wait)
-                else:
+                if attempt >= max_retries:
                     logger.error("Transient Neo4j error unresolved after %d retries: %s", max_retries, e)
-                    return self
-            except _NEO4J_WRITE_EXCEPTIONS as e:
-                logger.warning(f"Failed run neo4j cypher query. Error - {e}", exc_info=True, stack_info=True)
-                return self
+                    raise
+                wait = random.uniform(0, min(2 ** attempt, 30))
+                logger.warning(
+                    "Transient Neo4j error (attempt %d/%d), retrying in %.2fs: %s",
+                    attempt + 1, max_retries, wait, e,
+                )
+                time.sleep(wait)
             except Exception as e:
+                # Never swallow: a silently dropped write reports a successful sync
+                # while rows are missing from the graph.
                 logger.warning(f"Failed run neo4j cypher query. Error - {e}", exc_info=True, stack_info=True)
-                return self
-        return self
+                raise
 
     # ------------------------------------------------------------------
     # Transaction helpers (used by cartography.graph.job / statement)
