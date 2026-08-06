@@ -23,7 +23,7 @@ def get_reserved_instances(boto3_session: boto3.session.Session, region: str) ->
     reserved_instances = []
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
     try:
-        reserved_instances = client.describe_reserved_instances()['ReservedInstances']
+        reserved_instances = client.describe_reserved_instances(Filters=[{'Name': 'state', 'Values': ['active']}])['ReservedInstances']
 
     except Exception as e:
         logger.warning(f"Failed retrieve reserved instances for region - {region}. Error - {e}")
