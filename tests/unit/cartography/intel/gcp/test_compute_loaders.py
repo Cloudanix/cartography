@@ -314,3 +314,24 @@ class TestLoadGcpIngressFirewalls:
         session = MagicMock()
         compute.load_gcp_ingress_firewalls(session, [], TEST_UPDATE_TAG)
         session.execute_write.assert_not_called()
+
+
+class TestAttachComputeDisksToInstances:
+    def test_single_batched_write(self):
+        session = MagicMock()
+        rows = [
+            {"id": "projects/p1/disks/d1", "instance_id": "projects/p1/zones/z1/instances/vm-1"},
+            {"id": "projects/p1/disks/d2", "instance_id": "projects/p1/zones/z1/instances/vm-2"},
+        ]
+
+        compute.attach_compute_disks_to_instances(session, rows, TEST_UPDATE_TAG)
+
+        assert session.execute_write.call_count == 1
+        call = session.execute_write.call_args
+        assert call.kwargs["DictList"] == rows
+        assert "record.instance_id" in call.args[1]
+
+    def test_empty_rows_write_nothing(self):
+        session = MagicMock()
+        compute.attach_compute_disks_to_instances(session, [], TEST_UPDATE_TAG)
+        session.execute_write.assert_not_called()

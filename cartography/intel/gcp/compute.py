@@ -275,42 +275,30 @@ def load_proxies_tx(
 
 
 @timeit
-def attach_compute_disks_to_instance(
+def attach_compute_disks_to_instances(
     session: neo4j.Session,
-    data_list: List[Dict],
-    instance_id: str,
+    disk_rows: List[Dict],
     update_tag: int,
 ) -> None:
-    session.execute_write(attach_compute_disks_to_instance_tx, data_list, instance_id, update_tag)
-
-
-@timeit
-def attach_compute_disks_to_instance_tx(
-    tx: neo4j.Transaction,
-    data: List[Dict],
-    instance_id: str,
-    gcp_update_tag: int,
-) -> None:
+    """
+    Attach disks to their instances in one batched write. Each row needs 'id' (the disk
+    id) and 'instance_id'.
+    """
     query = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (disk:GCPComputeDisk{id:record.id})
     ON CREATE SET
         disk.firstseen = timestamp()
     SET
         disk.lastupdated = $gcp_update_tag
-    WITH disk
-    MATCH (i:GCPInstance{id: $InstanceId})
+    WITH disk, record
+    MATCH (i:GCPInstance{id: record.instance_id})
     MERGE (i)-[r:USES]->(disk)
     ON CREATE SET
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    tx.run(
-        query,
-        Records=data,
-        InstanceId=instance_id,
-        gcp_update_tag=gcp_update_tag,
-    )
+    load_graph_data(session, query, disk_rows, gcp_update_tag=update_tag)
 
 
 def _get_error_reason(http_error: HttpError) -> str:
@@ -1908,13 +1896,16 @@ def sync_gcp_instances(
 
     load_gcp_instances(neo4j_session, instance_list, gcp_update_tag)
 
-    # attach compute instance to disks
-    for instance in instance_list:
-        disks = []
-        for disk in instance.get("disks", []):
-            disk["id"] = f"projects/{project_id}/disks/{disk.get('initializeParams', {}).get('diskName', '')}"
-            disks.append(disk)
-        attach_compute_disks_to_instance(neo4j_session, disks, instance["partial_uri"], gcp_update_tag)
+    # attach compute instances to disks - one batched write across all instances
+    disk_rows = [
+        {
+            "id": f"projects/{project_id}/disks/{disk.get('initializeParams', {}).get('diskName', '')}",
+            "instance_id": instance["partial_uri"],
+        }
+        for instance in instance_list
+        for disk in instance.get("disks", [])
+    ]
+    attach_compute_disks_to_instances(neo4j_session, disk_rows, gcp_update_tag)
 
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_instances(neo4j_session, common_job_parameters)
