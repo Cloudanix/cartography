@@ -238,3 +238,79 @@ class TestLoadGcpInstancesBatching:
         queries = [c.args[1] for c in session.execute_write.call_args_list if len(c.args) > 1]
         assert not any("GKECluster" in q for q in queries)
         assert not any("GKENodePool" in q for q in queries)
+
+
+FIREWALL = {
+    "id": "projects/p1/global/firewalls/allow-web",
+    "direction": "INGRESS",
+    "disabled": False,
+    "name": "allow-web",
+    "priority": 1000,
+    "selfLink": "https://selflink/fw",
+    "vpc_partial_uri": "projects/p1/global/networks/default",
+    "has_target_service_accounts": False,
+    "consolelink": "https://console/fw",
+    "network": "https://net/default",
+    "sourceRanges": ["34.1.2.3/32", "10.0.0.0/8", "2001:db8::/32"],
+    "transformed_allow_list": [
+        {"ruleid": "fw/allow/tcp/80", "protocol": "tcp", "fromport": 80, "toport": 80},
+    ],
+    "transformed_deny_list": [
+        {"ruleid": "fw/deny/tcp/22", "protocol": "tcp", "fromport": 22, "toport": 22},
+    ],
+    "targetTags": ["web"],
+}
+
+
+class TestFirewallRowBuilders:
+    def test_rule_rows_partitioned_by_label_and_ip_type(self):
+        partitions = compute._build_firewall_rule_rows([FIREWALL])
+
+        # 1 allow rule x 3 ranges (2 v4 + 1 v6); same for deny
+        assert len(partitions[("ALLOWED_BY", "IPv4")]) == 2
+        assert len(partitions[("ALLOWED_BY", "IPv6")]) == 1
+        assert len(partitions[("DENIED_BY", "IPv4")]) == 2
+        assert len(partitions[("DENIED_BY", "IPv6")]) == 1
+        row = partitions[("ALLOWED_BY", "IPv4")][0]
+        assert row == {
+            "fw_id": FIREWALL["id"],
+            "ruleid": "fw/allow/tcp/80",
+            "protocol": "tcp",
+            "fromport": 80,
+            "toport": 80,
+            "range": "34.1.2.3/32",
+        }
+
+    def test_target_tag_rows(self):
+        rows = compute._build_target_tag_rows([FIREWALL])
+        assert rows == [{
+            "fw_id": FIREWALL["id"],
+            "tag_id": "projects/p1/global/networks/default/tags/web",
+            "tag_value": "web",
+        }]
+
+    def test_public_ip_rows_exclude_private_ranges(self):
+        rows = compute._build_firewall_public_ip_rows([FIREWALL])
+        # 10.0.0.0/8 is private; 2001:db8::/32 fails IPv4Network parsing and is skipped
+        assert rows == [{"fw_id": FIREWALL["id"], "ip": "34.1.2.3/32"}]
+
+
+class TestLoadGcpIngressFirewalls:
+    def test_batched_writes(self):
+        session = MagicMock()
+
+        compute.load_gcp_ingress_firewalls(session, [FIREWALL, FIREWALL], TEST_UPDATE_TAG)
+
+        # 1 firewall batch + 4 rule partitions + 1 target tags + 1 public ips = 7
+        # (independent of firewall count; was ~7+ writes PER firewall)
+        assert session.execute_write.call_count == 7
+        queries = [c.args[1] for c in session.execute_write.call_args_list]
+        assert sum("ALLOWED_BY" in q for q in queries) == 2  # v4 + v6 partitions
+        assert sum("DENIED_BY" in q for q in queries) == 2
+        assert sum("Ipv6Range" in q for q in queries) == 2
+        assert all("UNWIND $DictList" in q for q in queries)
+
+    def test_empty_list_writes_nothing(self):
+        session = MagicMock()
+        compute.load_gcp_ingress_firewalls(session, [], TEST_UPDATE_TAG)
+        session.execute_write.assert_not_called()

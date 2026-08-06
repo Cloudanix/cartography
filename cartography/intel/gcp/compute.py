@@ -1544,86 +1544,76 @@ def load_gcp_ingress_firewalls(neo4j_session: neo4j.Session, fw_list: List[Resou
     :return: Nothing
     """
     query = """
-    MERGE (fw:GCPFirewall{id: $FwPartialUri})
+    UNWIND $DictList AS item
+    MERGE (fw:GCPFirewall{id: item.id})
     ON CREATE SET fw.firstseen = timestamp(),
-    fw.partial_uri = $FwPartialUri
-    SET fw.direction = $Direction,
-    fw.disabled = $Disabled,
-    fw.name = $Name,
-    fw.region = $region,
-    fw.priority = $Priority,
-    fw.self_link = $SelfLink,
-    fw.has_target_service_accounts = $HasTargetServiceAccounts,
-    fw.consolelink = $consolelink,
-    fw.network = $Network,
+    fw.partial_uri = item.id
+    SET fw.direction = item.direction,
+    fw.disabled = item.disabled,
+    fw.name = item.name,
+    fw.region = 'global',
+    fw.priority = item.priority,
+    fw.self_link = item.selfLink,
+    fw.has_target_service_accounts = item.has_target_service_accounts,
+    fw.consolelink = item.consolelink,
+    fw.network = item.network,
     fw.lastupdated = $gcp_update_tag
 
-    MERGE (vpc:GCPVpc{id: $VpcPartialUri})
+    MERGE (vpc:GCPVpc{id: item.vpc_partial_uri})
     ON CREATE SET vpc.firstseen = timestamp(),
-    vpc.partial_uri = $VpcPartialUri
+    vpc.partial_uri = item.vpc_partial_uri
     SET vpc.lastupdated = $gcp_update_tag
 
     MERGE (vpc)-[r:RESOURCE]->(fw)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
+    load_graph_data(neo4j_session, query, fw_list, gcp_update_tag=gcp_update_tag)
+    _attach_firewall_rules(neo4j_session, fw_list, gcp_update_tag)
+    _attach_target_tags(neo4j_session, fw_list, gcp_update_tag)
+    _attach_firewall_public_ip_address(neo4j_session, fw_list, gcp_update_tag)
+
+
+def _build_firewall_public_ip_rows(fw_list: List[Dict]) -> List[Dict]:
+    """One row per firewall x public source range."""
+    rows = []
     for fw in fw_list:
-        neo4j_session.run(
-            query,
-            FwPartialUri=fw["id"],
-            Direction=fw["direction"],
-            Disabled=fw["disabled"],
-            Name=fw["name"],
-            Priority=fw["priority"],
-            SelfLink=fw["selfLink"],
-            region="global",
-            VpcPartialUri=fw["vpc_partial_uri"],
-            HasTargetServiceAccounts=fw["has_target_service_accounts"],
-            consolelink=fw["consolelink"],
-            Network=fw["network"],
-            gcp_update_tag=gcp_update_tag,
-        )
-        _attach_firewall_rules(neo4j_session, fw, gcp_update_tag)
-        _attach_target_tags(neo4j_session, fw, gcp_update_tag)
-        _attach_firewall_public_ip_address(neo4j_session, fw, gcp_update_tag)
+        for ip in fw.get("sourceRanges", []):
+            try:
+                if not ipaddress.IPv4Network(str(ip).split("/")[0]).is_private:
+                    rows.append({"fw_id": fw["id"], "ip": ip})
+            except AddressValueError as e:
+                logger.warning(f"failed to check public ip, error related to the address - {e}")
+            except NetmaskValueError as e:
+                logger.warning(f" failed to check public ip, error related to the net mask - {e}")
+            except Exception as e:
+                logger.warning(f"failed to check public ip - {e}")
+    return rows
 
 
 @timeit
-def _attach_firewall_public_ip_address(neo4j_session: neo4j.Session, fw: Resource, gcp_update_tag: int) -> None:
+def _attach_firewall_public_ip_address(neo4j_session: neo4j.Session, fw_list: List[Dict], gcp_update_tag: int) -> None:
     ingest_public_ip_address = """
-    UNWIND $PublicIpAddress as ip
-        MERGE (i:GCPPublicIpAddress{ipAddress:ip})
+    UNWIND $DictList AS item
+        MERGE (i:GCPPublicIpAddress{ipAddress:item.ip})
             ON CREATE SET i.firstseen = timestamp()
             SET i.lastupdated = $gcp_update_tag,
-                i.IpAddress=ip,
-                i.id=ip,
+                i.IpAddress=item.ip,
+                i.id=item.ip,
                 i.type='Internal',
                 i.source='GCP',
                 i.resource='FirewallRule',
                 i.lastupdated = $gcp_update_tag
-        with i
-            MATCH (p:GCPFirewall{id: $FwId})
+        with i, item
+            MATCH (p:GCPFirewall{id: item.fw_id})
         with i,p
          MERGE (p)-[r:MEMBER_OF_PUBLIC_IP_ADDRESS]->(i)
          ON CREATE SET r.firstseen = timestamp()
          SET
          r.lastupdated = $gcp_update_tag
     """
-    public_ip_address = []
-    for ip in fw.get("sourceRanges", []):
-        try:
-            if not ipaddress.IPv4Network(str(ip).split("/")[0]).is_private:
-                public_ip_address.append(ip)
-        except AddressValueError as e:
-            logger.warning(f"failed to check public ip, error related to the address - {e}")
-        except NetmaskValueError as e:
-            logger.warning(f" failed to check public ip, error related to the net mask - {e}")
-        except Exception as e:
-            logger.warning(f"failed to check public ip - {e}")
-    neo4j_session.run(
-        query=ingest_public_ip_address,
-        PublicIpAddress=public_ip_address,
-        FwId=fw["id"],
+    load_graph_data(
+        neo4j_session, ingest_public_ip_address, _build_firewall_public_ip_rows(fw_list),
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -1644,33 +1634,62 @@ def determine_ip_type(ip_range: str) -> str:
         return "IPv4"
 
 
-@timeit
-def _attach_firewall_rules(neo4j_session: neo4j.Session, fw: Resource, gcp_update_tag: int) -> None:
+def _build_firewall_rule_rows(fw_list: List[Dict]) -> Dict[tuple, List[Dict]]:
     """
-    Attach the allow_rules and deny_rules to the Firewall object, forming IpRule nodes.
+    Flatten firewall x rule x source-range (this was a 3-deep per-item loop) into rows,
+    partitioned by (relationship label, ip type) since each combination needs its own
+    query shape.
+    """
+    partitions: Dict[tuple, List[Dict]] = {
+        ("ALLOWED_BY", "IPv4"): [],
+        ("ALLOWED_BY", "IPv6"): [],
+        ("DENIED_BY", "IPv4"): [],
+        ("DENIED_BY", "IPv6"): [],
+    }
+    for fw in fw_list:
+        for list_type, rel_label in (("transformed_allow_list", "ALLOWED_BY"), ("transformed_deny_list", "DENIED_BY")):
+            for rule in fw.get(list_type, []):
+                for ip_range in fw.get("sourceRanges", []):
+                    ip_type = determine_ip_type(ip_range)
+                    if ip_type not in ("IPv4", "IPv6"):
+                        continue
+                    partitions[(rel_label, ip_type)].append({
+                        "fw_id": fw["id"],
+                        "ruleid": rule["ruleid"],
+                        "protocol": rule["protocol"],
+                        "fromport": rule.get("fromport"),
+                        "toport": rule.get("toport"),
+                        "range": ip_range,
+                    })
+    return partitions
+
+
+@timeit
+def _attach_firewall_rules(neo4j_session: neo4j.Session, fw_list: List[Dict], gcp_update_tag: int) -> None:
+    """
+    Attach the allow_rules and deny_rules to the Firewall objects, forming IpRule nodes.
     This function also creates separate IpRange (for IPv4) and Ipv6Range nodes.
 
     :param neo4j_session: The Neo4j session
-    :param fw: The Firewall object
+    :param fw_list: The transformed firewall dicts
     :param gcp_update_tag: The timestamp for updates
     :return: None
     """
+    query_template = Template("""
+    UNWIND $DictList AS item
+    MATCH (fw:GCPFirewall{id: item.fw_id})
 
-    # query that makes
-    query_ipv4 = Template("""
-    MATCH (fw:GCPFirewall{id: $FwPartialUri})
-
-    MERGE (rule:IpRule:IpPermissionInbound:GCPIpRule{id: $RuleId})
+    MERGE (rule:IpRule:IpPermissionInbound:GCPIpRule{id: item.ruleid})
     ON CREATE SET rule.firstseen = timestamp(),
-    rule.ruleid = $RuleId
-    SET rule.protocol = $Protocol,
-    rule.fromport = $FromPort,
-    rule.toport = $ToPort,
+    rule.ruleid = item.ruleid
+    SET rule.protocol = item.protocol,
+    rule.fromport = item.fromport,
+    rule.toport = item.toport,
     rule.lastupdated = $gcp_update_tag
 
-    MERGE (rng:IpRange{id: $Range})
+    MERGE (rng:$range_label{id: item.range})
     ON CREATE SET rng.firstseen = timestamp(),
-    rng.range = $Range
+    rng.range = item.range
     SET rng.lastupdated = $gcp_update_tag
 
     MERGE (rng)-[m:MEMBER_OF_IP_RULE]->(rule)
@@ -1682,100 +1701,51 @@ def _attach_firewall_rules(neo4j_session: neo4j.Session, fw: Resource, gcp_updat
     SET r.lastupdated = $gcp_update_tag
     """)
 
-    query_ipv6 = Template("""
-    MATCH (fw:GCPFirewall{id: $FwPartialUri})
+    range_labels = {"IPv4": "IpRange", "IPv6": "Ipv6Range"}
+    for (rel_label, ip_type), rows in _build_firewall_rule_rows(fw_list).items():
+        query = query_template.safe_substitute(
+            fw_rule_relationship_label=rel_label,
+            range_label=range_labels[ip_type],
+        )
+        load_graph_data(neo4j_session, query, rows, gcp_update_tag=gcp_update_tag)
 
-    MERGE (rule:IpRule:IpPermissionInbound:GCPIpRule{id: $RuleId})
-    ON CREATE SET rule.firstseen = timestamp(),
-    rule.ruleid = $RuleId
-    SET rule.protocol = $Protocol,
-    rule.fromport = $FromPort,
-    rule.toport = $ToPort,
-    rule.lastupdated = $gcp_update_tag
 
-    MERGE (rng:Ipv6Range{id: $Range})
-    ON CREATE SET rng.firstseen = timestamp(),
-    rng.range = $Range
-    SET rng.lastupdated = $gcp_update_tag
-
-    MERGE (rng)-[m:MEMBER_OF_IP_RULE]->(rule)
-    ON CREATE SET m.firstseen = timestamp()
-    SET m.lastupdated = $gcp_update_tag
-
-    MERGE (fw)<-[r:$fw_rule_relationship_label]-(rule)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $gcp_update_tag
-    """)
-
-    for list_type in ["transformed_allow_list", "transformed_deny_list"]:
-        if list_type == "transformed_allow_list":
-            label = "ALLOWED_BY"
-        else:
-            label = "DENIED_BY"
-
-        for rule in fw.get(list_type, []):
-            # Iterate over all source ranges (IP addresses or CIDRs)
-            for ip_range in fw.get("sourceRanges", []):
-                ip_type = determine_ip_type(ip_range)
-
-                if ip_type == "IPv4":
-                    # Run the query for IPv4 ranges
-                    neo4j_session.run(
-                        query_ipv4.safe_substitute(fw_rule_relationship_label=label),
-                        FwPartialUri=fw["id"],
-                        RuleId=rule["ruleid"],
-                        Protocol=rule["protocol"],
-                        FromPort=rule.get("fromport"),
-                        ToPort=rule.get("toport"),
-                        Range=ip_range,
-                        gcp_update_tag=gcp_update_tag,
-                    )
-
-                elif ip_type == "IPv6":
-                    # Run the query for IPv6 ranges
-                    neo4j_session.run(
-                        query_ipv6.safe_substitute(fw_rule_relationship_label=label),
-                        FwPartialUri=fw["id"],
-                        RuleId=rule["ruleid"],
-                        Protocol=rule["protocol"],
-                        FromPort=rule.get("fromport"),
-                        ToPort=rule.get("toport"),
-                        Range=ip_range,
-                        gcp_update_tag=gcp_update_tag,
-                    )
+def _build_target_tag_rows(fw_list: List[Dict]) -> List[Dict]:
+    return [
+        {
+            "fw_id": fw["id"],
+            "tag_id": _create_gcp_network_tag_id(fw["vpc_partial_uri"], tag),
+            "tag_value": tag,
+        }
+        for fw in fw_list
+        for tag in fw.get("targetTags", [])
+    ]
 
 
 @timeit
-def _attach_target_tags(neo4j_session: neo4j.Session, fw: Resource, gcp_update_tag: int) -> None:
+def _attach_target_tags(neo4j_session: neo4j.Session, fw_list: List[Dict], gcp_update_tag: int) -> None:
     """
-    Attach target tags to the firewall object
+    Attach target tags to the firewall objects
     :param neo4j_session: The neo4j session
-    :param fw: The firewall object
+    :param fw_list: The transformed firewall dicts
     :param gcp_update_tag: The timestamp
     :return: Nothing
     """
     query = """
-    MATCH (fw:GCPFirewall{id: $FwPartialUri})
+    UNWIND $DictList AS item
+    MATCH (fw:GCPFirewall{id: item.fw_id})
 
-    MERGE (t:GCPNetworkTag{id: $TagId})
+    MERGE (t:GCPNetworkTag{id: item.tag_id})
     ON CREATE SET t.firstseen = timestamp(),
-    t.tag_id = $TagId,
-    t.value = $TagValue
+    t.tag_id = item.tag_id,
+    t.value = item.tag_value
     SET t.lastupdated = $gcp_update_tag
 
     MERGE (fw)-[h:TARGET_TAG]->(t)
     ON CREATE SET h.firstseen = timestamp()
     SET h.lastupdated = $gcp_update_tag
     """
-    for tag in fw.get("targetTags", []):
-        tag_id = _create_gcp_network_tag_id(fw["vpc_partial_uri"], tag)
-        neo4j_session.run(
-            query,
-            FwPartialUri=fw["id"],
-            TagId=tag_id,
-            TagValue=tag,
-            gcp_update_tag=gcp_update_tag,
-        )
+    load_graph_data(neo4j_session, query, _build_target_tag_rows(fw_list), gcp_update_tag=gcp_update_tag)
 
 
 @timeit
