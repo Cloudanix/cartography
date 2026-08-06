@@ -373,8 +373,18 @@ def ensure_indexes(neo4j_session: neo4j.Session, node_schema: CartographyNodeSch
     for query in queries:
         if not query.startswith('CREATE INDEX IF NOT EXISTS'):
             raise ValueError('Query provided to `ensure_indexes()` does not start with "CREATE INDEX IF NOT EXISTS".')
-        # Managed transaction so index creation retries on TransientError instead of failing the sync.
-        neo4j_session.execute_write(write_query_tx, query)
+        try:
+            # Managed transaction so index creation retries on TransientError instead of failing the sync.
+            neo4j_session.execute_write(write_query_tx, query)
+        except neo4j.exceptions.ClientError as e:
+            # Despite IF NOT EXISTS, Neo4j has a race where concurrent sessions creating
+            # the same index can fail between the existence check and the creation. Our
+            # provider syncs run 8 workers against a shared driver, so this is expected;
+            # the index existing is the desired end state.
+            if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
+                logger.debug(f"Index already exists (created by a parallel sync): {query}")
+                continue
+            raise
 
 
 def load(

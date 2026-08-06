@@ -60,6 +60,36 @@ def test_ensure_indexes_rejects_non_create_index_query(mock_build):
     session.execute_write.assert_not_called()
 
 
+@patch("cartography.client.core.tx.build_create_index_queries")
+def test_ensure_indexes_ignores_parallel_index_creation_race(mock_build):
+    # Two workers hitting CREATE INDEX IF NOT EXISTS concurrently can still race in
+    # Neo4j; the resulting EquivalentSchemaRuleAlreadyExists is the desired end state.
+    mock_build.return_value = [
+        "CREATE INDEX IF NOT EXISTS FOR (n:Foo) ON (n.id)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:Bar) ON (n.id)",
+    ]
+    race = ClientError("already exists")
+    race.code = "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists"
+    session = MagicMock()
+    session.execute_write.side_effect = [race, None]
+
+    ensure_indexes(session, MagicMock())  # must not raise
+
+    assert session.execute_write.call_count == 2
+
+
+@patch("cartography.client.core.tx.build_create_index_queries")
+def test_ensure_indexes_raises_other_client_errors(mock_build):
+    mock_build.return_value = ["CREATE INDEX IF NOT EXISTS FOR (n:Foo) ON (n.id)"]
+    err = ClientError("denied")
+    err.code = "Neo.ClientError.Security.Forbidden"
+    session = MagicMock()
+    session.execute_write.side_effect = err
+
+    with pytest.raises(ClientError):
+        ensure_indexes(session, MagicMock())
+
+
 @patch("cartography.client.core.tx.build_ingestion_query")
 @patch("cartography.client.core.tx.ensure_indexes")
 def test_load_empty_list_short_circuits(mock_ensure, mock_build):
