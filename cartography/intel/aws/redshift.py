@@ -8,6 +8,7 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -155,26 +156,27 @@ def load_redshift_cluster_data(
     aws_update_tag: int,
 ) -> None:
     ingest_cluster = """
-    MERGE (cluster:RedshiftCluster{id: $Arn})
+    UNWIND $DictList AS item
+    MERGE (cluster:RedshiftCluster{id: item.arn})
     ON CREATE SET cluster.firstseen = timestamp(),
-    cluster.arn = $Arn
-    SET cluster.availability_zone = $AZ,
-    cluster.cluster_create_time = $ClusterCreateTime,
-    cluster.cluster_identifier = $ClusterIdentifier,
-    cluster.cluster_revision_number = $ClusterRevisionNumber,
-    cluster.db_name = $DBName,
-    cluster.consolelink = $consolelink,
-    cluster.encrypted = $Encrypted,
-    cluster.cluster_status = $ClusterStatus,
-    cluster.endpoint_address = $EndpointAddress,
-    cluster.endpoint_port = $EndpointPort,
-    cluster.master_username = $MasterUsername,
-    cluster.node_type = $NodeType,
-    cluster.number_of_nodes = $NumberOfNodes,
-    cluster.publicly_accessible = $PubliclyAccessible,
-    cluster.vpc_id = $VpcId,
+    cluster.arn = item.arn
+    SET cluster.availability_zone = item.az,
+    cluster.cluster_create_time = item.cluster_create_time,
+    cluster.cluster_identifier = item.cluster_identifier,
+    cluster.cluster_revision_number = item.cluster_revision_number,
+    cluster.db_name = item.db_name,
+    cluster.consolelink = item.consolelink,
+    cluster.encrypted = item.encrypted,
+    cluster.cluster_status = item.cluster_status,
+    cluster.endpoint_address = item.endpoint_address,
+    cluster.endpoint_port = item.endpoint_port,
+    cluster.master_username = item.master_username,
+    cluster.node_type = item.node_type,
+    cluster.number_of_nodes = item.number_of_nodes,
+    cluster.publicly_accessible = item.publicly_accessible,
+    cluster.vpc_id = item.vpc_id,
     cluster.lastupdated = $aws_update_tag,
-    cluster.region = $Region
+    cluster.region = item.region
     WITH cluster
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(cluster)
@@ -182,140 +184,138 @@ def load_redshift_cluster_data(
     SET r.lastupdated = $aws_update_tag
     """
 
+    cluster_rows = []
     for cluster in clusters:
-        endpoint_address = ""
-        endpoint_port = ""
-        if cluster.get("Endpoint"):
-            endpoint_address = cluster.get("Endpoint").get("Address")
-            endpoint_port = cluster.get("Endpoint").get("Port")
-
-        neo4j_session.run(
-            ingest_cluster,
-            Arn=cluster["arn"],
-            consolelink=aws_console_link.get_console_link(arn=cluster["arn"]),
-            AZ=cluster.get("AvailabilityZone"),
-            ClusterCreateTime=cluster.get("ClusterCreateTime"),
-            ClusterIdentifier=cluster.get("ClusterIdentifier"),
-            ClusterRevisionNumber=cluster.get("ClusterRevisionNumber"),
-            ClusterStatus=cluster.get("ClusterStatus"),
-            DBName=cluster.get("DBName"),
-            Encrypted=cluster.get("Encrypted"),
-            EndpointAddress=endpoint_address,
-            EndpointPort=endpoint_port,  # type: ignore
-            MasterUsername=cluster.get("MasterUsername"),
-            NodeType=cluster.get("NodeType"),
-            NumberOfNodes=cluster.get("NumberOfNodes"),
-            PubliclyAccessible=cluster.get("PubliclyAccessible"),
-            VpcId=cluster.get("VpcId"),
-            Region=cluster.get("region"),
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            aws_update_tag=aws_update_tag,
-        )
-        _attach_ec2_security_groups(neo4j_session, cluster, aws_update_tag, current_aws_account_id)
-        _attach_iam_roles(neo4j_session, cluster, aws_update_tag)
-        _attach_aws_vpc(neo4j_session, cluster, aws_update_tag)
-        _attach_aws_network_interface(neo4j_session, cluster, aws_update_tag)
-        _attach_aws_ec2_subnet(neo4j_session, cluster, aws_update_tag)
+        endpoint = cluster.get("Endpoint") or {}
+        cluster_rows.append({
+            "arn": cluster["arn"],
+            "consolelink": aws_console_link.get_console_link(arn=cluster["arn"]),
+            "az": cluster.get("AvailabilityZone"),
+            "cluster_create_time": cluster.get("ClusterCreateTime"),
+            "cluster_identifier": cluster.get("ClusterIdentifier"),
+            "cluster_revision_number": cluster.get("ClusterRevisionNumber"),
+            "cluster_status": cluster.get("ClusterStatus"),
+            "db_name": cluster.get("DBName"),
+            "encrypted": cluster.get("Encrypted"),
+            "endpoint_address": endpoint.get("Address", ""),
+            "endpoint_port": endpoint.get("Port", ""),
+            "master_username": cluster.get("MasterUsername"),
+            "node_type": cluster.get("NodeType"),
+            "number_of_nodes": cluster.get("NumberOfNodes"),
+            "publicly_accessible": cluster.get("PubliclyAccessible"),
+            "vpc_id": cluster.get("VpcId"),
+            "region": cluster.get("region"),
+        })
+    load_graph_data(
+        neo4j_session, ingest_cluster, cluster_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id, aws_update_tag=aws_update_tag,
+    )
+    _attach_ec2_security_groups(neo4j_session, clusters, aws_update_tag, current_aws_account_id)
+    _attach_iam_roles(neo4j_session, clusters, aws_update_tag)
+    _attach_aws_vpc(neo4j_session, clusters, aws_update_tag)
+    _attach_aws_network_interface(neo4j_session, clusters, aws_update_tag)
+    _attach_aws_ec2_subnet(neo4j_session, clusters, aws_update_tag)
 
 
 @timeit
 def _attach_ec2_security_groups(
-    neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int, account_id: str,
+    neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int, account_id: str,
 ) -> None:
     attach_cluster_to_group = """
-    MATCH (c:RedshiftCluster{id:$ClusterArn})
-    MERGE (sg:EC2SecurityGroup{id:$GroupId})
-    SET sg.consolelink = $consolelink
+    UNWIND $DictList AS item
+    MATCH (c:RedshiftCluster{id:item.cluster_arn})
+    MERGE (sg:EC2SecurityGroup{id:item.group_id})
+    SET sg.consolelink = item.consolelink
     MERGE (c)-[m:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
     ON CREATE SET m.firstseen = timestamp()
     SET m.lastupdated = $aws_update_tag
     """
-    for group in cluster.get("VpcSecurityGroups", []):
-        region = group.get("region", "")
-        group_id = group.get("GroupId")
-        group_arn = f"arn:aws:ec2:{region}:{account_id}:security-group/{group_id}"
-        consolelink = aws_console_link.get_console_link(arn=group_arn)
-        neo4j_session.run(
-            attach_cluster_to_group,
-            ClusterArn=cluster["arn"],
-            consolelink=consolelink,
-            GroupId=group["VpcSecurityGroupId"],
-            aws_update_tag=aws_update_tag,
-        )
+    rows = []
+    for cluster in clusters:
+        for group in cluster.get("VpcSecurityGroups", []):
+            region = group.get("region", "")
+            group_id = group.get("GroupId")
+            group_arn = f"arn:aws:ec2:{region}:{account_id}:security-group/{group_id}"
+            rows.append({
+                "cluster_arn": cluster["arn"],
+                "consolelink": aws_console_link.get_console_link(arn=group_arn),
+                "group_id": group["VpcSecurityGroupId"],
+            })
+    load_graph_data(neo4j_session, attach_cluster_to_group, rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
-def _attach_iam_roles(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int) -> None:
+def _attach_iam_roles(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
     attach_cluster_to_role = """
-    MATCH (c:RedshiftCluster{id:$ClusterArn})
-    MERGE (p:AWSPrincipal{arn:$RoleArn})
+    UNWIND $DictList AS item
+    MATCH (c:RedshiftCluster{id:item.cluster_arn})
+    MERGE (p:AWSPrincipal{arn:item.role_arn})
     MERGE (c)-[s:STS_ASSUMEROLE_ALLOW]->(p)
     ON CREATE SET s.firstseen = timestamp()
     SET s.lastupdated = $aws_update_tag
     """
-    for role in cluster.get("IamRoles", []):
-        neo4j_session.run(
-            attach_cluster_to_role,
-            ClusterArn=cluster["arn"],
-            RoleArn=role["IamRoleArn"],
-            aws_update_tag=aws_update_tag,
-        )
+    rows = [
+        {"cluster_arn": cluster["arn"], "role_arn": role["IamRoleArn"]}
+        for cluster in clusters
+        for role in cluster.get("IamRoles", [])
+    ]
+    load_graph_data(neo4j_session, attach_cluster_to_role, rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
-def _attach_aws_vpc(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int) -> None:
+def _attach_aws_vpc(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
     attach_cluster_to_vpc = """
-    MATCH (c:RedshiftCluster{id:$ClusterArn})
-    MERGE (v:AWSVpc{id:$VpcId})
+    UNWIND $DictList AS item
+    MATCH (c:RedshiftCluster{id:item.cluster_arn})
+    MERGE (v:AWSVpc{id:item.vpc_id})
     MERGE (c)-[m:MEMBER_OF_AWS_VPC]->(v)
     ON CREATE SET m.firstseen = timestamp()
     SET m.lastupdated = $aws_update_tag
     """
-    if cluster.get("VpcId"):
-        neo4j_session.run(
-            attach_cluster_to_vpc,
-            ClusterArn=cluster["arn"],
-            VpcId=cluster["VpcId"],
-            aws_update_tag=aws_update_tag,
-        )
+    rows = [
+        {"cluster_arn": cluster["arn"], "vpc_id": cluster["VpcId"]}
+        for cluster in clusters
+        if cluster.get("VpcId")
+    ]
+    load_graph_data(neo4j_session, attach_cluster_to_vpc, rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
-def _attach_aws_network_interface(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int) -> None:
+def _attach_aws_network_interface(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
     attach_cluster_to_network_interface = """
-    UNWIND $NetworkInterfaces as NetworkInterface
-        MATCH (c:RedshiftCluster{id:$ClusterArn})
-        MERGE (v:NetworkInterface{id: NetworkInterface.NetworkInterfaceId})
+    UNWIND $DictList AS item
+        MATCH (c:RedshiftCluster{id:item.cluster_arn})
+        MERGE (v:NetworkInterface{id: item.network_interface_id})
         MERGE (c)-[m:NETWORK_INTERFACE]->(v)
         ON CREATE SET m.firstseen = timestamp()
         SET m.lastupdated = $aws_update_tag
     """
-    for vpc_endpoint in cluster.get("VpcEndpoints", []):
-        neo4j_session.run(
-            attach_cluster_to_network_interface,
-            ClusterArn=cluster["arn"],
-            NetworkInterfaces=vpc_endpoint["NetworkInterfaces"],
-            aws_update_tag=aws_update_tag,
-        )
+    rows = [
+        {"cluster_arn": cluster["arn"], "network_interface_id": nic["NetworkInterfaceId"]}
+        for cluster in clusters
+        for vpc_endpoint in cluster.get("VpcEndpoints", [])
+        for nic in vpc_endpoint["NetworkInterfaces"]
+    ]
+    load_graph_data(neo4j_session, attach_cluster_to_network_interface, rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
-def _attach_aws_ec2_subnet(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int) -> None:
+def _attach_aws_ec2_subnet(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
     attach_cluster_to_ec2_subnet = """
-    UNWIND $NetworkInterfaces as NetworkInterface
-        MATCH (c:RedshiftCluster{id:$ClusterArn})
-        MERGE (s:EC2Subnet{id: NetworkInterface.SubnetId})
+    UNWIND $DictList AS item
+        MATCH (c:RedshiftCluster{id:item.cluster_arn})
+        MERGE (s:EC2Subnet{id: item.subnet_id})
         MERGE (c)-[m:CLUSTER_SUBNET]->(s)
         ON CREATE SET m.firstseen = timestamp()
         SET m.lastupdated = $aws_update_tag
     """
-    for vpc_endpoint in cluster.get("VpcEndpoints", []):
-        neo4j_session.run(
-            attach_cluster_to_ec2_subnet,
-            ClusterArn=cluster["arn"],
-            NetworkInterfaces=vpc_endpoint["NetworkInterfaces"],
-            aws_update_tag=aws_update_tag,
-        )
+    rows = [
+        {"cluster_arn": cluster["arn"], "subnet_id": nic["SubnetId"]}
+        for cluster in clusters
+        for vpc_endpoint in cluster.get("VpcEndpoints", [])
+        for nic in vpc_endpoint["NetworkInterfaces"]
+    ]
+    load_graph_data(neo4j_session, attach_cluster_to_ec2_subnet, rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
