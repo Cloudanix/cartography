@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
+def filter_active_redshift_reserved_nodes(reserved_nodes: List[Dict]) -> List[Dict]:
+    """Keep only reserved Redshift nodes in active state."""
+    return [node for node in reserved_nodes if node.get("State") == "active"]
+
+
 @timeit
 @aws_handle_regions
 def get_redshift_reserved_node(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
@@ -26,7 +31,7 @@ def get_redshift_reserved_node(boto3_session: boto3.session.Session, region: str
         reserved_nodes: List = []
         for page in paginator.paginate():
             reserved_nodes.extend(page["ReservedNodes"])
-        return reserved_nodes
+        return filter_active_redshift_reserved_nodes(reserved_nodes)
 
     except ClientError as e:
         logger.error(f"Failed to call redshift describe_reserved_nodes: {region} - {e}")
