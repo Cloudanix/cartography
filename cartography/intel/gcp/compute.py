@@ -23,6 +23,7 @@ from googleapiclient.discovery import Resource
 from . import iam
 from . import instance_groups
 from . import label
+from cartography.client.core.tx import load_graph_data
 from cartography.util import batch
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -1194,43 +1195,30 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
     :return: Nothing
     """
     query = """
-    MERGE (p:GCPProject{id: $ProjectId})
+    UNWIND $DictList AS item
+    MERGE (p:GCPProject{id: item.project_id})
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = $gcp_update_tag
 
-    MERGE (vpc:GCPVpc{id: $PartialUri})
+    MERGE (vpc:GCPVpc{id: item.partial_uri})
     ON CREATE SET vpc.firstseen = timestamp(),
-    vpc.partial_uri = $PartialUri
-    SET vpc.self_link = $SelfLink,
-    vpc.region = $region,
-    vpc.name = $VpcName,
-    vpc.project_id =  $ProjectId,
-    vpc.auto_create_subnetworks = $AutoCreateSubnetworks,
-    vpc.routing_config_routing_mode = $RoutingMode,
-    vpc.description = $Description,
-    vpc.consolelink = $consolelink,
+    vpc.partial_uri = item.partial_uri
+    SET vpc.self_link = item.self_link,
+    vpc.region = item.region,
+    vpc.name = item.name,
+    vpc.project_id = item.project_id,
+    vpc.auto_create_subnetworks = item.auto_create_subnetworks,
+    vpc.routing_config_routing_mode = item.routing_config_routing_mode,
+    vpc.description = item.description,
+    vpc.consolelink = item.consolelink,
     vpc.lastupdated = $gcp_update_tag,
-    vpc.is_default = $isDefault
+    vpc.is_default = item.isDefault
 
     MERGE (p)-[r:RESOURCE]->(vpc)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    for vpc in vpcs:
-        neo4j_session.run(
-            query,
-            ProjectId=vpc["project_id"],
-            PartialUri=vpc["partial_uri"],
-            SelfLink=vpc["self_link"],
-            VpcName=vpc["name"],
-            AutoCreateSubnetworks=vpc["auto_create_subnetworks"],
-            RoutingMode=vpc["routing_config_routing_mode"],
-            Description=vpc["description"],
-            region=vpc.get("region"),
-            consolelink=vpc.get("consolelink"),
-            gcp_update_tag=gcp_update_tag,
-            isDefault=vpc.get("isDefault"),
-        )
+    load_graph_data(neo4j_session, query, vpcs, gcp_update_tag=gcp_update_tag)
 
 
 @timeit
@@ -1243,47 +1231,32 @@ def load_gcp_subnets(neo4j_session: neo4j.Session, subnets: List[Dict], gcp_upda
     :return: Nothing
     """
     query = """
-    MERGE (vpc:GCPVpc{id: $VpcPartialUri})
+    UNWIND $DictList AS item
+    MERGE (vpc:GCPVpc{id: item.vpc_partial_uri})
     ON CREATE SET vpc.firstseen = timestamp(),
-    vpc.partial_uri = $VpcPartialUri
+    vpc.partial_uri = item.vpc_partial_uri
     SET vpc.lastupdated = $gcp_update_tag
 
-    MERGE (subnet:GCPSubnet{id: $PartialUri})
+    MERGE (subnet:GCPSubnet{id: item.partial_uri})
     ON CREATE SET subnet.firstseen = timestamp(),
-    subnet.partial_uri = $PartialUri
-    SET subnet.self_link = $SubnetSelfLink,
-    subnet.project_id = $ProjectId,
-    subnet.name = $SubnetName,
-    subnet.region = $Region,
-    subnet.gateway_address = $GatewayAddress,
-    subnet.ip_cidr_range = $IpCidrRange,
-    subnet.private_ip_google_access = $PrivateIpGoogleAccess,
-    subnet.vpc_partial_uri = $VpcPartialUri,
-    subnet.consolelink = $consolelink,
+    subnet.partial_uri = item.partial_uri
+    SET subnet.self_link = item.self_link,
+    subnet.project_id = item.project_id,
+    subnet.name = item.name,
+    subnet.region = item.region,
+    subnet.gateway_address = item.gateway_address,
+    subnet.ip_cidr_range = item.ip_cidr_range,
+    subnet.private_ip_google_access = item.private_ip_google_access,
+    subnet.vpc_partial_uri = item.vpc_partial_uri,
+    subnet.consolelink = item.consolelink,
     subnet.lastupdated = $gcp_update_tag,
-    subnet.is_default = $isDefault
+    subnet.is_default = item.isDefault
 
     MERGE (vpc)-[r:RESOURCE]->(subnet)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    for s in subnets:
-        neo4j_session.run(
-            query,
-            VpcPartialUri=s["vpc_partial_uri"],
-            VpcSelfLink=s["vpc_self_link"],
-            PartialUri=s["partial_uri"],
-            SubnetSelfLink=s["self_link"],
-            ProjectId=s["project_id"],
-            SubnetName=s["name"],
-            Region=s["region"],
-            GatewayAddress=s["gateway_address"],
-            IpCidrRange=s["ip_cidr_range"],
-            PrivateIpGoogleAccess=s["private_ip_google_access"],
-            consolelink=s["consolelink"],
-            gcp_update_tag=gcp_update_tag,
-            isDefault=s["isDefault"],
-        )
+    load_graph_data(neo4j_session, query, subnets, gcp_update_tag=gcp_update_tag)
 
 
 @timeit
