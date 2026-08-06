@@ -67,8 +67,8 @@ Legend: ✅ done · 🔵 in progress · ⚪ not started · ⛔ blocked/deferred
 |-------|-------|--------|
 | 1 | Query/index fixes + `ensure_indexes` managed-tx wrap | ✅ done — unit + integration green in CI |
 | 2 | Integration EXPLAIN plan guard (+ self-test) | ✅ done — unit + real-EXPLAIN sweep green in CI |
-| 3.0 | Foundation: `session.py` silent-fail fix, `graph_write_seconds` split, upstream `tx.py` backport (batch 10k + retry + matchlinks), `ensure_indexes` memoize | ⚪ not started — **next up; blocks 3.1+** |
-| 3 | Migrate per-item loaders to `tx.load()` (re-scoped 2026-08-06) | ⚪ not started — blocked on 3.0 |
+| 3.0 | Foundation: `session.py` silent-fail fix, `graph_write_seconds` split, upstream `tx.py` backport (batch 10k + retry + matchlinks), `ensure_indexes` memoize | ✅ done 2026-08-06 — unit tests green locally; integration pending CI |
+| 3 | Migrate per-item loaders to `tx.load()` (re-scoped 2026-08-06) | ⚪ not started — **unblocked, next up** (after 3.0 CI run) |
 | 4 | PROFILE unanchored cleanup queries | ⚪ not started — after Phase 3 |
 
 > **CI update (2026-08-06):** the integration suite has run for Phases 1 and 2. Every item
@@ -216,17 +216,27 @@ writes fail silently, and the `tx.py` backport changes the target they migrate o
 
 | # | Task | Scope / key files | Est. | Status |
 |---|------|-------------------|------|--------|
-| 3.0.1 | Fix silent exception swallowing — every wrapper that logs + `return self` must re-raise (or retry, then raise): `run()`, `execute_write()`, `execute_read()` | `cartography/graph/session.py` | S | ⚪ |
-| 3.0.2 | Split graph-write time from API time: emit `graph_write_seconds` alongside `duration_seconds` via `ServiceTimingContext`; then re-rank remaining work with real numbers | provider timing contexts (`docs/azure-timing-instrumentation.md`) | S | ⚪ |
-| 3.0.3 | Backport upstream `client/core/tx.py`: `batch_size=10000` tunable per call (supersedes decision 14A), retry classification (network, `TransientError`, `BufferError`, `EntityNotFound`), empty-input short-circuit | `cartography/client/core/tx.py` + call sites | M | ⚪ |
-| 3.0.4 | Backport `load_matchlinks()` + `build_matchlink_query()` — relationship-only loader; migration target for hand-written linkers (AKS, route53) | `tx.py`, `querybuilder.py` | S | ⚪ |
-| 3.0.5 | Memoize `ensure_indexes()` per process (Option 5) | `tx.py:232` | XS | ⚪ |
+| 3.0.1 | Fix silent exception swallowing — every wrapper that logs + `return self` must re-raise (or retry, then raise): `run()`, `execute_write()`, `execute_read()` | `cartography/graph/session.py` | S | ✅ `92d62da40`, `bc0693378` |
+| 3.0.2 | Split graph-write time from API time: emit `graph_write_seconds` alongside `duration_seconds`; then re-rank remaining work with real numbers | `graph/write_timer.py` (new), `graph/session.py`, azure `util/timing.py`, aws/gcp `__init__.py` | S | ✅ `8efe6aec0`, `8d66b5960`, `52e8278ff` |
+| 3.0.3 | Backport upstream `client/core/tx.py`: `batch_size=10000` tunable per call (supersedes decision 14A), retry classification (network, `TransientError`, `BufferError`, `EntityNotFound`), empty-input short-circuit, index-race tolerance | `cartography/client/core/tx.py` | M | ✅ `e1f90f7ca`, `50453c34b`, `82b166502`, `f649917d9` |
+| 3.0.4 | Backport `load_matchlinks()` + `build_matchlink_query()` — relationship-only loader; migration target for hand-written linkers (AKS, route53) | `models/core/relationships.py`, `querybuilder.py`, `tx.py` | S | ✅ `1fc2e87ec`, `acfa2eb89`, `fd3f314dc` |
+| 3.0.5 | Memoize `ensure_indexes()` per process (Option 5) | `tx.py` | XS | ✅ `e52b15207` |
 
-> **3.0.1 scope note (2026-08-06):** `session.py` has since gained a `TransientError`
-> retry loop (`session.py:50-63`), but the retry returns `self` on exhaustion instead of
-> raising, non-transient exceptions are still swallowed (`:64-69`), and the
-> `execute_write`/`execute_read` wrappers (`:76+`) swallow too. Scope = all of them —
-> log, then **raise**.
+> **3.0.1 scope note (2026-08-06):** `session.py` had gained a `TransientError`
+> retry loop, but the retry returned `self` on exhaustion instead of raising,
+> non-transient exceptions were still swallowed, and the `execute_write`/
+> `execute_read` wrappers swallowed too. All of them now log and **raise**.
+
+> **Phase 3.0 implementation notes (2026-08-06):** all tasks landed with unit tests
+> (`test_session.py`, `test_write_timer.py`, `test_tx.py`, `test_querybuilder_matchlink.py`,
+> `test_relationships.py`, `test_timing.py`) — 60+ new assertions, one atomic commit per
+> change. New helpers for Phase 3.7: `run_write_query()` (drop-in for raw auto-commit
+> `session.run`) and `execute_write_with_retry()`. The matchlink backport is the minimal
+> core: upstream's optional sub-resource-scoped endpoint matching is deferred until a
+> call site needs it. Run integration in CI before starting 3.1 (sandbox has no neo4j;
+> `test_plan_guard.py::test_iter_generated_queries_builds_all` has a pre-existing,
+> ordering-dependent failure when run with the querybuilder-excs test module — verified
+> present before these changes at `7f4bcddd8`).
 
 ### Phase 3 checklist
 
@@ -537,7 +547,7 @@ migration that exists, is tested, and is running in production elsewhere.
 - **Structured JSON timing logs** per service/subscription.
 - **EXPLAIN plan guard** (Phase 2) — upstream has no equivalent.
 
-### ⚠️ Correctness defect found during this analysis
+### ⚠️ Correctness defect found during this analysis — ✅ FIXED 2026-08-06 (3.0.1)
 
 `cartography/graph/session.py:67` — the fork's `Session.run()` wrapper catches
 `Exception`, logs a warning, and **returns `self`**:
@@ -638,7 +648,9 @@ Re-run it before starting a module; the counts move as migrations land.
 
 | Concern | File:line |
 |---------|-----------|
-| Batched load entrypoint | `cartography/client/core/tx.py:252` (`load`), `:208` (`load_graph_data`), `:223` (batch=500) |
+| Batched load entrypoint | `cartography/client/core/tx.py` (`load`, `load_graph_data`; batch_size=10000 default, tunable) |
+| Matchlink loader (3.0.4) | `tx.py` (`load_matchlinks`), `querybuilder.py` (`build_matchlink_query`) |
+| Graph-write timing split | `cartography/graph/write_timer.py`, fed by `graph/session.py` |
 | ~~Raw run in ensure_indexes~~ (now managed) | `cartography/client/core/tx.py:232` |
 | Ingestion query (UNWIND) | `cartography/graph/querybuilder.py:347` |
 | Auto index generation | `cartography/graph/querybuilder.py:402` |
