@@ -44,14 +44,25 @@ def get_images_in_use(neo4j_session: neo4j.Session, region: str, current_aws_acc
     return images
 
 
+def filter_available_ec2_images(images: List[Dict]) -> List[Dict]:
+    """Keep only available AMIs (drop pending/failed/invalid)."""
+    return [image for image in images if image.get('State') == 'available']
+
+
 @timeit
 @aws_handle_regions
 def get_images(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
     images = []
     try:
-        self_images = client.describe_images(Owners=['self'])['Images']
-        images.extend(self_images)
+        self_images = client.describe_images(
+            Owners=['self'],
+            Filters=[{
+                'Name': 'state',
+                'Values': ['available'],
+            }],
+        )['Images']
+        images.extend(filter_available_ec2_images(self_images))
     except ClientError as e:
         logger.warning(f"Failed retrieve images for region - {region}. Error - {e}")
     return images
