@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.graph.job import GraphJob
 from cartography.models.aws.ec2.securitygroup_instance import EC2SecurityGroupInstanceSchema
 from cartography.util import aws_handle_regions
@@ -50,104 +51,123 @@ def get_ec2_security_group_data(boto3_session: boto3.session.Session, region: st
     return security_groups
 
 
+def _build_rule_and_range_rows(groups: List[Dict]) -> tuple:
+    """
+    Flatten group x rule-type x rule (and their IP ranges) into rows, partitioned by
+    node label since each label needs its own query. This was a per-item nested loop.
+    """
+    rule_rows: Dict[str, List[Dict]] = {"IpPermissionInbound": [], "IpPermissionEgress": []}
+    range_rows: Dict[str, List[Dict]] = {"IpRange": [], "Ipv6Range": []}
+    rule_type_map = {"IpPermissions": "IpPermissionInbound", "IpPermissionsEgress": "IpPermissionEgress"}
+
+    for group in groups:
+        group_id = group["GroupId"]
+        for rule_type, rule_label in rule_type_map.items():
+            for rule in group.get(rule_type) or []:
+                protocol = rule.get("IpProtocol", "all")
+                from_port = rule.get("FromPort")
+                to_port = rule.get("ToPort")
+
+                # NOTE This hardcoding is done because some, rules might be applicable for all protocols in that case
+                # the value of protocol variable would be -1 (or all) this means it will also be available for all
+                # ports, hence from_port & to_port values might not be provided
+                # Docs: boto3 EC2 Client.describe_security_groups reference
+                if protocol == "-1" or protocol == "all":
+                    from_port = 0  # the smallest possible IP
+                    to_port = 65535  # the largest possible IP
+
+                ruleid = f"{group_id}/{rule_type}/{from_port}{to_port}{protocol}"
+                rule_rows[rule_label].append({
+                    "ruleid": ruleid,
+                    "from_port": from_port,
+                    "to_port": to_port,
+                    "protocol": protocol,
+                    "group_id": group_id,
+                })
+
+                for ip_range in rule["IpRanges"]:
+                    cidr_ip = ip_range['CidrIp']
+                    range_rows["IpRange"].append({
+                        "range_id": f"IpRule/{ruleid}/ipRange/{cidr_ip}",
+                        "range": cidr_ip,
+                        "range_name": cidr_ip.split('/')[0],
+                        "ruleid": ruleid,
+                    })
+
+                for ipv6_range in rule["Ipv6Ranges"]:
+                    cidr_ipv6 = ipv6_range['CidrIpv6']
+                    range_rows["Ipv6Range"].append({
+                        "range_id": f"IpRule/{ruleid}/ipv6Range/{cidr_ipv6}",
+                        "range": cidr_ipv6,
+                        "range_name": cidr_ipv6.split('/')[0],
+                        "ruleid": ruleid,
+                    })
+
+    return rule_rows, range_rows
+
+
 @timeit
-def load_ec2_security_group_rule(neo4j_session: neo4j.Session, group: Dict, rule_type: str, update_tag: int) -> None:
+def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dict], update_tag: int) -> None:
     INGEST_RULE_TEMPLATE = Template("""
-    MERGE (rule:$rule_label{ruleid: $RuleId})
-    ON CREATE SET rule :IpRule, rule.firstseen = timestamp(), rule.fromport = $FromPort, rule.toport = $ToPort,
-    rule.protocol = $Protocol
+    UNWIND $DictList AS item
+    MERGE (rule:$rule_label{ruleid: item.ruleid})
+    ON CREATE SET rule :IpRule, rule.firstseen = timestamp(), rule.fromport = item.from_port,
+    rule.toport = item.to_port,
+    rule.protocol = item.protocol
     SET rule.lastupdated = $update_tag
-    WITH rule
-    MATCH (group:EC2SecurityGroup{groupid: $GroupId})
+    WITH rule, item
+    MATCH (group:EC2SecurityGroup{groupid: item.group_id})
     MERGE (group)<-[r:MEMBER_OF_EC2_SECURITY_GROUP]-(rule)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag;
     """)
 
     ingest_rule_group_pair = """
-    MERGE (group:EC2SecurityGroup{id: $GroupId})
-    ON CREATE SET group.firstseen = timestamp(), group.groupid = $GroupId
+    UNWIND $DictList AS item
+    MERGE (group:EC2SecurityGroup{id: item.group_id})
+    ON CREATE SET group.firstseen = timestamp(), group.groupid = item.group_id
     SET group.lastupdated = $update_tag
-    WITH group
-    MATCH (inbound:IpRule{ruleid: $RuleId})
+    WITH group, item
+    MATCH (inbound:IpRule{ruleid: item.ruleid})
     MERGE (inbound)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
 
     ingest_range = Template("""
-    MERGE (range:$range_label{id: $RangeId})
-    ON CREATE SET range.firstseen = timestamp(), range.range = $Range
-    SET range.lastupdated = $update_tag, range.name = $RangeName
-    WITH range
-    MATCH (rule:IpRule{ruleid: $RuleId})
+    UNWIND $DictList AS item
+    MERGE (range:$range_label{id: item.range_id})
+    ON CREATE SET range.firstseen = timestamp(), range.range = item.range
+    SET range.lastupdated = $update_tag, range.name = item.range_name
+    WITH range, item
+    MATCH (rule:IpRule{ruleid: item.ruleid})
     MERGE (rule)<-[r:MEMBER_OF_IP_RULE]-(range)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """)
 
-    group_id = group["GroupId"]
-    rule_type_map = {"IpPermissions": "IpPermissionInbound", "IpPermissionsEgress": "IpPermissionEgress"}
+    rule_rows, range_rows = _build_rule_and_range_rows(groups)
 
-    if group.get(rule_type):
-        for rule in group[rule_type]:
-            protocol = rule.get("IpProtocol", "all")
-            from_port = rule.get("FromPort")
-            to_port = rule.get("ToPort")
-
-            # NOTE This hardcoding is done because some, rules might be applicable for all protocols in that case the value of
-            # protocol variable would be -1 (or all) this means it will also be available for all ports, hence from_port & to_port values
-            # might not be provided
-            # Docs Link:https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/ec2/client/describe_security_groups.html
-            if protocol == "-1" or protocol == "all":
-                from_port = 0  # the smallest possible IP
-                to_port = 65535  # the largest possible IP
-
-            ruleid = f"{group_id}/{rule_type}/{from_port}{to_port}{protocol}"
-            # NOTE Cypher query syntax is incompatible with Python string formatting, so we have to do this awkward
-            # NOTE manual formatting instead.
-            neo4j_session.run(
-                INGEST_RULE_TEMPLATE.safe_substitute(rule_label=rule_type_map[rule_type]),
-                RuleId=ruleid,
-                FromPort=from_port,
-                ToPort=to_port,
-                Protocol=protocol,
-                GroupId=group_id,
-                update_tag=update_tag,
-            )
-
-            neo4j_session.run(
-                ingest_rule_group_pair,
-                GroupId=group_id,
-                RuleId=ruleid,
-                update_tag=update_tag,
-            )
-
-            for ip_range in rule["IpRanges"]:
-                cidr_ip = ip_range['CidrIp']
-                range_id = f"IpRule/{ruleid}/ipRange/{cidr_ip}"
-                range_name = cidr_ip.split('/')[0]
-                neo4j_session.run(
-                    ingest_range.safe_substitute(range_label='IpRange'),
-                    RangeId=range_id,
-                    Range=cidr_ip,
-                    RangeName=range_name,
-                    RuleId=ruleid,
-                    update_tag=update_tag,
-                )
-
-            for ipv6_range in rule["Ipv6Ranges"]:
-                cidr_ipv6 = ipv6_range['CidrIpv6']
-                range_id = f"IpRule/{ruleid}/ipv6Range/{cidr_ipv6}"
-                range_name = cidr_ipv6.split('/')[0]
-                neo4j_session.run(
-                    ingest_range.safe_substitute(range_label='Ipv6Range'),
-                    RangeId=range_id,
-                    Range=cidr_ipv6,
-                    RangeName=range_name,
-                    RuleId=ruleid,
-                    update_tag=update_tag,
-                )
+    for rule_label, rows in rule_rows.items():
+        load_graph_data(
+            neo4j_session,
+            INGEST_RULE_TEMPLATE.safe_substitute(rule_label=rule_label),
+            rows,
+            update_tag=update_tag,
+        )
+    load_graph_data(
+        neo4j_session,
+        ingest_rule_group_pair,
+        rule_rows["IpPermissionInbound"] + rule_rows["IpPermissionEgress"],
+        update_tag=update_tag,
+    )
+    for range_label, rows in range_rows.items():
+        load_graph_data(
+            neo4j_session,
+            ingest_range.safe_substitute(range_label=range_label),
+            rows,
+            update_tag=update_tag,
+        )
 
 
 @timeit
@@ -156,24 +176,26 @@ def load_ec2_security_groupinfo(
     current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_security_group = """
-    MERGE (group:EC2SecurityGroup{id: $GroupId})
-    ON CREATE SET group.firstseen = timestamp(), group.groupid = $GroupId
-    SET group.name = $GroupName, group.description = $Description,
-    group.consolelink = $consolelink,
-    group.region = $Region,
-    group.lastupdated = $update_tag, group.arn = $GroupArn,
-    group.is_default = $isDefault
-    WITH group
+    UNWIND $DictList AS item
+    MERGE (group:EC2SecurityGroup{id: item.group_id})
+    ON CREATE SET group.firstseen = timestamp(), group.groupid = item.group_id
+    SET group.name = item.group_name, group.description = item.description,
+    group.consolelink = item.consolelink,
+    group.region = item.region,
+    group.lastupdated = $update_tag, group.arn = item.group_arn,
+    group.is_default = item.is_default
+    WITH group, item
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
-    WITH group
-    MATCH (vpc:AWSVpc{id: $VpcId})
+    WITH group, item
+    MATCH (vpc:AWSVpc{id: item.vpc_id})
     MERGE (vpc)-[rg:MEMBER_OF_EC2_SECURITY_GROUP]->(group)
     ON CREATE SET rg.firstseen = timestamp()
     """
 
+    group_rows = []
     for group in data:
         region = group.get('region', '')
         group_id = group["GroupId"]
@@ -185,22 +207,25 @@ def load_ec2_security_groupinfo(
         except Exception as ex:
             logger.error('failed to generate console link for security group', {"key": group_arn}, ex)
 
-        neo4j_session.run(
-            ingest_security_group,
-            GroupId=group_id,
-            GroupArn=group_arn,
-            consolelink=consolelink,
-            GroupName=group.get("GroupName"),
-            Description=group.get("Description"),
-            VpcId=group.get("VpcId", None),
-            Region=region,
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            update_tag=update_tag,
-            isDefault=group.get("isDefault", None),
-        )
+        group_rows.append({
+            "group_id": group_id,
+            "group_arn": group_arn,
+            "consolelink": consolelink,
+            "group_name": group.get("GroupName"),
+            "description": group.get("Description"),
+            "vpc_id": group.get("VpcId", None),
+            "region": region,
+            "is_default": group.get("isDefault", None),
+        })
 
-        load_ec2_security_group_rule(neo4j_session, group, "IpPermissions", update_tag)
-        load_ec2_security_group_rule(neo4j_session, group, "IpPermissionsEgress", update_tag)
+    load_graph_data(
+        neo4j_session,
+        ingest_security_group,
+        group_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        update_tag=update_tag,
+    )
+    load_ec2_security_group_rules(neo4j_session, data, update_tag)
 
 
 @timeit
