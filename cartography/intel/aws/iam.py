@@ -706,17 +706,18 @@ def load_roles(
     aws_update_tag: int,
 ) -> None:
     ingest_role = """
-    MERGE (rnode:AWSRole{arn: $Arn})
-    ON CREATE SET rnode:AWSPrincipal, rnode.roleid = $RoleId, rnode.firstseen = timestamp(),
-    rnode.region = $region,
-    rnode.consolelink = $consolelink,
-    rnode.createdate = $CreateDate
-    SET rnode.name = $RoleName, rnode.path = $Path,
-    rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
-    rnode.is_service_role = $IsServiceRole,
-    rnode.is_sso_reserved_role = $IsSSOReservedRole,
-    rnode.type = $Type,
-    rnode.managed_type = $ManagedType
+    UNWIND $DictList AS item
+    MERGE (rnode:AWSRole{arn: item.arn})
+    ON CREATE SET rnode:AWSPrincipal, rnode.roleid = item.roleid, rnode.firstseen = timestamp(),
+    rnode.region = 'global',
+    rnode.consolelink = item.consolelink,
+    rnode.createdate = item.createdate
+    SET rnode.name = item.rolename, rnode.path = item.path,
+    rnode.lastuseddate = item.lastuseddate, rnode.lastusedregion = item.lastusedregion,
+    rnode.is_service_role = item.is_service_role,
+    rnode.is_sso_reserved_role = item.is_sso_reserved_role,
+    rnode.type = item.type,
+    rnode.managed_type = item.managed_type
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -726,24 +727,26 @@ def load_roles(
     """
 
     ingest_policy_statement = """
-    MERGE (spnnode:AWSPrincipal{arn: $SpnArn})
+    UNWIND $DictList AS item
+    MERGE (spnnode:AWSPrincipal{arn: item.spn_arn})
     ON CREATE SET spnnode.firstseen = timestamp()
-    SET spnnode.lastupdated = $aws_update_tag, spnnode.type = $SpnType
-    WITH spnnode
-    MATCH (role:AWSRole{arn: $RoleArn})
+    SET spnnode.lastupdated = $aws_update_tag, spnnode.type = item.spn_type
+    WITH spnnode, item
+    MATCH (role:AWSRole{arn: item.role_arn})
     MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(spnnode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
 
     ingest_external_account_principals = """
-    MERGE (epnode:AWSExternalPrincipal{principal: $principal})
+    UNWIND $DictList AS item
+    MERGE (epnode:AWSExternalPrincipal{principal: item.principal})
     ON CREATE SET epnode.firstseen = timestamp()
     SET epnode.lastupdated = $aws_update_tag,
-    epnode.access_type = $AccessType,
-    epnode.account_id = $AccountId
-    WITH epnode
-    MATCH (role:AWSRole{arn: $RoleArn})
+    epnode.access_type = item.access_type,
+    epnode.account_id = item.account_id
+    WITH epnode, item
+    MATCH (role:AWSRole{arn: item.role_arn})
     MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(epnode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -751,47 +754,65 @@ def load_roles(
 
     # TODO support conditions
     logger.info(f"Loading {len(roles)} IAM roles to the graph.")
-    for role in roles:
-        neo4j_session.run(
-            ingest_role,
-            Arn=role["Arn"],
-            consolelink=aws_console_link.get_console_link(arn=role["Arn"]),
-            RoleId=role.get("RoleId", None),
-            CreateDate=str(role["CreateDate"]),
-            RoleName=role["RoleName"],
-            Path=role["Path"],
-            IsServiceRole=role.get("isServiceRole", False),
-            IsSSOReservedRole=role.get("isSSOReservedRole", False),
-            Type=role.get("type", None),
-            ManagedType=role.get("type") if role.get("type") in (MANAGED_TYPE_PREDEFINED, MANAGED_TYPE_CUSTOM)
+    role_rows = [
+        {
+            "arn": role["Arn"],
+            "consolelink": aws_console_link.get_console_link(arn=role["Arn"]),
+            "roleid": role.get("RoleId", None),
+            "createdate": str(role["CreateDate"]),
+            "rolename": role["RoleName"],
+            "path": role["Path"],
+            "is_service_role": role.get("isServiceRole", False),
+            "is_sso_reserved_role": role.get("isSSOReservedRole", False),
+            "type": role.get("type", None),
+            "managed_type": role.get("type") if role.get("type") in (MANAGED_TYPE_PREDEFINED, MANAGED_TYPE_CUSTOM)
             else _aws_role_managed_type(role.get("Path", "")),
-            region="global",
-            LastUsedDate=role["RoleLastUsed"].get("LastUsedDate") if "RoleLastUsed" in role else None,
-            LastUsedRegion=role["RoleLastUsed"].get("Region") if "RoleLastUsed" in role else None,
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            aws_update_tag=aws_update_tag,
-        )
+            "lastuseddate": role["RoleLastUsed"].get("LastUsedDate") if "RoleLastUsed" in role else None,
+            "lastusedregion": role["RoleLastUsed"].get("Region") if "RoleLastUsed" in role else None,
+        }
+        for role in roles
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_role,
+        role_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
-        for external_principal in role["ExternalAccountPrincipals"]:
-            neo4j_session.run(
-                ingest_external_account_principals,
-                principal=external_principal.get("principal"),
-                AccessType=external_principal.get("access_type"),
-                AccountId=external_principal.get("account_id"),
-                RoleArn=role["Arn"],
-                aws_update_tag=aws_update_tag,
-            )
+    external_principal_rows = [
+        {
+            "principal": external_principal.get("principal"),
+            "access_type": external_principal.get("access_type"),
+            "account_id": external_principal.get("account_id"),
+            "role_arn": role["Arn"],
+        }
+        for role in roles
+        for external_principal in role["ExternalAccountPrincipals"]
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_external_account_principals,
+        external_principal_rows,
+        aws_update_tag=aws_update_tag,
+    )
 
-        for statement in role["AssumeRolePolicyDocument"]["Statement"]:
-            principal_entries = _parse_principal_entries(statement["Principal"])
-            for principal_type, principal_value in principal_entries:
-                neo4j_session.run(
-                    ingest_policy_statement,
-                    SpnArn=principal_value,
-                    SpnType=principal_type,
-                    RoleArn=role["Arn"],
-                    aws_update_tag=aws_update_tag,
-                )
+    trust_principal_rows = [
+        {
+            "spn_arn": principal_value,
+            "spn_type": principal_type,
+            "role_arn": role["Arn"],
+        }
+        for role in roles
+        for statement in role["AssumeRolePolicyDocument"]["Statement"]
+        for principal_type, principal_value in _parse_principal_entries(statement["Principal"])
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_policy_statement,
+        trust_principal_rows,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 @timeit
