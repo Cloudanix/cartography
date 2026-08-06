@@ -7,6 +7,8 @@ from typing import Callable
 import neo4j
 from neo4j.exceptions import TransientError
 
+from cartography.graph import write_timer
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,8 @@ class Session:
     def run(self, query: str, parameters: Any = None, max_retries: int = 3, **kwparameters: Any) -> Any:
         for attempt in range(max_retries + 1):
             try:
-                return self.neo4j_session.run(query, parameters, **kwparameters)
+                with write_timer.timed():
+                    return self.neo4j_session.run(query, parameters, **kwparameters)
             except TransientError as e:
                 if attempt >= max_retries:
                     logger.error("Transient Neo4j error unresolved after %d retries: %s", max_retries, e)
@@ -55,7 +58,8 @@ class Session:
 
     def execute_write(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
         try:
-            return self.neo4j_session.execute_write(transaction_function, *args, **kwargs)
+            with write_timer.timed():
+                return self.neo4j_session.execute_write(transaction_function, *args, **kwargs)
         except Exception as e:
             # Never swallow: callers (e.g. GraphStatement._run_iterative) rely on the
             # real result, and a dropped write must fail the sync stage loudly.
@@ -64,7 +68,8 @@ class Session:
 
     def execute_read(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
         try:
-            return self.neo4j_session.execute_read(transaction_function, *args, **kwargs)
+            with write_timer.timed():
+                return self.neo4j_session.execute_read(transaction_function, *args, **kwargs)
         except Exception as e:
             logger.warning(f"Failed execute_read for neo4j. Error - {e}", exc_info=True, stack_info=True)
             raise
