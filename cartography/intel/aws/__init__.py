@@ -21,6 +21,7 @@ from .ec2.util import get_botocore_config
 from .resources import parse_and_validate_aws_requested_syncs
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
+from cartography.graph import write_timer
 from cartography.graph.session import Session
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.stats import get_stats_client
@@ -67,6 +68,7 @@ def concurrent_execution(
     shared_neo4j_driver=None,
 ):
     tic = time.perf_counter()
+    _gw0 = write_timer.total()
     _status = "success"
     _err: Dict = {}
     _result = None
@@ -117,6 +119,7 @@ def concurrent_execution(
             "service": service,
             "run_mode": "parallel",
             "duration_seconds": _elapsed,
+            "graph_write_seconds": round(write_timer.total() - _gw0, 4),
             "status": _status,
         }
         if _err:
@@ -172,6 +175,7 @@ def _sync_one_account(
                 if func_name not in ["permission_relationships", "resourcegroupstaggingapi"]:
                     logger.info(f"Processing {func_name}")
                     _svc_tic = time.perf_counter()
+                    _svc_gw0 = write_timer.total()
                     _svc_status = "success"
                     _svc_err: Dict = {}
                     try:
@@ -191,6 +195,7 @@ def _sync_one_account(
                             "service": func_name,
                             "run_mode": "sequential",
                             "duration_seconds": _svc_elapsed,
+                            "graph_write_seconds": round(write_timer.total() - _svc_gw0, 4),
                             "status": _svc_status,
                         }
                         if _svc_err:
