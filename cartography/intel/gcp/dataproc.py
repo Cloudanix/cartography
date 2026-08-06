@@ -16,23 +16,14 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
-# Terminal Dataproc cluster states that should not be ingested.
-INACTIVE_DATAPROC_CLUSTER_STATES = {
-    'TERMINATED',
-    'ERROR',
-    'DELETING',
-    'UNKNOWN',
-}
-
-
-def filter_active_dataproc_clusters(clusters: List[Dict]) -> List[Dict]:
-    """Drop terminated/error Dataproc cluster tombstones."""
-    active = []
-    for cluster in clusters:
-        state = (cluster.get('status') or {}).get('state')
-        if state not in INACTIVE_DATAPROC_CLUSTER_STATES:
-            active.append(cluster)
-    return active
+# Dataproc list filter: ACTIVE = CREATING|UPDATING|RUNNING (API helper state).
+# STOPPED/STOPPING are still live config — fetch those states in separate calls
+# because Dataproc filters only support AND, not OR.
+DATAPROC_LIST_STATE_FILTERS = (
+    'status.state = ACTIVE',
+    'status.state = STOPPED',
+    'status.state = STOPPING',
+)
 
 
 @timeit
@@ -41,21 +32,26 @@ def get_dataproc_clusters(dataproc: Resource, project_id: str, regions: list) ->
     try:
         if regions:
             for region in regions:
-                req = dataproc.projects().regions().clusters().list(projectId=project_id, region=region)
-                while req is not None:
-                    res = req.execute()
-                    if res.get('clusters'):
-                        for cluster in res['clusters']:
-                            cluster['region'] = region
-                            cluster['id'] = f"projects/{project_id}/clusters/{cluster['clusterName']}"
-                            cluster['consolelink'] = gcp_console_link.get_console_link(
-                                project_id=project_id,
-                                dataproc_cluster_name=cluster['clusterName'], region=cluster['region'], resource_name='dataproc_cluster',
-                            )
-                            clusters.append(cluster)
-                    req = dataproc.projects().regions().clusters().list_next(previous_request=req, previous_response=res)
+                for state_filter in DATAPROC_LIST_STATE_FILTERS:
+                    req = dataproc.projects().regions().clusters().list(
+                        projectId=project_id,
+                        region=region,
+                        filter=state_filter,
+                    )
+                    while req is not None:
+                        res = req.execute()
+                        if res.get('clusters'):
+                            for cluster in res['clusters']:
+                                cluster['region'] = region
+                                cluster['id'] = f"projects/{project_id}/clusters/{cluster['clusterName']}"
+                                cluster['consolelink'] = gcp_console_link.get_console_link(
+                                    project_id=project_id,
+                                    dataproc_cluster_name=cluster['clusterName'], region=cluster['region'], resource_name='dataproc_cluster',
+                                )
+                                clusters.append(cluster)
+                        req = dataproc.projects().regions().clusters().list_next(previous_request=req, previous_response=res)
 
-        return filter_active_dataproc_clusters(clusters)
+        return clusters
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
         if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
