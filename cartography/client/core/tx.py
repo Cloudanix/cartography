@@ -12,6 +12,10 @@ from cartography.graph.querybuilder import build_ingestion_query
 from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.util import batch
 
+# Rows per write transaction. Matches upstream cartography's default; tune per call
+# via the batch_size param if a module's rows are unusually wide.
+DEFAULT_LOAD_BATCH_SIZE = 10000
+
 
 def read_list_of_values_tx(tx: neo4j.Transaction, query: str, **kwargs) -> List[Union[str, int]]:
     """
@@ -209,6 +213,7 @@ def load_graph_data(
         neo4j_session: neo4j.Session,
         query: str,
         dict_list: List[Dict[str, Any]],
+        batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
         **kwargs,
 ) -> None:
     """
@@ -217,10 +222,13 @@ def load_graph_data(
     :param query: The Neo4j write query to run. This query is not meant to be handwritten, rather it should be generated
     with cartography.graph.querybuilder.build_ingestion_query().
     :param dict_list: The data to load to the graph represented as a list of dicts.
+    :param batch_size: Number of items to write per transaction. Defaults to DEFAULT_LOAD_BATCH_SIZE.
     :param kwargs: Allows additional keyword args to be supplied to the Neo4j query.
     :return: None
     """
-    for data_batch in batch(dict_list, size=500):
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
+    for data_batch in batch(dict_list, size=batch_size):
         neo4j_session.execute_write(
             write_list_of_dicts_tx,
             query,
@@ -253,6 +261,7 @@ def load(
         neo4j_session: neo4j.Session,
         node_schema: CartographyNodeSchema,
         dict_list: List[Dict[str, Any]],
+        batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
         **kwargs,
 ) -> None:
     """
@@ -261,12 +270,15 @@ def load(
     :param neo4j_session: The Neo4j session
     :param node_schema: The CartographyNodeSchema object to create indexes for and generate a query.
     :param dict_list: The data to load to the graph represented as a list of dicts.
+    :param batch_size: Number of items to write per transaction. Defaults to DEFAULT_LOAD_BATCH_SIZE.
     :param kwargs: Allows additional keyword args to be supplied to the Neo4j query.
     :return: None
     """
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
     if len(dict_list) == 0:
         # Nothing to load; skip index creation and query generation round-trips.
         return
     ensure_indexes(neo4j_session, node_schema)
     ingestion_query = build_ingestion_query(node_schema)
-    load_graph_data(neo4j_session, ingestion_query, dict_list, **kwargs)
+    load_graph_data(neo4j_session, ingestion_query, dict_list, batch_size=batch_size, **kwargs)

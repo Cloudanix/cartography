@@ -5,6 +5,7 @@ import pytest
 
 from cartography.client.core.tx import ensure_indexes
 from cartography.client.core.tx import load
+from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import write_query_tx
 
 
@@ -68,3 +69,47 @@ def test_load_nonempty_list_loads(mock_ensure, mock_build):
 
     mock_ensure.assert_called_once()
     assert session.execute_write.call_count == 1
+
+
+def test_load_graph_data_batches_at_batch_size():
+    session = MagicMock()
+    data = [{"id": i} for i in range(25)]
+
+    load_graph_data(session, "UNWIND $DictList AS item RETURN item", data, batch_size=10)
+
+    assert session.execute_write.call_count == 3  # 10 + 10 + 5
+    batch_sizes = [len(call.kwargs["DictList"]) for call in session.execute_write.call_args_list]
+    assert batch_sizes == [10, 10, 5]
+
+
+def test_load_graph_data_default_batch_size_is_10000():
+    session = MagicMock()
+    data = [{"id": i} for i in range(10001)]
+
+    load_graph_data(session, "UNWIND $DictList AS item RETURN item", data)
+
+    assert session.execute_write.call_count == 2
+
+
+@pytest.mark.parametrize("bad_size", [0, -1])
+def test_load_graph_data_rejects_nonpositive_batch_size(bad_size):
+    with pytest.raises(ValueError):
+        load_graph_data(MagicMock(), "q", [{"id": 1}], batch_size=bad_size)
+
+
+@pytest.mark.parametrize("bad_size", [0, -1])
+def test_load_rejects_nonpositive_batch_size(bad_size):
+    with pytest.raises(ValueError):
+        load(MagicMock(), MagicMock(), [{"id": 1}], batch_size=bad_size)
+
+
+@patch("cartography.client.core.tx.load_graph_data")
+@patch("cartography.client.core.tx.build_ingestion_query")
+@patch("cartography.client.core.tx.ensure_indexes")
+def test_load_passes_batch_size_through(mock_ensure, mock_build, mock_lgd):
+    session = MagicMock()
+    data = [{"id": 1}]
+
+    load(session, MagicMock(), data, batch_size=42, lastupdated=1)
+
+    mock_lgd.assert_called_once_with(session, mock_build.return_value, data, batch_size=42, lastupdated=1)
