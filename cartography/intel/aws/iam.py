@@ -16,6 +16,7 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.permission_relationships import parse_statement_node
 from cartography.intel.aws.permission_relationships import principal_allowed_on_resource
 from cartography.util import run_cleanup_job
@@ -473,15 +474,16 @@ def load_users(
     aws_update_tag: int,
 ) -> None:
     ingest_user = """
-    MERGE (unode:AWSUser{arn: $ARN})
-    ON CREATE SET unode:AWSPrincipal, unode.userid = $USERID, unode.firstseen = timestamp(),
-    unode.consolelink = $consolelink,
-    unode.createdate = $CREATE_DATE
-    SET unode.name = $USERNAME, unode.user_name = $USERNAME,
-    unode.path = $PATH, unode.passwordlastused = $PASSWORD_LASTUSED,
-    unode.region = $region,
-    unode.consoleloginenabled = $CONSOLELOGINENABLED,
-    unode.mfaenabled = $MFAENABLED,
+    UNWIND $DictList AS item
+    MERGE (unode:AWSUser{arn: item.arn})
+    ON CREATE SET unode:AWSPrincipal, unode.userid = item.userid, unode.firstseen = timestamp(),
+    unode.consolelink = item.consolelink,
+    unode.createdate = item.createdate
+    SET unode.name = item.username, unode.user_name = item.username,
+    unode.path = item.path, unode.passwordlastused = item.passwordlastused,
+    unode.region = 'global',
+    unode.consoleloginenabled = item.consoleloginenabled,
+    unode.mfaenabled = item.mfaenabled,
     unode.managed_type = $ManagedType,
     unode.lastupdated = $aws_update_tag
     WITH unode
@@ -491,23 +493,28 @@ def load_users(
     SET r.lastupdated = $aws_update_tag
     """
     logger.info(f"Loading {len(users)} IAM users.")
-    for user in users:
-        neo4j_session.run(
-            ingest_user,
-            ARN=user["Arn"],
-            consolelink=aws_console_link.get_console_link(arn=user["Arn"]),
-            USERID=user["UserId"],
-            CREATE_DATE=str(user["CreateDate"]),
-            USERNAME=user["UserName"],
-            PATH=user["Path"],
-            CONSOLELOGINENABLED=user.get("consoleLoginEnabled", False),
-            MFAENABLED=user.get("MFAEnabled", False),
-            PASSWORD_LASTUSED=str(user.get("PasswordLastUsed", "")),
-            ManagedType=MANAGED_TYPE_CUSTOM,
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            region="global",
-            aws_update_tag=aws_update_tag,
-        )
+    user_rows = [
+        {
+            "arn": user["Arn"],
+            "consolelink": aws_console_link.get_console_link(arn=user["Arn"]),
+            "userid": user["UserId"],
+            "createdate": str(user["CreateDate"]),
+            "username": user["UserName"],
+            "path": user["Path"],
+            "consoleloginenabled": user.get("consoleLoginEnabled", False),
+            "mfaenabled": user.get("MFAEnabled", False),
+            "passwordlastused": str(user.get("PasswordLastUsed", "")),
+        }
+        for user in users
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_user,
+        user_rows,
+        ManagedType=MANAGED_TYPE_CUSTOM,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 @timeit
@@ -518,15 +525,16 @@ def load_service_accounts(
     aws_update_tag: int,
 ) -> None:
     ingest_service_account = """
-    MERGE (sanode:AWSServiceAccount{arn: $ARN})
-    ON CREATE SET sanode:AWSPrincipal, sanode.userid = $USERID, sanode.firstseen = timestamp(),
-    sanode.consolelink = $consolelink,
-    sanode.createdate = $CREATE_DATE
-    SET sanode.name = $USERNAME, sanode.user_name = $USERNAME,
-    sanode.path = $PATH, sanode.passwordlastused = $PASSWORD_LASTUSED,
-    sanode.region = $region,
-    sanode.consoleloginenabled = $CONSOLELOGINENABLED,
-    sanode.mfaenabled = $MFAENABLED,
+    UNWIND $DictList AS item
+    MERGE (sanode:AWSServiceAccount{arn: item.arn})
+    ON CREATE SET sanode:AWSPrincipal, sanode.userid = item.userid, sanode.firstseen = timestamp(),
+    sanode.consolelink = item.consolelink,
+    sanode.createdate = item.createdate
+    SET sanode.name = item.username, sanode.user_name = item.username,
+    sanode.path = item.path, sanode.passwordlastused = item.passwordlastused,
+    sanode.region = 'global',
+    sanode.consoleloginenabled = item.consoleloginenabled,
+    sanode.mfaenabled = item.mfaenabled,
     sanode.managed_type = $ManagedType,
     sanode.lastupdated = $aws_update_tag
     WITH sanode
@@ -536,23 +544,28 @@ def load_service_accounts(
     SET r.lastupdated = $aws_update_tag
     """
     logger.info(f"Loading {len(service_accounts)} IAM service accounts.")
-    for sa in service_accounts:
-        neo4j_session.run(
-            ingest_service_account,
-            ARN=sa["Arn"],
-            consolelink=aws_console_link.get_console_link(arn=sa["Arn"]),
-            USERID=sa["UserId"],
-            CREATE_DATE=str(sa["CreateDate"]),
-            USERNAME=sa["UserName"],
-            PATH=sa["Path"],
-            CONSOLELOGINENABLED=sa.get("consoleLoginEnabled", False),
-            MFAENABLED=sa.get("MFAEnabled", False),
-            PASSWORD_LASTUSED=str(sa.get("PasswordLastUsed", "")),
-            ManagedType=MANAGED_TYPE_CUSTOM,
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            region="global",
-            aws_update_tag=aws_update_tag,
-        )
+    sa_rows = [
+        {
+            "arn": sa["Arn"],
+            "consolelink": aws_console_link.get_console_link(arn=sa["Arn"]),
+            "userid": sa["UserId"],
+            "createdate": str(sa["CreateDate"]),
+            "username": sa["UserName"],
+            "path": sa["Path"],
+            "consoleloginenabled": sa.get("consoleLoginEnabled", False),
+            "mfaenabled": sa.get("MFAEnabled", False),
+            "passwordlastused": str(sa.get("PasswordLastUsed", "")),
+        }
+        for sa in service_accounts
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_service_account,
+        sa_rows,
+        ManagedType=MANAGED_TYPE_CUSTOM,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 def _is_service_account(user: Dict) -> bool:
@@ -634,11 +647,12 @@ def load_groups(
     aws_update_tag: int,
 ) -> None:
     ingest_group = """
-    MERGE (gnode:AWSGroup{arn: $ARN})
-    ON CREATE SET gnode.groupid = $GROUP_ID, gnode.firstseen = timestamp(), gnode.createdate = $CREATE_DATE
-    SET gnode:AWSPrincipal, gnode.name = $GROUP_NAME, gnode.path = $PATH,
-    gnode.region = $region,
-    gnode.consolelink = $consolelink,
+    UNWIND $DictList AS item
+    MERGE (gnode:AWSGroup{arn: item.arn})
+    ON CREATE SET gnode.groupid = item.groupid, gnode.firstseen = timestamp(), gnode.createdate = item.createdate
+    SET gnode:AWSPrincipal, gnode.name = item.groupname, gnode.path = item.path,
+    gnode.region = 'global',
+    gnode.consolelink = item.consolelink,
     gnode.managed_type = $ManagedType,
     gnode.lastupdated = $aws_update_tag
     WITH gnode
@@ -648,20 +662,25 @@ def load_groups(
     SET r.lastupdated = $aws_update_tag
     """
     logger.info(f"Loading {len(groups)} IAM groups to the graph.")
-    for group in groups:
-        neo4j_session.run(
-            ingest_group,
-            ARN=group["Arn"],
-            consolelink=aws_console_link.get_console_link(arn=group["Arn"]),
-            GROUP_ID=group["GroupId"],
-            CREATE_DATE=str(group["CreateDate"]),
-            GROUP_NAME=group["GroupName"],
-            PATH=group["Path"],
-            ManagedType=MANAGED_TYPE_CUSTOM,
-            region="global",
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            aws_update_tag=aws_update_tag,
-        )
+    group_rows = [
+        {
+            "arn": group["Arn"],
+            "consolelink": aws_console_link.get_console_link(arn=group["Arn"]),
+            "groupid": group["GroupId"],
+            "createdate": str(group["CreateDate"]),
+            "groupname": group["GroupName"],
+            "path": group["Path"],
+        }
+        for group in groups
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_group,
+        group_rows,
+        ManagedType=MANAGED_TYPE_CUSTOM,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 def _parse_principal_entries(principal: Dict) -> List[Tuple[Any, Any]]:
