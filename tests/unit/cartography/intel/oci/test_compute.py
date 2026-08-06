@@ -1,19 +1,9 @@
-from cartography.intel.oci.compute import filter_active_oci_instances
+from cartography.intel.oci.compute import ACTIVE_INSTANCE_LIFECYCLE_STATES
 
 
-def test_filter_active_oci_instances_keeps_live_states():
-    instances = [
-        {'id': 'i-running', 'lifecycle-state': 'RUNNING'},
-        {'id': 'i-stopped', 'lifecycle-state': 'STOPPED'},
-        {'id': 'i-starting', 'lifecycle-state': 'STARTING'},
-        {'id': 'i-terminated', 'lifecycle-state': 'TERMINATED'},
-        {'id': 'i-terminating', 'lifecycle-state': 'TERMINATING'},
-        {'id': 'i-creating', 'lifecycle-state': 'CREATING'},
-        {'id': 'i-missing'},
-    ]
-    filtered = filter_active_oci_instances(instances)
-    assert [i['id'] for i in filtered] == ['i-running', 'i-stopped', 'i-starting']
-
-
-def test_filter_active_oci_instances_empty():
-    assert filter_active_oci_instances([]) == []
+def test_active_instance_lifecycle_states_for_api_filter():
+    assert 'RUNNING' in ACTIVE_INSTANCE_LIFECYCLE_STATES
+    assert 'STOPPED' in ACTIVE_INSTANCE_LIFECYCLE_STATES
+    assert 'TERMINATED' not in ACTIVE_INSTANCE_LIFECYCLE_STATES
+    assert 'TERMINATING' not in ACTIVE_INSTANCE_LIFECYCLE_STATES
+    assert 'CREATING' not in ACTIVE_INSTANCE_LIFECYCLE_STATES
