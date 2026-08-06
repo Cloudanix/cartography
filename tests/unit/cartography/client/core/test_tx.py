@@ -13,9 +13,11 @@ from cartography.client.core.tx import ensure_indexes
 from cartography.client.core.tx import execute_write_with_retry
 from cartography.client.core.tx import load
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import load_matchlinks
 from cartography.client.core.tx import reset_ensured_indexes_cache
 from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import write_query_tx
+from tests.data.graph.querybuilder.sample_models.matchlink import FakeUserToRoleMatchLink
 
 
 @pytest.fixture(autouse=True)
@@ -332,3 +334,47 @@ class TestEnsureIndexesMemoization:
         ensure_indexes(session, FakeSchemaA())
 
         assert session.execute_write.call_count == 2
+
+
+class TestLoadMatchlinks:
+    def test_empty_list_short_circuits(self):
+        session = MagicMock()
+
+        load_matchlinks(session, FakeUserToRoleMatchLink(), [])
+
+        session.execute_write.assert_not_called()
+
+    def test_missing_sub_resource_kwargs_raise(self):
+        with pytest.raises(ValueError, match="_sub_resource_label"):
+            load_matchlinks(MagicMock(), FakeUserToRoleMatchLink(), [{"user_id": 1}])
+        with pytest.raises(ValueError, match="_sub_resource_id"):
+            load_matchlinks(
+                MagicMock(), FakeUserToRoleMatchLink(), [{"user_id": 1}],
+                _sub_resource_label="AWSAccount",
+            )
+
+    @pytest.mark.parametrize("bad_size", [0, -1])
+    def test_rejects_nonpositive_batch_size(self, bad_size):
+        with pytest.raises(ValueError):
+            load_matchlinks(
+                MagicMock(), FakeUserToRoleMatchLink(), [{"user_id": 1}], batch_size=bad_size,
+                _sub_resource_label="AWSAccount", _sub_resource_id="1234",
+            )
+
+    def test_ensures_indexes_and_writes_links(self):
+        session = MagicMock()
+        links = [{"user_id": 1, "role_name": "admin"}]
+
+        load_matchlinks(
+            session, FakeUserToRoleMatchLink(), links,
+            lastupdated=1, _sub_resource_label="AWSAccount", _sub_resource_id="1234",
+        )
+
+        # 3 index queries (source, target, rel composite) + 1 batched link write.
+        assert session.execute_write.call_count == 4
+        write_call = session.execute_write.call_args_list[-1]
+        assert write_call.kwargs["DictList"] == links
+        assert write_call.kwargs["_sub_resource_label"] == "AWSAccount"
+        assert write_call.kwargs["_sub_resource_id"] == "1234"
+        query = write_call.args[1]
+        assert "MERGE (from)-[r:HAS_ROLE]->(to)" in query

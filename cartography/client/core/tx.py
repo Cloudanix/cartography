@@ -16,8 +16,11 @@ import neo4j
 import neo4j.exceptions
 
 from cartography.graph.querybuilder import build_create_index_queries
+from cartography.graph.querybuilder import build_create_index_queries_for_matchlink
 from cartography.graph.querybuilder import build_ingestion_query
+from cartography.graph.querybuilder import build_matchlink_query
 from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.relationships import CartographyRelSchema
 from cartography.util import backoff_handler
 from cartography.util import batch
 
@@ -437,3 +440,67 @@ def load(
     ensure_indexes(neo4j_session, node_schema)
     ingestion_query = build_ingestion_query(node_schema)
     load_graph_data(neo4j_session, ingestion_query, dict_list, batch_size=batch_size, **kwargs)
+
+
+def ensure_indexes_for_matchlinks(neo4j_session: neo4j.Session, rel_schema: CartographyRelSchema) -> None:
+    """
+    Creates indexes for the node fields referenced by a matchlink rel schema (source and
+    target match keys, plus the relationship's sub-resource composite index). Only used
+    for load_matchlinks(); use ensure_indexes() for CartographyNodeSchema objects.
+    :param neo4j_session: The neo4j session
+    :param rel_schema: The CartographyRelSchema object to create indexes for.
+    """
+    queries = build_create_index_queries_for_matchlink(rel_schema)
+
+    for query in queries:
+        if not query.startswith('CREATE INDEX IF NOT EXISTS'):
+            raise ValueError(
+                'Query provided to `ensure_indexes_for_matchlinks()` does not start with '
+                '"CREATE INDEX IF NOT EXISTS".',
+            )
+        try:
+            neo4j_session.execute_write(write_query_tx, query)
+        except neo4j.exceptions.ClientError as e:
+            # Same concurrent-creation race as ensure_indexes().
+            if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
+                logger.debug(f"Index already exists (created by a parallel sync): {query}")
+                continue
+            raise
+
+
+def load_matchlinks(
+        neo4j_session: neo4j.Session,
+        rel_schema: CartographyRelSchema,
+        dict_list: List[Dict[str, Any]],
+        batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
+        **kwargs,
+) -> None:
+    """
+    Main entrypoint for intel modules to draw relationships between two nodes that
+    already exist in the graph (the supported replacement for hand-written
+    "link A to B" queries). Ensures indexes for the match keys, then MERGEs the
+    relationships in batches with retry.
+    :param neo4j_session: The Neo4j session
+    :param rel_schema: The CartographyRelSchema with source_node_matcher/label defined.
+    :param dict_list: The link data as a list of dicts (source + target match values).
+    :param batch_size: Number of items to write per transaction. Defaults to DEFAULT_LOAD_BATCH_SIZE.
+    :param kwargs: Additional keyword args supplied to the query. Must include
+        `_sub_resource_label` and `_sub_resource_id` (used by matchlink cleanup).
+    :return: None
+    """
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
+    if len(dict_list) == 0:
+        # Nothing to link; skip index creation and query generation round-trips.
+        return
+
+    for required_kwarg in ('_sub_resource_label', '_sub_resource_id'):
+        if required_kwarg not in kwargs:
+            raise ValueError(
+                f"Required kwarg '{required_kwarg}' not provided for {rel_schema.rel_label}. "
+                "This is needed for matchlink cleanup queries.",
+            )
+
+    ensure_indexes_for_matchlinks(neo4j_session, rel_schema)
+    matchlink_query = build_matchlink_query(rel_schema)
+    load_graph_data(neo4j_session, matchlink_query, dict_list, batch_size=batch_size, **kwargs)
