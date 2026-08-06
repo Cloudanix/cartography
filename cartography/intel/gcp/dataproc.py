@@ -16,6 +16,24 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
+# Terminal Dataproc cluster states that should not be ingested.
+INACTIVE_DATAPROC_CLUSTER_STATES = {
+    'TERMINATED',
+    'ERROR',
+    'DELETING',
+    'UNKNOWN',
+}
+
+
+def filter_active_dataproc_clusters(clusters: List[Dict]) -> List[Dict]:
+    """Drop terminated/error Dataproc cluster tombstones."""
+    active = []
+    for cluster in clusters:
+        state = (cluster.get('status') or {}).get('state')
+        if state not in INACTIVE_DATAPROC_CLUSTER_STATES:
+            active.append(cluster)
+    return active
+
 
 @timeit
 def get_dataproc_clusters(dataproc: Resource, project_id: str, regions: list) -> List[Dict]:
@@ -37,7 +55,7 @@ def get_dataproc_clusters(dataproc: Resource, project_id: str, regions: list) ->
                             clusters.append(cluster)
                     req = dataproc.projects().regions().clusters().list_next(previous_request=req, previous_response=res)
 
-        return clusters
+        return filter_active_dataproc_clusters(clusters)
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
         if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
