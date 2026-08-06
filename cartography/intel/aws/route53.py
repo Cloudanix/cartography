@@ -11,6 +11,8 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -112,7 +114,7 @@ def link_aws_resources(neo4j_session: neo4j.Session, update_tag: int) -> None:
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = $update_tag
     """
-    neo4j_session.run(link_records, update_tag=update_tag)
+    run_write_query(neo4j_session, link_records, update_tag=update_tag)
 
     # find records that point to AWS LoadBalancers
     link_elb = """
@@ -121,7 +123,7 @@ def link_aws_resources(neo4j_session: neo4j.Session, update_tag: int) -> None:
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = $update_tag
     """
-    neo4j_session.run(link_elb, update_tag=update_tag)
+    run_write_query(neo4j_session, link_elb, update_tag=update_tag)
 
     # find records that point to AWS LoadBalancersV2
     link_elbv2 = """
@@ -130,7 +132,7 @@ def link_aws_resources(neo4j_session: neo4j.Session, update_tag: int) -> None:
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = $update_tag
     """
-    neo4j_session.run(link_elbv2, update_tag=update_tag)
+    run_write_query(neo4j_session, link_elbv2, update_tag=update_tag)
 
     # find records that point to AWS EC2 Instances
     link_ec2 = """
@@ -139,13 +141,13 @@ def link_aws_resources(neo4j_session: neo4j.Session, update_tag: int) -> None:
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = $update_tag
     """
-    neo4j_session.run(link_ec2, update_tag=update_tag)
+    run_write_query(neo4j_session, link_ec2, update_tag=update_tag)
 
 
 @timeit
 def load_a_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag: int) -> None:
     ingest_records = """
-    UNWIND $records as record
+    UNWIND $DictList as record
     MERGE (a:DNSRecord:AWSDNSRecord{id: record.id})
     ON CREATE SET a.firstseen = timestamp(), a.name = record.name,
     a.region = record.Region,
@@ -158,9 +160,10 @@ def load_a_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        records=records,
+        records,
         update_tag=update_tag,
     )
 
@@ -169,7 +172,7 @@ def load_a_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag
 def load_alias_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag: int) -> None:
     # create the DNSRecord nodes and link them to matching DNSZone and S3Bucket nodes
     ingest_records = """
-    UNWIND $records as record
+    UNWIND $DictList as record
     MERGE (a:DNSRecord:AWSDNSRecord{id: record.id})
     ON CREATE SET a.firstseen = timestamp(), a.name = record.name,
     a.region = record.Region,
@@ -182,9 +185,10 @@ def load_alias_records(neo4j_session: neo4j.Session, records: List[Dict], update
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        records=records,
+        records,
         update_tag=update_tag,
     )
 
@@ -192,7 +196,7 @@ def load_alias_records(neo4j_session: neo4j.Session, records: List[Dict], update
 @timeit
 def load_cname_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag: int) -> None:
     ingest_records = """
-    UNWIND $records as record
+    UNWIND $DictList as record
     MERGE (a:DNSRecord:AWSDNSRecord{id: record.id})
     ON CREATE SET a.firstseen = timestamp(), a.name = record.name,
     a.region = record.Region,
@@ -205,9 +209,10 @@ def load_cname_records(neo4j_session: neo4j.Session, records: List[Dict], update
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        records=records,
+        records,
         update_tag=update_tag,
     )
 
@@ -228,7 +233,8 @@ def load_zone(neo4j_session: neo4j.Session, zone: Dict, current_aws_id: str, upd
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_z,
         ZoneName=zone['name'][:-1],
         ZoneId=zone['zoneid'],
@@ -245,7 +251,7 @@ def load_zone(neo4j_session: neo4j.Session, zone: Dict, current_aws_id: str, upd
 @timeit
 def load_ns_records(neo4j_session: neo4j.Session, records: List[Dict], zone_name: str, update_tag: int, consolelink: str) -> None:
     ingest_records = """
-    UNWIND $records as record
+    UNWIND $DictList as record
     MERGE (a:DNSRecord:AWSDNSRecord{id: record.id})
     ON CREATE SET a.firstseen = timestamp(), a.name = record.name,
     a.region = record.Region,
@@ -266,16 +272,17 @@ def load_ns_records(neo4j_session: neo4j.Session, records: List[Dict], zone_name
     SET pt.lastupdated = $update_tag
 
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        records=records,
+        records,
         consolelink=consolelink,
         update_tag=update_tag,
     )
 
     # Map the official name servers for a domain.
     map_ns_records = """
-    UNWIND $servers as server
+    UNWIND $DictList as server
     MATCH (ns:NameServer{id:server})
     MATCH (zone:AWSDNSZone{zoneid: $zoneid})
     MERGE (ns)<-[r:NAMESERVER]-(zone)
@@ -283,9 +290,10 @@ def load_ns_records(neo4j_session: neo4j.Session, records: List[Dict], zone_name
     """
     for record in records:
         if zone_name == record["name"]:
-            neo4j_session.run(
+            load_graph_data(
+                neo4j_session,
                 map_ns_records,
-                servers=record["servers"],
+                record["servers"],
                 zoneid=record["zoneid"],
                 update_tag=update_tag,
             )
@@ -306,7 +314,8 @@ def link_sub_zones(neo4j_session: neo4j.Session, update_tag: int) -> None:
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         query,
         update_tag=update_tag,
     )
