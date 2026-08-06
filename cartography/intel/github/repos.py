@@ -16,6 +16,7 @@ from packaging.requirements import InvalidRequirement
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import describe_request_error
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import get_retry_delay_seconds
@@ -607,28 +608,33 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
     :param repo_owners: list of owner to repo mappings
     :return: Nothing
     """
-    for owner in repo_owners:
-        ingest_owner_template = Template("""
-            MERGE (node:$account_type{id: $Id})
-            ON CREATE SET node.firstseen = timestamp()
-            SET node.username = $UserName,
-            node.lastupdated = $UpdateTag
-            WITH node
+    ingest_owner_template = Template("""
+        UNWIND $DictList AS item
+        MERGE (node:$account_type{id: item.owner})
+        ON CREATE SET node.firstseen = timestamp()
+        SET node.username = item.owner,
+        node.lastupdated = $UpdateTag
+        WITH node, item
 
-            MATCH (repo:GitHubRepository{id: $RepoId})
-            MERGE (node)-[r:RESOURCE]->(repo)
-            ON CREATE SET r.firstseen = timestamp()
-            SET r.lastupdated = $UpdateTag""")
+        MATCH (repo:GitHubRepository{id: item.repo_id})
+        MERGE (node)-[r:RESOURCE]->(repo)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $UpdateTag""")
 
-        # INFO: Only Organization is supported
-        # account_type = {'User': "GitHubUser", 'Organization': "GitHubOrganization"}
-        account_type = {"Organization": "GitHubOrganization"}
+    # INFO: Only Organization is supported
+    # account_type = {'User': "GitHubUser", 'Organization': "GitHubOrganization"}
+    account_type = {"Organization": "GitHubOrganization"}
 
-        neo4j_session.run(
-            ingest_owner_template.safe_substitute(account_type=account_type[owner["type"]]),
-            Id=owner["owner"],
-            UserName=owner["owner"],
-            RepoId=owner["repo_id"],
+    for owner_type, type_label in account_type.items():
+        rows = [
+            {"owner": owner["owner"], "repo_id": owner["repo_id"]}
+            for owner in repo_owners
+            if owner["type"] == owner_type
+        ]
+        load_graph_data(
+            neo4j_session,
+            ingest_owner_template.safe_substitute(account_type=type_label),
+            rows,
             UpdateTag=update_tag,
         )
 

@@ -11,6 +11,7 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.stats import get_stats_client
 from cartography.util import aws_handle_regions
@@ -218,24 +219,22 @@ def cleanup_rds_security_groups(neo4j_session: neo4j.Session, common_job_paramet
 
 @timeit
 def attach_db_security_groups_to_ec2_security_groups(
-    session: neo4j.Session, data: List[Dict],
-    db_sg_id: str, aws_update_tag: int,
+    session: neo4j.Session, db_sgs: List[Dict], aws_update_tag: int,
 ):
-    for sg in data:
-        ingest_script = """
-        MATCH (dbsg:RDSSecurityGroup{id:$DBSecurityGroupId})
-        MATCH (sg:EC2SecurityGroup{id:$EC2SecurityGroupId})
-        MERGE (dbsg)-[r:USING]->(sg)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $aws_update_tag
-        """
-
-        session.run(
-            ingest_script,
-            DBSecurityGroupId=db_sg_id,
-            EC2SecurityGroupId=sg.get('EC2SecurityGroupId'),
-            aws_update_tag=aws_update_tag,
-        )
+    ingest_script = """
+    UNWIND $DictList AS item
+    MATCH (dbsg:RDSSecurityGroup{id:item.db_sg_id})
+    MATCH (sg:EC2SecurityGroup{id:item.ec2_sg_id})
+    MERGE (dbsg)-[r:USING]->(sg)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+    rows = [
+        {"db_sg_id": db_sg.get('DBSecurityGroupArn'), "ec2_sg_id": sg.get('EC2SecurityGroupId')}
+        for db_sg in db_sgs
+        for sg in db_sg.get('EC2SecurityGroups', [])
+    ]
+    load_graph_data(session, ingest_script, rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
@@ -252,12 +251,7 @@ def sync_rds_security_groups(
     logger.info(f"Total RDS Security Groups: {len(data)}")
 
     load_rds_security_groups(neo4j_session, data, current_aws_account_id, update_tag)
-    for db_sg in data:
-        attach_db_security_groups_to_ec2_security_groups(
-            neo4j_session, db_sg.get(
-                'EC2SecurityGroups', [],
-            ), db_sg.get('DBSecurityGroupArn'), update_tag,
-        )
+    attach_db_security_groups_to_ec2_security_groups(neo4j_session, data, update_tag)
     cleanup_rds_security_groups(neo4j_session, common_job_parameters)
 
 
@@ -424,8 +418,8 @@ def load_rds_clusters(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
+    _attach_associate_roles(neo4j_session, data, aws_update_tag)
     for cluster in data:
-        _attach_associate_roles(neo4j_session, cluster, aws_update_tag)
         _attach_db_subnet_group(neo4j_session, cluster, aws_update_tag)
         _attach_ec2_security_groups_cluster(neo4j_session, cluster, aws_update_tag)
         # TODO: track read replicas
@@ -450,21 +444,21 @@ def load_rds_clusters(
 
 
 @timeit
-def _attach_associate_roles(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int) -> None:
+def _attach_associate_roles(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
     attach_cluster_to_role = """
-    MATCH (c:RDSCluster{id:$DBClusterArn})
-    MERGE (p:AWSPrincipal{arn:$RoleArn})
+    UNWIND $DictList AS item
+    MATCH (c:RDSCluster{id:item.cluster_arn})
+    MERGE (p:AWSPrincipal{arn:item.role_arn})
     MERGE (c)-[s:RDS_ASSUMEROLE_ALLOW]->(p)
     ON CREATE SET s.firstseen = timestamp()
     SET s.lastupdated = $aws_update_tag
     """
-    for role in cluster.get('AssociatedRoles', []):
-        neo4j_session.run(
-            attach_cluster_to_role,
-            DBClusterArn=cluster['DBClusterArn'],
-            RoleArn=role['RoleArn'],
-            aws_update_tag=aws_update_tag,
-        )
+    rows = [
+        {"cluster_arn": cluster['DBClusterArn'], "role_arn": role['RoleArn']}
+        for cluster in clusters
+        for role in cluster.get('AssociatedRoles', [])
+    ]
+    load_graph_data(neo4j_session, attach_cluster_to_role, rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
