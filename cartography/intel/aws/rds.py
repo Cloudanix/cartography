@@ -63,17 +63,23 @@ def dns_lookup_with_ip_type(hostname: str) -> List[Dict[str, bool]]:
     return [check_ip_type(ip) for ip in ips]
 
 
+def filter_active_rds_reserved_db_instances(instances: List[Dict]) -> List[Dict]:
+    """Keep only reserved DB instances in active state (drop retired/payment-*)."""
+    return [instance for instance in instances if instance.get('State') == 'active']
+
+
 @timeit
 @aws_handle_regions
 def get_rds_reserved_db_instances_data(boto3_session: boto3.session.Session, region: str) -> List[Any]:
     """
-    Create an RDS boto3 client and grab all the reserved db instances.
+    Create an RDS boto3 client and grab active reserved db instances.
     """
     client = boto3_session.client('rds', region_name=region, config=get_botocore_config())
     paginator = client.get_paginator('describe_reserved_db_instances')
     instances: List[Any] = []
     for page in paginator.paginate():
         instances.extend(page['ReservedDBInstances'])
+    instances = filter_active_rds_reserved_db_instances(instances)
     for instance in instances:
         instance['region'] = region
         instance['name'] = instance['ReservedDBInstanceArn'].split(':')[-1]
