@@ -225,7 +225,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
 
     WITH re, repo
     MATCH (project:BitbucketProject{id:repo.project.uuid})
-    MERGE (project)<-[o:RESOURCE]-(re)
+    MERGE (project)-[o:RESOURCE]->(re)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
     """
