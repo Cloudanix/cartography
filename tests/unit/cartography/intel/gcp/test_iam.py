@@ -1,4 +1,28 @@
+from unittest.mock import MagicMock
+
 from cartography.intel.gcp import iam
+
+
+def test_load_bindings_deleted_members_have_consolelink():
+    # Deleted members (deleted:group:..., deleted:user:..., deleted:domain:...) used to omit
+    # "consolelink", making the attach_* helpers raise KeyError.
+    neo4j_session = MagicMock()
+    bindings = [{
+        'role': 'projects/p1/roles/custom1',
+        'parent': 'project',
+        'parent_id': 'p1',
+        'members': [
+            'deleted:group:grp@example.org?uid=123',
+            'deleted:user:usr@example.org?uid=456',
+            'deleted:domain:example.org?uid=789',
+        ],
+    }]
+
+    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {})
+
+    consolelinks = [call.kwargs['ConsoleLink'] for call in neo4j_session.run.call_args_list]
+    assert len(consolelinks) == 3
+    assert all(link for link in consolelinks)
 
 
 def test_gcp_service_account_managed_type():

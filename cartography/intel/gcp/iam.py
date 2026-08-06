@@ -758,7 +758,7 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         "is_deleted": True,
                         "parent": binding['parent'],
                         "parent_id": binding['parent_id'],
-
+                        "consolelink": gcp_console_link.get_console_link(project_id=project_id, resource_name='iam_user'),
                     }
                     if role_id.startswith("projects/"):
                         attach_project_role_to_user(
@@ -813,6 +813,7 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         "is_deleted": True,
                         "parent": binding['parent'],
                         "parent_id": binding['parent_id'],
+                        "consolelink": gcp_console_link.get_console_link(project_id=project_id, resource_name='iam_group'),
                     }
                     if role_id.startswith("projects/"):
                         attach_project_role_to_group(
@@ -840,6 +841,7 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         "is_deleted": True,
                         "parent": binding['parent'],
                         "parent_id": binding['parent_id'],
+                        "consolelink": gcp_console_link.get_console_link(project_id=project_id, resource_name='iam_domain'),
                     }
                     if role_id.startswith("projects/"):
                         attach_project_role_to_domain(
@@ -1060,7 +1062,7 @@ def attach_project_role_to_group(
         GroupName=group['name'],
         createDate=datetime.utcnow(),
         GroupEmail=group['email'],
-        ConsoleLink=group['consolelink'],
+        ConsoleLink=group.get('consolelink'),
         Parent=group['parent'],
         ParentId=group['parent_id'],
         isDeleted=group.get('is_deleted', False),
@@ -1111,7 +1113,7 @@ def attach_sso_role_to_group(
         GroupName=group['name'],
         createDate=datetime.utcnow(),
         GroupEmail=group['email'],
-        ConsoleLink=group['consolelink'],
+        ConsoleLink=group.get('consolelink'),
         Parent=group['parent'],
         ParentId=group['parent_id'],
         isDeleted=group.get('is_deleted', False),
@@ -1160,7 +1162,7 @@ def attach_project_role_to_domain(
         createDate=datetime.utcnow(),
         ParentId=domain['parent_id'],
         DomainEmail=domain['email'],
-        ConsoleLink=domain['consolelink'],
+        ConsoleLink=domain.get('consolelink'),
         DomainName=domain['name'],
         isDeleted=domain.get('is_deleted', False),
         project_id=project_id,
@@ -1210,7 +1212,7 @@ def attach_sso_role_to_domain(
         createDate=datetime.utcnow(),
         ParentId=domain['parent_id'],
         DomainEmail=domain['email'],
-        ConsoleLink=domain['consolelink'],
+        ConsoleLink=domain.get('consolelink'),
         DomainName=domain['name'],
         isDeleted=domain.get('is_deleted', False),
         project_id=project_id,
