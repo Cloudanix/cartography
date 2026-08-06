@@ -1,20 +1,139 @@
+import logging
+import time
+from functools import partial
 from typing import Any
+from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Tuple
+from typing import TypeVar
 from typing import Union
 
+import backoff
 import neo4j
+import neo4j.exceptions
 
 from cartography.graph.querybuilder import build_create_index_queries
 from cartography.graph.querybuilder import build_ingestion_query
 from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.util import backoff_handler
 from cartography.util import batch
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # Rows per write transaction. Matches upstream cartography's default; tune per call
 # via the batch_size param if a module's rows are unusually wide.
 DEFAULT_LOAD_BATCH_SIZE = 10000
+
+_MAX_NETWORK_RETRIES = 5
+_MAX_ENTITY_NOT_FOUND_RETRIES = 5
+_MAX_BUFFER_ERROR_RETRIES = 5
+_NETWORK_EXCEPTIONS: tuple = (
+    ConnectionResetError,
+    neo4j.exceptions.ServiceUnavailable,
+    neo4j.exceptions.SessionExpired,
+    neo4j.exceptions.TransientError,
+)
+
+
+def _is_retryable_client_error(exc: Exception) -> bool:
+    """
+    EntityNotFound during concurrent write operations is a known transient Neo4j error:
+    with concurrent MERGE/DELETE one thread can delete an entity another thread has
+    referenced but not yet locked. Neo4j maintainers recommend retrying it even though
+    the driver classifies it as a non-retryable ClientError
+    (https://github.com/neo4j/neo4j/issues/6823). This is exactly the condition created
+    by our 8-worker-per-provider write concurrency.
+    """
+    if not isinstance(exc, neo4j.exceptions.ClientError):
+        return False
+    # exc.code can be None for locally-created errors
+    return exc.code == "Neo.ClientError.Statement.EntityNotFound"
+
+
+def _is_retryable_buffer_error(exc: Exception) -> bool:
+    """
+    BufferError("... cannot be re-sized") is a known transient error from the neo4j
+    driver's internal buffer management under multi-threaded use.
+    """
+    return isinstance(exc, BufferError) and "cannot be re-sized" in str(exc)
+
+
+def _run_with_retry(operation: Callable[[], T], target: str) -> T:
+    """
+    Execute the supplied callable with retry + exponential backoff for transient network
+    errors, EntityNotFound ClientErrors, and re-size BufferErrors. Anything else raises
+    immediately; exhausted retries re-raise the last error.
+    """
+    network_attempts = 0
+    entity_attempts = 0
+    buffer_attempts = 0
+    network_wait = backoff.expo()
+    entity_wait = backoff.expo()
+    buffer_wait = backoff.expo()
+
+    def _backoff(kind: str, attempts: int, max_attempts: int, wait_gen: Any, exc: Exception) -> None:
+        wait = next(wait_gen) or 1.0
+        backoff_handler({"wait": wait, "tries": attempts, "target": target, "exception": exc})
+        logger.warning(f"{kind} retry {attempts}/{max_attempts} for {target}: {exc}")
+        time.sleep(wait)
+
+    while True:
+        try:
+            result = operation()
+            recovered = network_attempts + entity_attempts + buffer_attempts
+            if recovered:
+                logger.info(f"Recovered after {recovered} retries. Function: {target}")
+            return result
+        except _NETWORK_EXCEPTIONS as exc:
+            if network_attempts >= _MAX_NETWORK_RETRIES - 1:
+                raise
+            network_attempts += 1
+            _backoff("Network error", network_attempts, _MAX_NETWORK_RETRIES, network_wait, exc)
+        except neo4j.exceptions.ClientError as exc:
+            if not _is_retryable_client_error(exc) or entity_attempts >= _MAX_ENTITY_NOT_FOUND_RETRIES - 1:
+                raise
+            entity_attempts += 1
+            _backoff("EntityNotFound", entity_attempts, _MAX_ENTITY_NOT_FOUND_RETRIES, entity_wait, exc)
+        except BufferError as exc:
+            if not _is_retryable_buffer_error(exc) or buffer_attempts >= _MAX_BUFFER_ERROR_RETRIES - 1:
+                raise
+            buffer_attempts += 1
+            _backoff("BufferError", buffer_attempts, _MAX_BUFFER_ERROR_RETRIES, buffer_wait, exc)
+
+
+def execute_write_with_retry(
+        neo4j_session: neo4j.Session,
+        tx_func: Any,
+        *args: Any,
+        **kwargs: Any,
+) -> Any:
+    """
+    Run a transaction function through session.execute_write with _run_with_retry's
+    transient-error classification on top of the driver's own TransientError handling.
+    Use for any custom write that does not fit the load_graph_data() path.
+    """
+    target = getattr(tx_func, "__qualname__", repr(tx_func))
+    operation = partial(neo4j_session.execute_write, tx_func, *args, **kwargs)
+    return _run_with_retry(operation, target)
+
+
+def run_write_query(neo4j_session: neo4j.Session, query: str, **parameters: Any) -> None:
+    """
+    Execute a single write query inside a managed transaction with retry. Drop-in
+    replacement for raw auto-commit neo4j_session.run(query, ...) in intel modules
+    (perf plan Phase 3.7).
+    """
+    def _run_query_tx(tx: neo4j.Transaction) -> None:
+        tx.run(query, **parameters).consume()
+
+    def _operation() -> None:
+        neo4j_session.execute_write(_run_query_tx)
+
+    _run_with_retry(_operation, "run_write_query")
 
 
 def read_list_of_values_tx(tx: neo4j.Transaction, query: str, **kwargs) -> List[Union[str, int]]:
@@ -192,7 +311,7 @@ def write_list_of_dicts_tx(
     :param kwargs: Keyword args to be supplied to the Neo4j query.
     :return: None
     """
-    tx.run(query, kwargs)
+    tx.run(query, kwargs).consume()
 
 
 def write_query_tx(
@@ -229,7 +348,8 @@ def load_graph_data(
     if batch_size <= 0:
         raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
     for data_batch in batch(dict_list, size=batch_size):
-        neo4j_session.execute_write(
+        execute_write_with_retry(
+            neo4j_session,
             write_list_of_dicts_tx,
             query,
             DictList=data_batch,

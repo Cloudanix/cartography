@@ -2,11 +2,25 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import pytest
+from neo4j.exceptions import ClientError
+from neo4j.exceptions import ServiceUnavailable
+from neo4j.exceptions import TransientError
 
+from cartography.client.core.tx import _is_retryable_buffer_error
+from cartography.client.core.tx import _is_retryable_client_error
+from cartography.client.core.tx import _run_with_retry
 from cartography.client.core.tx import ensure_indexes
+from cartography.client.core.tx import execute_write_with_retry
 from cartography.client.core.tx import load
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import write_query_tx
+
+
+def entity_not_found_error():
+    err = ClientError("entity gone")
+    err.code = "Neo.ClientError.Statement.EntityNotFound"
+    return err
 
 
 def test_write_query_tx_runs_query_without_params():
@@ -113,3 +127,112 @@ def test_load_passes_batch_size_through(mock_ensure, mock_build, mock_lgd):
     load(session, MagicMock(), data, batch_size=42, lastupdated=1)
 
     mock_lgd.assert_called_once_with(session, mock_build.return_value, data, batch_size=42, lastupdated=1)
+
+
+class TestRetryClassification:
+    def test_entity_not_found_is_retryable(self):
+        assert _is_retryable_client_error(entity_not_found_error())
+
+    def test_other_client_error_is_not_retryable(self):
+        err = ClientError("bad")
+        err.code = "Neo.ClientError.Statement.SyntaxError"
+        assert not _is_retryable_client_error(err)
+
+    def test_client_error_without_code_is_not_retryable(self):
+        assert not _is_retryable_client_error(ClientError("local"))
+
+    def test_non_client_error_is_not_retryable(self):
+        assert not _is_retryable_client_error(ValueError("nope"))
+
+    def test_resize_buffer_error_is_retryable(self):
+        assert _is_retryable_buffer_error(BufferError("Existing exports of data: object cannot be re-sized"))
+
+    def test_other_buffer_error_is_not_retryable(self):
+        assert not _is_retryable_buffer_error(BufferError("something else"))
+
+
+@patch("cartography.client.core.tx.time.sleep")
+class TestRunWithRetry:
+    def test_success_passthrough(self, mock_sleep):
+        op = MagicMock(return_value="ok")
+        assert _run_with_retry(op, "t") == "ok"
+        mock_sleep.assert_not_called()
+
+    def test_network_error_retried_then_succeeds(self, mock_sleep):
+        op = MagicMock(side_effect=[ServiceUnavailable("down"), TransientError("busy"), "ok"])
+        assert _run_with_retry(op, "t") == "ok"
+        assert op.call_count == 3
+
+    def test_network_error_exhaustion_raises(self, mock_sleep):
+        op = MagicMock(side_effect=ServiceUnavailable("down"))
+        with pytest.raises(ServiceUnavailable):
+            _run_with_retry(op, "t")
+        assert op.call_count == 5  # _MAX_NETWORK_RETRIES
+
+    def test_entity_not_found_retried_then_succeeds(self, mock_sleep):
+        op = MagicMock(side_effect=[entity_not_found_error(), "ok"])
+        assert _run_with_retry(op, "t") == "ok"
+        assert op.call_count == 2
+
+    def test_non_retryable_client_error_raises_immediately(self, mock_sleep):
+        err = ClientError("bad")
+        err.code = "Neo.ClientError.Statement.SyntaxError"
+        op = MagicMock(side_effect=err)
+        with pytest.raises(ClientError):
+            _run_with_retry(op, "t")
+        assert op.call_count == 1
+
+    def test_buffer_error_retried_then_succeeds(self, mock_sleep):
+        op = MagicMock(side_effect=[BufferError("x cannot be re-sized"), "ok"])
+        assert _run_with_retry(op, "t") == "ok"
+        assert op.call_count == 2
+
+    def test_unrelated_exception_raises_immediately(self, mock_sleep):
+        op = MagicMock(side_effect=KeyError("boom"))
+        with pytest.raises(KeyError):
+            _run_with_retry(op, "t")
+        assert op.call_count == 1
+
+
+class TestExecuteWriteWithRetry:
+    def test_passes_through_to_execute_write(self):
+        session = MagicMock()
+        tx_func = MagicMock()
+
+        result = execute_write_with_retry(session, tx_func, "a", k=1)
+
+        assert result is session.execute_write.return_value
+        session.execute_write.assert_called_once_with(tx_func, "a", k=1)
+
+    @patch("cartography.client.core.tx.time.sleep")
+    def test_retries_entity_not_found(self, mock_sleep):
+        session = MagicMock()
+        session.execute_write.side_effect = [entity_not_found_error(), "ok"]
+
+        assert execute_write_with_retry(session, MagicMock()) == "ok"
+        assert session.execute_write.call_count == 2
+
+
+class TestRunWriteQuery:
+    def test_runs_query_in_managed_tx(self):
+        session = MagicMock()
+
+        run_write_query(session, "MERGE (n:Foo{id: $id})", id=1)
+
+        session.execute_write.assert_called_once()
+        # Execute the captured tx function against a mock transaction and verify the
+        # query goes through tx.run with the given parameters.
+        tx_fn = session.execute_write.call_args.args[0]
+        tx = MagicMock()
+        tx_fn(tx)
+        tx.run.assert_called_once_with("MERGE (n:Foo{id: $id})", id=1)
+
+
+@patch("cartography.client.core.tx.time.sleep")
+def test_load_graph_data_retries_transient_batch_failure(mock_sleep):
+    session = MagicMock()
+    session.execute_write.side_effect = [entity_not_found_error(), None]
+
+    load_graph_data(session, "UNWIND $DictList AS item RETURN item", [{"id": 1}])
+
+    assert session.execute_write.call_count == 2
