@@ -16,6 +16,17 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
+def filter_current_launch_template_versions(versions: List[Dict]) -> List[Dict]:
+    """Keep default and/or latest launch template versions only."""
+    if not versions:
+        return []
+    latest_number = max(v.get('VersionNumber', 0) for v in versions)
+    return [
+        v for v in versions
+        if v.get('DefaultVersion') is True or v.get('VersionNumber') == latest_number
+    ]
+
+
 @timeit
 @aws_handle_regions
 def get_launch_templates(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
@@ -29,9 +40,12 @@ def get_launch_templates(boto3_session: boto3.session.Session, region: str) -> L
         for template in templates:
             template_versions: List[Dict] = []
             v_paginator = client.get_paginator('describe_launch_template_versions')
-            for versions in v_paginator.paginate(LaunchTemplateId=template['LaunchTemplateId']):
+            for versions in v_paginator.paginate(
+                LaunchTemplateId=template['LaunchTemplateId'],
+                Versions=['$Latest', '$Default'],
+            ):
                 template_versions.extend(versions["LaunchTemplateVersions"])
-            template["_template_versions"] = template_versions
+            template["_template_versions"] = filter_current_launch_template_versions(template_versions)
 
     except Exception as e:
         logger.warning(f"Failed retrieve address for region - {region}. Error - {e}")
