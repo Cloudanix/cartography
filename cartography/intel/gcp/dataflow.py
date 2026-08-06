@@ -16,6 +16,23 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
+# Terminal / non-live Dataflow job states that should not be ingested.
+INACTIVE_DATAFLOW_JOB_STATES = {
+    'JOB_STATE_DONE',
+    'JOB_STATE_FAILED',
+    'JOB_STATE_CANCELLED',
+    'JOB_STATE_UPDATED',
+    'JOB_STATE_DRAINED',
+}
+
+
+def filter_active_dataflow_jobs(jobs: List[Dict]) -> List[Dict]:
+    """Keep only non-terminal Dataflow jobs."""
+    return [
+        job for job in jobs
+        if job.get('currentState') not in INACTIVE_DATAFLOW_JOB_STATES
+    ]
+
 
 @timeit
 def get_dataflow_jobs(dataflow: Resource, project_id: str, regions: list, common_job_parameters) -> List[Dict]:
@@ -27,7 +44,7 @@ def get_dataflow_jobs(dataflow: Resource, project_id: str, regions: list, common
             if res.get('jobs'):
                 jobs.extend(res.get('jobs', []))
             req = dataflow.projects().jobs().aggregated_next(previous_request=req, previous_response=res)
-        return jobs
+        return filter_active_dataflow_jobs(jobs)
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
         if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
