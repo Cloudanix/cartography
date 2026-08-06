@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
+def filter_completed_ebs_snapshots(snapshots: List[Dict]) -> List[Dict]:
+    """Keep only completed EBS snapshots (drop pending/error)."""
+    return [snapshot for snapshot in snapshots if snapshot.get('State') == 'completed']
+
+
 @timeit
 @aws_handle_regions
 def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
@@ -33,10 +38,15 @@ def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dic
                     "Name": "owner-alias",
                     "Values": ["self"],
                 },
+                {
+                    "Name": "state",
+                    "Values": ["completed"],
+                },
             ],
         )
         for page in page_iterator:
             snapshots.extend(page['Snapshots'])
+        snapshots = filter_completed_ebs_snapshots(snapshots)
         for snapshot in snapshots:
             snapshot['region'] = region
             volume_permissions = get_snapshot_attribute(client=client, attribute_name='createVolumePermissions', snapshot_id=snapshot['SnapshotId'])
