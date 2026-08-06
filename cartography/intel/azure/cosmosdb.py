@@ -16,6 +16,8 @@ from azure.mgmt.cosmosdb import CosmosDBManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.credentials import Credentials
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -97,7 +99,7 @@ def load_database_account_data(
     Ingest data of all database accounts into neo4j.
     """
     ingest_database_account = """
-    UNWIND $database_accounts_list AS da
+    UNWIND $DictList AS da
     MERGE (d:AzureCosmosDBAccount{id: da.id})
     ON CREATE SET d.firstseen = timestamp(),
     d.type = da.type, d.resourcegroup = da.resourceGroup,
@@ -133,9 +135,10 @@ def load_database_account_data(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_database_account,
-        database_accounts_list=database_account_list,
+        database_account_list,
         AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=azure_update_tag,
     )
@@ -153,7 +156,8 @@ def _attach_resource_group_database_account(neo4j_session: neo4j.Session, databa
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_database_account,
         database_account_id=database_account_id,
         resource_group=resource_group,
@@ -187,7 +191,7 @@ def _load_database_account_associated_iprules(
 ) -> None:
     """Relationship between Azure Cosmos DB And Public Ip Addresses in Cartography """
     ingest_iprules = """
-        UNWIND $ip_rules_list as ip_rule
+        UNWIND $DictList as ip_rule
         MERGE (rule:AzureFirewallRule{id: ip_rule})
         ON CREATE SET
         rule.firstseen = timestamp(),
@@ -219,9 +223,10 @@ def _load_database_account_associated_iprules(
 
         """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_iprules,
-        ip_rules_list=database_account.get('ipruleslist', []),
+        database_account.get('ipruleslist', []),
         DatabaseAccountId=database_account.get('id'),
         resourceType=database_account.get('type'),
         azure_update_tag=azure_update_tag,
@@ -243,7 +248,7 @@ def _load_database_account_write_locations(
             location["location_name"] = location.get("location_name", "").replace(" ", "").lower()
 
         ingest_write_location = """
-        UNWIND $write_locations_list as wl
+        UNWIND $DictList as wl
         MERGE (loc:AzureCosmosDBLocation{id: wl.id})
         ON CREATE SET loc.firstseen = timestamp()
         SET loc.lastupdated = $azure_update_tag,
@@ -260,9 +265,10 @@ def _load_database_account_write_locations(
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_write_location,
-            write_locations_list=write_locations,
+            write_locations,
             DatabaseAccountId=database_account_id,
             azure_update_tag=azure_update_tag,
         )
@@ -283,7 +289,7 @@ def _load_database_account_read_locations(
             location["location_name"] = location.get("location_name", "").replace(" ", "").lower()
 
         ingest_read_location = """
-        UNWIND $read_locations_list as rl
+        UNWIND $DictList as rl
         MERGE (loc:AzureCosmosDBLocation{id: rl.id})
         ON CREATE SET loc.firstseen = timestamp()
         SET loc.lastupdated = $azure_update_tag,
@@ -300,9 +306,10 @@ def _load_database_account_read_locations(
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_read_location,
-            read_locations_list=read_locations,
+            read_locations,
             DatabaseAccountId=database_account_id,
             azure_update_tag=azure_update_tag,
         )
@@ -323,7 +330,7 @@ def _load_database_account_associated_locations(
             location["location_name"] = location.get("location_name", "").replace(" ", "").lower()
 
         ingest_associated_location = """
-        UNWIND $associated_locations_list as al
+        UNWIND $DictList as al
         MERGE (loc:AzureCosmosDBLocation{id: al.id})
         ON CREATE SET loc.firstseen = timestamp()
         SET loc.lastupdated = $azure_update_tag,
@@ -340,9 +347,10 @@ def _load_database_account_associated_locations(
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_associated_location,
-            associated_locations_list=associated_locations,
+            associated_locations,
             DatabaseAccountId=database_account_id,
             azure_update_tag=azure_update_tag,
         )
@@ -373,7 +381,7 @@ def _load_cosmosdb_cors_policy(
         cors_policies = database_account['cors']
 
         ingest_cors_policy = """
-        UNWIND $cors_policies_list AS cp
+        UNWIND $DictList AS cp
         MERGE (corspolicy:AzureCosmosDBCorsPolicy{id: cp.cors_policy_unique_id})
         ON CREATE SET corspolicy.firstseen = timestamp(),
         corspolicy.allowedorigins = cp.allowed_origins
@@ -390,9 +398,10 @@ def _load_cosmosdb_cors_policy(
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_cors_policy,
-            cors_policies_list=cors_policies,
+            cors_policies,
             DatabaseAccountId=database_account_id,
             region="global",
             azure_update_tag=azure_update_tag,
@@ -413,7 +422,7 @@ def _load_cosmosdb_failover_policies(
             policy["id"] = f'{database_account_id}/failoverPolicies/{policy["id"]}'
 
         ingest_failover_policies = """
-        UNWIND $failover_policies_list AS fp
+        UNWIND $DictList AS fp
         MERGE (fpolicy:AzureCosmosDBAccountFailoverPolicy{id: fp.id})
         ON CREATE SET fpolicy.firstseen = timestamp()
         SET fpolicy.lastupdated = $azure_update_tag,
@@ -427,9 +436,10 @@ def _load_cosmosdb_failover_policies(
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_failover_policies,
-            failover_policies_list=failover_policies,
+            failover_policies,
             DatabaseAccountId=database_account_id,
             azure_update_tag=azure_update_tag,
         )
@@ -449,7 +459,7 @@ def _load_cosmosdb_private_endpoint_connections(
         private_endpoint_connections = database_account['private_endpoint_connections']
 
         ingest_private_endpoint_connections = """
-        UNWIND $private_endpoint_connections_list AS connection
+        UNWIND $DictList AS connection
         MERGE (pec:AzureCDBPrivateEndpointConnection{id: connection.id})
         ON CREATE SET pec.firstseen = timestamp()
         SET pec.lastupdated = $azure_update_tag,
@@ -465,9 +475,10 @@ def _load_cosmosdb_private_endpoint_connections(
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_private_endpoint_connections,
-            private_endpoint_connections_list=private_endpoint_connections,
+            private_endpoint_connections,
             DatabaseAccountId=database_account_id,
             region=database_account.get("location", "global"),
             azure_update_tag=azure_update_tag,
@@ -486,7 +497,8 @@ def _attach_resource_group_private_endpoint_connection(neo4j_session: neo4j.Sess
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_endpoint_connections,
         connection_id=private_endpoint_connection_id,
         resource_group=resource_group,
@@ -508,7 +520,7 @@ def _load_cosmosdb_virtual_network_rules(
             network_rule['consolelink'] = azure_console_link.get_console_link(id=network_rule['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
 
         ingest_virtual_network_rules = """
-        UNWIND $virtual_network_rules_list AS vnr
+        UNWIND $DictList AS vnr
         MERGE (rules:AzureCosmosDBVirtualNetworkRule{id: vnr.id})
         ON CREATE SET rules.firstseen = timestamp(),
         rules.region = $region
@@ -522,9 +534,10 @@ def _load_cosmosdb_virtual_network_rules(
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_virtual_network_rules,
-            virtual_network_rules_list=virtual_network_rules,
+            virtual_network_rules,
             DatabaseAccountId=database_account_id,
             region=database_account.get("location", "global"),
             azure_update_tag=azure_update_tag,
@@ -756,7 +769,7 @@ def _load_sql_databases(neo4j_session: neo4j.Session, sql_databases: List[Dict],
     Ingest SQL Databases into neo4j.
     """
     ingest_sql_databases = """
-    UNWIND $sql_databases_list AS database
+    UNWIND $DictList AS database
     MERGE (sdb:AzureCosmosDBSqlDatabase{id: database.id})
     ON CREATE SET sdb.firstseen = timestamp(), sdb.type = database.type,
     sdb.location = database.location,
@@ -773,9 +786,10 @@ def _load_sql_databases(neo4j_session: neo4j.Session, sql_databases: List[Dict],
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_sql_databases,
-        sql_databases_list=sql_databases,
+        sql_databases,
         azure_update_tag=update_tag,
     )
 
@@ -786,7 +800,7 @@ def _load_cassandra_keyspaces(neo4j_session: neo4j.Session, cassandra_keyspaces:
     Ingest Cassandra keyspaces into neo4j.
     """
     ingest_cassandra_keyspaces = """
-    UNWIND $cassandra_keyspaces_list AS keyspace
+    UNWIND $DictList AS keyspace
     MERGE (ck:AzureCosmosDBCassandraKeySpace{id: keyspace.id})
     ON CREATE SET ck.firstseen = timestamp(), ck.type = keyspace.type,
     ck.location = keyspace.location,
@@ -803,9 +817,10 @@ def _load_cassandra_keyspaces(neo4j_session: neo4j.Session, cassandra_keyspaces:
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_cassandra_keyspaces,
-        cassandra_keyspaces_list=cassandra_keyspaces,
+        cassandra_keyspaces,
         azure_update_tag=update_tag,
     )
 
@@ -816,7 +831,7 @@ def _load_mongodb_databases(neo4j_session: neo4j.Session, mongodb_databases: Lis
     Ingest MongoDB databases into neo4j.
     """
     ingest_mongodb_databases = """
-    UNWIND $mongodb_databases_list AS database
+    UNWIND $DictList AS database
     MERGE (mdb:AzureCosmosDBMongoDBDatabase{id: database.id})
     ON CREATE SET mdb.firstseen = timestamp(), mdb.type = database.type,
     mdb.location = database.location,
@@ -833,9 +848,10 @@ def _load_mongodb_databases(neo4j_session: neo4j.Session, mongodb_databases: Lis
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_mongodb_databases,
-        mongodb_databases_list=mongodb_databases,
+        mongodb_databases,
         azure_update_tag=update_tag,
     )
 
@@ -846,7 +862,7 @@ def _load_table_resources(neo4j_session: neo4j.Session, table_resources: List[Di
     Ingest Table resources into neo4j.
     """
     ingest_tables = """
-    UNWIND $table_resources_list AS table
+    UNWIND $DictList AS table
     MERGE (tr:AzureCosmosDBTableResource{id: table.id})
     ON CREATE SET tr.firstseen = timestamp(), tr.type = table.type,
     tr.location = table.location,
@@ -863,9 +879,10 @@ def _load_table_resources(neo4j_session: neo4j.Session, table_resources: List[Di
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_tables,
-        table_resources_list=table_resources,
+        table_resources,
         azure_update_tag=update_tag,
     )
     for table_resource in table_resources:
@@ -883,7 +900,8 @@ def _attach_resource_group_table_resource(neo4j_session: neo4j.Session, table_re
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_tables,
         table_resource_id=table_resource_id,
         resource_group=resource_group,
@@ -970,7 +988,7 @@ def _load_sql_containers(neo4j_session: neo4j.Session, containers: List[Dict], u
     Ingest SQL Container details into neo4j.
     """
     ingest_containers = """
-    UNWIND $sql_containers_list AS container
+    UNWIND $DictList AS container
     MERGE (c:AzureCosmosDBSqlContainer{id: container.id})
     ON CREATE SET c.firstseen = timestamp(), c.type = container.type,
     c.location = container.location,
@@ -993,9 +1011,10 @@ def _load_sql_containers(neo4j_session: neo4j.Session, containers: List[Dict], u
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_containers,
-        sql_containers_list=containers,
+        containers,
         azure_update_tag=update_tag,
     )
     for container in containers:
@@ -1012,7 +1031,8 @@ def _attach_resource_container(neo4j_session: neo4j.Session, container_id: str, 
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_containers,
         container_id=container_id,
         resource_group=resource_group,
@@ -1101,7 +1121,7 @@ def _load_cassandra_tables(neo4j_session: neo4j.Session, cassandra_tables: List[
     Ingest Cassandra Tables into neo4j.
     """
     ingest_cassandra_tables = """
-    UNWIND $cassandra_tables_list AS table
+    UNWIND $DictList AS table
     MERGE (ct:AzureCosmosDBCassandraTable{id: table.id})
     ON CREATE SET ct.firstseen = timestamp(), ct.type = table.type,
     ct.location = table.location,
@@ -1121,9 +1141,10 @@ def _load_cassandra_tables(neo4j_session: neo4j.Session, cassandra_tables: List[
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_cassandra_tables,
-        cassandra_tables_list=cassandra_tables,
+        cassandra_tables,
         azure_update_tag=update_tag,
     )
     for cassandra_table in cassandra_tables:
@@ -1140,7 +1161,8 @@ def _attach_resource_cassandra_table(neo4j_session: neo4j.Session, cassandra_tab
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_cassandra_tables,
         cassandra_table_id=cassandra_table_id,
         resource_group=resource_group,
@@ -1227,7 +1249,7 @@ def _load_collections(neo4j_session: neo4j.Session, collections: List[Dict], upd
     Ingest MongoDB Collections into neo4j.
     """
     ingest_collections = """
-    UNWIND $mongodb_collections_list AS collection
+    UNWIND $DictList AS collection
     MERGE (col:AzureCosmosDBMongoDBCollection{id: collection.id})
     ON CREATE SET col.firstseen = timestamp(), col.type = collection.type,
     col.location = collection.location,
@@ -1246,9 +1268,10 @@ def _load_collections(neo4j_session: neo4j.Session, collections: List[Dict], upd
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_collections,
-        mongodb_collections_list=collections,
+        collections,
         azure_update_tag=update_tag,
     )
     for collection in collections:
@@ -1265,7 +1288,8 @@ def _attach_resource_group_collection(neo4j_session: neo4j.Session, collection_i
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_collections,
         collection_id=collection_id,
         resource_group=resource_group,

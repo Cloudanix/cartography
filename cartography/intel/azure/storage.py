@@ -16,6 +16,8 @@ from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.credentials import Credentials
 from .util.timing import get_timing_policy
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -79,7 +81,7 @@ def load_storage_account_data(
     Ingest Storage Account details into neo4j.
     """
     ingest_storage_account = """
-    UNWIND $storage_accounts_list as account
+    UNWIND $DictList as account
     MERGE (s:AzureStorageAccount{id: account.id})
     ON CREATE SET s.firstseen = timestamp(),
     s.type = account.type, s.resourcegroup = account.resourceGroup,
@@ -107,9 +109,10 @@ def load_storage_account_data(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_storage_account,
-        storage_accounts_list=storage_account_list,
+        storage_account_list,
         AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=azure_update_tag,
     )
@@ -127,7 +130,8 @@ def _attach_resource_group_storage_account(neo4j_session: neo4j.Session, storage
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_storage_account,
         account_id=storage_account_id,
         resource_group=resource_group,
@@ -336,7 +340,7 @@ def _load_queue_services(
     Ingest Queue Service details into neo4j.
     """
     ingest_queue_services = """
-    UNWIND $queue_services_list as qservice
+    UNWIND $DictList as qservice
     MERGE (qs:AzureStorageQueueService{id: qservice.id})
     ON CREATE SET qs.firstseen = timestamp(), qs.type = qservice.type, qs.region = $region
     SET qs.name = qservice.name,
@@ -350,10 +354,11 @@ def _load_queue_services(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_queue_services,
+        queue_services,
         region="global",
-        queue_services_list=queue_services,
         azure_update_tag=update_tag,
     )
     for queue_service in queue_services:
@@ -370,7 +375,8 @@ def _attach_resource_queue_service(neo4j_session: neo4j.Session, queue_service_i
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_queue_services,
         queue_service_id=queue_service_id,
         resource_group=resource_group,
@@ -386,7 +392,7 @@ def _load_table_services(
     Ingest Table Service details into neo4j.
     """
     ingest_table_services = """
-    UNWIND $table_services_list as tservice
+    UNWIND $DictList as tservice
     MERGE (ts:AzureStorageTableService{id: tservice.id})
     ON CREATE SET ts.firstseen = timestamp(), ts.type = tservice.type, ts.region = $region
     SET ts.name = tservice.name,
@@ -400,10 +406,11 @@ def _load_table_services(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_table_services,
+        table_services,
         region="global",
-        table_services_list=table_services,
         azure_update_tag=update_tag,
     )
     for table_service in table_services:
@@ -421,7 +428,8 @@ def _attach_resource_storage_table_service(neo4j_session: neo4j.Session, table_s
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_table_services,
         tservice_id=table_service_id,
         resource_group=resource_group,
@@ -437,7 +445,7 @@ def _load_file_services(
     Ingest File Service details into neo4j.
     """
     ingest_file_services = """
-    UNWIND $file_services_list as fservice
+    UNWIND $DictList as fservice
     MERGE (fs:AzureStorageFileService{id: fservice.id})
     ON CREATE SET fs.firstseen = timestamp(), fs.type = fservice.type, fs.region = $region
     SET fs.name = fservice.name,
@@ -451,10 +459,11 @@ def _load_file_services(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_file_services,
+        file_services,
         region="global",
-        file_services_list=file_services,
         azure_update_tag=update_tag,
     )
     for file_service in file_services:
@@ -471,7 +480,8 @@ def _attach_resource_storage_file_service(neo4j_session: neo4j.Session, file_ser
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_file_services,
         fservice_id=file_service_id,
         resource_group=resource_group,
@@ -487,7 +497,7 @@ def _load_blob_services(
     Ingest Blob Service details into neo4j.
     """
     ingest_blob_services = """
-    UNWIND $blob_services_list as bservice
+    UNWIND $DictList as bservice
     MERGE (bs:AzureStorageBlobService{id: bservice.id})
     ON CREATE SET bs.firstseen = timestamp(), bs.type = bservice.type, bs.region = $region
     SET bs.name = bservice.name,
@@ -501,10 +511,11 @@ def _load_blob_services(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_blob_services,
+        blob_services,
         region="global",
-        blob_services_list=blob_services,
         azure_update_tag=update_tag,
     )
     for blob_service in blob_services:
@@ -521,7 +532,8 @@ def _attach_resource_storage_blob_service(neo4j_session: neo4j.Session, blob_ser
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_blob_services,
         bservice_id=blob_service_id,
         resource_group=resource_group,
@@ -607,7 +619,7 @@ def _load_queues(neo4j_session: neo4j.Session, queues: List[Dict], update_tag: i
     Ingest Queue details into neo4j.
     """
     ingest_queues = """
-    UNWIND $queues_list as queue
+    UNWIND $DictList as queue
     MERGE (q:AzureStorageQueue{id: queue.id})
     ON CREATE SET q.firstseen = timestamp(), q.type = queue.type, q.region = $region
     SET q.name = queue.name,
@@ -621,10 +633,11 @@ def _load_queues(neo4j_session: neo4j.Session, queues: List[Dict], update_tag: i
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_queues,
+        queues,
         region="global",
-        queues_list=queues,
         azure_update_tag=update_tag,
     )
     for queue in queues:
@@ -642,7 +655,8 @@ def _attach_resource_storage_queue(neo4j_session: neo4j.Session, queue_id: str, 
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_queues,
         queue_id=queue_id,
         resource_group=resource_group,
@@ -728,7 +742,7 @@ def _load_tables(neo4j_session: neo4j.Session, tables: List[Dict], update_tag: i
     Ingest Table details into neo4j.
     """
     ingest_tables = """
-    UNWIND $tables_list as table
+    UNWIND $DictList as table
     MERGE (t:AzureStorageTable{id: table.id})
     ON CREATE SET t.firstseen = timestamp(), t.type = table.type, t.region = $region
     SET t.name = table.name,
@@ -743,10 +757,11 @@ def _load_tables(neo4j_session: neo4j.Session, tables: List[Dict], update_tag: i
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_tables,
+        tables,
         region="global",
-        tables_list=tables,
         azure_update_tag=update_tag,
     )
     for table in tables:
@@ -767,7 +782,8 @@ def _attach_resource_storage_table(neo4j_session: neo4j.Session, table_id: str, 
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_tables,
         table_id=table_id,
         resource_group=resource_group,
@@ -853,7 +869,7 @@ def _load_shares(neo4j_session: neo4j.Session, shares: List[Dict], update_tag: i
     Ingest Share details into neo4j.
     """
     ingest_shares = """
-    UNWIND $shares_list as s
+    UNWIND $DictList as s
     MERGE (share:AzureStorageFileShare{id: s.id})
     ON CREATE SET share.firstseen = timestamp(), share.type = s.type, share.region = $region
     SET share.name = s.name,
@@ -878,10 +894,11 @@ def _load_shares(neo4j_session: neo4j.Session, shares: List[Dict], update_tag: i
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_shares,
+        shares,
         region="global",
-        shares_list=shares,
         azure_update_tag=update_tag,
     )
     for share in shares:
@@ -898,7 +915,8 @@ def _attach_resource_storage_share(neo4j_session: neo4j.Session, share_id: str, 
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_shares,
         share_id=share_id,
         resource_group=resource_group,
@@ -988,7 +1006,7 @@ def _load_blob_containers(
     Ingest Blob Container details into neo4j.
     """
     ingest_blob_containers = """
-    UNWIND $blob_containers_list as blob
+    UNWIND $DictList as blob
     MERGE (bc:AzureStorageBlobContainer{id: blob.id})
     ON CREATE SET bc.firstseen = timestamp(), bc.type = blob.type, bc.region = $region
     SET bc.name = blob.name,
@@ -1014,10 +1032,11 @@ def _load_blob_containers(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_blob_containers,
+        blob_containers,
         region="global",
-        blob_containers_list=blob_containers,
         azure_update_tag=update_tag,
     )
     for blob_container in blob_containers:
@@ -1034,7 +1053,8 @@ def _attach_resource_storage_blob_container(neo4j_session: neo4j.Session, blob_c
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_blob_containers,
         blob_id=blob_container_id,
         resource_group=resource_group,
