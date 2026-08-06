@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from cartography.client.core.tx import ensure_indexes
+from cartography.client.core.tx import load
 from cartography.client.core.tx import write_query_tx
 
 
@@ -42,3 +43,28 @@ def test_ensure_indexes_rejects_non_create_index_query(mock_build):
         ensure_indexes(session, MagicMock())
 
     session.execute_write.assert_not_called()
+
+
+@patch("cartography.client.core.tx.build_ingestion_query")
+@patch("cartography.client.core.tx.ensure_indexes")
+def test_load_empty_list_short_circuits(mock_ensure, mock_build):
+    # No data -> no index creation, no query build, no writes.
+    session = MagicMock()
+
+    load(session, MagicMock(), [])
+
+    mock_ensure.assert_not_called()
+    mock_build.assert_not_called()
+    session.execute_write.assert_not_called()
+
+
+@patch("cartography.client.core.tx.build_ingestion_query")
+@patch("cartography.client.core.tx.ensure_indexes")
+def test_load_nonempty_list_loads(mock_ensure, mock_build):
+    session = MagicMock()
+    mock_build.return_value = "UNWIND $DictList AS item MERGE (n:Foo{id: item.id})"
+
+    load(session, MagicMock(), [{"id": 1}])
+
+    mock_ensure.assert_called_once()
+    assert session.execute_write.call_count == 1
