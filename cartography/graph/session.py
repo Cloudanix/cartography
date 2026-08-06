@@ -5,27 +5,10 @@ from typing import Any
 from typing import Callable
 
 import neo4j
-from neo4j.exceptions import AuthError
-from neo4j.exceptions import RoutingServiceUnavailable
-from neo4j.exceptions import ServiceUnavailable
-from neo4j.exceptions import SessionExpired
-from neo4j.exceptions import TransactionError
-from neo4j.exceptions import TransactionNestingError
 from neo4j.exceptions import TransientError
-from neo4j.exceptions import WriteServiceUnavailable
 
 
 logger = logging.getLogger(__name__)
-
-_NEO4J_WRITE_EXCEPTIONS = (
-    ServiceUnavailable,
-    AuthError,
-    SessionExpired,
-    TransactionError,
-    TransactionNestingError,
-    RoutingServiceUnavailable,
-    WriteServiceUnavailable,
-)
 
 
 class Session:
@@ -73,20 +56,18 @@ class Session:
     def execute_write(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
         try:
             return self.neo4j_session.execute_write(transaction_function, *args, **kwargs)
-        except _NEO4J_WRITE_EXCEPTIONS as e:
-            logger.warning(f"Failed execute_write for neo4j. Error - {e}", exc_info=True, stack_info=True)
         except Exception as e:
+            # Never swallow: callers (e.g. GraphStatement._run_iterative) rely on the
+            # real result, and a dropped write must fail the sync stage loudly.
             logger.warning(f"Failed execute_write for neo4j. Error - {e}", exc_info=True, stack_info=True)
-        return None
+            raise
 
     def execute_read(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
         try:
             return self.neo4j_session.execute_read(transaction_function, *args, **kwargs)
-        except _NEO4J_WRITE_EXCEPTIONS as e:
-            logger.warning(f"Failed execute_read for neo4j. Error - {e}", exc_info=True, stack_info=True)
         except Exception as e:
             logger.warning(f"Failed execute_read for neo4j. Error - {e}", exc_info=True, stack_info=True)
-        return None
+            raise
 
     # ------------------------------------------------------------------
     # Lifecycle helpers

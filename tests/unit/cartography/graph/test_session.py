@@ -67,3 +67,45 @@ class TestRun:
 
         with pytest.raises(ValueError):
             session.run("q")
+
+
+class TestExecuteWrite:
+    def test_success_returns_tx_result(self):
+        session, inner = make_session()
+        tx_fn = MagicMock()
+
+        result = session.execute_write(tx_fn, "arg", kw=1)
+
+        assert result is inner.execute_write.return_value
+        inner.execute_write.assert_called_once_with(tx_fn, "arg", kw=1)
+
+    def test_failure_raises(self):
+        session, inner = make_session()
+        inner.execute_write.side_effect = ServiceUnavailable("down")
+
+        with pytest.raises(ServiceUnavailable):
+            session.execute_write(MagicMock())
+
+    def test_unexpected_exception_raises(self):
+        session, inner = make_session()
+        inner.execute_write.side_effect = ValueError("boom")
+
+        with pytest.raises(ValueError):
+            session.execute_write(MagicMock())
+
+
+class TestExecuteRead:
+    def test_success_returns_tx_result(self):
+        session, inner = make_session()
+        tx_fn = MagicMock()
+
+        result = session.execute_read(tx_fn)
+
+        assert result is inner.execute_read.return_value
+
+    def test_failure_raises(self):
+        session, inner = make_session()
+        inner.execute_read.side_effect = ClientError("denied")
+
+        with pytest.raises(ClientError):
+            session.execute_read(MagicMock())
