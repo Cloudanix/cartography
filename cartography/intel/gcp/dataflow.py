@@ -16,12 +16,18 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
+# Dataflow jobs.aggregated filter enum — ACTIVE = non-terminal/running jobs.
+DATAFLOW_ACTIVE_FILTER = 'ACTIVE'
+
 
 @timeit
 def get_dataflow_jobs(dataflow: Resource, project_id: str, regions: list, common_job_parameters) -> List[Dict]:
     jobs = []
     try:
-        req = dataflow.projects().jobs().aggregated(projectId=project_id)
+        req = dataflow.projects().jobs().aggregated(
+            projectId=project_id,
+            filter=DATAFLOW_ACTIVE_FILTER,
+        )
         while req is not None:
             res = req.execute()
             if res.get('jobs'):

@@ -223,6 +223,11 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     )
 
 
+def filter_active_elasticsearch_reserved_instances(reserved_instances: List[Dict]) -> List[Dict]:
+    """Keep only reserved Elasticsearch instances in active state."""
+    return [ri for ri in reserved_instances if ri.get('State') == 'active']
+
+
 @timeit
 @aws_handle_regions
 def get_elasticsearch_reserved_instances(client: botocore.client.BaseClient, region: str, current_aws_account_id: str) -> List[Dict]:
@@ -233,6 +238,7 @@ def get_elasticsearch_reserved_instances(client: botocore.client.BaseClient, reg
         page_iterator = paginator.paginate()
         for page in page_iterator:
             reserved_instances.extend(page.get('ReservedElasticsearchInstances', []))
+        reserved_instances = filter_active_elasticsearch_reserved_instances(reserved_instances)
         for reserved_instance in reserved_instances:
             reserved_instance['arn'] = f"arn:aws:es:{region}:{current_aws_account_id}:reserved-instances/{reserved_instance['ReservedElasticsearchInstanceId']}"
             reserved_instance['region'] = region

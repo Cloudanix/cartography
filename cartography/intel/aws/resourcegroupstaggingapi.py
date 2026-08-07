@@ -5,6 +5,7 @@ from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from string import Template
 from typing import Dict
+from typing import Iterator
 from typing import List
 
 import boto3
@@ -169,10 +170,6 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     'config:config-rule': {'label': 'AWSConfigRule', 'property': 'id'},
     'ec2:image': {'label': 'EC2Image', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ec2:launch-template': {'label': 'LaunchTemplate', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
-    'ec2:reserved-instances': {
-        'label': 'EC2ReservedInstance', 'property': 'id',
-        'id_func': get_short_id_from_ec2_arn,
-    },
     'ec2:route-table': {'label': 'EC2RouteTable', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ec2:snapshot': {'label': 'EBSSnapshot', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'events:event-bus': {'label': 'AWSEventBridgeEventBus', 'property': 'id'},
@@ -186,7 +183,6 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
         'path': '-[:RESOURCE]->(:EKSCluster)<-[:ASSOCIATED_WITH]-',
     },
     'kinesis:stream': {'label': 'KinesisStream', 'property': 'id'},
-    'rds:ri': {'label': 'RDSReservedDBInstance', 'property': 'id'},
     'logs:log-group': {'label': 'AWSCloudWatchLogGroup', 'property': 'id', 'id_func': get_log_group_arn_with_wildcard},
     'route53:hostedzone': {'label': 'AWSDNSZone', 'property': 'zoneid', 'id_func': get_hosted_zone_id_from_arn},
     'sagemaker:cluster': {'label': 'AWSSagemakerCluster', 'property': 'arn'},
@@ -212,21 +208,26 @@ GLOBAL_RESOURCE_TYPES = frozenset({
 })
 
 
-@timeit
-@aws_handle_regions
-def get_tags(boto3_session: boto3.session.Session, resource_type: str, region: str) -> List[Dict]:
+def iter_tag_pages(
+    boto3_session: boto3.session.Session, resource_type: str, region: str,
+) -> Iterator[List[Dict]]:
     """
-    Create boto3 client and retrieve tag data.
+    Yield pages of ResourceTagMappingList from the tagging API.
+
+    Streaming keeps peak memory to roughly one API page instead of the full
+    region×resource-type result set for large resource types.
     """
     # this is a temporary workaround to populate AWS tags for IAM roles.
     # resourcegroupstaggingapi does not support IAM roles and no ETA is provided
     # TODO: when resourcegroupstaggingapi supports iam:role, remove this condition block
-    resources: List[Dict] = []
     try:
         if resource_type == 'iam:role':
-            return get_role_tags(boto3_session)
+            yield get_role_tags(boto3_session)
+            return
 
-        client = boto3_session.client('resourcegroupstaggingapi', region_name=region, config=get_botocore_config())
+        client = boto3_session.client(
+            'resourcegroupstaggingapi', region_name=region, config=get_botocore_config(),
+        )
         paginator = client.get_paginator('get_resources')
 
         for page in paginator.paginate(
@@ -234,9 +235,25 @@ def get_tags(boto3_session: boto3.session.Session, resource_type: str, region: s
             # This is just a starting list; there may be others supported by this API.
             ResourceTypeFilters=[resource_type],
         ):
-            resources.extend(page['ResourceTagMappingList'])
+            mappings = page.get('ResourceTagMappingList') or []
+            if mappings:
+                yield mappings
     except (ClientError, Exception) as e:
         logger.warning(f"Failed to get tags for resource type {resource_type}. {e}")
+
+
+@timeit
+@aws_handle_regions
+def get_tags(boto3_session: boto3.session.Session, resource_type: str, region: str) -> List[Dict]:
+    """
+    Create boto3 client and retrieve tag data.
+
+    Collects all pages into one list. Prefer iter_tag_pages() / sync_tags() for
+    large resource types so peak memory stays bounded.
+    """
+    resources: List[Dict] = []
+    for page_resources in iter_tag_pages(boto3_session, resource_type, region):
+        resources.extend(page_resources)
     return resources
 
 
@@ -330,9 +347,18 @@ def sync_tags(
 ) -> None:
     logger.debug(f"BEGIN processing tags for {region} & {resource_type}")
 
-    tag_data = get_tags(boto3_session, resource_type, region)
-    transform_tags(tag_data, resource_type)
-    load_tags(neo4j_session=neo4j_session, tag_data=tag_data, resource_type=resource_type, region=region, current_aws_account_id=current_aws_account_id, aws_update_tag=update_tag)
+    # Load each tagging-API page as it arrives instead of buffering the full
+    # result set in memory first.
+    for tag_data in iter_tag_pages(boto3_session, resource_type, region):
+        transform_tags(tag_data, resource_type)
+        load_tags(
+            neo4j_session=neo4j_session,
+            tag_data=tag_data,
+            resource_type=resource_type,
+            region=region,
+            current_aws_account_id=current_aws_account_id,
+            aws_update_tag=update_tag,
+        )
 
     logger.debug(f"END processing tags for {region} & {resource_type}")
 

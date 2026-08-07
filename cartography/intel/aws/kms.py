@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
+def filter_live_kms_keys(keys: List[Dict]) -> List[Dict]:
+    """Drop keys pending deletion; keep Enabled/Disabled (still security-relevant)."""
+    return [key for key in keys if key.get('KeyState') != 'PendingDeletion']
+
+
 @timeit
 @aws_handle_regions
 def get_kms_key_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
@@ -45,7 +50,7 @@ def get_kms_key_list(boto3_session: boto3.session.Session, region: str) -> List[
         response['region'] = region
         described_key_list.append(response)
 
-    return described_key_list
+    return filter_live_kms_keys(described_key_list)
 
 
 @timeit

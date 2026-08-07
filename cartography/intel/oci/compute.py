@@ -18,6 +18,44 @@ from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
 
+# Lifecycle states we treat as live compute worth ingesting.
+# Keep STOPPED (still configured, billable boot volume / security surface).
+# Include transitional states (STARTING, STOPPING, PROVISIONING, MOVING).
+# Drop TERMINATED / TERMINATING / CREATING.
+# list_instances accepts a single lifecycle_state — one call per state.
+ACTIVE_INSTANCE_LIFECYCLE_STATES: List[str] = [
+    "RUNNING",
+    "STARTING",
+    "STOPPING",
+    "STOPPED",
+    "PROVISIONING",
+    "MOVING",
+]
+
+
+def _list_instances_with_lifecycle_filter(
+    compute: oci.core.compute_client.ComputeClient,
+    compartment_id: str,
+    lifecycle_states: List[str],
+) -> List[Any]:
+    """Issue one paginated list_instances call per lifecycle_state and merge."""
+    aggregated: List[Any] = []
+    for state in lifecycle_states:
+        try:
+            response = oci.pagination.list_call_get_all_results(
+                compute.list_instances,
+                compartment_id=compartment_id,
+                lifecycle_state=state,
+            )
+            if response.data:
+                aggregated.extend(response.data)
+        except oci.exceptions.ServiceError as e:
+            logger.warning(
+                "list_instances failed for lifecycle_state '%s' in compartment '%s': %s",
+                state, compartment_id, e.message,
+            )
+    return aggregated
+
 
 def get_vnic_data(
     network_client: oci.core.virtual_network_client.VirtualNetworkClient,
@@ -100,19 +138,13 @@ def get_instance_list_data(
     compartment_id: str,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Get all compute instances in a compartment.
+    Get live compute instances in a compartment.
     See https://docs.oracle.com/en-us/iaas/api/#/en/iaas/latest/Instance/ListInstances
     """
-    try:
-        response = oci.pagination.list_call_get_all_results(
-            compute.list_instances, compartment_id=compartment_id,
-        )
-        return {'Instances': utils.oci_object_to_json(response.data)}
-    except oci.exceptions.ServiceError as e:
-        logger.warning(
-            "Could not retrieve compute instances for compartment '%s': %s", compartment_id, e.message,
-        )
-        return {'Instances': []}
+    raw = _list_instances_with_lifecycle_filter(
+        compute, compartment_id, ACTIVE_INSTANCE_LIFECYCLE_STATES,
+    )
+    return {'Instances': utils.oci_object_to_json(raw)}
 
 
 def load_instances(

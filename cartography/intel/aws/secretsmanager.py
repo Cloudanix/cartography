@@ -24,7 +24,9 @@ def get_secret_list(boto3_session: boto3.session.Session, region: str) -> List[D
     client = boto3_session.client('secretsmanager', region_name=region, config=get_botocore_config())
     paginator = client.get_paginator('list_secrets')
     secrets: List[Dict] = []
-    for page in paginator.paginate():
+    # IncludePlannedDeletion=False is the API default; pass explicitly so
+    # secrets scheduled for deletion never leave Secrets Manager.
+    for page in paginator.paginate(IncludePlannedDeletion=False):
         secrets.extend(page['SecretList'])
     return secrets
 

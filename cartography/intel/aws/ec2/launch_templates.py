@@ -16,6 +16,9 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
+# Applied at describe_launch_template_versions — historical versions stay at the API.
+LAUNCH_TEMPLATE_VERSIONS = ['$Latest', '$Default']
+
 
 @timeit
 @aws_handle_regions
@@ -30,7 +33,10 @@ def get_launch_templates(boto3_session: boto3.session.Session, region: str) -> L
         for template in templates:
             template_versions: List[Dict] = []
             v_paginator = client.get_paginator('describe_launch_template_versions')
-            for versions in v_paginator.paginate(LaunchTemplateId=template['LaunchTemplateId']):
+            for versions in v_paginator.paginate(
+                LaunchTemplateId=template['LaunchTemplateId'],
+                Versions=LAUNCH_TEMPLATE_VERSIONS,
+            ):
                 template_versions.extend(versions["LaunchTemplateVersions"])
             template["_template_versions"] = template_versions
 
