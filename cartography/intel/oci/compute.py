@@ -141,16 +141,10 @@ def get_instance_list_data(
     Get live compute instances in a compartment.
     See https://docs.oracle.com/en-us/iaas/api/#/en/iaas/latest/Instance/ListInstances
     """
-    try:
-        raw = _list_instances_with_lifecycle_filter(
-            compute, compartment_id, ACTIVE_INSTANCE_LIFECYCLE_STATES,
-        )
-        return {'Instances': utils.oci_object_to_json(raw)}
-    except oci.exceptions.ServiceError as e:
-        logger.warning(
-            "Could not retrieve compute instances for compartment '%s': %s", compartment_id, e.message,
-        )
-        return {'Instances': []}
+    raw = _list_instances_with_lifecycle_filter(
+        compute, compartment_id, ACTIVE_INSTANCE_LIFECYCLE_STATES,
+    )
+    return {'Instances': utils.oci_object_to_json(raw)}
 
 
 def load_instances(
