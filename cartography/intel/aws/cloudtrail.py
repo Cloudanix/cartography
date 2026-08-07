@@ -7,6 +7,7 @@ import boto3
 import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -35,7 +36,7 @@ def transform_trails(trails: List[Dict]) -> List[Dict]:
 @timeit
 def load_trails(neo4j_session: neo4j.Session, trails: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
     query: str = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (trail:AWSCloudTrailTrail{id: record.TrailARN})
     ON CREATE SET trail.firstseen = timestamp(),
         trail.arn = record.TrailARN
@@ -66,9 +67,10 @@ def load_trails(neo4j_session: neo4j.Session, trails: List[Dict], current_aws_ac
     SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        Records=trails,
+        trails,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )

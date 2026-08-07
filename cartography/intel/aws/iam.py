@@ -17,6 +17,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.permission_relationships import parse_statement_node
 from cartography.intel.aws.permission_relationships import principal_allowed_on_resource
 from cartography.util import run_cleanup_job
@@ -851,7 +853,8 @@ def get_policies_for_principal(neo4j_session: neo4j.Session, principal_arn: str)
     DISTINCT policy.id AS policy_id,
     COLLECT(DISTINCT statements) AS statements
     """
-    results = neo4j_session.run(
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
         get_policy_query,
         Arn=principal_arn,
     )
@@ -889,7 +892,8 @@ def sync_assumerole_relationships(
     SET r.lastupdated = $aws_update_tag
     """
 
-    results = neo4j_session.run(
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
         query_potential_matches,
         AccountId=current_aws_account_id,
     )
@@ -1153,7 +1157,8 @@ def load_policy_statements(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
         """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_policy_statement,
         PolicyId=policy_id,
         consolelink=consolelink,
@@ -1161,7 +1166,7 @@ def load_policy_statements(
         Statements=statements,
         region="global",
         aws_update_tag=aws_update_tag,
-    ).consume()
+    )
 
 
 def _batch_load_policies(
@@ -1489,7 +1494,7 @@ def sync_group_memberships(
         "MATCH (group:AWSGroup)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ACCOUNT_ID}) "
         "return group.name as name, group.arn as arn;"
     )
-    groups = neo4j_session.run(query, AWS_ACCOUNT_ID=current_aws_account_id)
+    groups = neo4j_session.execute_read(read_list_of_dicts_tx, query, AWS_ACCOUNT_ID=current_aws_account_id)
     groups_membership = {group["arn"]: get_group_membership_data(boto3_session, group["name"]) for group in groups}
     load_group_memberships(neo4j_session, groups_membership, aws_update_tag)
     run_cleanup_job(
@@ -1509,7 +1514,7 @@ def sync_user_access_keys(
 ) -> None:
     logger.info("Syncing IAM user access keys for account '%s'.", current_aws_account_id)
     query = "MATCH (user:AWSPrincipal)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ACCOUNT_ID}) WHERE user:AWSUser OR user:AWSServiceAccount return user.name as name"
-    result = neo4j_session.run(query, AWS_ACCOUNT_ID=current_aws_account_id)
+    result = neo4j_session.execute_read(read_list_of_dicts_tx, query, AWS_ACCOUNT_ID=current_aws_account_id)
     usernames = [r["name"] for r in result]
     for name in usernames:
         access_keys = get_account_access_key_data(boto3_session, name)

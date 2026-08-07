@@ -13,6 +13,8 @@ import boto3
 import neo4j
 import yaml
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.graph.statement import GraphStatement
 from cartography.util import timeit
 
@@ -253,7 +255,8 @@ def get_principals_for_account(neo4j_session: neo4j.Session, account_id: str) ->
     RETURN
     DISTINCT principal.arn as principal_arn, policy.id as policy_id, collect(statements) as statements
     """
-    results = neo4j_session.run(
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
         get_policy_query,
         AccountId=account_id,
     )
@@ -274,7 +277,8 @@ def get_resource_arns(neo4j_session: neo4j.Session, account_id: str, node_label:
     return resource.arn as arn
     """)
     get_resource_query_template = get_resource_query.safe_substitute(node_label=node_label)
-    results = neo4j_session.run(
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
         get_resource_query_template,
         AccountId=account_id,
     )
@@ -287,7 +291,7 @@ def load_principal_mappings(
     relationship_name: str, update_tag: int,
 ) -> None:
     map_policy_query = Template("""
-    UNWIND $Mapping as mapping
+    UNWIND $DictList as mapping
     MATCH (principal:AWSPrincipal{arn:mapping.principal_arn})
     MATCH (resource:$node_label{arn:mapping.resource_arn})
     MERGE (principal)-[r:$relationship_name]->(resource)
@@ -299,9 +303,10 @@ def load_principal_mappings(
         node_label=node_label,
         relationship_name=relationship_name,
     )
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         map_policy_query_template,
-        Mapping=principal_mappings,
+        principal_mappings,
         aws_update_tag=update_tag,
     )
 
