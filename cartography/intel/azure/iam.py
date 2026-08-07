@@ -502,7 +502,7 @@ _IAM_TENANT_SYNC_KEY = "_iam_tenant_level_synced"  # key in common_job_parameter
 
 
 class GraphAuthenticationExpiredError(Exception):
-    """Microsoft Graph rejected the request because the access token is expired."""
+    """Microsoft Graph rejected the request due to an invalid or expired access token."""
 
 
 def _is_throttle_error(e: Exception) -> bool:
@@ -619,13 +619,13 @@ async def get_group_members(
             ctx = get_current_context()
             if _is_graph_auth_expired_error(e):
                 logger.error(
-                    f"get_group_members group_id={group_id}: Graph auth expired after "
+                    f"get_group_members group_id={group_id}: Graph auth invalid/expired after "
                     f"{time.perf_counter() - t0:.2f}s — aborting member fetch",
                 )
                 if ctx is not None:
                     ctx.request_count += 1
                 raise GraphAuthenticationExpiredError(
-                    f"Microsoft Graph token expired while fetching members for {group_id}",
+                    f"Microsoft Graph token invalid/expired while fetching members for {group_id}",
                 ) from e
             if _is_throttle_error(e):
                 retry_after = _get_retry_after(e)
@@ -672,12 +672,16 @@ async def _gather_group_members_fail_fast(
     """
     auth_expired = asyncio.Event()
     member_semaphore = asyncio.Semaphore(3)
+    skipped_due_to_auth = 0
 
     async def _bounded_get_members(group_id: str) -> List[Dict]:
+        nonlocal skipped_due_to_auth
         if auth_expired.is_set():
+            skipped_due_to_auth += 1
             return []
         async with member_semaphore:
             if auth_expired.is_set():
+                skipped_due_to_auth += 1
                 return []
             try:
                 return await get_group_members(credentials, group_id, client=client)
@@ -691,10 +695,9 @@ async def _gather_group_members_fail_fast(
     )
     expired = any(isinstance(result, GraphAuthenticationExpiredError) for result in results)
     if expired:
-        skipped = sum(1 for result in results if result == [])
         logger.error(
-            f"IAM tenant={tenant_id}: Graph access token expired during group member fetch; "
-            f"aborting remaining member fetches (skipped≈{skipped}) to avoid a prolonged 401 storm",
+            f"IAM tenant={tenant_id}: Graph access token invalid/expired during group member fetch; "
+            f"aborting remaining member fetches (skipped={skipped_due_to_auth}) to avoid a prolonged 401 storm",
         )
     return list(results), expired
 
@@ -1527,7 +1530,7 @@ async def sync_scoped_users_and_groups(
                 all_member_ids.add(member["id"])
     if auth_expired:
         logger.error(
-            f"IAM tenant={tenant_id}: Graph token expired mid member-fetch; "
+            f"IAM tenant={tenant_id}: Graph token invalid/expired mid member-fetch; "
             f"continuing with {len(all_memberships)} memberships gathered before abort",
         )
     logger.info(
