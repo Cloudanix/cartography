@@ -191,12 +191,13 @@ def parse_statement_node(node_group: List[Any]) -> List[Any]:
     """ Parse a dict from group of Neo4J node
 
     Arguments:
-        node_group {[Neo4j.Node]} -- the node to parse
+        node_group {list} -- A list of statement dicts (previously Neo4j.Node objects,
+            now plain dicts after the read_list_of_dicts_tx migration)
 
     Returns:
         [list] -- A list of statements from the node
     """
-    return [n._properties for n in node_group]
+    return [n if isinstance(n, dict) else n._properties for n in node_group]
 
 
 def compile_regex(item: str) -> Pattern:
