@@ -16,6 +16,18 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
+# Applied at describe_snapshots so pending/error never leave the API.
+EBS_SNAPSHOT_FILTERS = [
+    {
+        "Name": "owner-alias",
+        "Values": ["self"],
+    },
+    {
+        "Name": "state",
+        "Values": ["completed"],
+    },
+]
+
 
 @timeit
 @aws_handle_regions
@@ -27,14 +39,7 @@ def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dic
 
         snapshots: List[Dict] = []
 
-        page_iterator = paginator.paginate(
-            Filters=[
-                {
-                    "Name": "owner-alias",
-                    "Values": ["self"],
-                },
-            ],
-        )
+        page_iterator = paginator.paginate(Filters=EBS_SNAPSHOT_FILTERS)
         for page in page_iterator:
             snapshots.extend(page['Snapshots'])
         for snapshot in snapshots:
@@ -66,8 +71,8 @@ def get_snapshot_attribute(client, snapshot_id, attribute_name):
                 'ec2:describe_snapshot_attribute failed with AccessDeniedException; continuing sync.',
                 exc_info=True,
             )
-    else:
-        raise
+        else:
+            raise
 
     return response
 

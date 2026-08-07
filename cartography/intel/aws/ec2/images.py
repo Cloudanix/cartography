@@ -20,6 +20,12 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
+# Applied at describe_images so non-available AMIs never leave the API.
+EC2_IMAGE_FILTERS = [{
+    'Name': 'state',
+    'Values': ['available'],
+}]
+
 
 def get_images_in_use(neo4j_session: neo4j.Session, region: str, current_aws_account_id: str) -> List[str]:
     # We use OPTIONAL here to allow query chaining with queries that may not match.
@@ -50,7 +56,10 @@ def get_images(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
     images = []
     try:
-        self_images = client.describe_images(Owners=['self'])['Images']
+        self_images = client.describe_images(
+            Owners=['self'],
+            Filters=EC2_IMAGE_FILTERS,
+        )['Images']
         images.extend(self_images)
     except ClientError as e:
         logger.warning(f"Failed retrieve images for region - {region}. Error - {e}")
