@@ -27,6 +27,7 @@ import oci.object_storage
 
 from . import tags
 from . import utils
+from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
@@ -85,7 +86,8 @@ def load_audit_configuration(
     SET r.lastupdated = $oci_update_tag
     """
     retention = config_data.get("retention-period-days", 0)
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_audit_config,
         CONFIG_ID=f"oci.audit.config.{tenancy_id}.{region}",
         TENANCY_ID=tenancy_id,
@@ -471,7 +473,8 @@ def load_logging_configuration(
     """
 
     config_id = f"oci.logging.config.{config['compartment_id']}.{config['region']}"
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_config,
         CONFIG_ID=config_id,
         COMPARTMENT_ID=config["compartment_id"],
@@ -571,7 +574,8 @@ def enrich_bucket_logging_status(
             b.logging_enabled = false,
             b.logging_resource_type = 'oci-storage-objectstorage-bucket'
         """
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             mark_unlogged_buckets,
             COMPARTMENT_ID=compartment_id,
             REGION=region,

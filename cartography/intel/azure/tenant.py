@@ -8,6 +8,7 @@ from azure.core.exceptions import HttpResponseError
 from azure.mgmt.resource import SubscriptionClient
 
 from .util.credentials import Credentials
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -114,7 +115,8 @@ def load_azure_tenant(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag;
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         query,
         workspaceId=common_job_parameters['WORKSPACE_ID'],
         id=tenant_obj['id'],

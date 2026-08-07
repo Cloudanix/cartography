@@ -11,6 +11,7 @@ import oci.key_management
 
 from . import tags
 from . import utils
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
@@ -243,8 +244,8 @@ def sync_keys(
             "WHERE v.region = $REGION AND v.lifecycle_state = 'ACTIVE' "
             "RETURN v.ocid as ocid, v.management_endpoint as endpoint"
         )
-        vaults = neo4j_session.run(
-            query, COMPARTMENT_ID=compartment["ocid"], REGION=region,
+        vaults = neo4j_session.execute_read(
+            read_list_of_dicts_tx, query, COMPARTMENT_ID=compartment["ocid"], REGION=region,
         )
         for vault in vaults:
             endpoint = vault["endpoint"]

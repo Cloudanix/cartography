@@ -13,6 +13,7 @@ import oci.ons
 
 from . import tags
 from . import utils
+from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
@@ -172,7 +173,8 @@ def load_cloud_guard(
     SET r.lastupdated = $oci_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_cg,
         CONFIG_ID=f"oci.cloudguard.{compartment_id}.{region}",
         COMPARTMENT_ID=compartment_id,

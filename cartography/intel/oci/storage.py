@@ -18,6 +18,7 @@ import oci
 
 from . import tags
 from . import utils
+from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
@@ -385,7 +386,7 @@ def load_block_volumes(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(link_instances, oci_update_tag=oci_update_tag)
+    run_write_query(neo4j_session, link_instances, oci_update_tag=oci_update_tag)
 
 
 def sync_block_volumes(
@@ -543,7 +544,7 @@ def load_boot_volumes(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(link_instances, oci_update_tag=oci_update_tag)
+    run_write_query(neo4j_session, link_instances, oci_update_tag=oci_update_tag)
 
 
 def sync_boot_volumes(
@@ -1034,7 +1035,7 @@ def link_instances_to_file_systems(
                   r.inference_method = 'shared_subnet'
     SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(link_query, oci_update_tag=oci_update_tag)
+    run_write_query(neo4j_session, link_query, oci_update_tag=oci_update_tag)
 
 
 def sync_file_storage(
