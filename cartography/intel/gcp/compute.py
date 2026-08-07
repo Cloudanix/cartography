@@ -1798,7 +1798,7 @@ def cleanup_gcp_firewall_rules(neo4j_session: neo4j.Session, common_job_paramete
         run_cleanup_job("gcp_compute_firewall_cleanup.json", neo4j_session, common_job_parameters)
 
     except ClientError as ex:
-        logger.error("error while syncing gcp firewall rules", ex)
+        logger.error("error while syncing gcp firewall rules: %s", ex)
 
 
 @timeit
@@ -1813,7 +1813,7 @@ def cleanup_gcp_proxies(neo4j_session: neo4j.Session, common_job_parameters: Dic
         run_cleanup_job("gcp_compute_proxies_cleanup.json", neo4j_session, common_job_parameters)
 
     except ClientError as ex:
-        logger.error("error while syncing gcp proxies", ex)
+        logger.error("error while syncing gcp proxies: %s", ex)
 
 
 @timeit
