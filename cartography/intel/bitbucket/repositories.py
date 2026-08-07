@@ -11,6 +11,8 @@ import neo4j
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
 from .common import cleanse_string
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import make_requests_url
 from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
@@ -176,7 +178,7 @@ def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_l
     :param repo_primary_language: list of primary language to repo mappings
     """
     ingest_languages = """
-        UNWIND $Languages as lang
+        UNWIND $DictList as lang
 
         MERGE (pl:ProgrammingLanguage{id: lang.primary_language})
         ON CREATE SET pl.firstseen = timestamp(),
@@ -190,9 +192,10 @@ def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_l
         SET r.lastupdated = $UpdateTag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_languages,
-        Languages=repo_primary_language,
+        repo_primary_language,
         UpdateTag=update_tag,
     )
 
@@ -262,8 +265,9 @@ def _update_repo_last_activity(
 
     if last_activity_at is not None:
         iso_str, ts_ms = normalize_datetime(last_activity_at)
-        neo4j_session.run(
-            "MATCH (r:BitbucketRepository{id: $RepoId}) SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs",
+        run_write_query(
+            neo4j_session,
+            "MATCH (r:BitbucketRepository{id: $RepoId}) SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs",  # noqa: E501
             RepoId=repo_id,
             LastActivity=iso_str,
             LastActivityTs=ts_ms,
