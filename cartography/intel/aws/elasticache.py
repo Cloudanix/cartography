@@ -94,7 +94,7 @@ def load_elasticache_clusters(
         ON CREATE SET r2.firstseen = timestamp()
         SET r2.lastupdated = $aws_update_tag
     """
-    logger.info(f"Loading f{len(clusters)} ElastiCache clusters into graph.")
+    logger.info(f"Loading {len(clusters)} ElastiCache clusters into graph.")
     load_graph_data(
         neo4j_session,
         query,
