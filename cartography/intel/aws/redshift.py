@@ -309,7 +309,7 @@ def _attach_aws_ec2_subnet(neo4j_session: neo4j.Session, clusters: List[Dict], a
     attach_cluster_to_ec2_subnet = """
     UNWIND $DictList AS item
         MATCH (c:RedshiftCluster{id:item.cluster_arn})
-        MERGE (s:EC2Subnet{id: item.subnet_id})
+        MERGE (s:EC2Subnet{subnetid: item.subnet_id})
         MERGE (c)-[m:CLUSTER_SUBNET]->(s)
         ON CREATE SET m.firstseen = timestamp()
         SET m.lastupdated = $aws_update_tag
