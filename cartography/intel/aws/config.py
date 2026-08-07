@@ -7,6 +7,7 @@ import boto3
 import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -57,7 +58,7 @@ def load_configuration_recorders(
     aws_update_tag: int,
 ) -> None:
     ingest_configuration_recorders = """
-    UNWIND $Recorders as recorder
+    UNWIND $DictList as recorder
         MERGE (n:AWSConfigurationRecorder{id: recorder._id})
         ON CREATE SET n.firstseen = timestamp()
         SET n.name = recorder.name, n.role_arn = recorder.roleARN,
@@ -80,9 +81,10 @@ def load_configuration_recorders(
         arn = f'arn:aws:config:{region}:{current_aws_account_id}:configuration-recorder/{recorder["name"]}'
         recorder['consolelink'] = aws_console_link.get_console_link(arn=arn)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_configuration_recorders,
-        Recorders=data,
+        data,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
@@ -98,7 +100,7 @@ def load_delivery_channels(
     aws_update_tag: int,
 ) -> None:
     ingest_delivery_channels = """
-    UNWIND $Channels as channel
+    UNWIND $DictList as channel
         MERGE (n:AWSConfigDeliveryChannel{id: channel._id})
         ON CREATE SET n.firstseen = timestamp()
         SET n.name = channel.name,
@@ -123,9 +125,10 @@ def load_delivery_channels(
         arn = f'arn:aws:config:{region}:{current_aws_account_id}:delivery-channel/{channel["name"]}'
         channel['consolelink'] = aws_console_link.get_console_link(arn=arn)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_delivery_channels,
-        Channels=data,
+        data,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
@@ -141,7 +144,7 @@ def load_config_rules(
     aws_update_tag: int,
 ) -> None:
     ingest_config_rules = """
-    UNWIND $Rules as rule
+    UNWIND $DictList as rule
         MERGE (n:AWSConfigRule{id: rule.ConfigRuleArn})
         ON CREATE SET n.firstseen = timestamp()
         SET n.name = rule.ConfigRuleName, n.description = rule.Description,
@@ -172,9 +175,10 @@ def load_config_rules(
                 details.append(f'{detail}')
         rule["_source_details"] = details
         rule["consolelink"] = aws_console_link.get_console_link(arn=rule['ConfigRuleArn'])
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_config_rules,
-        Rules=data,
+        data,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,

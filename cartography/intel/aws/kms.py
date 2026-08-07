@@ -15,6 +15,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -123,7 +125,7 @@ def _load_kms_key_aliases(neo4j_session: neo4j.Session, aliases: List[Dict], upd
     Ingest KMS Aliases into neo4j.
     """
     ingest_aliases = """
-    UNWIND $alias_list AS alias
+    UNWIND $DictList AS alias
     MERGE (a:KMSAlias{id: alias.AliasArn})
     ON CREATE SET a.firstseen = timestamp(), a.targetkeyid = alias.TargetKeyId
     SET a.aliasname = alias.AliasName, a.lastupdated = $UpdateTag,
@@ -136,9 +138,10 @@ def _load_kms_key_aliases(neo4j_session: neo4j.Session, aliases: List[Dict], upd
     SET r.lastupdated = $UpdateTag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_aliases,
-        alias_list=aliases,
+        aliases,
         UpdateTag=update_tag,
     )
 
@@ -151,7 +154,7 @@ def _load_kms_key_grants(
     Ingest KMS Key Grants into neo4j.
     """
     ingest_grants = """
-    UNWIND $grants AS grant
+    UNWIND $DictList AS grant
     MERGE (g:KMSGrant{id: grant.GrantId})
     ON CREATE SET g.firstseen = timestamp(), g.granteeprincipal = grant.GranteePrincipal,
     g.creationdate = grant.CreationDate
@@ -170,9 +173,10 @@ def _load_kms_key_grants(
     for grant in grants_list:
         grant['CreationDate'] = str(grant['CreationDate'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_grants,
-        grants=grants_list,
+        grants_list,
         UpdateTag=update_tag,
     )
 
@@ -184,7 +188,7 @@ def _load_kms_key_policies(neo4j_session: neo4j.Session, policies: List[Dict], u
     """
     # NOTE we use the coalesce function so appending works when the value is null initially
     ingest_policies = """
-    UNWIND $policies AS policy
+    UNWIND $DictList AS policy
     MATCH (k:KMSKey) where k.name = policy.kms_key
     SET k.anonymous_access = (coalesce(k.anonymous_access, false) OR policy.internet_accessible),
     k.region=policy.region,
@@ -192,9 +196,10 @@ def _load_kms_key_policies(neo4j_session: neo4j.Session, policies: List[Dict], u
     k.lastupdated = $UpdateTag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_policies,
-        policies=policies,
+        policies,
         UpdateTag=update_tag,
     )
 
@@ -205,7 +210,8 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
     SET kmskey.anonymous_access = false, kmskey.anonymous_actions = []
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         set_defaults,
         AWS_ID=aws_account_id,
     )
@@ -317,7 +323,7 @@ def load_kms_keys(
     aws_update_tag: int,
 ) -> None:
     ingest_keys = """
-    UNWIND $key_list AS k
+    UNWIND $DictList AS k
     MERGE (kmskey:KMSKey{id:k.KeyId})
     ON CREATE SET kmskey.firstseen = timestamp(),
     kmskey.arn = k.Arn, kmskey.creationdate = k.CreationDate
@@ -345,9 +351,10 @@ def load_kms_keys(
         key['ValidTo'] = str(key.get('ValidTo'))
         key['consolelink'] = aws_console_link.get_console_link(arn=key['Arn'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_keys,
-        key_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )

@@ -11,6 +11,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.dns import ingest_dns_record_by_fqdn
 from cartography.util import aws_handle_regions
@@ -68,7 +70,7 @@ def _load_es_domains(
     :param domains: Domain list to ingest
     """
     ingest_records = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (es:ESDomain{id: record.DomainId})
     ON CREATE SET es.firstseen = timestamp(), es.arn = record.ARN, es.domainid = record.DomainId
     SET es.lastupdated = $aws_update_tag, es.deleted = record.Deleted, es.created = record.created,
@@ -102,9 +104,10 @@ def _load_es_domains(
     for d in domain_list:
         del d['ServiceSoftwareOptions']
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        Records=domain_list,
+        domain_list,
         AWS_ACCOUNT_ID=aws_account_id,
         aws_update_tag=aws_update_tag,
     )
@@ -151,7 +154,7 @@ def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_dat
     ingest_subnet = """
     MATCH (es:ESDomain{id: $DomainId})
     WITH es
-    UNWIND $SubnetList as subnet_id
+    UNWIND $DictList as subnet_id
         MATCH (subnet_node:EC2Subnet{id: subnet_id})
         MERGE (es)-[r:PART_OF_SUBNET]->(subnet_node)
         ON CREATE SET r.firstseen = timestamp()
@@ -161,7 +164,7 @@ def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_dat
     ingest_sec_groups = """
     MATCH (es:ESDomain{id: $DomainId})
     WITH es
-    UNWIND $SecGroupList as ecsecgroup_id
+    UNWIND $DictList as ecsecgroup_id
         MATCH (group_node:EC2SecurityGroup{id: ecsecgroup_id})
         MERGE (es)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(group_node)
         ON CREATE SET r.firstseen = timestamp()
@@ -173,21 +176,20 @@ def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_dat
         subnetList = vpc_data.get("SubnetIds", [])
         groupList = vpc_data.get("SecurityGroupIds", [])
 
-        if len(subnetList) > 0:
-            neo4j_session.run(
-                ingest_subnet,
-                DomainId=domain_id,
-                SubnetList=subnetList,
-                aws_update_tag=aws_update_tag,
-            )
-
-        if len(groupList) > 0:
-            neo4j_session.run(
-                ingest_sec_groups,
-                DomainId=domain_id,
-                SecGroupList=groupList,
-                aws_update_tag=aws_update_tag,
-            )
+        load_graph_data(
+            neo4j_session,
+            ingest_subnet,
+            subnetList,
+            DomainId=domain_id,
+            aws_update_tag=aws_update_tag,
+        )
+        load_graph_data(
+            neo4j_session,
+            ingest_sec_groups,
+            groupList,
+            DomainId=domain_id,
+            aws_update_tag=aws_update_tag,
+        )
 
 
 @timeit
@@ -209,7 +211,7 @@ def _process_access_policy(neo4j_session: neo4j.Session, domain_id: str, domain_
         if policy.is_internet_accessible():
             exposed_internet = True
 
-    neo4j_session.run(tag_es, DomainId=domain_id, InternetExposed=exposed_internet)
+    run_write_query(neo4j_session, tag_es, DomainId=domain_id, InternetExposed=exposed_internet)
 
 
 @timeit

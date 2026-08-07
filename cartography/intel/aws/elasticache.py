@@ -8,6 +8,7 @@ import boto3
 import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.stats import get_stats_client
 from cartography.util import aws_handle_regions
@@ -60,7 +61,7 @@ def load_elasticache_clusters(
     aws_account_id: str, update_tag: int,
 ) -> None:
     query = """
-    UNWIND $clusters as elasticache_cluster
+    UNWIND $DictList as elasticache_cluster
         MERGE (cluster:ElasticacheCluster{id:elasticache_cluster.ARN})
         ON CREATE SET cluster.firstseen = timestamp(),
             cluster.arn = elasticache_cluster.ARN,
@@ -94,9 +95,10 @@ def load_elasticache_clusters(
         SET r2.lastupdated = $aws_update_tag
     """
     logger.info(f"Loading f{len(clusters)} ElastiCache clusters into graph.")
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        clusters=clusters,
+        clusters,
         aws_update_tag=update_tag,
         aws_account_id=aws_account_id,
     )
@@ -105,7 +107,7 @@ def load_elasticache_clusters(
 @timeit
 def attach_elasticache_clusters_to_security_groups(neo4j_session: neo4j.Session, clusters: List[Dict], update_tag: int) -> None:
     query = """
-    UNWIND $clusters as elasticache_cluster
+    UNWIND $DictList as elasticache_cluster
         MATCH (cluster:ElasticacheCluster{id:elasticache_cluster.ARN})
         UNWIND elasticache_cluster.SecurityGroups as sg
             MERGE (security_group:EC2SecurityGroup{id: sg.SecurityGroupId})
@@ -116,9 +118,10 @@ def attach_elasticache_clusters_to_security_groups(neo4j_session: neo4j.Session,
             ON CREATE SET r.firstseen = timestamp()
             SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        clusters=clusters,
+        clusters,
         aws_update_tag=update_tag,
     )
 

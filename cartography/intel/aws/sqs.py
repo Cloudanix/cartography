@@ -10,6 +10,7 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -74,7 +75,7 @@ def load_sqs_queues(
     aws_update_tag: int,
 ) -> None:
     ingest_queues = """
-    UNWIND $Queues as sqs_queue
+    UNWIND $DictList as sqs_queue
         MERGE (queue:SQSQueue{id: sqs_queue.QueueArn})
         ON CREATE SET queue.firstseen = timestamp(), queue.url = sqs_queue.url
         SET queue.name = sqs_queue.name, queue.region = sqs_queue.region, queue.arn = sqs_queue.QueueArn,
@@ -125,9 +126,10 @@ def load_sqs_queues(
                 })
         queues.append(queue)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_queues,
-        Queues=queues,
+        queues,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
@@ -141,15 +143,16 @@ def _attach_dead_letter_queues(neo4j_session: neo4j.Session, data: List[Dict[str
     Attach deadletter queues to their queues.
     """
     attach_deadletter_to_queue = """
-    UNWIND $Relations as relation
+    UNWIND $DictList as relation
         MATCH (queue:SQSQueue{id: relation.arn}), (deadletter:SQSQueue{id: relation.dead_letter_arn})
         MERGE (queue)-[r:HAS_DEADLETTER_QUEUE]->(deadletter)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_deadletter_to_queue,
-        Relations=data,
+        data,
         aws_update_tag=aws_update_tag,
     )
 
