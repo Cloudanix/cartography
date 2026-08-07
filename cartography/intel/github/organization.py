@@ -8,6 +8,7 @@ from typing import Tuple
 
 import neo4j
 
+from cartography.client.core.tx import run_write_query
 from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import fetch_page
@@ -81,7 +82,8 @@ def load_organization(
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag;
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         query,
         OrgLogin=org_data['login'],
         OrgUrl=org_data['url'],

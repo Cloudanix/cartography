@@ -7,6 +7,7 @@ from typing import Tuple
 
 import neo4j
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import fetch_all
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
@@ -80,7 +81,7 @@ def load_organization_users(
     SET org.lastupdated = $UpdateTag
     WITH org
 
-    UNWIND $UserData as user
+    UNWIND $DictList as user
 
     MERGE (u:GitHubUser{id: user.node.url})
     ON CREATE SET u.firstseen = timestamp()
@@ -102,11 +103,12 @@ def load_organization_users(
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
+        user_data,
         OrgUrl=org_data["url"],
         OrgLogin=org_data["login"],
-        UserData=user_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
         workspace_id=common_job_parameters["WORKSPACE_ID"],
     )
