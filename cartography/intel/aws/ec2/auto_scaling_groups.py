@@ -205,10 +205,7 @@ def load_ec2_auto_scaling_groups(
         if group.get('VPCZoneIdentifier'):
             vpclist = group["VPCZoneIdentifier"]
 
-            if ',' in vpclist:
-                data = vpclist.split(',')
-            else:
-                data = vpclist
+            data = vpclist.split(',')
 
             load_graph_data(
                 neo4j_session,
