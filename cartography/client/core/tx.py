@@ -30,7 +30,7 @@ T = TypeVar("T")
 
 # Rows per write transaction. Matches upstream cartography's default; tune per call
 # via the batch_size param if a module's rows are unusually wide.
-DEFAULT_LOAD_BATCH_SIZE = 10000
+DEFAULT_LOAD_BATCH_SIZE = 500
 
 _MAX_NETWORK_RETRIES = 5
 _MAX_ENTITY_NOT_FOUND_RETRIES = 5
