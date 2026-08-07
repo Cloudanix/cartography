@@ -253,6 +253,31 @@ definitions as donor code where the fork has no custom logic (Option 3, selectiv
 | 3.5 | `aws/redshift.py` | 5 | S | ✅ `dcfeb5caa` |
 | 3.6 | `github/repos.py`, `aws/rds.py`, `azure/subscription.py`, `digitalocean/compute.py` | 1–2 each | S | ✅ `dcd217064` |
 | 3.7 | Already-UNWIND raw writes → `load_graph_data` (10k chunks + retry) / `run_write_query` (azure ×3, aws s3/route53, gcp spanner, pagerduty) | n/a | M | ✅ `3f637d91c`, `affa89d32`, `05de80069` |
+| 3.8 | **Uniform neo4j interactions** (plan items 5+6): every remaining raw `session.run` in the in-scope providers → `load_graph_data` / `run_write_query` / `execute_read` | n/a | M | ✅ 8 commits, `249da0f8f`..`2408593c5` |
+
+> **Phase 3.8 — uniform interactions (2026-08-06).** Sweep over aws, gcp, azure, oci,
+> github, bitbucket, gitlab and azuredevops (okta and other low-priority providers left
+> alone). ~200 raw auto-commit calls converted, provider by provider, one commit per
+> module group:
+> - **writes with one row list** → `load_graph_data` (10k-row chunks + transient-error
+>   retry); the query's list parameter is renamed to `$DictList` and nothing else changes.
+> - **scalar writes** (including `MATCH … SET` queries with no MERGE) → `run_write_query`
+>   (managed tx + retry).
+> - **reads** → `execute_read(read_list_of_dicts_tx, …)`; record access (`r["field"]`)
+>   is unchanged because the helper returns dicts with the same keys.
+>
+> Loaders that already ran inside `session.execute_write(...)`/`tx.run` were left alone —
+> they are managed already. gitlab was verified to have no raw calls to begin with.
+>
+> An AST scan (`.run()` on a session receiver) now reports **zero** raw calls across all
+> eight providers. Two follow-on test updates were required and are part of the commits:
+> `test_repos`'s query-shape assertion and gcp `test_iam`'s deleted-member regression test
+> both asserted on the old raw-call path and now assert through the managed path.
+>
+> Full unit suite: 24 failures, all pre-existing (same set as before this work, minus
+> `test_principal_policies`, which this work fixed). Azure modules are compile+lint
+> validated only — their SDK packages are missing in the dev sandbox — so the azure
+> conversions still need the CI integration run.
 
 > **Phase 3 implementation notes (2026-08-06):** executed via the plan §1.3 "intermediate
 > win": each per-item loop rewritten as one UNWIND batch through `load_graph_data`
