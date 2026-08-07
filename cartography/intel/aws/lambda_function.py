@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -188,7 +189,7 @@ def load_lambda_functions(
     aws_update_tag: int,
 ) -> None:
     ingest_lambda_functions = """
-    UNWIND $lambda_functions_list AS lf
+    UNWIND $DictList AS lf
     MERGE (lambda:AWSLambda{id: lf.FunctionArn})
     ON CREATE SET lambda.firstseen = timestamp()
     SET lambda.name = lf.FunctionName,
@@ -237,9 +238,10 @@ def load_lambda_functions(
     SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_lambda_functions,
-        lambda_functions_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
@@ -329,7 +331,7 @@ def load_lambda_function_details(
 @timeit
 def _load_lambda_function_aliases(neo4j_session: neo4j.Session, lambda_aliases: List[Dict], update_tag: int) -> None:
     ingest_aliases = """
-    UNWIND $aliases_list AS alias
+    UNWIND $DictList AS alias
     MERGE (a:AWSLambdaFunctionAlias{id: alias.AliasArn})
     ON CREATE SET a.firstseen = timestamp()
     SET a.aliasname = alias.Name,
@@ -347,9 +349,10 @@ def _load_lambda_function_aliases(neo4j_session: neo4j.Session, lambda_aliases: 
     SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_aliases,
-        aliases_list=lambda_aliases,
+        lambda_aliases,
         aws_update_tag=update_tag,
     )
 
@@ -361,7 +364,7 @@ def _load_lambda_event_source_mappings(
     update_tag: int,
 ) -> None:
     ingest_esms = """
-    UNWIND $esm_list AS esm
+    UNWIND $DictList AS esm
     MERGE (e:AWSLambdaEventSourceMapping{id: esm.EventSourceArn})
     ON CREATE SET e.firstseen = timestamp()
     SET e.batchsize = esm.BatchSize,
@@ -389,9 +392,10 @@ def _load_lambda_event_source_mappings(
     SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_esms,
-        esm_list=lambda_event_source_mappings,
+        lambda_event_source_mappings,
         aws_update_tag=update_tag,
     )
 
@@ -399,7 +403,7 @@ def _load_lambda_event_source_mappings(
 @timeit
 def _load_lambda_layers(neo4j_session: neo4j.Session, lambda_layers: List[Dict], update_tag: int) -> None:
     ingest_layers = """
-    UNWIND $layers_list AS layer
+    UNWIND $DictList AS layer
     MERGE (l:AWSLambdaLayer{id: layer.Arn})
     ON CREATE SET l.firstseen = timestamp()
     SET l.codesize = layer.CodeSize,
@@ -417,9 +421,10 @@ def _load_lambda_layers(neo4j_session: neo4j.Session, lambda_layers: List[Dict],
     SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_layers,
-        layers_list=lambda_layers,
+        lambda_layers,
         aws_update_tag=update_tag,
     )
 

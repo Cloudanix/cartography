@@ -16,6 +16,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -242,7 +244,7 @@ def load_apigateway_rest_apis(
     Ingest the details of API Gateway REST APIs into neo4j.
     """
     ingest_rest_apis = """
-    UNWIND $rest_apis_list AS r
+    UNWIND $DictList AS r
     MERGE (rest_api:APIGatewayRestAPI{id:r.id})
     ON CREATE SET rest_api.firstseen = timestamp(),
     rest_api.createddate = r.createdDate
@@ -270,9 +272,10 @@ def load_apigateway_rest_apis(
         api['Arn'] = f"arn:aws:apigateway:{region}::restapis/{api['id']}"
         api['consolelink'] = aws_console_link.get_console_link(arn=api['Arn'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_rest_apis,
-        rest_apis_list=rest_apis,
+        rest_apis,
         aws_update_tag=aws_update_tag,
         AWS_ACCOUNT_ID=current_aws_account_id,
     )
@@ -286,16 +289,17 @@ def _load_apigateway_policies(
     Ingest API Gateway REST API policy results into neo4j.
     """
     ingest_policies = """
-    UNWIND $policies as policy
+    UNWIND $DictList as policy
     MATCH (r:APIGatewayRestAPI) where r.name = policy.api_id
     SET r.anonymous_access = (coalesce(r.anonymous_access, false) OR policy.internet_accessible),
     r.anonymous_actions = coalesce(r.anonymous_actions, []) + policy.accessible_actions,
     r.lastupdated = $UpdateTag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_policies,
-        policies=policies,
+        policies,
         UpdateTag=update_tag,
     )
 
@@ -307,7 +311,8 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
     SET restApi.anonymous_access = false, restApi.anonymous_actions = []
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         set_defaults,
         AWS_ID=aws_account_id,
     )
@@ -321,7 +326,7 @@ def _load_apigateway_stages(
     Ingest the Stage resource details into neo4j.
     """
     ingest_stages = """
-    UNWIND $stages_list AS stage
+    UNWIND $DictList AS stage
     MERGE (s:APIGatewayStage{id: stage.arn})
     ON CREATE SET s.firstseen = timestamp(), s.stagename = stage.stageName,
     s.createddate = stage.createdDate
@@ -349,9 +354,10 @@ def _load_apigateway_stages(
         stage['arn'] = f"arn:aws:apigateway:{stage['region']}::restapis/{stage['apiId']}/stages/{stage['stageName']}"
         stage['consolelink'] = aws_console_link.get_console_link(arn=stage['arn'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_stages,
-        stages_list=stages,
+        stages,
         UpdateTag=update_tag,
     )
 
@@ -364,7 +370,7 @@ def _load_apigateway_certificates(
     Ingest the API Gateway Client Certificate details into neo4j.
     """
     ingest_certificates = """
-    UNWIND $certificates_list as certificate
+    UNWIND $DictList as certificate
     MERGE (c:APIGatewayClientCertificate{id: certificate.arn})
     ON CREATE SET c.firstseen = timestamp(), c.createddate = certificate.createdDate
     SET c.lastupdated = $UpdateTag, c.expirationdate = certificate.expirationDate,
@@ -379,9 +385,10 @@ def _load_apigateway_certificates(
     SET r.lastupdated = $UpdateTag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_certificates,
-        certificates_list=certificates,
+        certificates,
         UpdateTag=update_tag,
     )
 
@@ -394,7 +401,7 @@ def _load_apigateway_resources(
     Ingest the API Gateway Resource details into neo4j.
     """
     ingest_resources = """
-    UNWIND $resources_list AS res
+    UNWIND $DictList AS res
     MERGE (s:APIGatewayResource{id: res.id})
     ON CREATE SET s.firstseen = timestamp()
     SET s.path = res.path,
@@ -414,9 +421,10 @@ def _load_apigateway_resources(
     for resource in resources:
         resource['arn'] = f"arn:aws:apigateway:{resource['region']}::restapis/{resource['apiId']}/resources/{resource['id']}"
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_resources,
-        resources_list=resources,
+        resources,
         UpdateTag=update_tag,
     )
 

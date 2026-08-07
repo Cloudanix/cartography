@@ -8,6 +8,7 @@ import neo4j
 
 from .util import call_azure_devops_api
 from .util import validate_organization_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -76,7 +77,8 @@ def load_organization(
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag;
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         query,
         OrgName=org_data.get("name"),
         OrgUrl=org_data.get("url"),

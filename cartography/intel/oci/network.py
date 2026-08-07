@@ -12,6 +12,7 @@ import oci.logging
 
 from . import tags
 from . import utils
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
@@ -538,7 +539,9 @@ def sync_nsg_security_rules(
         "WHERE nsg.region = $REGION "
         "RETURN nsg.ocid as ocid"
     )
-    nsgs = neo4j_session.run(query, COMPARTMENT_ID=compartment_ocid, REGION=region)
+    nsgs = neo4j_session.execute_read(
+        read_list_of_dicts_tx, query, COMPARTMENT_ID=compartment_ocid, REGION=region,
+    )
     for nsg in nsgs:
         data = get_nsg_security_rules_data(network_client, nsg["ocid"])
         if data["SecurityRules"]:
@@ -877,7 +880,9 @@ def sync_subnet_associations(
         "subnet.security_list_ids as security_list_ids"
     )
     for compartment in compartments:
-        subnets = neo4j_session.run(query, COMPARTMENT_ID=compartment["ocid"], REGION=region)
+        subnets = neo4j_session.execute_read(
+            read_list_of_dicts_tx, query, COMPARTMENT_ID=compartment["ocid"], REGION=region,
+        )
         rt_rows = []
         sl_rows = []
         for subnet in subnets:
@@ -1002,7 +1007,9 @@ def sync_vnics(
         "RETURN DISTINCT attachment.vnic_id as vnic_id"
     )
     for compartment in compartments:
-        attachments = neo4j_session.run(query, COMPARTMENT_ID=compartment["ocid"], REGION=region)
+        attachments = neo4j_session.execute_read(
+            read_list_of_dicts_tx, query, COMPARTMENT_ID=compartment["ocid"], REGION=region,
+        )
         vnics = []
         for attachment in attachments:
             vnic = get_vnic_data(network_client, attachment["vnic_id"])

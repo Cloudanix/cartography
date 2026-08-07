@@ -12,6 +12,7 @@ import oci
 
 from . import tags
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -210,7 +211,7 @@ def load_autonomous_databases(
     upstream nodes have not been synced yet).
     """
     ingest_adb = """
-    UNWIND $items AS adb
+    UNWIND $DictList AS adb
         MERGE (a:OCIAutonomousDatabase{id: adb.id})
         ON CREATE SET a.firstseen = timestamp(),
                       a.createdate = adb.time_created
@@ -270,9 +271,10 @@ def load_autonomous_databases(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_adb,
-        items=autonomous_databases,
+        autonomous_databases,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -417,7 +419,7 @@ def load_db_systems(
     oci_update_tag: int,
 ) -> None:
     ingest_db_system = """
-    UNWIND $items AS s
+    UNWIND $DictList AS s
         MERGE (sys:OCIDbSystem{id: s.id})
         ON CREATE SET sys.firstseen = timestamp(),
                       sys.createdate = s.time_created
@@ -468,9 +470,10 @@ def load_db_systems(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_db_system,
-        items=db_systems,
+        db_systems,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -560,7 +563,7 @@ def load_db_homes(
     (e.g. a system in a state we filter out) silently no-op.
     """
     ingest_db_home = """
-    UNWIND $items AS h
+    UNWIND $DictList AS h
         MERGE (dh:OCIDbHome{id: h.id})
         ON CREATE SET dh.firstseen = timestamp(),
                       dh.createdate = h.time_created
@@ -584,8 +587,8 @@ def load_db_homes(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
-        ingest_db_home, items=db_homes, oci_update_tag=oci_update_tag,
+    load_graph_data(
+        neo4j_session, ingest_db_home, db_homes, oci_update_tag=oci_update_tag,
     )
 
     _link_kms_key(
@@ -672,7 +675,7 @@ def load_db_nodes(
     HAS_DB_NODE.
     """
     ingest_db_node = """
-    UNWIND $items AS n
+    UNWIND $DictList AS n
         MERGE (dn:OCIDbNode{id: n.id})
         ON CREATE SET dn.firstseen = timestamp(),
                       dn.createdate = n.time_created
@@ -699,8 +702,8 @@ def load_db_nodes(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
-        ingest_db_node, items=db_nodes, oci_update_tag=oci_update_tag,
+    load_graph_data(
+        neo4j_session, ingest_db_node, db_nodes, oci_update_tag=oci_update_tag,
     )
 
 
@@ -725,15 +728,15 @@ def _link_subnet_and_nsg(
     ]
     if subnet_links:
         link_subnet = f"""
-        UNWIND $links AS link
+        UNWIND $DictList AS link
             MATCH (r:{label}{{id: link.resource_id}})
             MATCH (s:OCISubnet{{id: link.subnet_id}})
             MERGE (r)-[rel:OCI_SUBNET]->(s)
             ON CREATE SET rel.firstseen = timestamp()
             SET rel.lastupdated = $oci_update_tag
         """
-        neo4j_session.run(
-            link_subnet, links=subnet_links, oci_update_tag=oci_update_tag,
+        load_graph_data(
+            neo4j_session, link_subnet, subnet_links, oci_update_tag=oci_update_tag,
         )
 
     nsg_links: List[Dict[str, str]] = []
@@ -742,15 +745,15 @@ def _link_subnet_and_nsg(
             nsg_links.append({"resource_id": item["id"], "nsg_id": nsg_id})
     if nsg_links:
         link_nsg = f"""
-        UNWIND $links AS link
+        UNWIND $DictList AS link
             MATCH (r:{label}{{id: link.resource_id}})
             MATCH (n:OCINetworkSecurityGroup{{id: link.nsg_id}})
             MERGE (r)-[rel:OCI_NSG]->(n)
             ON CREATE SET rel.firstseen = timestamp()
             SET rel.lastupdated = $oci_update_tag
         """
-        neo4j_session.run(
-            link_nsg, links=nsg_links, oci_update_tag=oci_update_tag,
+        load_graph_data(
+            neo4j_session, link_nsg, nsg_links, oci_update_tag=oci_update_tag,
         )
 
 
@@ -771,14 +774,14 @@ def _link_kms_key(
     if not links:
         return
     link_kms = f"""
-    UNWIND $links AS link
+    UNWIND $DictList AS link
         MATCH (r:{label}{{id: link.resource_id}})
         MATCH (k:OCIKmsKey{{id: link.kms_key_id}})
         MERGE (r)-[rel:OCI_KMS_KEY]->(k)
         ON CREATE SET rel.firstseen = timestamp()
         SET rel.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(link_kms, links=links, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, link_kms, links, oci_update_tag=oci_update_tag)
 
 
 # ---------------------------------------------------------------------------

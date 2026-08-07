@@ -9,6 +9,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.client.core.tx import run_write_query
 from cartography.intel.gcp import compute
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -178,7 +179,8 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
     SET r.lastupdated = $gcp_update_tag
     """
     for bucket in buckets:
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             query,
             ProjectId=project_id,
             BucketId=bucket['id'],

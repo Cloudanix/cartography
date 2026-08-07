@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.graph.job import GraphJob
 from cartography.models.aws.ec2.subnet_instance import EC2SubnetInstanceSchema
 from cartography.util import aws_handle_regions
@@ -80,7 +81,7 @@ def load_subnets(
 ) -> None:
 
     ingest_subnets = """
-    UNWIND $subnets as subnet
+    UNWIND $DictList as subnet
     MERGE (snet:EC2Subnet{subnetid: subnet.SubnetId})
     ON CREATE SET snet.firstseen = timestamp()
     SET snet.lastupdated = $aws_update_tag, snet.name = subnet.CidrBlock, snet.cidr_block = subnet.CidrBlock,
@@ -94,7 +95,7 @@ def load_subnets(
     """
 
     ingest_subnet_vpc_relations = """
-    UNWIND $subnets as subnet
+    UNWIND $DictList as subnet
     MATCH (snet:EC2Subnet{subnetid: subnet.SubnetId}), (vpc:AWSVpc{id: subnet.VpcId})
     MERGE (snet)-[r:MEMBER_OF_AWS_VPC]->(vpc)
     ON CREATE SET r.firstseen = timestamp()
@@ -102,23 +103,32 @@ def load_subnets(
     """
 
     ingest_subnet_aws_account_relations = """
-    UNWIND $subnets as subnet
+    UNWIND $DictList as subnet
     MATCH (snet:EC2Subnet{subnetid: subnet.SubnetId}), (aws:AWSAccount{id: $aws_account_id})
     MERGE (aws)-[r:RESOURCE]->(snet)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
-        ingest_subnets, subnets=data, aws_update_tag=aws_update_tag,
+    load_graph_data(
+        neo4j_session,
+        ingest_subnets,
+        data,
+        aws_update_tag=aws_update_tag,
         aws_account_id=aws_account_id,
     )
-    neo4j_session.run(
-        ingest_subnet_vpc_relations, subnets=data, aws_update_tag=aws_update_tag,
+    load_graph_data(
+        neo4j_session,
+        ingest_subnet_vpc_relations,
+        data,
+        aws_update_tag=aws_update_tag,
         aws_account_id=aws_account_id,
     )
-    neo4j_session.run(
-        ingest_subnet_aws_account_relations, subnets=data, aws_update_tag=aws_update_tag,
+    load_graph_data(
+        neo4j_session,
+        ingest_subnet_aws_account_relations,
+        data,
+        aws_update_tag=aws_update_tag,
         aws_account_id=aws_account_id,
     )
 

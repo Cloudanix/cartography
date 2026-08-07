@@ -1,16 +1,143 @@
+import logging
+import threading
+import time
+from functools import partial
 from typing import Any
+from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Tuple
+from typing import TypeVar
 from typing import Union
 
+import backoff
 import neo4j
+import neo4j.exceptions
 
 from cartography.graph.querybuilder import build_create_index_queries
+from cartography.graph.querybuilder import build_create_index_queries_for_matchlink
 from cartography.graph.querybuilder import build_ingestion_query
+from cartography.graph.querybuilder import build_matchlink_query
 from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.util import backoff_handler
 from cartography.util import batch
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# Rows per write transaction. Matches upstream cartography's default; tune per call
+# via the batch_size param if a module's rows are unusually wide.
+DEFAULT_LOAD_BATCH_SIZE = 10000
+
+_MAX_NETWORK_RETRIES = 5
+_MAX_ENTITY_NOT_FOUND_RETRIES = 5
+_MAX_BUFFER_ERROR_RETRIES = 5
+_NETWORK_EXCEPTIONS: tuple = (
+    ConnectionResetError,
+    neo4j.exceptions.ServiceUnavailable,
+    neo4j.exceptions.SessionExpired,
+    neo4j.exceptions.TransientError,
+)
+
+
+def _is_retryable_client_error(exc: Exception) -> bool:
+    """
+    EntityNotFound during concurrent write operations is a known transient Neo4j error:
+    with concurrent MERGE/DELETE one thread can delete an entity another thread has
+    referenced but not yet locked. Neo4j maintainers recommend retrying it even though
+    the driver classifies it as a non-retryable ClientError
+    (https://github.com/neo4j/neo4j/issues/6823). This is exactly the condition created
+    by our 8-worker-per-provider write concurrency.
+    """
+    if not isinstance(exc, neo4j.exceptions.ClientError):
+        return False
+    # exc.code can be None for locally-created errors
+    return exc.code == "Neo.ClientError.Statement.EntityNotFound"
+
+
+def _is_retryable_buffer_error(exc: Exception) -> bool:
+    """
+    BufferError("... cannot be re-sized") is a known transient error from the neo4j
+    driver's internal buffer management under multi-threaded use.
+    """
+    return isinstance(exc, BufferError) and "cannot be re-sized" in str(exc)
+
+
+def _run_with_retry(operation: Callable[[], T], target: str) -> T:
+    """
+    Execute the supplied callable with retry + exponential backoff for transient network
+    errors, EntityNotFound ClientErrors, and re-size BufferErrors. Anything else raises
+    immediately; exhausted retries re-raise the last error.
+    """
+    network_attempts = 0
+    entity_attempts = 0
+    buffer_attempts = 0
+    network_wait = backoff.expo()
+    entity_wait = backoff.expo()
+    buffer_wait = backoff.expo()
+
+    def _backoff(kind: str, attempts: int, max_attempts: int, wait_gen: Any, exc: Exception) -> None:
+        wait = next(wait_gen) or 1.0
+        backoff_handler({"wait": wait, "tries": attempts, "target": target, "exception": exc})
+        logger.warning(f"{kind} retry {attempts}/{max_attempts} for {target}: {exc}")
+        time.sleep(wait)
+
+    while True:
+        try:
+            result = operation()
+            recovered = network_attempts + entity_attempts + buffer_attempts
+            if recovered:
+                logger.info(f"Recovered after {recovered} retries. Function: {target}")
+            return result
+        except _NETWORK_EXCEPTIONS as exc:
+            if network_attempts >= _MAX_NETWORK_RETRIES - 1:
+                raise
+            network_attempts += 1
+            _backoff("Network error", network_attempts, _MAX_NETWORK_RETRIES, network_wait, exc)
+        except neo4j.exceptions.ClientError as exc:
+            if not _is_retryable_client_error(exc) or entity_attempts >= _MAX_ENTITY_NOT_FOUND_RETRIES - 1:
+                raise
+            entity_attempts += 1
+            _backoff("EntityNotFound", entity_attempts, _MAX_ENTITY_NOT_FOUND_RETRIES, entity_wait, exc)
+        except BufferError as exc:
+            if not _is_retryable_buffer_error(exc) or buffer_attempts >= _MAX_BUFFER_ERROR_RETRIES - 1:
+                raise
+            buffer_attempts += 1
+            _backoff("BufferError", buffer_attempts, _MAX_BUFFER_ERROR_RETRIES, buffer_wait, exc)
+
+
+def execute_write_with_retry(
+        neo4j_session: neo4j.Session,
+        tx_func: Any,
+        *args: Any,
+        **kwargs: Any,
+) -> Any:
+    """
+    Run a transaction function through session.execute_write with _run_with_retry's
+    transient-error classification on top of the driver's own TransientError handling.
+    Use for any custom write that does not fit the load_graph_data() path.
+    """
+    target = getattr(tx_func, "__qualname__", repr(tx_func))
+    operation = partial(neo4j_session.execute_write, tx_func, *args, **kwargs)
+    return _run_with_retry(operation, target)
+
+
+def run_write_query(neo4j_session: neo4j.Session, query: str, **parameters: Any) -> None:
+    """
+    Execute a single write query inside a managed transaction with retry. Drop-in
+    replacement for raw auto-commit neo4j_session.run(query, ...) in intel modules
+    (perf plan Phase 3.7).
+    """
+    def _run_query_tx(tx: neo4j.Transaction) -> None:
+        tx.run(query, **parameters).consume()
+
+    def _operation() -> None:
+        neo4j_session.execute_write(_run_query_tx)
+
+    _run_with_retry(_operation, "run_write_query")
 
 
 def read_list_of_values_tx(tx: neo4j.Transaction, query: str, **kwargs) -> List[Union[str, int]]:
@@ -188,7 +315,7 @@ def write_list_of_dicts_tx(
     :param kwargs: Keyword args to be supplied to the Neo4j query.
     :return: None
     """
-    tx.run(query, kwargs)
+    tx.run(query, kwargs).consume()
 
 
 def write_query_tx(
@@ -209,6 +336,7 @@ def load_graph_data(
         neo4j_session: neo4j.Session,
         query: str,
         dict_list: List[Dict[str, Any]],
+        batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
         **kwargs,
 ) -> None:
     """
@@ -217,11 +345,15 @@ def load_graph_data(
     :param query: The Neo4j write query to run. This query is not meant to be handwritten, rather it should be generated
     with cartography.graph.querybuilder.build_ingestion_query().
     :param dict_list: The data to load to the graph represented as a list of dicts.
+    :param batch_size: Number of items to write per transaction. Defaults to DEFAULT_LOAD_BATCH_SIZE.
     :param kwargs: Allows additional keyword args to be supplied to the Neo4j query.
     :return: None
     """
-    for data_batch in batch(dict_list, size=500):
-        neo4j_session.execute_write(
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
+    for data_batch in batch(dict_list, size=batch_size):
+        execute_write_with_retry(
+            neo4j_session,
             write_list_of_dicts_tx,
             query,
             DictList=data_batch,
@@ -229,30 +361,65 @@ def load_graph_data(
         )
 
 
+# Schema classes whose indexes were already ensured in this process. load() runs per
+# region x account x schema, so without this every load re-issues 6-8 CREATE INDEX
+# round-trips that are no-ops after the first.
+_ensured_index_schemas: set = set()
+_ensured_index_schemas_lock = threading.Lock()
+
+
+def reset_ensured_indexes_cache() -> None:
+    """Forget which schemas had their indexes ensured (tests / long-lived processes)."""
+    with _ensured_index_schemas_lock:
+        _ensured_index_schemas.clear()
+
+
 def ensure_indexes(neo4j_session: neo4j.Session, node_schema: CartographyNodeSchema) -> None:
     """
     Creates indexes if they don't exist for the given CartographyNodeSchema object, as well as for all of the
     relationships defined on its `other_relationships` and `sub_resource_relationship` fields. This operation is
-    idempotent.
+    idempotent and memoized per schema class for the lifetime of the process.
 
     This ensures that every time we need to MATCH on a node to draw a relationship to it, the field used for the MATCH
     will be indexed, making the operation fast.
     :param neo4j_session: The neo4j session
     :param node_schema: The node_schema object to create indexes for.
     """
+    schema_key = f"{type(node_schema).__module__}.{type(node_schema).__qualname__}"
+    with _ensured_index_schemas_lock:
+        if schema_key in _ensured_index_schemas:
+            return
+
     queries = build_create_index_queries(node_schema)
 
     for query in queries:
         if not query.startswith('CREATE INDEX IF NOT EXISTS'):
             raise ValueError('Query provided to `ensure_indexes()` does not start with "CREATE INDEX IF NOT EXISTS".')
-        # Managed transaction so index creation retries on TransientError instead of failing the sync.
-        neo4j_session.execute_write(write_query_tx, query)
+        try:
+            # Managed transaction so index creation retries on TransientError instead of failing the sync.
+            neo4j_session.execute_write(write_query_tx, query)
+        except neo4j.exceptions.ClientError as e:
+            # Despite IF NOT EXISTS, Neo4j has a race where concurrent sessions creating
+            # the same index can fail between the existence check and the creation. Our
+            # provider syncs run 8 workers against a shared driver, so this is expected;
+            # the index existing is the desired end state.
+            if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
+                logger.debug(f"Index already exists (created by a parallel sync): {query}")
+                continue
+            raise
+
+    # Memoize only after every query succeeded so a failed run is retried next load().
+    # Two workers may both run the queries for one schema before either memoizes; that
+    # is harmless (CREATE INDEX IF NOT EXISTS) and cheaper than holding the lock on I/O.
+    with _ensured_index_schemas_lock:
+        _ensured_index_schemas.add(schema_key)
 
 
 def load(
         neo4j_session: neo4j.Session,
         node_schema: CartographyNodeSchema,
         dict_list: List[Dict[str, Any]],
+        batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
         **kwargs,
 ) -> None:
     """
@@ -261,9 +428,79 @@ def load(
     :param neo4j_session: The Neo4j session
     :param node_schema: The CartographyNodeSchema object to create indexes for and generate a query.
     :param dict_list: The data to load to the graph represented as a list of dicts.
+    :param batch_size: Number of items to write per transaction. Defaults to DEFAULT_LOAD_BATCH_SIZE.
     :param kwargs: Allows additional keyword args to be supplied to the Neo4j query.
     :return: None
     """
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
+    if len(dict_list) == 0:
+        # Nothing to load; skip index creation and query generation round-trips.
+        return
     ensure_indexes(neo4j_session, node_schema)
     ingestion_query = build_ingestion_query(node_schema)
-    load_graph_data(neo4j_session, ingestion_query, dict_list, **kwargs)
+    load_graph_data(neo4j_session, ingestion_query, dict_list, batch_size=batch_size, **kwargs)
+
+
+def ensure_indexes_for_matchlinks(neo4j_session: neo4j.Session, rel_schema: CartographyRelSchema) -> None:
+    """
+    Creates indexes for the node fields referenced by a matchlink rel schema (source and
+    target match keys, plus the relationship's sub-resource composite index). Only used
+    for load_matchlinks(); use ensure_indexes() for CartographyNodeSchema objects.
+    :param neo4j_session: The neo4j session
+    :param rel_schema: The CartographyRelSchema object to create indexes for.
+    """
+    queries = build_create_index_queries_for_matchlink(rel_schema)
+
+    for query in queries:
+        if not query.startswith('CREATE INDEX IF NOT EXISTS'):
+            raise ValueError(
+                'Query provided to `ensure_indexes_for_matchlinks()` does not start with '
+                '"CREATE INDEX IF NOT EXISTS".',
+            )
+        try:
+            neo4j_session.execute_write(write_query_tx, query)
+        except neo4j.exceptions.ClientError as e:
+            # Same concurrent-creation race as ensure_indexes().
+            if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
+                logger.debug(f"Index already exists (created by a parallel sync): {query}")
+                continue
+            raise
+
+
+def load_matchlinks(
+        neo4j_session: neo4j.Session,
+        rel_schema: CartographyRelSchema,
+        dict_list: List[Dict[str, Any]],
+        batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
+        **kwargs,
+) -> None:
+    """
+    Main entrypoint for intel modules to draw relationships between two nodes that
+    already exist in the graph (the supported replacement for hand-written
+    "link A to B" queries). Ensures indexes for the match keys, then MERGEs the
+    relationships in batches with retry.
+    :param neo4j_session: The Neo4j session
+    :param rel_schema: The CartographyRelSchema with source_node_matcher/label defined.
+    :param dict_list: The link data as a list of dicts (source + target match values).
+    :param batch_size: Number of items to write per transaction. Defaults to DEFAULT_LOAD_BATCH_SIZE.
+    :param kwargs: Additional keyword args supplied to the query. Must include
+        `_sub_resource_label` and `_sub_resource_id` (used by matchlink cleanup).
+    :return: None
+    """
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
+    if len(dict_list) == 0:
+        # Nothing to link; skip index creation and query generation round-trips.
+        return
+
+    for required_kwarg in ('_sub_resource_label', '_sub_resource_id'):
+        if required_kwarg not in kwargs:
+            raise ValueError(
+                f"Required kwarg '{required_kwarg}' not provided for {rel_schema.rel_label}. "
+                "This is needed for matchlink cleanup queries.",
+            )
+
+    ensure_indexes_for_matchlinks(neo4j_session, rel_schema)
+    matchlink_query = build_matchlink_query(rel_schema)
+    load_graph_data(neo4j_session, matchlink_query, dict_list, batch_size=batch_size, **kwargs)

@@ -9,6 +9,7 @@ from azure.mgmt.resource import SubscriptionClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.credentials import Credentials
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -84,32 +85,26 @@ def load_azure_subscriptions(
     neo4j_session: neo4j.Session, tenant_id: str, subscriptions: List[Dict], update_tag: int,
 ) -> None:
     query = """
+    UNWIND $DictList AS item
     MERGE (at:AzureTenant{id: $TENANT_ID})
     ON CREATE SET at.firstseen = timestamp(),
-    at.region = $region
+    at.region = 'global'
     SET at.lastupdated = $update_tag
-    WITH at
-    MERGE (as:AzureSubscription{id: $SUBSCRIPTION_ID})
-    ON CREATE SET as.firstseen = timestamp(), as.path = $SUBSCRIPTION_PATH,
-    as.region = $region
-    SET as.lastupdated = $update_tag, as.name = $SUBSCRIPTION_NAME, as.state = $SUBSCRIPTION_STATE, as.consolelink = $CONSOLE_LINK
+    WITH at, item
+    MERGE (as:AzureSubscription{id: item.subscriptionId})
+    ON CREATE SET as.firstseen = timestamp(), as.path = item.id,
+    as.region = 'global'
+    SET as.lastupdated = $update_tag, as.name = item.displayName, as.state = item.state,
+    as.consolelink = item.consolelink
     WITH as, at
     MERGE (at)-[r:RESOURCE]->(as)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag;
     """
-    for sub in subscriptions:
-        neo4j_session.run(
-            query,
-            TENANT_ID=tenant_id,
-            SUBSCRIPTION_ID=sub['subscriptionId'],
-            SUBSCRIPTION_PATH=sub['id'],
-            SUBSCRIPTION_NAME=sub['displayName'],
-            SUBSCRIPTION_STATE=sub['state'],
-            CONSOLE_LINK=sub['consolelink'],
-            update_tag=update_tag,
-            region='global',
-        )
+    load_graph_data(
+        neo4j_session, query, subscriptions,
+        TENANT_ID=tenant_id, update_tag=update_tag,
+    )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:

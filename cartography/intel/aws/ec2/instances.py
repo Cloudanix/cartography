@@ -11,6 +11,8 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.graph.job import GraphJob
@@ -464,16 +466,17 @@ def load_ec2_roles(
     update_tag: int,
 ) -> None:
     ingest_role_instance_relations = """
-    UNWIND $roles as role
+    UNWIND $DictList as role
     MATCH (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.Arn})
     MERGE (instance)-[r:USES]->(roleNode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_role_instance_relations,
-        roles=role_data,
+        role_data,
         aws_update_tag=update_tag,
     )
 
@@ -482,7 +485,7 @@ def load_ec2_roles(
 def link_ec2_to_eks(neo4j_session: neo4j.Session, instance_list: List[Dict], update_tag: int) -> None:
     """Links EC2 instances to EKS Clusters and Node Groups based on extracted tags."""
     cluster_query = """
-    UNWIND $Instances as instance
+    UNWIND $DictList as instance
     WITH instance WHERE instance.EksClusterName IS NOT NULL
     MATCH (i:EC2Instance{id: instance.InstanceId})
     MATCH (c:EKSCluster{name: instance.EksClusterName})
@@ -492,7 +495,7 @@ def link_ec2_to_eks(neo4j_session: neo4j.Session, instance_list: List[Dict], upd
     """
 
     nodegroup_query = """
-    UNWIND $Instances as instance
+    UNWIND $DictList as instance
     WITH instance WHERE instance.EksNodeGroupName IS NOT NULL AND instance.EksClusterName IS NOT NULL
     MATCH (i:EC2Instance{id: instance.InstanceId})
     MATCH (c:EKSCluster{name: instance.EksClusterName})<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup{name: instance.EksNodeGroupName})
@@ -500,8 +503,8 @@ def link_ec2_to_eks(neo4j_session: neo4j.Session, instance_list: List[Dict], upd
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(cluster_query, Instances=instance_list, update_tag=update_tag)
-    neo4j_session.run(nodegroup_query, Instances=instance_list, update_tag=update_tag)
+    load_graph_data(neo4j_session, cluster_query, instance_list, update_tag=update_tag)
+    load_graph_data(neo4j_session, nodegroup_query, instance_list, update_tag=update_tag)
 
 
 def load_ec2_instance_data(
@@ -543,7 +546,8 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
       AND r.lastupdated <> $UPDATE_TAG
     DELETE r
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         cleanup_query,
         UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
         AWS_ID=common_job_parameters['AWS_ID'],

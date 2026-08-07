@@ -1,11 +1,15 @@
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from cartography.intel.gcp import iam
 
 
-def test_load_bindings_deleted_members_have_consolelink():
+@patch.object(iam, 'run_write_query')
+def test_load_bindings_deleted_members_have_consolelink(mock_run_write_query):
     # Deleted members (deleted:group:..., deleted:user:..., deleted:domain:...) used to omit
     # "consolelink", making the attach_* helpers raise KeyError.
+    # The attach_* writes go through run_write_query (managed tx + retry), so the query
+    # parameters are asserted there rather than on a raw session.run.
     neo4j_session = MagicMock()
     bindings = [{
         'role': 'projects/p1/roles/custom1',
@@ -20,7 +24,7 @@ def test_load_bindings_deleted_members_have_consolelink():
 
     iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {})
 
-    consolelinks = [call.kwargs['ConsoleLink'] for call in neo4j_session.run.call_args_list]
+    consolelinks = [call.kwargs['ConsoleLink'] for call in mock_run_write_query.call_args_list]
     assert len(consolelinks) == 3
     assert all(link for link in consolelinks)
 

@@ -8,6 +8,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -36,7 +37,7 @@ def load_vpc_peerings(
     aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_vpc_peerings = """
-    UNWIND $vpc_peerings AS vpc_peering
+    UNWIND $DictList AS vpc_peering
 
     MERGE (pcx:AWSPeeringConnection{id: vpc_peering.VpcPeeringConnectionId})
     ON CREATE SET pcx.firstseen = timestamp()
@@ -93,8 +94,11 @@ def load_vpc_peerings(
         item['arn'] = f"arn:aws:ec2:{region}:{aws_account_id}:vpc-peering-connection/{item['VpcPeeringConnectionId']}"
         item['consolelink'] = aws_console_link.get_console_link(arn=item['arn'])
 
-    neo4j_session.run(
-        ingest_vpc_peerings, vpc_peerings=data, update_tag=update_tag,
+    load_graph_data(
+        neo4j_session,
+        ingest_vpc_peerings,
+        data,
+        update_tag=update_tag,
         region=region, aws_account_id=aws_account_id,
     )
 
@@ -106,7 +110,7 @@ def load_accepter_cidrs(
 ) -> None:
 
     ingest_accepter_cidr = """
-    UNWIND $vpc_peerings AS vpc_peering
+    UNWIND $DictList AS vpc_peering
     UNWIND vpc_peering.AccepterVpcInfo.CidrBlockSet AS c_b
 
     MERGE (ac_b:AWSCidrBlock:AWSIpv4CidrBlock{id: vpc_peering.AccepterVpcInfo.VpcId + '|' + c_b.CidrBlock})
@@ -126,8 +130,11 @@ def load_accepter_cidrs(
     SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
-        ingest_accepter_cidr, vpc_peerings=data, update_tag=update_tag,
+    load_graph_data(
+        neo4j_session,
+        ingest_accepter_cidr,
+        data,
+        update_tag=update_tag,
         region=region, aws_account_id=aws_account_id,
     )
 
@@ -139,7 +146,7 @@ def load_requester_cidrs(
 ) -> None:
 
     ingest_requester_cidr = """
-    UNWIND $vpc_peerings AS vpc_peering
+    UNWIND $DictList AS vpc_peering
     UNWIND vpc_peering.RequesterVpcInfo.CidrBlockSet AS c_b
 
     MERGE (rc_b:AWSCidrBlock:AWSIpv4CidrBlock{id: vpc_peering.RequesterVpcInfo.VpcId + '|' + c_b.CidrBlock})
@@ -159,8 +166,11 @@ def load_requester_cidrs(
     SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
-        ingest_requester_cidr, vpc_peerings=data, update_tag=update_tag,
+    load_graph_data(
+        neo4j_session,
+        ingest_requester_cidr,
+        data,
+        update_tag=update_tag,
         region=region, aws_account_id=aws_account_id,
     )
 

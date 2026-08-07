@@ -16,6 +16,7 @@ from packaging.requirements import InvalidRequirement
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import describe_request_error
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import get_retry_delay_seconds
@@ -524,7 +525,7 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
     :return: None
     """
     ingest_repo = """
-    UNWIND $RepoData as repository
+    UNWIND $DictList as repository
 
     MERGE (repo:GitHubRepository{id: repository.id})
     ON CREATE SET repo.firstseen = timestamp(),
@@ -561,9 +562,10 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_repo,
-        RepoData=repo_data,
+        repo_data,
         UpdateTag=update_tag,
     )
 
@@ -578,7 +580,7 @@ def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_la
     :return: Nothing
     """
     ingest_languages = """
-        UNWIND $Languages as lang
+        UNWIND $DictList as lang
 
         MERGE (pl:ProgrammingLanguage{id: lang.language_name})
         ON CREATE SET pl.firstseen = timestamp(),
@@ -591,9 +593,10 @@ def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_la
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $UpdateTag"""
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_languages,
-        Languages=repo_languages,
+        repo_languages,
         UpdateTag=update_tag,
     )
 
@@ -607,28 +610,33 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
     :param repo_owners: list of owner to repo mappings
     :return: Nothing
     """
-    for owner in repo_owners:
-        ingest_owner_template = Template("""
-            MERGE (node:$account_type{id: $Id})
-            ON CREATE SET node.firstseen = timestamp()
-            SET node.username = $UserName,
-            node.lastupdated = $UpdateTag
-            WITH node
+    ingest_owner_template = Template("""
+        UNWIND $DictList AS item
+        MERGE (node:$account_type{id: item.owner})
+        ON CREATE SET node.firstseen = timestamp()
+        SET node.username = item.owner,
+        node.lastupdated = $UpdateTag
+        WITH node, item
 
-            MATCH (repo:GitHubRepository{id: $RepoId})
-            MERGE (node)-[r:RESOURCE]->(repo)
-            ON CREATE SET r.firstseen = timestamp()
-            SET r.lastupdated = $UpdateTag""")
+        MATCH (repo:GitHubRepository{id: item.repo_id})
+        MERGE (node)-[r:RESOURCE]->(repo)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $UpdateTag""")
 
-        # INFO: Only Organization is supported
-        # account_type = {'User': "GitHubUser", 'Organization': "GitHubOrganization"}
-        account_type = {"Organization": "GitHubOrganization"}
+    # INFO: Only Organization is supported
+    # account_type = {'User': "GitHubUser", 'Organization': "GitHubOrganization"}
+    account_type = {"Organization": "GitHubOrganization"}
 
-        neo4j_session.run(
-            ingest_owner_template.safe_substitute(account_type=account_type[owner["type"]]),
-            Id=owner["owner"],
-            UserName=owner["owner"],
-            RepoId=owner["repo_id"],
+    for owner_type, type_label in account_type.items():
+        rows = [
+            {"owner": owner["owner"], "repo_id": owner["repo_id"]}
+            for owner in repo_owners
+            if owner["type"] == owner_type
+        ]
+        load_graph_data(
+            neo4j_session,
+            ingest_owner_template.safe_substitute(account_type=type_label),
+            rows,
             UpdateTag=update_tag,
         )
 
@@ -636,7 +644,7 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
 @timeit
 def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborators: Dict) -> None:
     query = Template("""
-    UNWIND $UserData as user
+    UNWIND $DictList as user
 
     MERGE (u:GitHubUser{id: user.url})
     ON CREATE SET u.firstseen = timestamp()
@@ -655,9 +663,10 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
     """)
     for collab_type in collaborators.keys():
         relationship_label = f"OUTSIDE_COLLAB_{collab_type}"
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             query.safe_substitute(rel_label=relationship_label),
-            UserData=collaborators[collab_type],
+            collaborators[collab_type],
             UpdateTag=update_tag,
         )
 
@@ -682,7 +691,7 @@ def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_d
     :return: None
     """
     ingest_branches = """
-    UNWIND $BranchData as branch_info
+    UNWIND $DictList as branch_info
     MERGE (branch:GitHubBranch{id: branch_info.branch_id})
     ON CREATE SET branch.firstseen = timestamp()
     SET branch.name = branch_info.name,
@@ -695,9 +704,10 @@ def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_d
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_branches,
-        BranchData=branch_data,
+        branch_data,
         UpdateTag=update_tag,
     )
 
@@ -705,7 +715,7 @@ def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_d
 @timeit
 def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requirements_objects: List[Dict]) -> None:
     query = """
-    UNWIND $Requirements AS req
+    UNWIND $DictList AS req
         MERGE (lib:PythonLibrary:Dependency{id: req.id})
         ON CREATE SET lib.firstseen = timestamp(),
         lib.name = req.name
@@ -719,9 +729,10 @@ def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requ
         SET r.lastupdated = $UpdateTag,
         r.specifier = req.specifier
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        Requirements=requirements_objects,
+        requirements_objects,
         UpdateTag=update_tag,
     )
 

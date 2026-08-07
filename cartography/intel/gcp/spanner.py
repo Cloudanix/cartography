@@ -10,6 +10,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -56,13 +57,8 @@ def transform_instances(instances: List[Dict], project_id: str) -> List[Dict]:
 
 @timeit
 def load_spanner_instances(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_spanner_instances_tx, data_list, project_id, update_tag)
-
-
-@timeit
-def load_spanner_instances_tx(tx: neo4j.Transaction, data: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     query = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (instance:GCPSpannerInstance{id:record.id})
     ON CREATE SET
         instance.firstseen = timestamp()
@@ -86,7 +82,7 @@ def load_spanner_instances_tx(tx: neo4j.Transaction, data: List[Dict], project_i
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    tx.run(query=query, Records=data, ProjectId=project_id, gcp_update_tag=gcp_update_tag)
+    load_graph_data(session, query, data_list, ProjectId=project_id, gcp_update_tag=update_tag)
 
 
 @timeit
@@ -133,13 +129,8 @@ def transform_instance_configs(instance_configs: List[Dict], project_id: str) ->
 
 @timeit
 def load_spanner_instance_configs(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_spanner_instance_configs_tx, data_list, project_id, update_tag)
-
-
-@timeit
-def load_spanner_instance_configs_tx(tx: neo4j.Transaction, data: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     query = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (instance_config:GCPSpannerInstanceConfig{id: record.id})
     ON CREATE SET
         instance_config.firstseen = timestamp()
@@ -160,7 +151,7 @@ def load_spanner_instance_configs_tx(tx: neo4j.Transaction, data: List[Dict], pr
         rt.firstseen = timestamp()
     SET rt.lastupdated = $gcp_update_tag
     """
-    tx.run(query=query, Records=data, ProjectId=project_id, gcp_update_tag=gcp_update_tag)
+    load_graph_data(session, query, data_list, ProjectId=project_id, gcp_update_tag=update_tag)
 
 
 @timeit
@@ -182,13 +173,8 @@ def transform_spanner_instance_configs_replicas(instance_configs: List[Dict], pr
 
 @timeit
 def load_spanner_instance_configs_replicas(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_spanner_instance_configs_replicas_tx, data_list, project_id, update_tag)
-
-
-@timeit
-def load_spanner_instance_configs_replicas_tx(tx: neo4j.Transaction, data: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     query = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (replica:GCPSpannerInstanceConfigReplica{id: record.id})
     ON CREATE SET
         replica.firstseen = timestamp()
@@ -204,7 +190,7 @@ def load_spanner_instance_configs_replicas_tx(tx: neo4j.Transaction, data: List[
         rt.firstseen = timestamp()
     SET rt.lastupdated = $gcp_update_tag
     """
-    tx.run(query=query, Records=data, ProjectId=project_id, gcp_update_tag=gcp_update_tag)
+    load_graph_data(session, query, data_list, ProjectId=project_id, gcp_update_tag=update_tag)
 
 
 @timeit
@@ -252,13 +238,8 @@ def transform_instances_databases(databases: List[Dict], project_id: str) -> Lis
 
 @timeit
 def load_spanner_instances_databases(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_spanner_instances_databases_tx, data_list, project_id, update_tag)
-
-
-@timeit
-def load_spanner_instances_databases_tx(tx: neo4j.Transaction, data: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     query = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (database:GCPSpannerInstanceDatabase{id: record.id})
     ON CREATE SET
         database.firstseen = timestamp()
@@ -289,7 +270,7 @@ def load_spanner_instances_databases_tx(tx: neo4j.Transaction, data: List[Dict],
         rt.firstseen = timestamp()
     SET rt.lastupdated = $gcp_update_tag
     """
-    tx.run(query=query, Records=data, ProjectId=project_id, gcp_update_tag=gcp_update_tag)
+    load_graph_data(session, query, data_list, ProjectId=project_id, gcp_update_tag=update_tag)
 
 
 @timeit
@@ -337,13 +318,8 @@ def transform_instances_backups(backups: List[Dict], project_id: str) -> List[Di
 
 @timeit
 def load_spanner_instances_backups(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_spanner_instances_backups_tx, data_list, project_id, update_tag)
-
-
-@timeit
-def load_spanner_instances_backups_tx(tx: neo4j.Transaction, data: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     query = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (backup:GCPSpannerInstanceBackup{id: record.id})
     ON CREATE SET
         backup.firstseen = timestamp()
@@ -371,7 +347,7 @@ def load_spanner_instances_backups_tx(tx: neo4j.Transaction, data: List[Dict], p
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    tx.run(query=query, Records=data, ProjectId=project_id, gcp_update_tag=gcp_update_tag)
+    load_graph_data(session, query, data_list, ProjectId=project_id, gcp_update_tag=update_tag)
 
 
 @timeit

@@ -153,7 +153,8 @@ def test_transform_accepts_raw_rest_repo_shape() -> None:
 def test_load_github_repos_uses_is_private_field_in_query() -> None:
     neo4j_session = Mock()
 
-    repos.load_github_repos(neo4j_session, 123, [])
+    repos.load_github_repos(neo4j_session, 123, [{"id": "r1"}])
 
-    query = neo4j_session.run.call_args.args[0]
+    # writes now go through load_graph_data -> execute_write(tx_fn, query, ...)
+    query = neo4j_session.execute_write.call_args.args[1]
     assert "repo.is_private = repository.is_private" in query

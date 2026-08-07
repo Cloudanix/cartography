@@ -8,6 +8,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -50,7 +51,7 @@ def load_launch_templates(
         neo4j_session: neo4j.Session, data: List[Dict], region: str, current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_lt = """
-    UNWIND $launch_templates as lt
+    UNWIND $DictList as lt
         MERGE (template:LaunchTemplate{id: lt.LaunchTemplateId})
         ON CREATE SET template.firstseen = timestamp(),
         template.name = lt.LaunchTemplateName,
@@ -103,9 +104,10 @@ def load_launch_templates(
         for tv in lt.get("_template_versions", []):
             tv['CreateTime'] = str(time.mktime(tv['CreateTime'].timetuple()))
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_lt,
-        launch_templates=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         Region=region,
         update_tag=update_tag,

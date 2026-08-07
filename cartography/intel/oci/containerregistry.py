@@ -19,6 +19,7 @@ import oci.artifacts
 
 from . import tags
 from . import utils
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,8 @@ def load_container_repositories(
     """
 
     for repo in repositories:
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             ingest_repo,
             OCID=repo.get("id"),
             DISPLAY_NAME=repo.get("display-name", ""),
@@ -227,7 +229,8 @@ def load_container_images(
     """
 
     for image in images:
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             ingest_image,
             OCID=image.get("id"),
             DISPLAY_NAME=image.get("display-name", image.get("repository-name", "")),

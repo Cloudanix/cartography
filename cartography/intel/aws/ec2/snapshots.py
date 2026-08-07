@@ -8,6 +8,7 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -82,7 +83,7 @@ def load_snapshots(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_snapshots = """
-    UNWIND $snapshots_list as snapshot
+    UNWIND $DictList as snapshot
     MERGE (s:EBSSnapshot{id: snapshot.SnapshotId})
     ON CREATE SET s.firstseen = timestamp()
     SET s.lastupdated = $update_tag, s.description = snapshot.Description, s.encrypted = snapshot.Encrypted,
@@ -105,9 +106,10 @@ def load_snapshots(
         snapshot['Arn'] = f"arn:aws:ec2:{region}:{current_aws_account_id}:snapshot/{snapshot['SnapshotId']}"
         snapshot['consolelink'] = aws_console_link.get_console_link(arn=snapshot['Arn'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_snapshots,
-        snapshots_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
@@ -128,7 +130,7 @@ def load_snapshot_volume_relations(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_volumes = """
-    UNWIND $snapshot_volumes_list as volume
+    UNWIND $DictList as volume
     MERGE (v:EBSVolume{id: volume.VolumeId})
     ON CREATE SET v.firstseen = timestamp()
     SET v.lastupdated = $update_tag
@@ -144,9 +146,10 @@ def load_snapshot_volume_relations(
     SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_volumes,
-        snapshot_volumes_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )

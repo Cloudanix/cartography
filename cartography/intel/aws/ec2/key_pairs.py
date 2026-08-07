@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import run_write_query
 from cartography.graph.job import GraphJob
 from cartography.models.aws.ec2.keypairs import EC2KeyPairSchema
 from cartography.util import aws_handle_regions
@@ -66,7 +67,8 @@ def load_ec2_key_pairs(
         # consolelink = aws_console_link.get_console_link(arn=key_pair_arn)
         consolelink = ''
 
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             ingest_key_pair,
             ARN=key_pair_arn,
             KeyName=key_name,

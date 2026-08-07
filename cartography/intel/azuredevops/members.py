@@ -9,6 +9,7 @@ import neo4j
 from .util import call_azure_devops_api
 from .util import call_azure_devops_api_pagination
 from .util import validate_user_data
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -104,7 +105,7 @@ def load_users(
     - groupEntitlements: Group entitlements (if available)
     """
     query = """
-    UNWIND $UserData as user
+    UNWIND $DictList as user
 
     MERGE (u:AzureDevOpsUser{id: user.id})
     ON CREATE SET u.firstseen = timestamp()
@@ -125,9 +126,10 @@ def load_users(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        UserData=user_data,
+        user_data,
         OrganizationName=org_name,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )

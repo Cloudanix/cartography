@@ -9,6 +9,7 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
@@ -88,7 +89,7 @@ def load_volumes(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_volumes = """
-    UNWIND $volumes_list as volume
+    UNWIND $DictList as volume
         MERGE (vol:EBSVolume{id: volume.VolumeId})
         ON CREATE SET vol.firstseen = timestamp()
         SET vol.arn = volume.VolumeArn,
@@ -117,9 +118,10 @@ def load_volumes(
     for volume in data:
         console_arn = f"arn:aws:ec2:{volume['region']}:{current_aws_account_id}:volume/{volume['VolumeId']}"
         volume['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_volumes,
-        volumes_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )

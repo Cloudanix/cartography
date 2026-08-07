@@ -28,6 +28,8 @@ from . import network
 from . import tag as azure_tag
 from .util.credentials import Credentials
 from .util.timing import get_timing_policy
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -318,7 +320,7 @@ def load_server_data(
     Ingest the server details into neo4j.
     """
     ingest_server = """
-    UNWIND $server_list as server
+    UNWIND $DictList as server
     MERGE (s:AzureSQLServer{id: server.id})
     ON CREATE SET s.firstseen = timestamp(),
     s.resourcegroup = server.resourceGroup,
@@ -344,9 +346,10 @@ def load_server_data(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_server,
-        server_list=server_list,
+        server_list,
         AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=azure_update_tag,
     )
@@ -364,7 +367,8 @@ def _attach_resource_group_server(neo4j_session: neo4j.Session, server_id: str, 
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_server,
         server_id=server_id,
         server_resource_group=server_resource_group,
@@ -378,7 +382,7 @@ def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server
     """
     ingest_attach_private_endpoint_connection = """
     MATCH (s:AzureSQLServer{id: $server_id})
-    UNWIND $private_endpoint_connections as pec
+    UNWIND $DictList as pec
     MERGE (aspec:AzureServerPrivateEndpointConnection{id: pec.id})
     ON CREATE SET aspec.firstseen = timestamp()
     SET aspec.provisioning_state = pec.properties.provisioning_state,
@@ -389,10 +393,11 @@ def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server
     SET r.lastupdated = $azure_update_tag
     """
     for server in server_list:
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_attach_private_endpoint_connection,
+            server.get('private_endpoint_connections', []),
             server_id=server.get('id'),
-            private_endpoint_connections=server.get('private_endpoint_connections', []),
             azure_update_tag=azure_update_tag,
         )
         for private_endpoint_connection in server.get('private_endpoint_connections', []):
@@ -409,7 +414,8 @@ def _attach_resource_group_server_private_endpoint_connections(neo4j_session: ne
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_attach_private_endpoint_connection,
         aspec_id=private_endpoint_connection_id,
         resource_group=resource_group,
@@ -778,7 +784,7 @@ def _load_server_dns_aliases(
     Ingest the DNS Alias details into neo4j.
     """
     ingest_dns_aliases = """
-    UNWIND $dns_aliases_list as dns_alias
+    UNWIND $DictList as dns_alias
     MERGE (alias:AzureServerDNSAlias{id: dns_alias.id})
     ON CREATE SET alias.firstseen = timestamp()
     SET alias.name = dns_alias.name,
@@ -794,9 +800,10 @@ def _load_server_dns_aliases(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_dns_aliases,
-        dns_aliases_list=dns_aliases,
+        dns_aliases,
         azure_update_tag=update_tag,
     )
     for dns_aliases in dns_aliases:
@@ -813,7 +820,8 @@ def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id:
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_dns_aliases,
         dns_alias_id=dns_alias_id,
         resource_group=resource_group,
@@ -827,7 +835,7 @@ def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], upd
     Ingest the firewall rules into neo4j.
     """
     ingest_firewall_rules = """
-    UNWIND $fw_rules as fw_rule
+    UNWIND $DictList as fw_rule
     MERGE (rule:AzureFirewallRule{id: fw_rule.id})
     ON CREATE SET rule.firstseen = timestamp()
     SET rule.name = fw_rule.name,
@@ -842,9 +850,10 @@ def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], upd
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_firewall_rules,
-        fw_rules=fw_rules,
+        fw_rules,
         azure_update_tag=update_tag,
     )
     for fw_rule in fw_rules:
@@ -861,7 +870,8 @@ def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id: str
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_firewall_rules,
         fw_rule_id=fw_rule_id,
         resource_group=resource_group,
@@ -909,7 +919,7 @@ def _load_server_ad_admins(
     Ingest the Server AD Administrators details into neo4j.
     """
     ingest_ad_admins = """
-    UNWIND $ad_admins_list as ad_admin
+    UNWIND $DictList as ad_admin
     MERGE (a:AzureServerADAdministrator{id: ad_admin.id})
     ON CREATE SET a.firstseen = timestamp()
     SET a.name = ad_admin.name,
@@ -926,9 +936,10 @@ def _load_server_ad_admins(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_ad_admins,
-        ad_admins_list=ad_admins,
+        ad_admins,
         azure_update_tag=update_tag,
     )
     for ad_admin in ad_admins:
@@ -945,7 +956,8 @@ def _attach_resource_group_ad_admin(neo4j_session: neo4j.Session, ad_admin_id: s
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_ad_admins,
         ad_admin_id=ad_admin_id,
         resource_group=resource_group,
@@ -961,7 +973,7 @@ def _load_recoverable_databases(
     Ingest the recoverable database details into neo4j.
     """
     ingest_recoverable_databases = """
-    UNWIND $recoverable_databases_list as rec_db
+    UNWIND $DictList as rec_db
     MERGE (rd:AzureRecoverableDatabase{id: rec_db.id})
     ON CREATE SET rd.firstseen = timestamp()
     SET rd.name = rec_db.name,
@@ -978,9 +990,10 @@ def _load_recoverable_databases(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_recoverable_databases,
-        recoverable_databases_list=recoverable_databases,
+        recoverable_databases,
         region='global',
         azure_update_tag=update_tag,
     )
@@ -998,7 +1011,8 @@ def _attach_resource_group_recoverable_database(neo4j_session: neo4j.Session, re
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_recoverable_databases,
         rec_db_id=recoverable_database_id,
         resource_group=resource_group,
@@ -1014,7 +1028,7 @@ def _load_restorable_dropped_databases(
     Ingest the restorable dropped database details into neo4j.
     """
     ingest_restorable_dropped_databases = """
-    UNWIND $restorable_dropped_databases_list as res_dropped_db
+    UNWIND $DictList as res_dropped_db
     MERGE (rdd:AzureRestorableDroppedDatabase{id: res_dropped_db.id})
     ON CREATE SET rdd.firstseen = timestamp(), rdd.location = res_dropped_db.location,
     rdd.region = res_dropped_db.location
@@ -1035,9 +1049,10 @@ def _load_restorable_dropped_databases(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_restorable_dropped_databases,
-        restorable_dropped_databases_list=restorable_dropped_databases,
+        restorable_dropped_databases,
         azure_update_tag=update_tag,
     )
     for restorable_dropped_database in restorable_dropped_databases:
@@ -1054,7 +1069,8 @@ def _attach_resource_group_restorable_dropped_database(neo4j_session: neo4j.Sess
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_restorable_dropped_databases,
         res_dropped_db_id=restorable_dropped_database_id,
         resource_group=resource_group,
@@ -1070,7 +1086,7 @@ def _load_failover_groups(
     Ingest the failover groups details into neo4j.
     """
     ingest_failover_groups = """
-    UNWIND $failover_groups_list as fg
+    UNWIND $DictList as fg
     MERGE (f:AzureFailoverGroup{id: fg.id})
     ON CREATE SET f.firstseen = timestamp(), f.location = fg.location
     SET f.name = fg.name,
@@ -1085,9 +1101,10 @@ def _load_failover_groups(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_failover_groups,
-        failover_groups_list=failover_groups,
+        failover_groups,
         azure_update_tag=update_tag,
     )
     for failover_group in failover_groups:
@@ -1104,7 +1121,8 @@ def _attach_resource_group_restorable_failover_group(neo4j_session: neo4j.Sessio
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_failover_groups,
         fg_id=failover_group_id,
         resource_group=resource_group,
@@ -1120,7 +1138,7 @@ def _load_elastic_pools(
     Ingest the elastic pool details into neo4j.
     """
     ingest_elastic_pools = """
-    UNWIND $elastic_pools_list as ep
+    UNWIND $DictList as ep
     MERGE (e:AzureElasticPool{id: ep.id})
     ON CREATE SET e.firstseen = timestamp(), e.location = ep.location,
     e.region = ep.location
@@ -1140,9 +1158,10 @@ def _load_elastic_pools(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_elastic_pools,
-        elastic_pools_list=elastic_pools,
+        elastic_pools,
         azure_update_tag=update_tag,
     )
     for elastic_pool in elastic_pools:
@@ -1159,7 +1178,8 @@ def _attach_resource_group_restorable_elastic_pool(neo4j_session: neo4j.Session,
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_elastic_pools,
         ep_id=elastic_pool_id,
         resource_group=resource_group,
@@ -1175,7 +1195,7 @@ def _load_databases(
     Ingest the database details into neo4j.
     """
     ingest_databases = """
-    UNWIND $databases_list as az_database
+    UNWIND $DictList as az_database
     MERGE (d:AzureSQLDatabase{id: az_database.id})
     ON CREATE SET d.firstseen = timestamp(), d.location = az_database.location,
     d.region = az_database.location
@@ -1201,9 +1221,10 @@ def _load_databases(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_databases,
-        databases_list=databases,
+        databases,
         azure_update_tag=update_tag,
     )
     for database in databases:
@@ -1243,7 +1264,8 @@ def _attach_resource_group_restorable_database(neo4j_session: neo4j.Session, dat
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_databases,
         database_id=database_id,
         resource_group=resource_group,
@@ -1474,7 +1496,7 @@ def _load_replication_links(
     Ingest replication links into neo4j.
     """
     ingest_replication_links = """
-    UNWIND $replication_links_list as replication_link
+    UNWIND $DictList as replication_link
     MERGE (rl:AzureReplicationLink{id: replication_link.id})
     ON CREATE SET rl.firstseen = timestamp(),
     rl.location = replication_link.location,
@@ -1499,9 +1521,10 @@ def _load_replication_links(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_replication_links,
-        replication_links_list=replication_links,
+        replication_links,
         azure_update_tag=update_tag,
     )
     for replication_link in replication_links:
@@ -1518,7 +1541,8 @@ def _attach_resource_group_replication_link(neo4j_session: neo4j.Session, replic
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_replication_links,
         replication_link_id=replication_link_id,
         resource_group=resource_group,
@@ -1534,7 +1558,7 @@ def _load_db_threat_detection_policies(
     Ingest threat detection policy into neo4j.
     """
     ingest_threat_detection_policies = """
-    UNWIND $threat_detection_policies_list as tdp
+    UNWIND $DictList as tdp
     MERGE (policy:AzureDatabaseThreatDetectionPolicy{id: tdp.id})
     ON CREATE SET policy.firstseen = timestamp(),
     policy.location = tdp.location
@@ -1558,9 +1582,10 @@ def _load_db_threat_detection_policies(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_threat_detection_policies,
-        threat_detection_policies_list=threat_detection_policies,
+        threat_detection_policies,
         azure_update_tag=update_tag,
     )
     for threat_detection in threat_detection_policies:
@@ -1577,7 +1602,8 @@ def _attach_resource_group_threat_detection(neo4j_session: neo4j.Session, threat
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_threat_detection_policies,
         threat_detection_id=threat_detection_id,
         resource_group=resource_group,
@@ -1593,7 +1619,7 @@ def _load_restore_points(
     Ingest restore points into neo4j.
     """
     ingest_restore_points = """
-    UNWIND $restore_points_list as rp
+    UNWIND $DictList as rp
     MERGE (point:AzureRestorePoint{id: rp.id})
     ON CREATE SET point.firstseen = timestamp(),
     point.location = rp.location,
@@ -1611,9 +1637,10 @@ def _load_restore_points(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_restore_points,
-        restore_points_list=restore_points,
+        restore_points,
         azure_update_tag=update_tag,
     )
     for restore_point in restore_points:
@@ -1630,7 +1657,8 @@ def _attach_resource_group_restore_point(neo4j_session: neo4j.Session, restore_p
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_restore_points,
         restore_point_id=restore_point_id,
         resource_group=resource_group,
@@ -1646,7 +1674,7 @@ def _load_transparent_data_encryptions(
     Ingest transparent data encryptions into neo4j.
     """
     ingest_data_encryptions = """
-    UNWIND $transparent_data_encryptions_list as e
+    UNWIND $DictList as e
     MERGE (tae:AzureTransparentDataEncryption{id: e.id})
     ON CREATE SET tae.firstseen = timestamp(),
     tae.location = e.location,
@@ -1662,9 +1690,10 @@ def _load_transparent_data_encryptions(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_data_encryptions,
-        transparent_data_encryptions_list=encryptions_list,
+        encryptions_list,
         azure_update_tag=update_tag,
     )
     for encryption in encryptions_list:
@@ -1681,7 +1710,8 @@ def _attach_resource_group_encryption(neo4j_session: neo4j.Session, encryption_i
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_data_encryptions,
         encryption_id=encryption_id,
         resource_group=resource_group,

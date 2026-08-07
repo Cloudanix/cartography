@@ -9,6 +9,9 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
@@ -43,7 +46,10 @@ def get_images_in_use(neo4j_session: neo4j.Session, region: str, current_aws_acc
     WITH images + new_ltv_images AS images
     RETURN images
     """
-    results = neo4j_session.run(get_images_query, AWS_ACCOUNT_ID=current_aws_account_id, Region=region)
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx, get_images_query,
+        AWS_ACCOUNT_ID=current_aws_account_id, Region=region,
+    )
     images = []
     for r in results:
         images.extend(r['images'])
@@ -168,7 +174,7 @@ def load_images(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_images = """
-    UNWIND $images_list as image
+    UNWIND $DictList as image
     MERGE (i:EC2Image{id: image.ID})
     ON CREATE SET i.firstseen = timestamp(), i.imageid = image.ImageId, i.name = image.Name,
     i.creationdate = image.CreationDate
@@ -197,9 +203,10 @@ def load_images(
         image['ID'] = image['ImageId'] + '|' + image.get('region', '')
         image['arn'] = f"arn:aws:ec2:{image.get('region', '')}:{current_aws_account_id}:image/{image['ImageId']}"
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_images,
-        images_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
@@ -229,7 +236,8 @@ def link_ec2_instances_to_images(neo4j_session: neo4j.Session, update_tag: int) 
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_instance_image_rel,
         update_tag=update_tag,
     )

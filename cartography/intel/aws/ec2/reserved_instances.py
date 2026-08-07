@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -37,7 +38,7 @@ def load_reserved_instances(
         current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_reserved_instances = """
-    UNWIND $reserved_instances_list as res
+    UNWIND $DictList as res
     MERGE (ri:EC2ReservedInstance{id: res.ReservedInstancesId})
     ON CREATE SET ri.firstseen = timestamp()
     SET ri.lastupdated = $update_tag, ri.availabilityzone = res.AvailabilityZone, ri.duration = res.Duration,
@@ -61,9 +62,10 @@ def load_reserved_instances(
         r_instance['Arn'] = f"arn:aws:ec2:{region}:{current_aws_account_id}:reserved-instances/{r_instance['ReservedInstancesId']}"
         r_instance['consolelink'] = aws_console_link.get_console_link(arn=r_instance['Arn'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_reserved_instances,
-        reserved_instances_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         Region=region,
         update_tag=update_tag,

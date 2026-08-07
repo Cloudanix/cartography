@@ -12,6 +12,8 @@ import neo4j
 import oci
 
 from . import utils
+from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
@@ -286,7 +288,7 @@ def sync_group_memberships(
     logger.debug("Syncing IAM group membership for account '%s'.", current_tenancy_id)
     query = "MATCH (group:OCIGroup)<-[:RESOURCE]-(OCITenancy{id: $OCI_TENANCY_ID}) " \
             "return group.name as name, group.ocid as ocid;"
-    groups = neo4j_session.run(query, OCI_TENANCY_ID=current_tenancy_id)
+    groups = neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=current_tenancy_id)
     groups_membership = {
         group["ocid"]: get_group_membership_data(iam, group['ocid'], current_tenancy_id) for group in groups
     }
@@ -407,7 +409,8 @@ def load_oci_policy_group_reference(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_policy_group_reference,
         POLICY_ID=policy_id,
         GROUP_ID=group_id,
@@ -429,7 +432,8 @@ def load_oci_policy_compartment_reference(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_policy_compartment_reference,
         POLICY_ID=policy_id,
         COMPARTMENT_ID=compartment_id,

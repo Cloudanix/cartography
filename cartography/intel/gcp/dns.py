@@ -10,6 +10,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -251,7 +252,7 @@ def load_dns_zones(neo4j_session: neo4j.Session, dns_zones: List[Dict], project_
     """
 
     ingest_records = """
-    UNWIND $records as record
+    UNWIND $DictList as record
     MERGE (zone:GCPDNSZone{id:record.id})
     ON CREATE SET
         zone.firstseen = timestamp(),
@@ -273,9 +274,10 @@ def load_dns_zones(neo4j_session: neo4j.Session, dns_zones: List[Dict], project_
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        records=dns_zones,
+        dns_zones,
         region="global",
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
@@ -304,7 +306,7 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
     """
 
     ingest_records = """
-    UNWIND $records as record
+    UNWIND $DictList as record
     MERGE (rrs:GCPRecordSet{id:record.id})
     ON CREATE SET
         rrs.firstseen = timestamp()
@@ -323,9 +325,10 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        records=dns_rrs,
+        dns_rrs,
         region="global",
         gcp_update_tag=gcp_update_tag,
     )
@@ -352,7 +355,7 @@ def load_dns_polices(neo4j_session: neo4j.Session, policies: List[Dict], project
     :return: Nothing
     """
     ingest_policies = """
-    UNWIND $DNSPolicies as policy
+    UNWIND $DictList as policy
     MERGE (pol:GCPDNSPolicy{id:policy.id})
     ON CREATE SET
         pol.firstseen = timestamp()
@@ -371,9 +374,10 @@ def load_dns_polices(neo4j_session: neo4j.Session, policies: List[Dict], project
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_policies,
-        DNSPolicies=policies,
+        policies,
         region="global",
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
@@ -401,7 +405,7 @@ def load_dns_keys(neo4j_session: neo4j.Session, dns_keys: List[Dict], project_id
     :return: Nothing
     """
     ingest_keys = """
-    UNWIND $DNSKeys as key
+    UNWIND $DictList as key
     MERGE (ky:GCPDNSKey{id:key.id})
     ON CREATE SET
         ky.firstseen = timestamp()
@@ -420,9 +424,10 @@ def load_dns_keys(neo4j_session: neo4j.Session, dns_keys: List[Dict], project_id
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_keys,
-        DNSKeys=dns_keys,
+        dns_keys,
         region="global",
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,

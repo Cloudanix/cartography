@@ -9,6 +9,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.models.aws.ssm.instance_information import SSMInstanceInformationSchema
@@ -28,7 +29,10 @@ def get_instance_ids(neo4j_session: neo4j.Session, region: str, current_aws_acco
     WHERE i.region = $Region
     RETURN i.id
     """
-    results = neo4j_session.run(get_instances_query, AWS_ACCOUNT_ID=current_aws_account_id, Region=region)
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx, get_instances_query,
+        AWS_ACCOUNT_ID=current_aws_account_id, Region=region,
+    )
     instance_ids = []
     for r in results:
         instance_ids.append(r['i.id'])

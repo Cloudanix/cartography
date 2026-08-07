@@ -8,6 +8,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -98,7 +99,7 @@ def load_internet_gateways(
         arn = f"arn:aws:ec2:{region}:{igw.get('OwnerId', '')}:internet-gateway/{igw['InternetGatewayId']}"
         igw['consolelink'] = aws_console_link.get_console_link(arn=arn)
     query = """
-    UNWIND $internet_gateways as igw
+    UNWIND $DictList as igw
         MERGE (ig:AWSInternetGateway{id: igw.InternetGatewayId})
         ON CREATE SET
             ig.firstseen = timestamp(),
@@ -124,13 +125,14 @@ def load_internet_gateways(
         SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        internet_gateways=internet_gateways,
+        internet_gateways,
         region=region,
         aws_account_id=current_aws_account_id,
         aws_update_tag=update_tag,
-    ).consume()
+    )
 
 
 @timeit

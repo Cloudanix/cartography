@@ -10,6 +10,8 @@ from cloudconsolelink.clouds.azure import AzureLinker
 
 from . import vmss
 from .util.credentials import Credentials
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
@@ -137,7 +139,7 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
 
 def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[Dict], update_tag: int) -> None:
     ingest_vm = """
-    UNWIND $vms AS vm
+    UNWIND $DictList AS vm
     MERGE (v:AzureVirtualMachine{id: vm.id})
     ON CREATE SET v.firstseen = timestamp(),
     v.type = vm.type, v.location = vm.location,
@@ -173,9 +175,10 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_vm,
-        vms=vm_list,
+        vm_list,
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
@@ -204,7 +207,7 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
 
 def load_vm_image_relations(neo4j_session: neo4j.Session, vm_list: List[Dict], update_tag: int) -> None:
     ingest_vm_image = """
-    UNWIND $vms AS vm
+    UNWIND $DictList AS vm
     WITH vm
     WHERE vm.image_reference_id IS NOT NULL
     MERGE (img:AzureImage {id: vm.image_reference_id})
@@ -221,9 +224,10 @@ def load_vm_image_relations(neo4j_session: neo4j.Session, vm_list: List[Dict], u
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_vm_image,
-        vms=vm_list,
+        vm_list,
         update_tag=update_tag,
     )
 
@@ -685,7 +689,7 @@ def sync_virtual_machine_scale_sets_extensions(
 
 def load_vm_data_disks(neo4j_session: neo4j.Session, vm_id: str, data_disks: List[Dict], update_tag: int) -> None:
     ingest_data_disk = """
-    UNWIND $disks AS disk
+    UNWIND $DictList AS disk
     MERGE (d:AzureDisk:AzureDataDisk{id: disk.managed_disk.id})
     ON CREATE SET d.firstseen = timestamp(), d.lun = disk.lun
     SET d.lastupdated = $update_tag, d.name = disk.name,
@@ -703,9 +707,10 @@ def load_vm_data_disks(neo4j_session: neo4j.Session, vm_id: str, data_disks: Lis
     """
 
     # for disk in data_disks:
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_data_disk,
-        disks=data_disks,
+        data_disks,
         VM_ID=vm_id,
         update_tag=update_tag,
     )
@@ -713,7 +718,7 @@ def load_vm_data_disks(neo4j_session: neo4j.Session, vm_id: str, data_disks: Lis
 
 def load_vm_managed_identities(neo4j_session: neo4j.Session, vm_id: str, managed_identities: List[str], update_tag: int) -> None:  # noqa: E501
     ingest_managed_identity = """
-    UNWIND $managed_identities AS ua
+    UNWIND $DictList AS ua
     MERGE (i:AzureManagedIdentity{id: toLower(ua)})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp()
@@ -725,9 +730,10 @@ def load_vm_managed_identities(neo4j_session: neo4j.Session, vm_id: str, managed
     SET rel.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_managed_identity,
-        managed_identities=managed_identities,
+        managed_identities,
         VM_ID=vm_id,
         update_tag=update_tag,
     )
@@ -749,7 +755,8 @@ def load_vm_os_disk(neo4j_session: neo4j.Session, vm_id: str, os_disk: Dict, upd
     SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_os_disk,
         disk=os_disk,
         VM_ID=vm_id,
@@ -767,7 +774,8 @@ def _attach_snapshot_disk(neo4j_session: neo4j.Session, snapshot_id: str, disk_i
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         attach_snapshot_disk,
         snapshot_id=snapshot_id,
         disk_id=disk_id,
@@ -804,7 +812,7 @@ def get_disks(credentials: Credentials, subscription_id: str, regions: list, com
 
 def load_disks(neo4j_session: neo4j.Session, subscription_id: str, disk_list: List[Dict], update_tag: int) -> None:
     ingest_disks = """
-    UNWIND $disks AS disk
+    UNWIND $DictList AS disk
     MERGE (d:AzureDisk{id: disk.id})
     ON CREATE SET d.firstseen = timestamp(),
     d.type = disk.type, d.location = disk.location,
@@ -823,9 +831,10 @@ def load_disks(neo4j_session: neo4j.Session, subscription_id: str, disk_list: Li
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag"""
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_disks,
-        disks=disk_list,
+        disk_list,
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
@@ -843,7 +852,8 @@ def _attach_resource_group_disk(neo4j_session: neo4j.Session, disk_id: str, reso
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_disks,
         disk_id=disk_id,
         resource_group=resource_group,
@@ -880,7 +890,7 @@ def get_snapshots_list(credentials: Credentials, subscription_id: str, regions: 
 
 def load_snapshots(neo4j_session: neo4j.Session, subscription_id: str, snapshots: List[Dict], update_tag: int) -> None:
     ingest_snapshots = """
-    UNWIND $snapshots as snapshot
+    UNWIND $DictList as snapshot
     MERGE (s:AzureSnapshot{id: snapshot.id})
     ON CREATE SET s.firstseen = timestamp(),
     s.resourcegroup = snapshot.resource_group,
@@ -898,9 +908,10 @@ def load_snapshots(neo4j_session: neo4j.Session, subscription_id: str, snapshots
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag"""
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_snapshots,
-        snapshots=snapshots,
+        snapshots,
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
@@ -918,7 +929,8 @@ def _attach_resource_group_disk_snapshot(neo4j_session: neo4j.Session, snapshot_
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_snapshots,
         snapshot_id=snapshot_id,
         resource_group=resource_group,
@@ -1012,8 +1024,8 @@ def link_compute_to_aks(neo4j_session: neo4j.Session, update_tag: int) -> None:
     """
 
     for label in aks_node_labels:
-        neo4j_session.run(cluster_query.format(label=label), update_tag=update_tag)
-        neo4j_session.run(pool_query.format(label=label), update_tag=update_tag)
+        run_write_query(neo4j_session, cluster_query.format(label=label), update_tag=update_tag)
+        run_write_query(neo4j_session, pool_query.format(label=label), update_tag=update_tag)
 
 
 @timeit

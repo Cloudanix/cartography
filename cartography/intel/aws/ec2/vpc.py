@@ -10,6 +10,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -50,7 +52,7 @@ def _get_cidr_association_statement(block_type: str) -> str:
     INGEST_CIDR_TEMPLATE = Template("""
     MATCH (vpc:AWSVpc{id: $VpcId})
     WITH vpc
-    UNWIND $CidrBlock as block_data
+    UNWIND $DictList as block_data
         MERGE (new_block:$block_label{id: $VpcId + '|' + block_data.$block_cidr})
         ON CREATE SET new_block.firstseen = timestamp()
         SET new_block.association_id = block_data.AssociationId,
@@ -93,10 +95,11 @@ def load_cidr_association_set(
     else:
         data = vpc_data.get("CidrBlockAssociationSet", [])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_statement,
+        data,
         VpcId=vpc_id,
-        CidrBlock=data,
         update_tag=update_tag,
     )
 
@@ -166,7 +169,8 @@ def load_ec2_vpcs(
                 vpc_name = tag.get("Value")
                 break
 
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             ingest_vpc,
             VpcId=vpc_id,
             InstanceTenancy=vpc.get("InstanceTenancy", None),

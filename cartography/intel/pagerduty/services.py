@@ -7,6 +7,7 @@ import dateutil.parser
 import neo4j
 from pdpyras import APISession
 
+from cartography.client.core.tx import load_graph_data
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ def load_service_data(
     Transform and load service information
     """
     ingestion_cypher_query = """
-    UNWIND $Services AS service
+    UNWIND $DictList AS service
         MERGE (s:PagerDutyService{id: service.id})
         ON CREATE SET s.html_url = service.html_url,
             s.firstseen = timestamp()
@@ -93,9 +94,10 @@ def load_service_data(
             for team in service["teams"]:
                 team_relations.append({"service": service["id"], "team": team["id"]})
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingestion_cypher_query,
-        Services=data,
+        data,
         update_tag=update_tag,
     )
 
@@ -110,14 +112,15 @@ def _attach_teams(
     Add relationship between teams and services.
     """
     ingestion_cypher_query = """
-    UNWIND $Relations AS relation
+    UNWIND $DictList AS relation
         MATCH (t:PagerDutyTeam{id: relation.team}), (s:PagerDutyService{id: relation.service})
         MERGE (t)-[r:ASSOCIATED_WITH]->(s)
         ON CREATE SET r.firstseen = timestamp()
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingestion_cypher_query,
-        Relations=data,
+        data,
         update_tag=update_tag,
     )
 
@@ -129,7 +132,7 @@ def load_integration_data(
     Transform and load integration information
     """
     ingestion_cypher_query = """
-    UNWIND $Integrations AS integration
+    UNWIND $DictList AS integration
         MERGE (i:PagerDutyIntegration{id: integration.id})
         ON CREATE SET i.html_url = integration.html_url,
             i.firstseen = timestamp()
@@ -155,8 +158,9 @@ def load_integration_data(
         created_at = dateutil.parser.parse(integration["created_at"])
         integration["created_at"] = int(created_at.timestamp())
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingestion_cypher_query,
-        Integrations=data,
+        data,
         update_tag=update_tag,
     )

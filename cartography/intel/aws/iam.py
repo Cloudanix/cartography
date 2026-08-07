@@ -16,6 +16,9 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.permission_relationships import parse_statement_node
 from cartography.intel.aws.permission_relationships import principal_allowed_on_resource
 from cartography.util import run_cleanup_job
@@ -473,15 +476,16 @@ def load_users(
     aws_update_tag: int,
 ) -> None:
     ingest_user = """
-    MERGE (unode:AWSUser{arn: $ARN})
-    ON CREATE SET unode:AWSPrincipal, unode.userid = $USERID, unode.firstseen = timestamp(),
-    unode.consolelink = $consolelink,
-    unode.createdate = $CREATE_DATE
-    SET unode.name = $USERNAME, unode.user_name = $USERNAME,
-    unode.path = $PATH, unode.passwordlastused = $PASSWORD_LASTUSED,
-    unode.region = $region,
-    unode.consoleloginenabled = $CONSOLELOGINENABLED,
-    unode.mfaenabled = $MFAENABLED,
+    UNWIND $DictList AS item
+    MERGE (unode:AWSUser{arn: item.arn})
+    ON CREATE SET unode:AWSPrincipal, unode.userid = item.userid, unode.firstseen = timestamp(),
+    unode.consolelink = item.consolelink,
+    unode.createdate = item.createdate
+    SET unode.name = item.username, unode.user_name = item.username,
+    unode.path = item.path, unode.passwordlastused = item.passwordlastused,
+    unode.region = 'global',
+    unode.consoleloginenabled = item.consoleloginenabled,
+    unode.mfaenabled = item.mfaenabled,
     unode.managed_type = $ManagedType,
     unode.lastupdated = $aws_update_tag
     WITH unode
@@ -491,23 +495,28 @@ def load_users(
     SET r.lastupdated = $aws_update_tag
     """
     logger.info(f"Loading {len(users)} IAM users.")
-    for user in users:
-        neo4j_session.run(
-            ingest_user,
-            ARN=user["Arn"],
-            consolelink=aws_console_link.get_console_link(arn=user["Arn"]),
-            USERID=user["UserId"],
-            CREATE_DATE=str(user["CreateDate"]),
-            USERNAME=user["UserName"],
-            PATH=user["Path"],
-            CONSOLELOGINENABLED=user.get("consoleLoginEnabled", False),
-            MFAENABLED=user.get("MFAEnabled", False),
-            PASSWORD_LASTUSED=str(user.get("PasswordLastUsed", "")),
-            ManagedType=MANAGED_TYPE_CUSTOM,
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            region="global",
-            aws_update_tag=aws_update_tag,
-        )
+    user_rows = [
+        {
+            "arn": user["Arn"],
+            "consolelink": aws_console_link.get_console_link(arn=user["Arn"]),
+            "userid": user["UserId"],
+            "createdate": str(user["CreateDate"]),
+            "username": user["UserName"],
+            "path": user["Path"],
+            "consoleloginenabled": user.get("consoleLoginEnabled", False),
+            "mfaenabled": user.get("MFAEnabled", False),
+            "passwordlastused": str(user.get("PasswordLastUsed", "")),
+        }
+        for user in users
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_user,
+        user_rows,
+        ManagedType=MANAGED_TYPE_CUSTOM,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 @timeit
@@ -518,15 +527,16 @@ def load_service_accounts(
     aws_update_tag: int,
 ) -> None:
     ingest_service_account = """
-    MERGE (sanode:AWSServiceAccount{arn: $ARN})
-    ON CREATE SET sanode:AWSPrincipal, sanode.userid = $USERID, sanode.firstseen = timestamp(),
-    sanode.consolelink = $consolelink,
-    sanode.createdate = $CREATE_DATE
-    SET sanode.name = $USERNAME, sanode.user_name = $USERNAME,
-    sanode.path = $PATH, sanode.passwordlastused = $PASSWORD_LASTUSED,
-    sanode.region = $region,
-    sanode.consoleloginenabled = $CONSOLELOGINENABLED,
-    sanode.mfaenabled = $MFAENABLED,
+    UNWIND $DictList AS item
+    MERGE (sanode:AWSServiceAccount{arn: item.arn})
+    ON CREATE SET sanode:AWSPrincipal, sanode.userid = item.userid, sanode.firstseen = timestamp(),
+    sanode.consolelink = item.consolelink,
+    sanode.createdate = item.createdate
+    SET sanode.name = item.username, sanode.user_name = item.username,
+    sanode.path = item.path, sanode.passwordlastused = item.passwordlastused,
+    sanode.region = 'global',
+    sanode.consoleloginenabled = item.consoleloginenabled,
+    sanode.mfaenabled = item.mfaenabled,
     sanode.managed_type = $ManagedType,
     sanode.lastupdated = $aws_update_tag
     WITH sanode
@@ -536,23 +546,28 @@ def load_service_accounts(
     SET r.lastupdated = $aws_update_tag
     """
     logger.info(f"Loading {len(service_accounts)} IAM service accounts.")
-    for sa in service_accounts:
-        neo4j_session.run(
-            ingest_service_account,
-            ARN=sa["Arn"],
-            consolelink=aws_console_link.get_console_link(arn=sa["Arn"]),
-            USERID=sa["UserId"],
-            CREATE_DATE=str(sa["CreateDate"]),
-            USERNAME=sa["UserName"],
-            PATH=sa["Path"],
-            CONSOLELOGINENABLED=sa.get("consoleLoginEnabled", False),
-            MFAENABLED=sa.get("MFAEnabled", False),
-            PASSWORD_LASTUSED=str(sa.get("PasswordLastUsed", "")),
-            ManagedType=MANAGED_TYPE_CUSTOM,
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            region="global",
-            aws_update_tag=aws_update_tag,
-        )
+    sa_rows = [
+        {
+            "arn": sa["Arn"],
+            "consolelink": aws_console_link.get_console_link(arn=sa["Arn"]),
+            "userid": sa["UserId"],
+            "createdate": str(sa["CreateDate"]),
+            "username": sa["UserName"],
+            "path": sa["Path"],
+            "consoleloginenabled": sa.get("consoleLoginEnabled", False),
+            "mfaenabled": sa.get("MFAEnabled", False),
+            "passwordlastused": str(sa.get("PasswordLastUsed", "")),
+        }
+        for sa in service_accounts
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_service_account,
+        sa_rows,
+        ManagedType=MANAGED_TYPE_CUSTOM,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 def _is_service_account(user: Dict) -> bool:
@@ -634,11 +649,12 @@ def load_groups(
     aws_update_tag: int,
 ) -> None:
     ingest_group = """
-    MERGE (gnode:AWSGroup{arn: $ARN})
-    ON CREATE SET gnode.groupid = $GROUP_ID, gnode.firstseen = timestamp(), gnode.createdate = $CREATE_DATE
-    SET gnode:AWSPrincipal, gnode.name = $GROUP_NAME, gnode.path = $PATH,
-    gnode.region = $region,
-    gnode.consolelink = $consolelink,
+    UNWIND $DictList AS item
+    MERGE (gnode:AWSGroup{arn: item.arn})
+    ON CREATE SET gnode.groupid = item.groupid, gnode.firstseen = timestamp(), gnode.createdate = item.createdate
+    SET gnode:AWSPrincipal, gnode.name = item.groupname, gnode.path = item.path,
+    gnode.region = 'global',
+    gnode.consolelink = item.consolelink,
     gnode.managed_type = $ManagedType,
     gnode.lastupdated = $aws_update_tag
     WITH gnode
@@ -648,20 +664,25 @@ def load_groups(
     SET r.lastupdated = $aws_update_tag
     """
     logger.info(f"Loading {len(groups)} IAM groups to the graph.")
-    for group in groups:
-        neo4j_session.run(
-            ingest_group,
-            ARN=group["Arn"],
-            consolelink=aws_console_link.get_console_link(arn=group["Arn"]),
-            GROUP_ID=group["GroupId"],
-            CREATE_DATE=str(group["CreateDate"]),
-            GROUP_NAME=group["GroupName"],
-            PATH=group["Path"],
-            ManagedType=MANAGED_TYPE_CUSTOM,
-            region="global",
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            aws_update_tag=aws_update_tag,
-        )
+    group_rows = [
+        {
+            "arn": group["Arn"],
+            "consolelink": aws_console_link.get_console_link(arn=group["Arn"]),
+            "groupid": group["GroupId"],
+            "createdate": str(group["CreateDate"]),
+            "groupname": group["GroupName"],
+            "path": group["Path"],
+        }
+        for group in groups
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_group,
+        group_rows,
+        ManagedType=MANAGED_TYPE_CUSTOM,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 def _parse_principal_entries(principal: Dict) -> List[Tuple[Any, Any]]:
@@ -687,17 +708,18 @@ def load_roles(
     aws_update_tag: int,
 ) -> None:
     ingest_role = """
-    MERGE (rnode:AWSRole{arn: $Arn})
-    ON CREATE SET rnode:AWSPrincipal, rnode.roleid = $RoleId, rnode.firstseen = timestamp(),
-    rnode.region = $region,
-    rnode.consolelink = $consolelink,
-    rnode.createdate = $CreateDate
-    SET rnode.name = $RoleName, rnode.path = $Path,
-    rnode.lastuseddate = $LastUsedDate, rnode.lastusedregion = $LastUsedRegion,
-    rnode.is_service_role = $IsServiceRole,
-    rnode.is_sso_reserved_role = $IsSSOReservedRole,
-    rnode.type = $Type,
-    rnode.managed_type = $ManagedType
+    UNWIND $DictList AS item
+    MERGE (rnode:AWSRole{arn: item.arn})
+    ON CREATE SET rnode:AWSPrincipal, rnode.roleid = item.roleid, rnode.firstseen = timestamp(),
+    rnode.region = 'global',
+    rnode.consolelink = item.consolelink,
+    rnode.createdate = item.createdate
+    SET rnode.name = item.rolename, rnode.path = item.path,
+    rnode.lastuseddate = item.lastuseddate, rnode.lastusedregion = item.lastusedregion,
+    rnode.is_service_role = item.is_service_role,
+    rnode.is_sso_reserved_role = item.is_sso_reserved_role,
+    rnode.type = item.type,
+    rnode.managed_type = item.managed_type
     SET rnode.lastupdated = $aws_update_tag
     WITH rnode
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -707,24 +729,26 @@ def load_roles(
     """
 
     ingest_policy_statement = """
-    MERGE (spnnode:AWSPrincipal{arn: $SpnArn})
+    UNWIND $DictList AS item
+    MERGE (spnnode:AWSPrincipal{arn: item.spn_arn})
     ON CREATE SET spnnode.firstseen = timestamp()
-    SET spnnode.lastupdated = $aws_update_tag, spnnode.type = $SpnType
-    WITH spnnode
-    MATCH (role:AWSRole{arn: $RoleArn})
+    SET spnnode.lastupdated = $aws_update_tag, spnnode.type = item.spn_type
+    WITH spnnode, item
+    MATCH (role:AWSRole{arn: item.role_arn})
     MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(spnnode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
 
     ingest_external_account_principals = """
-    MERGE (epnode:AWSExternalPrincipal{principal: $principal})
+    UNWIND $DictList AS item
+    MERGE (epnode:AWSExternalPrincipal{principal: item.principal})
     ON CREATE SET epnode.firstseen = timestamp()
     SET epnode.lastupdated = $aws_update_tag,
-    epnode.access_type = $AccessType,
-    epnode.account_id = $AccountId
-    WITH epnode
-    MATCH (role:AWSRole{arn: $RoleArn})
+    epnode.access_type = item.access_type,
+    epnode.account_id = item.account_id
+    WITH epnode, item
+    MATCH (role:AWSRole{arn: item.role_arn})
     MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(epnode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -732,55 +756,74 @@ def load_roles(
 
     # TODO support conditions
     logger.info(f"Loading {len(roles)} IAM roles to the graph.")
-    for role in roles:
-        neo4j_session.run(
-            ingest_role,
-            Arn=role["Arn"],
-            consolelink=aws_console_link.get_console_link(arn=role["Arn"]),
-            RoleId=role.get("RoleId", None),
-            CreateDate=str(role["CreateDate"]),
-            RoleName=role["RoleName"],
-            Path=role["Path"],
-            IsServiceRole=role.get("isServiceRole", False),
-            IsSSOReservedRole=role.get("isSSOReservedRole", False),
-            Type=role.get("type", None),
-            ManagedType=role.get("type") if role.get("type") in (MANAGED_TYPE_PREDEFINED, MANAGED_TYPE_CUSTOM)
+    role_rows = [
+        {
+            "arn": role["Arn"],
+            "consolelink": aws_console_link.get_console_link(arn=role["Arn"]),
+            "roleid": role.get("RoleId", None),
+            "createdate": str(role["CreateDate"]),
+            "rolename": role["RoleName"],
+            "path": role["Path"],
+            "is_service_role": role.get("isServiceRole", False),
+            "is_sso_reserved_role": role.get("isSSOReservedRole", False),
+            "type": role.get("type", None),
+            "managed_type": role.get("type") if role.get("type") in (MANAGED_TYPE_PREDEFINED, MANAGED_TYPE_CUSTOM)
             else _aws_role_managed_type(role.get("Path", "")),
-            region="global",
-            LastUsedDate=role["RoleLastUsed"].get("LastUsedDate") if "RoleLastUsed" in role else None,
-            LastUsedRegion=role["RoleLastUsed"].get("Region") if "RoleLastUsed" in role else None,
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            aws_update_tag=aws_update_tag,
-        )
+            "lastuseddate": role["RoleLastUsed"].get("LastUsedDate") if "RoleLastUsed" in role else None,
+            "lastusedregion": role["RoleLastUsed"].get("Region") if "RoleLastUsed" in role else None,
+        }
+        for role in roles
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_role,
+        role_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
-        for external_principal in role["ExternalAccountPrincipals"]:
-            neo4j_session.run(
-                ingest_external_account_principals,
-                principal=external_principal.get("principal"),
-                AccessType=external_principal.get("access_type"),
-                AccountId=external_principal.get("account_id"),
-                RoleArn=role["Arn"],
-                aws_update_tag=aws_update_tag,
-            )
+    external_principal_rows = [
+        {
+            "principal": external_principal.get("principal"),
+            "access_type": external_principal.get("access_type"),
+            "account_id": external_principal.get("account_id"),
+            "role_arn": role["Arn"],
+        }
+        for role in roles
+        for external_principal in role["ExternalAccountPrincipals"]
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_external_account_principals,
+        external_principal_rows,
+        aws_update_tag=aws_update_tag,
+    )
 
-        for statement in role["AssumeRolePolicyDocument"]["Statement"]:
-            principal_entries = _parse_principal_entries(statement["Principal"])
-            for principal_type, principal_value in principal_entries:
-                neo4j_session.run(
-                    ingest_policy_statement,
-                    SpnArn=principal_value,
-                    SpnType=principal_type,
-                    RoleArn=role["Arn"],
-                    aws_update_tag=aws_update_tag,
-                )
+    trust_principal_rows = [
+        {
+            "spn_arn": principal_value,
+            "spn_type": principal_type,
+            "role_arn": role["Arn"],
+        }
+        for role in roles
+        for statement in role["AssumeRolePolicyDocument"]["Statement"]
+        for principal_type, principal_value in _parse_principal_entries(statement["Principal"])
+    ]
+    load_graph_data(
+        neo4j_session,
+        ingest_policy_statement,
+        trust_principal_rows,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 @timeit
 def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict, aws_update_tag: int) -> None:
     ingest_membership = """
-    MATCH (group:AWSGroup{arn: $GroupArn})
-    WITH group
-    MATCH (user:AWSPrincipal{arn: $PrincipalArn})
+    UNWIND $DictList AS item
+    MATCH (group:AWSGroup{arn: item.group_arn})
+    WITH group, item
+    MATCH (user:AWSPrincipal{arn: item.principal_arn})
     WHERE user:AWSUser OR user:AWSServiceAccount
     MERGE (user)-[r:MEMBER_AWS_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
@@ -791,15 +834,12 @@ def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict
     SET r2.lastupdated = $aws_update_tag
     """
 
-    for group_arn, membership_data in group_memberships.items():
-        for info in membership_data.get("Users", []):
-            principal_arn = info["Arn"]
-            neo4j_session.run(
-                ingest_membership,
-                GroupArn=group_arn,
-                PrincipalArn=principal_arn,
-                aws_update_tag=aws_update_tag,
-            )
+    membership_rows = [
+        {"group_arn": group_arn, "principal_arn": info["Arn"]}
+        for group_arn, membership_data in group_memberships.items()
+        for info in membership_data.get("Users", [])
+    ]
+    load_graph_data(neo4j_session, ingest_membership, membership_rows, aws_update_tag=aws_update_tag)
 
 
 @timeit
@@ -813,7 +853,8 @@ def get_policies_for_principal(neo4j_session: neo4j.Session, principal_arn: str)
     DISTINCT policy.id AS policy_id,
     COLLECT(DISTINCT statements) AS statements
     """
-    results = neo4j_session.run(
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
         get_policy_query,
         Arn=principal_arn,
     )
@@ -841,29 +882,30 @@ def sync_assumerole_relationships(
     """
 
     ingest_policies_assume_role = """
-    MATCH (source:AWSPrincipal{arn: $SourceArn})
-    WITH source
-    MATCH (role:AWSRole{arn: $TargetArn})
+    UNWIND $DictList AS item
+    MATCH (source:AWSPrincipal{arn: item.source_arn})
+    WITH source, item
+    MATCH (role:AWSRole{arn: item.target_arn})
     WITH role, source
     MERGE (source)-[r:STS_ASSUMEROLE_ALLOW]->(role)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
 
-    results = neo4j_session.run(
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
         query_potential_matches,
         AccountId=current_aws_account_id,
     )
     potential_matches = [(r["source_arn"], r["target_arn"]) for r in results]
-    for source_arn, target_arn in potential_matches:
-        policies = get_policies_for_principal(neo4j_session, source_arn)
-        if principal_allowed_on_resource(policies, target_arn, ["sts:AssumeRole"]):
-            neo4j_session.run(
-                ingest_policies_assume_role,
-                SourceArn=source_arn,
-                TargetArn=target_arn,
-                aws_update_tag=aws_update_tag,
-            )
+    allowed_rows = [
+        {"source_arn": source_arn, "target_arn": target_arn}
+        for source_arn, target_arn in potential_matches
+        if principal_allowed_on_resource(
+            get_policies_for_principal(neo4j_session, source_arn), target_arn, ["sts:AssumeRole"],
+        )
+    ]
+    load_graph_data(neo4j_session, ingest_policies_assume_role, allowed_rows, aws_update_tag=aws_update_tag)
     run_cleanup_job(
         "aws_import_roles_policy_cleanup.json",
         neo4j_session,
@@ -882,18 +924,19 @@ def load_user_access_keys(
     # To rotate key there is no option in aws. we need to create new and delete existing key that's why rotatedate same as createdate
     # TODO change the node label to reflect that this is a user access key, not an account access key
     ingest_account_key = """
-    MATCH (user:AWSPrincipal{arn: $ARN})
+    UNWIND $DictList AS item
+    MATCH (user:AWSPrincipal{arn: item.arn})
     WHERE user:AWSUser OR user:AWSServiceAccount
-    WITH user
-    MERGE (key:AccountAccessKey{accesskeyid: $AccessKeyId})
+    WITH user, item
+    MERGE (key:AccountAccessKey{accesskeyid: item.accesskeyid})
     ON CREATE SET key.firstseen = timestamp(),
-    key.region = $region,
-    key.createdate = $CreateDate,
-    key.rotatedate = $CreateDate,
+    key.region = 'global',
+    key.createdate = item.createdate,
+    key.rotatedate = item.createdate,
     key.consolelink = $consolelink
-    SET key.status = $Status,
-    key.keyage = $KeyAge,
-    key.lastuseddate = $LastUsedDate,
+    SET key.status = item.status,
+    key.keyage = item.keyage,
+    key.lastuseddate = item.lastuseddate,
     key.lastupdated = $aws_update_tag
     WITH user,key
     MERGE (user)-[r:AWS_ACCESS_KEY]->(key)
@@ -901,21 +944,23 @@ def load_user_access_keys(
     SET r.lastupdated = $aws_update_tag
     """
 
-    for arn, access_keys in user_access_keys.items():
-        for key in access_keys["AccessKeyMetadata"]:
-            if key.get("AccessKeyId"):
-                neo4j_session.run(
-                    ingest_account_key,
-                    consolelink=consolelink,
-                    ARN=arn,
-                    AccessKeyId=key["AccessKeyId"],
-                    LastUsedDate=str(key.get("LastUsedDate", "")),
-                    CreateDate=str(key.get("CreateDate", "")),
-                    KeyAge=str(key.get("KeyAge", "")),
-                    Status=key["Status"],
-                    region="global",
-                    aws_update_tag=aws_update_tag,
-                )
+    access_key_rows = [
+        {
+            "arn": arn,
+            "accesskeyid": key["AccessKeyId"],
+            "lastuseddate": str(key.get("LastUsedDate", "")),
+            "createdate": str(key.get("CreateDate", "")),
+            "keyage": str(key.get("KeyAge", "")),
+            "status": key["Status"],
+        }
+        for arn, access_keys in user_access_keys.items()
+        for key in access_keys["AccessKeyMetadata"]
+        if key.get("AccessKeyId")
+    ]
+    load_graph_data(
+        neo4j_session, ingest_account_key, access_key_rows,
+        consolelink=consolelink, aws_update_tag=aws_update_tag,
+    )
 
 
 def ensure_list(obj: Any) -> List[Any]:
@@ -1112,7 +1157,8 @@ def load_policy_statements(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
         """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_policy_statement,
         PolicyId=policy_id,
         consolelink=consolelink,
@@ -1120,7 +1166,99 @@ def load_policy_statements(
         Statements=statements,
         region="global",
         aws_update_tag=aws_update_tag,
-    ).consume()
+    )
+
+
+def _batch_load_policies(
+    neo4j_session: neo4j.Session,
+    policy_rows: List[Dict],
+    policy_type: str,
+    aws_update_tag: int,
+) -> None:
+    """
+    Batched equivalent of _load_policy_tx: one UNWIND write linking policies to
+    principals matched by arn, and one matching principals by id (SSO principals).
+    """
+    if policy_type == PolicyType.managed.value:
+        create_clause = """
+        ON CREATE SET
+        policy.firstseen = timestamp()
+        """
+    else:
+        create_clause = """
+        ON CREATE SET
+        policy.firstseen = timestamp(),
+        policy.type = $PolicyType,
+        policy.region = 'global',
+        policy.name = item.policy_name,
+        policy.arn = item.policy_arn,
+        policy.managed_type = $ManagedType,
+        policy.consolelink = item.consolelink
+        """
+
+    ingest_policy = f"""
+    UNWIND $DictList AS item
+    MERGE (policy:AWSPolicy{{id: item.policy_id}})
+    {create_clause}
+    SET policy.lastupdated = $aws_update_tag
+    WITH policy, item
+    MATCH (principal:AWSPrincipal{{arn: item.principal_arn}})
+    MERGE (policy) <-[r:POLICY]-(principal)
+    SET r.lastupdated = $aws_update_tag
+    """
+    ingest_sso_policy = f"""
+    UNWIND $DictList AS item
+    MERGE (policy:AWSPolicy{{id: item.policy_id}})
+    {create_clause}
+    SET policy.lastupdated = $aws_update_tag
+    WITH policy, item
+    MATCH (principal:AWSPrincipal{{id: item.principal_arn}})
+    MERGE (policy) <-[r:POLICY]-(principal)
+    SET r.lastupdated = $aws_update_tag
+    """
+    for query in (ingest_policy, ingest_sso_policy):
+        load_graph_data(
+            neo4j_session,
+            query,
+            policy_rows,
+            PolicyType=policy_type,
+            ManagedType=MANAGED_TYPE_CUSTOM,
+            aws_update_tag=aws_update_tag,
+        )
+
+
+def _batch_load_policy_statements(
+    neo4j_session: neo4j.Session,
+    statement_rows: List[Dict],
+    aws_update_tag: int,
+    consolelink: str,
+) -> None:
+    """Batched equivalent of load_policy_statements: one write for all policies."""
+    ingest_policy_statement = """
+        UNWIND $DictList AS item
+        MATCH (policy:AWSPolicy{id: item.policy_id})
+        WITH policy, item
+        UNWIND item.statements as statement_data
+        MERGE (statement:AWSPolicyStatement{id: statement_data.id})
+        SET
+        statement.effect = statement_data.Effect,
+        statement.action = statement_data.Action,
+        statement.region = 'global',
+        statement.consolelink = $consolelink,
+        statement.notaction = statement_data.NotAction,
+        statement.resource = statement_data.Resource,
+        statement.notresource = statement_data.NotResource,
+        statement.condition = statement_data.Condition,
+        statement.sid = statement_data.Sid,
+        statement.lastupdated = $aws_update_tag
+        MERGE (policy)-[r:STATEMENT]->(statement)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $aws_update_tag
+        """
+    load_graph_data(
+        neo4j_session, ingest_policy_statement, statement_rows,
+        consolelink=consolelink, aws_update_tag=aws_update_tag,
+    )
 
 
 @timeit
@@ -1131,21 +1269,25 @@ def load_policy_data(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
+    policy_rows = []
+    statement_rows = []
     for principal_arn, policy_list in policy_map.items():
         logger.debug(f"Syncing IAM policies for principal {principal_arn}")
         for policy_name, statements in policy_list.items():
-            consolelink = ""
             policy_id = transform_policy_id(current_aws_account_id, policy_type, policy_name)
-            load_policy(
-                neo4j_session,
-                policy_id,
-                policy_name,
-                policy_type,
-                principal_arn,
-                current_aws_account_id,
-                aws_update_tag,
-            )
-            load_policy_statements(neo4j_session, policy_id, policy_name, statements, aws_update_tag, consolelink)
+            policy = policy_name.split("/")[-1]
+            policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
+            policy_rows.append({
+                "policy_id": policy_id,
+                "policy_name": policy_name,
+                "principal_arn": principal_arn,
+                "policy_arn": policy_arn,
+                "consolelink": aws_console_link.get_console_link(arn=policy_arn),
+            })
+            statement_rows.append({"policy_id": policy_id, "statements": statements})
+
+    _batch_load_policies(neo4j_session, policy_rows, policy_type, aws_update_tag)
+    _batch_load_policy_statements(neo4j_session, statement_rows, aws_update_tag, consolelink="")
 
 
 @timeit
@@ -1352,7 +1494,7 @@ def sync_group_memberships(
         "MATCH (group:AWSGroup)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ACCOUNT_ID}) "
         "return group.name as name, group.arn as arn;"
     )
-    groups = neo4j_session.run(query, AWS_ACCOUNT_ID=current_aws_account_id)
+    groups = neo4j_session.execute_read(read_list_of_dicts_tx, query, AWS_ACCOUNT_ID=current_aws_account_id)
     groups_membership = {group["arn"]: get_group_membership_data(boto3_session, group["name"]) for group in groups}
     load_group_memberships(neo4j_session, groups_membership, aws_update_tag)
     run_cleanup_job(
@@ -1372,7 +1514,7 @@ def sync_user_access_keys(
 ) -> None:
     logger.info("Syncing IAM user access keys for account '%s'.", current_aws_account_id)
     query = "MATCH (user:AWSPrincipal)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ACCOUNT_ID}) WHERE user:AWSUser OR user:AWSServiceAccount return user.name as name"
-    result = neo4j_session.run(query, AWS_ACCOUNT_ID=current_aws_account_id)
+    result = neo4j_session.execute_read(read_list_of_dicts_tx, query, AWS_ACCOUNT_ID=current_aws_account_id)
     usernames = [r["name"] for r in result]
     for name in usernames:
         access_keys = get_account_access_key_data(boto3_session, name)
