@@ -11,6 +11,8 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.intel.gcp import external_idp
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -444,7 +446,7 @@ def load_api_keys(
 ) -> None:
 
     query = """
-    UNWIND $ApiKeys as key
+    UNWIND $DictList as key
     MERGE (apikey:GCPAPIKey{id: key.id})
     ON CREATE SET
         apikey.firstseen = timestamp()
@@ -462,9 +464,10 @@ def load_api_keys(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        ApiKeys=api_keys,
+        api_keys,
         project_id=project_id,
         region="global",
         gcp_update_tag=gcp_update_tag,
@@ -484,7 +487,7 @@ def load_service_accounts(
 
 ) -> None:
     ingest_service_accounts = """
-    UNWIND $service_accounts_list AS sa
+    UNWIND $DictList AS sa
     MERGE (u:GCPServiceAccount{id: sa.id})
     ON CREATE SET u:GCPPrincipal, u.firstseen = timestamp()
     SET u.name = sa.name, u.displayname = sa.displayName,
@@ -505,9 +508,10 @@ def load_service_accounts(
     SET r.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_service_accounts,
-        service_accounts_list=service_accounts,
+        service_accounts,
         parent=['project'],
         parentId=[f'projects/{project_id}'],
         project_id=project_id,
@@ -528,7 +532,7 @@ def load_service_account_keys(
     service_account: str, project_id: str, gcp_update_tag: int,
 ) -> None:
     ingest_service_accounts = """
-    UNWIND $service_account_keys_list AS sa
+    UNWIND $DictList AS sa
     MERGE (u:GCPServiceAccountKey{id: sa.id})
     ON CREATE SET u.firstseen = timestamp()
     SET u.name=sa.name, u.serviceaccountid= $serviceaccount,
@@ -549,9 +553,10 @@ def load_service_account_keys(
     SET r.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_service_accounts,
-        service_account_keys_list=service_account_keys,
+        service_account_keys,
         serviceaccount=service_account,
         createDate=datetime.utcnow(),
         region="global",
@@ -568,7 +573,7 @@ def cleanup_service_account_keys(neo4j_session: neo4j.Session, common_job_parame
 @timeit
 def load_project_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_id: str, gcp_update_tag: int) -> None:
     ingest_roles = """
-    UNWIND $roles_list AS d
+    UNWIND $DictList AS d
     MERGE (u:GCPRole{id: d.id})
     ON CREATE SET u.firstseen = timestamp()
     SET u.name = d.name,
@@ -592,9 +597,10 @@ def load_project_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_
     SET r.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_roles,
-        roles_list=roles,
+        roles,
         region="global",
         createDate=datetime.utcnow(),
         project_id=project_id,
@@ -605,7 +611,7 @@ def load_project_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_
 @timeit
 def load_sso_roles(neo4j_session: neo4j.Session, roles: List[Dict], org_id: str, gcp_update_tag: int) -> None:
     ingest_roles = """
-    UNWIND $roles_list AS d
+    UNWIND $DictList AS d
     MERGE (u:GCPRole{id: d.id})
     ON CREATE SET u.firstseen = timestamp()
     SET u.name = d.name,
@@ -629,9 +635,10 @@ def load_sso_roles(neo4j_session: neo4j.Session, roles: List[Dict], org_id: str,
     SET r.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_roles,
-        roles_list=roles,
+        roles,
         region="global",
         createDate=datetime.utcnow(),
         org_id=org_id,
@@ -896,7 +903,8 @@ def attach_project_role_to_user(
     SET pr.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_script,
         RoleId=role_id,
         UserId=user['id'],
@@ -947,7 +955,8 @@ def attach_sso_role_to_user(
     SET pr.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_script,
         RoleId=role_id,
         UserId=user['id'],
@@ -980,7 +989,8 @@ def attach_project_role_to_service_account(
     SET r.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_script,
         RoleId=role_id,
         isDeleted=serviceAccount.get('is_deleted', False),
@@ -1011,7 +1021,8 @@ def attach_sso_role_to_service_account(
     r2.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_script,
         RoleId=role_id,
         isDeleted=serviceAccount.get('is_deleted', False),
@@ -1055,7 +1066,8 @@ def attach_project_role_to_group(
     SET pr.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_script,
         RoleId=role_id,
         GroupId=group['id'],
@@ -1106,7 +1118,8 @@ def attach_sso_role_to_group(
     SET pr.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_script,
         RoleId=role_id,
         GroupId=group['id'],
@@ -1154,7 +1167,8 @@ def attach_project_role_to_domain(
     SET pr.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_script,
         RoleId=role_id,
         DomainId=domain['id'],
@@ -1204,7 +1218,8 @@ def attach_sso_role_to_domain(
     SET pr.lastupdated = $gcp_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_script,
         RoleId=role_id,
         DomainId=domain['id'],

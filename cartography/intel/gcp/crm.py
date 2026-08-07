@@ -11,6 +11,7 @@ import neo4j
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -104,7 +105,8 @@ def load_gcp_organizations(neo4j_session: neo4j.Session, data: List[Dict], gcp_u
     SET o.lastupdated = $gcp_update_tag
     """
     for org_object in data:
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             query,
             WorkspaceId=common_job_parameters['WORKSPACE_ID'],
             OrgName=org_object['name'],
@@ -152,7 +154,8 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $gcp_update_tag
         """
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             query,
             ParentId=folder['parent'],
             FolderName=folder['name'],
@@ -197,7 +200,8 @@ def load_gcp_projects(
     for project in data:
         if project['projectId'] != common_job_parameters['GCP_PROJECT_ID']:
             continue
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             query,
             OrganizationId=common_job_parameters['GCP_ORGANIZATION_ID'],
             ProjectId=project['projectId'],
@@ -241,7 +245,8 @@ def _attach_gcp_project_parent(neo4j_session: neo4j.Session, project: Dict, gcp_
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """)
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         INGEST_PARENT_TEMPLATE.safe_substitute(parent_label=parent_label),
         ParentId=parent_id,
         ProjectId=project['projectId'],

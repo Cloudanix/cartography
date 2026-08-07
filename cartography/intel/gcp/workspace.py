@@ -8,6 +8,7 @@ import neo4j
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
@@ -273,7 +274,7 @@ def _load_groups_tx(tx: neo4j.Transaction, groups: List[Dict], organization_id: 
 @timeit
 def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List[Dict], gsuite_update_tag: int) -> None:
     ingestion_qry = """
-        UNWIND $MemberData as member
+        UNWIND $DictList as member
         MERGE (user:GCPUser {userId: member.id})
         ON CREATE SET
         user:GCPPrincipal,
@@ -288,14 +289,15 @@ def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List
         SET
         r.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingestion_qry,
-        MemberData=members,
+        members,
         GroupID=group.get("id"),
         UpdateTag=gsuite_update_tag,
     )
     membership_qry = """
-        UNWIND $MemberData as member
+        UNWIND $DictList as member
         MATCH(group_1: GCPGroup{groupId: member.id}), (group_2:GCPGroup {groupId: $GroupID})
         MERGE (group_1)-[r:MEMBER_GROUP]->(group_2)
         ON CREATE SET
@@ -303,7 +305,7 @@ def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List
         SET
         r.lastupdated = $UpdateTag
     """
-    neo4j_session.run(membership_qry, MemberData=members, GroupID=group.get("id"), UpdateTag=gsuite_update_tag)
+    load_graph_data(neo4j_session, membership_qry, members, GroupID=group.get("id"), UpdateTag=gsuite_update_tag)
 
 
 @timeit

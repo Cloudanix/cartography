@@ -10,6 +10,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -143,7 +144,8 @@ def load_gke_clusters(
     for cluster in cluster_resp:
         cluster["region"] = get_region_from_location(cluster.get("location"))
 
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             query,
             ProjectId=project_id,
             ClusterId=cluster["id"],
