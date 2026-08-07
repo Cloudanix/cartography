@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 # Lifecycle states we treat as live compute worth ingesting.
 # Keep STOPPED (still configured, billable boot volume / security surface).
-# Drop TERMINATED / TERMINATING / CREATING tombstones and in-flight creates.
+# Include transitional states (STARTING, STOPPING, PROVISIONING, MOVING).
+# Drop TERMINATED / TERMINATING / CREATING.
 # list_instances accepts a single lifecycle_state — one call per state.
 ACTIVE_INSTANCE_LIFECYCLE_STATES: List[str] = [
     "RUNNING",
