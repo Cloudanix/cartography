@@ -129,6 +129,9 @@ def test_untaggable_types_removed():
     # resource types; keeping them only wasted API calls every sync
     assert 'ecs:container' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
     assert 'elasticloadbalancing:listener' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+    # Reserved instances are low-value for tagging and can be large in RGT results
+    assert 'ec2:reserved-instances' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+    assert 'rds:ri' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
 
 
 def test_global_resource_types_synced_once_in_us_east_1(mocker, monkeypatch):
@@ -180,19 +183,11 @@ def test_phase2_remainder_mappings_present():
         'cloudwatch:alarm': 'AWSCloudWatchAlarm',
         'events:rule': 'AWSEventBridgeRule',
         'events:event-bus': 'AWSEventBridgeEventBus',
-        'rds:ri': 'RDSReservedDBInstance',
-        'ec2:reserved-instances': 'EC2ReservedInstance',
         'securityhub:hub': 'SecurityHub',
     }
     for resource_type, label in expected.items():
         assert resource_type in rgta.TAG_RESOURCE_TYPE_MAPPINGS, resource_type
         assert rgta.TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['label'] == label
-
-
-def test_reserved_instance_mapping_uses_short_id():
-    # EC2ReservedInstance nodes are created with id = ReservedInstancesId, not the ARN
-    arn = 'arn:aws:ec2:us-east-1:1234:reserved-instances/ri-abcd'
-    assert rgta.compute_resource_id({'ResourceARN': arn}, 'ec2:reserved-instances') == 'ri-abcd'
 
 
 def test_iam_role_is_a_global_resource_type():

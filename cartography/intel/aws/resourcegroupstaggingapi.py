@@ -170,10 +170,6 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     'config:config-rule': {'label': 'AWSConfigRule', 'property': 'id'},
     'ec2:image': {'label': 'EC2Image', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ec2:launch-template': {'label': 'LaunchTemplate', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
-    'ec2:reserved-instances': {
-        'label': 'EC2ReservedInstance', 'property': 'id',
-        'id_func': get_short_id_from_ec2_arn,
-    },
     'ec2:route-table': {'label': 'EC2RouteTable', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ec2:snapshot': {'label': 'EBSSnapshot', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'events:event-bus': {'label': 'AWSEventBridgeEventBus', 'property': 'id'},
@@ -187,7 +183,6 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
         'path': '-[:RESOURCE]->(:EKSCluster)<-[:ASSOCIATED_WITH]-',
     },
     'kinesis:stream': {'label': 'KinesisStream', 'property': 'id'},
-    'rds:ri': {'label': 'RDSReservedDBInstance', 'property': 'id'},
     'logs:log-group': {'label': 'AWSCloudWatchLogGroup', 'property': 'id', 'id_func': get_log_group_arn_with_wildcard},
     'route53:hostedzone': {'label': 'AWSDNSZone', 'property': 'zoneid', 'id_func': get_hosted_zone_id_from_arn},
     'sagemaker:cluster': {'label': 'AWSSagemakerCluster', 'property': 'arn'},
@@ -220,8 +215,7 @@ def iter_tag_pages(
     Yield pages of ResourceTagMappingList from the tagging API.
 
     Streaming keeps peak memory to roughly one API page instead of the full
-    region×resource-type result set (important for large types like
-    ec2:reserved-instances).
+    region×resource-type result set for large resource types.
     """
     # this is a temporary workaround to populate AWS tags for IAM roles.
     # resourcegroupstaggingapi does not support IAM roles and no ETA is provided
