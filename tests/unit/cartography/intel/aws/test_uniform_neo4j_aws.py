@@ -17,6 +17,7 @@ from cartography.intel.aws import elasticsearch
 from cartography.intel.aws import kms
 from cartography.intel.aws import lambda_function
 from cartography.intel.aws import organizations
+from cartography.intel.aws import rds
 from cartography.intel.aws import secretsmanager
 from cartography.intel.aws import securityhub
 from cartography.intel.aws import sqs
@@ -246,3 +247,60 @@ class TestLambda:
         assert session.execute_write.call_count == 2
         assert_batched(session.execute_write.call_args_list[0], functions)
         assert_batched(session.execute_write.call_args_list[1], aliases)
+
+
+class TestRds:
+    @patch.object(rds, "_attach_associate_roles")
+    @patch.object(rds, "_attach_db_subnet_group")
+    @patch.object(rds, "_attach_ec2_security_groups_cluster")
+    def test_clusters_batched(self, mock_sg, mock_subnet, mock_roles):
+        session = MagicMock()
+        clusters = [{
+            "DBClusterArn": "arn:aws:rds:us-east-1:1234:cluster:c1",
+            "DBClusterIdentifier": "c1",
+            "EarliestRestorableTime": None,
+            "LatestRestorableTime": None,
+            "ClusterCreateTime": None,
+            "EarliestBacktrackTime": None,
+        }]
+
+        rds.load_rds_clusters(session, clusters, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+
+        session.run.assert_not_called()
+        assert_batched(session.execute_write.call_args, clusters)
+
+    def test_cluster_security_group_attachment_batched(self):
+        session = MagicMock()
+        cluster = {
+            "DBClusterArn": "arn:aws:rds:us-east-1:1234:cluster:c1",
+            "VpcSecurityGroups": [{"VpcSecurityGroupId": "sg-1"}],
+        }
+
+        rds._attach_ec2_security_groups_cluster(session, cluster, TEST_UPDATE_TAG)
+
+        session.run.assert_not_called()
+        call = session.execute_write.call_args
+        assert_batched(call, cluster["VpcSecurityGroups"])
+        assert call.kwargs["DBClusterArn"] == cluster["DBClusterArn"]
+
+    def test_subnet_group_attachment_is_managed(self):
+        session = MagicMock()
+        cluster = {"DBClusterArn": "arn:aws:rds:us-east-1:1234:cluster:c1", "DBSubnetGroup": "sng-1"}
+
+        rds._attach_db_subnet_group(session, cluster, TEST_UPDATE_TAG)
+
+        session.run.assert_not_called()
+        session.execute_write.assert_called_once()
+
+    def test_read_replica_and_cluster_member_links_batched(self):
+        session = MagicMock()
+        replicas = [{"DBInstanceArn": "arn:instance", "ReadReplicaSourceDBInstanceIdentifier": "src"}]
+        members = [{"DBInstanceArn": "arn:instance", "DBClusterIdentifier": "c1"}]
+
+        rds._attach_read_replicas(session, replicas, TEST_UPDATE_TAG)
+        rds._attach_clusters(session, members, TEST_UPDATE_TAG)
+
+        session.run.assert_not_called()
+        assert session.execute_write.call_count == 2
+        assert_batched(session.execute_write.call_args_list[0], replicas)
+        assert_batched(session.execute_write.call_args_list[1], members)

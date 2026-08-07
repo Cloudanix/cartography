@@ -12,6 +12,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.stats import get_stats_client
 from cartography.util import aws_handle_regions
@@ -367,7 +368,7 @@ def load_rds_clusters(
     Ingest the RDS clusters to neo4j and link them to necessary nodes.
     """
     ingest_rds_cluster = """
-    UNWIND $Clusters as rds_cluster
+    UNWIND $DictList as rds_cluster
         MERGE (cluster:RDSCluster{id: rds_cluster.DBClusterArn})
         ON CREATE SET cluster.firstseen = timestamp(),
             cluster.arn = rds_cluster.DBClusterArn
@@ -435,9 +436,10 @@ def load_rds_clusters(
         cluster['ScalingConfigurationInfoMaxCapacity'] = cluster.get('ScalingConfigurationInfo', {}).get('MaxCapacity')
         cluster['ScalingConfigurationInfoAutoPause'] = cluster.get('ScalingConfigurationInfo', {}).get('AutoPause')
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_rds_cluster,
-        Clusters=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
@@ -467,17 +469,18 @@ def _attach_ec2_security_groups_cluster(neo4j_session: neo4j.Session, cluster: D
     Attach an RDS instance to its EC2SecurityGroups
     """
     attach_rds_to_group = """
-    UNWIND $VpcSecurityGroups as rds_sg
+    UNWIND $DictList as rds_sg
         MATCH (rds:RDSCluster{id: $DBClusterArn})
         MERGE (sg:EC2SecurityGroup{id: rds_sg.VpcSecurityGroupId})
         MERGE (rds)-[m:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
         ON CREATE SET m.firstseen = timestamp()
         SET m.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_rds_to_group,
+        cluster['VpcSecurityGroups'],
         DBClusterArn=cluster['DBClusterArn'],
-        VpcSecurityGroups=cluster['VpcSecurityGroups'],
         aws_update_tag=aws_update_tag,
     )
 
@@ -491,7 +494,8 @@ def _attach_db_subnet_group(neo4j_session: neo4j.Session, cluster: Dict, aws_upd
     ON CREATE SET s.firstseen = timestamp()
     SET s.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         attach_cluster_to_role,
         DBClusterArn=cluster['DBClusterArn'],
         DBSubnetGroup=cluster['DBSubnetGroup'],
@@ -524,7 +528,7 @@ def load_rds_instances(
     Ingest the RDS instances to neo4j and link them to necessary nodes.
     """
     ingest_rds_instance = """
-    UNWIND $Instances as rds_instance
+    UNWIND $DictList as rds_instance
         MERGE (rds:RDSInstance{id: rds_instance.DBInstanceArn})
         ON CREATE SET rds.firstseen = timestamp(),
             rds.arn = rds_instance.DBInstanceArn
@@ -612,9 +616,10 @@ def load_rds_instances(
                 publicIp = ip.get("ip")
         rds['privateIp'] = privateIp
         rds['publicIp'] = publicIp
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_rds_instance,
-        Instances=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
@@ -633,7 +638,7 @@ def load_rds_snapshots(
     Ingest the RDS snapshots to neo4j and link them to necessary nodes.
     """
     ingest_rds_snapshot = """
-    UNWIND $Snapshots as rds_snapshot
+    UNWIND $DictList as rds_snapshot
         MERGE (snapshot:RDSSnapshot{id: rds_snapshot.DBSnapshotArn})
         ON CREATE SET snapshot.firstseen = timestamp(),
             snapshot.arn = rds_snapshot.DBSnapshotArn
@@ -679,9 +684,10 @@ def load_rds_snapshots(
 
     snapshots = transform_rds_snapshots(data)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_rds_snapshot,
-        Snapshots=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
@@ -694,7 +700,7 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: Dict, aws_u
     Ingest the RDS snapshot attributes to neo4j and link them to RDS snapshot.
     """
     ingest_rds_snapshot_attributes = """
-    UNWIND $snapshotAttributes as result
+    UNWIND $DictList as result
         MATCH (rdsSnapshot:RDSSnapshot{db_snapshot_identifier: result.DBSnapshotIdentifier})
         WITH result, rdsSnapshot
         UNWIND result.DBSnapshotAttributes as attribute
@@ -709,9 +715,10 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: Dict, aws_u
             SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_rds_snapshot_attributes,
-        snapshotAttributes=data,
+        data,
         aws_update_tag=aws_update_tag,
     )
 
@@ -722,16 +729,17 @@ def _attach_snapshots(neo4j_session: neo4j.Session, snapshots: List[Dict], aws_u
     Attach snapshots to their source instance
     """
     attach_member_to_source = """
-    UNWIND $Snapshots as snapshot
+    UNWIND $DictList as snapshot
         MATCH (rdsInstance:RDSInstance {db_instance_identifier: snapshot.DBInstanceIdentifier}),
         (rdsSnapshot:RDSSnapshot {arn: snapshot.DBSnapshotArn})
         MERGE (rdsInstance)-[r:IS_SNAPSHOT_SOURCE]->(rdsSnapshot)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_member_to_source,
-        Snapshots=snapshots,
+        snapshots,
         aws_update_tag=aws_update_tag,
     )
 
@@ -745,7 +753,7 @@ def _attach_ec2_subnet_groups(
     Attach RDS instances to their EC2 subnet groups
     """
     attach_rds_to_subnet_group = """
-    UNWIND $SubnetGroups as rds_sng
+    UNWIND $DictList as rds_sng
         MERGE (sng:DBSubnetGroup{id: rds_sng.arn})
         ON CREATE SET sng.firstseen = timestamp()
         SET sng.name = rds_sng.DBSubnetGroupName,
@@ -768,9 +776,10 @@ def _attach_ec2_subnet_groups(
         db_sng['instance_arn'] = instance['DBInstanceArn']
         db_sng['region'] = region
         db_sngs.append(db_sng)
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_rds_to_subnet_group,
-        SubnetGroups=db_sngs,
+        db_sngs,
         aws_update_tag=aws_update_tag,
     )
     _attach_ec2_subnets_to_subnetgroup(neo4j_session, db_sngs, current_aws_account_id, aws_update_tag)
@@ -790,7 +799,7 @@ def _attach_ec2_subnets_to_subnetgroup(
     Availability Zone to select a subnet and an IP address within that subnet to associate with your DB instance.`
     """
     attach_subnets_to_sng = """
-    UNWIND $Subnets as rds_sn
+    UNWIND $DictList as rds_sn
         MATCH (sng:DBSubnetGroup{id: rds_sn.sng_arn})
         MERGE (subnet:EC2Subnet{subnetid: rds_sn.sn_id})
         ON CREATE SET subnet.firstseen = timestamp()
@@ -812,9 +821,10 @@ def _attach_ec2_subnets_to_subnetgroup(
                 'sng_arn': sng_arn,
                 'az': az,
             })
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_subnets_to_sng,
-        Subnets=subnets,
+        subnets,
         aws_update_tag=aws_update_tag,
     )
 
@@ -825,7 +835,7 @@ def _attach_ec2_security_groups(neo4j_session: neo4j.Session, instances: List[Di
     Attach an RDS instance to its EC2SecurityGroups
     """
     attach_rds_to_group = """
-    UNWIND $Groups as rds_sg
+    UNWIND $DictList as rds_sg
         MATCH (rds:RDSInstance{id: rds_sg.arn})
         MERGE (sg:EC2SecurityGroup{id: rds_sg.group_id})
         MERGE (rds)-[m:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
@@ -839,9 +849,10 @@ def _attach_ec2_security_groups(neo4j_session: neo4j.Session, instances: List[Di
                 'arn': instance['DBInstanceArn'],
                 'group_id': group['VpcSecurityGroupId'],
             })
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_rds_to_group,
-        Groups=groups,
+        groups,
         aws_update_tag=aws_update_tag,
     )
 
@@ -852,16 +863,17 @@ def _attach_read_replicas(neo4j_session: neo4j.Session, read_replicas: List[Dict
     Attach read replicas to their source instances
     """
     attach_replica_to_source = """
-    UNWIND $Replicas as rds_replica
+    UNWIND $DictList as rds_replica
         MATCH (replica:RDSInstance{id: rds_replica.DBInstanceArn}),
         (source:RDSInstance{db_instance_identifier: rds_replica.ReadReplicaSourceDBInstanceIdentifier})
         MERGE (replica)-[r:IS_READ_REPLICA_OF]->(source)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_replica_to_source,
-        Replicas=read_replicas,
+        read_replicas,
         aws_update_tag=aws_update_tag,
     )
 
@@ -872,16 +884,17 @@ def _attach_clusters(neo4j_session: neo4j.Session, cluster_members: List[Dict], 
     Attach cluster members to their source clusters
     """
     attach_member_to_source = """
-    UNWIND $Members as rds_cluster_member
+    UNWIND $DictList as rds_cluster_member
     MATCH (member:RDSInstance{id: rds_cluster_member.DBInstanceArn}),
     (source:RDSCluster{db_cluster_identifier: rds_cluster_member.DBClusterIdentifier})
     MERGE (member)-[r:IS_CLUSTER_MEMBER_OF]->(source)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_member_to_source,
-        Members=cluster_members,
+        cluster_members,
         aws_update_tag=aws_update_tag,
     )
 
