@@ -9,6 +9,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
 from typing import TypedDict
 from typing import Union
 
@@ -656,6 +657,48 @@ async def get_group_members(
     return members_data
 
 
+async def _gather_group_members_fail_fast(
+    credentials: Credentials,
+    group_ids: List[str],
+    client: GraphServiceClient,
+    tenant_id: str,
+) -> Tuple[List[Any], bool]:
+    """
+    Fetch members for many groups with a shared auth circuit breaker.
+
+    Once GraphAuthenticationExpiredError is seen, remaining tasks skip Graph
+    calls so a dead token cannot burn an hour of 401s.
+    Returns (gather_results, auth_expired).
+    """
+    auth_expired = asyncio.Event()
+    member_semaphore = asyncio.Semaphore(3)
+
+    async def _bounded_get_members(group_id: str) -> List[Dict]:
+        if auth_expired.is_set():
+            return []
+        async with member_semaphore:
+            if auth_expired.is_set():
+                return []
+            try:
+                return await get_group_members(credentials, group_id, client=client)
+            except GraphAuthenticationExpiredError:
+                auth_expired.set()
+                raise
+
+    results = await asyncio.gather(
+        *[_bounded_get_members(group_id) for group_id in group_ids],
+        return_exceptions=True,
+    )
+    expired = any(isinstance(result, GraphAuthenticationExpiredError) for result in results)
+    if expired:
+        skipped = sum(1 for result in results if result == [])
+        logger.error(
+            f"IAM tenant={tenant_id}: Graph access token expired during group member fetch; "
+            f"aborting remaining member fetches (skipped≈{skipped}) to avoid a prolonged 401 storm",
+        )
+    return list(results), expired
+
+
 @timeit
 def load_group_memberships(neo4j_session: neo4j.Session, memberships: List[Dict], update_tag: int) -> None:
     neo4j_session.execute_write(_load_group_memberships_tx, memberships, update_tag)
@@ -703,17 +746,14 @@ async def sync_tenant_groups(
         f"IAM tenant={tenant_id}: group list fetch done — {len(tenant_groups_list)} groups in {time.perf_counter() - t0:.2f}s",
     )
 
-    # Fetch all group members concurrently (bounded) then write sequentially
-    _member_semaphore = asyncio.Semaphore(3)
-
-    async def _bounded_get_members(group_id: str) -> List[Dict]:
-        async with _member_semaphore:
-            return await get_group_members(credentials, group_id, client=client)
-
+    # Fetch all group members concurrently (bounded) then write sequentially.
+    # Abort remaining Graph calls if the access token expires mid-fanout.
     t0 = time.perf_counter()
-    membership_results = await asyncio.gather(
-        *[_bounded_get_members(group["id"]) for group in tenant_groups_list],
-        return_exceptions=True,
+    membership_results, auth_expired = await _gather_group_members_fail_fast(
+        credentials,
+        [group["id"] for group in tenant_groups_list],
+        client,
+        tenant_id,
     )
     logger.info(f"IAM tenant={tenant_id}: group member fetch done in {time.perf_counter() - t0:.2f}s")
 
@@ -721,7 +761,8 @@ async def sync_tenant_groups(
     load_tenant_groups(neo4j_session, tenant_id, tenant_groups_list, update_tag)
     for result in membership_results:
         if isinstance(result, Exception):
-            logger.warning(f"IAM tenant={tenant_id}: group member fetch error — {result}")
+            if not isinstance(result, GraphAuthenticationExpiredError):
+                logger.warning(f"IAM tenant={tenant_id}: group member fetch error — {result}")
             continue
         if result:
             load_group_memberships(neo4j_session, result, update_tag)
@@ -1450,28 +1491,28 @@ async def sync_scoped_users_and_groups(
     if not scoped_groups:
         return set()
 
-    # 2. Fetch members for all scoped groups concurrently (bounded by semaphore to avoid 429 floods)
+    # 2. Fetch members for all scoped groups concurrently (bounded by semaphore to avoid 429 floods).
+    # Abort remaining Graph calls if the access token expires mid-fanout.
     t0 = time.perf_counter()
     logger.info(
         f"IAM tenant={tenant_id}: fetching members for {len(scoped_groups)} groups concurrently",
     )
-    _member_semaphore = asyncio.Semaphore(3)
-
-    async def _bounded_get_members(group_id: str) -> List[Dict]:
-        async with _member_semaphore:
-            return await get_group_members(credentials, group_id, client=client)
+    membership_results, auth_expired = await _gather_group_members_fail_fast(
+        credentials,
+        [group["id"] for group in scoped_groups],
+        client,
+        tenant_id,
+    )
 
     all_memberships = []
     all_member_ids = set()
     member_fetch_errors = 0
     rate_limit_errors = 0
-    membership_results = await asyncio.gather(
-        *[_bounded_get_members(group["id"]) for group in scoped_groups],
-        return_exceptions=True,
-    )
     for memberships in membership_results:
         if isinstance(memberships, Exception):
             err_str = str(memberships)
+            if isinstance(memberships, GraphAuthenticationExpiredError):
+                continue
             if "429" in err_str or "throttl" in err_str.lower() or "too many requests" in err_str.lower():
                 rate_limit_errors += 1
             member_fetch_errors += 1
@@ -1481,10 +1522,15 @@ async def sync_scoped_users_and_groups(
             all_memberships.extend(memberships)
             for member in memberships:
                 all_member_ids.add(member["id"])
+    if auth_expired:
+        logger.error(
+            f"IAM tenant={tenant_id}: Graph token expired mid member-fetch; "
+            f"continuing with {len(all_memberships)} memberships gathered before abort",
+        )
     logger.info(
         f"IAM tenant={tenant_id}: member fetch done in {time.perf_counter() - t0:.2f}s — "
         f"memberships={len(all_memberships)} unique_members={len(all_member_ids)} "
-        f"errors={member_fetch_errors} rate_limit_errors={rate_limit_errors}",
+        f"errors={member_fetch_errors} rate_limit_errors={rate_limit_errors} auth_expired={auth_expired}",
     )
     ctx = get_current_context()
     if ctx is not None:
