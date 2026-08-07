@@ -71,8 +71,8 @@ def get_snapshot_attribute(client, snapshot_id, attribute_name):
                 'ec2:describe_snapshot_attribute failed with AccessDeniedException; continuing sync.',
                 exc_info=True,
             )
-    else:
-        raise
+        else:
+            raise
 
     return response
 
