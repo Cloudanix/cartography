@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -96,7 +97,7 @@ def load_elastic_ip_addresses(
     """
     logger.info(f"Loading {len(elastic_ip_addresses)} Elastic IP Addresses")
     ingest_addresses = """
-    UNWIND $elastic_ip_addresses as eia
+    UNWIND $DictList as eia
         MERGE (address: ElasticIPAddress{id: eia.AllocationId})
         ON CREATE SET address.firstseen = timestamp()
         SET address.instance_id = eia.InstanceId, address.public_ip = eia.PublicIp,
@@ -129,9 +130,10 @@ def load_elastic_ip_addresses(
         SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_addresses,
-        elastic_ip_addresses=elastic_ip_addresses,
+        elastic_ip_addresses,
         aws_account_id=current_aws_account_id,
         update_tag=update_tag,
     )
