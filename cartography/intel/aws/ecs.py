@@ -9,6 +9,7 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import camel_to_snake
@@ -140,7 +141,7 @@ def load_ecs_clusters(
     aws_update_tag: int,
 ) -> None:
     ingest_clusters = """
-    UNWIND $Clusters AS cluster
+    UNWIND $DictList AS cluster
         MERGE (c:ECSCluster{id: cluster.clusterArn})
         ON CREATE SET c.firstseen = timestamp()
         SET c.name = cluster.clusterName, c.region = cluster.region,
@@ -171,9 +172,10 @@ def load_ecs_clusters(
 
         clusters.append(cluster)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_clusters,
-        Clusters=clusters,
+        clusters,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
@@ -189,7 +191,7 @@ def load_ecs_container_instances(
     aws_update_tag: int,
 ) -> None:
     ingest_instances = """
-    UNWIND $Instances AS instance
+    UNWIND $DictList AS instance
         MERGE (i:ECSContainerInstance{id: instance.containerInstanceArn})
         ON CREATE SET i.firstseen = timestamp()
         SET i.ec2_instance_id = instance.ec2InstanceId, i.region = $Region,
@@ -216,10 +218,11 @@ def load_ecs_container_instances(
         instance["registeredAt"] = dict_date_to_epoch(instance, "registeredAt")
         instances.append(instance)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_instances,
+        instances,
         ClusterARN=cluster_arn,
-        Instances=instances,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
@@ -236,7 +239,7 @@ def load_ecs_services(
     aws_update_tag: int,
 ) -> None:
     ingest_services = """
-    UNWIND $Services AS service
+    UNWIND $DictList AS service
         MERGE (s:ECSService{id: service.serviceArn})
         ON CREATE SET s.firstseen = timestamp()
         SET s.name = service.serviceName, s.region = $Region,
@@ -279,10 +282,11 @@ def load_ecs_services(
         service["createdAt"] = dict_date_to_epoch(service, "createdAt")
         services.append(service)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_services,
+        services,
         ClusterARN=cluster_arn,
-        Services=services,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
@@ -298,7 +302,7 @@ def load_ecs_task_definitions(
     aws_update_tag: int,
 ) -> None:
     ingest_task_definitions = """
-    UNWIND $Definitions AS def
+    UNWIND $DictList AS def
         MERGE (d:ECSTaskDefinition{id: def.taskDefinitionArn})
         ON CREATE SET d.firstseen = timestamp()
         SET d.arn = def.taskDefinitionArn, d.region = $Region,
@@ -350,9 +354,10 @@ def load_ecs_task_definitions(
 
         task_definitions.append(task_definition)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_task_definitions,
-        Definitions=task_definitions,
+        task_definitions,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
@@ -377,7 +382,7 @@ def load_ecs_tasks(
     aws_update_tag: int,
 ) -> None:
     ingest_tasks = """
-    UNWIND $Tasks AS task
+    UNWIND $DictList AS task
         MERGE (t:ECSTask{id: task.taskArn})
         ON CREATE SET t.firstseen = timestamp()
         SET t.arn = task.taskArn, t.region = $Region,
@@ -441,10 +446,11 @@ def load_ecs_tasks(
         containers.extend(task["containers"])
         tasks.append(task)
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_tasks,
+        tasks,
         ClusterARN=cluster_arn,
-        Tasks=tasks,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
@@ -468,7 +474,7 @@ def load_ecs_container_definitions(
     aws_update_tag: int,
 ) -> None:
     ingest_definitions = """
-    UNWIND $Definitions AS def
+    UNWIND $DictList AS def
         MERGE (d:ECSContainerDefinition{id: def._taskDefinitionArn + "-" + def.name})
         ON CREATE SET d.firstseen = timestamp()
         SET d.task_definition_arn = def._taskDefinitionArn, d.region = $Region,
@@ -501,9 +507,10 @@ def load_ecs_container_definitions(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_definitions,
-        Definitions=data,
+        data,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
@@ -519,7 +526,7 @@ def load_ecs_containers(
     aws_update_tag: int,
 ) -> None:
     ingest_containers = """
-    UNWIND $Containers AS container
+    UNWIND $DictList AS container
         MERGE (c:ECSContainer{id: container.containerArn})
         ON CREATE SET c.firstseen = timestamp()
         SET c.arn = container.containerArn, c.region = $Region,
@@ -543,9 +550,10 @@ def load_ecs_containers(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_containers,
-        Containers=data,
+        data,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,

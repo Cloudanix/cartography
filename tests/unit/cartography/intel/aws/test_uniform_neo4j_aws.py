@@ -7,12 +7,15 @@ auto-commit session.run.
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from cartography.intel.aws import apigateway
 from cartography.intel.aws import config
 from cartography.intel.aws import ecr
 from cartography.intel.aws import eks
 from cartography.intel.aws import elasticache
+from cartography.intel.aws import ecs
 from cartography.intel.aws import elasticsearch
 from cartography.intel.aws import kms
+from cartography.intel.aws import lambda_function
 from cartography.intel.aws import organizations
 from cartography.intel.aws import secretsmanager
 from cartography.intel.aws import securityhub
@@ -186,3 +189,60 @@ class TestElasticsearch:
         # subnets batch writes; the empty security-group list short-circuits
         assert session.execute_write.call_count == 1
         assert session.execute_write.call_args.kwargs["DictList"] == ["subnet-1"]
+
+
+class TestApiGateway:
+    def test_rest_apis_and_stages_batched(self):
+        session = MagicMock()
+        apis = [{"id": "a1", "region": TEST_REGION, "createdDate": "2024-01-01"}]
+        stages = [{"apiId": "a1", "stageName": "prod", "region": TEST_REGION, "createdDate": "2024-01-01"}]
+
+        apigateway.load_apigateway_rest_apis(session, apis, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        apigateway._load_apigateway_stages(session, stages, TEST_UPDATE_TAG)
+
+        session.run.assert_not_called()
+        assert session.execute_write.call_count == 2
+        for call in session.execute_write.call_args_list:
+            assert "UNWIND $DictList" in call.args[1]
+
+    def test_default_values_write_is_managed(self):
+        session = MagicMock()
+
+        apigateway._set_default_values(session, TEST_ACCOUNT_ID)
+
+        session.run.assert_not_called()
+        session.execute_write.assert_called_once()
+
+
+class TestEcs:
+    def test_clusters_and_services_batched(self):
+        session = MagicMock()
+        clusters = [{"clusterArn": "arn:aws:ecs:us-east-1:1234:cluster/c1"}]
+        services = [{"serviceArn": "arn:aws:ecs:us-east-1:1234:service/s1", "createdAt": None}]
+
+        ecs.load_ecs_clusters(session, clusters, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        ecs.load_ecs_services(
+            session, "arn:aws:ecs:us-east-1:1234:cluster/c1", services, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
+        )
+
+        session.run.assert_not_called()
+        assert session.execute_write.call_count == 2
+        assert_batched(session.execute_write.call_args_list[0], clusters)
+        service_call = session.execute_write.call_args_list[1]
+        assert_batched(service_call, services)
+        assert service_call.kwargs["ClusterARN"] == "arn:aws:ecs:us-east-1:1234:cluster/c1"
+
+
+class TestLambda:
+    def test_functions_and_aliases_batched(self):
+        session = MagicMock()
+        functions = [{"FunctionArn": "arn:aws:lambda:us-east-1:1234:function:f1", "FunctionName": "f1"}]
+        aliases = [{"AliasArn": "arn:aws:lambda:us-east-1:1234:function:f1:live", "FunctionArn": "f1"}]
+
+        lambda_function.load_lambda_functions(session, functions, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        lambda_function._load_lambda_function_aliases(session, aliases, TEST_UPDATE_TAG)
+
+        session.run.assert_not_called()
+        assert session.execute_write.call_count == 2
+        assert_batched(session.execute_write.call_args_list[0], functions)
+        assert_batched(session.execute_write.call_args_list[1], aliases)
