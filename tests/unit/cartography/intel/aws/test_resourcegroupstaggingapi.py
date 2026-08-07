@@ -129,6 +129,9 @@ def test_untaggable_types_removed():
     # resource types; keeping them only wasted API calls every sync
     assert 'ecs:container' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
     assert 'elasticloadbalancing:listener' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+    # Reserved instances are low-value for tagging and can be large in RGT results
+    assert 'ec2:reserved-instances' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+    assert 'rds:ri' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
 
 
 def test_global_resource_types_synced_once_in_us_east_1(mocker, monkeypatch):
@@ -180,19 +183,11 @@ def test_phase2_remainder_mappings_present():
         'cloudwatch:alarm': 'AWSCloudWatchAlarm',
         'events:rule': 'AWSEventBridgeRule',
         'events:event-bus': 'AWSEventBridgeEventBus',
-        'rds:ri': 'RDSReservedDBInstance',
-        'ec2:reserved-instances': 'EC2ReservedInstance',
         'securityhub:hub': 'SecurityHub',
     }
     for resource_type, label in expected.items():
         assert resource_type in rgta.TAG_RESOURCE_TYPE_MAPPINGS, resource_type
         assert rgta.TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['label'] == label
-
-
-def test_reserved_instance_mapping_uses_short_id():
-    # EC2ReservedInstance nodes are created with id = ReservedInstancesId, not the ARN
-    arn = 'arn:aws:ec2:us-east-1:1234:reserved-instances/ri-abcd'
-    assert rgta.compute_resource_id({'ResourceARN': arn}, 'ec2:reserved-instances') == 'ri-abcd'
 
 
 def test_iam_role_is_a_global_resource_type():
@@ -218,3 +213,31 @@ def test_iam_role_tags_fetched_once_per_account(mocker, monkeypatch):
 
     calls = [(c.args[2], c.args[3]) for c in sync_tags.call_args_list]
     assert [c for c in calls if c[1] == 'iam:role'] == [('us-east-1', 'iam:role')]
+
+def test_sync_tags_streams_pages_without_buffering(mocker):
+    """Each tagging-API page is transform+load'd immediately; pages are not accumulated."""
+    pages = [
+        [{'ResourceARN': 'arn:aws:ec2:us-east-1:1234:instance/i-1', 'Tags': [{'Key': 'a', 'Value': '1'}]}],
+        [{'ResourceARN': 'arn:aws:ec2:us-east-1:1234:instance/i-2', 'Tags': [{'Key': 'b', 'Value': '2'}]}],
+    ]
+    mocker.patch.object(rgta, 'iter_tag_pages', return_value=iter(pages))
+    transform = mocker.patch.object(rgta, 'transform_tags')
+    load = mocker.patch.object(rgta, 'load_tags')
+
+    rgta.sync_tags(mocker.MagicMock(), mocker.MagicMock(), 'us-east-1', 'ec2:instance', '1234', 111)
+
+    assert transform.call_count == 2
+    assert load.call_count == 2
+    assert transform.call_args_list[0].args[0] is pages[0]
+    assert transform.call_args_list[1].args[0] is pages[1]
+    assert load.call_args_list[0].kwargs['tag_data'] is pages[0]
+    assert load.call_args_list[1].kwargs['tag_data'] is pages[1]
+
+
+def test_get_tags_collects_all_pages(mocker):
+    pages = [[{'ResourceARN': 'a'}], [{'ResourceARN': 'b'}]]
+    mocker.patch.object(rgta, 'iter_tag_pages', return_value=iter(pages))
+    assert rgta.get_tags(mocker.MagicMock(), 'ec2:instance', 'us-east-1') == [
+        {'ResourceARN': 'a'}, {'ResourceARN': 'b'},
+    ]
+
