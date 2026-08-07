@@ -8,6 +8,7 @@ import neo4j
 
 from .util import call_azure_devops_api_pagination
 from .util import validate_project_data
+from cartography.client.core.tx import load_graph_data
 from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -77,7 +78,7 @@ def load_projects(
     - capabilities: Project capabilities (if available)
     """
     query = """
-    UNWIND $ProjectData as project
+    UNWIND $DictList as project
 
     MERGE (p:AzureDevOpsProject{id: project.id})
     ON CREATE SET p.firstseen = timestamp()
@@ -101,9 +102,10 @@ def load_projects(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UPDATE_TAG
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        ProjectData=project_data,
+        project_data,
         OrganizationName=organization_name,
         UPDATE_TAG=common_job_parameters["UPDATE_TAG"],
     )

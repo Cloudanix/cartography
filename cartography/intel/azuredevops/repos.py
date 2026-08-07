@@ -10,6 +10,8 @@ import neo4j
 
 from .util import call_azure_devops_api_pagination
 from .util import validate_repository_data
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -102,7 +104,7 @@ def load_repositories(
     - last_activity_at_timestamp: Last activity timestamp in milliseconds
     """
     query = """
-    UNWIND $RepoData as repo
+    UNWIND $DictList as repo
 
     MERGE (r:AzureDevOpsRepo{id: repo.id})
     ON CREATE SET r.firstseen = timestamp()
@@ -128,9 +130,10 @@ def load_repositories(
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        RepoData=repo_data,
+        repo_data,
         ProjectId=project_id,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
@@ -193,7 +196,7 @@ def load_branches_data(
     Load Azure DevOps branch data into Neo4j.
     """
     query = """
-    UNWIND $BranchesData as branch
+    UNWIND $DictList as branch
     MERGE (b:AzureDevOpsBranch{id: branch.id})
     ON CREATE SET b.firstseen = timestamp()
     SET b.name = branch.name,
@@ -206,9 +209,10 @@ def load_branches_data(
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        BranchesData=branches_data,
+        branches_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
@@ -247,8 +251,9 @@ def _update_repo_last_activity(
 
     if last_activity_at is not None:
         iso_str, ts_ms = normalize_datetime(last_activity_at)
-        neo4j_session.run(
-            "MATCH (r:AzureDevOpsRepo{id: $RepoId}) SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs",
+        run_write_query(
+            neo4j_session,
+            "MATCH (r:AzureDevOpsRepo{id: $RepoId}) SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs",  # noqa: E501
             RepoId=repo_id,
             LastActivity=iso_str,
             LastActivityTs=ts_ms,
