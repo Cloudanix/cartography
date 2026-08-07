@@ -755,7 +755,10 @@ async def sync_tenant_groups(
         client,
         tenant_id,
     )
-    logger.info(f"IAM tenant={tenant_id}: group member fetch done in {time.perf_counter() - t0:.2f}s")
+    logger.info(
+        f"IAM tenant={tenant_id}: group member fetch done in {time.perf_counter() - t0:.2f}s "
+        f"(auth_expired={auth_expired})",
+    )
 
     t0 = time.perf_counter()
     load_tenant_groups(neo4j_session, tenant_id, tenant_groups_list, update_tag)
