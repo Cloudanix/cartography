@@ -205,7 +205,7 @@ def load_ec2_security_groupinfo(
         try:
             consolelink = aws_console_link.get_console_link(arn=group_arn)
         except Exception as ex:
-            logger.error('failed to generate console link for security group', {"key": group_arn}, ex)
+            logger.error("failed to generate console link for security group %s: %s", group_arn, ex)
 
         group_rows.append({
             "group_id": group_id,
