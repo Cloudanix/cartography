@@ -155,7 +155,7 @@ def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_dat
     MATCH (es:ESDomain{id: $DomainId})
     WITH es
     UNWIND $DictList as subnet_id
-        MATCH (subnet_node:EC2Subnet{id: subnet_id})
+        MATCH (subnet_node:EC2Subnet{subnetid: subnet_id})
         MERGE (es)-[r:PART_OF_SUBNET]->(subnet_node)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
