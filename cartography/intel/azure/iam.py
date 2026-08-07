@@ -500,9 +500,22 @@ _GRAPH_DEFAULT_RETRY_AFTER = 10  # seconds to wait on 429 if Retry-After header 
 _IAM_TENANT_SYNC_KEY = "_iam_tenant_level_synced"  # key in common_job_parameters tracking per-cycle dedup
 
 
+class GraphAuthenticationExpiredError(Exception):
+    """Microsoft Graph rejected the request because the access token is expired."""
+
+
 def _is_throttle_error(e: Exception) -> bool:
     err_str = str(e)
     return "429" in err_str or "throttl" in err_str.lower() or "too many requests" in err_str.lower()
+
+
+def _is_graph_auth_expired_error(e: Exception) -> bool:
+    """True when Graph returns InvalidAuthenticationToken / expired access token."""
+    err_str = str(e)
+    if "InvalidAuthenticationToken" in err_str:
+        return True
+    lower = err_str.lower()
+    return "token is expired" in lower or "access token validation failed" in lower
 
 
 def _get_retry_after(e: Exception) -> float:
@@ -603,6 +616,16 @@ async def get_group_members(
 
         except Exception as e:
             ctx = get_current_context()
+            if _is_graph_auth_expired_error(e):
+                logger.error(
+                    f"get_group_members group_id={group_id}: Graph auth expired after "
+                    f"{time.perf_counter() - t0:.2f}s — aborting member fetch",
+                )
+                if ctx is not None:
+                    ctx.request_count += 1
+                raise GraphAuthenticationExpiredError(
+                    f"Microsoft Graph token expired while fetching members for {group_id}",
+                ) from e
             if _is_throttle_error(e):
                 retry_after = _get_retry_after(e)
                 if ctx is not None:
