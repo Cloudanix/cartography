@@ -8,6 +8,7 @@ import boto3
 import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import batch
@@ -76,7 +77,7 @@ def load_ecr_repositories(
     aws_update_tag: int,
 ) -> None:
     query = """
-    UNWIND $Repositories as ecr_repo
+    UNWIND $DictList as ecr_repo
         MERGE (repo:ECRRepository{id: ecr_repo.repositoryArn})
         ON CREATE SET repo.firstseen = timestamp(),
             repo.arn = ecr_repo.repositoryArn,
@@ -93,12 +94,13 @@ def load_ecr_repositories(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        Repositories=repos,
+        repos,
         aws_update_tag=aws_update_tag,
         AWS_ACCOUNT_ID=current_aws_account_id,
-    ).consume()  # See issue #440
+    )
 
 
 @timeit

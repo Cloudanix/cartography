@@ -6,6 +6,7 @@ import boto3
 import botocore.exceptions
 import neo4j
 
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -140,7 +141,8 @@ def load_aws_accounts(
     """
     for account_name, account_id in aws_accounts.items():
         root_arn = f'arn:aws:iam::{account_id}:root'
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             query,
             WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
             WORKSPACE_NAME=common_job_parameters['WORKSPACE_NAME'],

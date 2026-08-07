@@ -9,6 +9,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load
+from cartography.client.core.tx import load_graph_data
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.models.aws.eks.clusters import EKSClusterSchema
@@ -158,7 +159,7 @@ def get_auto_scaling_groups(boto3_session: boto3.session.Session, region: str, a
 @timeit
 def attact_autoscaling_groups_to_nodegroups(neo4j_session: neo4j.Session, nodegroup_arn: str, auto_scalin_groups: List[Dict], update_tag: int) -> None:
     attach_autoscaling = """
-    UNWIND $auto_scalin_groups as agroup
+    UNWIND $DictList as agroup
     MERGE (g:AutoScalingGroup{arn: agroup.AutoScalingGroupARN})
     ON CREATE SET g.firstseen = timestamp()
     SET g.lastupdated = $update_tag
@@ -168,9 +169,10 @@ def attact_autoscaling_groups_to_nodegroups(neo4j_session: neo4j.Session, nodegr
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_autoscaling,
-        auto_scalin_groups=auto_scalin_groups,
+        auto_scalin_groups,
         GROUPARN=nodegroup_arn,
         update_tag=update_tag,
     )
