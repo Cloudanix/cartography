@@ -251,9 +251,9 @@ definitions as donor code where the fork has no custom logic (Option 3, selectiv
 | 3.3 | `aws/ec2/security_groups.py` | 5 | S | ✅ `38fda6601` |
 | 3.4 | `aws/ec2/load_balancers.py` + `load_balancer_v2s.py` | 9 | M | ✅ `64cf92c2b`, `1da1d1ad1` |
 | 3.5 | `aws/redshift.py` | 5 | S | ✅ `dcfeb5caa` |
-| 3.6 | `github/repos.py`, `aws/rds.py`, `azure/subscription.py`, `digitalocean/compute.py` | 1–2 each | S | ✅ `dcd217064` |
-| 3.7 | Already-UNWIND raw writes → `load_graph_data` (10k chunks + retry) / `run_write_query` (azure ×3, aws s3/route53, gcp spanner, pagerduty) | n/a | M | ✅ `3f637d91c`, `affa89d32`, `05de80069` |
-| 3.8 | **Uniform neo4j interactions** (plan items 5+6): every remaining raw `session.run` in the in-scope providers → `load_graph_data` / `run_write_query` / `execute_read` | n/a | M | ✅ 8 commits, `249da0f8f`..`2408593c5` |
+| 3.6 | `github/repos.py`, `aws/rds.py`, `azure/subscription.py`, `digitalocean/compute.py` | 1–2 each | S | ✅ `deb9f6a51` |
+| 3.7 | Already-UNWIND raw writes → `load_graph_data` (10k chunks + retry) / `run_write_query` (azure ×3, aws s3/route53, gcp spanner, pagerduty) | n/a | M | ✅ `e94238e46`, `24634c457`, `01f681ecd` |
+| 3.8 | **Uniform neo4j interactions** (plan items 5+6): every remaining raw `session.run` in the in-scope providers → `load_graph_data` / `run_write_query` / `execute_read` | n/a | M | ✅ 8 commits, `522ea1081`..`88a34899a` |
 
 > **Phase 3.8 — uniform interactions (2026-08-06).** Sweep over aws, gcp, azure, oci,
 > github, bitbucket, gitlab and azuredevops (okta and other low-priority providers left
