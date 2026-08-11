@@ -177,6 +177,8 @@ def load_instances(
         inode.is_secure_boot_enabled = instance.is_secure_boot_enabled,
         inode.is_pv_encryption_in_transit_enabled = instance.is_pv_encryption_in_transit_enabled,
         inode.is_monitoring_disabled = instance.is_monitoring_disabled,
+        inode.vm_os = instance.vm_os,
+        inode.vm_os_version = instance.vm_os_version,
         inode.lastupdated = $oci_update_tag
         WITH inode, instance
         MATCH (cc:OCICompartment{id: instance.compartment_id})
@@ -207,6 +209,8 @@ def load_instances(
             "is_pv_encryption_in_transit_enabled": launch_options.get("is-pv-encryption-in-transit-enabled"),
             "is_monitoring_disabled": agent_config.get("is-monitoring-disabled"),
             "time_created": str(instance.get("time-created", "")),
+            "vm_os": None,
+            "vm_os_version": None,
         })
 
     load_graph_data(
@@ -905,6 +909,25 @@ def sync_volume_attachments(
     logger.info(f"Time to process OCI volume attachments for tenancy '{tenancy_id}' ({total} attachments): {time.perf_counter() - tic:0.4f} seconds")
 
 
+def _enrich_instances_with_image_os(
+    neo4j_session: neo4j.Session,
+    compartment_id: str,
+    oci_update_tag: int,
+) -> None:
+    """
+    Set vm_os and vm_os_version on OCIInstance nodes by joining to their OCIImage.
+    Run after both instances and images are loaded.
+    """
+    enrich_query = """
+    MATCH (inode:OCIInstance)-[:RESOURCE]-(cc:OCICompartment{id: $compartment_id})
+    WHERE inode.image_id IS NOT NULL AND inode.lastupdated = $oci_update_tag
+    MATCH (img:OCIImage{id: inode.image_id})
+    SET inode.vm_os = toLower(coalesce(img.operating_system, 'unknown')),
+        inode.vm_os_version = img.operating_system_version
+    """
+    neo4j_session.run(enrich_query, compartment_id=compartment_id, oci_update_tag=oci_update_tag)
+
+
 def sync(
     neo4j_session: neo4j.Session,
     compute: oci.core.compute_client.ComputeClient,
@@ -965,6 +988,9 @@ def sync(
 
         # Sync images
         sync_images(neo4j_session, compute, compartments, tenancy_id, oci_update_tag, common_job_parameters)
+
+        # Enrich instances with OS info from their boot images
+        _enrich_instances_with_image_os(neo4j_session, compartment_ocid, oci_update_tag)
 
         # Sync boot volume attachments (links instances to boot volumes)
         sync_boot_volume_attachments(

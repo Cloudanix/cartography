@@ -24,6 +24,7 @@ from . import iam
 from . import instance_groups
 from . import label
 from cartography.client.core.tx import load_graph_data
+from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.util import batch
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -553,6 +554,16 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
                 res["diskName"] = disk.get("initializeParams", {}).get("diskName")
                 os_feature_types = [feature["type"] for feature in disk.get("guestOsFeatures", [])]
                 res["osFeatures"] = "WINDOWS" if "WINDOWS" in os_feature_types else "LINUX"
+                # Derive OS name from source image URL (e.g. projects/ubuntu-os-cloud/global/images/ubuntu-2204-jammy-v20240101)
+                source_image = disk.get("initializeParams", {}).get("sourceImage", "") or ""
+                image_name = source_image.rsplit("/", 1)[-1].lower() if source_image else ""
+                vm_os = "unknown"
+                for op_system in OPERATING_SYSTEMS:
+                    if op_system in image_name:
+                        vm_os = op_system
+                        break
+                res["vmOs"] = vm_os
+                res["vmOsVersion"] = image_name if image_name else None
                 break
 
         for nic in res.get("networkInterfaces", []):
@@ -1104,7 +1115,9 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     i.os_features = instance.osFeatures,
     i.gke_cluster_name = instance.gke_cluster_name,
     i.gke_node_pool_name = instance.gke_node_pool_name,
-    i.is_spot_instance = instance.is_spot_instance
+    i.is_spot_instance = instance.is_spot_instance,
+    i.vm_os = instance.vmOs,
+    i.vm_os_version = instance.vmOsVersion
     WITH i, p
 
     MERGE (p)-[r:RESOURCE]->(i)

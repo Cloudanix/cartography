@@ -36,6 +36,8 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     hostresourcegrouparn: PropertyRef = PropertyRef("HostResourceGroupArn")
     platform: PropertyRef = PropertyRef("Platform")
     architecture: PropertyRef = PropertyRef("Architecture")
+    vmos: PropertyRef = PropertyRef("VmOs")
+    vmosversion: PropertyRef = PropertyRef("VmOsVersion")
     virtualizationtype: PropertyRef = PropertyRef("VirtualizationType")
     hypervisor: PropertyRef = PropertyRef("Hypervisor")
     ebsoptimized: PropertyRef = PropertyRef("EbsOptimized")
