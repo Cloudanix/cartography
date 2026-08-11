@@ -1,4 +1,5 @@
 from cartography.rules.data.frameworks.iso27001 import iso27001_annex_a
+from cartography.rules.data.frameworks.soc2 import soc2_tsc
 from cartography.rules.spec.model import Fact
 from cartography.rules.spec.model import Finding
 from cartography.rules.spec.model import Maturity
@@ -7,11 +8,11 @@ from cartography.rules.spec.model import Rule
 
 
 class IdentityMfaGapOutput(Finding):
+    principal_name: str | None = None
     provider: str | None = None
     account_id: str | None = None
     account_name: str | None = None
     principal_id: str | None = None
-    principal_name: str | None = None
     principal_type: str | None = None
     issue: str | None = None
     current_value: str | None = None
@@ -46,7 +47,9 @@ _cloudflare_account_2fa_not_enforced = Fact(
     MATCH (account:CloudflareAccount)
     RETURN COUNT(account) AS count
     """,
+    asset_label="CloudflareAccount",
     asset_id_field="account_id",
+    identity_fields=("account_id",),
     module=Module.CLOUDFLARE,
     maturity=Maturity.EXPERIMENTAL,
 )
@@ -90,7 +93,9 @@ _lastpass_user_mfa_missing = Fact(
     WHERE coalesce(user.disabled, false) = false
     RETURN COUNT(user) AS count
     """,
+    asset_label="LastpassUser",
     asset_id_field="principal_id",
+    identity_fields=("principal_id",),
     module=Module.LASTPASS,
     maturity=Maturity.EXPERIMENTAL,
 )
@@ -137,7 +142,9 @@ _jumpcloud_user_mfa_missing = Fact(
       AND coalesce(user.suspended, false) = false
     RETURN COUNT(user) AS count
     """,
+    asset_label="JumpCloudUser",
     asset_id_field="principal_id",
+    identity_fields=("principal_id",),
     module=Module.JUMPCLOUD,
     maturity=Maturity.EXPERIMENTAL,
 )
@@ -180,7 +187,9 @@ _duo_user_not_enrolled = Fact(
     WHERE coalesce(user.status, 'active') <> 'disabled'
     RETURN COUNT(user) AS count
     """,
+    asset_label="DuoUser",
     asset_id_field="principal_id",
+    identity_fields=("principal_id",),
     module=Module.DUO,
     maturity=Maturity.EXPERIMENTAL,
 )
@@ -202,5 +211,8 @@ identity_mfa_gaps = Rule(
     ),
     tags=("identity", "mfa", "compliance", "stride:spoofing"),
     version="0.1.0",
-    frameworks=(iso27001_annex_a("8.5"),),
+    frameworks=(
+        iso27001_annex_a("8.5"),
+        soc2_tsc("CC6.1"),
+    ),
 )

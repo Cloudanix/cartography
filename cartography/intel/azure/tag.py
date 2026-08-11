@@ -8,7 +8,7 @@ from typing import List
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
-from azure.mgmt.resource import ResourceManagementClient
+from azure.mgmt.resource.resources import ResourceManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 from neo4j import GraphDatabase
 

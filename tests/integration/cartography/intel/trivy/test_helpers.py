@@ -285,6 +285,10 @@ def assert_trivy_finding_extended_fields(neo4j_session: Session) -> None:
         MATCH (f:TrivyImageFinding)
         WHERE f.cwe_ids IS NOT NULL
         RETURN f.id AS id, f.cwe_ids AS cwe_ids, f.status AS status,
+               f._ont_problem_types AS problem_types,
+               f._ont_vuln_status AS vuln_status,
+               f.severity AS severity, f._ont_base_severity AS base_severity,
+               f._ont_source AS source,
                f.data_source_id AS data_source_id, f.data_source_name AS data_source_name,
                f.layer_digest AS layer_digest, f.references AS refs
         LIMIT 5
@@ -295,6 +299,35 @@ def assert_trivy_finding_extended_fields(neo4j_session: Session) -> None:
     for row in result:
         assert row["cwe_ids"] is not None, f"cwe_ids should be set for {row['id']}"
         assert row["status"] is not None, f"status should be set for {row['id']}"
+        assert (
+            row["problem_types"] == row["cwe_ids"]
+        ), f"problem_types should mirror cwe_ids for {row['id']}"
+        # _ont_vuln_status / _ont_base_severity are normalized from the raw Trivy
+        # values, so they mirror the normalized form rather than the raw string.
+        expected_vuln_status = {
+            "unknown": "unknown",
+            "affected": "open",
+            "fixed": "fixed",
+            "under_investigation": "under_investigation",
+            "will_not_fix": "not_affected",
+            "fix_deferred": "open",
+            "end_of_life": "open",
+            "not_affected": "not_affected",
+        }.get(row["status"])
+        assert (
+            row["vuln_status"] == expected_vuln_status
+        ), f"vuln_status should be the normalized status for {row['id']}"
+        expected_base_severity = {
+            "NONE": "info",
+            "LOW": "low",
+            "MEDIUM": "medium",
+            "HIGH": "high",
+            "CRITICAL": "critical",
+        }.get(row["severity"])
+        assert (
+            row["base_severity"] == expected_base_severity
+        ), f"base_severity should be the normalized severity for {row['id']}"
+        assert row["source"] == "trivy", f"_ont_source should be trivy for {row['id']}"
         assert (
             row["data_source_id"] is not None
         ), f"data_source_id should be set for {row['id']}"

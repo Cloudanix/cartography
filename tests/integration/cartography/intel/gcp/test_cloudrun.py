@@ -113,7 +113,7 @@ def _create_image_registry_nodes(neo4j_session):
     ):
         neo4j_session.run(
             """
-            MERGE (img:ECRImage {id: $digest, digest: $digest})
+            MERGE (img:AWSECRImage {id: $digest, digest: $digest})
             SET img.lastupdated = $tag
             """,
             digest=digest,
@@ -267,6 +267,15 @@ def test_sync_cloudrun(
         "email",
         "USES_SERVICE_ACCOUNT",
     ) == {(TEST_SERVICE_ID, TEST_SA_EMAIL_1)}
+    # Canonical ontology edge: (:ComputeService)-[:RUNS_AS]->(:ServiceAccount)
+    assert check_rels(
+        neo4j_session,
+        "GCPCloudRunService",
+        "id",
+        "GCPServiceAccount",
+        "email",
+        "RUNS_AS",
+    ) == {(TEST_SERVICE_ID, TEST_SA_EMAIL_1)}
 
     assert check_rels(
         neo4j_session,
@@ -284,6 +293,15 @@ def test_sync_cloudrun(
         "GCPServiceAccount",
         "email",
         "USES_SERVICE_ACCOUNT",
+    ) == {(TEST_JOB_ID, TEST_SA_EMAIL_2)}
+    # Canonical ontology edge: (:ComputeService)-[:RUNS_AS]->(:ServiceAccount)
+    assert check_rels(
+        neo4j_session,
+        "GCPCloudRunJob",
+        "id",
+        "GCPServiceAccount",
+        "email",
+        "RUNS_AS",
     ) == {(TEST_JOB_ID, TEST_SA_EMAIL_2)}
 
     # Assert: Check GCPLabel nodes from Cloud Run service labels
@@ -440,7 +458,7 @@ def test_cloud_run_image_prerequisites(
             neo4j_session,
             "GCPCloudRunRevision",
             "id",
-            "ECRImage",
+            "AWSECRImage",
             "digest",
             "HAS_IMAGE",
         )
@@ -452,7 +470,7 @@ def test_cloud_run_image_prerequisites(
         neo4j_session,
         "Container",
         "id",
-        "ECRImage",
+        "AWSECRImage",
         "digest",
         "HAS_IMAGE",
     ) == {

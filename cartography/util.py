@@ -33,6 +33,8 @@ from botocore.parsers import ResponseParserError
 from requests.exceptions import RequestException
 
 from cartography import helpers
+from cartography.graph.analysis import AnalysisJob
+from cartography.graph.analysisbuilder import to_graph_job
 from cartography.graph.job import GraphJob
 from cartography.graph.statement import get_job_shortname
 from cartography.stats import get_stats_client
@@ -565,6 +567,7 @@ AWS_REGION_ACCESS_DENIED_ERROR_CODES = [
     "UnauthorizedOperation",
     "UnrecognizedClientException",
     "InternalServerErrorException",
+    "SubscriptionRequiredException",
 ]
 
 AWS_REGION_UNSUPPORTED_OPERATION_SNIPPETS = (
@@ -1211,3 +1214,31 @@ def normalize_datetime(date_str: Optional[str]):
         return iso_str, timestamp_ms
     except (ValueError, TypeError):
         return None, None
+
+
+def run_typed_analysis_job(
+    analysis_job: AnalysisJob,
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict,
+) -> None:
+    job = to_graph_job(analysis_job)
+    job.merge_parameters(dict(common_job_parameters or {}))
+    job.run(neo4j_session)
+
+
+def run_typed_analysis_and_ensure_deps(
+    analysis_job: AnalysisJob,
+    resource_dependencies: Set[str],
+    requested_syncs: Set[str],
+    common_job_parameters: Dict[str, Any],
+    neo4j_session: neo4j.Session,
+) -> None:
+    if not resource_dependencies.issubset(requested_syncs):
+        logger.info(
+            f"Did not run {analysis_job.name} because it needs {resource_dependencies} to be included "
+            f"as a requested sync. You specified: {requested_syncs}. If you want this job to run, please change your "
+            f"CLI args/cartography config so that all required resources are included.",
+        )
+        return
+
+    run_typed_analysis_job(analysis_job, neo4j_session, common_job_parameters)

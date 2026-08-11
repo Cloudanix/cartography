@@ -1,25 +1,5 @@
 from dataclasses import dataclass
 
-from cartography.models.aws.ecs.containers import ECSContainerToTaskRel
-from cartography.models.aws.ecs.services import ECSServiceToECSClusterRel
-from cartography.models.aws.ecs.services import ECSServiceToECSTaskRel
-from cartography.models.aws.ecs.tasks import ECSTaskToECSClusterRel
-from cartography.models.azure.container_instance import (
-    AzureGroupContainerToContainerInstanceRel,
-)
-from cartography.models.gcp.cloudrun.job_container import CloudRunJobToContainerRel
-from cartography.models.gcp.cloudrun.service_container import (
-    CloudRunServiceToContainerRel,
-)
-from cartography.models.kubernetes.containers import (
-    KubernetesContainerToKubernetesPodRel,
-)
-from cartography.models.kubernetes.namespaces import (
-    KubernetesNamespaceToKubernetesClusterRel,
-)
-from cartography.models.kubernetes.pods import KubernetesPodToKubernetesClusterRel
-from cartography.models.kubernetes.pods import KubernetesPodToKubernetesNamespaceRel
-
 
 @dataclass(frozen=True)
 class RelConstraint:
@@ -51,27 +31,58 @@ ONTOLOGY_REL_CONSTRAINTS: tuple[RelConstraint, ...] = (
     RelConstraint(
         src="ComputeNamespace", dst="ComputeCluster", label="WORKLOAD_PARENT"
     ),
-)
-
-
-# DEPRECATED: pre-V1 rel classes tolerated until they are removed in v1.0.0.
-LEGACY_REL_WHITELIST: frozenset[type] = frozenset(
-    {
-        # DEPRECATED: replaced by WORKLOAD_PARENT, will be removed in v1.0.0.
-        AzureGroupContainerToContainerInstanceRel,
-        CloudRunJobToContainerRel,
-        CloudRunServiceToContainerRel,
-        ECSContainerToTaskRel,
-        ECSServiceToECSClusterRel,
-        ECSServiceToECSTaskRel,
-        ECSTaskToECSClusterRel,
-        KubernetesContainerToKubernetesPodRel,
-        KubernetesPodToKubernetesNamespaceRel,
-        # Kubernetes models its cluster as the tenant, so the pod's and
-        # namespace's sub_resource_relationship uses RESOURCE on a pair that
-        # the ontology also constrains as WORKLOAD_PARENT. Whitelisted until
-        # tenant scoping and the workload chain are reconciled.
-        KubernetesNamespaceToKubernetesClusterRel,
-        KubernetesPodToKubernetesClusterRel,
-    }
+    # A user account is granted a role.
+    RelConstraint(src="UserAccount", dst="PermissionRole", label="HAS_ROLE"),
+    # A service account (workload identity) is granted a role. No provider
+    # currently wires a direct edge (all go through binding nodes), so this is
+    # forward-looking governance for future modules.
+    RelConstraint(src="ServiceAccount", dst="PermissionRole", label="HAS_ROLE"),
+    # A group is granted a role; members inherit it.
+    RelConstraint(src="UserGroup", dst="PermissionRole", label="HAS_ROLE"),
+    # A composite/hierarchical role includes other roles.
+    RelConstraint(src="PermissionRole", dst="PermissionRole", label="INCLUDES"),
+    # A workload consumes a secret (mount method captured as a rel property).
+    RelConstraint(src="ComputePod", dst="Secret", label="USES_SECRET"),
+    RelConstraint(src="Function", dst="Secret", label="USES_SECRET"),
+    RelConstraint(src="ComputeInstance", dst="Secret", label="USES_SECRET"),
+    # A secret or data store is encrypted by an encryption key.
+    RelConstraint(src="Secret", dst="EncryptionKey", label="ENCRYPTED_BY"),
+    RelConstraint(src="Database", dst="EncryptionKey", label="ENCRYPTED_BY"),
+    RelConstraint(src="ObjectStorage", dst="EncryptionKey", label="ENCRYPTED_BY"),
+    RelConstraint(src="FileStorage", dst="EncryptionKey", label="ENCRYPTED_BY"),
+    # An identity is a member of a group; groups nest into other groups.
+    RelConstraint(src="UserAccount", dst="UserGroup", label="MEMBER_OF"),
+    RelConstraint(src="ServiceAccount", dst="UserGroup", label="MEMBER_OF"),
+    RelConstraint(src="UserGroup", dst="UserGroup", label="MEMBER_OF"),
+    # An API key / access credential is owned by the identity it authenticates as.
+    RelConstraint(src="APIKey", dst="UserAccount", label="OWNED_BY"),
+    RelConstraint(src="APIKey", dst="ServiceAccount", label="OWNED_BY"),
+    # A workload runs as / assumes the identity of a service account.
+    RelConstraint(src="ComputeInstance", dst="ServiceAccount", label="RUNS_AS"),
+    RelConstraint(src="ComputePod", dst="ServiceAccount", label="RUNS_AS"),
+    RelConstraint(src="Function", dst="ServiceAccount", label="RUNS_AS"),
+    RelConstraint(src="ComputeService", dst="ServiceAccount", label="RUNS_AS"),
+    # A workload assumes a permission role to obtain its privileges.
+    RelConstraint(src="ComputeInstance", dst="PermissionRole", label="ASSUMES"),
+    RelConstraint(src="Function", dst="PermissionRole", label="ASSUMES"),
+    # A vulnerability finding (CVE) or a rule-based security issue affects a
+    # specific version of a software package. Both finding shapes point at the same
+    # canonical PackageVersion.
+    RelConstraint(src="CVE", dst="PackageVersion", label="AFFECTS"),
+    RelConstraint(src="SecurityIssue", dst="PackageVersion", label="AFFECTS"),
+    # A container/function resolves to the concrete single-platform image it
+    # runs. Materialized by resolved_image_analysis.json from the raw HAS_IMAGE
+    # references, which constraints_whitelist.py exempts as a distinct semantic.
+    RelConstraint(src="Container", dst="Image", label="RESOLVED_IMAGE"),
+    RelConstraint(src="Function", dst="Image", label="RESOLVED_IMAGE"),
+    # An image/function is built from a source code repository (CI provenance).
+    RelConstraint(src="Image", dst="CodeRepository", label="PACKAGED_FROM"),
+    # NOTE: no UserAccount->CodeRepository constraint. Several distinct edges
+    # legitimately span that pair (COMMITTED_TO commit authorship, OWNER
+    # ownership, DIRECT_COLLAB_*/OUTSIDE_COLLAB_* access grants), so a single
+    # canonical label cannot be enforced here yet.
+    # A specific version of a software package is deployed inside a container image.
+    RelConstraint(src="PackageVersion", dst="Image", label="DEPLOYED"),
+    # A package groups the concrete versions of itself found across the estate.
+    RelConstraint(src="Package", dst="PackageVersion", label="HAS_VERSION"),
 )

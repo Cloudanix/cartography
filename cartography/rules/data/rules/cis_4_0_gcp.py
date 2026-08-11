@@ -10,6 +10,7 @@ Facts within a Rule are provider-specific implementations of the same concept.
 
 from cartography.rules.data.frameworks.cis import cis_gcp
 from cartography.rules.data.frameworks.iso27001 import iso27001_annex_a
+from cartography.rules.data.frameworks.soc2 import soc2_tsc
 from cartography.rules.spec.model import Fact
 from cartography.rules.spec.model import Finding
 from cartography.rules.spec.model import Maturity
@@ -69,14 +70,16 @@ _gcp_default_network_exists = Fact(
     MATCH (vpc:GCPVpc)
     RETURN COUNT(vpc) AS count
     """,
+    asset_label="GCPVpc",
     asset_id_field="vpc_id",
+    identity_fields=("vpc_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_3_1_default_network = Rule(
-    id="cis_gcp_3_1_default_network",
-    name="CIS GCP 3.1: Default Network Exists",
+gcp_default_network_exists = Rule(
+    id="gcp_default_network_exists",
+    name="Default Network Exists",
     description=(
         "The default network should be deleted from GCP projects. It includes "
         "preconfigured firewall rules that may not meet security requirements."
@@ -95,6 +98,8 @@ cis_gcp_3_1_default_network = Rule(
         cis_gcp("3.1"),
         iso27001_annex_a("8.20"),
         iso27001_annex_a("8.22"),
+        soc2_tsc("CC6.1"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -114,6 +119,9 @@ class UnrestrictedSshOutput(Finding):
     from_port: int | None = None
     to_port: int | None = None
     source_range: str | None = None
+    # True when the firewall's VPC has at least one non-terminated instance.
+    # The rule still emits when false; consumers use it to gauge relevancy.
+    in_use: bool | None = None
 
 
 _gcp_unrestricted_ssh = Fact(
@@ -141,7 +149,13 @@ _gcp_unrestricted_ssh = Fact(
         rule.ruleid AS firewall_rule_id,
         rule.fromport AS from_port,
         rule.toport AS to_port,
-        range.range AS source_range
+        range.range AS source_range,
+        // in_use: does the firewall's VPC hold any live instance? A firewall in an
+        // empty VPC protects nothing. Exposed for relevancy, the rule does not filter on it.
+        COUNT {
+            MATCH (vpc)-[:HAS]->(:GCPSubnet)<-[:PART_OF_SUBNET]-(:GCPNetworkInterface)-[:NETWORK_INTERFACE]-(inst:GCPInstance)
+            WHERE coalesce(inst.status, '') <> 'TERMINATED'
+        } > 0 AS in_use
     """,
     cypher_visual_query="""
     MATCH p=(project:GCPProject)-[:RESOURCE]->(vpc:GCPVpc)-[:RESOURCE]->(fw:GCPFirewall {direction: 'INGRESS'})
@@ -158,14 +172,16 @@ _gcp_unrestricted_ssh = Fact(
     MATCH (fw:GCPFirewall)
     RETURN COUNT(fw) AS count
     """,
+    asset_label="GCPFirewall",
     asset_id_field="firewall_id",
+    identity_fields=("firewall_id", "firewall_rule_id", "source_range"),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_3_6_unrestricted_ssh = Rule(
-    id="cis_gcp_3_6_unrestricted_ssh",
-    name="CIS GCP 3.6: Unrestricted SSH Access",
+gcp_unrestricted_ssh_access = Rule(
+    id="gcp_unrestricted_ssh_access",
+    name="Unrestricted SSH Access",
     description=(
         "Firewall rules should not allow SSH access (port 22) from any IP address. "
         "Unrestricted SSH access increases the risk of unauthorized access."
@@ -179,11 +195,12 @@ cis_gcp_3_6_unrestricted_ssh = Rule(
         "stride:information_disclosure",
         "stride:elevation_of_privilege",
     ),
-    version="1.0.0",
+    version="1.1.0",
     references=CIS_REFERENCES,
     frameworks=(
         cis_gcp("3.6"),
         iso27001_annex_a("8.20"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -203,6 +220,9 @@ class UnrestrictedRdpOutput(Finding):
     from_port: int | None = None
     to_port: int | None = None
     source_range: str | None = None
+    # True when the firewall's VPC has at least one non-terminated instance.
+    # The rule still emits when false; consumers use it to gauge relevancy.
+    in_use: bool | None = None
 
 
 _gcp_unrestricted_rdp = Fact(
@@ -230,7 +250,13 @@ _gcp_unrestricted_rdp = Fact(
         rule.ruleid AS firewall_rule_id,
         rule.fromport AS from_port,
         rule.toport AS to_port,
-        range.range AS source_range
+        range.range AS source_range,
+        // in_use: does the firewall's VPC hold any live instance? A firewall in an
+        // empty VPC protects nothing. Exposed for relevancy, the rule does not filter on it.
+        COUNT {
+            MATCH (vpc)-[:HAS]->(:GCPSubnet)<-[:PART_OF_SUBNET]-(:GCPNetworkInterface)-[:NETWORK_INTERFACE]-(inst:GCPInstance)
+            WHERE coalesce(inst.status, '') <> 'TERMINATED'
+        } > 0 AS in_use
     """,
     cypher_visual_query="""
     MATCH p=(project:GCPProject)-[:RESOURCE]->(vpc:GCPVpc)-[:RESOURCE]->(fw:GCPFirewall {direction: 'INGRESS'})
@@ -247,14 +273,16 @@ _gcp_unrestricted_rdp = Fact(
     MATCH (fw:GCPFirewall)
     RETURN COUNT(fw) AS count
     """,
+    asset_label="GCPFirewall",
     asset_id_field="firewall_id",
+    identity_fields=("firewall_id", "firewall_rule_id", "source_range"),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_3_7_unrestricted_rdp = Rule(
-    id="cis_gcp_3_7_unrestricted_rdp",
-    name="CIS GCP 3.7: Unrestricted RDP Access",
+gcp_unrestricted_rdp_access = Rule(
+    id="gcp_unrestricted_rdp_access",
+    name="Unrestricted RDP Access",
     description=(
         "Firewall rules should not allow RDP access (port 3389) from any IP address. "
         "Unrestricted RDP access increases the risk of unauthorized access."
@@ -268,11 +296,12 @@ cis_gcp_3_7_unrestricted_rdp = Rule(
         "stride:information_disclosure",
         "stride:elevation_of_privilege",
     ),
-    version="1.0.0",
+    version="1.1.0",
     references=CIS_REFERENCES,
     frameworks=(
         cis_gcp("3.7"),
         iso27001_annex_a("8.20"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -304,6 +333,8 @@ _gcp_instance_public_ip = Fact(
     MATCH (project:GCPProject)-[:RESOURCE]->(instance:GCPInstance)
     MATCH (instance)-[:NETWORK_INTERFACE]->(:GCPNetworkInterface)-[:RESOURCE]->(access:GCPNicAccessConfig)
     WHERE access.public_ip IS NOT NULL
+      // Terminated instances release their ephemeral IPs; the stale public_ip is not live
+      AND coalesce(instance.status, '') <> 'TERMINATED'
     RETURN
         instance.instancename AS instance_name,
         instance.id AS instance_id,
@@ -316,20 +347,24 @@ _gcp_instance_public_ip = Fact(
     MATCH p=(project:GCPProject)-[:RESOURCE]->(instance:GCPInstance)
     MATCH (instance)-[:NETWORK_INTERFACE]->(nic:GCPNetworkInterface)-[:RESOURCE]->(access:GCPNicAccessConfig)
     WHERE access.public_ip IS NOT NULL
+      AND coalesce(instance.status, '') <> 'TERMINATED'
     RETURN *
     """,
     cypher_count_query="""
     MATCH (instance:GCPInstance)
+    WHERE coalesce(instance.status, '') <> 'TERMINATED'
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_9_public_ip = Rule(
-    id="cis_gcp_4_9_public_ip",
-    name="CIS GCP 4.9: Compute Instance Public IPs",
+gcp_compute_instance_public_ips = Rule(
+    id="gcp_compute_instance_public_ips",
+    name="Compute Instance Public IPs",
     description=(
         "VM instances should not have external IPs attached to NICs. Use Cloud NAT "
         "or bastion hosts instead to reduce the attack surface."
@@ -342,11 +377,12 @@ cis_gcp_4_9_public_ip = Rule(
         "stride:information_disclosure",
         "stride:elevation_of_privilege",
     ),
-    version="1.0.0",
+    version="1.1.0",
     references=CIS_REFERENCES,
     frameworks=(
         cis_gcp("4.9"),
         iso27001_annex_a("8.20"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -409,14 +445,16 @@ _gcp_instance_confidential_compute_disabled = Fact(
       )
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_11_confidential_compute = Rule(
-    id="cis_gcp_4_11_confidential_compute",
-    name="CIS GCP 4.11: Instances Without Confidential Computing Enabled",
+gcp_instances_without_confidential_computing_enabled = Rule(
+    id="gcp_instances_without_confidential_computing_enabled",
+    name="Instances Without Confidential Computing Enabled",
     description=(
         "Eligible Compute Engine instances should enable Confidential Computing."
     ),
@@ -433,6 +471,7 @@ cis_gcp_4_11_confidential_compute = Rule(
     frameworks=(
         cis_gcp("4.11"),
         iso27001_annex_a("8.24"),
+        soc2_tsc("CC6.1"),
     ),
 )
 
@@ -442,8 +481,8 @@ cis_gcp_4_11_confidential_compute = Rule(
 # Main node: GCPDNSZone
 # =============================================================================
 class DnssecDisabledOutput(Finding):
-    zone_id: str | None = None
     zone_name: str | None = None
+    zone_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     dns_name: str | None = None
@@ -475,14 +514,16 @@ _gcp_dnssec_disabled = Fact(
     WHERE coalesce(zone.visibility, 'public') = 'public'
     RETURN COUNT(zone) AS count
     """,
+    asset_label="GCPDNSZone",
     asset_id_field="zone_id",
+    identity_fields=("zone_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_3_3_dnssec_enabled = Rule(
-    id="cis_gcp_3_3_dnssec_enabled",
-    name="CIS GCP 3.3: Cloud DNS DNSSEC Disabled",
+gcp_cloud_dns_dnssec_disabled = Rule(
+    id="gcp_cloud_dns_dnssec_disabled",
+    name="Cloud DNS DNSSEC Disabled",
     description="Public Cloud DNS zones should have DNSSEC enabled.",
     output_model=DnssecDisabledOutput,
     facts=(_gcp_dnssec_disabled,),
@@ -492,6 +533,7 @@ cis_gcp_3_3_dnssec_enabled = Rule(
     frameworks=(
         cis_gcp("3.3"),
         iso27001_annex_a("8.20"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -507,8 +549,8 @@ cis_gcp_3_3_dnssec_enabled = Rule(
 # Main node: GCPDNSZone
 # =============================================================================
 class DnssecWeakKskOutput(Finding):
-    zone_id: str | None = None
     zone_name: str | None = None
+    zone_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     dns_name: str | None = None
@@ -545,14 +587,16 @@ _gcp_dnssec_weak_ksk = Fact(
       AND coalesce(zone.dnssec_state, 'off') = 'on'
     RETURN COUNT(zone) AS count
     """,
+    asset_label="GCPDNSZone",
     asset_id_field="zone_id",
+    identity_fields=("zone_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_3_4_dnssec_no_rsasha1_ksk = Rule(
-    id="cis_gcp_3_4_dnssec_no_rsasha1_ksk",
-    name="CIS GCP 3.4: Cloud DNS DNSSEC Key-Signing Uses RSASHA1",
+gcp_cloud_dns_dnssec_key_signing_uses_rsasha1 = Rule(
+    id="gcp_cloud_dns_dnssec_key_signing_uses_rsasha1",
+    name="Cloud DNS DNSSEC Key-Signing Uses RSASHA1",
     description="Public Cloud DNS zones should not use RSASHA1 for the DNSSEC key-signing key.",
     output_model=DnssecWeakKskOutput,
     facts=(_gcp_dnssec_weak_ksk,),
@@ -562,6 +606,7 @@ cis_gcp_3_4_dnssec_no_rsasha1_ksk = Rule(
     frameworks=(
         cis_gcp("3.4"),
         iso27001_annex_a("8.24"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -571,8 +616,8 @@ cis_gcp_3_4_dnssec_no_rsasha1_ksk = Rule(
 # Main node: GCPDNSZone
 # =============================================================================
 class DnssecWeakZskOutput(Finding):
-    zone_id: str | None = None
     zone_name: str | None = None
+    zone_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     dns_name: str | None = None
@@ -609,14 +654,16 @@ _gcp_dnssec_weak_zsk = Fact(
       AND coalesce(zone.dnssec_state, 'off') = 'on'
     RETURN COUNT(zone) AS count
     """,
+    asset_label="GCPDNSZone",
     asset_id_field="zone_id",
+    identity_fields=("zone_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_3_5_dnssec_no_rsasha1_zsk = Rule(
-    id="cis_gcp_3_5_dnssec_no_rsasha1_zsk",
-    name="CIS GCP 3.5: Cloud DNS DNSSEC Zone-Signing Uses RSASHA1",
+gcp_cloud_dns_dnssec_zone_signing_uses_rsasha1 = Rule(
+    id="gcp_cloud_dns_dnssec_zone_signing_uses_rsasha1",
+    name="Cloud DNS DNSSEC Zone-Signing Uses RSASHA1",
     description="Public Cloud DNS zones should not use RSASHA1 for the DNSSEC zone-signing key.",
     output_model=DnssecWeakZskOutput,
     facts=(_gcp_dnssec_weak_zsk,),
@@ -626,6 +673,7 @@ cis_gcp_3_5_dnssec_no_rsasha1_zsk = Rule(
     frameworks=(
         cis_gcp("3.5"),
         iso27001_annex_a("8.24"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -635,8 +683,8 @@ cis_gcp_3_5_dnssec_no_rsasha1_zsk = Rule(
 # Main node: GCPSubnet
 # =============================================================================
 class SubnetFlowLogsDisabledOutput(Finding):
-    subnet_id: str | None = None
     subnet_name: str | None = None
+    subnet_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     region: str | None = None
@@ -661,9 +709,9 @@ _gcp_subnet_flow_logs_disabled = Fact(
     MATCH (project:GCPProject)-[:RESOURCE]->(subnet:GCPSubnet)
     WHERE coalesce(subnet.purpose, 'PRIVATE') = 'PRIVATE'
       AND (
-        coalesce(subnet.flow_logs_enabled, false) = false
+        subnet.flow_logs_enabled = false
         OR subnet.flow_logs_aggregation_interval <> 'INTERVAL_5_SEC'
-        OR coalesce(subnet.flow_logs_sampling, 0.0) <> 1.0
+        OR subnet.flow_logs_sampling <> 1.0
         OR subnet.flow_logs_metadata <> 'INCLUDE_ALL_METADATA'
         OR subnet.flow_logs_filter_expr IS NOT NULL
       )
@@ -687,9 +735,9 @@ _gcp_subnet_flow_logs_disabled = Fact(
     MATCH p=(project:GCPProject)-[:RESOURCE]->(subnet:GCPSubnet)
     WHERE coalesce(subnet.purpose, 'PRIVATE') = 'PRIVATE'
       AND (
-        coalesce(subnet.flow_logs_enabled, false) = false
+        subnet.flow_logs_enabled = false
         OR subnet.flow_logs_aggregation_interval <> 'INTERVAL_5_SEC'
-        OR coalesce(subnet.flow_logs_sampling, 0.0) <> 1.0
+        OR subnet.flow_logs_sampling <> 1.0
         OR subnet.flow_logs_metadata <> 'INCLUDE_ALL_METADATA'
         OR subnet.flow_logs_filter_expr IS NOT NULL
       )
@@ -700,24 +748,27 @@ _gcp_subnet_flow_logs_disabled = Fact(
     WHERE coalesce(subnet.purpose, 'PRIVATE') = 'PRIVATE'
     RETURN COUNT(subnet) AS count
     """,
+    asset_label="GCPSubnet",
     asset_id_field="subnet_id",
+    identity_fields=("subnet_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_3_8_vpc_flow_logs = Rule(
-    id="cis_gcp_3_8_vpc_flow_logs",
-    name="CIS GCP 3.8: Subnets Without Compliant VPC Flow Logs",
+gcp_subnets_without_compliant_vpc_flow_logs = Rule(
+    id="gcp_subnets_without_compliant_vpc_flow_logs",
+    name="Subnets Without Compliant VPC Flow Logs",
     description="Private-purpose GCP subnets should enable VPC Flow Logs with CIS-recommended settings.",
     output_model=SubnetFlowLogsDisabledOutput,
     facts=(_gcp_subnet_flow_logs_disabled,),
     tags=("networking", "subnet", "flow-logs", "logging"),
-    version="1.0.0",
+    version="1.0.1",
     references=CIS_REFERENCES,
     frameworks=(
         cis_gcp("3.8"),
         iso27001_annex_a("8.15"),
         iso27001_annex_a("8.16"),
+        soc2_tsc("CC7.2"),
     ),
 )
 
@@ -727,8 +778,8 @@ cis_gcp_3_8_vpc_flow_logs = Rule(
 # Main node: GCPCloudSQLInstance
 # =============================================================================
 class CloudSqlPublicIpOutput(Finding):
-    instance_id: str | None = None
     instance_name: str | None = None
+    instance_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     ip_addresses: str | None = None
@@ -757,14 +808,16 @@ _gcp_cloudsql_public_ip = Fact(
     MATCH (instance:GCPCloudSQLInstance)
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPCloudSQLInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_6_6_cloudsql_public_ip = Rule(
-    id="cis_gcp_6_6_cloudsql_public_ip",
-    name="CIS GCP 6.6: Cloud SQL Instances With Public IPs",
+gcp_cloudsql_public_ips = Rule(
+    id="gcp_cloudsql_public_ips",
+    name="Cloud SQL Instances With Public IPs",
     description="Cloud SQL instances should use private IPs and avoid public PRIMARY addresses.",
     output_model=CloudSqlPublicIpOutput,
     facts=(_gcp_cloudsql_public_ip,),
@@ -774,6 +827,7 @@ cis_gcp_6_6_cloudsql_public_ip = Rule(
     frameworks=(
         cis_gcp("6.6"),
         iso27001_annex_a("8.20"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -783,8 +837,8 @@ cis_gcp_6_6_cloudsql_public_ip = Rule(
 # Main node: GCPCloudSQLInstance
 # =============================================================================
 class CloudSqlBackupsDisabledOutput(Finding):
-    instance_id: str | None = None
     instance_name: str | None = None
+    instance_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     database_version: str | None = None
@@ -813,14 +867,16 @@ _gcp_cloudsql_backups_disabled = Fact(
     MATCH (instance:GCPCloudSQLInstance)
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPCloudSQLInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_6_7_cloudsql_backups = Rule(
-    id="cis_gcp_6_7_cloudsql_backups",
-    name="CIS GCP 6.7: Cloud SQL Automated Backups Disabled",
+gcp_cloudsql_automated_backups_disabled = Rule(
+    id="gcp_cloudsql_automated_backups_disabled",
+    name="Cloud SQL Automated Backups Disabled",
     description="Cloud SQL instances should have automated backups enabled.",
     output_model=CloudSqlBackupsDisabledOutput,
     facts=(_gcp_cloudsql_backups_disabled,),
@@ -830,8 +886,34 @@ cis_gcp_6_7_cloudsql_backups = Rule(
     frameworks=(
         cis_gcp("6.7"),
         iso27001_annex_a("8.13"),
+        soc2_tsc("A1.2"),
     ),
 )
+
+
+# =============================================================================
+# TODO: SOC 2 A1.2: Partial backup and recovery-infrastructure coverage
+# Covered today: Cloud SQL and standalone AWS RDS automated backup settings,
+# via gcp_cloudsql_automated_backups_disabled and
+# aws_rds_automated_backups_disabled. A report listing A1.2 as mapped still
+# overstates coverage because service-level settings do not prove recovery.
+# Missing datamodel or evidence: AWS Backup plans, vaults, protected resources,
+# and recovery points; Azure Recovery Services vaults and protected items; and
+# Google Cloud backup-plan and recovery-point inventories beyond Cloud SQL.
+# RDS multi_az and Cloud SQL availability_type are already ingested, but a
+# provider-wide high-availability rule would overstate A1.2 without an
+# authoritative inventory of business-critical databases and their required
+# recovery-time and recovery-point objectives.
+# =============================================================================
+
+# =============================================================================
+# TODO: SOC 2 A1.3: Recovery testing
+# Missing datamodel: restore-job inventory, which AWS Backup exposes through
+# list_restore_jobs (status, completion timestamps, the recovery point used),
+# plus the Azure and Google Cloud equivalents.
+# Out of reach: measured RTO/RPO results and recovery-test sign-off. Those are
+# process artifacts, not provider state.
+# =============================================================================
 
 
 # =============================================================================
@@ -839,6 +921,7 @@ cis_gcp_6_7_cloudsql_backups = Rule(
 # Main node: GCPBigQueryDataset
 # =============================================================================
 class BigQueryDatasetPublicAccessOutput(Finding):
+    dataset_name: str | None = None
     dataset_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
@@ -854,6 +937,7 @@ _gcp_bigquery_dataset_public = Fact(
     WHERE coalesce(dataset.access_entries, '') CONTAINS 'allUsers'
        OR coalesce(dataset.access_entries, '') CONTAINS 'allAuthenticatedUsers'
     RETURN
+        coalesce(dataset.friendly_name, dataset.dataset_id) AS dataset_name,
         dataset.id AS dataset_id,
         project.id AS project_id,
         project.displayname AS project_name,
@@ -869,14 +953,16 @@ _gcp_bigquery_dataset_public = Fact(
     MATCH (dataset:GCPBigQueryDataset)
     RETURN COUNT(dataset) AS count
     """,
+    asset_label="GCPBigQueryDataset",
     asset_id_field="dataset_id",
+    identity_fields=("dataset_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_7_1_bigquery_dataset_public = Rule(
-    id="cis_gcp_7_1_bigquery_dataset_public",
-    name="CIS GCP 7.1: BigQuery Datasets Publicly Accessible",
+gcp_bigquery_datasets_publicly_accessible = Rule(
+    id="gcp_bigquery_datasets_publicly_accessible",
+    name="BigQuery Datasets Publicly Accessible",
     description="BigQuery datasets should not grant access to allUsers or allAuthenticatedUsers.",
     output_model=BigQueryDatasetPublicAccessOutput,
     facts=(_gcp_bigquery_dataset_public,),
@@ -886,62 +972,112 @@ cis_gcp_7_1_bigquery_dataset_public = Rule(
     frameworks=(
         cis_gcp("7.1"),
         iso27001_annex_a("8.3"),
+        soc2_tsc("CC6.1"),
     ),
 )
 
 
 # =============================================================================
-# CIS GCP 7.2: BigQuery tables are encrypted with CMEK
-# Main node: GCPBigQueryTable
+# CIS GCP 7.2 (scoped): persistent BigQuery tables are encrypted with CMEK
+# Main node: GCPBigQueryTable, aggregated to the parent dataset.
+#
+# Two deliberate reductions vs the literal benchmark ("all BigQuery tables"):
+#
+# 1. Aggregate to the dataset. A single dataset can hold hundreds of thousands
+#    of tables (per-day shards, query-result cache). CMEK is remediated per
+#    dataset (default CMEK) or per logical table, not per shard, so one finding
+#    per table explodes cardinality without adding signal. We emit one finding
+#    per dataset holding >=1 in-scope table without CMEK, with the offending
+#    table count. No in-scope table is hidden: its dataset always surfaces.
+#
+# 2. Exclude expiring tables (expirationTime set). These are dominated by the
+#    ~24h query-result cache, which cannot be CMEK-encrypted. This also skips
+#    user tables with an explicit TTL, so the rule is scoped to *persistent*
+#    tables and does NOT fully cover CIS 7.2; the sibling dataset default-CMEK
+#    rule (7.3) governs future tables. This is an accepted trade-off to keep the
+#    finding volume actionable. https://cloud.google.com/bigquery/docs/cached-results
+#
+# We also exclude VIEW and EXTERNAL tables: they have no BigQuery-managed data
+# at rest, so kms_key_name is always empty and they would be false positives.
+# MATERIALIZED_VIEW / SNAPSHOT / CLONE do store data and support CMEK, so they
+# stay in scope. A null type is kept in scope to avoid dropping real tables.
 # =============================================================================
 class BigQueryTableCmekMissingOutput(Finding):
-    table_id: str | None = None
+    dataset_name: str | None = None
     dataset_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
-    kms_key_name: str | None = None
+    tables_without_cmek: str | None = None
+    sample_tables: list[str] | None = None
 
 
 _gcp_bigquery_table_cmek_missing = Fact(
     id="gcp_bigquery_table_cmek_missing",
-    name="GCP BigQuery tables without CMEK",
-    description="Detects BigQuery tables whose encryptionConfiguration.kmsKeyName is not set.",
+    name="GCP BigQuery datasets containing persistent tables without CMEK",
+    description="Detects BigQuery datasets holding persistent (non-expiring) tables whose encryptionConfiguration.kmsKeyName is not set, with a count of the offending tables.",
+    # The finding is anchored on the dataset, so the query matches the dataset node
+    # rather than deriving its id from `table.dataset_id`. Both use the composite
+    # `<project_id>:<dataset_id>` form, so the join is exact; a table whose dataset
+    # was not ingested drops out, which is correct for a dataset-anchored finding.
     cypher_query="""
     MATCH (project:GCPProject)-[:RESOURCE]->(table:GCPBigQueryTable)
-    WHERE table.kms_key_name IS NULL OR table.kms_key_name = ''
+    WHERE (table.kms_key_name IS NULL OR table.kms_key_name = '')
+      AND (table.expiration_time IS NULL OR table.expiration_time = '')
+      AND (table.type IS NULL OR NOT table.type IN ['VIEW', 'EXTERNAL'])
+    MATCH (dataset:GCPBigQueryDataset {id: table.dataset_id})
+    WITH project, dataset,
+         count(table) AS tables_without_cmek,
+         collect(coalesce(table.friendly_name, table.table_id))[..10] AS sample_tables
     RETURN
-        table.id AS table_id,
-        table.dataset_id AS dataset_id,
+        coalesce(dataset.friendly_name, dataset.dataset_id) AS dataset_name,
+        dataset.id AS dataset_id,
         project.id AS project_id,
         project.displayname AS project_name,
-        table.kms_key_name AS kms_key_name
+        tables_without_cmek,
+        sample_tables
     """,
     cypher_visual_query="""
     MATCH p=(project:GCPProject)-[:RESOURCE]->(table:GCPBigQueryTable)
-    WHERE table.kms_key_name IS NULL OR table.kms_key_name = ''
+    WHERE (table.kms_key_name IS NULL OR table.kms_key_name = '')
+      AND (table.expiration_time IS NULL OR table.expiration_time = '')
+      AND (table.type IS NULL OR NOT table.type IN ['VIEW', 'EXTERNAL'])
+    MATCH p2=(project)-[:RESOURCE]->(dataset:GCPBigQueryDataset)
+    WHERE dataset.id = table.dataset_id
     RETURN *
     """,
     cypher_count_query="""
-    MATCH (table:GCPBigQueryTable)
-    RETURN COUNT(table) AS count
+    MATCH (:GCPProject)-[:RESOURCE]->(table:GCPBigQueryTable)
+    WHERE (table.expiration_time IS NULL OR table.expiration_time = '')
+      AND (table.type IS NULL OR NOT table.type IN ['VIEW', 'EXTERNAL'])
+    MATCH (dataset:GCPBigQueryDataset {id: table.dataset_id})
+    RETURN count(DISTINCT dataset.id) AS count
     """,
-    asset_id_field="table_id",
+    asset_label="GCPBigQueryDataset",
+    asset_id_field="dataset_id",
+    identity_fields=("dataset_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_7_2_bigquery_table_cmek = Rule(
-    id="cis_gcp_7_2_bigquery_table_cmek",
-    name="CIS GCP 7.2: BigQuery Tables Without CMEK",
-    description="BigQuery tables should use customer-managed encryption keys.",
+gcp_bigquery_tables_without_cmek = Rule(
+    id="gcp_bigquery_tables_without_cmek",
+    name="Persistent BigQuery Tables Without CMEK",
+    description=(
+        "Persistent BigQuery tables should use customer-managed encryption keys. "
+        "Findings are grouped by dataset, with a count of the tables missing CMEK. "
+        "Expiring/temporary tables (e.g. the query-result cache) are excluded, so "
+        "this partially covers CIS 7.2; the dataset default-CMEK rule (7.3) covers "
+        "future tables."
+    ),
     output_model=BigQueryTableCmekMissingOutput,
     facts=(_gcp_bigquery_table_cmek_missing,),
     tags=("bigquery", "encryption", "cmek", "stride:information_disclosure"),
-    version="1.0.0",
+    version="1.0.1",
     references=CIS_REFERENCES,
     frameworks=(
         cis_gcp("7.2"),
         iso27001_annex_a("8.24"),
+        soc2_tsc("CC6.1"),
     ),
 )
 
@@ -951,6 +1087,7 @@ cis_gcp_7_2_bigquery_table_cmek = Rule(
 # Main node: GCPBigQueryDataset
 # =============================================================================
 class BigQueryDatasetCmekMissingOutput(Finding):
+    dataset_name: str | None = None
     dataset_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
@@ -965,6 +1102,7 @@ _gcp_bigquery_dataset_cmek_missing = Fact(
     MATCH (project:GCPProject)-[:RESOURCE]->(dataset:GCPBigQueryDataset)
     WHERE dataset.default_kms_key_name IS NULL OR dataset.default_kms_key_name = ''
     RETURN
+        coalesce(dataset.friendly_name, dataset.dataset_id) AS dataset_name,
         dataset.id AS dataset_id,
         project.id AS project_id,
         project.displayname AS project_name,
@@ -979,14 +1117,16 @@ _gcp_bigquery_dataset_cmek_missing = Fact(
     MATCH (dataset:GCPBigQueryDataset)
     RETURN COUNT(dataset) AS count
     """,
+    asset_label="GCPBigQueryDataset",
     asset_id_field="dataset_id",
+    identity_fields=("dataset_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_7_3_bigquery_dataset_cmek = Rule(
-    id="cis_gcp_7_3_bigquery_dataset_cmek",
-    name="CIS GCP 7.3: BigQuery Datasets Without Default CMEK",
+gcp_bigquery_datasets_without_default_cmek = Rule(
+    id="gcp_bigquery_datasets_without_default_cmek",
+    name="BigQuery Datasets Without Default CMEK",
     description="BigQuery datasets should define a default customer-managed encryption key.",
     output_model=BigQueryDatasetCmekMissingOutput,
     facts=(_gcp_bigquery_dataset_cmek_missing,),
@@ -996,6 +1136,7 @@ cis_gcp_7_3_bigquery_dataset_cmek = Rule(
     frameworks=(
         cis_gcp("7.3"),
         iso27001_annex_a("8.24"),
+        soc2_tsc("CC6.1"),
     ),
 )
 
@@ -1005,8 +1146,8 @@ cis_gcp_7_3_bigquery_dataset_cmek = Rule(
 # Main node: GCPCloudSQLInstance
 # =============================================================================
 class CloudSqlSslModeOutput(Finding):
-    instance_id: str | None = None
     instance_name: str | None = None
+    instance_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     ssl_mode: str | None = None
@@ -1039,14 +1180,16 @@ _gcp_cloudsql_ssl_not_enforced = Fact(
     MATCH (instance:GCPCloudSQLInstance)
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPCloudSQLInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_6_4_cloudsql_ssl_required = Rule(
-    id="cis_gcp_6_4_cloudsql_ssl_required",
-    name="CIS GCP 6.4: Cloud SQL SSL Not Enforced",
+gcp_cloudsql_ssl_not_enforced = Rule(
+    id="gcp_cloudsql_ssl_not_enforced",
+    name="Cloud SQL SSL Not Enforced",
     description="Cloud SQL instances should require all incoming connections to use SSL.",
     output_model=CloudSqlSslModeOutput,
     facts=(_gcp_cloudsql_ssl_not_enforced,),
@@ -1056,6 +1199,7 @@ cis_gcp_6_4_cloudsql_ssl_required = Rule(
     frameworks=(
         cis_gcp("6.4"),
         iso27001_annex_a("8.24"),
+        soc2_tsc("CC6.7"),
     ),
 )
 
@@ -1065,8 +1209,8 @@ cis_gcp_6_4_cloudsql_ssl_required = Rule(
 # Main node: GCPCloudSQLInstance
 # =============================================================================
 class CloudSqlAuthorizedNetworksOutput(Finding):
-    instance_id: str | None = None
     instance_name: str | None = None
+    instance_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     authorized_networks: str | None = None
@@ -1095,14 +1239,16 @@ _gcp_cloudsql_authorized_networks_open = Fact(
     MATCH (instance:GCPCloudSQLInstance)
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPCloudSQLInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_6_5_cloudsql_authorized_networks = Rule(
-    id="cis_gcp_6_5_cloudsql_authorized_networks",
-    name="CIS GCP 6.5: Cloud SQL Authorized Networks Open to the Internet",
+gcp_cloudsql_authorized_networks_open_to_internet = Rule(
+    id="gcp_cloudsql_authorized_networks_open_to_internet",
+    name="Cloud SQL Authorized Networks Open to the Internet",
     description="Cloud SQL instances should not authorize 0.0.0.0/0 in authorized networks.",
     output_model=CloudSqlAuthorizedNetworksOutput,
     facts=(_gcp_cloudsql_authorized_networks_open,),
@@ -1112,13 +1258,14 @@ cis_gcp_6_5_cloudsql_authorized_networks = Rule(
     frameworks=(
         cis_gcp("6.5"),
         iso27001_annex_a("8.20"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
 
 class CloudSqlDatabaseFlagOutput(Finding):
-    instance_id: str | None = None
     instance_name: str | None = None
+    instance_id: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     database_version: str | None = None
@@ -1159,7 +1306,9 @@ def _make_cloudsql_flag_fact(
         WHERE instance.database_version STARTS WITH '{db_version_filter}'
         RETURN COUNT(instance) AS count
         """,
+        asset_label="GCPCloudSQLInstance",
         asset_id_field="instance_id",
+        identity_fields=("instance_id",),
         module=Module.GCP,
         maturity=Maturity.STABLE,
     )
@@ -1171,6 +1320,7 @@ def _make_cloudsql_flag_rule(
     description: str,
     requirement: str,
     fact: Fact,
+    soc2_requirement: str = "CC7.1",
 ) -> Rule:
     return Rule(
         id=rule_id,
@@ -1184,6 +1334,7 @@ def _make_cloudsql_flag_rule(
         frameworks=(
             cis_gcp(requirement),
             iso27001_annex_a("8.9"),
+            soc2_tsc(soc2_requirement),
         ),
     )
 
@@ -1195,9 +1346,9 @@ _gcp_cloudsql_mysql_skip_show_database = _make_cloudsql_flag_fact(
     "MYSQL",
     'NOT (coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"skip_show_database\\", \\"value\\": \\"on\\".*\')',
 )
-cis_gcp_6_1_2_cloudsql_mysql_skip_show_database = _make_cloudsql_flag_rule(
-    "cis_gcp_6_1_2_cloudsql_mysql_skip_show_database",
-    "CIS GCP 6.1.2: Cloud SQL MySQL skip_show_database Not Set to On",
+gcp_cloudsql_mysql_skip_show_database_not_on = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_mysql_skip_show_database_not_on",
+    "Cloud SQL MySQL skip_show_database Not Set to On",
     "Cloud SQL MySQL instances should set skip_show_database to on.",
     "6.1.2",
     _gcp_cloudsql_mysql_skip_show_database,
@@ -1210,9 +1361,9 @@ _gcp_cloudsql_mysql_local_infile = _make_cloudsql_flag_fact(
     "MYSQL",
     'NOT (coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"local_infile\\", \\"value\\": \\"off\\".*\')',
 )
-cis_gcp_6_1_3_cloudsql_mysql_local_infile = _make_cloudsql_flag_rule(
-    "cis_gcp_6_1_3_cloudsql_mysql_local_infile",
-    "CIS GCP 6.1.3: Cloud SQL MySQL local_infile Not Set to Off",
+gcp_cloudsql_mysql_local_infile_not_off = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_mysql_local_infile_not_off",
+    "Cloud SQL MySQL local_infile Not Set to Off",
     "Cloud SQL MySQL instances should set local_infile to off.",
     "6.1.3",
     _gcp_cloudsql_mysql_local_infile,
@@ -1225,9 +1376,9 @@ _gcp_cloudsql_postgres_log_error_verbosity = _make_cloudsql_flag_fact(
     "POSTGRES",
     'coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"log_error_verbosity\\", \\"value\\": \\"VERBOSE\\".*\'',
 )
-cis_gcp_6_2_1_cloudsql_postgres_log_error_verbosity = _make_cloudsql_flag_rule(
-    "cis_gcp_6_2_1_cloudsql_postgres_log_error_verbosity",
-    "CIS GCP 6.2.1: Cloud SQL PostgreSQL log_error_verbosity Too Permissive",
+gcp_cloudsql_postgres_log_error_verbosity_too_permissive = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_postgres_log_error_verbosity_too_permissive",
+    "Cloud SQL PostgreSQL log_error_verbosity Too Permissive",
     "Cloud SQL PostgreSQL instances should set log_error_verbosity to DEFAULT or stricter.",
     "6.2.1",
     _gcp_cloudsql_postgres_log_error_verbosity,
@@ -1240,12 +1391,13 @@ _gcp_cloudsql_postgres_log_connections = _make_cloudsql_flag_fact(
     "POSTGRES",
     'NOT (coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"log_connections\\", \\"value\\": \\"on\\".*\')',
 )
-cis_gcp_6_2_2_cloudsql_postgres_log_connections = _make_cloudsql_flag_rule(
-    "cis_gcp_6_2_2_cloudsql_postgres_log_connections",
-    "CIS GCP 6.2.2: Cloud SQL PostgreSQL log_connections Not Set to On",
+gcp_cloudsql_postgres_log_connections_not_on = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_postgres_log_connections_not_on",
+    "Cloud SQL PostgreSQL log_connections Not Set to On",
     "Cloud SQL PostgreSQL instances should set log_connections to on.",
     "6.2.2",
     _gcp_cloudsql_postgres_log_connections,
+    "CC7.2",
 )
 
 _gcp_cloudsql_postgres_log_disconnections = _make_cloudsql_flag_fact(
@@ -1255,12 +1407,13 @@ _gcp_cloudsql_postgres_log_disconnections = _make_cloudsql_flag_fact(
     "POSTGRES",
     'NOT (coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"log_disconnections\\", \\"value\\": \\"on\\".*\')',
 )
-cis_gcp_6_2_3_cloudsql_postgres_log_disconnections = _make_cloudsql_flag_rule(
-    "cis_gcp_6_2_3_cloudsql_postgres_log_disconnections",
-    "CIS GCP 6.2.3: Cloud SQL PostgreSQL log_disconnections Not Set to On",
+gcp_cloudsql_postgres_log_disconnections_not_on = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_postgres_log_disconnections_not_on",
+    "Cloud SQL PostgreSQL log_disconnections Not Set to On",
     "Cloud SQL PostgreSQL instances should set log_disconnections to on.",
     "6.2.3",
     _gcp_cloudsql_postgres_log_disconnections,
+    "CC7.2",
 )
 
 _gcp_cloudsql_postgres_log_min_messages = _make_cloudsql_flag_fact(
@@ -1270,9 +1423,9 @@ _gcp_cloudsql_postgres_log_min_messages = _make_cloudsql_flag_fact(
     "POSTGRES",
     'coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"log_min_messages\\", \\"value\\": \\"(DEBUG5|DEBUG4|DEBUG3|DEBUG2|DEBUG1|INFO|NOTICE)\\".*\'',
 )
-cis_gcp_6_2_5_cloudsql_postgres_log_min_messages = _make_cloudsql_flag_rule(
-    "cis_gcp_6_2_5_cloudsql_postgres_log_min_messages",
-    "CIS GCP 6.2.5: Cloud SQL PostgreSQL log_min_messages Below Warning",
+gcp_cloudsql_postgres_log_min_messages_below_warning = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_postgres_log_min_messages_below_warning",
+    "Cloud SQL PostgreSQL log_min_messages Below Warning",
     "Cloud SQL PostgreSQL instances should set log_min_messages to Warning or stricter.",
     "6.2.5",
     _gcp_cloudsql_postgres_log_min_messages,
@@ -1285,9 +1438,9 @@ _gcp_cloudsql_postgres_log_min_error_statement = _make_cloudsql_flag_fact(
     "POSTGRES",
     'coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"log_min_error_statement\\", \\"value\\": \\"(DEBUG5|DEBUG4|DEBUG3|DEBUG2|DEBUG1|INFO|NOTICE|WARNING)\\".*\'',
 )
-cis_gcp_6_2_6_cloudsql_postgres_log_min_error_statement = _make_cloudsql_flag_rule(
-    "cis_gcp_6_2_6_cloudsql_postgres_log_min_error_statement",
-    "CIS GCP 6.2.6: Cloud SQL PostgreSQL log_min_error_statement Below Error",
+gcp_cloudsql_postgres_log_min_error_statement_below_error = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_postgres_log_min_error_statement_below_error",
+    "Cloud SQL PostgreSQL log_min_error_statement Below Error",
     "Cloud SQL PostgreSQL instances should set log_min_error_statement to Error or stricter.",
     "6.2.6",
     _gcp_cloudsql_postgres_log_min_error_statement,
@@ -1300,12 +1453,14 @@ _gcp_cloudsql_postgres_log_min_duration_statement = _make_cloudsql_flag_fact(
     "POSTGRES",
     'coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"log_min_duration_statement\\", \\"value\\": \\"(?!-1)[^\\"]+\\".*\'',
 )
-cis_gcp_6_2_7_cloudsql_postgres_log_min_duration_statement = _make_cloudsql_flag_rule(
-    "cis_gcp_6_2_7_cloudsql_postgres_log_min_duration_statement",
-    "CIS GCP 6.2.7: Cloud SQL PostgreSQL log_min_duration_statement Not Disabled",
-    "Cloud SQL PostgreSQL instances should set log_min_duration_statement to -1.",
-    "6.2.7",
-    _gcp_cloudsql_postgres_log_min_duration_statement,
+gcp_cloudsql_postgres_log_min_duration_statement_not_disabled = (
+    _make_cloudsql_flag_rule(
+        "gcp_cloudsql_postgres_log_min_duration_statement_not_disabled",
+        "Cloud SQL PostgreSQL log_min_duration_statement Not Disabled",
+        "Cloud SQL PostgreSQL instances should set log_min_duration_statement to -1.",
+        "6.2.7",
+        _gcp_cloudsql_postgres_log_min_duration_statement,
+    )
 )
 
 _gcp_cloudsql_postgres_enable_pgaudit = _make_cloudsql_flag_fact(
@@ -1315,12 +1470,13 @@ _gcp_cloudsql_postgres_enable_pgaudit = _make_cloudsql_flag_fact(
     "POSTGRES",
     'NOT (coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"cloudsql.enable_pgaudit\\", \\"value\\": \\"on\\".*\')',
 )
-cis_gcp_6_2_8_cloudsql_postgres_enable_pgaudit = _make_cloudsql_flag_rule(
-    "cis_gcp_6_2_8_cloudsql_postgres_enable_pgaudit",
-    "CIS GCP 6.2.8: Cloud SQL PostgreSQL cloudsql.enable_pgaudit Not Set to On",
+gcp_cloudsql_postgres_pgaudit_not_enabled = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_postgres_pgaudit_not_enabled",
+    "Cloud SQL PostgreSQL cloudsql.enable_pgaudit Not Set to On",
     "Cloud SQL PostgreSQL instances should set cloudsql.enable_pgaudit to on.",
     "6.2.8",
     _gcp_cloudsql_postgres_enable_pgaudit,
+    "CC7.2",
 )
 
 _gcp_cloudsql_sqlserver_external_scripts = _make_cloudsql_flag_fact(
@@ -1330,9 +1486,9 @@ _gcp_cloudsql_sqlserver_external_scripts = _make_cloudsql_flag_fact(
     "SQLSERVER",
     'coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"external scripts enabled\\", \\"value\\": \\"on\\".*\'',
 )
-cis_gcp_6_3_1_cloudsql_sqlserver_external_scripts = _make_cloudsql_flag_rule(
-    "cis_gcp_6_3_1_cloudsql_sqlserver_external_scripts",
-    "CIS GCP 6.3.1: Cloud SQL SQL Server External Scripts Enabled",
+gcp_cloudsql_sqlserver_external_scripts_enabled = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_sqlserver_external_scripts_enabled",
+    "Cloud SQL SQL Server External Scripts Enabled",
     "Cloud SQL SQL Server instances should set external scripts enabled to off.",
     "6.3.1",
     _gcp_cloudsql_sqlserver_external_scripts,
@@ -1345,9 +1501,9 @@ _gcp_cloudsql_sqlserver_cross_db_ownership = _make_cloudsql_flag_fact(
     "SQLSERVER",
     'coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"cross db ownership chaining\\", \\"value\\": \\"on\\".*\'',
 )
-cis_gcp_6_3_2_cloudsql_sqlserver_cross_db_ownership = _make_cloudsql_flag_rule(
-    "cis_gcp_6_3_2_cloudsql_sqlserver_cross_db_ownership",
-    "CIS GCP 6.3.2: Cloud SQL SQL Server Cross DB Ownership Chaining Enabled",
+gcp_cloudsql_sqlserver_cross_db_ownership_chaining_enabled = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_sqlserver_cross_db_ownership_chaining_enabled",
+    "Cloud SQL SQL Server Cross DB Ownership Chaining Enabled",
     "Cloud SQL SQL Server instances should not enable cross db ownership chaining.",
     "6.3.2",
     _gcp_cloudsql_sqlserver_cross_db_ownership,
@@ -1360,9 +1516,9 @@ _gcp_cloudsql_sqlserver_user_connections = _make_cloudsql_flag_fact(
     "SQLSERVER",
     'coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"user connections\\", \\"value\\": \\"(?!0)[^\\"]+\\".*\'',
 )
-cis_gcp_6_3_3_cloudsql_sqlserver_user_connections = _make_cloudsql_flag_rule(
-    "cis_gcp_6_3_3_cloudsql_sqlserver_user_connections",
-    "CIS GCP 6.3.3: Cloud SQL SQL Server User Connections Is Limiting",
+gcp_cloudsql_sqlserver_user_connections_limiting = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_sqlserver_user_connections_limiting",
+    "Cloud SQL SQL Server User Connections Is Limiting",
     "Cloud SQL SQL Server instances should set user connections to a non-limiting value.",
     "6.3.3",
     _gcp_cloudsql_sqlserver_user_connections,
@@ -1375,9 +1531,9 @@ _gcp_cloudsql_sqlserver_user_options = _make_cloudsql_flag_fact(
     "SQLSERVER",
     "coalesce(instance.database_flags, '') CONTAINS '\"name\": \"user options\"'",
 )
-cis_gcp_6_3_4_cloudsql_sqlserver_user_options = _make_cloudsql_flag_rule(
-    "cis_gcp_6_3_4_cloudsql_sqlserver_user_options",
-    "CIS GCP 6.3.4: Cloud SQL SQL Server User Options Configured",
+gcp_cloudsql_sqlserver_user_options_configured = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_sqlserver_user_options_configured",
+    "Cloud SQL SQL Server User Options Configured",
     "Cloud SQL SQL Server instances should not configure the user options flag.",
     "6.3.4",
     _gcp_cloudsql_sqlserver_user_options,
@@ -1390,9 +1546,9 @@ _gcp_cloudsql_sqlserver_remote_access = _make_cloudsql_flag_fact(
     "SQLSERVER",
     'NOT (coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"remote access\\", \\"value\\": \\"off\\".*\')',
 )
-cis_gcp_6_3_5_cloudsql_sqlserver_remote_access = _make_cloudsql_flag_rule(
-    "cis_gcp_6_3_5_cloudsql_sqlserver_remote_access",
-    "CIS GCP 6.3.5: Cloud SQL SQL Server Remote Access Not Set to Off",
+gcp_cloudsql_sqlserver_remote_access_not_off = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_sqlserver_remote_access_not_off",
+    "Cloud SQL SQL Server Remote Access Not Set to Off",
     "Cloud SQL SQL Server instances should set remote access to off.",
     "6.3.5",
     _gcp_cloudsql_sqlserver_remote_access,
@@ -1405,9 +1561,9 @@ _gcp_cloudsql_sqlserver_trace_3625 = _make_cloudsql_flag_fact(
     "SQLSERVER",
     'NOT (coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"3625\\", \\"value\\": \\"on\\".*\')',
 )
-cis_gcp_6_3_6_cloudsql_sqlserver_trace_3625 = _make_cloudsql_flag_rule(
-    "cis_gcp_6_3_6_cloudsql_sqlserver_trace_3625",
-    "CIS GCP 6.3.6: Cloud SQL SQL Server Trace Flag 3625 Not Set to On",
+gcp_cloudsql_sqlserver_trace_flag_3625_not_on = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_sqlserver_trace_flag_3625_not_on",
+    "Cloud SQL SQL Server Trace Flag 3625 Not Set to On",
     "Cloud SQL SQL Server instances should set trace flag 3625 to on.",
     "6.3.6",
     _gcp_cloudsql_sqlserver_trace_3625,
@@ -1420,9 +1576,9 @@ _gcp_cloudsql_sqlserver_contained_auth = _make_cloudsql_flag_fact(
     "SQLSERVER",
     'coalesce(instance.database_flags, \'\') =~ \'.*\\"name\\": \\"contained database authentication\\", \\"value\\": \\"on\\".*\'',
 )
-cis_gcp_6_3_7_cloudsql_sqlserver_contained_auth = _make_cloudsql_flag_rule(
-    "cis_gcp_6_3_7_cloudsql_sqlserver_contained_auth",
-    "CIS GCP 6.3.7: Cloud SQL SQL Server Contained Database Authentication Enabled",
+gcp_cloudsql_sqlserver_contained_database_authentication_enabled = _make_cloudsql_flag_rule(
+    "gcp_cloudsql_sqlserver_contained_database_authentication_enabled",
+    "Cloud SQL SQL Server Contained Database Authentication Enabled",
     "Cloud SQL SQL Server instances should set contained database authentication to off.",
     "6.3.7",
     _gcp_cloudsql_sqlserver_contained_auth,
@@ -1478,14 +1634,16 @@ _gcp_bucket_uniform_access_disabled = Fact(
     MATCH (bucket:GCPBucket)
     RETURN COUNT(bucket) AS count
     """,
+    asset_label="GCPBucket",
     asset_id_field="bucket_id",
+    identity_fields=("bucket_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_5_2_bucket_uniform_access = Rule(
-    id="cis_gcp_5_2_bucket_uniform_access",
-    name="CIS GCP 5.2: Bucket Uniform Access",
+gcp_bucket_uniform_access_disabled = Rule(
+    id="gcp_bucket_uniform_access_disabled",
+    name="Bucket Uniform Access",
     description=(
         "Buckets should enable uniform bucket-level access (bucket policy only) to "
         "simplify permission management and use only IAM for access control."
@@ -1503,6 +1661,7 @@ cis_gcp_5_2_bucket_uniform_access = Rule(
     frameworks=(
         cis_gcp("5.2"),
         iso27001_annex_a("8.3"),
+        soc2_tsc("CC6.1"),
     ),
 )
 
@@ -1551,9 +1710,88 @@ cis_gcp_5_2_bucket_uniform_access = Rule(
 # Missing datamodel or evidence: IAM bindings on individual KMS cryptokeys
 # =============================================================================
 
+
 # =============================================================================
-# TODO: CIS GCP 1.10: KMS encryption keys are rotated within 90 days
-# Missing datamodel or evidence: next_rotation_time on GCPCryptoKey; current model only stores rotation_period
+# CIS GCP 1.10: KMS encryption keys are rotated within 90 days
+# Main node: GCPCryptoKey
+# =============================================================================
+class KMSKeyWithoutRotationPolicyOutput(Finding):
+    key_name: str | None = None
+    key_id: str | None = None
+    project_id: str | None = None
+    project_name: str | None = None
+    key_ring_id: str | None = None
+    purpose: str | None = None
+    rotation_period: str | None = None
+
+
+_gcp_kms_key_without_rotation_policy = Fact(
+    id="gcp_kms_key_without_rotation_policy",
+    name="GCP KMS encryption keys without a compliant rotation policy",
+    description=(
+        "Detects symmetric GCP KMS encryption keys that have no automatic "
+        "rotation period or a period longer than 90 days."
+    ),
+    cypher_query="""
+    MATCH (project:GCPProject)-[:RESOURCE]->(key:GCPCryptoKey)
+    WHERE key.purpose = 'ENCRYPT_DECRYPT'
+      AND (
+        key.rotation_period IS NULL
+        OR key.rotation_period = ''
+        OR toFloat(replace(key.rotation_period, 's', '')) > 7776000
+      )
+    RETURN
+        key.name AS key_name,
+        key.id AS key_id,
+        project.id AS project_id,
+        project.displayname AS project_name,
+        key.key_ring_id AS key_ring_id,
+        key.purpose AS purpose,
+        key.rotation_period AS rotation_period
+    """,
+    cypher_visual_query="""
+    MATCH p=(project:GCPProject)-[:RESOURCE]->(key:GCPCryptoKey)
+    WHERE key.purpose = 'ENCRYPT_DECRYPT'
+      AND (
+        key.rotation_period IS NULL
+        OR key.rotation_period = ''
+        OR toFloat(replace(key.rotation_period, 's', '')) > 7776000
+      )
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (key:GCPCryptoKey)
+    WHERE key.purpose = 'ENCRYPT_DECRYPT'
+    RETURN COUNT(key) AS count
+    """,
+    asset_label="GCPCryptoKey",
+    asset_id_field="key_id",
+    identity_fields=("key_id",),
+    module=Module.GCP,
+    maturity=Maturity.STABLE,
+)
+
+gcp_kms_keys_without_rotation_policy = Rule(
+    id="gcp_kms_keys_without_rotation_policy",
+    name="GCP KMS Keys Without Compliant Rotation Policy",
+    description=(
+        "Symmetric GCP KMS encryption keys should automatically rotate at least "
+        "once every 90 days."
+    ),
+    output_model=KMSKeyWithoutRotationPolicyOutput,
+    facts=(_gcp_kms_key_without_rotation_policy,),
+    tags=("kms", "encryption", "key_management", "rotation"),
+    version="0.1.0",
+    references=CIS_REFERENCES,
+    frameworks=(
+        cis_gcp("1.10"),
+        iso27001_annex_a("8.24"),
+        soc2_tsc("CC6.1"),
+    ),
+)
+
+# TODO: CIS GCP 1.10 full coverage requires next_rotation_time on GCPCryptoKey
+# to verify that a configured rotation is scheduled within 90 days.
 # =============================================================================
 
 # =============================================================================
@@ -1728,14 +1966,16 @@ _gcp_instance_default_service_account = Fact(
       AND NOT instance.instancename STARTS WITH 'gke-'
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_1_default_service_account = Rule(
-    id="cis_gcp_4_1_default_service_account",
-    name="CIS GCP 4.1: Instances Using Default Service Account",
+gcp_instances_using_default_service_account = Rule(
+    id="gcp_instances_using_default_service_account",
+    name="Instances Using Default Service Account",
     description="VM instances should not use the default Compute Engine service account.",
     output_model=InstanceDefaultServiceAccountOutput,
     facts=(_gcp_instance_default_service_account,),
@@ -1745,6 +1985,7 @@ cis_gcp_4_1_default_service_account = Rule(
     frameworks=(
         cis_gcp("4.1"),
         iso27001_annex_a("5.16"),
+        soc2_tsc("CC6.1"),
     ),
 )
 
@@ -1794,14 +2035,16 @@ _gcp_instance_default_service_account_full_api = Fact(
       AND NOT instance.instancename STARTS WITH 'gke-'
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_2_default_service_account_full_api = Rule(
-    id="cis_gcp_4_2_default_service_account_full_api",
-    name="CIS GCP 4.2: Default Service Account With Full Cloud API Scope",
+gcp_default_service_account_full_cloud_api_scope = Rule(
+    id="gcp_default_service_account_full_cloud_api_scope",
+    name="Default Service Account With Full Cloud API Scope",
     description="VM instances should not use the default Compute Engine service account with full access to all Cloud APIs.",
     output_model=InstanceDefaultServiceAccountFullApiOutput,
     facts=(_gcp_instance_default_service_account_full_api,),
@@ -1812,6 +2055,7 @@ cis_gcp_4_2_default_service_account_full_api = Rule(
         cis_gcp("4.2"),
         iso27001_annex_a("5.18"),
         iso27001_annex_a("8.2"),
+        soc2_tsc("CC6.3"),
     ),
 )
 
@@ -1875,14 +2119,16 @@ _gcp_instance_project_wide_ssh_keys = Fact(
       AND NOT instance.instancename STARTS WITH 'gke-'
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_3_block_project_wide_ssh_keys = Rule(
-    id="cis_gcp_4_3_block_project_wide_ssh_keys",
-    name="CIS GCP 4.3: Instances Not Blocking Project-Wide SSH Keys",
+gcp_instances_not_blocking_project_wide_ssh_keys = Rule(
+    id="gcp_instances_not_blocking_project_wide_ssh_keys",
+    name="Instances Not Blocking Project-Wide SSH Keys",
     description="Compute Engine instances should block project-wide SSH keys unless OS Login is effectively enabled.",
     output_model=InstanceProjectWideSshKeysOutput,
     facts=(_gcp_instance_project_wide_ssh_keys,),
@@ -1892,6 +2138,7 @@ cis_gcp_4_3_block_project_wide_ssh_keys = Rule(
     frameworks=(
         cis_gcp("4.3"),
         iso27001_annex_a("8.5"),
+        soc2_tsc("CC6.1"),
     ),
 )
 
@@ -1901,8 +2148,8 @@ cis_gcp_4_3_block_project_wide_ssh_keys = Rule(
 # Main node: GCPProject
 # =============================================================================
 class ProjectOsloginDisabledOutput(Finding):
-    project_id: str | None = None
     project_name: str | None = None
+    project_id: str | None = None
     compute_project_enable_oslogin: str | None = None
     overriding_instance_count: int | None = None
 
@@ -1942,14 +2189,16 @@ _gcp_project_oslogin_disabled = Fact(
     MATCH (project:GCPProject)
     RETURN COUNT(project) AS count
     """,
+    asset_label="GCPProject",
     asset_id_field="project_id",
+    identity_fields=("project_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_4_oslogin_enabled = Rule(
-    id="cis_gcp_4_4_oslogin_enabled",
-    name="CIS GCP 4.4: Projects Without Effective OS Login",
+gcp_projects_without_effective_os_login = Rule(
+    id="gcp_projects_without_effective_os_login",
+    name="Projects Without Effective OS Login",
     description="Projects should enable OS Login and avoid instance-level overrides that disable it.",
     output_model=ProjectOsloginDisabledOutput,
     facts=(_gcp_project_oslogin_disabled,),
@@ -1959,6 +2208,7 @@ cis_gcp_4_4_oslogin_enabled = Rule(
     frameworks=(
         cis_gcp("4.4"),
         iso27001_annex_a("8.5"),
+        soc2_tsc("CC6.1"),
     ),
 )
 
@@ -2007,14 +2257,16 @@ _gcp_instance_ip_forwarding = Fact(
       AND NOT instance.instancename STARTS WITH 'gke-'
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_6_ip_forwarding = Rule(
-    id="cis_gcp_4_6_ip_forwarding",
-    name="CIS GCP 4.6: Instances With IP Forwarding Enabled",
+gcp_instances_with_ip_forwarding = Rule(
+    id="gcp_instances_with_ip_forwarding",
+    name="Instances With IP Forwarding Enabled",
     description="Compute Engine instances should not enable IP forwarding.",
     output_model=InstanceIpForwardingOutput,
     facts=(_gcp_instance_ip_forwarding,),
@@ -2024,6 +2276,7 @@ cis_gcp_4_6_ip_forwarding = Rule(
     frameworks=(
         cis_gcp("4.6"),
         iso27001_annex_a("8.20"),
+        soc2_tsc("CC6.6"),
     ),
 )
 
@@ -2082,14 +2335,16 @@ _gcp_instance_shielded_vm_disabled = Fact(
       AND NOT instance.instancename STARTS WITH 'gke-'
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_8_shielded_vm = Rule(
-    id="cis_gcp_4_8_shielded_vm",
-    name="CIS GCP 4.8: Instances Without Shielded VM Enabled",
+gcp_instances_without_shielded_vm_enabled = Rule(
+    id="gcp_instances_without_shielded_vm_enabled",
+    name="Instances Without Shielded VM Enabled",
     description="Compute Engine instances should enable Shielded VM vTPM and Integrity Monitoring.",
     output_model=InstanceShieldedVmDisabledOutput,
     facts=(_gcp_instance_shielded_vm_disabled,),
@@ -2099,6 +2354,7 @@ cis_gcp_4_8_shielded_vm = Rule(
     frameworks=(
         cis_gcp("4.8"),
         iso27001_annex_a("8.9"),
+        soc2_tsc("CC7.1"),
     ),
 )
 
@@ -2138,14 +2394,16 @@ _gcp_instance_serial_port_enabled = Fact(
     MATCH (instance:GCPInstance)
     RETURN COUNT(instance) AS count
     """,
+    asset_label="GCPInstance",
     asset_id_field="instance_id",
+    identity_fields=("instance_id",),
     module=Module.GCP,
     maturity=Maturity.STABLE,
 )
 
-cis_gcp_4_5_serial_ports_disabled = Rule(
-    id="cis_gcp_4_5_serial_ports_disabled",
-    name="CIS GCP 4.5: Instances With Serial Port Access Enabled",
+gcp_instances_with_serial_port_access = Rule(
+    id="gcp_instances_with_serial_port_access",
+    name="Instances With Serial Port Access Enabled",
     description="Compute Engine instances should not enable serial port access.",
     output_model=InstanceSerialPortEnabledOutput,
     facts=(_gcp_instance_serial_port_enabled,),
@@ -2155,6 +2413,7 @@ cis_gcp_4_5_serial_ports_disabled = Rule(
     frameworks=(
         cis_gcp("4.5"),
         iso27001_annex_a("8.3"),
+        soc2_tsc("CC6.1"),
     ),
 )
 

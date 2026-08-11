@@ -28,6 +28,7 @@ def test_analysis_jobs_cypher_syntax(neo4j_session):
         "PUBLIC_PORTS": [80, 443],
         "owner_org_id": "my_owner_org_id",
         "org_url": "my_org_url",
+        "account_id": "my_account_id",
     }
 
     for resource in files("cartography.data.jobs.analysis").iterdir():

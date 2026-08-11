@@ -1,3 +1,5 @@
+from cartography.rules.data.frameworks.iso27001 import iso27001_annex_a
+from cartography.rules.data.frameworks.soc2 import soc2_tsc
 from cartography.rules.spec.model import Fact
 from cartography.rules.spec.model import Finding
 from cartography.rules.spec.model import Maturity
@@ -11,7 +13,7 @@ _aws_eks_control_plane_exposed = Fact(
     description=(
         "EKS clusters whose Kubernetes API server is reachable from the "
         "public internet. The ontology normalizes "
-        "EKSCluster.endpoint_public_access into "
+        "AWSEKSCluster.endpoint_public_access into "
         "_ont_control_plane_public_access, and the AWS EKS asset-exposure "
         "analysis job further marks the cluster with exposed_internet=true. "
         "Both conditions are required to keep parity with the existing "
@@ -20,7 +22,7 @@ _aws_eks_control_plane_exposed = Fact(
         "'Public' endpoint mode."
     ),
     cypher_query="""
-    MATCH (c:EKSCluster)
+    MATCH (c:AWSEKSCluster)
     WHERE c._ont_control_plane_public_access = true
       AND c.exposed_internet = true
     RETURN
@@ -31,16 +33,18 @@ _aws_eks_control_plane_exposed = Fact(
         'aws' AS cloud
     """,
     cypher_visual_query="""
-    MATCH p=(acc:AWSAccount)-[:RESOURCE]->(c:EKSCluster)
+    MATCH p=(acc:AWSAccount)-[:RESOURCE]->(c:AWSEKSCluster)
     WHERE c._ont_control_plane_public_access = true
       AND c.exposed_internet = true
     RETURN *
     """,
     cypher_count_query="""
-    MATCH (c:EKSCluster)
+    MATCH (c:AWSEKSCluster)
     RETURN COUNT(c) AS count
     """,
+    asset_label="AWSEKSCluster",
     asset_id_field="id",
+    identity_fields=("id",),
     module=Module.AWS,
     maturity=Maturity.EXPERIMENTAL,
 )
@@ -78,7 +82,9 @@ _gcp_gke_control_plane_exposed = Fact(
     MATCH (c:GKECluster)
     RETURN COUNT(c) AS count
     """,
+    asset_label="GKECluster",
     asset_id_field="id",
+    identity_fields=("id",),
     module=Module.GCP,
     maturity=Maturity.EXPERIMENTAL,
 )
@@ -117,7 +123,9 @@ _azure_aks_control_plane_exposed = Fact(
     MATCH (c:AzureKubernetesCluster)
     RETURN COUNT(c) AS count
     """,
+    asset_label="AzureKubernetesCluster",
     asset_id_field="id",
+    identity_fields=("id",),
     module=Module.AZURE,
     maturity=Maturity.EXPERIMENTAL,
 )
@@ -133,8 +141,8 @@ _azure_aks_control_plane_exposed = Fact(
 
 # Rule
 class KubernetesControlPlaneExposed(Finding):
-    id: str | None = None
     name: str | None = None
+    id: str | None = None
     region: str | None = None
     version: str | None = None
     cloud: str | None = None
@@ -164,4 +172,8 @@ kubernetes_control_plane_exposed = Rule(
         "stride:elevation_of_privilege",
     ),
     version="0.1.0",
+    frameworks=(
+        iso27001_annex_a("8.20"),
+        soc2_tsc("CC6.6"),
+    ),
 )

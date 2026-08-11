@@ -13,12 +13,12 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 @dataclass(frozen=True)
 class EC2KeyPairNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef('KeyPairArn')
-    arn: PropertyRef = PropertyRef('KeyPairArn', extra_index=True)
-    keyname: PropertyRef = PropertyRef('KeyName')
-    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True)
+    id: PropertyRef = PropertyRef('KeyPairArn', description="ARN of the EC2 key pair.")
+    arn: PropertyRef = PropertyRef('KeyPairArn', extra_index=True, description="ARN of the EC2 key pair.")
+    keyname: PropertyRef = PropertyRef('KeyName', description="Name of the EC2 key pair.")
+    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True, description="AWS region of the key pair.")
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-    consolelink: PropertyRef = PropertyRef('consolelink')
+    consolelink: PropertyRef = PropertyRef('consolelink', description="AWS console URL for the key pair.")
 
 
 @dataclass(frozen=True)

@@ -375,3 +375,5 @@ CREATE INDEX IF NOT EXISTS FOR (n:OCIVnicAttachment) ON (n.vnic_id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIBootVolumeAttachment) ON (n.boot_volume_id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIVolumeAttachment) ON (n.volume_id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIMountTarget) ON (n.export_set_id);
+CREATE INDEX IF NOT EXISTS FOR (n:Tag) ON (n.key);
+CREATE INDEX IF NOT EXISTS FOR (n:Tag) ON (n.value);

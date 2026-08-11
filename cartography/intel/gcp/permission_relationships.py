@@ -10,14 +10,20 @@ import neo4j
 import yaml
 
 from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import load_matchlinks_cartesian_product
 from cartography.client.core.tx import read_list_of_values_tx
 from cartography.graph.job import GraphJob
+from cartography.models.gcp.permission_relationships import (
+    GCPConditionalPermissionMatchLink,
+)
 from cartography.models.gcp.permission_relationships import GCPPermissionMatchLink
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
 GCP_PERMISSION_RELATIONSHIP_BATCH_SIZE = 500
+GCP_PERMISSION_BULK_RESOURCE_BATCH_SIZE = 1000
+GCP_PERMISSION_BULK_PRINCIPAL_BATCH_SIZE = 100
 GCPPrincipalPermissionContext = dict[str, dict[str, dict[str, Any]]]
 
 
@@ -174,6 +180,59 @@ def evaluate_policy_binding_for_permissions(
     return False
 
 
+def _assignment_allows_permissions(
+    assignment_data: dict[str, Any],
+    permissions: list[str],
+) -> bool:
+    """
+    Check permission allow/deny logic without evaluating resource scope.
+
+    Broad-scope handling uses this after it has already classified an
+    assignment as project- or container-wide.
+    """
+    permissions_dict = assignment_data["permissions"]
+    for permission in permissions:
+        if not evaluate_denied_permission_for_permission(permissions_dict, permission):
+            if evaluate_permission_for_permission(permissions_dict, permission):
+                return True
+    return False
+
+
+def _split_project_scope_principals(
+    principals: GCPPrincipalPermissionContext,
+    permissions: list[str],
+    project_id: str,
+) -> tuple[set[str], GCPPrincipalPermissionContext]:
+    project_scope_pattern = f"project/{project_id}/.*"
+    project_scope_principals: set[str] = set()
+    residual_principals: GCPPrincipalPermissionContext = {}
+
+    for principal_email, policy_bindings in principals.items():
+        for binding_id, assignment_data in policy_bindings.items():
+            if not _assignment_allows_permissions(assignment_data, permissions):
+                continue
+
+            # Conditional grants must keep per-edge condition metadata, which the bulk
+            # Cartesian loader cannot carry. Route them to the row-by-row path instead.
+            if assignment_data[
+                "scope"
+            ].pattern == project_scope_pattern and not assignment_data.get(
+                "has_condition"
+            ):
+                project_scope_principals.add(principal_email)
+                continue
+
+            residual_principals.setdefault(principal_email, {})[
+                binding_id
+            ] = assignment_data
+
+    if project_scope_principals:
+        for principal_email in project_scope_principals:
+            residual_principals.pop(principal_email, None)
+
+    return project_scope_principals, residual_principals
+
+
 def principal_allowed_on_resource(
     policy_bindings: dict[str, Any],
     resource_scope: str,
@@ -188,6 +247,62 @@ def principal_allowed_on_resource(
     return False
 
 
+def collect_binding_conditions(
+    policy_bindings: dict[str, Any],
+    resource_scope: str,
+    permissions: list[str],
+) -> dict[str, Any]:
+    """Determine the condition metadata to stamp on a granted permission edge.
+
+    GCP evaluates IAM conditions at request time, so a conditional binding cannot be
+    statically resolved. We annotate the edge instead:
+    - If any matching binding grants the access unconditionally, the edge is reachable
+      unconditionally and has_condition is False.
+    - Otherwise every matching binding is conditional; has_condition is True and we
+      surface the (de-duplicated) condition titles/expressions for downstream filtering.
+
+    Only call this for edges already confirmed by principal_allowed_on_resource.
+    """
+    conditional: list[dict[str, Any]] = []
+    for assignment_data in policy_bindings.values():
+        if not evaluate_policy_binding_for_permissions(
+            assignment_data, permissions, resource_scope
+        ):
+            continue
+        if not assignment_data.get("has_condition"):
+            return {
+                "has_condition": False,
+                "condition_title": None,
+                "condition_expression": None,
+            }
+        conditional.append(assignment_data)
+
+    if not conditional:
+        return {
+            "has_condition": False,
+            "condition_title": None,
+            "condition_expression": None,
+        }
+
+    titles = list(
+        dict.fromkeys(
+            a["condition_title"] for a in conditional if a.get("condition_title")
+        )
+    )
+    expressions = list(
+        dict.fromkeys(
+            a["condition_expression"]
+            for a in conditional
+            if a.get("condition_expression")
+        )
+    )
+    return {
+        "has_condition": True,
+        "condition_title": "; ".join(titles) if titles else None,
+        "condition_expression": " || ".join(expressions) if expressions else None,
+    }
+
+
 def calculate_permission_relationships_for_resource(
     principals: dict[str, Any],
     resource_id: str,
@@ -197,10 +312,14 @@ def calculate_permission_relationships_for_resource(
     allowed_mappings: list[dict[str, Any]] = []
     for principal_email, policy_bindings in principals.items():
         if principal_allowed_on_resource(policy_bindings, resource_scope, permissions):
+            conditions = collect_binding_conditions(
+                policy_bindings, resource_scope, permissions
+            )
             allowed_mappings.append(
                 {
                     "principal_email": principal_email,
                     "resource_id": resource_id,
+                    **conditions,
                 }
             )
     return allowed_mappings
@@ -240,6 +359,246 @@ def iter_permission_relationship_batches(
         yield batch
 
 
+def _match_bigquery_dataset_scope(scope_pattern: str, project_id: str) -> str | None:
+    match = re.fullmatch(
+        rf"project/{re.escape(project_id)}/resource/projects/([^/]+)/datasets/([^/]+)",
+        scope_pattern,
+    )
+    if match is None:
+        return None
+    scope_project_id, dataset_id = match.groups()
+    return f"{scope_project_id}:{dataset_id}"
+
+
+def _is_broad_scope_for_bigquery_table(
+    assignment_data: dict[str, Any],
+    project_id: str,
+) -> bool:
+    """
+    Return True if this binding covers more than one specific BigQuery table.
+
+    A project scope covers every table in the project; organization and folder
+    scopes resolve to it too (see resolve_gcp_scope). A dataset scope covers every
+    table in that dataset.
+    """
+    scope_pattern = assignment_data["scope"].pattern
+    if scope_pattern == f"project/{project_id}/.*":
+        return True
+    return _match_bigquery_dataset_scope(scope_pattern, project_id) is not None
+
+
+def filter_bigquery_table_broad_scope_bindings(
+    principals: GCPPrincipalPermissionContext,
+    permissions: list[str],
+    project_id: str,
+) -> GCPPrincipalPermissionContext:
+    """
+    Keep only the bindings placed directly on a BigQuery table.
+
+    Expanding a project- or dataset-scope grant into one relationship per table
+    wrote millions of relationships that carried no information: the permission
+    engine consults no table-level property (no table ACL, no row or column level
+    security, no authorized view), and the same grant always also produces the
+    GCPBigQueryDataset relationship. Consumers reach the tables in one hop:
+
+        (:GCPPrincipal)-[:CAN_READ]->(:GCPBigQueryDataset)-[:HAS_TABLE]->(:GCPBigQueryTable)
+
+    What survives here is the signal that cannot be derived from the dataset
+    relationship: an IAM binding placed directly on a single table. Conditional
+    bindings follow the same rule; the dataset relationship carries their
+    condition metadata.
+    """
+    direct_principals: GCPPrincipalPermissionContext = {}
+
+    for principal_email, policy_bindings in principals.items():
+        for binding_id, assignment_data in policy_bindings.items():
+            if not _assignment_allows_permissions(assignment_data, permissions):
+                continue
+
+            if _is_broad_scope_for_bigquery_table(assignment_data, project_id):
+                continue
+
+            direct_principals.setdefault(principal_email, {})[
+                binding_id
+            ] = assignment_data
+
+    return direct_principals
+
+
+@timeit
+def load_permission_relationships_cartesian_product(
+    neo4j_session: neo4j.Session,
+    matchlink_schema: GCPPermissionMatchLink,
+    principal_emails: set[str],
+    resource_ids: list[str],
+    update_tag: int,
+    project_id: str,
+    scope_description: str,
+    principal_batch_size: int = GCP_PERMISSION_BULK_PRINCIPAL_BATCH_SIZE,
+    resource_batch_size: int = GCP_PERMISSION_BULK_RESOURCE_BATCH_SIZE,
+) -> int:
+    if not principal_emails or not resource_ids:
+        return 0
+
+    # A broad grant means each principal should link to each resource in this
+    # scope. The core MatchLink helper performs that expansion in bounded graph
+    # batches without constructing every pair as a Python dict first.
+    return load_matchlinks_cartesian_product(
+        neo4j_session,
+        matchlink_schema,
+        sorted(principal_emails),
+        sorted(resource_ids),
+        source_batch_size=principal_batch_size,
+        target_batch_size=resource_batch_size,
+        progress_description=(
+            f"{matchlink_schema.rel_label} {matchlink_schema.target_node_label} permissions for {scope_description}"
+        ),
+        lastupdated=update_tag,
+        # The bulk path only handles unconditional grants; set the condition fields
+        # explicitly so a prior conditional edge on the same pair is cleared.
+        has_condition=False,
+        condition_title=None,
+        condition_expression=None,
+        _sub_resource_label="GCPProject",
+        _sub_resource_id=project_id,
+    )
+
+
+_BroadScopeFilter = Callable[
+    [GCPPrincipalPermissionContext, list[str], str],
+    GCPPrincipalPermissionContext,
+]
+
+# Labels whose broad-scope grants are deliberately not materialized per resource:
+# a container node already carries the relationship and consumers traverse one hop
+# to the members. Only bindings placed directly on the resource are written, so
+# these labels have no bulk Cartesian phase at all.
+_BROAD_SCOPE_FILTERS: dict[str, _BroadScopeFilter] = {
+    "GCPBigQueryTable": filter_bigquery_table_broad_scope_bindings,
+}
+
+
+def _load_residual_permission_relationships(
+    neo4j_session: neo4j.Session,
+    residual_principals: GCPPrincipalPermissionContext,
+    resource_dict: dict[str, str],
+    permissions: list[str],
+    matchlink_schema: GCPPermissionMatchLink,
+    update_tag: int,
+    project_id: str,
+    batch_size: int,
+) -> int:
+    """
+    Load the row-by-row path, the only one that carries per-edge condition metadata.
+
+    Every pair is evaluated against the binding scope, so this handles exact and
+    partially wildcarded scopes alike.
+    """
+    if not residual_principals:
+        return 0
+
+    residual_matchlink_schema = GCPConditionalPermissionMatchLink(
+        source_node_label=matchlink_schema.source_node_label,
+        target_node_label=matchlink_schema.target_node_label,
+        rel_label=matchlink_schema.rel_label,
+    )
+    return evaluate_and_load_permission_relationships(
+        neo4j_session,
+        residual_principals,
+        resource_dict,
+        permissions,
+        residual_matchlink_schema,
+        update_tag,
+        project_id,
+        batch_size=batch_size,
+    )
+
+
+@timeit
+def evaluate_and_load_scope_aware_permission_relationships(
+    neo4j_session: neo4j.Session,
+    principals: GCPPrincipalPermissionContext,
+    resource_dict: dict[str, str],
+    permissions: list[str],
+    matchlink_schema: GCPPermissionMatchLink,
+    update_tag: int,
+    project_id: str,
+    batch_size: int = GCP_PERMISSION_RELATIONSHIP_BATCH_SIZE,
+) -> int:
+    broad_scope_filter = _BROAD_SCOPE_FILTERS.get(matchlink_schema.target_node_label)
+    if broad_scope_filter is not None:
+        # This label represents broad grants on a container node instead of
+        # expanding them per resource, so there is no bulk Cartesian phase and
+        # _split_project_scope_principals must not run: it drops a project-scope
+        # principal from the residual entirely, which would discard the direct
+        # binding of a principal that also holds project-wide access.
+        direct_principals = broad_scope_filter(principals, permissions, project_id)
+        logger.info(
+            "Loading relationship '%s' for %d %s resources in project '%s' from direct "
+            "bindings only: %d of %d principals hold one, broader grants stay on the container node",
+            matchlink_schema.rel_label,
+            len(resource_dict),
+            matchlink_schema.target_node_label,
+            project_id,
+            len(direct_principals),
+            len(principals),
+        )
+        return _load_residual_permission_relationships(
+            neo4j_session,
+            direct_principals,
+            resource_dict,
+            permissions,
+            matchlink_schema,
+            update_tag,
+            project_id,
+            batch_size,
+        )
+
+    project_scope_principals, residual_principals = _split_project_scope_principals(
+        principals,
+        permissions,
+        project_id,
+    )
+
+    resource_ids = list(resource_dict)
+
+    # Load the residual (row-by-row) path FIRST. It may write conditional edges, and
+    # the bulk unconditional load below must overwrite any overlapping edge so that
+    # broader unconditional access always wins (has_condition=false). See #2891 review.
+    relationships_loaded = _load_residual_permission_relationships(
+        neo4j_session,
+        residual_principals,
+        resource_dict,
+        permissions,
+        matchlink_schema,
+        update_tag,
+        project_id,
+        batch_size,
+    )
+
+    # Project bulk is the broadest scope, so it runs last and wins over everything.
+    if project_scope_principals:
+        logger.info(
+            "Bulk loading relationship '%s' for %d project-scope principals across %d %s resources in project '%s'",
+            matchlink_schema.rel_label,
+            len(project_scope_principals),
+            len(resource_ids),
+            matchlink_schema.target_node_label,
+            project_id,
+        )
+        relationships_loaded += load_permission_relationships_cartesian_product(
+            neo4j_session,
+            matchlink_schema,
+            project_scope_principals,
+            resource_ids,
+            update_tag,
+            project_id,
+            f"project {project_id}",
+        )
+
+    return relationships_loaded
+
+
 @timeit
 def build_principals_from_policy_bindings(
     policy_bindings: list[dict[str, Any]],
@@ -252,20 +611,24 @@ def build_principals_from_policy_bindings(
     """
     principals: GCPPrincipalPermissionContext = {}
     compiled_assignments: dict[str, dict[str, Any]] = {}
-    skipped_conditional = 0
+    conditional_bindings = 0
     skipped_missing_roles = 0
     total_member_assignments = 0
 
     for binding in policy_bindings:
-        if binding["has_condition"]:
-            skipped_conditional += 1
-            continue
-
         role = binding["role"]
         role_permissions = role_permissions_by_name.get(role)
         if role_permissions is None:
             skipped_missing_roles += 1
             continue
+
+        # Conditional bindings used to be dropped, which understated access. We now
+        # keep them and carry the condition metadata so the edge can be flagged
+        # (has_condition=True). GCP evaluates the CEL condition at request time, so we
+        # cannot statically resolve allow vs deny here. See issue #2312.
+        has_condition = bool(binding.get("has_condition"))
+        if has_condition:
+            conditional_bindings += 1
 
         binding_id = binding["id"]
         if binding_id not in compiled_assignments:
@@ -274,6 +637,9 @@ def build_principals_from_policy_bindings(
                 "scope": compile_gcp_regex(
                     resolve_gcp_scope(binding["resource"], project_id)
                 ),
+                "has_condition": has_condition,
+                "condition_title": binding.get("condition_title"),
+                "condition_expression": binding.get("condition_expression"),
             }
 
         # Share the compiled assignment across members of the same binding. Treat
@@ -285,13 +651,13 @@ def build_principals_from_policy_bindings(
             total_member_assignments += 1
 
     logger.info(
-        "Built GCP permission evaluation context for project '%s': bindings=%d, usable_bindings=%d, member_assignments=%d, principals=%d, skipped_conditional=%d, skipped_missing_roles=%d",
+        "Built GCP permission evaluation context for project '%s': bindings=%d, usable_bindings=%d, member_assignments=%d, principals=%d, conditional_bindings=%d, skipped_missing_roles=%d",
         project_id,
         len(policy_bindings),
         len(compiled_assignments),
         total_member_assignments,
         len(principals),
-        skipped_conditional,
+        conditional_bindings,
         skipped_missing_roles,
     )
     return principals
@@ -390,7 +756,7 @@ def is_valid_gcp_rpr(rpr: dict[str, Any]) -> bool:
 def load_principal_mappings(
     neo4j_session: neo4j.Session,
     principal_mappings: list[dict[str, Any]],
-    matchlink_schema: GCPPermissionMatchLink,
+    matchlink_schema: GCPPermissionMatchLink | GCPConditionalPermissionMatchLink,
     update_tag: int,
     project_id: str,
     batch_size: int = GCP_PERMISSION_RELATIONSHIP_BATCH_SIZE,
@@ -423,7 +789,7 @@ def evaluate_and_load_permission_relationships(
     principals: GCPPrincipalPermissionContext,
     resource_dict: dict[str, str],
     permissions: list[str],
-    matchlink_schema: GCPPermissionMatchLink,
+    matchlink_schema: GCPPermissionMatchLink | GCPConditionalPermissionMatchLink,
     update_tag: int,
     project_id: str,
     batch_size: int = GCP_PERMISSION_RELATIONSHIP_BATCH_SIZE,
@@ -560,15 +926,17 @@ def sync(
             rel_label=relationship_name,
         )
 
-        loaded_relationship_count = evaluate_and_load_permission_relationships(
-            neo4j_session,
-            principals,
-            resource_dict,
-            permissions,
-            matchlink_schema,
-            update_tag,
-            project_id,
-            batch_size=GCP_PERMISSION_RELATIONSHIP_BATCH_SIZE,
+        loaded_relationship_count = (
+            evaluate_and_load_scope_aware_permission_relationships(
+                neo4j_session,
+                principals,
+                resource_dict,
+                permissions,
+                matchlink_schema,
+                update_tag,
+                project_id,
+                batch_size=GCP_PERMISSION_RELATIONSHIP_BATCH_SIZE,
+            )
         )
         logger.info(
             "Finished loading relationship '%s' for resource type '%s' in project '%s' with %d total relationships before cleanup",

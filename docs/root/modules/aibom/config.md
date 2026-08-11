@@ -1,81 +1,24 @@
-## AIBOM Configuration
+# AIBOM Configuration
 
-The AIBOM module ingests pre-generated [Cisco AI BOM](https://github.com/cisco-ai-defense/aibom) JSON reports and maps them onto container images already present in Cartography.
+## Prerequisites
 
-Cartography does not run the scanner in this module. It only ingests JSON artifacts from local disk or supported object stores.
+Run the applicable provider ingestion before AIBOM:
 
-### Why this module exists
+- Image reports require concrete `Image` nodes populated by ECR, GCP Artifact
+  Registry, GitLab Container Registry, or another image provider.
+- Repository reports require matching `GitHubRepository` or `GitLabProject`
+  nodes.
 
-Traditional image inventory tells you what packages and vulnerabilities exist in a container. It does not tell you whether that container includes AI agents, models, prompts, tools, memory layers, or other agentic building blocks.
+In the default sync order, AIBOM runs after provider modules automatically.
 
-This module adds that missing inventory layer and ties it to the production graph through the `:Image` ontology label, so you can ask questions such as:
+## Configure Cartography
 
-- Which production images contain AI agents?
-- Which agents use tools, prompts, models, or memory?
-- Which scans failed or did not match a known image in the graph?
+Set `--aibom-source` to a local directory or supported object storage URI.
+Supported URI schemes include `s3://`, `gs://`, and `azblob://`.
 
-### Input format
+## Run Cartography
 
-Each JSON file must be an envelope wrapping the native scanner output with the image URI that should be matched to the graph.
-
-```json
-{
-  "image_uri": "000000000000.dkr.ecr.us-east-1.amazonaws.com/example-repository:v1.0",
-  "scan_scope": "/app",
-  "scanner": {
-    "name": "cisco-aibom",
-    "version": "0.4.0"
-  },
-  "report": {
-    "aibom_analysis": {
-      "...": "native scanner output"
-    }
-  }
-}
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `image_uri` | Yes | Image URI to map into the graph. Tag-based and digest-based URIs are both supported. |
-| `report` | Yes | Wrapper object containing the native `aibom_analysis`. |
-| `scan_scope` | No | Path or scope scanned inside the image or extracted filesystem. Stored on `AIBOMSource`. |
-| `scanner.name` | No | Scanner name. Defaults to `cisco-aibom`. |
-| `scanner.version` | No | Scanner version. Falls back to `aibom_analysis.metadata.analyzer_version`. |
-
-The native source payload may optionally include:
-
-- `workflows`
-- `relationships`
-- `source_kind`
-- category-specific component fields such as `model_name`, `framework`, and `label`
-
-The module preserves those optional fields when present.
-
-### Image linking behavior
-
-AIBOM links scan results to any node carrying the `:Image` ontology label, making it provider-agnostic across ECR, GCP Artifact Registry, GitLab Container Registry, and other supported registries.
-
-- **Digest-based URIs** (`repo@sha256:...`): The digest is extracted directly and verified against `:Image` nodes via `_ont_digest`. No provider-specific traversal is needed.
-- **Tag-based URIs** (`repo:tag`): Provider-specific fallbacks resolve the tag through registry reference nodes such as `ECRRepositoryImage` and `GCPArtifactRegistryRepositoryImage`, then follow `IMAGE` to the canonical image node. Single-platform images are returned directly. For manifest lists, the resolver traverses `CONTAINS_IMAGE` to return all child single-platform image digests, creating one-to-many relationships from a single source or component to multiple platform images.
-
-### Provenance behavior
-
-Cartography now preserves source provenance even when component inventory is not loaded:
-
-- If a source has a non-`completed` status, Cartography loads `AIBOMSource` but skips components, workflows, and relationships.
-- If `image_uri` does not resolve to an `Image` node, Cartography still loads `AIBOMSource` with `image_matched = false` for troubleshooting.
-
-This makes stale coverage, failed scans, and mismatched image URIs visible in the graph instead of silently disappearing.
-
-### Prerequisite
-
-Run image provider ingestion (ECR, GCP Artifact Registry, GitLab, etc.) before AIBOM ingestion so `:Image` nodes with `_ont_digest` exist in the graph. For tag-based URI resolution, provider tag/reference nodes such as `ECRRepositoryImage` or `GCPArtifactRegistryRepositoryImage` must also exist. In the default sync order AIBOM runs after provider modules automatically.
-
-### Results layout
-
-The AIBOM module ingests every `*.json` file under the configured source as part of a single snapshot. Keep only the latest scan per image in the results location. If older reports for the same image are also present, their scans and detections will all be loaded in that snapshot because they share the same `update_tag`.
-
-### Run with local files
+Run with local files:
 
 ```bash
 cartography \
@@ -83,7 +26,7 @@ cartography \
   --aibom-source /path/to/aibom-results
 ```
 
-### Run with object storage
+Run with object storage:
 
 ```bash
 cartography \
@@ -91,16 +34,61 @@ cartography \
   --aibom-source s3://my-aibom-bucket/reports/
 ```
 
-`--aibom-source` also accepts `gs://bucket/prefix` and `azblob://account/container/prefix`.
+## Input Artifacts
 
-Deprecated local and S3 report-source flags remain accepted until Cartography v1.0.0 and emit warnings when used. New configurations should use `--aibom-source`.
+Cartography ingests pre-generated
+[Cisco AI BOM](https://github.com/cisco-ai-defense/aibom) JSON reports. It
+does not run the scanner.
 
-### Observability counters
+### Generate Input Artifacts
 
-- `aibom_reports_processed`
-- `aibom_sources_total`
-- `aibom_sources_matched`
-- `aibom_sources_unmatched`
-- `aibom_sources_skipped_incomplete`
-- `aibom_components_loaded_<category>`
-- `aibom_relationships_loaded_<relationship_type>`
+Generate AIBOM reports before running Cartography and place the resulting JSON
+files in the configured local directory or object storage location. Keep only
+the latest scan for each image in that location.
+
+### Input Format
+
+Each JSON file must be a raw AIBOM `1.0.0rc4` report with a top-level `aibom_analysis` object.
+
+```json
+{
+  "aibom_analysis": {
+    "metadata": {
+      "...": "report-level metadata"
+    },
+    "sources": {
+      "000000000000.dkr.ecr.us-east-1.amazonaws.com/example-repository@sha256:...": {
+        "...": "source-level inventory"
+      }
+    },
+    "summary": {
+      "...": "report-level summary"
+    },
+    "risk": {
+      "...": "report-level risk summary"
+    },
+    "errors": []
+  }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `aibom_analysis` | Yes | Root payload for a raw AIBOM `1.0.0rc4` report. |
+| `aibom_analysis.metadata` | Yes | Report-level metadata such as analyzer version, timing, model, and schema version. |
+| `aibom_analysis.sources` | Yes | Map keyed by a digest-qualified image reference or a GitHub/GitLab repository URI. |
+| `aibom_analysis.summary` | No | Report-level summary counts and severity fields. |
+| `aibom_analysis.risk` | No | Report-level risk score and severity summary. |
+| `aibom_analysis.errors` | No | Report-level error list. |
+
+`aibom_analysis.sources` must be non-empty. Empty source maps are treated as
+malformed input and fail AIBOM sync with a validation error.
+
+Each source under `aibom_analysis.sources` should include:
+
+- `source_name`
+- `source_path`
+- `summary`
+- `metadata`
+- `components`
+- `relationships`

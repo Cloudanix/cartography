@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 
@@ -51,6 +52,36 @@ def _get_severity_range_for_threshold(
         return ["9", "10"]  # CRITICAL only
     else:
         return None
+
+
+def _severity_label(severity: Any) -> str | None:
+    """
+    Bucket GuardDuty's numeric severity into a normalized ontology severity label.
+
+    GuardDuty severity is a float in the 1.0-10.0 range; the same Low/Medium/High/
+    Critical bands used by `_get_severity_range_for_threshold` apply here. We store the
+    lowercase label so the :SecurityIssue ontology (_ont_severity) can compare severity
+    across providers whose native scales differ. The raw numeric value stays on the
+    node's `severity` property.
+
+    :param severity: The numeric GuardDuty severity value (or None).
+    :return: One of "low", "medium", "high", "critical", or None if unparseable.
+    """
+    if severity is None:
+        return None
+    try:
+        value = float(severity)
+    except (TypeError, ValueError):
+        return None
+    if value >= 9.0:
+        return "critical"
+    if value >= 7.0:
+        return "high"
+    if value >= 4.0:
+        return "medium"
+    if value >= 1.0:
+        return "low"
+    return None
 
 
 @aws_handle_regions
@@ -165,6 +196,24 @@ def get_findings(
     return findings_data
 
 
+def _extract_sample(service: dict[str, Any]) -> bool | None:
+    # GuardDuty flags sample findings (CreateSampleFindings / the console
+    # "Generate sample findings" button) with `"sample": true` *inside* the
+    # JSON-encoded `service.additionalInfo.value` string, not as a top-level
+    # field. boto3 returns that string verbatim, so parse it to recover the flag.
+    additional_info = service.get("AdditionalInfo") or {}
+    raw_value = additional_info.get("Value")
+    if not raw_value:
+        return None
+    try:
+        parsed = json.loads(raw_value)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed.get("sample")
+
+
 def transform_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Transform GuardDuty findings from API response to schema format."""
     transformed: list[dict[str, Any]] = []
@@ -190,6 +239,7 @@ def transform_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "arn": f.get("Arn"),
             "type": f.get("Type"),
             "severity": f.get("Severity"),
+            "severity_label": _severity_label(f.get("Severity")),
             "title": f.get("Title"),
             "description": f.get("Description"),
             "confidence": f.get("Confidence"),
@@ -206,7 +256,10 @@ def transform_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "accountid": f.get("AccountId"),
             "region": f.get("Region"),
             "detectorid": f.get("DetectorId"),
-            "archived": f.get("Archived"),
+            # `Archived` lives under the `Service` object per the AWS Finding
+            # schema; fall back to a top-level `Archived` for safety.
+            "archived": service.get("Archived", f.get("Archived")),
+            "sample": _extract_sample(service),
             # Service-level fields
             "service_action_type": action_type,
             "service_count": service.get("Count"),
@@ -237,6 +290,11 @@ def transform_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Handle nested resource information
         resource = f.get("Resource", {})
         item["resource_type"] = resource.get("ResourceType")
+        item["resource_id"] = None
+        item["eks_cluster_arn"] = None
+        item["access_key_id"] = None
+        item["principal_user_id"] = None
+        item["principal_role_id"] = None
 
         # Extract resource ID based on resource type
         if item["resource_type"] == "Instance":
@@ -246,8 +304,23 @@ def transform_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
             buckets = resource.get("S3BucketDetails") or []
             if buckets:
                 item["resource_id"] = buckets[0].get("Name")
-        else:
-            item["resource_id"] = None
+        elif item["resource_type"] == "EKSCluster":
+            # EKS/Kubernetes findings target a cluster. AWSEKSCluster.id is the
+            # cluster ARN, so match on the Arn from EksClusterDetails.
+            details = resource.get("EksClusterDetails", {})
+            item["eks_cluster_arn"] = details.get("Arn")
+        elif item["resource_type"] == "AccessKey":
+            details = resource.get("AccessKeyDetails", {})
+            item["access_key_id"] = details.get("AccessKeyId")
+            user_type = details.get("UserType")
+            principal_id = details.get("PrincipalId")
+            if principal_id:
+                if user_type == "IAMUser":
+                    item["principal_user_id"] = principal_id
+                elif user_type == "AssumedRole":
+                    # AssumedRole PrincipalId format: "AROAEXAMPLE:session-name".
+                    # Take the unique-id prefix to match AWSRole.roleid.
+                    item["principal_role_id"] = principal_id.split(":", 1)[0]
 
         transformed.append(item)
 
@@ -479,7 +552,7 @@ def sync(
         neo4j_session,
         group_type="AWSAccount",
         group_id=current_aws_account_id,
-        synced_type="GuardDutyDetector",
+        synced_type="AWSGuardDutyDetector",
         update_tag=update_tag,
         stat_handler=stat_handler,
     )
@@ -487,7 +560,7 @@ def sync(
         neo4j_session,
         group_type="AWSAccount",
         group_id=current_aws_account_id,
-        synced_type="GuardDutyFinding",
+        synced_type="AWSGuardDutyFinding",
         update_tag=update_tag,
         stat_handler=stat_handler,
     )
