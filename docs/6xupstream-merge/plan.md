@@ -83,7 +83,7 @@ overlapping files and rerere replays resolutions if a merge is aborted/redone.
 - [x] Baseline: **2057 passed**, `pytest tests/unit -q` on `upstream-merge` tip (2026-08-11).
 - [x] Tag safety point: `pre-sync-2026-08` at `upstream-merge` tip.
 
-### Phase 1 — Merge `origin/main` into `upstream-merge` (148 conflicts)
+### Phase 1 — Merge `origin/main` into `upstream-merge` (148 conflicts) — DONE (`a17c286ab`)
 
 ```bash
 git merge origin/main
@@ -101,7 +101,7 @@ Resolution rules by file class:
 
 Gate: `pytest tests/unit -q` ≥ Phase-0 baseline; pre-commit clean. Commit the merge.
 
-### Phase 2 — Merge `upstream/master` into `upstream-merge`
+### Phase 2 — Merge `upstream/master` into `upstream-merge` — DONE (`f7046ffd9`)
 
 Single merge is preferred (243 commits but bounded conflict list). If the conflict set proves
 unmanageable, fall back to chunked merges at upstream monthly boundaries (`git log --since` to
@@ -165,6 +165,37 @@ Gate: unit tests ≥ baseline + new upstream tests passing; pre-commit clean. Co
 - Keep the `pre-sync-*` tag convention for rollback points.
 
 ---
+
+## Execution log (2026-08-11)
+
+- **Phase 1 done** — merge commit `a17c286ab`. 148 conflicts + major silent-loss repair:
+  the May sync had emptied bitbucket/azuredevops/gitlab modules, dropped cli.py `run_*`
+  queue entrypoints, sync.py `build_*_sync` functions, 20 Config fields, util.py helpers,
+  `intel/aws/bedrock.py`, crxcavator, gsuite/api.py, ~80 referenced cleanup/analysis
+  JSONs, 23 test-data files, and 9 dependencies. All restored. Real bug fixed:
+  gcp `_zones_to_regions` name-chopping. Unit gate: 2134 passed.
+- **Phase 2 done** — merge commit `f7046ffd9`. 91 conflicts. Fork stance codified:
+  Cloudanix legacy architecture kept for aws/azure/gcp/github orchestrators; upstream
+  taken for models/**, new modules (Netlify, Modal, O365, Cloudflare, Wiz…), typed
+  analysis jobs, generated schema docs. Fixed `gcp/util` package-shadowing bug,
+  azure-mgmt-resource 26 import moves, uv.lock regenerated (cloudconsolelink<4.1 pin).
+  Unit gate: **4523 passed, 1 xfailed, 0 failures**.
+- **Phase 3 partial** — unit suite green; write_transaction grep = 0; all custom
+  enhancement checklist gates verified by grep (batch-500, write_timer, azure token
+  expiry, App-installation sync, API filters, run_* entrypoints, queue response dict,
+  composition Session). **Integration tests + staging smoke pending — need Docker
+  (neo4j:5-community) which the sandboxed session cannot start.**
+
+### Deferred upstream features (adopt deliberately later)
+- SSM public parameters sync (needs config wiring)
+- AWS Inspector active sync (production runs deliberate no-op; EPSS helpers in-tree)
+- Dormant azure/gcp/github data-model module suites (app_service, firewall, rbac,
+  crm/cloudrun/vertex packages' tests, workload identity)
+
+### Follow-ups
+- Regenerate schema docs for adopted modules; flesh out manual schema stubs for
+  azuredevops/bitbucket/crxcavator.
+- Pre-existing on main, marked xfail: github repos raw-REST-shape transform test.
 
 ## Custom enhancements protection checklist
 
