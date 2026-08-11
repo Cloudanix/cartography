@@ -151,7 +151,22 @@ def get(token: str, api_url: str, organization: str) -> List[Dict]:
     #         exc_info=True,
     #     )
 
-    rest_repos = get_org_repos(organization, token, api_url)
+    # Prefer the installation's own repository list. `/orgs/{org}/repos` answers "what does this
+    # organization own", which is a superset of what the customer granted us when they installed
+    # the GitHub App with "Only select repositories". Syncing that superset puts repos we have no
+    # access to into the graph, so the console lists repos it cannot scan and full scans get
+    # scheduled against them.
+    rest_repos = get_installation_repos(token, api_url)
+    if rest_repos is None:
+        rest_repos = get_org_repos(organization, token, api_url)
+    else:
+        # An installation is scoped to one account, but stay explicit: only this org's repos.
+        rest_repos = [
+            rest_repo
+            for rest_repo in rest_repos
+            if ((rest_repo.get("owner") or {}).get("login") or "").lower() == organization.lower()
+        ]
+
     return [_normalize_rest_repo(rest_repo) for rest_repo in rest_repos]
 
 
@@ -737,7 +752,7 @@ def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requ
     )
 
 
-def _build_org_repos_url(api_url: str, org_name: str) -> str:
+def _build_rest_api_root(api_url: str) -> str:
     api_root = api_url.rstrip("/")
     for suffix, replacement in (
         ("/api/v3/graphql", "/api/v3"),
@@ -748,7 +763,15 @@ def _build_org_repos_url(api_url: str, org_name: str) -> str:
             api_root = f"{api_root[:-len(suffix)]}{replacement}"
             break
 
-    return f"{api_root}/orgs/{org_name}/repos"
+    return api_root
+
+
+def _build_org_repos_url(api_url: str, org_name: str) -> str:
+    return f"{_build_rest_api_root(api_url)}/orgs/{org_name}/repos"
+
+
+def _build_installation_repos_url(api_url: str) -> str:
+    return f"{_build_rest_api_root(api_url)}/installation/repositories"
 
 
 def _normalize_rest_repo(repo: Dict[str, Any]) -> Dict[str, Any]:
@@ -790,6 +813,86 @@ def _normalize_rest_repo(repo: Dict[str, Any]) -> Dict[str, Any]:
         "requirements": None,
         "setupCfg": None,
     }
+
+
+def get_installation_repos(access_token: str, api_url: str, retries: int = 5) -> Optional[List[Dict[str, Any]]]:
+    """
+    List the repos the customer granted to the GitHub App installation this token belongs to.
+
+    This is the customer's consent list: exactly the repos picked under "Only select
+    repositories", or every org repo when they picked "All repositories". Unlike
+    `/orgs/{org}/repos` it cannot return a repo we were never given access to.
+
+    Requires a GitHub App installation access token. Returns None when the endpoint is not usable
+    with the supplied credentials - a personal access token or user OAuth token gets 401/403 here
+    - so the caller can fall back to the organization listing.
+    https://docs.github.com/en/rest/apps/installations#list-repositories-accessible-to-the-app-installation
+    """
+    url = _build_installation_repos_url(api_url)
+    headers = {"Authorization": f"token {access_token}", "Accept": "application/vnd.github.v3+json"}
+
+    all_repos: List[Dict[str, Any]] = []
+    page = 1
+    per_page = 100
+
+    while True:
+        retry = 0
+        repos = None
+        while retry < retries:
+            try:
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    params={"page": page, "per_page": per_page},
+                    timeout=(60, 60),
+                )
+                if response.status_code in (401, 403):
+                    logger.info(
+                        (
+                            "GitHub installation repository listing is unavailable with these credentials "
+                            f"(HTTP {response.status_code}); falling back to the organization listing."
+                        ),
+                    )
+                    return None
+                response.raise_for_status()
+                repos = response.json().get("repositories", [])
+                break
+            except (
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError,
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.ConnectionError,
+            ) as err:
+                retry += 1
+                if retry >= retries or not is_retryable_request_error(err):
+                    logger.error(
+                        (
+                            "GitHub installation repository listing failed after "
+                            f"{retry} attempts ({describe_request_error(err)})."
+                        ),
+                        exc_info=True,
+                    )
+                    raise
+                logger.warning(
+                    (
+                        "GitHub installation repository listing retry after "
+                        f"{describe_request_error(err)} ({retry}/{retries})."
+                    ),
+                )
+                time.sleep(get_retry_delay_seconds(err, retry))
+
+        if not repos:
+            break
+
+        all_repos.extend(repos)
+
+        # A short page means the listing is exhausted.
+        if len(repos) < per_page:
+            break
+
+        page += 1
+
+    return all_repos
 
 
 def get_org_repos(org_name: str, access_token: str, api_url: str, retries: int = 5) -> List[Dict[str, Any]]:
