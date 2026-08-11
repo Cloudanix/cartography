@@ -77,13 +77,11 @@ overlapping files and rerere replays resolutions if a merge is aborted/redone.
 
 ### Phase 0 — Prep
 
-- [ ] `git remote set-url upstream git@github.com:cartography-cncf/cartography.git` (both push/fetch); `git fetch --all --prune`.
-- [ ] `git config rerere.enabled true` in this worktree.
-- [ ] Rebuild venv: worktree currently has **no `.venv`**; upstream now requires Python ≥3.11
-      and uses uv (`uv sync` / `uv pip install -e .`). Confirm python3.11+ available locally.
-- [ ] Baseline: run `pytest tests/unit -q` on `upstream-merge` tip and record pass count
-      (old baseline 1740 is stale).
-- [ ] Tag safety point: `git tag pre-sync-2026-08 upstream-merge`.
+- [x] `git remote set-url upstream git@github.com:cartography-cncf/cartography.git` (both push/fetch); `git fetch --all --prune`.
+- [x] `git config rerere.enabled true` in this worktree.
+- [x] Rebuild venv: `uv sync --group dev --python 3.12` (Python 3.12.13; upstream requires ≥3.11).
+- [x] Baseline: **2057 passed**, `pytest tests/unit -q` on `upstream-merge` tip (2026-08-11).
+- [x] Tag safety point: `pre-sync-2026-08` at `upstream-merge` tip.
 
 ### Phase 1 — Merge `origin/main` into `upstream-merge` (148 conflicts)
 
