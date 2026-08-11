@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 from typing import Any
 from typing import Dict
 from typing import List
@@ -109,6 +110,7 @@ def get_instance_patches(
         for patch in patches:
             patch["_instance_id"] = instance_id
         instance_patches.extend(patches)
+        time.sleep(0.2)
     return instance_patches
 
 
@@ -248,12 +250,11 @@ def sync(
     update_tag: int,
     common_job_parameters: Dict[str, Any],
 ) -> None:
+    tic = time.perf_counter()
+    logger.info("Syncing SSM for account '%s'.", current_aws_account_id)
     for region in regions:
-        logger.info(
-            "Syncing SSM for region '%s' in account '%s'.",
-            region,
-            current_aws_account_id,
-        )
+        t_region = time.perf_counter()
+        logger.info("Syncing SSM for region '%s' in account '%s'.", region, current_aws_account_id)
         instance_ids = get_instance_ids(neo4j_session, region, current_aws_account_id)
         data = get_instance_information(boto3_session, region, instance_ids)
         data = transform_instance_information(data, region, current_aws_account_id)
@@ -284,5 +285,8 @@ def sync(
             current_aws_account_id,
             update_tag,
         )
+        logger.info(f"ssm account={current_aws_account_id} region={region}: done in {time.perf_counter() - t_region:0.4f}s")
 
     cleanup_ssm(neo4j_session, common_job_parameters)
+    toc = time.perf_counter()
+    logger.info(f"Time to process AWS SSM: {toc - tic:0.4f} seconds")

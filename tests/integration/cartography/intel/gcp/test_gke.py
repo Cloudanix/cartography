@@ -3,12 +3,19 @@ from unittest.mock import patch
 
 import cartography.intel.gcp.gke
 import tests.data.gcp.gke
+from cartography.util import run_analysis_job
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
+TEST_WORKSPACE_ID = "1223344"
 TEST_PROJECT_NUMBER = "000000000000"
 TEST_UPDATE_TAG = 123456789
 TEST_CLUSTER_ID = "https://container.googleapis.com/v1/projects/test-cluster/locations/europe-west2/clusters/test-cluster"
+exposure_job_parameters = {
+    "UPDATE_TAG": TEST_UPDATE_TAG,
+    "WORKSPACE_ID": TEST_WORKSPACE_ID,
+    "GCP_PROJECT_ID": TEST_PROJECT_NUMBER,
+}
 
 
 def test_load_gke_clusters(neo4j_session):
@@ -124,3 +131,49 @@ def test_gke_cluster_labels(_mock_get_gke_clusters, neo4j_session):
         (TEST_CLUSTER_ID, f"{TEST_CLUSTER_ID}:env:dev"),
         (TEST_CLUSTER_ID, f"{TEST_CLUSTER_ID}:team:platform"),
     }
+
+
+def cloudanix_workspace_to_gcp_project(neo4j_session):
+    query = """
+    MERGE (w:CloudanixWorkspace{id: $WorkspaceId})
+    MERGE (project:GCPProject{id: $ProjectId})
+    MERGE (w)-[:OWNER]->(project)
+    """
+    neo4j_session.run(
+        query,
+        WorkspaceId=TEST_WORKSPACE_ID,
+        ProjectId=TEST_PROJECT_NUMBER,
+    )
+
+
+def test_gke_public_facing(neo4j_session):
+
+    test_load_gke_clusters(neo4j_session)
+    test_load_gke_clusters_relationships(neo4j_session)
+    cloudanix_workspace_to_gcp_project(neo4j_session)
+
+    run_analysis_job(
+        "gcp_gke_asset_exposure.json",
+        neo4j_session,
+        exposure_job_parameters,
+    )
+
+    query1 = """
+    MATCH (cluster:GKECluster)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE cluster.exposed_internet=true
+    RETURN cluster.name
+    """
+
+    objects = neo4j_session.run(
+        query1,
+        GCP_PROJECT_ID=TEST_PROJECT_NUMBER,
+        WORKSPACE_ID=TEST_WORKSPACE_ID,
+    )
+
+    actual_nodes = {
+        (o["cluster.name"],) for o in objects
+    }
+
+    expected_nodes = {
+        ("test-cluster",),
+    }
+    assert actual_nodes == expected_nodes

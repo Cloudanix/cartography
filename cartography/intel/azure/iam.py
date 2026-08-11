@@ -1,12 +1,15 @@
 import asyncio
 import logging
 import math
+import random
+import time
 from datetime import datetime
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
 from typing import TypedDict
 from typing import Union
 
@@ -14,24 +17,42 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.authorization import AuthorizationManagementClient
 from azure.mgmt.msi import ManagedServiceIdentityClient
-
-try:
-    from cloudconsolelink.clouds.azure import AzureLinker
-except ImportError:
-    AzureLinker = None
+from cloudconsolelink.clouds.azure import AzureLinker
 from msgraph import GraphServiceClient
 from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
 from msgraph.generated.users.users_request_builder import UsersRequestBuilder
 
+from .util.credentials import Credentials
+from .util.timing import get_current_context
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
-from .util.credentials import Credentials
-
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker() if AzureLinker else None
+azure_console_link = AzureLinker()
 
 scopes = ["https://graph.microsoft.com/.default"]
+
+# Standard cross-provider classification of IAM resources by who created them.
+# "predefined" => created/owned by the cloud provider; "custom" => created by a customer principal.
+MANAGED_TYPE_PREDEFINED = "predefined"
+MANAGED_TYPE_CUSTOM = "custom"
+
+# Microsoft's first-party (well-known) tenant id. Service principals owned by this tenant are
+# Microsoft-managed first-party apps rather than customer-created ones.
+AZURE_MICROSOFT_TENANT_ID = "f8cdef31-a31e-4b4a-93e4-5f571e91255a"
+
+
+def _azure_role_managed_type(role: Dict) -> str:
+    if role.get("type") == "Microsoft.Authorization/roleDefinitions" or role.get("role_type") == "BuiltInRole":
+        return MANAGED_TYPE_PREDEFINED
+    return MANAGED_TYPE_CUSTOM
+
+
+def _azure_service_principal_managed_type(app_owner_organization_id: Optional[str]) -> str:
+    if (app_owner_organization_id or "").lower() == AZURE_MICROSOFT_TENANT_ID:
+        return MANAGED_TYPE_PREDEFINED
+    return MANAGED_TYPE_CUSTOM
+
 
 # A safe batch size for "in" filters with GUIDs to avoid 414 URI Too Long errors.
 # MS Graph URL limit is ~2048 chars. 36-char GUID + quotes/commas = ~39 chars.
@@ -39,9 +60,7 @@ scopes = ["https://graph.microsoft.com/.default"]
 SAFE_BATCH_SIZE = 15
 
 
-def load_tenant_users(
-    session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int
-) -> None:
+def load_tenant_users(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     iteration_size = 500
     total_items = len(data_list)
     total_iterations = math.ceil(len(data_list) / iteration_size)
@@ -59,9 +78,7 @@ def load_tenant_users(
 
         session.execute_write(_load_tenant_users_tx, tenant_id, paged_users, update_tag)
 
-        logger.info(
-            f"Iteration {counter + 1} of {total_iterations}. {start} - {end} - {len(paged_users)}"
-        )
+        logger.info(f"Iteration {counter + 1} of {total_iterations}. {start} - {end} - {len(paged_users)}")
 
 
 def load_roles(
@@ -72,34 +89,19 @@ def load_roles(
     update_tag: int,
     SUBSCRIPTION_ID: str,
 ) -> None:
-    session.execute_write(
-        _load_roles_tx,
-        tenant_id,
-        data_list,
-        role_assignments_list,
-        update_tag,
-        SUBSCRIPTION_ID,
-    )
+    session.execute_write(_load_roles_tx, tenant_id, data_list, role_assignments_list, update_tag, SUBSCRIPTION_ID)
 
 
-def load_managed_identities(
-    session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int
-) -> None:
+def load_managed_identities(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.execute_write(_load_managed_identities_tx, tenant_id, data_list, update_tag)
 
 
-def load_tenant_groups(
-    session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int
-) -> None:
+def load_tenant_groups(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.execute_write(_load_tenant_groups_tx, tenant_id, data_list, update_tag)
 
 
-def load_tenant_applications(
-    session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int
-) -> None:
-    session.execute_write(
-        _load_tenant_applications_tx, tenant_id, data_list, update_tag
-    )
+def load_tenant_applications(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
+    session.execute_write(_load_tenant_applications_tx, tenant_id, data_list, update_tag)
 
 
 def load_tenant_service_accounts(
@@ -108,29 +110,21 @@ def load_tenant_service_accounts(
     data_list: List[Dict],
     update_tag: int,
 ) -> None:
-    session.execute_write(
-        _load_tenant_service_accounts_tx, tenant_id, data_list, update_tag
-    )
+    session.execute_write(_load_tenant_service_accounts_tx, tenant_id, data_list, update_tag)
 
 
-def load_tenant_domains(
-    session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int
-) -> None:
+def load_tenant_domains(session: neo4j.Session, tenant_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.execute_write(_load_tenant_domains_tx, tenant_id, data_list, update_tag)
 
 
-def set_used_state(
-    session: neo4j.Session, tenant_id: str, common_job_parameters: Dict, update_tag: int
-) -> None:
-    session.execute_write(
-        _set_used_state_tx, tenant_id, common_job_parameters, update_tag
-    )
+def set_used_state(session: neo4j.Session, tenant_id: str, common_job_parameters: Dict, update_tag: int) -> None:
+    t0 = time.perf_counter()
+    session.execute_write(_set_used_state_tx, tenant_id, common_job_parameters, update_tag)
+    logger.info(f"IAM tenant={tenant_id}: set_used_state done in {time.perf_counter() - t0:.2f}s")
 
 
 @timeit
-def get_graph_client(
-    credentials: Credentials, tenant_id: Optional[str] = None
-) -> GraphServiceClient:
+def get_graph_client(credentials: Credentials, tenant_id: Optional[str] = None) -> GraphServiceClient:
     """
     Create a Microsoft Graph client.
     This replaces the deprecated Azure AD Graph client.
@@ -152,24 +146,22 @@ def get_default_graph_client(credentials: Credentials) -> GraphServiceClient:
 
 
 @timeit
-def get_authorization_client(
-    credentials: Credentials, subscription_id: str
-) -> AuthorizationManagementClient:
+def get_authorization_client(credentials: Credentials, subscription_id: str) -> AuthorizationManagementClient:
     client = AuthorizationManagementClient(credentials, subscription_id)
     return client
 
 
 @timeit
-def get_managed_identity_client(
-    credentials: Credentials, subscription_id: str
-) -> ManagedServiceIdentityClient:
+def get_managed_identity_client(credentials: Credentials, subscription_id: str) -> ManagedServiceIdentityClient:
     client = ManagedServiceIdentityClient(credentials, subscription_id)
     return client
 
 
 @timeit
 async def list_tenant_users(
-    client: GraphServiceClient, tenant_id: str, filter_query: Optional[str] = None
+    client: GraphServiceClient,
+    tenant_id: str,
+    filter_query: Optional[str] = None,
 ) -> List[Dict]:
     """
     List users from Microsoft Graph API.
@@ -182,20 +174,25 @@ async def list_tenant_users(
             query_params = UsersRequestBuilder.UsersRequestBuilderGetQueryParameters(
                 filter=filter_query,
             )
-            request_config = (
-                UsersRequestBuilder.UsersRequestBuilderGetRequestConfiguration(
-                    query_parameters=query_params,
-                )
+            request_config = UsersRequestBuilder.UsersRequestBuilderGetRequestConfiguration(
+                query_parameters=query_params,
             )
         users: List[Dict] = []
+        pages = 0
         response = await client.users.get(request_configuration=request_config)
         if not response or not response.value:
             return []
+        pages += 1
         users.extend(response.value)
 
         while response.odata_next_link:
             response = await client.users.with_url(response.odata_next_link).get()
+            pages += 1
             users.extend(response.value)
+
+        ctx = get_current_context()
+        if ctx is not None:
+            ctx.request_count += pages
 
         users = transform_users(users, tenant_id)
         return users
@@ -237,9 +234,7 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
 
         # Custom properties we use internally
         custom_id = f"tenants/{tenant_id}/users/{user_id}"
-        consolelink = azure_console_link.get_console_link(
-            id=user_id, iam_entity_type="user"
-        )
+        consolelink = azure_console_link.get_console_link(id=user_id, iam_entity_type="user")
 
         # Map to our internal structure
         usr = {
@@ -274,9 +269,7 @@ def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
         "id": f"tenants/{tenant_id}/users/{user['object_id']}",
-        "consolelink": azure_console_link.get_console_link(
-            id=user["object_id"], iam_entity_type="user"
-        ),
+        "consolelink": azure_console_link.get_console_link(id=user["object_id"], iam_entity_type="user"),
         "object_id": user["object_id"],
         "user_principal_name": user["user_principal_name"],
         "email": user["mail"],
@@ -291,9 +284,7 @@ def transform_user(user: Dict, tenant_id: str) -> Dict:
         "deletion_timestamp": user["deletion_timestamp"],
         "create_date": user["additional_properties"]["createdDateTime"],
         "company_name": user["additional_properties"]["companyName"],
-        "refresh_tokens_valid_from": user["additional_properties"][
-            "refreshTokensValidFromDateTime"
-        ],
+        "refresh_tokens_valid_from": user["additional_properties"]["refreshTokensValidFromDateTime"],
         "mobile": user["additional_properties"]["mobile"],
     }
 
@@ -332,6 +323,7 @@ def _load_tenant_users_tx(
     i.office_location = user.office_location,
     i.preferred_language = user.preferred_language,
     i.department = user.department,
+    i.managed_type = 'custom',
     i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -349,12 +341,8 @@ def _load_tenant_users_tx(
     )
 
 
-def cleanup_tenant_users(
-    neo4j_session: neo4j.Session, common_job_parameters: Dict
-) -> None:
-    run_cleanup_job(
-        "azure_import_tenant_users_cleanup.json", neo4j_session, common_job_parameters
-    )
+def cleanup_tenant_users(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job("azure_import_tenant_users_cleanup.json", neo4j_session, common_job_parameters)
 
 
 async def sync_tenant_users(
@@ -368,15 +356,22 @@ async def sync_tenant_users(
     Sync users from Microsoft Graph API to Neo4j.
     """
     client = get_graph_client(credentials.default_graph_credentials)
+    t0 = time.perf_counter()
     tenant_users_list = await list_tenant_users(client, tenant_id)
-
+    logger.info(
+        f"IAM tenant={tenant_id}: user list fetch done — {len(tenant_users_list)} users in {time.perf_counter() - t0:.2f}s",
+    )
+    t0 = time.perf_counter()
     load_tenant_users(neo4j_session, tenant_id, tenant_users_list, update_tag)
     cleanup_tenant_users(neo4j_session, common_job_parameters)
+    logger.info(f"IAM tenant={tenant_id}: user Neo4j write done in {time.perf_counter() - t0:.2f}s")
 
 
 @timeit
 async def get_tenant_groups_list(
-    client: GraphServiceClient, tenant_id: str, filter_query: Optional[str] = None
+    client: GraphServiceClient,
+    tenant_id: str,
+    filter_query: Optional[str] = None,
 ) -> List[Dict]:
     """
     Get groups from Microsoft Graph API.
@@ -389,20 +384,26 @@ async def get_tenant_groups_list(
             query_params = GroupsRequestBuilder.GroupsRequestBuilderGetQueryParameters(
                 filter=filter_query,
             )
-            request_config = (
-                GroupsRequestBuilder.GroupsRequestBuilderGetRequestConfiguration(
-                    query_parameters=query_params,
-                )
+            request_config = GroupsRequestBuilder.GroupsRequestBuilderGetRequestConfiguration(
+                query_parameters=query_params,
             )
         groups: List[Dict] = []
+        pages = 0
         response = await client.groups.get(request_configuration=request_config)
         if not response or not response.value:
             return []
+        pages += 1
         groups.extend(response.value)
 
         while response.odata_next_link:
             response = await client.groups.with_url(response.odata_next_link).get()
+            pages += 1
             groups.extend(response.value)
+
+        ctx = get_current_context()
+        if ctx is not None:
+            ctx.request_count += pages
+
         tenant_groups_list = []
 
         for group in groups:
@@ -420,25 +421,13 @@ async def get_tenant_groups_list(
                     "security_enabled": getattr(group, "security_enabled", None),
                     "visibility": getattr(group, "visibility", None),
                     "classification": getattr(group, "classification", None),
-                    "created_date_time": getattr(
-                        group, "created_date_time", datetime.utcnow()
-                    ).isoformat(),
+                    "created_date_time": getattr(group, "created_date_time", datetime.utcnow()).isoformat(),
                     "description": getattr(group, "description", None),
-                    "on_premises_sync_enabled": getattr(
-                        group, "on_premises_sync_enabled", None
-                    ),
-                    "on_premises_domain_name": getattr(
-                        group, "on_premises_domain_name", None
-                    ),
-                    "on_premises_sam_account_name": getattr(
-                        group, "on_premises_sam_account_name", None
-                    ),
-                    "on_premises_security_identifier": getattr(
-                        group, "on_premises_security_identifier", None
-                    ),
-                    "renewed_date_time": getattr(
-                        group, "renewed_date_time", datetime.utcnow()
-                    ).isoformat(),
+                    "on_premises_sync_enabled": getattr(group, "on_premises_sync_enabled", None),
+                    "on_premises_domain_name": getattr(group, "on_premises_domain_name", None),
+                    "on_premises_sam_account_name": getattr(group, "on_premises_sam_account_name", None),
+                    "on_premises_security_identifier": getattr(group, "on_premises_security_identifier", None),
+                    "renewed_date_time": getattr(group, "renewed_date_time", datetime.utcnow()).isoformat(),
                     "security_identifier": getattr(group, "security_identifier", None),
                 }
 
@@ -489,6 +478,7 @@ def _load_tenant_groups_tx(
     i.on_premises_security_identifier = group.on_premises_security_identifier,
     i.renewed_date_time = group.renewed_date_time,
     i.security_identifier = group.security_identifier,
+    i.managed_type = 'custom',
     i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -506,75 +496,219 @@ def _load_tenant_groups_tx(
     )
 
 
-async def get_group_members(
-    credentials: Credentials, group_id: str
-) -> List[Dict[str, Any]]:
-    client: GraphServiceClient = get_default_graph_client(
-        credentials.default_graph_credentials
-    )
-    members_data = []
-    try:
-        members: List[Dict] = []
-        response = await client.groups.by_group_id(
-            group_id.split("/")[-1]
-        ).members.get()
-        members.extend(response.value)
+_GRAPH_MAX_RETRIES = 5
+_GRAPH_DEFAULT_RETRY_AFTER = 10  # seconds to wait on 429 if Retry-After header absent
+_IAM_TENANT_SYNC_KEY = "_iam_tenant_level_synced"  # key in common_job_parameters tracking per-cycle dedup
 
-        while response.odata_next_link:
-            response = (
-                await client.groups.by_group_id(group_id.split("/")[-1])
-                .members.with_url(response.odata_next_link)
-                .get()
-            )
+
+class GraphAuthenticationExpiredError(Exception):
+    """Microsoft Graph rejected the request due to an invalid or expired access token."""
+
+
+def _is_throttle_error(e: Exception) -> bool:
+    err_str = str(e)
+    return "429" in err_str or "throttl" in err_str.lower() or "too many requests" in err_str.lower()
+
+
+def _is_graph_auth_expired_error(e: Exception) -> bool:
+    """True when Graph returns InvalidAuthenticationToken / expired access token."""
+    err_str = str(e)
+    if "InvalidAuthenticationToken" in err_str:
+        return True
+    lower = err_str.lower()
+    return "token is expired" in lower or "access token validation failed" in lower
+
+
+def _get_retry_after(e: Exception) -> float:
+    """Extract Retry-After seconds from exception headers if available."""
+    headers = getattr(e, "response_headers", None) or getattr(getattr(e, "response", None), "headers", None) or {}
+    raw = headers.get("Retry-After") or headers.get("retry-after")
+    if raw:
+        try:
+            val = float(raw)
+            logger.debug("Retry-After header=%ss (from Azure response)", val)
+            return val
+        except (ValueError, TypeError):
+            pass
+    logger.debug("No Retry-After header on %s, using default %ss", type(e).__name__, _GRAPH_DEFAULT_RETRY_AFTER)
+    return _GRAPH_DEFAULT_RETRY_AFTER
+
+
+async def get_group_members(
+    credentials: Credentials,
+    group_id: str,
+    client: Optional[GraphServiceClient] = None,
+) -> List[Dict[str, Any]]:
+    t0 = time.perf_counter()
+    if client is None:
+        client = get_default_graph_client(credentials.default_graph_credentials)
+    members_data = []
+
+    for attempt in range(1, _GRAPH_MAX_RETRIES + 1):
+        try:
+            members: List[Dict] = []
+            raw_id = group_id.split("/")[-1]
+            response = await client.groups.by_group_id(raw_id).members.get()
             members.extend(response.value)
 
-        if members:
-            for member in members:
-                if member.odata_type == "#microsoft.graph.group":
-                    inherited_members: List[Dict] = []
-                    response = await client.groups.by_group_id(member.id).members.get()
-                    inherited_members.extend(response.value)
+            while response.odata_next_link:
+                response = await client.groups.by_group_id(raw_id).members.with_url(response.odata_next_link).get()
+                members.extend(response.value)
 
-                    while response.odata_next_link:
-                        response = (
-                            await client.groups.by_group_id(member.id)
-                            .members.with_url(response.odata_next_link)
-                            .get()
-                        )
-                        inherited_members.extend(response.value)
-                    for inherited_member in inherited_members:
-                        members_data.append(
-                            {
-                                "id": inherited_member.id,
-                                "display_name": inherited_member.display_name,
-                                "mail": inherited_member.mail,
-                                "group_id": group_id,
-                            }
-                        )
-                members_data.append(
-                    {
-                        "id": member.id,
-                        "display_name": member.display_name,
-                        "mail": member.mail,
-                        "group_id": group_id,
-                    }
+            if members:
+                _subgroup_semaphore = asyncio.Semaphore(3)
+
+                async def _fetch_subgroup_members(sub_group_id: str) -> List[Dict]:
+                    async with _subgroup_semaphore:
+                        inherited: List[Dict] = []
+                        resp = await client.groups.by_group_id(sub_group_id).members.get()
+                        inherited.extend(resp.value)
+                        while resp.odata_next_link:
+                            resp = (
+                                await client.groups.by_group_id(sub_group_id)
+                                .members.with_url(resp.odata_next_link)
+                                .get()
+                            )
+                            inherited.extend(resp.value)
+                        return inherited
+
+                sub_group_ids = [m.id for m in members if m.odata_type == "#microsoft.graph.group"]
+                if sub_group_ids:
+                    logger.debug(f"get_group_members group_id={group_id}: expanding {len(sub_group_ids)} sub-groups")
+                sub_group_results = await asyncio.gather(
+                    *[_fetch_subgroup_members(gid) for gid in sub_group_ids],
+                    return_exceptions=True,
                 )
-    except Exception as e:
-        logger.warning(f"error to get members of group {group_id} - {e}")
+                sub_group_members_map = {}
+                sub_group_errors = 0
+                for gid, result in zip(sub_group_ids, sub_group_results):
+                    if isinstance(result, Exception):
+                        sub_group_errors += 1
+                    else:
+                        sub_group_members_map[gid] = result
+                if sub_group_errors:
+                    logger.warning(
+                        f"get_group_members group_id={group_id}: {sub_group_errors}/{len(sub_group_ids)} sub-group fetches failed",
+                    )
+
+                for member in members:
+                    if member.odata_type == "#microsoft.graph.group":
+                        for inherited_member in sub_group_members_map.get(member.id, []):
+                            members_data.append(
+                                {
+                                    "id": inherited_member.id,
+                                    "display_name": inherited_member.display_name,
+                                    "mail": inherited_member.mail,
+                                    "group_id": group_id,
+                                },
+                            )
+                    members_data.append(
+                        {
+                            "id": member.id,
+                            "display_name": member.display_name,
+                            "mail": member.mail,
+                            "group_id": group_id,
+                        },
+                    )
+
+            elapsed = time.perf_counter() - t0
+            logger.debug(f"get_group_members group_id={group_id}: {len(members_data)} members in {elapsed:.2f}s")
+            return members_data
+
+        except Exception as e:
+            ctx = get_current_context()
+            if _is_graph_auth_expired_error(e):
+                logger.error(
+                    f"get_group_members group_id={group_id}: Graph auth invalid/expired after "
+                    f"{time.perf_counter() - t0:.2f}s — aborting member fetch",
+                )
+                if ctx is not None:
+                    ctx.request_count += 1
+                raise GraphAuthenticationExpiredError(
+                    f"Microsoft Graph token invalid/expired while fetching members for {group_id}",
+                ) from e
+            if _is_throttle_error(e):
+                retry_after = _get_retry_after(e)
+                if ctx is not None:
+                    ctx.throttle_count += 1
+                if attempt < _GRAPH_MAX_RETRIES:
+                    if ctx is not None:
+                        ctx.retry_count += 1
+                    logger.warning(
+                        f"get_group_members group_id={group_id}: RATE_LIMITED (429) attempt {attempt}/{_GRAPH_MAX_RETRIES}, "
+                        f"waiting {retry_after:.0f}s — {e}",
+                    )
+                    await asyncio.sleep(retry_after + random.uniform(0, 3))
+                    members_data = []
+                    continue
+                else:
+                    logger.warning(
+                        f"get_group_members group_id={group_id}: RATE_LIMITED (429) after {_GRAPH_MAX_RETRIES} attempts, "
+                        f"giving up after {time.perf_counter() - t0:.2f}s",
+                    )
+            else:
+                logger.warning(
+                    f"get_group_members group_id={group_id}: error after {time.perf_counter() - t0:.2f}s — {e}",
+                )
+            if ctx is not None:
+                ctx.request_count += 1
+            return members_data
+
     return members_data
 
 
+async def _gather_group_members_fail_fast(
+    credentials: Credentials,
+    group_ids: List[str],
+    client: GraphServiceClient,
+    tenant_id: str,
+) -> Tuple[List[Any], bool]:
+    """
+    Fetch members for many groups with a shared auth circuit breaker.
+
+    Once GraphAuthenticationExpiredError is seen, remaining tasks skip Graph
+    calls so a dead token cannot burn an hour of 401s.
+    Returns (gather_results, auth_expired).
+    """
+    auth_expired = asyncio.Event()
+    member_semaphore = asyncio.Semaphore(3)
+    skipped_due_to_auth = 0
+
+    async def _bounded_get_members(group_id: str) -> List[Dict]:
+        nonlocal skipped_due_to_auth
+        if auth_expired.is_set():
+            skipped_due_to_auth += 1
+            return []
+        async with member_semaphore:
+            if auth_expired.is_set():
+                skipped_due_to_auth += 1
+                return []
+            try:
+                return await get_group_members(credentials, group_id, client=client)
+            except GraphAuthenticationExpiredError:
+                auth_expired.set()
+                raise
+
+    results = await asyncio.gather(
+        *[_bounded_get_members(group_id) for group_id in group_ids],
+        return_exceptions=True,
+    )
+    expired = any(isinstance(result, GraphAuthenticationExpiredError) for result in results)
+    if expired:
+        logger.error(
+            f"IAM tenant={tenant_id}: Graph access token invalid/expired during group member fetch; "
+            f"aborting remaining member fetches (skipped={skipped_due_to_auth}) to avoid a prolonged 401 storm",
+        )
+    return list(results), expired
+
+
 @timeit
-def load_group_memberships(
-    neo4j_session: neo4j.Session, memberships: List[Dict], update_tag: int
-) -> None:
+def load_group_memberships(neo4j_session: neo4j.Session, memberships: List[Dict], update_tag: int) -> None:
     neo4j_session.execute_write(_load_group_memberships_tx, memberships, update_tag)
 
 
 @timeit
-def _load_group_memberships_tx(
-    tx: neo4j.Transaction, memberships: List[Dict], update_tag: int
-) -> None:
+def _load_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], update_tag: int) -> None:
     ingest_memberships = """
     UNWIND $memberships AS membership
         MATCH (p:AzureGroup{id: membership.group_id})
@@ -594,12 +728,8 @@ def _load_group_memberships_tx(
     )
 
 
-def cleanup_tenant_groups(
-    neo4j_session: neo4j.Session, common_job_parameters: Dict
-) -> None:
-    run_cleanup_job(
-        "azure_import_tenant_groups_cleanup.json", neo4j_session, common_job_parameters
-    )
+def cleanup_tenant_groups(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job("azure_import_tenant_groups_cleanup.json", neo4j_session, common_job_parameters)
 
 
 async def sync_tenant_groups(
@@ -613,36 +743,62 @@ async def sync_tenant_groups(
     Sync groups from Microsoft Graph API to Neo4j.
     """
     client = get_graph_client(credentials.default_graph_credentials)
+    t0 = time.perf_counter()
     tenant_groups_list = await get_tenant_groups_list(client, tenant_id)
+    logger.info(
+        f"IAM tenant={tenant_id}: group list fetch done — {len(tenant_groups_list)} groups in {time.perf_counter() - t0:.2f}s",
+    )
 
+    # Fetch all group members concurrently (bounded) then write sequentially.
+    # Abort remaining Graph calls if the access token expires mid-fanout.
+    t0 = time.perf_counter()
+    membership_results, auth_expired = await _gather_group_members_fail_fast(
+        credentials,
+        [group["id"] for group in tenant_groups_list],
+        client,
+        tenant_id,
+    )
+    logger.info(
+        f"IAM tenant={tenant_id}: group member fetch done in {time.perf_counter() - t0:.2f}s "
+        f"(auth_expired={auth_expired})",
+    )
+
+    t0 = time.perf_counter()
     load_tenant_groups(neo4j_session, tenant_id, tenant_groups_list, update_tag)
-    for group in tenant_groups_list:
-        memberships = await get_group_members(credentials, group["id"])
-        load_group_memberships(neo4j_session, memberships, update_tag)
-
+    for result in membership_results:
+        if isinstance(result, Exception):
+            if not isinstance(result, GraphAuthenticationExpiredError):
+                logger.warning(f"IAM tenant={tenant_id}: group member fetch error — {result}")
+            continue
+        if result:
+            load_group_memberships(neo4j_session, result, update_tag)
     cleanup_tenant_groups(neo4j_session, common_job_parameters)
+    logger.info(f"IAM tenant={tenant_id}: group Neo4j write done in {time.perf_counter() - t0:.2f}s")
 
 
 @timeit
-async def get_tenant_applications_list(
-    client: GraphServiceClient, tenant_id: str
-) -> List[Dict]:
+async def get_tenant_applications_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
     """
     Get applications from Microsoft Graph API.
     Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/application-list
     """
     try:
         apps: List[Dict] = []
+        pages = 0
         response = await client.applications.get()
         if not response or not response.value:
             return []
+        pages += 1
         apps.extend(response.value)
 
         while response.odata_next_link:
-            response = await client.applications.with_url(
-                response.odata_next_link
-            ).get()
+            response = await client.applications.with_url(response.odata_next_link).get()
+            pages += 1
             apps.extend(response.value)
+
+        ctx = get_current_context()
+        if ctx is not None:
+            ctx.request_count += pages
 
         tenant_applications_list = []
 
@@ -655,29 +811,17 @@ async def get_tenant_applications_list(
                     "id": getattr(app, "id", None),
                     "display_name": getattr(app, "display_name", None),
                     "app_id": getattr(app, "app_id", None),
-                    "created_date_time": getattr(
-                        app, "created_date_time", datetime.utcnow()
-                    ).isoformat(),
+                    "created_date_time": getattr(app, "created_date_time", datetime.utcnow()).isoformat(),
                     "description": getattr(app, "description", None),
-                    "deleted_date_time": (
-                        getattr(app, "deleted_date_time", None)
-                        if getattr(app, "deleted_date_time", None)
-                        else datetime.utcnow().isoformat()
-                    ),
+                    "deleted_date_time": getattr(app, "deleted_date_time", None)
+                    if getattr(app, "deleted_date_time", None)
+                    else datetime.utcnow().isoformat(),
                     "publisher_domain": getattr(app, "publisher_domain", None),
                     "sign_in_audience": getattr(app, "sign_in_audience", None),
-                    "application_template_id": getattr(
-                        app, "application_template_id", None
-                    ),
-                    "disabled_by_microsoft_status": getattr(
-                        app, "disabled_by_microsoft_status", None
-                    ),
-                    "is_device_only_auth_supported": getattr(
-                        app, "is_device_only_auth_supported", None
-                    ),
-                    "is_fallback_public_client": getattr(
-                        app, "is_fallback_public_client", None
-                    ),
+                    "application_template_id": getattr(app, "application_template_id", None),
+                    "disabled_by_microsoft_status": getattr(app, "disabled_by_microsoft_status", None),
+                    "is_device_only_auth_supported": getattr(app, "is_device_only_auth_supported", None),
+                    "is_fallback_public_client": getattr(app, "is_fallback_public_client", None),
                 }
 
             # Add tenant-specific ID for consistency with previous implementation
@@ -723,6 +867,7 @@ def _load_tenant_applications_tx(
     i.disabled_by_microsoft_status = app.disabled_by_microsoft_status,
     i.is_device_only_auth_supported = app.is_device_only_auth_supported,
     i.is_fallback_public_client = app.is_fallback_public_client,
+    i.managed_type = 'custom',
     i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -740,14 +885,8 @@ def _load_tenant_applications_tx(
     )
 
 
-def cleanup_tenant_applications(
-    neo4j_session: neo4j.Session, common_job_parameters: Dict
-) -> None:
-    run_cleanup_job(
-        "azure_import_tenant_applications_cleanup.json",
-        neo4j_session,
-        common_job_parameters,
-    )
+def cleanup_tenant_applications(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job("azure_import_tenant_applications_cleanup.json", neo4j_session, common_job_parameters)
 
 
 async def sync_tenant_applications(
@@ -763,32 +902,33 @@ async def sync_tenant_applications(
     client = get_graph_client(credentials.default_graph_credentials)
     tenant_applications_list = await get_tenant_applications_list(client, tenant_id)
 
-    load_tenant_applications(
-        neo4j_session, tenant_id, tenant_applications_list, update_tag
-    )
+    load_tenant_applications(neo4j_session, tenant_id, tenant_applications_list, update_tag)
     cleanup_tenant_applications(neo4j_session, common_job_parameters)
 
 
 @timeit
-async def get_tenant_service_accounts_list(
-    client: GraphServiceClient, tenant_id: str
-) -> List[Dict]:
+async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
     """
     Get service principals from Microsoft Graph API.
     Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/serviceprincipal-list
     """
     try:
         service_accounts: List[Dict] = []
+        pages = 0
         response = await client.service_principals.get()
         if not response or not response.value:
             return []
+        pages += 1
         service_accounts.extend(response.value)
 
         while response.odata_next_link:
-            response = await client.service_principals.with_url(
-                response.odata_next_link
-            ).get()
+            response = await client.service_principals.with_url(response.odata_next_link).get()
+            pages += 1
             service_accounts.extend(response.value)
+
+        ctx = get_current_context()
+        if ctx is not None:
+            ctx.request_count += pages
 
         tenant_service_accounts_list = []
 
@@ -804,34 +944,24 @@ async def get_tenant_service_accounts_list(
                     "client_id": getattr(sp, "app_id", None),
                     "account_enabled": getattr(sp, "account_enabled", None),
                     "app_display_name": getattr(sp, "app_display_name", None),
-                    "app_role_assignment_required": getattr(
-                        sp, "app_role_assignment_required", None
-                    ),
-                    "application_template_id": getattr(
-                        sp, "application_template_id", None
-                    ),
+                    "app_role_assignment_required": getattr(sp, "app_role_assignment_required", None),
+                    "application_template_id": getattr(sp, "application_template_id", None),
                     "created_date_time": getattr(sp, "createdDateTime", None),
                     "deleted_date_time": getattr(sp, "deleted_date_time", None),
                     "description": getattr(sp, "description", None),
-                    "disabled_by_microsoft_status": getattr(
-                        sp, "disabled_by_microsoft_status", None
-                    ),
+                    "disabled_by_microsoft_status": getattr(sp, "disabled_by_microsoft_status", None),
                     "homepage": getattr(sp, "homepage", None),
                     "login_url": getattr(sp, "login_url", None),
                     "logout_url": getattr(sp, "logout_url", None),
-                    "preferred_single_sign_on_mode": getattr(
-                        sp, "preferred_single_sign_on_mode", None
-                    ),
+                    "preferred_single_sign_on_mode": getattr(sp, "preferred_single_sign_on_mode", None),
                     "preferred_token_signing_key_thumbprint": getattr(
-                        sp, "preferred_token_signing_key_thumbprint", None
+                        sp,
+                        "preferred_token_signing_key_thumbprint",
+                        None,
                     ),
-                    "service_principal_type": getattr(
-                        sp, "service_principal_type", None
-                    ),
+                    "service_principal_type": getattr(sp, "service_principal_type", None),
                     "sign_in_audience": getattr(sp, "sign_on_audience", None),
-                    "token_encryption_key_id": getattr(
-                        sp, "token_encryption_key_id", None
-                    ),
+                    "token_encryption_key_id": getattr(sp, "token_encryption_key_id", None),
                 }
 
             # Add tenant-specific ID for consistency with previous implementation
@@ -841,6 +971,9 @@ async def get_tenant_service_accounts_list(
                 id=sp_dict.get("id"),
                 app_id=sp_dict.get("app_id"),
                 iam_entity_type="service_principal",
+            )
+            sp_dict["managed_type"] = _azure_service_principal_managed_type(
+                sp_dict.get("app_owner_organization_id"),
             )
 
             tenant_service_accounts_list.append(sp_dict)
@@ -887,6 +1020,7 @@ def _load_tenant_service_accounts_tx(
     i.service_principal_type = service.service_principal_type,
     i.sign_in_audience = service.sign_in_audience,
     i.token_encryption_key_id = service.token_encryption_key_id,
+    i.managed_type = coalesce(service.managed_type, CASE WHEN toLower(coalesce(service.app_owner_organization_id, '')) = $ms_tenant_id THEN 'predefined' ELSE 'custom' END),
     i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -900,18 +1034,13 @@ def _load_tenant_service_accounts_tx(
         region="global",
         tenant_service_accounts_list=tenant_service_accounts_list,
         tenant_id=tenant_id,
+        ms_tenant_id=AZURE_MICROSOFT_TENANT_ID,
         update_tag=update_tag,
     )
 
 
-def cleanup_tenant_service_accounts(
-    neo4j_session: neo4j.Session, common_job_parameters: Dict
-) -> None:
-    run_cleanup_job(
-        "azure_import_tenant_service_accounts_cleanup.json",
-        neo4j_session,
-        common_job_parameters,
-    )
+def cleanup_tenant_service_accounts(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job("azure_import_tenant_service_accounts_cleanup.json", neo4j_session, common_job_parameters)
 
 
 async def sync_tenant_service_accounts(
@@ -925,20 +1054,14 @@ async def sync_tenant_service_accounts(
     Sync service principals from Microsoft Graph API to Neo4j.
     """
     client = get_graph_client(credentials.default_graph_credentials)
-    tenant_service_accounts_list = await get_tenant_service_accounts_list(
-        client, tenant_id
-    )
+    tenant_service_accounts_list = await get_tenant_service_accounts_list(client, tenant_id)
 
-    load_tenant_service_accounts(
-        neo4j_session, tenant_id, tenant_service_accounts_list, update_tag
-    )
+    load_tenant_service_accounts(neo4j_session, tenant_id, tenant_service_accounts_list, update_tag)
     cleanup_tenant_service_accounts(neo4j_session, common_job_parameters)
 
 
 @timeit
-async def get_tenant_domains_list(
-    client: GraphServiceClient, tenant_id: str
-) -> List[Dict]:
+async def get_tenant_domains_list(client: GraphServiceClient, tenant_id: str) -> List[Dict]:
     """
     Get domains from Microsoft Graph API.
     Microsoft Graph API documentation: https://learn.microsoft.com/en-us/graph/api/domain-list
@@ -951,6 +1074,10 @@ async def get_tenant_domains_list(
         response = await client.domains.get()
         if not response or not response.value:
             return []
+
+        ctx = get_current_context()
+        if ctx is not None:
+            ctx.request_count += 1
 
         tenant_domains_list = []
 
@@ -968,20 +1095,18 @@ async def get_tenant_domains_list(
                     "is_root": getattr(domain, "is_root", None),
                     "is_verified": getattr(domain, "is_verified", None),
                     "password_notification_window_in_days": getattr(
-                        domain, "password_notification_window_in_days", None
+                        domain,
+                        "password_notification_window_in_days",
+                        None,
                     ),
-                    "password_validity_period_in_days": getattr(
-                        domain, "password_validity_period_in_days", None
-                    ),
+                    "password_validity_period_in_days": getattr(domain, "password_validity_period_in_days", None),
                     "supported_services": getattr(domain, "supported_services", []),
                 }
 
                 # Handle state property which is a complex object
                 if hasattr(domain, "state") and domain.state:
                     domain_dict["state"] = {
-                        "last_action_date_time": getattr(
-                            domain.state, "last_action_date_time", None
-                        ),
+                        "last_action_date_time": getattr(domain.state, "last_action_date_time", None),
                         "operation": getattr(domain.state, "operation", None),
                         "status": getattr(domain.state, "status", None),
                     }
@@ -1030,6 +1155,7 @@ def _load_tenant_domains_tx(
     i.state_last_action_date_time = CASE WHEN domain.state IS NOT NULL THEN domain.state.last_action_date_time ELSE null END,
     i.state_operation = CASE WHEN domain.state IS NOT NULL THEN domain.state.operation ELSE null END,
     i.state_status = CASE WHEN domain.state IS NOT NULL THEN domain.state.status ELSE null END,
+    i.managed_type = 'custom',
     i.region = $region
     WITH i
     MATCH (owner:AzureTenant{id: $tenant_id})
@@ -1048,12 +1174,8 @@ def _load_tenant_domains_tx(
     )
 
 
-def cleanup_tenant_domains(
-    neo4j_session: neo4j.Session, common_job_parameters: Dict
-) -> None:
-    run_cleanup_job(
-        "azure_import_tenant_domains_cleanup.json", neo4j_session, common_job_parameters
-    )
+def cleanup_tenant_domains(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job("azure_import_tenant_domains_cleanup.json", neo4j_session, common_job_parameters)
 
 
 async def sync_tenant_domains(
@@ -1081,27 +1203,16 @@ def get_roles_list(
 ) -> List[Dict]:
     try:
         role_definitions_list = list(
-            map(
-                lambda x: x.as_dict(),
-                client.role_definitions.list(scope=f"/subscriptions/{subscription_id}"),
-            ),
+            map(lambda x: x.as_dict(), client.role_definitions.list(scope=f"/subscriptions/{subscription_id}")),
         )
         for role in role_definitions_list:
-            if (
-                role.get("type") == "Microsoft.Authorization/roleDefinitions"
-                or role.get("role_type") == "BuiltInRole"
-            ):
-                role["role_owner_type"] = "predefined"
-
-            else:
-                role["role_owner_type"] = "custom"
+            role["role_owner_type"] = _azure_role_managed_type(role)
+            role["managed_type"] = role["role_owner_type"]
 
             role["identity_id"] = role["id"].split("/")[-1]
             role["consolelink"] = azure_console_link.get_console_link(
                 id=role["id"],
-                primary_ad_domain_name=common_job_parameters[
-                    "Azure_Primary_AD_Domain_Name"
-                ],
+                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
             )
             permissions = []
             for permission in role.get("permissions", []):
@@ -1119,9 +1230,7 @@ def get_roles_list(
 
 
 @timeit
-def get_role_assignments(
-    client: AuthorizationManagementClient, common_job_parameters: Dict
-) -> List[Dict]:
+def get_role_assignments(client: AuthorizationManagementClient, common_job_parameters: Dict) -> List[Dict]:
     try:
         role_assignments_list = list(
             map(lambda x: x.as_dict(), client.role_assignments.list()),
@@ -1142,22 +1251,15 @@ def get_managed_identity_list(
 ) -> List[Dict]:
     try:
         managed_identity_list = list(
-            map(
-                lambda x: x.as_dict(),
-                client.user_assigned_identities.list_by_subscription(),
-            ),
+            map(lambda x: x.as_dict(), client.user_assigned_identities.list_by_subscription()),
         )
 
         for managed_identity in managed_identity_list:
             managed_identity["consolelink"] = azure_console_link.get_console_link(
                 id=managed_identity["id"],
-                primary_ad_domain_name=common_job_parameters[
-                    "Azure_Primary_AD_Domain_Name"
-                ],
+                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
             )
-            managed_identity["location"] = (
-                managed_identity.get("location", "").replace(" ", "").lower()
-            )
+            managed_identity["location"] = managed_identity.get("location", "").replace(" ", "").lower()
         return managed_identity_list
     except HttpResponseError as e:
         logger.warning(f"Error while retrieving managed identity - {e}")
@@ -1187,6 +1289,7 @@ def _load_roles_tx(
     i.role_type = role.role_type,
     i.identity_id = role.identity_id,
     i.role_owner_type = role.role_owner_type,
+    i.managed_type = coalesce(role.managed_type, role.role_owner_type, CASE WHEN role.role_type = 'BuiltInRole' OR role.type = 'Microsoft.Authorization/roleDefinitions' THEN 'predefined' ELSE 'custom' END),
     i.region = $region
     WITH i,role
     MATCH (t:AzureTenant{id: $tenant_id})
@@ -1211,27 +1314,22 @@ def _load_roles_tx(
     )
 
     attach_role = """
-    MATCH (principal:AzurePrincipal{object_id: $principal_id})
-    WITH principal
-    MATCH (i:AzureRole{id: $role})
-    WITH i,principal
+    UNWIND $role_assignments AS ra
+    MATCH (principal:AzurePrincipal{object_id: ra.principal_id})
+    WITH principal, ra
+    MATCH (i:AzureRole{id: ra.role_id})
     MERGE (principal)-[r:ASSUME_ROLE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    for role_assignment in role_assignments_list:
-        tx.run(
-            attach_role,
-            role=role_assignment.get(
-                "role_definition_id",
-                role_assignment.get("properties", {}).get("role_definition_id"),
-            ),
-            principal_id=role_assignment.get(
-                "principal_id",
-                role_assignment.get("properties", {}).get("principal_id"),
-            ),
-            update_tag=update_tag,
-        )
+    prepared_assignments = [
+        {
+            "role_id": ra.get("role_definition_id", ra.get("properties", {}).get("role_definition_id")),
+            "principal_id": ra.get("principal_id", ra.get("properties", {}).get("principal_id")),
+        }
+        for ra in role_assignments_list
+    ]
+    tx.run(attach_role, role_assignments=prepared_assignments, update_tag=update_tag)
 
 
 def _load_managed_identities_tx(
@@ -1255,7 +1353,8 @@ def _load_managed_identities_tx(
     i.type = managed_identity.type,
     i.object_id = managed_identity.principal_id,
     i.principal_id = managed_identity.principal_id,
-    i.client_id = managed_identity.client_id
+    i.client_id = managed_identity.client_id,
+    i.managed_type = 'custom'
     WITH i
     MATCH (t:AzureTenant{id: $tenant_id})
     MERGE (t)-[tr:RESOURCE]->(i)
@@ -1272,19 +1371,11 @@ def _load_managed_identities_tx(
 
 
 def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job(
-        "azure_import_tenant_roles_cleanup.json", neo4j_session, common_job_parameters
-    )
+    run_cleanup_job("azure_import_tenant_roles_cleanup.json", neo4j_session, common_job_parameters)
 
 
-def cleanup_managed_identities(
-    neo4j_session: neo4j.Session, common_job_parameters: Dict
-) -> None:
-    run_cleanup_job(
-        "azure_import_managed_identity_cleanup.json",
-        neo4j_session,
-        common_job_parameters,
-    )
+def cleanup_managed_identities(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job("azure_import_managed_identity_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def sync_roles(
@@ -1295,28 +1386,24 @@ def sync_roles(
     common_job_parameters: Dict,
     ingested_principal_ids: Optional[set] = None,
 ) -> None:
-    client = get_authorization_client(
-        credentials.arm_credentials, credentials.subscription_id
-    )
-    roles_list = get_roles_list(
-        credentials.subscription_id, client, common_job_parameters
-    )
+    t0 = time.perf_counter()
+    client = get_authorization_client(credentials.arm_credentials, credentials.subscription_id)
+    roles_list = get_roles_list(credentials.subscription_id, client, common_job_parameters)
     role_assignments_list = get_role_assignments(client, common_job_parameters)
+    logger.info(
+        f"IAM tenant={tenant_id}: roles fetch done — {len(roles_list)} roles, "
+        f"{len(role_assignments_list)} assignments in {time.perf_counter() - t0:.2f}s",
+    )
     if ingested_principal_ids is not None:
         role_assignments_list = [
             assignment
             for assignment in role_assignments_list
             if assignment.get("principal_id") in ingested_principal_ids
         ]
-    load_roles(
-        neo4j_session,
-        tenant_id,
-        roles_list,
-        role_assignments_list,
-        update_tag,
-        credentials.subscription_id,
-    )
+    t0 = time.perf_counter()
+    load_roles(neo4j_session, tenant_id, roles_list, role_assignments_list, update_tag, credentials.subscription_id)
     cleanup_roles(neo4j_session, common_job_parameters)
+    logger.info(f"IAM tenant={tenant_id}: roles Neo4j write done in {time.perf_counter() - t0:.2f}s")
 
 
 def sync_managed_identity(
@@ -1326,14 +1413,17 @@ def sync_managed_identity(
     update_tag: int,
     common_job_parameters: Dict,
 ) -> None:
-    client = get_managed_identity_client(
-        credentials.arm_credentials, credentials.subscription_id
+    t0 = time.perf_counter()
+    client = get_managed_identity_client(credentials.arm_credentials, credentials.subscription_id)
+    managed_identity_list = get_managed_identity_list(client, credentials.subscription_id, common_job_parameters)
+    logger.info(
+        f"IAM tenant={tenant_id}: managed identity fetch done — "
+        f"{len(managed_identity_list)} identities in {time.perf_counter() - t0:.2f}s",
     )
-    managed_identity_list = get_managed_identity_list(
-        client, credentials.subscription_id, common_job_parameters
-    )
+    t0 = time.perf_counter()
     load_managed_identities(neo4j_session, tenant_id, managed_identity_list, update_tag)
     cleanup_managed_identities(neo4j_session, common_job_parameters)
+    logger.info(f"IAM tenant={tenant_id}: managed identity Neo4j write done in {time.perf_counter() - t0:.2f}s")
 
 
 def _set_used_state_tx(
@@ -1375,6 +1465,7 @@ def _set_used_state_tx(
     )
 
 
+@timeit
 async def sync_scoped_users_and_groups(
     neo4j_session: neo4j.Session,
     credentials: Credentials,
@@ -1386,62 +1477,104 @@ async def sync_scoped_users_and_groups(
     """
     Syncs only specified groups and their members (users).
     """
+    t_total = time.perf_counter()
     client = get_graph_client(credentials.default_graph_credentials)
 
     # 1. Fetch only the scoped groups in batches to avoid URL length limits.
+    t0 = time.perf_counter()
     scoped_groups = []
     group_id_list = list(scoped_group_ids)
     for i in range(0, len(group_id_list), SAFE_BATCH_SIZE):
-        batch_ids = group_id_list[i : i + SAFE_BATCH_SIZE]
-        id_filter_str = "id in ({})".format(
-            ",".join(f"'{id_val['id']}'" for id_val in batch_ids)
-        )
-        group_batch = await get_tenant_groups_list(
-            client, tenant_id, filter_query=id_filter_str
-        )
+        batch_ids = group_id_list[i: i + SAFE_BATCH_SIZE]
+        id_filter_str = "id in ({})".format(",".join(f"'{id_val['id']}'" for id_val in batch_ids))
+        group_batch = await get_tenant_groups_list(client, tenant_id, filter_query=id_filter_str)
         if group_batch:
             scoped_groups.extend(group_batch)
+    logger.info(
+        f"IAM tenant={tenant_id}: group fetch done — {len(scoped_groups)}/{len(group_id_list)} groups in {time.perf_counter() - t0:.2f}s",
+    )
 
     if not scoped_groups:
         return set()
 
-    # 2. Fetch members for each scoped group
+    # 2. Fetch members for all scoped groups concurrently (bounded by semaphore to avoid 429 floods).
+    # Abort remaining Graph calls if the access token expires mid-fanout.
+    t0 = time.perf_counter()
+    logger.info(
+        f"IAM tenant={tenant_id}: fetching members for {len(scoped_groups)} groups concurrently",
+    )
+    membership_results, auth_expired = await _gather_group_members_fail_fast(
+        credentials,
+        [group["id"] for group in scoped_groups],
+        client,
+        tenant_id,
+    )
+
     all_memberships = []
     all_member_ids = set()
-    for group in scoped_groups:
-        memberships = await get_group_members(credentials, group["id"])
+    member_fetch_errors = 0
+    rate_limit_errors = 0
+    for memberships in membership_results:
+        if isinstance(memberships, Exception):
+            err_str = str(memberships)
+            if isinstance(memberships, GraphAuthenticationExpiredError):
+                continue
+            if "429" in err_str or "throttl" in err_str.lower() or "too many requests" in err_str.lower():
+                rate_limit_errors += 1
+            member_fetch_errors += 1
+            logger.warning(f"IAM tenant={tenant_id}: group member fetch error — {memberships}")
+            continue
         if memberships:
             all_memberships.extend(memberships)
             for member in memberships:
                 all_member_ids.add(member["id"])
+    if auth_expired:
+        logger.error(
+            f"IAM tenant={tenant_id}: Graph token invalid/expired mid member-fetch; "
+            f"continuing with {len(all_memberships)} memberships gathered before abort",
+        )
+    logger.info(
+        f"IAM tenant={tenant_id}: member fetch done in {time.perf_counter() - t0:.2f}s — "
+        f"memberships={len(all_memberships)} unique_members={len(all_member_ids)} "
+        f"errors={member_fetch_errors} rate_limit_errors={rate_limit_errors} auth_expired={auth_expired}",
+    )
+    ctx = get_current_context()
+    if ctx is not None:
+        ctx.request_count += len(scoped_groups)
+        ctx.throttle_count += rate_limit_errors
 
     # 3. Fetch only the required users in batches using a $filter query to avoid URL length limits.
+    t0 = time.perf_counter()
     scoped_users = []
     if all_member_ids:
         member_id_list = list(all_member_ids)
         user_fetch_tasks = []
         for i in range(0, len(member_id_list), SAFE_BATCH_SIZE):
-            batch_ids = member_id_list[i : i + SAFE_BATCH_SIZE]
-            id_filter_str = "id in ({})".format(
-                ",".join(f"'{id_val}'" for id_val in batch_ids)
-            )
-            user_fetch_tasks.append(
-                list_tenant_users(client, tenant_id, filter_query=id_filter_str)
-            )
+            batch_ids = member_id_list[i: i + SAFE_BATCH_SIZE]
+            id_filter_str = "id in ({})".format(",".join(f"'{id_val}'" for id_val in batch_ids))
+            user_fetch_tasks.append(list_tenant_users(client, tenant_id, filter_query=id_filter_str))
 
-        # Run all batch fetches concurrently
+        logger.info(
+            f"IAM tenant={tenant_id}: fetching {len(all_member_ids)} users across {len(user_fetch_tasks)} batches concurrently",
+        )
         user_batch_responses = await asyncio.gather(*user_fetch_tasks)
         for user_batch in user_batch_responses:
             if user_batch:
                 scoped_users.extend(user_batch)
+    logger.info(
+        f"IAM tenant={tenant_id}: user fetch done in {time.perf_counter() - t0:.2f}s — {len(scoped_users)} users",
+    )
 
     # 4. Load the filtered data into Neo4j
+    t0 = time.perf_counter()
     load_tenant_groups(neo4j_session, tenant_id, scoped_groups, update_tag)
     if scoped_users:
         load_tenant_users(neo4j_session, tenant_id, scoped_users, update_tag)
-
     if all_memberships:
         load_group_memberships(neo4j_session, all_memberships, update_tag)
+    logger.info(
+        f"IAM tenant={tenant_id}: Neo4j write done in {time.perf_counter() - t0:.2f}s",
+    )
 
     # 5. Collect and return the IDs of all ingested principals
     ingested_principal_ids = {u.get("object_id") for u in scoped_users}
@@ -1451,6 +1584,11 @@ async def sync_scoped_users_and_groups(
     cleanup_tenant_users(neo4j_session, common_job_parameters)
     cleanup_tenant_groups(neo4j_session, common_job_parameters)
 
+    logger.info(
+        f"IAM tenant={tenant_id}: sync_scoped_users_and_groups complete — "
+        f"groups={len(scoped_groups)} users={len(scoped_users)} memberships={len(all_memberships)} "
+        f"total_elapsed={time.perf_counter() - t_total:.2f}s",
+    )
     return ingested_principal_ids
 
 
@@ -1464,12 +1602,19 @@ async def async_sync(
 ) -> None:
     scoped_group_ids = common_job_parameters.get("GROUPS", [])
     ingested_principal_ids: Optional[set] = None
+
+    # Tenant-level IAM data (users/groups/apps/domains) is tenant-wide, not per-subscription.
+    # Guard against re-fetching it for every subscription in the same tenant within one sync cycle.
+    tenant_synced_set: set = set(common_job_parameters.get(_IAM_TENANT_SYNC_KEY, []))
+    tenant_level_done = tenant_id in tenant_synced_set
+
     try:
-        if common_job_parameters.get(
-            "DEFAULT_SUBSCRIPTION"
-        ) == credentials.subscription_id or not common_job_parameters.get(
-            "DEFAULT_SUBSCRIPTION"
-        ):
+        should_run_tenant_level = not tenant_level_done and (
+            common_job_parameters.get("DEFAULT_SUBSCRIPTION") == credentials.subscription_id or
+            not common_job_parameters.get("DEFAULT_SUBSCRIPTION")
+        )
+
+        if should_run_tenant_level:
             if scoped_group_ids:
                 # Only sync specified groups and their users
                 ingested_principal_ids = await sync_scoped_users_and_groups(
@@ -1497,29 +1642,60 @@ async def async_sync(
                     common_job_parameters,
                 )
 
-            await sync_tenant_applications(
-                neo4j_session,
-                credentials,
-                tenant_id,
-                update_tag,
-                common_job_parameters,
+            # Fetch concurrently from Graph API — no Neo4j involvement yet
+            t0 = time.perf_counter()
+            logger.info(f"IAM tenant={tenant_id}: fetching applications/service_accounts/domains concurrently")
+            graph_client = get_graph_client(credentials.default_graph_credentials)
+            apps_list, svc_accounts_list, domains_list = await asyncio.gather(
+                get_tenant_applications_list(graph_client, tenant_id),
+                get_tenant_service_accounts_list(graph_client, tenant_id),
+                get_tenant_domains_list(graph_client, tenant_id),
             )
-            await sync_tenant_service_accounts(
-                neo4j_session,
-                credentials,
-                tenant_id,
-                update_tag,
-                common_job_parameters,
+            logger.info(
+                f"IAM tenant={tenant_id}: Graph fetch done in {time.perf_counter() - t0:.2f}s — "
+                f"apps={len(apps_list)} svc_accounts={len(svc_accounts_list)} domains={len(domains_list)}",
             )
-            await sync_tenant_domains(
-                neo4j_session, credentials, tenant_id, update_tag, common_job_parameters
+
+            # Write sequentially — neo4j Session is not safe for concurrent use
+            t0 = time.perf_counter()
+            load_tenant_applications(neo4j_session, tenant_id, apps_list, update_tag)
+            cleanup_tenant_applications(neo4j_session, common_job_parameters)
+
+            load_tenant_service_accounts(neo4j_session, tenant_id, svc_accounts_list, update_tag)
+            cleanup_tenant_service_accounts(neo4j_session, common_job_parameters)
+
+            load_tenant_domains(neo4j_session, tenant_id, domains_list, update_tag)
+            cleanup_tenant_domains(neo4j_session, common_job_parameters)
+            logger.info(
+                f"IAM tenant={tenant_id}: Neo4j write (apps/svc_accounts/domains) done in {time.perf_counter() - t0:.2f}s",
             )
+
             sync_managed_identity(
                 neo4j_session,
                 credentials,
                 tenant_id,
                 update_tag,
                 common_job_parameters,
+            )
+
+            # Mark tenant-level sync done for this cycle
+            tenant_synced_set.add(tenant_id)
+            common_job_parameters[_IAM_TENANT_SYNC_KEY] = list(tenant_synced_set)
+
+        elif tenant_level_done:
+            logger.info(
+                "IAM tenant=%s: tenant-level sync already done this cycle, skipping (users/groups/apps/domains)",
+                tenant_id,
+            )
+
+            # Mark tenant-level sync done for this cycle
+            tenant_synced_set.add(tenant_id)
+            common_job_parameters[_IAM_TENANT_SYNC_KEY] = tenant_synced_set
+
+        elif tenant_level_done:
+            logger.info(
+                "IAM tenant=%s: tenant-level sync already done this cycle, skipping (users/groups/apps/domains)",
+                tenant_id,
             )
 
         sync_roles(
@@ -1550,8 +1726,4 @@ def sync(
     logger.info("Syncing IAM for Tenant '%s'.", tenant_id)
 
     common_job_parameters["AZURE_TENANT_ID"] = tenant_id
-    asyncio.run(
-        async_sync(
-            neo4j_session, credentials, tenant_id, update_tag, common_job_parameters
-        )
-    )
+    asyncio.run(async_sync(neo4j_session, credentials, tenant_id, update_tag, common_job_parameters))

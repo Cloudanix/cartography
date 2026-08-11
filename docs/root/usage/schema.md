@@ -42,13 +42,22 @@
 ```{include} ../modules/azure/schema.md
 ```
 
+```{include} ../modules/azuredevops/schema.md
+```
+
 ```{include} ../modules/bigfix/schema.md
+```
+
+```{include} ../modules/bitbucket/schema.md
 ```
 
 ```{include} ../modules/cloudflare/schema.md
 ```
 
 ```{include} ../modules/crowdstrike/schema.md
+```
+
+```{include} ../modules/crxcavator/schema.md
 ```
 
 ```{include} ../modules/cve/schema.md

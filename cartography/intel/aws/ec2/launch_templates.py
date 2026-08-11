@@ -24,6 +24,9 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker() if AWSLinker else None
 
+# Applied at describe_launch_template_versions — historical versions stay at the API.
+LAUNCH_TEMPLATE_VERSIONS = ['$Latest', '$Default']
+
 
 @timeit
 @aws_handle_regions
@@ -73,7 +76,10 @@ def get_launch_template_versions_by_template(
     v_paginator = client.get_paginator("describe_launch_template_versions")
     template_versions = []
     try:
-        for versions in v_paginator.paginate(LaunchTemplateId=launch_template_id):
+        for versions in v_paginator.paginate(
+            LaunchTemplateId=launch_template_id,
+            Versions=LAUNCH_TEMPLATE_VERSIONS,
+        ):
             template_versions.extend(versions["LaunchTemplateVersions"])
     except botocore.exceptions.ClientError as e:
         error_code = e.response["Error"]["Code"]

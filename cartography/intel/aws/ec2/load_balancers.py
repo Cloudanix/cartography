@@ -1,305 +1,212 @@
 import logging
+import time
+from typing import Dict
+from typing import List
 
 import boto3
 import neo4j
-from botocore.exceptions import ClientError
-from botocore.exceptions import ConnectTimeoutError
-from botocore.exceptions import EndpointConnectionError
-from botocore.exceptions import ReadTimeoutError
+from cloudconsolelink.clouds.aws import AWSLinker
 
-from cartography.client.core.tx import load
-from cartography.graph.job import GraphJob
-from cartography.intel.aws.util.botocore_config import create_boto3_client
-from cartography.intel.aws.util.botocore_config import get_botocore_config
-from cartography.models.aws.ec2.load_balancer_listeners import ELBListenerSchema
-from cartography.models.aws.ec2.load_balancers import LoadBalancerSchema
+from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.util import aws_handle_regions
+from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-
-
-class ELBTransientRegionFailure(Exception):
-    pass
-
-
-TRANSIENT_REGION_EXCEPTIONS = (
-    ConnectTimeoutError,
-    EndpointConnectionError,
-    ReadTimeoutError,
-)
-
-RETRYABLE_ELB_ERROR_CODES = {
-    "InternalError",
-    "InternalFailure",
-    "RequestTimeout",
-    "RequestTimeoutException",
-    "ServiceUnavailable",
-    "Throttling",
-    "ThrottlingException",
-    "TooManyRequestsException",
-}
-
-RETRYABLE_ELB_HTTP_STATUS_CODES = {500, 502, 503, 504}
-
-
-def _is_retryable_elb_client_error(error: ClientError) -> bool:
-    error_code = error.response.get("Error", {}).get("Code")
-    status_code = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-    return (
-        error_code in RETRYABLE_ELB_ERROR_CODES
-        or status_code in RETRYABLE_ELB_HTTP_STATUS_CODES
-    )
-
-
-# DEPRECATED: Remove this migration function when releasing v1
-def _migrate_legacy_loadbalancer_labels(neo4j_session: neo4j.Session) -> None:
-    """One-time migration: relabel LoadBalancer → AWSLoadBalancer."""
-    check_query = """
-    MATCH (:AWSAccount)-[:RESOURCE]->(n:LoadBalancer)
-    WHERE NOT n:AWSLoadBalancer AND NOT n:LoadBalancerV2
-    RETURN count(n) as legacy_count
-    """
-    result = neo4j_session.run(check_query)
-    legacy_count = result.single()["legacy_count"]
-
-    if legacy_count == 0:
-        return
-
-    logger.info(f"Migrating {legacy_count} legacy LoadBalancer nodes...")
-    migration_query = """
-    MATCH (:AWSAccount)-[:RESOURCE]->(n:LoadBalancer)
-    WHERE NOT n:AWSLoadBalancer AND NOT n:LoadBalancerV2
-    SET n:AWSLoadBalancer
-    RETURN count(n) as migrated
-    """
-    result = neo4j_session.run(migration_query)
-    logger.info(f"Migrated {result.single()['migrated']} nodes")
-
-
-def _get_listener_id(load_balancer_id: str, port: int, protocol: str) -> str:
-    """
-    Generate a unique ID for a load balancer listener.
-
-    Args:
-        load_balancer_id: The ID of the load balancer
-        port: The listener port
-        protocol: The listener protocol
-
-    Returns:
-        A unique ID string for the listener
-    """
-    return f"{load_balancer_id}{port}{protocol}"
-
-
-def transform_load_balancer_listener_data(
-    load_balancer_id: str, listener_data: list[dict]
-) -> list[dict]:
-    """
-    Transform load balancer listener data into a format suitable for cartography ingestion.
-
-    Args:
-        load_balancer_id: The ID of the load balancer
-        listener_data: List of listener data from AWS API
-
-    Returns:
-        List of transformed listener data
-    """
-    transformed = []
-    for listener in listener_data:
-        listener_info = listener["Listener"]
-        transformed_listener = {
-            "id": _get_listener_id(
-                load_balancer_id,
-                listener_info["LoadBalancerPort"],
-                listener_info["Protocol"],
-            ),
-            "port": listener_info.get("LoadBalancerPort"),
-            "protocol": listener_info.get("Protocol"),
-            "instance_port": listener_info.get("InstancePort"),
-            "instance_protocol": listener_info.get("InstanceProtocol"),
-            "policy_names": listener.get("PolicyNames", []),
-            "LoadBalancerId": load_balancer_id,
-        }
-        transformed.append(transformed_listener)
-    return transformed
-
-
-def transform_load_balancer_data(
-    load_balancers: list[dict],
-) -> tuple[list[dict], list[dict]]:
-    """
-    Transform load balancer data into a format suitable for cartography ingestion.
-
-    Args:
-        load_balancers: List of load balancer data from AWS API
-
-    Returns:
-        Tuple of (transformed load balancer data, transformed listener data)
-    """
-    transformed = []
-    listener_data = []
-
-    for lb in load_balancers:
-        load_balancer_id = lb["DNSName"]
-        transformed_lb = {
-            "id": load_balancer_id,
-            "name": lb["LoadBalancerName"],
-            "dnsname": lb["DNSName"],
-            "canonicalhostedzonename": lb.get("CanonicalHostedZoneName"),
-            "canonicalhostedzonenameid": lb.get("CanonicalHostedZoneNameID"),
-            "scheme": lb.get("Scheme"),
-            "createdtime": str(lb["CreatedTime"]),
-            "GROUP_NAME": lb.get("SourceSecurityGroup", {}).get("GroupName"),
-            "GROUP_IDS": [str(group) for group in lb.get("SecurityGroups", [])],
-            "INSTANCE_IDS": [
-                instance["InstanceId"] for instance in lb.get("Instances", [])
-            ],
-            "LISTENER_IDS": [
-                _get_listener_id(
-                    load_balancer_id,
-                    listener["Listener"]["LoadBalancerPort"],
-                    listener["Listener"]["Protocol"],
-                )
-                for listener in lb.get("ListenerDescriptions", [])
-            ],
-        }
-        transformed.append(transformed_lb)
-
-        # Classic ELB listeners are not returned anywhere else in AWS, so we must parse them out
-        # of the describe_load_balancers response.
-        if lb.get("ListenerDescriptions"):
-            listener_data.extend(
-                transform_load_balancer_listener_data(
-                    load_balancer_id,
-                    lb.get("ListenerDescriptions", []),
-                ),
-            )
-
-    return transformed, listener_data
+aws_console_link = AWSLinker()
 
 
 @timeit
 @aws_handle_regions
-def get_loadbalancer_data(
-    boto3_session: boto3.session.Session, region: str
-) -> list[dict]:
-    client = create_boto3_client(
-        boto3_session, "elb", region_name=region, config=get_botocore_config()
-    )
-    paginator = client.get_paginator("describe_load_balancers")
-    elbs: list[dict] = []
+def get_loadbalancer_data(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+    client = boto3_session.client('elb', region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator('describe_load_balancers')
+    elbs: List[Dict] = []
     try:
         for page in paginator.paginate():
-            elbs.extend(page["LoadBalancerDescriptions"])
-    except TRANSIENT_REGION_EXCEPTIONS as error:
-        raise ELBTransientRegionFailure(
-            "Encountered a transient regional ELB endpoint failure while calling DescribeLoadBalancers"
-        ) from error
+            elbs.extend(page['LoadBalancerDescriptions'])
+        for elb in elbs:
+            elb['region'] = region
+
+    except Exception as e:
+        logger.warning(f"Failed retrieve load balancers for region - {region}. Error - {e}")
+
     return elbs
 
 
 @timeit
-def load_load_balancers(
-    neo4j_session: neo4j.Session,
-    data: list[dict],
-    region: str,
-    current_aws_account_id: str,
-    update_tag: int,
-) -> None:
-    load(
-        neo4j_session,
-        LoadBalancerSchema(),
-        data,
-        Region=region,
-        AWS_ID=current_aws_account_id,
-        lastupdated=update_tag,
-    )
-
-
-@timeit
 def load_load_balancer_listeners(
-    neo4j_session: neo4j.Session,
-    data: list[dict],
-    region: str,
-    current_aws_account_id: str,
-    update_tag: int,
+    neo4j_session: neo4j.Session, listener_rows: List[Dict], update_tag: int,
 ) -> None:
-    load(
-        neo4j_session,
-        ELBListenerSchema(),
-        data,
-        Region=region,
-        AWS_ID=current_aws_account_id,
-        lastupdated=update_tag,
-    )
+    """Each row: load_balancer_id, consolelink, listeners (the ListenerDescriptions list)."""
+    ingest_listener = """
+    UNWIND $DictList AS item
+    MATCH (elb:LoadBalancer{id: item.load_balancer_id})
+    WITH elb, item
+    UNWIND item.listeners as data
+        MERGE (l:Endpoint:ELBListener{id: elb.id + toString(data.Listener.LoadBalancerPort) +
+                toString(data.Listener.Protocol)})
+        ON CREATE SET l.port = data.Listener.LoadBalancerPort, l.protocol = data.Listener.Protocol,
+        l.consolelink = item.consolelink,
+        l.firstseen = timestamp()
+        SET l.instance_port = data.Listener.InstancePort, l.instance_protocol = data.Listener.InstanceProtocol,
+        l.policy_names = data.PolicyNames,
+        l.lastupdated = $update_tag
+        WITH l, elb
+        MERGE (elb)-[r:ELB_LISTENER]->(l)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
+    """
+    load_graph_data(neo4j_session, ingest_listener, listener_rows, update_tag=update_tag)
 
 
 @timeit
-def cleanup_load_balancers(
-    neo4j_session: neo4j.Session, common_job_parameters: dict
+def load_load_balancer_subnets(
+    neo4j_session: neo4j.Session, subnet_rows: List[Dict], update_tag: int,
 ) -> None:
-    GraphJob.from_node_schema(ELBListenerSchema(), common_job_parameters).run(
-        neo4j_session
+    """Each row: load_balancer_id, subnet_id."""
+    ingest_load_balancer_subnet = """
+    UNWIND $DictList AS item
+    MATCH (elb:LoadBalancer{id: item.load_balancer_id}), (subnet:EC2Subnet{subnetid: item.subnet_id})
+    MERGE (elb)-[r:SUBNET]->(subnet)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+    load_graph_data(neo4j_session, ingest_load_balancer_subnet, subnet_rows, update_tag=update_tag)
+
+
+@timeit
+def load_load_balancers(
+    neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
+    update_tag: int,
+) -> None:
+    ingest_load_balancer = """
+    UNWIND $DictList AS item
+    MERGE (elb:LoadBalancer{id: item.id})
+    ON CREATE SET elb.firstseen = timestamp(), elb.createdtime = item.createdtime
+    SET elb.lastupdated = $update_tag, elb.name = item.name, elb.dnsname = item.id,
+    elb.canonicalhostedzonename = item.hosted_zone_name, elb.canonicalhostedzonenameid = item.hosted_zone_name_id,
+    elb.scheme = item.scheme, elb.region = item.region, elb.arn = item.arn
+    WITH elb
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (aa)-[r:RESOURCE]->(elb)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+
+    ingest_load_balancersource_security_group = """
+    UNWIND $DictList AS item
+    MATCH (elb:LoadBalancer{id: item.load_balancer_id}),
+    (group:EC2SecurityGroup{name: item.group_name})
+    MERGE (elb)-[r:SOURCE_SECURITY_GROUP]->(group)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+
+    ingest_load_balancer_security_group = """
+    UNWIND $DictList AS item
+    MATCH (elb:LoadBalancer{id: item.load_balancer_id}),
+    (group:EC2SecurityGroup{groupid: item.group_id})
+    MERGE (elb)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(group)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+
+    ingest_instances = """
+    UNWIND $DictList AS item
+    MATCH (elb:LoadBalancer{id: item.load_balancer_id}), (instance:EC2Instance{instanceid: item.instance_id})
+    MERGE (elb)-[r:EXPOSE]->(instance)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    WITH instance
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (aa)-[r:RESOURCE]->(instance)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+
+    lb_rows, subnet_rows, sg_rows, source_sg_rows, instance_rows, listener_rows = [], [], [], [], [], []
+    for lb in data:
+        region = lb.get('region', '')
+        load_balancer_id = lb["DNSName"]
+        load_balancer_arn = \
+            f"arn:aws:elasticloadbalancing:{region}:{current_aws_account_id}:loadbalancer/{load_balancer_id}"
+        console_arn = \
+            f"arn:aws:elasticloadbalancing:{region}:{current_aws_account_id}:loadbalancer/{lb['LoadBalancerName']}"
+        consolelink = aws_console_link.get_console_link(arn=console_arn)
+
+        lb_rows.append({
+            "id": load_balancer_id,
+            "createdtime": str(lb["CreatedTime"]),
+            "name": lb["LoadBalancerName"],
+            "hosted_zone_name": lb.get("CanonicalHostedZoneName"),
+            "hosted_zone_name_id": lb.get("CanonicalHostedZoneNameID"),
+            "scheme": lb.get("Scheme", ""),
+            "region": region,
+            "arn": load_balancer_arn,
+        })
+        subnet_rows.extend(
+            {"load_balancer_id": load_balancer_id, "subnet_id": subnet_id}
+            for subnet_id in lb["Subnets"] or []
+        )
+        sg_rows.extend(
+            {"load_balancer_id": load_balancer_id, "group_id": str(group)}
+            for group in lb["SecurityGroups"] or []
+        )
+        if lb["SourceSecurityGroup"]:
+            source_sg_rows.append({
+                "load_balancer_id": load_balancer_id,
+                "group_name": lb["SourceSecurityGroup"]["GroupName"],
+            })
+        instance_rows.extend(
+            {"load_balancer_id": load_balancer_id, "instance_id": instance["InstanceId"]}
+            for instance in lb["Instances"] or []
+        )
+        if lb["ListenerDescriptions"]:
+            listener_rows.append({
+                "load_balancer_id": load_balancer_id,
+                "consolelink": consolelink,
+                "listeners": lb["ListenerDescriptions"],
+            })
+
+    load_graph_data(
+        neo4j_session, ingest_load_balancer, lb_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id, update_tag=update_tag,
     )
-    GraphJob.from_node_schema(LoadBalancerSchema(), common_job_parameters).run(
-        neo4j_session
+    load_load_balancer_subnets(neo4j_session, subnet_rows, update_tag)
+    load_graph_data(neo4j_session, ingest_load_balancer_security_group, sg_rows, update_tag=update_tag)
+    load_graph_data(neo4j_session, ingest_load_balancersource_security_group, source_sg_rows, update_tag=update_tag)
+    load_graph_data(
+        neo4j_session, ingest_instances, instance_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id, update_tag=update_tag,
     )
+    load_load_balancer_listeners(neo4j_session, listener_rows, update_tag)
+
+
+@timeit
+def cleanup_load_balancers(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job('aws_ingest_load_balancers_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync_load_balancers(
-    neo4j_session: neo4j.Session,
-    boto3_session: boto3.session.Session,
-    regions: list[str],
-    current_aws_account_id: str,
-    update_tag: int,
-    common_job_parameters: dict,
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
+    update_tag: int, common_job_parameters: Dict,
 ) -> None:
-    _migrate_legacy_loadbalancer_labels(neo4j_session)
-    cleanup_safe = True
+    tic = time.perf_counter()
 
+    logger.info("Syncing EC2 load balancers for account '%s', at %s.", current_aws_account_id, tic)
+
+    data = []
     for region in regions:
-        logger.info(
-            "Syncing EC2 load balancers for region '%s' in account '%s'.",
-            region,
-            current_aws_account_id,
-        )
-        try:
-            data = get_loadbalancer_data(boto3_session, region)
-        except ELBTransientRegionFailure as error:
-            cleanup_safe = False
-            logger.warning(
-                "Skipping classic ELB sync for account %s in region %s after transient ELB failure: %s",
-                current_aws_account_id,
-                region,
-                error,
-            )
-            continue
-        except ClientError as error:
-            if _is_retryable_elb_client_error(error):
-                cleanup_safe = False
-                logger.warning(
-                    "Skipping classic ELB sync for account %s in region %s after AWS client retries were exhausted: %s",
-                    current_aws_account_id,
-                    region,
-                    error,
-                )
-                continue
-            raise
-        transformed_data, listener_data = transform_load_balancer_data(data)
+        logger.info("Syncing EC2 load balancers for region '%s' in account '%s'.", region, current_aws_account_id)
+        data.extend(get_loadbalancer_data(boto3_session, region))
 
-        load_load_balancers(
-            neo4j_session, transformed_data, region, current_aws_account_id, update_tag
-        )
-        load_load_balancer_listeners(
-            neo4j_session, listener_data, region, current_aws_account_id, update_tag
-        )
+    logger.info(f"Total Load Balancers: {len(data)}")
 
-    if cleanup_safe:
-        cleanup_load_balancers(neo4j_session, common_job_parameters)
-    else:
-        logger.warning(
-            "Skipping classic ELB cleanup for account %s because one or more regions had transient ELB failures. Preserving last-known-good ELB state.",
-            current_aws_account_id,
-        )
+    load_load_balancers(neo4j_session, data, current_aws_account_id, update_tag)
+    cleanup_load_balancers(neo4j_session, common_job_parameters)
+
+    toc = time.perf_counter()
+    logger.info(f"Time to process EC2 load balancers: {toc - tic:0.4f} seconds")

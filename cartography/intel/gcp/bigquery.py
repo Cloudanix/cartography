@@ -160,6 +160,11 @@ def transform_dataset_accesses(
     """
     accesses_list = []
     for res in response_objects:
+        # View, routine, and dataset access entries don't have a 'role' field
+        # per GCP API spec — skip them as they represent authorized entity access
+        # rather than role-based ACLs.
+        if "role" not in res:
+            continue
         res["id"] = f"projects/{project_id}/bigquery/{dataset_id}/role/{res['role']}"
         accesses_list.append(res)
     return accesses_list

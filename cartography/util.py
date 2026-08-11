@@ -25,10 +25,12 @@ import backoff
 import boto3
 import botocore
 import neo4j
+import requests
 from botocore.exceptions import ConnectTimeoutError
 from botocore.exceptions import EndpointConnectionError
 from botocore.exceptions import ReadTimeoutError
 from botocore.parsers import ResponseParserError
+from requests.exceptions import RequestException
 
 from cartography import helpers
 from cartography.graph.job import GraphJob
@@ -670,6 +672,7 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
     @backoff.on_exception(
         backoff.expo,
         (botocore.exceptions.ClientError, ResponseParserError),
+        max_tries=3,
         max_time=600,
         on_backoff=backoff_handler,
     )
@@ -1141,3 +1144,70 @@ def make_neo4j_datetime_validator() -> Callable[[Any], Union[datetime, None]]:
     Returns a lambda that can be used with BeforeValidator.
     """
     return lambda v: to_datetime(v)
+
+
+def make_requests_url(
+    url: str,
+    access_token: str,
+    return_raw: bool = False,
+) -> Union[Dict, requests.Response]:
+    try:
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        response = requests.request(
+            "GET",
+            url,
+            headers=headers,
+        )
+
+        if response.status_code != 200:
+            logger.warning(
+                f"non-200 response calling {url}: status={response.status_code} body={response.text[:100]!r}",
+            )
+            return {}
+
+        if return_raw:
+            return response
+
+        return response.json()
+
+    except RequestException as e:
+        logger.info(f"failed to get response from {url}: {e}")
+        return {}
+
+
+def get_azure_resource_group_name(id: str) -> str:
+    resource_group = ""
+    id = id.lower()
+    if id is not None and "resourcegroups" in id:
+        x = id.split("/")
+        resource_group = x[x.index("resourcegroups") + 1]
+        return resource_group
+
+    return resource_group
+
+
+def normalize_datetime(date_str: Optional[str]):
+    """
+    Normalize an ISO 8601 datetime string to a standard UTC format and compute its timestamp.
+
+    Returns a tuple (iso_str, timestamp_ms):
+      - iso_str: "YYYY-MM-DDTHH:MM:SSZ" normalized to UTC, no sub-second precision
+      - timestamp_ms: integer milliseconds since Unix epoch
+
+    Returns (None, None) if the input is None, empty, or cannot be parsed.
+    """
+    if not date_str:
+        return None, None
+    try:
+        # fromisoformat in Python < 3.11 does not handle 'Z' suffix
+        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        dt_utc = dt.astimezone(timezone.utc)
+        iso_str = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp_ms = int(dt_utc.timestamp() * 1000)
+        return iso_str, timestamp_ms
+    except (ValueError, TypeError):
+        return None, None

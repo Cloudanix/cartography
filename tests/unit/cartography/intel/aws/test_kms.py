@@ -1,3 +1,4 @@
+from cartography.intel.aws.kms import filter_live_kms_keys
 from cartography.intel.aws.kms import transform_kms_key_policies
 from tests.data.aws.kms import ACCESS_DENIED_KMS_KEY_DETAILS
 
@@ -24,3 +25,20 @@ def test_transform_kms_key_policies_with_null_policy():
     assert key2_data["kms_key"] == "1b2cd345-7e8f-49ab-cdef-0123456789ab"
     assert key2_data["anonymous_access"] is None
     assert key2_data["anonymous_actions"] is None
+
+
+
+
+def test_filter_live_kms_keys_skips_pending_deletion():
+    keys = [
+        {'KeyId': 'k-enabled', 'KeyState': 'Enabled'},
+        {'KeyId': 'k-disabled', 'KeyState': 'Disabled'},
+        {'KeyId': 'k-pending', 'KeyState': 'PendingDeletion'},
+        {'KeyId': 'k-missing'},
+    ]
+    filtered = filter_live_kms_keys(keys)
+    assert [k['KeyId'] for k in filtered] == ['k-enabled', 'k-disabled', 'k-missing']
+
+
+def test_filter_live_kms_keys_empty():
+    assert filter_live_kms_keys([]) == []

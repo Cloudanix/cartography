@@ -28,6 +28,45 @@ def _resolve_token(token: Any) -> str:
 
 _GRAPHQL_RATE_LIMIT_REMAINING_THRESHOLD = 500
 _REST_RATE_LIMIT_REMAINING_THRESHOLD = 100
+_TRANSIENT_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def get_http_status_code(err: BaseException) -> int | None:
+    if isinstance(err, requests.exceptions.HTTPError) and err.response is not None:
+        return err.response.status_code
+    return None
+
+
+def is_retryable_request_error(err: BaseException) -> bool:
+    if isinstance(
+        err,
+        (
+            requests.exceptions.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+        ),
+    ):
+        return True
+
+    status_code = get_http_status_code(err)
+    return (
+        status_code in _TRANSIENT_HTTP_STATUS_CODES if status_code is not None else False
+    )
+
+
+def get_retry_delay_seconds(err: BaseException, retry: int) -> int:
+    if isinstance(err, requests.exceptions.HTTPError) and err.response is not None:
+        retry_after = err.response.headers.get("Retry-After")
+        if retry_after and retry_after.isdigit():
+            return int(retry_after)
+    return int(2**retry)
+
+
+def describe_request_error(err: BaseException) -> str:
+    status_code = get_http_status_code(err)
+    if status_code is not None:
+        return f"HTTP {status_code}"
+    return err.__class__.__name__
 # Search API has a stricter rate limit (30 requests/minute for authenticated users)
 _SEARCH_RATE_LIMIT_REMAINING_THRESHOLD = 5
 # HTTP status codes that are safe to retry with exponential backoff

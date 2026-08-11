@@ -7,6 +7,8 @@ from pkgutil import iter_modules
 from typing import Any
 from typing import Callable
 
+import cartography.intel.analysis
+import cloudanix
 import neo4j.exceptions
 from neo4j import GraphDatabase
 from statsd import StatsClient
@@ -71,6 +73,15 @@ TOP_LEVEL_MODULES: OrderedDict[str, Callable[..., None]] = OrderedDict(
         "openai": _LazyStage("cartography.intel.openai", "start_openai_ingestion"),
         "github": _LazyStage("cartography.intel.github", "start_github_ingestion"),
         "gitlab": _LazyStage("cartography.intel.gitlab", "start_gitlab_ingestion"),
+        "azuredevops": _LazyStage(
+            "cartography.intel.azuredevops", "start_azure_devops_ingestion"
+        ),
+        "bitbucket": _LazyStage(
+            "cartography.intel.bitbucket", "start_bitbucket_ingestion"
+        ),
+        "crxcavator": _LazyStage(
+            "cartography.intel.crxcavator", "start_extension_ingestion"
+        ),
         "digitalocean": _LazyStage(
             "cartography.intel.digitalocean", "start_digitalocean_ingestion"
         ),
@@ -262,11 +273,24 @@ class Sync:
             and debugging purposes.
         """
         logger.info("Starting sync with update tag '%d'", config.update_tag)
+        response = STATUS_SUCCESS
         with neo4j_driver.session(database=config.neo4j_database) as neo4j_session:
             for stage_name, stage_func in self._stages.items():
                 logger.info("Starting sync stage '%s'", stage_name)
                 try:
-                    stage_func(neo4j_session, config)
+                    if stage_name in [
+                        "aws",
+                        "azure",
+                        "gcp",
+                        "github",
+                        "bitbucket",
+                        "gitlab",
+                        "azuredevops",
+                        "oci",
+                    ]:
+                        response = stage_func(neo4j_session, config)
+                    else:
+                        stage_func(neo4j_session, config)
                 except (KeyboardInterrupt, SystemExit):
                     logger.warning("Sync interrupted during stage '%s'.", stage_name)
                     raise
@@ -278,7 +302,7 @@ class Sync:
                     raise  # TODO this should be configurable
                 logger.info("Finishing sync stage '%s'", stage_name)
         logger.info("Finishing sync with update tag '%d'", config.update_tag)
-        return STATUS_SUCCESS
+        return response
 
     @classmethod
     def list_intel_modules(cls) -> OrderedDict:
@@ -615,6 +639,90 @@ def build_sync(selected_modules_as_str: str) -> Sync:
     sync.add_stages(
         [(sync_name, TOP_LEVEL_MODULES[sync_name]) for sync_name in selected_modules],
     )
+    return sync
+
+
+def build_aws_sync():
+    """
+    Build the aws cartography sync, which runs all intelligence modules shipped with the cartography package.
+
+    :rtype: cartography.sync.Sync
+    :return: The aws cartography sync object.
+    """
+    import cartography.intel.aws
+
+    sync = Sync()
+
+    stages = []
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("aws", cartography.intel.aws.start_aws_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
+
+    sync.add_stages(stages)
+
+    return sync
+
+
+def build_azure_sync():
+    """
+    Build the azure cartography sync, which runs all intelligence modules shipped with the cartography package.
+
+    :rtype: cartography.sync.Sync
+    :return: The azure cartography sync object.
+    """
+    import cartography.intel.azure
+
+    sync = Sync()
+
+    stages = []
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("azure", cartography.intel.azure.start_azure_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
+
+    sync.add_stages(stages)
+
+    return sync
+
+
+def build_gcp_sync():
+    """
+    Build the default cartography sync, which runs all intelligence modules shipped with the cartography package.
+
+    :rtype: cartography.sync.Sync
+    :return: The default cartography sync object.
+    """
+    import cartography.intel.gcp
+
+    sync = Sync()
+
+    stages = []
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("gcp", cartography.intel.gcp.start_gcp_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
+
+    sync.add_stages(stages)
+
+    return sync
+
+
+def build_oci_sync():
+    """
+    Build the default cartography sync, which runs all intelligence modules shipped with the cartography package.
+
+    :rtype: cartography.sync.Sync
+    :return: The default cartography sync object.
+    """
+    import cartography.intel.oci
+
+    sync = Sync()
+
+    stages = []
+    stages.append(("cloudanix-workspace", cloudanix.run))
+    stages.append(("oci", cartography.intel.oci.start_oci_ingestion))
+    stages.append(("analysis", cartography.intel.analysis.run))
+
+    sync.add_stages(stages)
+
     return sync
 
 

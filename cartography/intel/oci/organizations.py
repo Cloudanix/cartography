@@ -1,6 +1,10 @@
+# Copyright (c) 2020, Oracle and/or its affiliates.
 import logging
 import re
+import time
 from typing import Any
+from typing import Dict
+from typing import List
 
 import neo4j
 import oci
@@ -8,21 +12,17 @@ from oci.exceptions import ConfigFileNotFound
 from oci.exceptions import InvalidConfig
 from oci.exceptions import ProfileNotFound
 
-from cartography.client.core.tx import load
-from cartography.graph.job import GraphJob
-from cartography.models.oci.tenancy import OCITenancySchema
-from cartography.util import timeit
+from cartography.client.core.tx import load_graph_data
+from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
 
 
-@timeit
-def get_caller_identity() -> dict[Any, Any]:
+def get_caller_identity() -> Dict[Any, Any]:
     return {}
 
 
-@timeit
-def get_oci_account_default() -> dict[str, Any]:
+def get_oci_account_default() -> Dict[str, Any]:
     try:
         profile_oci_credentials = oci.config.from_file("~/.oci/config", "DEFAULT")
         oci.config.validate_config(profile_oci_credentials)
@@ -40,36 +40,30 @@ def get_oci_account_default() -> dict[str, Any]:
         return {}
 
 
-@timeit
-def get_oci_profile_names_from_config() -> list[Any]:
+def get_oci_profile_names_from_config() -> List[Any]:
     config_path = oci.config._get_config_path_with_fallback("~/.oci/config")
     config = open(config_path).read()
-    pattern = r"\[(.*)\]"
+    pattern = r'\[(.*)\]'
     m = re.findall(pattern, config)
     return m
 
 
-@timeit
-def get_oci_accounts_from_config() -> dict[str, Any]:
+def get_oci_accounts_from_config() -> Dict[str, Any]:
 
     available_profiles = get_oci_profile_names_from_config()
 
     d = {}
     for profile_name in available_profiles:
-        if profile_name == "DEFAULT":
+        if profile_name == 'DEFAULT':
             logger.debug("Skipping OCI profile 'DEFAULT'.")
             continue
         try:
-            profile_oci_credentials = oci.config.from_file(
-                "~/.oci/config",
-                profile_name,
-            )
+            profile_oci_credentials = oci.config.from_file("~/.oci/config", profile_name)
             oci.config.validate_config(profile_oci_credentials)
         except (ConfigFileNotFound, ProfileNotFound, InvalidConfig) as e:
             logger.debug(
                 "Error occurred calling oci.config.from_file with profile_name '%s'.",
-                profile_name,
-                exc_info=True,
+                profile_name, exc_info=True,
             )
             logger.error(
                 (
@@ -92,52 +86,82 @@ def get_oci_accounts_from_config() -> dict[str, Any]:
     return d
 
 
-def transform_oci_accounts(
-    oci_accounts: dict[str, Any],
-) -> list[dict[str, Any]]:
+def get_tenancy_details(
+    identity_client: oci.identity.identity_client.IdentityClient,
+    tenancy_id: str,
+) -> Dict[str, Any]:
     """
-    Transform OCI accounts data for loading into Neo4j.
+    Get tenancy details (name, home region, etc.) from the OCI API.
     """
-    return [
-        {
-            "ocid": oci_accounts[name]["tenancy"],
-            "name": name,
+    try:
+        response = identity_client.get_tenancy(tenancy_id)
+        tenancy = response.data
+        return {
+            "id": tenancy.id,
+            "name": tenancy.name,
+            "description": tenancy.description,
+            "home_region_key": tenancy.home_region_key,
         }
-        for name in oci_accounts
-    ]
+    except oci.exceptions.ServiceError as e:
+        logger.warning("Could not fetch tenancy details for '%s': %s", tenancy_id, e.message)
+        return {"id": tenancy_id, "name": tenancy_id}
 
 
-@timeit
 def load_oci_accounts(
     neo4j_session: neo4j.Session,
-    oci_accounts: list[dict[str, Any]],
+    oci_accounts: Dict[str, Any],
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any],
+    identity_client: oci.identity.identity_client.IdentityClient = None,
 ) -> None:
-    load(
+    query = """
+    UNWIND $DictList AS acct
+        MERGE (w:CloudanixWorkspace{id: $WORKSPACE_ID})
+        SET w.lastupdated = $oci_update_tag
+        WITH w, acct
+        MERGE (aa:OCITenancy{id: acct.tenancy_id})
+        ON CREATE SET aa.firstseen = timestamp()
+        SET aa.ocid = acct.tenancy_id, aa.unique_id = acct.unique_id, aa.lastupdated = $oci_update_tag, aa.name = acct.account_name
+        WITH w, aa
+        MERGE (w)-[r:OWNER]->(aa)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
+    """
+    rows = []
+    for name in oci_accounts:
+        tenancy_id = oci_accounts[name]["tenancy"]
+
+        # Get real tenancy name from API if identity_client is available
+        account_name = name
+        if identity_client:
+            tenancy_details = get_tenancy_details(identity_client, tenancy_id)
+            account_name = tenancy_details.get("name", name)
+
+        rows.append({"tenancy_id": tenancy_id, "unique_id": f"tenancy/{tenancy_id}", "account_name": account_name})
+
+    load_graph_data(
         neo4j_session,
-        OCITenancySchema(),
-        oci_accounts,
-        lastupdated=oci_update_tag,
+        query,
+        rows,
+        WORKSPACE_ID=common_job_parameters.get("WORKSPACE_ID", ""),
+        oci_update_tag=oci_update_tag,
     )
 
 
-@timeit
-def cleanup(
-    neo4j_session: neo4j.Session,
-    common_job_parameters: dict[str, Any],
-) -> None:
-    GraphJob.from_node_schema(OCITenancySchema(), common_job_parameters).run(
-        neo4j_session
-    )
+def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    run_cleanup_job('oci_tenancy_cleanup.json', neo4j_session, common_job_parameters)
 
 
-@timeit
 def sync(
     neo4j_session: neo4j.Session,
-    accounts: dict[str, Any],
+    accounts: Dict[str, Any],
     oci_update_tag: int,
-    common_job_parameters: dict[str, Any],
+    common_job_parameters: Dict[str, Any],
+    identity_client: oci.identity.identity_client.IdentityClient = None,
 ) -> None:
-    transformed_accounts = transform_oci_accounts(accounts)
-    load_oci_accounts(neo4j_session, transformed_accounts, oci_update_tag)
+    tic = time.perf_counter()
+    logger.info("Syncing OCI organizations")
+    load_oci_accounts(neo4j_session, accounts, oci_update_tag, common_job_parameters, identity_client)
     cleanup(neo4j_session, common_job_parameters)
+    toc = time.perf_counter()
+    logger.info(f"Time to process OCI organizations ({len(accounts)} accounts): {toc - tic:0.4f} seconds")

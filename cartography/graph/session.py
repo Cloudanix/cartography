@@ -1,34 +1,23 @@
 import logging
+import random
+import time
 from typing import Any
 from typing import Callable
 
 import neo4j
-from neo4j.exceptions import AuthError
-from neo4j.exceptions import RoutingServiceUnavailable
-from neo4j.exceptions import ServiceUnavailable
-from neo4j.exceptions import SessionExpired
-from neo4j.exceptions import TransactionError
-from neo4j.exceptions import TransactionNestingError
-from neo4j.exceptions import WriteServiceUnavailable
+from neo4j.exceptions import TransientError
+
+from cartography.graph import write_timer
+
 
 logger = logging.getLogger(__name__)
-
-_NEO4J_WRITE_EXCEPTIONS = (
-    ServiceUnavailable,
-    AuthError,
-    SessionExpired,
-    TransactionError,
-    TransactionNestingError,
-    RoutingServiceUnavailable,
-    WriteServiceUnavailable,
-)
 
 
 class Session:
     """
     A thin composition-based wrapper around neo4j.Session.
 
-    We deliberately do NOT inherit from neo4j.Session because Neo4j 5+/6+ driver
+    We deliberately do NOT inherit from neo4j.Session because Neo4j 5's driver
     initialises many internal attributes (e.g. _closed) inside its own __init__,
     and skipping that call causes crashes throughout the driver internals.
     Instead we hold the real session as self.neo4j_session and delegate every
@@ -42,68 +31,48 @@ class Session:
     # Core query execution
     # ------------------------------------------------------------------
 
-    def run(self, query: str, parameters: Any = None, **kwparameters: Any) -> Any:
-        try:
-            return self.neo4j_session.run(query, parameters, **kwparameters)
-        except _NEO4J_WRITE_EXCEPTIONS as e:
-            logger.warning(
-                f"Failed run neo4j cypher query. Error - {e}",
-                exc_info=True,
-                stack_info=True,
-            )
-        except Exception as e:
-            logger.warning(
-                f"Failed run neo4j cypher query. Error - {e}",
-                exc_info=True,
-                stack_info=True,
-            )
-        return self
+    def run(self, query: str, parameters: Any = None, max_retries: int = 3, **kwparameters: Any) -> Any:
+        for attempt in range(max_retries + 1):
+            try:
+                with write_timer.timed():
+                    return self.neo4j_session.run(query, parameters, **kwparameters)
+            except TransientError as e:
+                if attempt >= max_retries:
+                    logger.error("Transient Neo4j error unresolved after %d retries: %s", max_retries, e)
+                    raise
+                wait = random.uniform(0, min(2 ** attempt, 30))
+                logger.warning(
+                    "Transient Neo4j error (attempt %d/%d), retrying in %.2fs: %s",
+                    attempt + 1, max_retries, wait, e,
+                )
+                time.sleep(wait)
+            except Exception as e:
+                # Never swallow: a silently dropped write reports a successful sync
+                # while rows are missing from the graph.
+                logger.warning(f"Failed run neo4j cypher query. Error - {e}", exc_info=True, stack_info=True)
+                raise
 
     # ------------------------------------------------------------------
     # Transaction helpers (used by cartography.graph.job / statement)
     # ------------------------------------------------------------------
 
-    def execute_write(
-        self, transaction_function: Callable, *args: Any, **kwargs: Any
-    ) -> Any:
+    def execute_write(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
         try:
-            return self.neo4j_session.execute_write(
-                transaction_function, *args, **kwargs
-            )
-        except _NEO4J_WRITE_EXCEPTIONS as e:
-            logger.warning(
-                f"Failed execute_write for neo4j. Error - {e}",
-                exc_info=True,
-                stack_info=True,
-            )
+            with write_timer.timed():
+                return self.neo4j_session.execute_write(transaction_function, *args, **kwargs)
         except Exception as e:
-            logger.warning(
-                f"Failed execute_write for neo4j. Error - {e}",
-                exc_info=True,
-                stack_info=True,
-            )
-        return None
+            # Never swallow: callers (e.g. GraphStatement._run_iterative) rely on the
+            # real result, and a dropped write must fail the sync stage loudly.
+            logger.warning(f"Failed execute_write for neo4j. Error - {e}", exc_info=True, stack_info=True)
+            raise
 
-    def execute_read(
-        self, transaction_function: Callable, *args: Any, **kwargs: Any
-    ) -> Any:
+    def execute_read(self, transaction_function: Callable, *args: Any, **kwargs: Any) -> Any:
         try:
-            return self.neo4j_session.execute_read(
-                transaction_function, *args, **kwargs
-            )
-        except _NEO4J_WRITE_EXCEPTIONS as e:
-            logger.warning(
-                f"Failed execute_read for neo4j. Error - {e}",
-                exc_info=True,
-                stack_info=True,
-            )
+            with write_timer.timed():
+                return self.neo4j_session.execute_read(transaction_function, *args, **kwargs)
         except Exception as e:
-            logger.warning(
-                f"Failed execute_read for neo4j. Error - {e}",
-                exc_info=True,
-                stack_info=True,
-            )
-        return None
+            logger.warning(f"Failed execute_read for neo4j. Error - {e}", exc_info=True, stack_info=True)
+            raise
 
     # ------------------------------------------------------------------
     # Lifecycle helpers

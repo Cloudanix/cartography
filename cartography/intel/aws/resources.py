@@ -1,5 +1,5 @@
-from collections import OrderedDict
-from typing import Callable
+from typing import Dict
+from typing import List
 
 from cartography.intel.aws.ec2.route_tables import sync_route_tables
 
@@ -7,6 +7,7 @@ from . import acm
 from . import apigateway
 from . import apigatewayv2
 from . import bedrock
+from . import cloudformation
 from . import cloudfront
 from . import cloudtrail
 from . import cloudtrail_management_events
@@ -28,8 +29,10 @@ from . import glue
 from . import guardduty
 from . import iam
 from . import identitycenter
+from . import identitystore
 from . import inspector
 from . import kms
+from . import kinesis
 from . import lambda_function
 from . import permission_relationships
 from . import rds
@@ -45,6 +48,7 @@ from . import ses
 from . import sns
 from . import sqs
 from . import ssm
+from . import waf
 from .ec2.auto_scaling_groups import sync_ec2_auto_scaling_groups
 from .ec2.elastic_ip_addresses import sync_elastic_ip_addresses
 from .ec2.images import sync_ec2_images
@@ -68,90 +72,78 @@ from .ec2.vpc_endpoint import sync_vpc_endpoints
 from .ec2.vpc_peerings import sync_vpc_peerings
 from .iam_instance_profiles import sync_iam_instance_profiles
 
-# IMPORTANT: The order of this OrderedDict defines the sync execution order.
-# Module dependencies are enforced by iterating over this dict in order,
-# even when users request a subset of modules.
-# See comments inline for specific dependency requirements.
-RESOURCE_FUNCTIONS: OrderedDict[str, Callable[..., None]] = OrderedDict(
-    {
-        "iam": iam.sync,
-        "iaminstanceprofiles": sync_iam_instance_profiles,
-        "s3": s3.sync,
-        # `kms` must run before `dynamodb` since DynamoDB SSE KMS encryption creates
-        # relationships to existing KMSKey nodes using KMSMasterKeyArn.
-        "kms": kms.sync,
-        "dynamodb": dynamodb.sync,
-        "ec2:launch_templates": sync_ec2_launch_templates,
-        "ec2:autoscalinggroup": sync_ec2_auto_scaling_groups,
-        # `ec2:instance` must be included before `ssm` and `ec2:images`,
-        # they rely on EC2Instance data provided by this module.
-        "ec2:instance": sync_ec2_instances,
-        "ec2:images": sync_ec2_images,
-        "ec2:keypair": sync_ec2_key_pairs,
-        # `ec2:security_group` must run before load balancers and network interfaces
-        # so that EC2SecurityGroup nodes exist for MEMBER_OF_EC2_SECURITY_GROUP edges.
-        "ec2:security_group": sync_ec2_security_groupinfo,
-        # `ec2:subnet` and `ec2:instance` must be synced before `ec2:load_balancer` and `ec2:load_balancer_v2`
-        # so that EC2Subnet and EC2Instance nodes exist when load balancers create relationships.
-        "ec2:subnet": sync_subnets,
-        "ec2:load_balancer": sync_load_balancers,
-        "ec2:load_balancer_v2": sync_load_balancer_v2s,
-        "ec2:network_acls": sync_network_acls,
-        "ec2:network_interface": sync_network_interfaces,
-        # `ec2:load_balancer_v2:expose` must run after `ec2:network_interface` so that
-        # EC2PrivateIp nodes exist when IP target MatchLinks are created.
-        "ec2:load_balancer_v2:expose": sync_load_balancer_v2_expose,
-        "ec2:tgw": sync_transit_gateways,
-        "ec2:vpc": sync_vpc,
-        # `ec2:vpc_endpoint` must be synced before `ec2:route_table` so that
-        # ROUTES_TO_VPC_ENDPOINT relationships can be created when routes sync.
-        "ec2:vpc_endpoint": sync_vpc_endpoints,
-        "ec2:route_table": sync_route_tables,
-        "ec2:vpc_peering": sync_vpc_peerings,
-        "ec2:internet_gateway": sync_internet_gateways,
-        "ec2:reserved_instances": sync_ec2_reserved_instances,
-        "ec2:volumes": sync_ebs_volumes,
-        "ec2:snapshots": sync_ebs_snapshots,
-        "ecr": ecr.sync,
-        "ecr:image_layers": ecr_image_layers.sync,
-        # `ec2:instance` must be synced before `ecs` so that EC2Instance nodes exist
-        # when ECSContainerInstance creates IS_INSTANCE relationships.
-        "ecs": ecs.sync,
-        "eks": eks.sync,
-        "elasticache": elasticache.sync,
-        "elastic_ip_addresses": sync_elastic_ip_addresses,
-        "emr": emr.sync,
-        "lambda_function": lambda_function.sync,
-        "rds": rds.sync,
-        "redshift": redshift.sync,
-        "route53": route53.sync,
-        "elasticsearch": elasticsearch.sync,
-        "permission_relationships": permission_relationships.sync,
-        "resourcegroupstaggingapi": resourcegroupstaggingapi.sync,
-        "apigateway": apigateway.sync,
-        "apigatewayv2": apigatewayv2.sync,
-        "bedrock": bedrock.sync,
-        "cloudfront": cloudfront.sync,
-        "secretsmanager": secretsmanager.sync,
-        "securityhub": securityhub.sync,
-        "s3accountpublicaccessblock": s3accountpublicaccessblock.sync,
-        "sagemaker": sagemaker.sync,
-        "ses": ses.sync,
-        "sns": sns.sync,
-        "sqs": sqs.sync,
-        "ssm": ssm.sync,
-        "acm:certificate": acm.sync,
-        "inspector": inspector.sync,
-        "config": config.sync,
-        "identitycenter": identitycenter.sync_identity_center_instances,
-        "cloudtrail": cloudtrail.sync,
-        "cloudtrail_management_events": cloudtrail_management_events.sync,
-        "cloudwatch": cloudwatch.sync,
-        "efs": efs.sync,
-        "guardduty": guardduty.sync,
-        "codebuild": codebuild.sync,
-        "cognito": cognito.sync,
-        "eventbridge": eventbridge.sync,
-        "glue": glue.sync,
-    }
-)
+RESOURCE_FUNCTIONS: Dict = {
+    'identitystore': identitystore.sync,
+    'iam': iam.sync,
+    's3': s3.sync,
+    'dynamodb': dynamodb.sync,
+    'lambda_function': lambda_function.sync,
+    'ecr': ecr.sync,
+    'ecs': ecs.sync,
+    'eks': eks.sync,
+    'emr': emr.sync,
+    'kms': kms.sync,
+    'kinesis': kinesis.sync,
+    'apigateway': apigateway.sync,
+    'secretsmanager': secretsmanager.sync,
+    'sqs': sqs.sync,
+    'sns': sns.sync,
+    'ses': ses.sync,
+    'sagemaker': sagemaker.sync,
+    'bedrock': bedrock.sync,
+    'cloudwatch': cloudwatch.sync,
+    'cloudfront': cloudfront.sync,
+    'cloudformation': cloudformation.sync,
+    'cloudtrail': cloudtrail.sync,
+    'ec2:launch_templates': sync_ec2_launch_templates,
+    'ec2:keypair': sync_ec2_key_pairs,
+    'ec2:reserved_instances': sync_ec2_reserved_instances,
+    'ec2:vpc': sync_vpc,
+    'ec2:vpc_peering': sync_vpc_peerings,
+    'ec2:security_group': sync_ec2_security_groupinfo,
+    'ec2:subnet': sync_subnets,
+    'ec2:internet_gateway': sync_internet_gateways,
+    'ec2:tgw': sync_transit_gateways,
+    'ec2:route_table': sync_route_tables,
+    # `ec2:instance` must be included before `ssm` and `ec2:images`,
+    # they rely on EC2Instance data provided by this module.
+    'ec2:instance': sync_ec2_instances,
+    'ec2:images': sync_ec2_images,
+    'ec2:volumes': sync_ebs_volumes,
+    'ec2:snapshots': sync_ebs_snapshots,
+    'ec2:autoscalinggroup': sync_ec2_auto_scaling_groups,
+    'ec2:load_balancer': sync_load_balancers,
+    'ec2:load_balancer_v2': sync_load_balancer_v2s,
+    'ec2:network_interface': sync_network_interfaces,
+    'waf': waf.sync,
+    'rds': rds.sync,
+    'redshift': redshift.sync,
+    'elasticache': elasticache.sync,
+    'elasticsearch': elasticsearch.sync,
+    'elastic_ip_addresses': sync_elastic_ip_addresses,
+    'ssm': ssm.sync,
+    'route53': route53.sync,
+    'inspector': inspector.sync,
+    'config': config.sync,
+    'securityhub': securityhub.sync,
+    'permission_relationships': permission_relationships.sync,
+    'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
+}
+
+
+def parse_and_validate_aws_requested_syncs(aws_requested_syncs: str) -> List[str]:
+    validated_resources: List[str] = []
+    for resource in aws_requested_syncs.split(","):
+        resource = resource.strip()
+
+        if resource in RESOURCE_FUNCTIONS:
+            validated_resources.append(resource)
+        else:
+            valid_syncs: str = ", ".join(RESOURCE_FUNCTIONS.keys())
+            raise ValueError(
+                f'Error parsing `aws-requested-syncs`. You specified "{aws_requested_syncs}". '
+                f"Please check that your string is formatted properly. "
+                f'Example valid input looks like "s3,iam,rds" or "s3, ec2:instance, dynamodb". '
+                f"Our full list of valid values is: {valid_syncs}.",
+            )
+    return validated_resources

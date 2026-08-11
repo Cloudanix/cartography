@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -282,9 +283,14 @@ def sync_managed_instance_groups(
     Ingest Managed Instance Groups (MIGs) and connect them to their backing VMs via :PART_OF.
     """
 
+    tic = time.perf_counter()
     migs: List[Dict] = []
     migs.extend(_get_zonal_managed_instance_groups(compute, project_id, zones))
     migs.extend(_get_regional_managed_instance_groups(compute, project_id, regions))
+    logger.info(
+        f"gcp/instance_groups project={project_id}: fetch done — {len(migs)} MIGs "
+        f"in {time.perf_counter() - tic:0.4f}s",
+    )
 
     if migs:
         _load_managed_instance_groups(neo4j_session, migs, project_id, gcp_update_tag)
@@ -301,4 +307,8 @@ def sync_managed_instance_groups(
 
     run_cleanup_job(
         "gcp_instance_groups_cleanup.json", neo4j_session, common_job_parameters
+    )
+    toc = time.perf_counter()
+    logger.info(
+        f"Time to process GCP Managed Instance Groups for project '{project_id}': {toc - tic:0.4f} seconds",
     )

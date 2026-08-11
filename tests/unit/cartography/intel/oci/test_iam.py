@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from cartography.intel.oci import iam
 
+
 JSON_OCI_OBJECT = {
     "capabilities": {
         "can_use_api_keys": True,
@@ -51,25 +52,21 @@ def test_get_compartment_list_data_recurse():
     list_call_get_all_results.data = None
     iam_obj = MagicMock()
     iam_obj.list_compartments.return_value = []
-    with patch(
-        "oci.pagination.list_call_get_all_results",
-        return_value=list_call_get_all_results,
-    ):
-        compartment_list = {"Compartments": []}
+    with patch('oci.pagination.list_call_get_all_results', return_value=list_call_get_all_results) as page_results:
+        compartment_list = {'Compartments': ''}
         compartment_id = "ocid1.compartment.oc1..aaaaaaaakl52gpiymzh46mx5gjrtqgdnzpbhwflj2il5h5r7awj5qlpo2vra"
         iam.get_compartment_list_data_recurse(iam_obj, compartment_list, compartment_id)
-        # Test outcome: compartment_list should remain unchanged when no data is returned
-        assert compartment_list == {"Compartments": []}
+        page_results.assert_called_once()
 
 
 def test_get_compartment_list_data():
     iam_obj = MagicMock()
     iam_obj.list_compartments.return_value = []
-    patch_func = "cartography.intel.oci.iam.get_compartment_list_data_recurse"
-    with patch(patch_func, return_value=JSON_OCI_OBJECT):
+    patch_func = 'cartography.intel.oci.iam.get_compartment_list_data_recurse'
+    with patch(patch_func, return_value=JSON_OCI_OBJECT) as page_results:
         output = iam.get_compartment_list_data(iam_obj, None)
-        # Test outcome: verify output structure
-        assert output == {"Compartments": []}
+        page_results.assert_called_once()
+        assert output == {"Compartments": ""}
 
 
 def test_get_user_list_data():
@@ -77,14 +74,11 @@ def test_get_user_list_data():
     iam_obj.list_users.return_value = []
     resp_obj = MagicMock()
     resp_obj.data = USER_OCI_OBJECT
-    with patch(
-        "oci.pagination.list_call_get_all_results",
-        return_value=resp_obj,
-    ):
+    with patch('oci.pagination.list_call_get_all_results', return_value=resp_obj) as page_results:
         user_list = iam.get_user_list_data(iam_obj, "")
-        # Test outcomes: verify output structure and data
+        page_results.assert_called_once()
         assert "Users" in user_list.keys()
-        assert user_list["Users"][0]["name"] == "none@none.com"
+        assert user_list['Users'][0]['name'] == "none@none.com"
 
 
 def test_get_group_list_data():
@@ -92,14 +86,11 @@ def test_get_group_list_data():
     iam_obj.list_groups.return_value = []
     resp_obj = MagicMock()
     resp_obj.data = GROUP_OCI_OBJECT
-    with patch(
-        "oci.pagination.list_call_get_all_results",
-        return_value=resp_obj,
-    ):
+    with patch('oci.pagination.list_call_get_all_results', return_value=resp_obj) as page_results:
         group_list = iam.get_group_list_data(iam_obj, "")
-        # Test outcomes: verify output structure and data
+        page_results.assert_called_once()
         assert "Groups" in group_list.keys()
-        assert group_list["Groups"][0]["name"] == "Administrators"
+        assert group_list['Groups'][0]['name'] == "Administrators"
 
 
 def test_get_group_membership_data():
@@ -107,17 +98,11 @@ def test_get_group_membership_data():
     iam_obj.list_groups.return_value = []
     resp_obj = MagicMock()
     resp_obj.data = GROUP_MEMBER_OCI_OBJECT
-    with patch(
-        "oci.pagination.list_call_get_all_results",
-        return_value=resp_obj,
-    ):
+    with patch('oci.pagination.list_call_get_all_results', return_value=resp_obj) as page_results:
         group_member_list = iam.get_group_membership_data(iam_obj, "", "")
-        # Test outcomes: verify output structure and data
+        page_results.assert_called_once()
         assert "GroupMemberships" in group_member_list.keys()
-        assert (
-            group_member_list["GroupMemberships"][0]["user-id"]
-            == "ocid1.user.oc1..1234"
-        )
+        assert group_member_list['GroupMemberships'][0]['user-id'] == "ocid1.user.oc1..1234"
 
 
 def test_get_policy_list_data():
@@ -125,14 +110,11 @@ def test_get_policy_list_data():
     iam_obj.list_groups.return_value = []
     resp_obj = MagicMock()
     resp_obj.data = POLICY_OCI_OBJECT
-    with patch(
-        "oci.pagination.list_call_get_all_results",
-        return_value=resp_obj,
-    ):
+    with patch('oci.pagination.list_call_get_all_results', return_value=resp_obj) as page_results:
         policy_list = iam.get_policy_list_data(iam_obj, "")
-        # Test outcomes: verify output structure and data
+        page_results.assert_called_once()
         assert "Policies" in policy_list.keys()
-        assert policy_list["Policies"][0]["name"] == "dev_storage_use"
+        assert policy_list['Policies'][0]['name'] == "dev_storage_use"
 
 
 def test_get_region_subscriptions_list_data():
@@ -140,11 +122,38 @@ def test_get_region_subscriptions_list_data():
     iam_obj.list_groups.return_value = []
     resp_obj = MagicMock()
     resp_obj.data = REGION_OCI_OBJECT
-    with patch(
-        "oci.pagination.list_call_get_all_results",
-        return_value=resp_obj,
-    ):
+    with patch('oci.pagination.list_call_get_all_results', return_value=resp_obj) as page_results:
         region_subscribe_list = iam.get_region_subscriptions_list_data(iam_obj, "")
-        # Test outcomes: verify output structure and data
+        page_results.assert_called_once()
         assert "RegionSubscriptions" in region_subscribe_list.keys()
-        assert region_subscribe_list["RegionSubscriptions"][0]["region-key"] == "PHX"
+        assert region_subscribe_list['RegionSubscriptions'][0]['region-key'] == "PHX"
+
+
+TENANCY_OCID = "ocid1.tenancy.oc1..tenancy123"
+
+
+def test_oci_compartment_managed_type():
+    # The root compartment's id equals the tenancy ocid.
+    assert iam._oci_compartment_managed_type({"id": TENANCY_OCID}, TENANCY_OCID) == "predefined"
+    # A compartment whose parent is the tenancy root is still customer-created.
+    assert iam._oci_compartment_managed_type(
+        {"id": "ocid1.compartment.oc1..abc", "compartmentId": "ocid1.compartment.oc1..parent", "name": "dev"},
+        TENANCY_OCID,
+    ) == "custom"
+    # Oracle seeds the PaaS-managed compartment.
+    assert iam._oci_compartment_managed_type(
+        {"id": "ocid1.compartment.oc1..paas", "name": "ManagedCompartmentForPaaS"}, TENANCY_OCID,
+    ) == "predefined"
+
+
+def test_oci_group_managed_type():
+    assert iam._oci_group_managed_type({"name": "Administrators"}) == "predefined"
+    assert iam._oci_group_managed_type({"name": "dev-team"}) == "custom"
+    assert iam._oci_group_managed_type({}) == "custom"
+
+
+def test_oci_policy_managed_type():
+    assert iam._oci_policy_managed_type({"name": "Tenant Admin Policy"}) == "predefined"
+    assert iam._oci_policy_managed_type({"name": "PSM-root-policy"}) == "predefined"
+    assert iam._oci_policy_managed_type({"name": "dev_storage_use"}) == "custom"
+    assert iam._oci_policy_managed_type({}) == "custom"

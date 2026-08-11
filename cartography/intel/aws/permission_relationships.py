@@ -15,6 +15,7 @@ import yaml
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import read_list_of_values_tx
 from cartography.client.core.tx import run_write_query
+from cartography.client.core.tx import load_graph_data
 from cartography.graph.statement import GraphStatement
 from cartography.util import timeit
 
@@ -214,6 +215,19 @@ def calculate_permission_relationships(
     return allowed_mappings
 
 
+def parse_statement_node(node_group: List[Any]) -> List[Any]:
+    """ Parse a dict from group of Neo4J node
+
+    Arguments:
+        node_group {list} -- A list of statement dicts (previously Neo4j.Node objects,
+            now plain dicts after the read_list_of_dicts_tx migration)
+
+    Returns:
+        [list] -- A list of statements from the node
+    """
+    return [n if isinstance(n, dict) else n._properties for n in node_group]
+
+
 def compile_regex(item: str) -> Pattern:
     r"""Compile a clause into a regex. Clause checking in AWS is case insensitive
     The following regex symbols will be replaced to make AWS * and ? matching a regex
@@ -317,9 +331,8 @@ def load_principal_mappings(
     relationship_name: str,
     update_tag: int,
 ) -> None:
-    map_policy_query = Template(
-        """
-    UNWIND $Mapping as mapping
+    map_policy_query = Template("""
+    UNWIND $DictList as mapping
     MATCH (principal:AWSPrincipal{arn:mapping.principal_arn})
     MATCH (resource:$node_label{arn:mapping.resource_arn})
     MERGE (principal)-[r:$relationship_name]->(resource)
@@ -332,10 +345,10 @@ def load_principal_mappings(
         node_label=node_label,
         relationship_name=relationship_name,
     )
-    run_write_query(
+    load_graph_data(
         neo4j_session,
         map_policy_query_template,
-        Mapping=principal_mappings,
+        principal_mappings,
         aws_update_tag=update_tag,
     )
 

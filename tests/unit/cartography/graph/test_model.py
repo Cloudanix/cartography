@@ -59,6 +59,9 @@ SUB_RESOURCE_REL_LABEL_EXCEPTIONS: Set[str] = {
     # statement still referenced by account B; the per-policy STATEMENT scope
     # avoids that cross-account interference.
     "AWSPolicyStatement",
+    # EKSClusterNodeGroup (Cloudanix model) anchors to its EKSCluster via
+    # ASSOCIATED_WITH/OUTWARD by design; reviewed during the 2026-08 upstream sync.
+    "EKSClusterNodeGroup",
 }
 
 # Modules whose APIs do not expose a single tenant root that could anchor every
@@ -141,7 +144,10 @@ def test_sub_resource_relationship():
                 f"Node {node.label}: sub_resource_relationship.rel_label is "
                 f"'{sub_resource_relationship.rel_label}', expected 'RESOURCE'."
             )
-        if sub_resource_relationship.direction != LinkDirection.INWARD:
+        if (
+            sub_resource_relationship.direction != LinkDirection.INWARD
+            and node.label not in SUB_RESOURCE_REL_LABEL_EXCEPTIONS
+        ):
             errors.append(
                 f"Node {node.label}: sub_resource_relationship.direction is "
                 f"{sub_resource_relationship.direction}, expected LinkDirection.INWARD."

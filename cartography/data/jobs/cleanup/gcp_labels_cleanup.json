@@ -11,6 +11,18 @@
 			"iterative": true,
 			"iterationsize": 100,
 			"__comment__": "Remove GCP Resource-to-Label relationships that are out of date."
+		},
+		{
+			"query": "MATCH (n:GCPLabel)<-[:LABELED]-(m:GCPKMSCryptoKey)<-[:RESOURCE]-(:GCPKMSKeyRing)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Same as the first statement, for labels on resources owned by a parent resource rather than directly by the project (see OWNERSHIP_PATHS in intel/gcp/label.py)."
+		},
+		{
+			"query": "MATCH (:GCPLabel)<-[r:LABELED]-(m:GCPKMSCryptoKey)<-[:RESOURCE]-(:GCPKMSKeyRing)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Same as the second statement, for the nested ownership path."
 		}
 	],
 	"name": "cleanup GCP labels resources"

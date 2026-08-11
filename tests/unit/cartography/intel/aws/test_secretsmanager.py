@@ -6,6 +6,7 @@ from unittest.mock import patch
 from botocore.exceptions import ClientError
 
 import cartography.intel.aws.secretsmanager
+from cartography.intel.aws import secretsmanager
 from cartography.intel.aws.secretsmanager import get_secret_versions
 from cartography.intel.aws.secretsmanager import transform_secrets
 from tests.data.aws.secretsmanager import SECRETS_RAW_DATA
@@ -122,3 +123,22 @@ def test_get_secret_versions_skips_deleted_secret(mock_create_boto3_client):
         SecretId=secret_arn,
         IncludeDeprecated=True,
     )
+
+
+from unittest.mock import MagicMock
+
+from cartography.intel.aws import secretsmanager
+
+
+def test_get_secret_list_passes_include_planned_deletion_false():
+    boto3_session = MagicMock()
+    client = boto3_session.client.return_value
+    paginator = client.get_paginator.return_value
+    secret = {'ARN': 'arn:aws:secretsmanager:us-east-1:123456789012:secret:example'}
+    paginator.paginate.return_value = [{'SecretList': [secret]}]
+
+    result = secretsmanager.get_secret_list(boto3_session, 'us-east-1')
+
+    client.get_paginator.assert_called_once_with('list_secrets')
+    paginator.paginate.assert_called_once_with(IncludePlannedDeletion=False)
+    assert result == [secret]

@@ -8,6 +8,7 @@ import pytest
 from cartography.intel.aws.ec2.launch_templates import (
     get_launch_template_versions_by_template,
 )
+from cartography.intel.aws.ec2.launch_templates import LAUNCH_TEMPLATE_VERSIONS
 from cartography.intel.aws.ec2.launch_templates import transform_launch_templates
 from tests.utils import unwrapper
 
@@ -112,7 +113,8 @@ def test_get_launch_template_versions_by_template_success():
         "describe_launch_template_versions"
     )
     mock_paginator.paginate.assert_called_once_with(
-        LaunchTemplateId="valid-template-id"
+        LaunchTemplateId="valid-template-id",
+        Versions=["$Latest", "$Default"],
     )
 
 
@@ -237,3 +239,7 @@ def test_transform_launch_templates_preserves_other_fields():
     assert result[0]["DefaultVersionNumber"] == 1
     assert result[0]["LatestVersionNumber"] == 2
     assert result[0]["CreateTime"] == MOCK_CREATE_TIME_STR
+
+
+def test_launch_template_versions_request_latest_and_default():
+    assert LAUNCH_TEMPLATE_VERSIONS == ['$Latest', '$Default']

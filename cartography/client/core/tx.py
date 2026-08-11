@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from functools import partial
 from typing import Any
@@ -29,6 +30,10 @@ logger = logging.getLogger(__name__)
 stat_handler = get_stats_client(__name__)
 
 T = TypeVar("T")
+
+# Rows per write transaction. Tune per call via the batch_size param if a module's
+# rows are unusually wide.
+DEFAULT_LOAD_BATCH_SIZE = 500
 
 _MAX_NETWORK_RETRIES = 5
 _MAX_ENTITY_NOT_FOUND_RETRIES = 5
@@ -285,7 +290,9 @@ def _run_index_query_with_retry(neo4j_session: neo4j.Session, query: str) -> Non
     check and the actual creation.
     """
     try:
-        neo4j_session.run(query)
+        # Managed transaction so index creation retries on TransientError instead of
+        # failing the sync.
+        neo4j_session.execute_write(write_query_tx, query)
     except neo4j.exceptions.ClientError as e:
         # EquivalentSchemaRuleAlreadyExists means another parallel sync already created
         # this index, which is the desired end state. Safe to ignore.
@@ -615,11 +622,25 @@ def write_list_of_dicts_tx(
     tx.run(query, kwargs).consume()
 
 
+def write_query_tx(
+    tx: neo4j.Transaction,
+    query: str,
+) -> None:
+    """
+    Runs a single parameter-less write query inside a managed transaction. Used for DDL
+    such as `CREATE INDEX` where there is no `$DictList` payload.
+    :param tx: The neo4j write transaction.
+    :param query: The Neo4j write query to run.
+    :return: None
+    """
+    tx.run(query)
+
+
 def load_graph_data(
     neo4j_session: neo4j.Session,
     query: str,
     dict_list: List[Dict[str, Any]],
-    batch_size: int = 10000,
+    batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
     **kwargs,
 ) -> None:
     """
@@ -678,6 +699,19 @@ def load_graph_data(
         )
 
 
+# Schema classes whose indexes were already ensured in this process. load() runs per
+# region x account x schema, so without this every load re-issues 6-8 CREATE INDEX
+# round-trips that are no-ops after the first.
+_ensured_index_schemas: set = set()
+_ensured_index_schemas_lock = threading.Lock()
+
+
+def reset_ensured_indexes_cache() -> None:
+    """Forget which schemas had their indexes ensured (tests / long-lived processes)."""
+    with _ensured_index_schemas_lock:
+        _ensured_index_schemas.clear()
+
+
 def ensure_indexes(
     neo4j_session: neo4j.Session,
     node_schema: CartographyNodeSchema,
@@ -714,6 +748,11 @@ def ensure_indexes(
         - All properties included in target node matchers automatically have indexes created.
         - This function should be called before performing any data loading operations.
     """
+    schema_key = f"{type(node_schema).__module__}.{type(node_schema).__qualname__}"
+    with _ensured_index_schemas_lock:
+        if schema_key in _ensured_index_schemas:
+            return
+
     queries = build_create_index_queries(node_schema)
 
     for query in queries:
@@ -722,6 +761,12 @@ def ensure_indexes(
                 'Query provided to `ensure_indexes()` does not start with "CREATE INDEX IF NOT EXISTS".',
             )
         _run_index_query_with_retry(neo4j_session, query)
+
+    # Memoize only after every query succeeded so a failed run is retried next load().
+    # Two workers may both run the queries for one schema before either memoizes; that
+    # is harmless (CREATE INDEX IF NOT EXISTS) and cheaper than holding the lock on I/O.
+    with _ensured_index_schemas_lock:
+        _ensured_index_schemas.add(schema_key)
 
 
 def ensure_indexes_for_matchlinks(
@@ -765,7 +810,7 @@ def load(
     neo4j_session: neo4j.Session,
     node_schema: CartographyNodeSchema,
     dict_list: List[Dict[str, Any]],
-    batch_size: int = 10000,
+    batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
     **kwargs,
 ) -> None:
     """
@@ -834,7 +879,7 @@ def load_matchlinks(
     neo4j_session: neo4j.Session,
     rel_schema: CartographyRelSchema,
     dict_list: list[dict[str, Any]],
-    batch_size: int = 10000,
+    batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
     **kwargs,
 ) -> None:
     """

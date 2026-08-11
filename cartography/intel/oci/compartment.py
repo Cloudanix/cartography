@@ -1,0 +1,159 @@
+import logging
+import time
+from typing import Any
+from typing import Dict
+from typing import List
+
+import neo4j
+import oci
+
+from . import utils
+from .iam import _oci_compartment_managed_type
+from cartography.client.core.tx import load_graph_data
+from cartography.util import run_cleanup_job
+from cartography.util import timeit
+
+logger = logging.getLogger(__name__)
+
+
+def get_all_oci_compartments(
+    identity_client: oci.identity.identity_client.IdentityClient,
+    tenancy_id: str,
+) -> List[Dict[str, Any]]:
+    """
+    Get all compartments in the tenancy (recursively).
+    """
+    try:
+        response = oci.pagination.list_call_get_all_results(
+            identity_client.list_compartments,
+            tenancy_id,
+            compartment_id_in_subtree=True,
+            access_level="ACCESSIBLE",
+        )
+        compartments = []
+        for comp in response.data:
+            compartments.append({
+                'id': comp.id,
+                'compartmentId': comp.id,
+                'name': comp.name,
+                'description': comp.description,
+                'lifecycleState': comp.lifecycle_state,
+                'timeCreated': str(comp.time_created),
+                'parentCompartmentId': comp.compartment_id,
+            })
+        return compartments
+    except oci.exceptions.ServiceError as e:
+        logger.error(
+            "Failed to fetch compartments for tenancy '%s': %s", tenancy_id, e.message,
+        )
+        return []
+
+
+def get_current_oci_compartment(
+    identity_client: oci.identity.identity_client.IdentityClient,
+    compartment_id: str,
+) -> List[Dict[str, Any]]:
+    """
+    Get a single compartment by its OCID.
+    """
+    try:
+        response = identity_client.get_compartment(compartment_id)
+        comp = response.data
+        return [{
+            'id': comp.id,
+            'compartmentId': comp.id,
+            'name': comp.name,
+            'description': comp.description,
+            'lifecycleState': comp.lifecycle_state,
+            'timeCreated': str(comp.time_created),
+            'parentCompartmentId': comp.compartment_id,
+        }]
+    except oci.exceptions.ServiceError as e:
+        logger.error(
+            "Failed to fetch compartment '%s': %s", compartment_id, e.message,
+        )
+        return []
+
+
+def load_oci_compartments(
+    neo4j_session: neo4j.Session,
+    tenancy_id: str,
+    compartments: List[Dict[str, Any]],
+    update_tag: int,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    """
+    Ingest OCI compartments into Neo4j and link to tenancy via OWNER relationship.
+    """
+    query = """
+    UNWIND $DictList AS comp
+        MERGE (t:OCITenancy{id: $TENANCY_ID})
+        ON CREATE SET t.firstseen = timestamp()
+        SET t.ocid = $TENANCY_ID, t.lastupdated = $update_tag
+        WITH t, comp
+        MERGE (c:OCICompartment{id: comp.id})
+        ON CREATE SET c.firstseen = timestamp(),
+        c.createdate = comp.time_created
+        SET c.ocid = comp.id,
+        c.lastupdated = $update_tag,
+        c.name = comp.name,
+        c.description = comp.description,
+        c.lifecycle_state = comp.lifecycle_state,
+        c.compartmentid = comp.parent_compartment_id,
+        c.managed_type = comp.managed_type
+        WITH t, c
+        MERGE (t)-[r:OWNER]->(c)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
+    """
+    rows = [
+        {
+            'id': comp['compartmentId'],
+            'name': comp['name'],
+            'description': comp.get('description', ''),
+            'lifecycle_state': comp.get('lifecycleState', ''),
+            'time_created': comp.get('timeCreated', ''),
+            'parent_compartment_id': comp.get('parentCompartmentId', tenancy_id),
+            'managed_type': _oci_compartment_managed_type(comp, tenancy_id),
+        }
+        for comp in compartments
+    ]
+    load_graph_data(
+        neo4j_session,
+        query,
+        rows,
+        TENANCY_ID=tenancy_id,
+        update_tag=update_tag,
+    )
+
+
+def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    run_cleanup_job('oci_import_compartments_cleanup.json', neo4j_session, common_job_parameters)
+
+
+@timeit
+def sync(
+    neo4j_session: neo4j.Session,
+    tenancy_id: str,
+    compartments: List[Dict[str, Any]],
+    update_tag: int,
+    common_job_parameters: Dict[str, Any],
+) -> None:
+    """
+    Sync OCI compartments into Neo4j.
+    Similar to Azure's subscription.sync.
+    """
+    tic = time.perf_counter()
+    logger.info(f"Syncing OCI compartments for tenancy '{tenancy_id}'")
+    load_oci_compartments(neo4j_session, tenancy_id, compartments, update_tag, common_job_parameters)
+
+    for comp in compartments:
+        common_job_parameters['OCI_COMPARTMENT_ID'] = comp['compartmentId']
+        common_job_parameters['OCI_TENANCY_ID'] = tenancy_id
+
+        cleanup(neo4j_session, common_job_parameters)
+
+    del common_job_parameters['OCI_COMPARTMENT_ID']
+    del common_job_parameters['OCI_TENANCY_ID']
+    toc = time.perf_counter()
+    logger.info(f"Time to process OCI compartments for tenancy '{tenancy_id}' ({len(compartments)} compartments): {toc - tic:0.4f} seconds")

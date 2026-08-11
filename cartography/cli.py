@@ -2697,3 +2697,229 @@ def main(argv=None):
 
     argv = argv if argv is not None else sys.argv[1:]
     sys.exit(CLI(prog="cartography").main(argv))
+
+
+import cartography.sync  # noqa: E402  (deferred: keeps --help/--version paths light)
+
+
+def run_aws(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_aws_sync()
+
+    # TODO: Define config and pass it forward
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        credentials=request["credentials"],
+        params=request["params"],
+        aws_requested_syncs=request.get("services", None),
+        update_tag=request.get("updateTag", None),
+        refresh_entitlements=request.get("refreshEntitlements", False),
+        identity_store_region=request.get("identityStoreRegion", None),
+        aws_internal_accounts=request.get("internalAccounts", None),
+        partial=request.get("params", {}).get("partial", False),
+        manual_run=request.get("params", {}).get("manualRun", False),
+        dc=request.get("params", {}).get("dc", "US"),
+        aws_excluded_regions=request.get("awsExcludedRegions", []),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_azure(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_azure_sync()
+
+    # TODO: Define config and pass it forward
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        azure_client_id=request["azure"]["client_id"],
+        azure_client_secret=request["azure"]["client_secret"],
+        azure_redirect_uri=request["azure"]["redirect_uri"],
+        azure_subscription_id=request["azure"]["subscription_id"],
+        azure_tenant_id=request["azure"]["tenant_id"],
+        azure_refresh_token=request.get("azure", {}).get("refresh_token"),
+        azure_vault_scope=request["azure"]["vault_scope"],
+        azure_graph_scope=request["azure"]["graph_scope"],
+        azure_default_graph_scope=request.get("azure", {}).get("default_graph_scope"),
+        azure_azure_scope=request["azure"]["azure_scope"],
+        params=request["params"],
+        azure_requested_syncs=request.get("services", None),
+        update_tag=request.get("updateTag", None),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_gcp(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_gcp_sync()
+
+    # TODO: Define config and pass it forward
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        credentials=request["credentials"],
+        params=request["params"],
+        gcp_requested_syncs=request.get("services", None),
+        refresh_entitlements=request.get("refreshEntitlements", False),
+        update_tag=request.get("updateTag", None),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_oci(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_oci_sync()
+
+    config = Config(
+        neo4j_uri=request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        params=request["params"],
+        oci_requested_syncs=request.get("services", None),
+        update_tag=request.get("updateTag", None),
+        oci_tenancy_id=request.get("params", {}).get("tenancyOCID", ""),
+        oci_compartment_id=request.get("params", {}).get("compartmentOCID", ""),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_github(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+    default_sync = cartography.sync.build_github_sync()
+
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        params=request["params"],
+        github_config=request.get("github_config", None),
+        gcp_requested_syncs=request.get("services", None),
+        update_tag=request.get("updateTag", None),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_bitbucket(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_bitbucket_sync()
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        params=request["params"],
+        bitbucket_access_token=request["bitbucket"]["access_token"],
+        update_tag=request.get("updateTag", None),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_gitlab(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_gitlab_sync()
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        params=request["params"],
+        gitlab_access_token=request["gitlab"]["access_token"],
+        gitlab_hosted_domain=request["gitlab"].get("hosted_domain"),
+        update_tag=request.get("updateTag", None),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_azure_devops(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_azure_devops_sync()
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        params=request["params"],
+        azure_devops_config=request.get("azure_devops_config", None),
+        update_tag=request.get("updateTag", None),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)

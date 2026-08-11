@@ -8,6 +8,7 @@ import gzip
 import io
 import json
 import logging
+import time
 import zipfile
 from typing import Any
 
@@ -576,6 +577,7 @@ def sync_gitlab_dependencies(
     :param dependency_files_by_project: Pre-fetched dependency files from dependency_files sync.
         If provided, avoids duplicate API calls. Dict maps project_url to list of files.
     """
+    tic = time.perf_counter()
     logger.info(f"Syncing GitLab dependencies for {len(projects)} projects")
 
     # Sync dependencies for each project
@@ -641,3 +643,14 @@ def sync_gitlab_dependencies(
         )
 
     logger.info("GitLab dependencies sync completed")
+    logger.info(
+        json.dumps(
+            {
+                "event": "gitlab_service_timing",
+                "service": "dependencies",
+                "project_count": len(projects),
+                "duration_seconds": round(time.perf_counter() - tic, 4),
+                "status": "success",
+            }
+        ),
+    )

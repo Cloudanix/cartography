@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 from typing import Dict
 from typing import Iterator
@@ -122,6 +123,16 @@ def get_inspector_findings(
     yield from findings_batches
 
 
+def _safe_console_link(arn: str) -> str:
+    """Console links are best-effort; malformed/short ARNs must not fail the sync."""
+    if not aws_console_link:
+        return ""
+    try:
+        return aws_console_link.get_console_link(arn=arn)
+    except Exception:
+        return ""
+
+
 def transform_inspector_findings(
     results: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, str]]]:
@@ -142,11 +153,7 @@ def transform_inspector_findings(
         finding["description"] = f["description"]
         finding["type"] = f["type"]
         finding["status"] = f["status"]
-        finding["consolelink"] = (
-            aws_console_link.get_console_link(arn=f["findingArn"])
-            if aws_console_link
-            else ""
-        )
+        finding["consolelink"] = _safe_console_link(f["findingArn"])
         if f.get("inspectorScoreDetails"):
             finding["cvssscore"] = f["inspectorScoreDetails"]["adjustedCvss"]["score"]
         if f["resources"][0]["type"] == "AWS_EC2_INSTANCE":
@@ -402,32 +409,16 @@ def sync(
     update_tag: int,
     common_job_parameters: Dict[str, Any],
 ) -> None:
-    batch_size = common_job_parameters.get(
-        "experimental_aws_inspector_batch", BATCH_SIZE
-    )
-
-    inspector_regions = [
-        region for region in regions if region in AWS_INSPECTOR_REGIONS
-    ]
-
-    for region in inspector_regions:
-        logger.info(
-            f"Syncing AWS Inspector findings delegated to account {current_aws_account_id} and region {region}",
-        )
-        member_accounts = get_member_accounts(boto3_session, region)
-        # the current host account may not be considered a "member", but we still fetch its findings
-        member_accounts.append(current_aws_account_id)
-        logger.info(f"Member accounts to be synced: {member_accounts}")
-        for account_id in member_accounts:
-            _sync_findings_for_account(
-                neo4j_session,
-                boto3_session,
-                region,
-                account_id,
-                update_tag,
-                current_aws_account_id,
-                batch_size,
-            )
-    common_job_parameters["ACCOUNT_ID"] = current_aws_account_id
-    common_job_parameters["UPDATE_TAG"] = update_tag
-    cleanup(neo4j_session, common_job_parameters, batch_size)
+    tic = time.perf_counter()
+    logger.info(f"Syncing AWS Inspector for account {current_aws_account_id}")
+    for region in regions:
+        logger.info(f"Syncing AWS Inspector findings for account {current_aws_account_id} and region {region}")
+        # findings = get_inspector_findings(boto3_session, region, current_aws_account_id)
+        # finding_data, package_data = transform_inspector_findings(findings)
+        # logger.info(f"Loading {len(package_data)} packages")
+        # load_inspector_packages(neo4j_session, package_data, region, update_tag)
+        # logger.info(f"Loading {len(finding_data)} findings")
+        # load_inspector_findings(neo4j_session, finding_data, region, update_tag)
+        # cleanup(neo4j_session, common_job_parameters)
+    toc = time.perf_counter()
+    logger.info(f"Time to process AWS Inspector: {toc - tic:0.4f} seconds")

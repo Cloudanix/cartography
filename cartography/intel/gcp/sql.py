@@ -89,6 +89,14 @@ def get_sql_instances(
                         ),
                         None,
                     )
+                    item["public_ip"] = next(
+                        (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIMARY"),
+                        None,
+                    )
+                    item["private_ip"] = next(
+                        (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIVATE"),
+                        None,
+                    )
                     item["pscEnabled"] = False
                     if regions is None or len(regions) == 0:
                         sql_instances.append(item)
@@ -320,6 +328,8 @@ def _load_sql_instances_tx(
         i.engine = instance.engine,
         i.engineVersion = instance.engineVersion,
         i.endpoint = instance.endpoint,
+        i.public_ip = instance.public_ip,
+        i.private_ip = instance.private_ip,
         i.pscEnabled = instance.pscEnabled,
         i.port = instance.port,
         i.name = instance.name,
@@ -526,6 +536,8 @@ def transform_sql_instances(sql_instances: List[Dict]) -> List[Dict]:
     transformed_instances = []
     for instance in sql_instances:
         transformed_instance = instance.copy()
+        # Cloud SQL returns labels at settings.userLabels; label.sync_labels reads 'labels'
+        transformed_instance["labels"] = instance.get("settings", {}).get("userLabels", {})
 
         if not instance.get("pscServiceAttachmentLink"):
             transformed_instance["pscEnabled"] = False
