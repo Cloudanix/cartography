@@ -180,11 +180,36 @@ Gate: unit tests ≥ baseline + new upstream tests passing; pre-commit clean. Co
   analysis jobs, generated schema docs. Fixed `gcp/util` package-shadowing bug,
   azure-mgmt-resource 26 import moves, uv.lock regenerated (cloudconsolelink<4.1 pin).
   Unit gate: **4523 passed, 1 xfailed, 0 failures**.
-- **Phase 3 partial** — unit suite green; write_transaction grep = 0; all custom
-  enhancement checklist gates verified by grep (batch-500, write_timer, azure token
+- **Phase 3 done** — unit suite green (**4533 passed, 1 xfailed**); `write_transaction`
+  grep = 0; every custom-enhancement gate verified (batch-500, write_timer, azure token
   expiry, App-installation sync, API filters, run_* entrypoints, queue response dict,
-  composition Session). **Integration tests + staging smoke pending — need Docker
-  (neo4j:5-community) which the sandboxed session cannot start.**
+  composition Session).
+
+  Integration was measured against a fresh `origin/main` worktree on the same Neo4j 5
+  container and Python, because raw failure counts were misleading:
+
+  | tree | failed | passed |
+  |---|---|---|
+  | `origin/main` (baseline) | 127 | 479 |
+  | `upstream-merge` | 104 | 1242 |
+
+  Of the 104: 71 also fail on main (pre-existing), 16 are upstream-only tests with no
+  main equivalent, and **17 are true regressions** — apigateway (5), rds (5), cosmosdb
+  (2), redshift, azure network, ec2 key_pairs, elastic_ips, and the cleanup-job Cypher
+  syntax check (needs APOC in the test container). All sit in modules that ended up
+  partially adopted from upstream; finishing or reverting those adoptions is the fix.
+
+  Fixed during Phase 3: `create_indexes` executed comment lines from `indexes.cypher`
+  as Cypher; `tests/data/**` had lost 37 custom fixtures across 19 files plus the
+  `crxcavator` package init; ECR `LIST_REPOSITORY_IMAGES` needed both lineages' keys;
+  51 test files were paired against the wrong side and were repointed.
+
+- **Phase 4 done** — PR [#464](https://github.com/Cloudanix/cartography/pull/464),
+  `upstream-merge` → `main`, MERGEABLE. Includes a catch-up merge of `e5a85aca5`
+  (VmOs/VmOsVersion), which landed on main mid-sync.
+
+- **Phase 5 pending** — force-push `master` to mirror upstream once #464 merges.
+  Staging smoke test also still outstanding.
 
 ### Deferred upstream features (adopt deliberately later)
 - SSM public parameters sync (needs config wiring)
