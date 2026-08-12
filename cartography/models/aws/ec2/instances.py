@@ -155,6 +155,27 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
         "IPv6Address",
         description="The primary IPv6 address assigned to the instance's primary network interface (DeviceIndex=0), if any.",
     )
+    vmos: PropertyRef = PropertyRef(
+        "VmOs", description="The operating system of the instance, derived from its AMI."
+    )
+    vmosversion: PropertyRef = PropertyRef(
+        "VmOsVersion", description="The operating system version of the instance, derived from its AMI."
+    )
+    virtualizationtype: PropertyRef = PropertyRef(
+        "VirtualizationType", description="The virtualization type of the instance (hvm or paravirtual)."
+    )
+    hypervisor: PropertyRef = PropertyRef(
+        "Hypervisor", description="The hypervisor type of the instance."
+    )
+    consolelink: PropertyRef = PropertyRef(
+        "consolelink", description="AWS console URL for the instance."
+    )
+    userdata: PropertyRef = PropertyRef(
+        "UserData", description="The user data supplied at instance launch."
+    )
+    eksnodegroupname: PropertyRef = PropertyRef(
+        "EksNodeGroupName", description="The name of the EKS node group this instance belongs to, if applicable."
+    )
 
 
 @dataclass(frozen=True)
