@@ -473,3 +473,72 @@ SINGLE_PLATFORM_IMAGE_DETAILS = {
 }
 
 BATCH_GET_MANIFEST_LIST_EMPTY_RESPONSE: dict[str, list] = {"images": []}
+
+
+# Upstream's variant of the same fixture; merged so tests from both
+# lineages resolve (main's entries win on key collisions).
+_UPSTREAM_LIST_REPOSITORY_IMAGES = {
+    "000000000000.dkr.ecr.us-east-1.amazonaws.com/example-repository": [
+        {
+            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "imageTag": "1",
+            "repositoryName": "example-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+        {
+            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "imageTag": "latest",
+            "repositoryName": "example-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+        {
+            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+            "imageTag": "2",
+            "repositoryName": "example-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+    ],
+    "000000000000.dkr.ecr.us-east-1.amazonaws.com/sample-repository": [
+        {
+            # NOTE same digest and tag as image in example-repository
+            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "imageTag": "1",
+            "repositoryName": "sample-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+        {
+            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000011",
+            "imageTag": "2",
+            "repositoryName": "sample-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+    ],
+    "000000000000.dkr.ecr.us-east-1.amazonaws.com/test-repository": [
+        {
+            # NOTE same digest but different tag from image in example-repository
+            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "imageTag": "1234567890",
+            "repositoryName": "test-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+        {
+            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000021",
+            "imageTag": "1",
+            "repositoryName": "test-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+        # Item without an imageDigest: will get filtered out and not ingested.
+        {
+            "imageTag": "1",
+            "repositoryName": "test-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+        # Item without an imageTag
+        {
+            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000031",
+            "repositoryName": "test-repository",
+            **DESCRIBE_IMAGES["imageDetails"],
+        },
+    ],
+}
+LIST_REPOSITORY_IMAGES = {**_UPSTREAM_LIST_REPOSITORY_IMAGES, **LIST_REPOSITORY_IMAGES}
