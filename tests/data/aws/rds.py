@@ -253,3 +253,92 @@ DESCRIBE_EVENT_SUBSCRIPTIONS_RESPONSE = {
         },
     ],
 }
+
+
+DESCRIBE_DBSNAPSHOT_ATTRIBUTE_RESPONSE = [
+    {
+        'DBSnapshotIdentifier': 'some-db-snapshot-identifier',
+        'DBSnapshotAttributes': [
+            {
+                'AttributeName': 'backup',
+                'AttributeValues': [
+                    'all',
+                ],
+            },
+            {
+                'AttributeName': 'attrib-1',
+                'AttributeValues': [
+                    'all',
+                ],
+            },
+        ],
+    },
+    {
+        'DBSnapshotIdentifier': 'some-other-db-snapshot-identifier',
+        'DBSnapshotAttributes': [
+            {
+                'AttributeName': 'backup',
+                'AttributeValues': [
+                    'all',
+                ],
+            },
+            {
+                'AttributeName': 'attrib-1',
+                'AttributeValues': [
+                    'all',
+                ],
+            },
+            {
+                'AttributeName': 'restore',
+                'AttributeValues': [
+                    'all',
+                ],
+            },
+        ],
+    },
+]
+
+
+DESCRIBE_SECURITY_GROUPS_RESPONSE = [
+    {
+        'region': 'us-east-1',
+        "OwnerId": "123456789012",
+        "DBSecurityGroupName": "mysecgroup",
+        "DBSecurityGroupDescription": "My Test Security Group",
+        "VpcId": "vpc-1234567f",
+        "EC2SecurityGroups": [],
+        "IPRanges": [],
+        "DBSecurityGroupArn": "arn:aws:rds:us-east-1:111122223333:secgrp:mysecgroup",
+    },
+]
+
+
+DESCRIBE_SNAPSHOTS_RESPONSE = [
+    {
+        "DBSnapshotIdentifier": "mydbsnapshot",
+        "DBInstanceIdentifier": "mysqldb",
+        'region': 'us-east-1',
+        'name': 'mydbsnapshot',
+        "SnapshotCreateTime": "2018-02-08T22:28:08.598Z",
+        "Engine": "mysql",
+        "AllocatedStorage": 20,
+        "Status": "available",
+        "Port": 3306,
+        "AvailabilityZone": "us-east-1f",
+        "VpcId": "vpc-6594f31c",
+        "InstanceCreateTime": "2018-02-08T22:24:55.973Z",
+        "MasterUsername": "mysqladmin",
+        "EngineVersion": "5.6.37",
+        "LicenseModel": "general-public-license",
+        "SnapshotType": "manual",
+        "OptionGroupName": "default:mysql-5-6",
+        "PercentProgress": 100,
+        "StorageType": "gp2",
+        "Encrypted": False,
+        "DBSnapshotArn": "arn:aws:rds:us-east-1:123456789012:snapshot:mydbsnapshot",
+        "IAMDatabaseAuthenticationEnabled": False,
+        "ProcessorFeatures": [],
+        "DbiResourceId": "db-AKIAIOSFODNN7EXAMPLE",
+    },
+]
+

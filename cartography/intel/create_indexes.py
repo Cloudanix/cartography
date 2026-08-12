@@ -15,9 +15,12 @@ def get_index_statements() -> List[str]:
     statements = []
     with load_resource_binary("cartography.data", "indexes.cypher") as f:
         for line in f.readlines():
-            statements.append(
-                line.decode("UTF-8").rstrip("\r\n"),
-            )
+            statement = line.decode("UTF-8").rstrip("\r\n")
+            # One statement per line; skip blanks and comment-only lines, which are
+            # not valid standalone Cypher queries.
+            if not statement.strip() or statement.lstrip().startswith("//"):
+                continue
+            statements.append(statement)
     return statements
 
 

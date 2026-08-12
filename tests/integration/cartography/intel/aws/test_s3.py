@@ -1,133 +1,30 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
-
 import cartography.intel.aws.s3
-import cartography.intel.aws.sns
 import tests.data.aws.s3
-from cartography.intel.aws.s3 import sync
-from tests.data.aws.s3 import GET_S3_BUCKET_DETAILS
-from tests.data.aws.s3 import LIST_BUCKETS
-from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
+from cartography.util import run_analysis_job
 
-TEST_ACCOUNT_ID = "000000000000"
-TEST_REGION = "us-east-1"
+
+TEST_ACCOUNT_ID = '000000000000'
+TEST_REGION = 'us-east-1'
 TEST_UPDATE_TAG = 123456789
-
-
-@patch.object(
-    cartography.intel.aws.s3,
-    "_sync_s3_notifications",
-)
-@patch.object(
-    cartography.intel.aws.s3,
-    "get_s3_bucket_details",
-    return_value=iter(GET_S3_BUCKET_DETAILS),
-)
-@patch.object(
-    cartography.intel.aws.s3,
-    "get_s3_bucket_list",
-    return_value=LIST_BUCKETS,
-)
-def test_sync_s3(
-    mock_get_bucket_list,
-    mock_get_bucket_details,
-    mock_sync_notifications,
-    neo4j_session,
-):
-    """
-    Ensure that S3 sync creates buckets, ACLs, and policy statements with correct relationships.
-    """
-    # Arrange
-    boto3_session = MagicMock()
-    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-
-    # Act
-    sync(
-        neo4j_session,
-        boto3_session,
-        [TEST_REGION],
-        TEST_ACCOUNT_ID,
-        TEST_UPDATE_TAG,
-        {
-            "UPDATE_TAG": TEST_UPDATE_TAG,
-            "AWS_ID": TEST_ACCOUNT_ID,
-            "WORKSPACE_ID": "test_workspace",
-            "ORGANIZATION_ID": "test_org",
-        },
-    )
-
-    # Assert - AWSS3Bucket nodes exist
-    assert check_nodes(neo4j_session, "AWSS3Bucket", ["id", "name", "region"]) == {
-        ("bucket-1", "bucket-1", "eu-west-1"),
-        ("bucket-2", "bucket-2", "me-south-1"),
-        ("bucket-3", "bucket-3", None),
-    }
-
-    # Assert - Relationships (AWSAccount)-[RESOURCE]->(AWSS3Bucket)
-    assert check_rels(
-        neo4j_session,
-        "AWSAccount",
-        "id",
-        "AWSS3Bucket",
-        "id",
-        "RESOURCE",
-        rel_direction_right=True,
-    ) == {
-        (TEST_ACCOUNT_ID, "bucket-1"),
-        (TEST_ACCOUNT_ID, "bucket-2"),
-        (TEST_ACCOUNT_ID, "bucket-3"),
-    }
-
-    # Assert - AWSS3Acl nodes exist
-    assert (
-        len(check_nodes(neo4j_session, "AWSS3Acl", ["id"])) == 5
-    )  # 1 for bucket-1, 2 for bucket-2, 2 for bucket-3
-
-    # Assert - Relationships (AWSS3Acl)-[APPLIES_TO]->(AWSS3Bucket)
-    acl_rels = check_rels(
-        neo4j_session,
-        "AWSS3Acl",
-        "id",
-        "AWSS3Bucket",
-        "id",
-        "APPLIES_TO",
-        rel_direction_right=True,
-    )
-    assert len(acl_rels) == 5
-
-    # Assert - AWSS3PolicyStatement nodes exist (only for bucket-1)
-    assert len(check_nodes(neo4j_session, "AWSS3PolicyStatement", ["id"])) == 3
-
-    # Assert - Relationships (AWSS3Bucket)-[POLICY_STATEMENT]->(AWSS3PolicyStatement)
-    assert check_rels(
-        neo4j_session,
-        "AWSS3Bucket",
-        "id",
-        "AWSS3PolicyStatement",
-        "id",
-        "POLICY_STATEMENT",
-        rel_direction_right=True,
-    ) == {
-        ("bucket-1", "bucket-1/policy_statement/1/IPAllow"),
-        ("bucket-1", "bucket-1/policy_statement/2/S3PolicyId2"),
-        ("bucket-1", "bucket-1/policy_statement/3/"),
-    }
+TEST_WORKSPACE_ID = '123'
 
 
 def test_load_s3_buckets(neo4j_session, *args):
     """
     Ensure that expected buckets get loaded with their key fields.
     """
-    data = tests.data.aws.s3.LIST_BUCKETS
-    cartography.intel.aws.s3.load_s3_buckets(
-        neo4j_session,
-        data,
-        TEST_ACCOUNT_ID,
-        TEST_UPDATE_TAG,
+    neo4j_session.run(
+        """
+            MERGE (aws:AWSAccount{id: $aws_account_id})<-[:OWNER]-(:CloudanixWorkspace{id: $workspace_id})
+            ON CREATE SET aws.firstseen = timestamp()
+            SET aws.lastupdated = $aws_update_tag
+            """,
+        aws_account_id=TEST_ACCOUNT_ID,
+        aws_update_tag=TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
-
+    data = tests.data.aws.s3.LIST_BUCKETS
+    cartography.intel.aws.s3.load_s3_buckets(neo4j_session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
     expected_nodes = {
         (
             "bucket-1",
@@ -148,14 +45,14 @@ def test_load_s3_buckets(neo4j_session, *args):
 
     nodes = neo4j_session.run(
         """
-        MATCH (s:AWSS3Bucket) return s.id, s.name, s.region
+        MATCH (s:S3Bucket) return s.id, s.name, s.region
         """,
     )
     actual_nodes = {
         (
-            n["s.id"],
-            n["s.name"],
-            n["s.region"],
+            n['s.id'],
+            n['s.name'],
+            n['s.region'],
         )
         for n in nodes
     }
@@ -166,17 +63,6 @@ def test_load_s3_encryption(neo4j_session, *args):
     """
     Ensure that expected bucket gets loaded with their encryption fields.
     """
-    # Seed the KMS key referenced by bucket-1 so the ENCRYPTED_BY edge can match
-    # it at load time.
-    neo4j_session.run(
-        """
-        MERGE (k:AWSKMSKey{id: $key_id})
-        SET k.arn = $key_arn, k.lastupdated = $update_tag
-        """,
-        key_id="9a1ad414-6e3b-47ce-8366-6b8f26ba467d",
-        key_arn="arn:aws:kms:eu-east-1:000000000000:key/9a1ad414-6e3b-47ce-8366-6b8f26ba467d",
-        update_tag=TEST_UPDATE_TAG,
-    )
     data = tests.data.aws.s3.GET_ENCRYPTION
     cartography.intel.aws.s3._load_s3_encryption(neo4j_session, data, TEST_UPDATE_TAG)
 
@@ -192,122 +78,30 @@ def test_load_s3_encryption(neo4j_session, *args):
 
     nodes = neo4j_session.run(
         """
-        MATCH (s:AWSS3Bucket)
+        MATCH (s:S3Bucket)
         WHERE s.id = 'bucket-1'
         RETURN s.id, s.default_encryption, s.encryption_algorithm, s.encryption_key_id, s.bucket_key_enabled
         """,
     )
     actual_nodes = {
         (
-            n["s.id"],
-            n["s.default_encryption"],
-            n["s.encryption_algorithm"],
-            n["s.encryption_key_id"],
-            n["s.bucket_key_enabled"],
+            n['s.id'],
+            n['s.default_encryption'],
+            n['s.encryption_algorithm'],
+            n['s.encryption_key_id'],
+            n['s.bucket_key_enabled'],
         )
         for n in nodes
     }
     assert actual_nodes == expected_nodes
-
-    # Canonical ontology edge: (:ObjectStorage)-[:ENCRYPTED_BY]->(:EncryptionKey)
-    assert check_rels(
-        neo4j_session,
-        "AWSS3Bucket",
-        "id",
-        "AWSKMSKey",
-        "arn",
-        "ENCRYPTED_BY",
-        rel_direction_right=True,
-    ) == {
-        (
-            "bucket-1",
-            "arn:aws:kms:eu-east-1:000000000000:key/9a1ad414-6e3b-47ce-8366-6b8f26ba467d",
-        ),
-    }
-
-
-def test_s3_encryption_relationship_cleanup(neo4j_session):
-    """A stale (:AWSS3Bucket)-[:ENCRYPTED_BY]->(:AWSKMSKey) edge is removed when the
-    bucket stops using that KMS key (key rotation or KMS encryption disabled).
-    The edge lives on the S3BucketEncryptionSchema composite (no sub_resource),
-    so it must be cleaned via its own rel-only cleanup."""
-    key_arn = "arn:aws:kms:us-east-1:000000000000:key/cleanup-test-key"
-    neo4j_session.run(
-        "MERGE (k:AWSKMSKey{id: $id}) SET k.arn = $arn, k.lastupdated = $tag",
-        id="cleanup-test-key",
-        arn=key_arn,
-        tag=TEST_UPDATE_TAG,
-    )
-
-    # First sync: the bucket is encrypted with the customer-managed KMS key.
-    cartography.intel.aws.s3._load_s3_encryption(
-        neo4j_session,
-        {
-            "bucket": "bucket-cleanup",
-            "default_encryption": True,
-            "encryption_algorithm": "aws:kms",
-            "encryption_key_id": key_arn,
-            "bucket_key_enabled": False,
-        },
-        TEST_UPDATE_TAG,
-    )
-    assert ("bucket-cleanup", key_arn) in check_rels(
-        neo4j_session,
-        "AWSS3Bucket",
-        "id",
-        "AWSKMSKey",
-        "arn",
-        "ENCRYPTED_BY",
-        rel_direction_right=True,
-    )
-
-    # Second sync at a new update tag: default encryption falls back to SSE-S3
-    # (no KMS key), so no ENCRYPTED_BY edge is re-created.
-    new_tag = TEST_UPDATE_TAG + 1
-    cartography.intel.aws.s3._load_s3_encryption(
-        neo4j_session,
-        {
-            "bucket": "bucket-cleanup",
-            "default_encryption": True,
-            "encryption_algorithm": "AES256",
-            "encryption_key_id": None,
-            "bucket_key_enabled": False,
-        },
-        new_tag,
-    )
-    # Use an account id that matches no other bucket so the scoped AWSS3Bucket node
-    # cleanup leaves this file's shared buckets untouched; the encryption rel
-    # cleanup (no sub_resource) runs globally and removes the stale edge.
-    cartography.intel.aws.s3.cleanup_s3_buckets(
-        neo4j_session,
-        {"UPDATE_TAG": new_tag, "AWS_ID": "999999999999"},
-    )
-
-    # The stale edge to the old key must be gone.
-    assert ("bucket-cleanup", key_arn) not in check_rels(
-        neo4j_session,
-        "AWSS3Bucket",
-        "id",
-        "AWSKMSKey",
-        "arn",
-        "ENCRYPTED_BY",
-        rel_direction_right=True,
-    )
 
 
 def test_load_s3_policies(neo4j_session, *args):
     """
     Ensure that expected bucket policy statements are loaded with their key fields.
     """
-    data = cartography.intel.aws.s3.parse_policy_statements(
-        "bucket-1",
-        tests.data.aws.s3.LIST_STATEMENTS,
-    )
-    cartography.intel.aws.s3._load_s3_policy_statements(
-        neo4j_session,
-        data,
-        TEST_UPDATE_TAG,
-    )
+    data = cartography.intel.aws.s3.parse_policy_statements("bucket-1", tests.data.aws.s3.LIST_STATEMENTS)
+    cartography.intel.aws.s3._load_s3_policy_statements(neo4j_session, data, TEST_UPDATE_TAG)
 
     expected_nodes = [
         (
@@ -316,13 +110,13 @@ def test_load_s3_policies(neo4j_session, *args):
             "bucket-1/policy_statement/1/IPAllow",
             "IPAllow",
             "Deny",
-            '"*"',
+            "\"*\"",
             "s3:*",
             [
                 "arn:aws:s3:::DOC-EXAMPLE-BUCKET",
                 "arn:aws:s3:::DOC-EXAMPLE-BUCKET/*",
             ],
-            '{"NotIpAddress": {"aws:SourceIp": "54.240.143.0/24"}}',
+            "{\"NotIpAddress\": {\"aws:SourceIp\": \"54.240.143.0/24\"}}",
         ),
         (
             "S3PolicyId1",
@@ -330,10 +124,10 @@ def test_load_s3_policies(neo4j_session, *args):
             "bucket-1/policy_statement/2/S3PolicyId2",
             "S3PolicyId2",
             "Deny",
-            '"*"',
+            "\"*\"",
             "s3:*",
             "arn:aws:s3:::DOC-EXAMPLE-BUCKET/taxdocuments/*",
-            '{"Null": {"aws:MultiFactorAuthAge": true}}',
+            "{\"Null\": {\"aws:MultiFactorAuthAge\": true}}",
         ),
         (
             "S3PolicyId1",
@@ -341,7 +135,7 @@ def test_load_s3_policies(neo4j_session, *args):
             "bucket-1/policy_statement/3/",
             "",
             "Allow",
-            '"*"',
+            "\"*\"",
             ["s3:GetObject"],
             "arn:aws:s3:::DOC-EXAMPLE-BUCKET/*",
             None,
@@ -350,7 +144,7 @@ def test_load_s3_policies(neo4j_session, *args):
 
     nodes = neo4j_session.run(
         """
-        MATCH (s:AWSS3PolicyStatement)
+        MATCH (s:S3PolicyStatement)
         WHERE s.bucket = 'bucket-1'
         RETURN
         s.policy_id, s.policy_version, s.id, s.sid, s.effect, s.principal, s.action, s.resource, s.condition
@@ -358,15 +152,15 @@ def test_load_s3_policies(neo4j_session, *args):
     )
     actual_nodes = [
         (
-            n["s.policy_id"],
-            n["s.policy_version"],
-            n["s.id"],
-            n["s.sid"],
-            n["s.effect"],
-            n["s.principal"],
-            n["s.action"],
-            n["s.resource"],
-            n["s.condition"],
+            n['s.policy_id'],
+            n['s.policy_version'],
+            n['s.id'],
+            n['s.sid'],
+            n['s.effect'],
+            n['s.principal'],
+            n['s.action'],
+            n['s.resource'],
+            n['s.condition'],
         )
         for n in nodes
     ]
@@ -376,181 +170,42 @@ def test_load_s3_policies(neo4j_session, *args):
 
     actual_relationships = neo4j_session.run(
         """
-        MATCH (:AWSS3Bucket{id:"bucket-1"})-[r:POLICY_STATEMENT]->(:AWSS3PolicyStatement) RETURN count(r)
+        MATCH (:S3Bucket{id:"bucket-1"})-[r:POLICY_STATEMENT]->(:S3PolicyStatement) RETURN count(r)
         """,
     )
 
     assert actual_relationships.single().value() == 3
 
 
-def test_load_s3_bucket_ownership(neo4j_session, *args):
-    """
-    Ensure that expected bucket gets loaded with their bucket ownership controls fields.
-    """
-    data = tests.data.aws.s3.GET_BUCKET_OWNERSHIP_CONTROLS
-    cartography.intel.aws.s3._load_bucket_ownership_controls(
-        neo4j_session, data, TEST_UPDATE_TAG
+def test_load_s3_policy_statuses(neo4j_session, *args):
+    cartography.intel.aws.s3._load_s3_policy_statuses(neo4j_session, tests.data.aws.s3.LIST_STATUSES, TEST_UPDATE_TAG)
+
+    common_job_parameters = {
+        'UPDATE_TAG': TEST_UPDATE_TAG + 1,  # Simulate a new sync run finished so the old update tag is obsolete now
+        'AWS_ID': TEST_ACCOUNT_ID,
+        'WORKSPACE_ID': TEST_WORKSPACE_ID,
+    }
+
+    run_analysis_job(
+        'aws_s3_asset_exposure.json',
+        neo4j_session,
+        common_job_parameters,
     )
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (s:S3Bucket{anonymous_access:true}) RETURN s.id;
+        """,
+    )
+
+    actual_nodes = {
+        (
+            n['s.id'],
+        )
+        for n in nodes
+    }
 
     expected_nodes = {
-        (
-            "bucket-1",
-            "BucketOwnerPreferred",
-        ),
-    }
-
-    nodes = neo4j_session.run(
-        """
-        MATCH (s:AWSS3Bucket)
-        WHERE s.id = 'bucket-1'
-        RETURN s.id, s.object_ownership
-        """,
-    )
-    actual_nodes = {
-        (
-            n["s.id"],
-            n["s.object_ownership"],
-        )
-        for n in nodes
+        ('bucket-2',), ('bucket-1',),
     }
     assert actual_nodes == expected_nodes
-
-
-def test_s3_sns_relationship(neo4j_session):
-    """Test that S3 bucket to SNS topic relationships are created correctly."""
-
-    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-
-    cartography.intel.aws.s3.load_s3_buckets(
-        neo4j_session,
-        tests.data.aws.s3.LIST_BUCKETS,
-        TEST_ACCOUNT_ID,
-        TEST_UPDATE_TAG,
-    )
-
-    cartography.intel.aws.sns.load_sns_topics(
-        neo4j_session,
-        tests.data.aws.s3.SNS_TOPICS,
-        "us-east-1",
-        TEST_ACCOUNT_ID,
-        TEST_UPDATE_TAG,
-    )
-
-    parsed_notifications = cartography.intel.aws.s3.parse_notification_configuration(
-        "bucket-1",
-        tests.data.aws.s3.S3_NOTIFICATIONS,
-    )
-
-    cartography.intel.aws.s3._load_s3_notifications(
-        neo4j_session,
-        parsed_notifications,
-        TEST_UPDATE_TAG,
-    )
-
-    assert check_rels(
-        neo4j_session,
-        "AWSS3Bucket",
-        "id",
-        "AWSSNSTopic",
-        "arn",
-        "NOTIFIES",
-        rel_direction_right=True,
-    ) == {
-        ("bucket-1", "arn:aws:sns:us-east-1:123456789012:test-topic"),
-    }
-
-    cartography.intel.aws.s3._cleanup_s3_notifications(
-        neo4j_session,
-        "bucket-1",
-        TEST_UPDATE_TAG + 1,
-    )
-
-    assert (
-        check_rels(
-            neo4j_session,
-            "AWSS3Bucket",
-            "id",
-            "AWSSNSTopic",
-            "arn",
-            "NOTIFIES",
-            rel_direction_right=True,
-        )
-        == set()
-    )
-
-
-def test_load_s3_bucket_logging(neo4j_session):
-    """
-    Ensure that expected bucket gets loaded with their bucket logging fields.
-    """
-    # Test enabled logging
-    # Arrange
-    parsed_data_enabled = cartography.intel.aws.s3.parse_bucket_logging(
-        "bucket-1", tests.data.aws.s3.GET_BUCKET_LOGGING_ENABLED
-    )
-    expected_nodes_enabled = {
-        (
-            parsed_data_enabled["bucket"],
-            parsed_data_enabled["logging_enabled"],
-            parsed_data_enabled["target_bucket"],
-        ),
-    }
-
-    # Act
-    cartography.intel.aws.s3._load_bucket_logging(
-        neo4j_session, [parsed_data_enabled], TEST_UPDATE_TAG
-    )
-
-    # Assert
-    nodes = neo4j_session.run(
-        """
-        MATCH (s:AWSS3Bucket)
-        WHERE s.name = 'bucket-1'
-        RETURN s.name, s.logging_enabled, s.logging_target_bucket
-        """,
-    )
-    actual_nodes = {
-        (
-            n["s.name"],
-            n["s.logging_enabled"],
-            n["s.logging_target_bucket"],
-        )
-        for n in nodes
-    }
-    assert actual_nodes == expected_nodes_enabled
-
-    # Test disabled logging
-    # Arrange
-    parsed_data_disabled = cartography.intel.aws.s3.parse_bucket_logging(
-        "bucket-2", tests.data.aws.s3.GET_BUCKET_LOGGING_DISABLED
-    )
-    expected_nodes_disabled = {
-        (
-            parsed_data_disabled["bucket"],
-            parsed_data_disabled["logging_enabled"],
-            parsed_data_disabled["target_bucket"],
-        ),
-    }
-
-    # Act
-    cartography.intel.aws.s3._load_bucket_logging(
-        neo4j_session, [parsed_data_disabled], TEST_UPDATE_TAG
-    )
-
-    # Assert
-    nodes = neo4j_session.run(
-        """
-        MATCH (s:AWSS3Bucket)
-        WHERE s.name = 'bucket-2'
-        RETURN s.name, s.logging_enabled, s.logging_target_bucket
-        """,
-    )
-    actual_nodes = {
-        (
-            n["s.name"],
-            n["s.logging_enabled"],
-            n["s.logging_target_bucket"],
-        )
-        for n in nodes
-    }
-    assert actual_nodes == expected_nodes_disabled

@@ -1,3 +1,5 @@
+from tests.data.kubernetes.namespaces import GET_CLUSTER_DATA
+from tests.data.kubernetes.namespaces import GET_NAMESPACES_DATA
 import json
 from uuid import uuid4
 
@@ -151,5 +153,49 @@ KUBERNETES_CLUSTER_2_POD_SERVICE_ACCOUNTS_DATA = [
         "uid": "cluster-2-my-namespace-default-sa-uid",
         "creation_timestamp": 1633581668,
         "resource_version": "2001",
+    },
+]
+
+
+GET_PODS_DATA = [
+    {
+        "uid": RANDOM_ID[0],
+        "name": "my-pod",
+        "creation_timestamp": 1633581666,
+        "deletion_timestamp": None,
+        "namespace": GET_NAMESPACES_DATA[-1]["name"],
+        "node": "my-node",
+        "cluster_uid": GET_CLUSTER_DATA["uid"],
+        "labels": {
+            "key1": "val1",
+            "key2": "val2",
+        },
+        "containers": [
+            {
+                "name": "my-pod-container",
+                "image": "my-image",
+                "uid": f"{RANDOM_ID[0]}-my-pod-container",
+            },
+        ],
+    },
+    {
+        "uid": RANDOM_ID[1],
+        "name": "my-service-pod",
+        "creation_timestamp": 1633581666,
+        "deletion_timestamp": None,
+        "namespace": GET_NAMESPACES_DATA[-1]["name"],
+        "node": "my-node",
+        "cluster_uid": GET_CLUSTER_DATA["uid"],
+        "labels": {
+            "key1": "val3",
+            "key2": "val4",
+        },
+        "containers": [
+            {
+                "name": "my-service-pod-container",
+                "image": "my-image",
+                "uid": f"{RANDOM_ID[1]}-my-pod-container",
+            },
+        ],
     },
 ]

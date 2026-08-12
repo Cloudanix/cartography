@@ -1,3 +1,5 @@
+from tests.data.kubernetes.namespaces import GET_CLUSTER_DATA
+from tests.data.kubernetes.namespaces import GET_NAMESPACES_DATA
 from uuid import uuid4
 
 from tests.data.kubernetes.clusters import KUBERNETES_CLUSTER_NAMES
@@ -38,6 +40,19 @@ KUBERNETES_SECRETS_DATA = [
         "creation_timestamp": 1633581666,
         "deletion_timestamp": None,
         "namespace": KUBERNETES_CLUSTER_1_NAMESPACES_DATA[-1]["name"],
+        "type": "Opaque",
+    },
+]
+
+
+GET_SECRETS_DATA = [
+    {
+        "uid": uuid4().hex,
+        "name": "my-secret",
+        "creation_timestamp": 1633581666,
+        "deletion_timestamp": None,
+        "namespace": GET_NAMESPACES_DATA[-1]["name"],
+        "cluster_uid": GET_CLUSTER_DATA["uid"],
         "type": "Opaque",
     },
 ]

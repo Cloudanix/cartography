@@ -423,3 +423,10 @@ DESCRIBE_MONGODB_COLLECTIONS = [
         "database_id": da2 + "/mongodbDatabases/mongo_db2",
     },
 ]
+
+
+cors1_id = "0001"  # Sample cors policy id for testing
+
+
+cors2_id = "0002"  # Sample cors policy id for testing
+

@@ -1,251 +1,283 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from cartography.intel.azure import key_vaults
+from cartography.util import run_analysis_job
+from tests.data.azure.key_vaults import DESCRIBE_CERTIFICATES
+from tests.data.azure.key_vaults import DESCRIBE_KEYS
+from tests.data.azure.key_vaults import DESCRIBE_KEYVAULTS
+from tests.data.azure.key_vaults import DESCRIBE_SECRETS
 
-import cartography.intel.azure.key_vaults as key_vaults
-from tests.data.azure.key_vaults import MOCK_CERTIFICATES
-from tests.data.azure.key_vaults import MOCK_KEYS
-from tests.data.azure.key_vaults import MOCK_SECRETS
-from tests.data.azure.key_vaults import MOCK_VAULTS
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
-
-TEST_SUBSCRIPTION_ID = "00-00-00-00"
+TEST_SUBSCRIPTION_ID = '00-00-00-00'
+TEST_RESOURCE_GROUP = 'TestRG'
 TEST_UPDATE_TAG = 123456789
+TEST_WORKSPACE_ID = '1234'
+TEST_TENANT_ID = '1234'
 
 
-@patch("cartography.intel.azure.key_vaults.get_certificates")
-@patch("cartography.intel.azure.key_vaults.get_keys")
-@patch("cartography.intel.azure.key_vaults.get_secrets")
-@patch("cartography.intel.azure.key_vaults.get_key_vaults")
-def test_sync_key_vaults_and_contents(
-    mock_get_vaults, mock_get_secrets, mock_get_keys, mock_get_certs, neo4j_session
-):
-    """
-    Test that we can correctly sync Key Vaults and their contents.
-    """
-    # Arrange
-    mock_get_vaults.return_value = MOCK_VAULTS
-    mock_get_secrets.return_value = MOCK_SECRETS
-    mock_get_keys.return_value = MOCK_KEYS
-    mock_get_certs.return_value = MOCK_CERTIFICATES
+def test_load_key_vaults(neo4j_session):
+    key_vaults.load_key_vaults(
+        neo4j_session,
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_KEYVAULTS,
+        TEST_UPDATE_TAG,
+    )
 
-    # Create the prerequisite AzureSubscription node
+    expected_nodes = {
+        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault1",
+        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2",
+    }
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (r:AzureKeyVault) RETURN r.id;
+        """, )
+    actual_nodes = {n['r.id'] for n in nodes}
+
+    assert actual_nodes == expected_nodes
+
+
+def test_load_key_vaults_relationships(neo4j_session):
     neo4j_session.run(
         """
-        MERGE (s:AzureSubscription{id: $sub_id})
-        SET s.lastupdated = $update_tag
+        MERGE (as:AzureSubscription{id: $subscription_id})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
+        ON CREATE SET as.firstseen = timestamp()
+        SET as.lastupdated = $update_tag
         """,
-        sub_id=TEST_SUBSCRIPTION_ID,
+        subscription_id=TEST_SUBSCRIPTION_ID,
+        AZURE_TENANT_ID=TEST_TENANT_ID,
+        WORKSPACE_ID=TEST_WORKSPACE_ID,
         update_tag=TEST_UPDATE_TAG,
     )
 
-    common_job_parameters = {
-        "UPDATE_TAG": TEST_UPDATE_TAG,
-        "AZURE_SUBSCRIPTION_ID": TEST_SUBSCRIPTION_ID,
-    }
-
-    # Act
-    key_vaults.sync(
+    key_vaults.load_key_vaults(
         neo4j_session,
-        MagicMock(),
         TEST_SUBSCRIPTION_ID,
+        DESCRIBE_KEYVAULTS,
         TEST_UPDATE_TAG,
-        common_job_parameters,
     )
 
-    # Assert Vaults
-    expected_vaults = {
+    expected = {
         (
-            "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/my-test-key-vault",
-            "my-test-key-vault",
+            TEST_SUBSCRIPTION_ID,
+            "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault1",
+        ),
+        (
+            TEST_SUBSCRIPTION_ID,
+            "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2",
         ),
     }
-    actual_vaults = check_nodes(neo4j_session, "AzureKeyVault", ["id", "name"])
-    assert actual_vaults == expected_vaults
 
-    # Assert Secrets
-    expected_secrets = {
-        ("https://my-test-key-vault.vault.azure.net/secrets/my-secret", "my-secret")
-    }
-    actual_secrets = check_nodes(neo4j_session, "AzureKeyVaultSecret", ["id", "name"])
-    assert actual_secrets == expected_secrets
+    result = neo4j_session.run(
+        """
+        MATCH (n1:AzureSubscription)-[:RESOURCE]->(n2:AzureKeyVault) RETURN n1.id, n2.id;
+        """, )
 
-    # Assert Keys
-    expected_keys = {
-        ("https://my-test-key-vault.vault.azure.net/keys/my-key", "my-key")
-    }
-    actual_keys = check_nodes(neo4j_session, "AzureKeyVaultKey", ["id", "name"])
-    assert actual_keys == expected_keys
+    actual = {(r['n1.id'], r['n2.id']) for r in result}
 
-    # Assert Certificates
-    expected_certs = {
-        ("https://my-test-key-vault.vault.azure.net/certificates/my-cert", "my-cert")
-    }
-    actual_certs = check_nodes(
-        neo4j_session, "AzureKeyVaultCertificate", ["id", "name"]
-    )
-    assert actual_certs == expected_certs
+    assert actual == expected
 
-    # Assert Relationships
-    vault_id = MOCK_VAULTS[0]["id"]
-    secret_id = MOCK_SECRETS[0]["id"]
-    key_id = MOCK_KEYS[0]["id"]
-    cert_id = MOCK_CERTIFICATES[0]["id"]
 
-    # Assert CONTAINS relationships from Vault to children
-    expected_contains_rels = {
-        (vault_id, secret_id),
-        (vault_id, key_id),
-        (vault_id, cert_id),
-    }
-    actual_contains_rels = check_rels(
+def test_load_key_vault_keys(neo4j_session):
+    key_vaults.load_key_vaults_keys(
         neo4j_session,
-        "AzureKeyVault",
-        "id",
-        "AzureKeyVaultSecret",
-        "id",
-        "CONTAINS",
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_KEYS,
+        TEST_UPDATE_TAG,
     )
-    actual_contains_rels.update(
-        check_rels(
-            neo4j_session,
-            "AzureKeyVault",
-            "id",
-            "AzureKeyVaultKey",
-            "id",
-            "CONTAINS",
-        ),
-    )
-    actual_contains_rels.update(
-        check_rels(
-            neo4j_session,
-            "AzureKeyVault",
-            "id",
-            "AzureKeyVaultCertificate",
-            "id",
-            "CONTAINS",
-        ),
-    )
-    assert actual_contains_rels == expected_contains_rels
 
-    # Assert RESOURCE relationships from Subscription to children
-    expected_resource_rels = {
-        (TEST_SUBSCRIPTION_ID, secret_id),
-        (TEST_SUBSCRIPTION_ID, key_id),
-        (TEST_SUBSCRIPTION_ID, cert_id),
-    }
-    actual_resource_rels = check_rels(
+    expected_nodes = {'/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2'}
+    nodes = neo4j_session.run(
+        """
+        MATCH (r:AzureKeyVaultKey) RETURN r.id;
+        """, )
+    actual_nodes = {n['r.id'] for n in nodes}
+
+    assert actual_nodes == expected_nodes
+
+
+def test_load_key_vauly_key_relationship(neo4j_session):
+    key_vaults.load_key_vaults(
         neo4j_session,
-        "AzureSubscription",
-        "id",
-        "AzureKeyVaultSecret",
-        "id",
-        "RESOURCE",
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_KEYVAULTS,
+        TEST_UPDATE_TAG,
     )
-    actual_resource_rels.update(
-        check_rels(
-            neo4j_session,
-            "AzureSubscription",
-            "id",
-            "AzureKeyVaultKey",
-            "id",
-            "RESOURCE",
-        ),
-    )
-    actual_resource_rels.update(
-        check_rels(
-            neo4j_session,
-            "AzureSubscription",
-            "id",
-            "AzureKeyVaultCertificate",
-            "id",
-            "RESOURCE",
-        ),
-    )
-    assert actual_resource_rels == expected_resource_rels
 
-    # Assert TAGGED relationships from secrets to AzureTag
-    expected_tag_rels = {
-        (secret_id, f"{TEST_SUBSCRIPTION_ID}|env:prod"),
-    }
-    actual_tag_rels = check_rels(
+    key_vaults.load_key_vaults_keys(
         neo4j_session,
-        "AzureKeyVaultSecret",
-        "id",
-        "AzureTag",
-        "id",
-        "TAGGED",
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_KEYS,
+        TEST_UPDATE_TAG,
     )
-    assert actual_tag_rels == expected_tag_rels
+
+    expected_nodes = {
+        (
+            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault1',
+            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2',
+        ),
+        (
+            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2',
+            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2',
+        ),
+    }
+
+    result = neo4j_session.run(
+        """
+        MATCH (n1:AzureKeyVault)-[:HAS_KEY]->(n2:AzureKeyVaultKey) RETURN n1.id, n2.id;
+        """, )
+
+    actual_nodes = {(r['n1.id'], r['n2.id']) for r in result}
+
+    assert actual_nodes == expected_nodes
 
 
-@patch("cartography.intel.azure.key_vaults.get_certificates")
-@patch("cartography.intel.azure.key_vaults.get_keys")
-@patch("cartography.intel.azure.key_vaults.get_secrets")
-@patch("cartography.intel.azure.key_vaults.get_key_vaults")
-def test_secret_tag_cleanup_preserves_shared_tags(
-    mock_get_vaults, mock_get_secrets, mock_get_keys, mock_get_certs, neo4j_session
-):
-    """
-    The secret-tag cleanup must only detach stale TAGGED edges from
-    AzureKeyVaultSecret. It must NOT delete AzureTag nodes, which are shared
-    across resource types and scoped only by subscription.
-    """
-    # Arrange
-    mock_get_vaults.return_value = MOCK_VAULTS
-    mock_get_secrets.return_value = MOCK_SECRETS
-    mock_get_keys.return_value = MOCK_KEYS
-    mock_get_certs.return_value = MOCK_CERTIFICATES
+def test_load_key_vault_secrets(neo4j_session):
+    key_vaults.load_key_vaults_secrets(
+        neo4j_session,
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_SECRETS,
+        TEST_UPDATE_TAG,
+    )
 
-    stale_tag = 1  # older than TEST_UPDATE_TAG
+    expected_nodes = {
+        "https://vault1.vault.azure.net/secrets/secret1/abcdefg",
+        "https://vault1.vault.azure.net/secrets/secret2/hijklm",
+    }
 
-    # A pre-existing shared tag that belongs to another resource type, last synced
-    # by a previous run (stale relative to this run's update tag).
+    nodes = neo4j_session.run(
+        """
+        MATCH (r:AzureKeyVaultSecret) RETURN r.id;
+        """, )
+    actual_nodes = {n['r.id'] for n in nodes}
+
+    assert actual_nodes == expected_nodes
+
+
+def test_key_vault_secrets_relationship(neo4j_session):
+    key_vaults.load_key_vaults(
+        neo4j_session,
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_KEYVAULTS,
+        TEST_UPDATE_TAG,
+    )
+
+    key_vaults.load_key_vaults_secrets(
+        neo4j_session,
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_SECRETS,
+        TEST_UPDATE_TAG,
+    )
+
+    expected_nodes = {
+        ("/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault1", "https://vault1.vault.azure.net/secrets/secret1/abcdefg"),
+        ("/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2", "https://vault1.vault.azure.net/secrets/secret2/hijklm"),
+    }
+
+    result = neo4j_session.run(
+        """
+        MATCH (n1:AzureKeyVault)-[:HAS_SECRET]->(n2:AzureKeyVaultSecret) RETURN n1.id, n2.id;
+        """, )
+
+    actual_nodes = {(r['n1.id'], r['n2.id']) for r in result}
+
+    assert actual_nodes == expected_nodes
+
+
+def test_load_key_vault_certificates(neo4j_session):
+    key_vaults.load_key_vaults_certificates(
+        neo4j_session,
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_CERTIFICATES,
+        TEST_UPDATE_TAG,
+    )
+
+    expected_nodes = {
+        "https://vault1.vault.azure.net/certificates/selfSignedCert01/012abc",
+        "https://vault1.vault.azure.net/certificates/selfSignedCert02/123ghj",
+    }
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (r:AzureKeyVaultCertificate) RETURN r.id;
+        """, )
+    actual_nodes = {n['r.id'] for n in nodes}
+
+    assert actual_nodes == expected_nodes
+
+
+def test_key_vault_certificates_relationship(neo4j_session):
+    key_vaults.load_key_vaults(
+        neo4j_session,
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_KEYVAULTS,
+        TEST_UPDATE_TAG,
+    )
+
+    key_vaults.load_key_vaults_certificates(
+        neo4j_session,
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_CERTIFICATES,
+        TEST_UPDATE_TAG,
+    )
+
+    expected_nodes = {
+        ("/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault1", "https://vault1.vault.azure.net/certificates/selfSignedCert01/012abc"),
+        ("/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2", "https://vault1.vault.azure.net/certificates/selfSignedCert02/123ghj"),
+    }
+
+    result = neo4j_session.run(
+        """
+        MATCH (n1:AzureKeyVault)-[:HAS_CERTIFICATE]->(n2:AzureKeyVaultCertificate) RETURN n1.id, n2.id;
+        """, )
+
+    actual_nodes = {(r['n1.id'], r['n2.id']) for r in result}
+
+    assert actual_nodes == expected_nodes
+
+
+def test_key_vaults_public_exposure_analysis(neo4j_session):
     neo4j_session.run(
         """
-        MERGE (s:AzureSubscription{id: $sub_id})
-        SET s.lastupdated = $update_tag
-        MERGE (t:AzureTag{id: $tag_id})
-        SET t.lastupdated = $stale_tag, t.key = 'owner', t.value = 'platform'
-        MERGE (s)-[res:RESOURCE]->(t)
-        SET res.lastupdated = $stale_tag
-        MERGE (sa:AzureStorageAccount{id: $sa_id})
-        SET sa.lastupdated = $stale_tag
-        MERGE (sa)-[tagged:TAGGED]->(t)
-        SET tagged.lastupdated = $stale_tag
+        MERGE (as:AzureSubscription{id: $subscription_id})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
+        ON CREATE SET as.firstseen = timestamp()
+        SET as.lastupdated = $update_tag
         """,
-        sub_id=TEST_SUBSCRIPTION_ID,
+        subscription_id=TEST_SUBSCRIPTION_ID,
+        AZURE_TENANT_ID=TEST_TENANT_ID,
+        WORKSPACE_ID=TEST_WORKSPACE_ID,
         update_tag=TEST_UPDATE_TAG,
-        stale_tag=stale_tag,
-        tag_id=f"{TEST_SUBSCRIPTION_ID}|owner:platform",
-        sa_id="/subscriptions/00-00-00-00/storageAccounts/other",
+    )
+
+    key_vaults.load_key_vaults(
+        neo4j_session,
+        TEST_SUBSCRIPTION_ID,
+        DESCRIBE_KEYVAULTS,
+        TEST_UPDATE_TAG,
     )
 
     common_job_parameters = {
-        "UPDATE_TAG": TEST_UPDATE_TAG,
+        "UPDATE_TAG": TEST_UPDATE_TAG + 1,
+        "WORKSPACE_ID": TEST_WORKSPACE_ID,
         "AZURE_SUBSCRIPTION_ID": TEST_SUBSCRIPTION_ID,
+        "AZURE_TENANT_ID": TEST_TENANT_ID,
     }
 
-    # Act
-    key_vaults.sync(
+    run_analysis_job(
+        'azure_keyvault_asset_exposure.json',
         neo4j_session,
-        MagicMock(),
-        TEST_SUBSCRIPTION_ID,
-        TEST_UPDATE_TAG,
         common_job_parameters,
     )
 
-    # Assert: the shared tag node and the other resource's TAGGED edge survive.
-    shared_tag_id = f"{TEST_SUBSCRIPTION_ID}|owner:platform"
-    assert (shared_tag_id,) in check_nodes(neo4j_session, "AzureTag", ["id"])
-    assert (
-        "/subscriptions/00-00-00-00/storageAccounts/other",
-        shared_tag_id,
-    ) in check_rels(
-        neo4j_session,
-        "AzureStorageAccount",
-        "id",
-        "AzureTag",
-        "id",
-        "TAGGED",
+    expected_nodes = {
+        (
+            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.KeyVault/vaults/vault2',
+            'default_network_access',
+        ),
+    }
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (r:AzureKeyVault{exposed_internet: true}) RETURN r.id, r.exposed_internet_type;
+        """,
     )
+    actual_nodes = {(n['r.id'], ",".join(n['r.exposed_internet_type'])) for n in nodes}
+
+    assert actual_nodes == expected_nodes

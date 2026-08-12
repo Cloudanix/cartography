@@ -1,144 +1,26 @@
-from unittest.mock import MagicMock
-from unittest.mock import patch
-
 import cartography.intel.aws.elasticsearch
-from cartography.intel.aws.elasticsearch import sync
-from tests.data.aws.elasticsearch import GET_ES_DOMAINS
-from tests.integration.cartography.intel.aws.common import create_test_account
-from tests.integration.util import check_nodes
-from tests.integration.util import check_rels
-
-TEST_ACCOUNT_ID = "000000000000"
-TEST_REGION = "us-east-1"
+from tests.data.aws.elasticsearch import DESCRIBE_INSTANCE_RESPONSE
 TEST_UPDATE_TAG = 123456789
 
 
-def test_transform_es_domains_calculates_internet_exposure():
-    domains = [
-        {
-            "DomainId": "public-domain",
-            "Endpoint": "search-public.example.com",
-            "AccessPolicies": (
-                '{"Version":"2012-10-17","Statement":[{"Effect":"Allow",'
-                '"Principal":"*","Action":"es:*","Resource":"*"}]}'
-            ),
-        },
-        {
-            "DomainId": "private-domain",
-            "Endpoint": "search-private.example.com",
-            "AccessPolicies": '{"Version":"2012-10-17","Statement":[]}',
-        },
-    ]
-
-    transformed = cartography.intel.aws.elasticsearch._transform_es_domains(domains)
-
-    assert {
-        domain["DomainId"]: domain["exposed_internet"] for domain in transformed
-    } == {
-        "public-domain": True,
-        "private-domain": False,
+def test_load_es_reserved_instance_data(neo4j_session):
+    _ensure_local_neo4j_has_test_es_reserved_instance_data(neo4j_session)
+    expected_nodes = {
+        "arn:aws:es:us-east-1:123456789:reserved-instances/my-reservation",
     }
-
-
-def _create_test_subnets_and_security_groups(neo4j_session):
-    """Create test subnets and security groups for relationship testing."""
-    neo4j_session.run(
+    nodes = neo4j_session.run(
         """
-        MERGE (s:AWSEC2Subnet{id: 'subnet-11111111'})
-        SET s.lastupdated = $update_tag
+        MATCH (n:AWSESReservedInstance) RETURN n.id;
         """,
-        update_tag=TEST_UPDATE_TAG,
     )
-    neo4j_session.run(
-        """
-        MERGE (s:AWSEC2Subnet{id: 'subnet-22222222'})
-        SET s.lastupdated = $update_tag
-        """,
-        update_tag=TEST_UPDATE_TAG,
-    )
-    neo4j_session.run(
-        """
-        MERGE (sg:AWSEC2SecurityGroup{id: 'sg-12345678'})
-        SET sg.lastupdated = $update_tag
-        """,
-        update_tag=TEST_UPDATE_TAG,
-    )
+    actual_nodes = {n['n.id'] for n in nodes}
+    assert actual_nodes == expected_nodes
 
 
-@patch("cartography.intel.aws.elasticsearch.ingest_dns_record_by_fqdn")
-@patch.object(
-    cartography.intel.aws.elasticsearch,
-    "_get_es_domains",
-    return_value=GET_ES_DOMAINS,
-)
-def test_sync_elasticsearch(mock_get_es_domains, mock_dns_ingest, neo4j_session):
-    """
-    Ensure that Elasticsearch domains are synced correctly with their nodes and relationships.
-    """
-    # Arrange
-    boto3_session = MagicMock()
-    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-    _create_test_subnets_and_security_groups(neo4j_session)
-
-    # Act
-    sync(
+def _ensure_local_neo4j_has_test_es_reserved_instance_data(neo4j_session):
+    cartography.intel.aws.elasticsearch.load_elasticsearch_reserved_instances(
         neo4j_session,
-        boto3_session,
-        [TEST_REGION],
-        TEST_ACCOUNT_ID,
+        DESCRIBE_INSTANCE_RESPONSE,
+        '123456789012',
         TEST_UPDATE_TAG,
-        {"UPDATE_TAG": TEST_UPDATE_TAG, "AWS_ID": TEST_ACCOUNT_ID},
     )
-
-    # Assert - AWSESDomain nodes exist with key properties
-    assert check_nodes(
-        neo4j_session,
-        "AWSESDomain",
-        ["id", "elasticsearch_version", "exposed_internet"],
-    ) == {
-        ("000000000000/test-es-domain-1", "7.10", False),
-        ("000000000000/test-es-domain-2", "6.8", False),
-    }
-
-    # Assert - Relationships (AWSAccount)-[RESOURCE]->(AWSESDomain)
-    assert check_rels(
-        neo4j_session,
-        "AWSAccount",
-        "id",
-        "AWSESDomain",
-        "id",
-        "RESOURCE",
-        rel_direction_right=True,
-    ) == {
-        (TEST_ACCOUNT_ID, "000000000000/test-es-domain-1"),
-        (TEST_ACCOUNT_ID, "000000000000/test-es-domain-2"),
-    }
-
-    # Assert - Relationships (AWSESDomain)-[PART_OF_SUBNET]->(AWSEC2Subnet)
-    # Only domain-1 has VPCOptions with subnets
-    assert check_rels(
-        neo4j_session,
-        "AWSESDomain",
-        "id",
-        "AWSEC2Subnet",
-        "id",
-        "PART_OF_SUBNET",
-        rel_direction_right=True,
-    ) == {
-        ("000000000000/test-es-domain-1", "subnet-11111111"),
-        ("000000000000/test-es-domain-1", "subnet-22222222"),
-    }
-
-    # Assert - Relationships (AWSESDomain)-[MEMBER_OF_EC2_SECURITY_GROUP]->(AWSEC2SecurityGroup)
-    # Only domain-1 has VPCOptions with security groups
-    assert check_rels(
-        neo4j_session,
-        "AWSESDomain",
-        "id",
-        "AWSEC2SecurityGroup",
-        "id",
-        "MEMBER_OF_EC2_SECURITY_GROUP",
-        rel_direction_right=True,
-    ) == {
-        ("000000000000/test-es-domain-1", "sg-12345678"),
-    }

@@ -249,3 +249,19 @@ GET_S3_BUCKET_DETAILS = [
         None,
     ),
 ]
+
+
+LIST_STATUSES = [
+    {
+        'is_public': True,
+        'bucket': 'bucket-1',
+    },
+    {
+        'is_public': True,
+        'bucket': 'bucket-2',
+    },
+    {
+        'is_public': False,
+        'bucket': 'bucket-3',
+    },
+]

@@ -1,7 +1,83 @@
-import datetime
 import json
+import datetime
+
+
+DESCRIBE_REPOSITORIES = {
+    'repositories': [
+        {
+            'repositoryArn': 'arn:aws:ecr:us-east-1:000000000000:repository/example-repository',
+            'registryId': '000000000000',
+            'repositoryName': 'example-repository',
+            'repositoryUri': '000000000000.dkr.ecr.us-east-1/example-repository',
+            'createdAt': datetime.datetime(2019, 1, 1, 0, 0, 1),
+            'consolelink': 'www.demolink.com',
+        },
+        {
+            'repositoryArn': 'arn:aws:ecr:us-east-1:000000000000:repository/sample-repository',
+            'registryId': '000000000000',
+            'repositoryName': 'sample-repository',
+            'repositoryUri': '000000000000.dkr.ecr.us-east-1/sample-repository',
+            'createdAt': datetime.datetime(2019, 1, 1, 0, 0, 1),
+            'consolelink': 'www.demolink.com',
+        },
+        {
+            'repositoryArn': 'arn:aws:ecr:us-east-1:000000000000:repository/test-repository',
+            'registryId': '000000000000',
+            'repositoryName': 'test-repository',
+            'repositoryUri': '000000000000.dkr.ecr.us-east-1/test-repository',
+            'createdAt': datetime.datetime(2019, 1, 1, 0, 0, 1),
+            'consolelink': 'www.demolink.com',
+        },
+    ],
+}
+
+
+LIST_REPOSITORY_IMAGES = {
+    '000000000000.dkr.ecr.us-east-1/example-repository': [
+        {
+            'imageDigest': 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+            'imageTag': '1',
+        },
+        {
+            'imageDigest': 'sha256:0000000000000000000000000000000000000000000000000000000000000001',
+            'imageTag': '2',
+        },
+    ],
+    '000000000000.dkr.ecr.us-east-1/sample-repository': [
+        {
+            # NOTE same digest and tag as image in example-repository
+            'imageDigest': 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+            'imageTag': '1',
+        },
+        {
+            'imageDigest': 'sha256:0000000000000000000000000000000000000000000000000000000000000011',
+            'imageTag': '2',
+        },
+    ],
+    '000000000000.dkr.ecr.us-east-1/test-repository': [
+        {
+            # NOTE same digest but different tag from image in example-repository
+            'imageDigest': 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+            'imageTag': '1234567890',
+        },
+        {
+            'imageDigest': 'sha256:0000000000000000000000000000000000000000000000000000000000000021',
+            'imageTag': '1',
+        },
+        # Item without an imageDigest: will get filtered out and not ingested.
+        {
+            'imageTag': '1',
+        },
+        # Item without an imageTag
+        {
+            'imageDigest': 'sha256:0000000000000000000000000000000000000000000000000000000000000031',
+        },
+    ],
+}
+
 
 PULL_THROUGH_CACHE_SECRET_ARN = "arn:aws:secretsmanager:us-east-1:000000000000:secret:ecr-pullthroughcache/dockerhub"
+
 PULL_THROUGH_CACHE_ROLE_ARN = (
     "arn:aws:iam::000000000000:role/ecr-pull-through-cache-role"
 )
@@ -41,31 +117,6 @@ PULL_THROUGH_CACHE_RULES_SECOND_SYNC = [
     },
 ]
 
-DESCRIBE_REPOSITORIES = {
-    "repositories": [
-        {
-            "repositoryArn": "arn:aws:ecr:us-east-1:000000000000:repository/example-repository",
-            "registryId": "000000000000",
-            "repositoryName": "example-repository",
-            "repositoryUri": "000000000000.dkr.ecr.us-east-1.amazonaws.com/example-repository",
-            "createdAt": datetime.datetime(2019, 1, 1, 0, 0, 1),
-        },
-        {
-            "repositoryArn": "arn:aws:ecr:us-east-1:000000000000:repository/sample-repository",
-            "registryId": "000000000000",
-            "repositoryName": "sample-repository",
-            "repositoryUri": "000000000000.dkr.ecr.us-east-1.amazonaws.com/sample-repository",
-            "createdAt": datetime.datetime(2019, 1, 1, 0, 0, 1),
-        },
-        {
-            "repositoryArn": "arn:aws:ecr:us-east-1:000000000000:repository/test-repository",
-            "registryId": "000000000000",
-            "repositoryName": "test-repository",
-            "repositoryUri": "000000000000.dkr.ecr.us-east-1.amazonaws.com/test-repository",
-            "createdAt": datetime.datetime(2019, 1, 1, 0, 0, 1),
-        },
-    ],
-}
 DESCRIBE_IMAGES = {
     "imageDetails": {
         "registryId": "000000000000",
@@ -92,72 +143,6 @@ DESCRIBE_IMAGES = {
     },
 }
 
-LIST_REPOSITORY_IMAGES = {
-    "000000000000.dkr.ecr.us-east-1.amazonaws.com/example-repository": [
-        {
-            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            "imageTag": "1",
-            "repositoryName": "example-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-        {
-            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            "imageTag": "latest",
-            "repositoryName": "example-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-        {
-            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
-            "imageTag": "2",
-            "repositoryName": "example-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-    ],
-    "000000000000.dkr.ecr.us-east-1.amazonaws.com/sample-repository": [
-        {
-            # NOTE same digest and tag as image in example-repository
-            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            "imageTag": "1",
-            "repositoryName": "sample-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-        {
-            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000011",
-            "imageTag": "2",
-            "repositoryName": "sample-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-    ],
-    "000000000000.dkr.ecr.us-east-1.amazonaws.com/test-repository": [
-        {
-            # NOTE same digest but different tag from image in example-repository
-            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            "imageTag": "1234567890",
-            "repositoryName": "test-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-        {
-            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000021",
-            "imageTag": "1",
-            "repositoryName": "test-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-        # Item without an imageDigest: will get filtered out and not ingested.
-        {
-            "imageTag": "1",
-            "repositoryName": "test-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-        # Item without an imageTag
-        {
-            "imageDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000031",
-            "repositoryName": "test-repository",
-            **DESCRIBE_IMAGES["imageDetails"],
-        },
-    ],
-}
-
-# Sample Docker manifest for testing
 SAMPLE_MANIFEST = {
     "schemaVersion": 2,
     "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
@@ -185,7 +170,6 @@ SAMPLE_MANIFEST = {
     ],
 }
 
-# Sample config blob with diff_ids for testing
 SAMPLE_CONFIG_BLOB = {
     "architecture": "amd64",
     "os": "linux",
@@ -212,7 +196,6 @@ SAMPLE_CONFIG_BLOB_WITH_CIRCLECI_LABELS = {
     },
 }
 
-# Multi-arch manifest list for testing
 SAMPLE_MANIFEST_LIST = {
     "schemaVersion": 2,
     "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -232,7 +215,6 @@ SAMPLE_MANIFEST_LIST = {
     ],
 }
 
-# Response for batch_get_image API
 BATCH_GET_IMAGE_RESPONSE = {
     "images": [
         {
@@ -248,13 +230,11 @@ BATCH_GET_IMAGE_RESPONSE = {
     ]
 }
 
-# Response for get_download_url_for_layer API
 GET_DOWNLOAD_URL_RESPONSE = {
     "downloadUrl": "https://example.s3.amazonaws.com/layer?X-Amz-Algorithm=AWS4-HMAC-SHA256...",
     "layerDigest": "sha256:b5b2b2c507a0944348e0303114d8d93aaaa081732b86451d9bce1f0c7a0b0c91",
 }
 
-# Attestation image manifest (in-toto format) - should be filtered
 ATTESTATION_MANIFEST = {
     "schemaVersion": 2,
     "mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -272,7 +252,6 @@ ATTESTATION_MANIFEST = {
     ],
 }
 
-# SLSA provenance blob (in-toto attestation payload)
 SLSA_PROVENANCE_BLOB = {
     "predicate": {
         "materials": [
@@ -286,7 +265,6 @@ SLSA_PROVENANCE_BLOB = {
     }
 }
 
-# Multi-layer container image manifest
 MULTI_LAYER_MANIFEST = {
     "schemaVersion": 2,
     "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
@@ -309,7 +287,6 @@ MULTI_LAYER_MANIFEST = {
     ],
 }
 
-# Config blob for multi-layer container
 MULTI_LAYER_CONFIG = {
     "architecture": "amd64",
     "os": "linux",
@@ -334,7 +311,6 @@ MULTI_LAYER_CONFIG = {
     },
 }
 
-# BuildKit cache manifest (should be filtered out)
 BUILDKIT_CACHE_MANIFEST = {
     "schemaVersion": 2,
     "mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -352,8 +328,6 @@ BUILDKIT_CACHE_MANIFEST = {
     ],
 }
 
-
-# Multi-arch fixtures shaped like AWS CLI responses
 MULTI_ARCH_INDEX = {
     "schemaVersion": 2,
     "mediaType": "application/vnd.oci.image.index.v1+json",
@@ -444,17 +418,19 @@ MULTI_ARCH_ARM64_CONFIG = {
 MANIFEST_LIST_DIGEST = (
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
+
 MANIFEST_LIST_AMD64_DIGEST = (
     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
+
 MANIFEST_LIST_ARM64_DIGEST = (
     "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 )
+
 MANIFEST_LIST_ATTESTATION_DIGEST = (
     "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 )
 
-# Mock response for batch_get_image when fetching manifest list
 BATCH_GET_MANIFEST_LIST_RESPONSE = {
     "images": [
         {
@@ -469,7 +445,6 @@ BATCH_GET_MANIFEST_LIST_RESPONSE = {
     ]
 }
 
-# Image details for a multi-arch manifest list
 MULTI_ARCH_IMAGE_DETAILS = {
     "registryId": "000000000000",
     "repositoryName": "multi-arch-repository",
@@ -481,7 +456,6 @@ MULTI_ARCH_IMAGE_DETAILS = {
     "lastRecordedPullTime": "2025-01-01T01:01:01.000000-00:00",
 }
 
-# Single-platform image incorrectly marked as manifest list (bug scenario)
 SINGLE_PLATFORM_DIGEST = (
     "sha256:914758fa1c15b12c7dfa8cab15eb53b7bbb5143386911da492b00c73c49eef6f"
 )
@@ -498,5 +472,4 @@ SINGLE_PLATFORM_IMAGE_DETAILS = {
     "lastRecordedPullTime": "2025-01-01T01:01:01.000000-00:00",
 }
 
-# Empty response when trying to fetch as manifest list (the bug scenario)
 BATCH_GET_MANIFEST_LIST_EMPTY_RESPONSE: dict[str, list] = {"images": []}

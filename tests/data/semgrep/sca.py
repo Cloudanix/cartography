@@ -142,3 +142,10 @@ USAGES = [
         "url": "https: //github.com/simpsoncorp/sample_repo/blob/commit_id/src/packages/linked-accounts/components/LinkedAccountsTable/constants.tsx#L274",  # noqa E501
     },
 ]
+
+
+DEPLOYMENTS = {
+    "id": "123456",
+    "name": "YourOrg",
+    "slug": "yourorg",
+}
