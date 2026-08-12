@@ -34,11 +34,6 @@ def test__parse_principal_entries():
     assert principal_entries[3] == ("Federated", "test-provider-1")
 
 
-def test_get_account_from_arn():
-    result = iam.get_account_from_arn("arn:aws:iam::081157660428:role/TestRole")
-    assert result == "081157660428"
-
-
 def test__get_role_tags_valid_tags(mocker):
     mocker.patch(
         'cartography.intel.aws.iam.get_role_list_data', return_value={
@@ -112,7 +107,7 @@ def test_transform_policy_data_correctly_creates_lists_of_statements():
     }
 
     # Act: call transform on the object
-    transform_policy_data(pol_statement_map, PolicyType.inline.value)
+    transform_policy_data(pol_statement_map, PolicyType.inline.value, "000000000000")
 
     # Assert that we correctly converted the statement to a list
     assert type(pol_statement_map['some-arn']['pol-name']) == list

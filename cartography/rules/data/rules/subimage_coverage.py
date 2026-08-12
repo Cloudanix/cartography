@@ -1,0 +1,374 @@
+from cartography.rules.spec.model import Fact
+from cartography.rules.spec.model import Finding
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
+from cartography.rules.spec.model import Rule
+
+# =============================================================================
+# Rule 1: SubImage Module Not Configured
+# Detects SubImage modules that are not configured but have internal usage
+# =============================================================================
+
+_subimage_module_not_configured_fact = Fact(
+    id="subimage-module-not-configured",
+    name="SubImage Module Not Configured",
+    description=(
+        "Detects SubImage modules that are not configured (is_configured=false) "
+        "but have a matching ThirdPartyApp in the graph, indicating internal usage "
+        "of that service without coverage."
+    ),
+    cypher_query="""
+    MATCH (m:SubImageModule)
+    WHERE m.is_configured = false
+    MATCH (app:ThirdPartyApp)
+    WHERE toLower(app._ont_name) = toLower(m.id)
+    RETURN m.id AS module_id, m.name AS module_name, app._ont_name AS app_name, app._ont_source AS app_source
+    ORDER BY m.name
+    """,
+    cypher_visual_query="""
+    MATCH (m:SubImageModule)
+    WHERE m.is_configured = false
+    MATCH (app:ThirdPartyApp)
+    WHERE toLower(app._ont_name) = toLower(m.id)
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (m:SubImageModule)
+    WHERE m.is_configured = false
+    MATCH (app:ThirdPartyApp)
+    WHERE toLower(app._ont_name) = toLower(m.id)
+    RETURN count(DISTINCT m) AS count
+    """,
+    asset_label="SubImageModule",
+    asset_id_field="module_id",
+    identity_fields=("module_name", "app_name", "app_source"),
+    module=Module.SUBIMAGE,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+class SubImageModuleNotConfiguredOutput(Finding):
+    module_id: str | None = None
+    module_name: str | None = None
+    app_name: str | None = None
+    app_source: str | None = None
+
+
+subimage_module_not_configured = Rule(
+    id="subimage_module_not_configured",
+    name="SubImage Module Not Configured",
+    description=(
+        "Detects SubImage modules that are not configured but have matching "
+        "ThirdPartyApp nodes in the graph, indicating the organization uses "
+        "that service without security coverage."
+    ),
+    output_model=SubImageModuleNotConfiguredOutput,
+    tags=(
+        "subimage",
+        "coverage",
+        "misconfiguration",
+    ),
+    facts=(_subimage_module_not_configured_fact,),
+    version="0.1.0",
+)
+
+# =============================================================================
+# Rule 2: SubImage Framework Disabled While Module Enabled
+# Detects frameworks that are disabled while their corresponding module is active
+# =============================================================================
+
+_subimage_framework_disabled_module_enabled_fact = Fact(
+    id="subimage-framework-disabled-module-enabled",
+    name="SubImage Framework Disabled While Module Enabled",
+    description=(
+        "Detects SubImage frameworks that are disabled while their corresponding "
+        "module is configured, indicating a compliance gap."
+    ),
+    cypher_query="""
+    MATCH (f:SubImageFramework)
+    WHERE f.enabled = false
+    MATCH (m:SubImageModule)
+    WHERE m.is_configured = true AND f.scope = m.id
+    RETURN f.id AS framework_id, f.name AS framework_name, f.scope AS framework_scope, m.name AS module_name
+    ORDER BY f.name
+    """,
+    cypher_visual_query="""
+    MATCH (f:SubImageFramework)
+    WHERE f.enabled = false
+    MATCH (m:SubImageModule)
+    WHERE m.is_configured = true AND f.scope = m.id
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (f:SubImageFramework)
+    WHERE f.enabled = false
+    MATCH (m:SubImageModule)
+    WHERE m.is_configured = true AND f.scope = m.id
+    RETURN count(f) AS count
+    """,
+    asset_label="SubImageFramework",
+    asset_id_field="framework_id",
+    identity_fields=("framework_name", "framework_scope"),
+    module=Module.SUBIMAGE,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+class SubImageFrameworkDisabledModuleEnabledOutput(Finding):
+    framework_id: str | None = None
+    framework_name: str | None = None
+    framework_scope: str | None = None
+    module_name: str | None = None
+
+
+subimage_framework_disabled_module_enabled = Rule(
+    id="subimage_framework_disabled_module_enabled",
+    name="SubImage Framework Disabled While Module Enabled",
+    description=(
+        "Detects SubImage frameworks that are disabled while their corresponding "
+        "module is configured and active, indicating a coverage gap."
+    ),
+    output_model=SubImageFrameworkDisabledModuleEnabledOutput,
+    tags=(
+        "subimage",
+        "coverage",
+        "misconfiguration",
+    ),
+    facts=(_subimage_framework_disabled_module_enabled_fact,),
+    version="0.1.0",
+)
+
+# =============================================================================
+# Rule 3: Container Image Not Found
+# Detects containers with no associated image in the graph
+# =============================================================================
+
+_container_image_not_found_fact = Fact(
+    id="container-image-not-found",
+    name="Container Image Not Found",
+    description=(
+        "Detects containers that have no HAS_IMAGE relationship, indicating "
+        "the container is running an unknown or untracked image."
+    ),
+    cypher_query="""
+    MATCH (c:Container)
+    WHERE NOT (c)-[:RESOLVED_IMAGE]->(:Image)
+      AND NOT coalesce(c.image, '') CONTAINS 'amazon/cloudwatch-agent'
+      AND NOT coalesce(c.name, '') STARTS WITH 'aws-guardduty-agent'
+      // Kubernetes system namespaces run vendor images that are never published
+      // to customer registries, so an unresolved image there is expected, not a gap.
+      AND NOT coalesce(c.namespace, '') IN ['kube-system', 'calico-system', 'tigera-operator']
+    OPTIONAL MATCH (c)<-[:HAS_CONTAINER]-(cluster)
+    RETURN c.name AS container_name, c.id AS container_id,
+           c.image AS image, cluster.name AS cluster_name,
+           c._ont_source AS ontology_source
+    ORDER BY c.name
+    """,
+    cypher_visual_query="""
+    MATCH (c:Container)
+    WHERE NOT (c)-[:RESOLVED_IMAGE]->(:Image)
+      AND NOT coalesce(c.image, '') CONTAINS 'amazon/cloudwatch-agent'
+      AND NOT coalesce(c.name, '') STARTS WITH 'aws-guardduty-agent'
+      // Kubernetes system namespaces run vendor images that are never published
+      // to customer registries, so an unresolved image there is expected, not a gap.
+      AND NOT coalesce(c.namespace, '') IN ['kube-system', 'calico-system', 'tigera-operator']
+    OPTIONAL MATCH (c)<-[:HAS_CONTAINER]-(cluster)
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (c:Container)
+    WHERE NOT (c)-[:RESOLVED_IMAGE]->(:Image)
+      AND NOT coalesce(c.image, '') CONTAINS 'amazon/cloudwatch-agent'
+      AND NOT coalesce(c.name, '') STARTS WITH 'aws-guardduty-agent'
+      // Kubernetes system namespaces run vendor images that are never published
+      // to customer registries, so an unresolved image there is expected, not a gap.
+      AND NOT coalesce(c.namespace, '') IN ['kube-system', 'calico-system', 'tigera-operator']
+    RETURN count(c) AS count
+    """,
+    asset_label="Container",
+    asset_id_field="container_id",
+    identity_fields=("container_id",),
+    module=Module.CROSS_CLOUD,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+class ContainerImageNotFoundOutput(Finding):
+    container_name: str | None = None
+    container_id: str | None = None
+    image: str | None = None
+    cluster_name: str | None = None
+    ontology_source: str | None = None
+    """Provider the container came from, distinct from the module-level `source`."""
+
+
+container_image_not_found = Rule(
+    id="container_image_not_found",
+    name="Container Image Not Found",
+    description=(
+        "Detects containers that have no associated image in the graph. "
+        "This may indicate the container is running an unknown or untracked "
+        "image that cannot be scanned for vulnerabilities."
+    ),
+    output_model=ContainerImageNotFoundOutput,
+    tags=(
+        "subimage",
+        "container",
+        "coverage",
+        "infrastructure",
+    ),
+    facts=(_container_image_not_found_fact,),
+    version="0.2.1",
+)
+
+# =============================================================================
+# Rule 4: AWS Account Not Synced
+# Detects AWSAccount nodes with no resources (moved from aws_account_coverage.py)
+# =============================================================================
+
+_aws_account_not_synced_fact = Fact(
+    id="aws-account-not-synced",
+    name="AWS Account Not Synced by Cartography",
+    description=(
+        "Detects AWS accounts that exist in the graph but have no resources, "
+        "indicating they were discovered but not actually synced by Cartography."
+    ),
+    cypher_query="""
+    MATCH (a:AWSAccount)
+    OPTIONAL MATCH (a)-[:RESOURCE]->(n)
+    WITH a, count(n) AS resource_count
+    // <= 1 (not 0): every configured account carries an AWSRootPrincipal RESOURCE
+    // edge, so a root-principal-only account is the "discovered but not ingested"
+    // case. The inscope filter drops out-of-scope org stubs (0 resources, not synced
+    // by design) that previously produced false positives.
+    WHERE resource_count <= 1 AND coalesce(a.inscope, false) = true
+    RETURN a.id AS account_id, a.name AS account_name, resource_count
+    ORDER BY a.name
+    """,
+    cypher_visual_query="""
+    MATCH (a:AWSAccount)
+    OPTIONAL MATCH (a)-[:RESOURCE]->(n)
+    WITH a, count(n) AS resource_count
+    // <= 1 (not 0): every configured account carries an AWSRootPrincipal RESOURCE
+    // edge, so a root-principal-only account is the "discovered but not ingested"
+    // case. The inscope filter drops out-of-scope org stubs (0 resources, not synced
+    // by design) that previously produced false positives.
+    WHERE resource_count <= 1 AND coalesce(a.inscope, false) = true
+    RETURN a
+    """,
+    cypher_count_query="""
+    MATCH (a:AWSAccount)
+    OPTIONAL MATCH (a)-[:RESOURCE]->(n)
+    WITH a, count(n) AS resource_count
+    // <= 1 (not 0): every configured account carries an AWSRootPrincipal RESOURCE
+    // edge, so a root-principal-only account is the "discovered but not ingested"
+    // case. The inscope filter drops out-of-scope org stubs (0 resources, not synced
+    // by design) that previously produced false positives.
+    WHERE resource_count <= 1 AND coalesce(a.inscope, false) = true
+    RETURN count(a) AS count
+    """,
+    asset_label="AWSAccount",
+    asset_id_field="account_id",
+    identity_fields=("account_id",),
+    module=Module.AWS,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+class AWSAccountNotSyncedOutput(Finding):
+    account_name: str | None = None
+    account_id: str | None = None
+    resource_count: int | None = None
+
+
+aws_account_not_synced = Rule(
+    id="aws_account_not_synced",
+    name="AWS Account Not Synced",
+    description=(
+        "Detects AWS accounts present in the graph that are not being synced "
+        "by Cartography. An account with no resources indicates it was "
+        "discovered (e.g. via organizations) but its resources are not being "
+        "ingested."
+    ),
+    output_model=AWSAccountNotSyncedOutput,
+    tags=(
+        "subimage",
+        "aws",
+        "coverage",
+        "infrastructure",
+        "misconfiguration",
+    ),
+    facts=(_aws_account_not_synced_fact,),
+    version="0.2.0",
+)
+
+# =============================================================================
+# Rule 5: Repository Without SLSA Provenance
+# Detects repos that have at least one image linked via PACKAGED_FROM with a
+# match_method other than "provenance", encouraging adoption of SLSA provenance.
+# =============================================================================
+
+_repository_without_slsa_provenance_fact = Fact(
+    id="repository-without-slsa-provenance",
+    name="Repository Without SLSA Provenance",
+    description=(
+        "Detects repositories that have at least one image linked via "
+        "PACKAGED_FROM with a match_method other than 'provenance', "
+        "indicating images were matched by Dockerfile analysis instead of "
+        "SLSA attestation."
+    ),
+    cypher_query="""
+    MATCH (i:Image)-[r:PACKAGED_FROM]->(repo:CodeRepository)
+    WHERE r.match_method <> 'provenance'
+    WITH repo, collect(DISTINCT r.match_method) AS match_methods,
+         count(DISTINCT i) AS image_count
+    RETURN repo.id AS repo_id, repo.name AS repo_name,
+           head(labels(repo)) AS repo_kind,
+           image_count, match_methods
+    ORDER BY repo.name
+    """,
+    cypher_visual_query="""
+    MATCH (i:Image)-[r:PACKAGED_FROM]->(repo:CodeRepository)
+    WHERE r.match_method <> 'provenance'
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (i:Image)-[r:PACKAGED_FROM]->(repo:CodeRepository)
+    WHERE r.match_method <> 'provenance'
+    RETURN count(DISTINCT repo) AS count
+    """,
+    asset_label="CodeRepository",
+    asset_id_field="repo_id",
+    identity_fields=("repo_id",),
+    module=Module.SUBIMAGE,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+class RepositoryWithoutSLSAProvenanceOutput(Finding):
+    repo_name: str | None = None
+    repo_id: str | None = None
+    repo_kind: str | None = None
+    image_count: int | None = None
+    match_methods: list[str] | None = None
+
+
+repository_without_slsa_provenance = Rule(
+    id="repository_without_slsa_provenance",
+    name="Repository Without SLSA Provenance",
+    description=(
+        "SLSA provenance attestations are the only source-to-image link "
+        "trusted enough to guarantee build traceability. Repositories "
+        "still relying on Dockerfile analysis lack that guarantee and "
+        "should adopt SLSA-compliant builds."
+    ),
+    output_model=RepositoryWithoutSLSAProvenanceOutput,
+    tags=(
+        "subimage",
+        "coverage",
+        "supply-chain",
+        "slsa",
+    ),
+    facts=(_repository_without_slsa_provenance_fact,),
+    version="0.1.0",
+)

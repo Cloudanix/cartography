@@ -29,7 +29,8 @@ class GraphLibrary:
 
         except ServiceUnavailable as e:
             self.context.logger.debug(
-                "Error occurred during Neo4j connect.", exc_info=True,
+                "Error occurred during Neo4j connect.",
+                exc_info=True,
             )
             self.context.logger.error(
                 (
@@ -43,7 +44,8 @@ class GraphLibrary:
 
         except AuthError as e:
             self.context.logger.debug(
-                "Error occurred during Neo4j auth.", exc_info=True,
+                "Error occurred during Neo4j auth.",
+                exc_info=True,
             )
             if not neo4j_auth:
                 self.context.logger.error(

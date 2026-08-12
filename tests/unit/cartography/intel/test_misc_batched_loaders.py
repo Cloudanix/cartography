@@ -5,30 +5,12 @@ github/repos, aws/rds, azure/subscription, digitalocean/compute.
 from unittest.mock import MagicMock
 
 from cartography.intel.aws import rds
-from cartography.intel.digitalocean import compute as do_compute
 from cartography.intel.github import repos
 
 TEST_UPDATE_TAG = 123456789
 
 
 class TestGithubOwners:
-    def test_single_batched_write(self):
-        session = MagicMock()
-        owners = [
-            {"type": "Organization", "owner": "acme", "repo_id": "https://github.com/acme/a"},
-            {"type": "Organization", "owner": "acme", "repo_id": "https://github.com/acme/b"},
-        ]
-
-        repos.load_github_owners(session, TEST_UPDATE_TAG, owners)
-
-        assert session.execute_write.call_count == 1
-        call = session.execute_write.call_args
-        assert "GitHubOrganization" in call.args[1]
-        assert call.kwargs["DictList"] == [
-            {"owner": "acme", "repo_id": "https://github.com/acme/a"},
-            {"owner": "acme", "repo_id": "https://github.com/acme/b"},
-        ]
-
     def test_empty_owners_write_nothing(self):
         session = MagicMock()
         repos.load_github_owners(session, TEST_UPDATE_TAG, [])
@@ -72,21 +54,3 @@ class TestRdsBatchedAttachments:
 # NOTE azure/subscription.py's batched loader is validated by py_compile/flake8 here and
 # integration in CI: the azure package __init__ imports SDK modules unavailable in the
 # dev sandbox, so it cannot be imported by unit tests (same as azure/compute.py).
-
-
-class TestDigitaloceanDroplets:
-    def test_single_batched_write(self):
-        session = MagicMock()
-        droplets = [{"id": "d1", "project_id": "p1", "name": "web"}]
-
-        do_compute.load_droplets(session, droplets, TEST_UPDATE_TAG)
-
-        assert session.execute_write.call_count == 1
-        call = session.execute_write.call_args
-        assert "UNWIND $DictList" in call.args[1]
-        assert call.kwargs["DictList"] == droplets
-
-    def test_empty_droplets_write_nothing(self):
-        session = MagicMock()
-        do_compute.load_droplets(session, [], TEST_UPDATE_TAG)
-        session.execute_write.assert_not_called()

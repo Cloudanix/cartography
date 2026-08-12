@@ -139,3 +139,175 @@ GET_ZONES_SAMPLE_RESPONSE = [(
         },
     ],
 )]
+
+
+AAAA_RECORD = {
+    "Name": "ipv6.example.com.",
+    "Type": "AAAA",
+    "TTL": 300,
+    "ResourceRecords": [
+        {"Value": "2001:db8::1"},
+        {"Value": "2001:db8::2"},
+    ],
+}
+
+AAAA_ALIAS_RECORD = {
+    "Name": "aliasv6.example.com.",
+    "Type": "AAAA",
+    "TTL": 60,
+    "AliasTarget": {
+        "HostedZoneId": "HOSTED_ZONE_2",
+        "DNSName": "target-ipv6.example.com.",
+        "EvaluateTargetHealth": False,
+    },
+}
+
+ELASTIC_IP_RELATIONSHIP_TEST_RECORDS = [
+    (
+        {
+            "CallerReference": "test-ref-123",
+            "Config": {
+                "PrivateZone": False,
+            },
+            "Id": "/hostedzone/TESTZONE",
+            "Name": "test.example.com.",
+            "ResourceRecordSetCount": 1,
+        },
+        [
+            {
+                "Name": "hello.what.example.com.",
+                "ResourceRecords": [
+                    {
+                        "Value": "192.168.1.1",
+                    },
+                ],
+                "TTL": 300,
+                "Type": "A",
+            },
+        ],
+    ),
+]
+
+GET_ZONES_WITH_SUBZONE = [
+    (
+        {
+            "Id": "/hostedzone/PARENT_ZONE",
+            "Name": "example.com.",
+            "ResourceRecordSetCount": 2,
+            "Config": {"PrivateZone": False},
+        },
+        [
+            {
+                "Name": "example.com.",
+                "Type": "A",
+                "ResourceRecords": [{"Value": "1.2.3.4"}],
+            },
+            # This is the crucial delegation record in the parent zone
+            {
+                "Name": "sub.example.com.",
+                "Type": "NS",
+                "ResourceRecords": [{"Value": "ns-of-the-subzone.com."}],
+            },
+        ],
+    ),
+    (
+        {
+            "Id": "/hostedzone/SUB_ZONE",
+            "Name": "sub.example.com.",
+            "ResourceRecordSetCount": 2,
+            "Config": {"PrivateZone": False},
+        },
+        [
+            {
+                "Name": "sub.example.com.",
+                "Type": "NS",
+                "ResourceRecords": [{"Value": "ns-of-the-subzone.com."}],
+            },
+            {
+                "Name": "test.sub.example.com.",
+                "Type": "A",
+                "ResourceRecords": [{"Value": "5.6.7.8"}],
+            },
+        ],
+    ),
+]
+
+GET_ZONES_FOR_CYCLE_TEST = [
+    (
+        # The Parent Zone
+        {
+            "Id": "/hostedzone/PARENT_ZONE",
+            "Name": "example.com.",
+            "ResourceRecordSetCount": 1,
+            "Config": {"PrivateZone": False},
+        },
+        [
+            # This NS record correctly delegates the subzone
+            {
+                "Name": "sub.example.com.",
+                "Type": "NS",
+                "ResourceRecords": [{"Value": "ns.shared-nameserver.com."}],
+            },
+        ],
+    ),
+    (
+        # The valid Subzone
+        {
+            "Id": "/hostedzone/SUB_ZONE",
+            "Name": "sub.example.com.",
+            "ResourceRecordSetCount": 1,
+            "Config": {"PrivateZone": False},
+        },
+        [
+            # The subzone's own NS record, pointing to the shared nameserver
+            {
+                "Name": "sub.example.com.",
+                "Type": "NS",
+                "ResourceRecords": [{"Value": "ns.shared-nameserver.com."}],
+            },
+        ],
+    ),
+    (
+        # The unrelated Zone that would have caused the bug
+        {
+            "Id": "/hostedzone/UNRELATED_ZONE",
+            "Name": "unrelated.io.",
+            "ResourceRecordSetCount": 1,
+            "Config": {"PrivateZone": False},
+        },
+        [
+            # This zone ALSO uses the same nameserver
+            {
+                "Name": "unrelated.io.",
+                "Type": "NS",
+                "ResourceRecords": [{"Value": "ns.shared-nameserver.com."}],
+            },
+        ],
+    ),
+]
+
+GET_ZONES_MIXED_CASE_ALIAS_RESPONSE = [
+    (
+        {
+            "CallerReference": "044a41db-b8e1-45f8-9962-91c95a654321",
+            "Config": {
+                "PrivateZone": False,
+            },
+            "Id": "/hostedzone/MIXED_CASE_ZONE",
+            "Name": "example.com.",
+            "ResourceRecordSetCount": 1,
+        },
+        [
+            {
+                "Name": "mixed.example.com.",
+                "AliasTarget": {
+                    "HostedZoneId": "Z35SXDOTRQ7X7K",
+                    "DNSName": "dualstack.my-mixed-alb-1234567890.us-east-1.elb.amazonaws.com.",
+                    "EvaluateTargetHealth": False,
+                },
+                "TTL": 60,
+                "Type": "A",
+            },
+        ],
+    ),
+]

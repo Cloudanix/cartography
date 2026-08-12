@@ -5,60 +5,85 @@ from typing import Dict
 from typing import List
 
 import neo4j
-from cloudconsolelink.clouds.gcp import GCPLinker
+
+try:
+    from cloudconsolelink.clouds.gcp import GCPLinker
+except ImportError:
+    GCPLinker = None
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
-from . import label
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
+from . import label
+
 logger = logging.getLogger(__name__)
-gcp_console_link = GCPLinker()
+gcp_console_link = GCPLinker() if GCPLinker else None
 
 # Dataproc list filter: ACTIVE = CREATING|UPDATING|RUNNING (API helper state).
 # STOPPED/STOPPING are still live config — fetch those states in separate calls
 # because Dataproc filters only support AND, not OR.
 DATAPROC_LIST_STATE_FILTERS = (
-    'status.state = ACTIVE',
-    'status.state = STOPPED',
-    'status.state = STOPPING',
+    "status.state = ACTIVE",
+    "status.state = STOPPED",
+    "status.state = STOPPING",
 )
 
 
 @timeit
-def get_dataproc_clusters(dataproc: Resource, project_id: str, regions: list) -> List[Dict]:
+def get_dataproc_clusters(
+    dataproc: Resource, project_id: str, regions: list
+) -> List[Dict]:
     clusters = []
     try:
         if regions:
             for region in regions:
                 for state_filter in DATAPROC_LIST_STATE_FILTERS:
-                    req = dataproc.projects().regions().clusters().list(
-                        projectId=project_id,
-                        region=region,
-                        filter=state_filter,
+                    req = (
+                        dataproc.projects()
+                        .regions()
+                        .clusters()
+                        .list(projectId=project_id, region=region, filter=state_filter)
                     )
                     while req is not None:
                         res = req.execute()
-                        if res.get('clusters'):
-                            for cluster in res['clusters']:
-                                cluster['region'] = region
-                                cluster['id'] = f"projects/{project_id}/clusters/{cluster['clusterName']}"
-                                cluster['consolelink'] = gcp_console_link.get_console_link(
-                                    project_id=project_id,
-                                    dataproc_cluster_name=cluster['clusterName'], region=cluster['region'], resource_name='dataproc_cluster',
+                        if res.get("clusters"):
+                            for cluster in res["clusters"]:
+                                cluster["region"] = region
+                                cluster["id"] = (
+                                    f"projects/{project_id}/clusters/{cluster['clusterName']}"
+                                )
+                                cluster["consolelink"] = (
+                                    gcp_console_link.get_console_link(
+                                        project_id=project_id,
+                                        dataproc_cluster_name=cluster["clusterName"],
+                                        region=cluster["region"],
+                                        resource_name="dataproc_cluster",
+                                    )
                                 )
                                 clusters.append(cluster)
-                        req = dataproc.projects().regions().clusters().list_next(previous_request=req, previous_response=res)
+                        req = (
+                            dataproc.projects()
+                            .regions()
+                            .clusters()
+                            .list_next(previous_request=req, previous_response=res)
+                        )
 
         return clusters
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve dataproc clusters on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -66,14 +91,18 @@ def get_dataproc_clusters(dataproc: Resource, project_id: str, regions: list) ->
 
 
 @timeit
-def load_dataproc_clusters(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+def load_dataproc_clusters(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.execute_write(load_dataproc_clusters_tx, data_list, project_id, update_tag)
 
 
 @timeit
 def load_dataproc_clusters_tx(
-    tx: neo4j.Transaction, data: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    data: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -104,26 +133,45 @@ def load_dataproc_clusters_tx(
 
 
 @timeit
-def cleanup_dataproc_clusters(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_dataproc_clusters_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_dataproc_clusters(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_dataproc_clusters_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_dataproc_clusters(
-    neo4j_session: neo4j.Session, dataproc: Resource, project_id: str, regions: List,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    dataproc: Resource,
+    project_id: str,
+    regions: List,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     clusters = get_dataproc_clusters(dataproc, project_id, regions)
 
     load_dataproc_clusters(neo4j_session, clusters, project_id, gcp_update_tag)
     cleanup_dataproc_clusters(neo4j_session, common_job_parameters)
-    label.sync_labels(neo4j_session, clusters, gcp_update_tag, common_job_parameters, 'dataproc_cluster', 'GCPDataprocCluster')
+    label.sync_labels(
+        neo4j_session,
+        clusters,
+        gcp_update_tag,
+        common_job_parameters,
+        "dataproc_cluster",
+        "GCPDataprocCluster",
+    )
 
 
 def sync(
-    neo4j_session: neo4j.Session, dataproc: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: dict, regions: list,
+    neo4j_session: neo4j.Session,
+    dataproc: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: dict,
+    regions: list,
 ) -> None:
 
     tic = time.perf_counter()
@@ -131,8 +179,12 @@ def sync(
     logger.info(f"Syncing Dataproc for project {project_id}, at {tic}")
 
     sync_dataproc_clusters(
-        neo4j_session, dataproc, project_id, regions,
-        gcp_update_tag, common_job_parameters,
+        neo4j_session,
+        dataproc,
+        project_id,
+        regions,
+        gcp_update_tag,
+        common_job_parameters,
     )
 
     toc = time.perf_counter()

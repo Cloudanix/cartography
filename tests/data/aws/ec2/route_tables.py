@@ -1,67 +1,93 @@
-DESCRIBE_ROUTE_TABLES = [
-    {
-        'Associations': [
-            {
-                'Main': False,
-                'RouteTableAssociationId': 'route_table_assoc-1',
-                'SubnetId': 'subnet-0fa9c8fa7cb241479',
-                'GatewayId': 'string',
-                'RouteTableId': 'route_table-1',
-            },
-            {
-                'Main': False,
-                'RouteTableAssociationId': 'route_table_assoc-2',
-                'SubnetId': 'subnet-020b2f3928f190ce8',
-                'GatewayId': 'string',
-                'RouteTableId': 'route_table-1',
-            },
-        ],
-        'RouteTableId': 'route_table-1',
-        'Routes': [
-            {
-                'DestinationCidrBlock': '0.0.0.0/0',
-                'DestinationIpv6CidrBlock': 'ff::ff/32',
-                'GatewayId': 'igw-a90d73f',
-                'State': 'active',
-            },
-            {
-                'DestinationCidrBlock': '11.10.10.10/8',
-                'DestinationIpv6CidrBlock': '::/0',
-                'GatewayId': 'egw-a90d73f',
-                'State': 'active',
-            },
-        ],
-        'VpcId': 'vpc-05326141848d1c681',
-        'OwnerId': 'string',
-        'region': 'us-central1',
-    },
-    {
-        'Associations': [
-            {
-                'Main': True,
-                'RouteTableAssociationId': 'route_table_assoc-3',
-                'SubnetId': 'subnet-0773409557644dca4',
-                'GatewayId': 'string',
-                'RouteTableId': 'route_table-2',
-            },
-        ],
-        'RouteTableId': 'route_table-2',
-        'Routes': [
-            {
-                'DestinationCidrBlock': '0.0.0.0/0',
-                'DestinationIpv6CidrBlock': 'ff::ff/32',
-                'GatewayId': 'egw-a90d73f',
-                'State': 'active',
-            },
-            {
-                'DestinationCidrBlock': '11.10.10.10/8',
-                'DestinationIpv6CidrBlock': '::/0',
-                'GatewayId': 'igw-a90d73f',
-                'State': 'active',
-            },
-        ],
-        'VpcId': 'vpc-025873e026b9e8ee6',
-        'OwnerId': 'string',
-        'region': 'us-central1',
-    },
-]
+DESCRIBE_ROUTE_TABLES = {
+    "RouteTables": [
+        {
+            "Associations": [
+                {
+                    "Main": True,
+                    "RouteTableAssociationId": "rtbassoc-aaaaaaaaaaaaaaaaa",
+                    "RouteTableId": "rtb-aaaaaaaaaaaaaaaaa",
+                    "AssociationState": {
+                        "State": "associated",
+                    },
+                },
+                {
+                    "Main": False,
+                    "RouteTableAssociationId": "rtbassoc-ddddddddddddddddd",
+                    "RouteTableId": "rtb-aaaaaaaaaaaaaaaaa",
+                    "GatewayId": "igw-013cb",
+                    "AssociationState": {
+                        "State": "associated",
+                    },
+                },
+            ],
+            "PropagatingVgws": [],
+            "RouteTableId": "rtb-aaaaaaaaaaaaaaaaa",
+            "Routes": [
+                {
+                    "DestinationCidrBlock": "172.31.0.0/16",
+                    "GatewayId": "local",
+                    "Origin": "CreateRouteTable",
+                    "State": "active",
+                },
+                {
+                    "DestinationCidrBlock": "0.0.0.0/0",
+                    "GatewayId": "igw-0387",
+                    "Origin": "CreateRoute",
+                    "State": "active",
+                },
+                {
+                    # Route to S3 Gateway VPC Endpoint
+                    "DestinationPrefixListId": "pl-63a5400a",
+                    "GatewayId": "vpce-gateway123",
+                    "Origin": "CreateRoute",
+                    "State": "active",
+                },
+            ],
+            "Tags": [],
+            "VpcId": "vpc-038cf",
+            "OwnerId": "12345",
+        },
+        {
+            "Associations": [
+                {
+                    "Main": False,
+                    "RouteTableAssociationId": "rtbassoc-bbbbbbbbbbbbbbbbb",
+                    "RouteTableId": "rtb-bbbbbbbbbbbbbbbbb",
+                    # From tests.data.aws.ec2.subnets.DESCRIBE_SUBNETS
+                    "SubnetId": "subnet-0773409557644dca4",
+                    "AssociationState": {
+                        "State": "associated",
+                    },
+                },
+                {
+                    "Main": False,
+                    "RouteTableAssociationId": "rtbassoc-ccccccccccccccccc",
+                    "RouteTableId": "rtb-bbbbbbbbbbbbbbbbb",
+                    # From tests.data.aws.ec2.subnets.DESCRIBE_SUBNETS
+                    "SubnetId": "subnet-0fa9c8fa7cb241479",
+                    "AssociationState": {
+                        "State": "associated",
+                    },
+                },
+            ],
+            "PropagatingVgws": [],
+            "RouteTableId": "rtb-bbbbbbbbbbbbbbbbb",
+            "Routes": [
+                {
+                    "DestinationCidrBlock": "10.1.0.0/16",
+                    "GatewayId": "local",
+                    "Origin": "CreateRouteTable",
+                    "State": "active",
+                },
+                {
+                    "DestinationCidrBlock": "0.0.0.0/0",
+                    "GatewayId": "igw-0387",
+                    "Origin": "CreateRoute",
+                    "State": "active",
+                },
+            ],
+            "VpcId": "vpc-0f510",
+            "OwnerId": "12345",
+        },
+    ],
+}

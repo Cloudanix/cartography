@@ -1,3 +1,9 @@
+import json
+import logging
+from unittest.mock import MagicMock
+
+from googleapiclient.errors import HttpError
+
 import cartography.intel.gcp.storage
 from cartography.intel.gcp import label
 from tests.data.gcp.storage import STORAGE_RESPONSE
@@ -39,3 +45,4 @@ def test_transform_gcp_buckets_keeps_labels_dict():
     for lbl in labels:
         assert lbl['resource_id'] == bucket['id']
         assert lbl['id'] == f"{bucket['id']}/label/{lbl['key']}"
+

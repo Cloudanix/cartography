@@ -8,6 +8,7 @@ from okta import FactorsClient
 from okta.framework.OktaError import OktaError
 from okta.models.factor.Factor import Factor
 
+from cartography.client.core.tx import run_write_query
 from cartography.intel.okta.sync_state import OktaSyncState
 from cartography.util import timeit
 
@@ -15,17 +16,20 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def _create_factor_client(okta_org: str, okta_api_key: str) -> FactorsClient:
+def _create_factor_client(
+    okta_org: str, okta_api_key: str, okta_base_domain: str = "okta.com"
+) -> FactorsClient:
     """
     Create Okta FactorsClient
     :param okta_org: Okta organization name
     :param okta_api_key: Okta API Key
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: Instance of FactorsClient
     """
 
     # https://github.com/okta/okta-sdk-python/blob/master/okta/FactorsClient.py
     factor_client = FactorsClient(
-        base_url=f"https://{okta_org}.okta.com/",
+        base_url=f"https://{okta_org}.{okta_base_domain}/",
         api_token=okta_api_key,
     )
 
@@ -79,12 +83,16 @@ def transform_okta_user_factor(okta_factor_info: Factor) -> Dict:
     factor_props["provider"] = okta_factor_info.provider
     factor_props["status"] = okta_factor_info.status
     if okta_factor_info.created:
-        factor_props["created"] = okta_factor_info.created.strftime("%m/%d/%Y, %H:%M:%S")
+        factor_props["created"] = okta_factor_info.created.strftime(
+            "%m/%d/%Y, %H:%M:%S",
+        )
     else:
         factor_props["created"] = None
 
     if okta_factor_info.lastUpdated:
-        factor_props["okta_last_updated"] = okta_factor_info.lastUpdated.strftime("%m/%d/%Y, %H:%M:%S")
+        factor_props["okta_last_updated"] = okta_factor_info.lastUpdated.strftime(
+            "%m/%d/%Y, %H:%M:%S",
+        )
     else:
         factor_props["okta_last_updated"] = None
 
@@ -93,7 +101,12 @@ def transform_okta_user_factor(okta_factor_info: Factor) -> Dict:
 
 
 @timeit
-def _load_user_factors(neo4j_session: neo4j.Session, user_id: str, factors: List[Dict], okta_update_tag: int) -> None:
+def _load_user_factors(
+    neo4j_session: neo4j.Session,
+    user_id: str,
+    factors: List[Dict],
+    okta_update_tag: int,
+) -> None:
     """
     Add user factors into the graph
     :param neo4j_session: session with the Neo4j server
@@ -121,7 +134,8 @@ def _load_user_factors(neo4j_session: neo4j.Session, user_id: str, factors: List
     SET r.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest,
         USER_ID=user_id,
         FACTOR_LIST=factors,
@@ -131,8 +145,12 @@ def _load_user_factors(neo4j_session: neo4j.Session, user_id: str, factors: List
 
 @timeit
 def sync_users_factors(
-    neo4j_session: neo4j.Session, okta_org_id: str, okta_update_tag: int, okta_api_key: str,
+    neo4j_session: neo4j.Session,
+    okta_org_id: str,
+    okta_update_tag: int,
+    okta_api_key: str,
     sync_state: OktaSyncState,
+    okta_base_domain: str = "okta.com",
 ) -> None:
     """
     Sync user factors
@@ -141,12 +159,13 @@ def sync_users_factors(
     :param okta_update_tag: The timestamp value to set our new Neo4j resources with
     :param okta_api_key: Okta API key
     :param sync_state: Okta sync state
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: Nothing
     """
 
     logger.info("Syncing Okta User Factors")
 
-    factor_client = _create_factor_client(okta_org_id, okta_api_key)
+    factor_client = _create_factor_client(okta_org_id, okta_api_key, okta_base_domain)
 
     if sync_state.users:
         for user_id in sync_state.users:

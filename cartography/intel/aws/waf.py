@@ -9,36 +9,42 @@ import neo4j
 from botocore.exceptions import ClientError
 from botocore.exceptions import ConnectTimeoutError
 from botocore.exceptions import EndpointConnectionError
-from cloudconsolelink.clouds.aws import AWSLinker
+
+try:
+    from cloudconsolelink.clouds.aws import AWSLinker
+except ImportError:
+    AWSLinker = None
 
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-aws_console_link = AWSLinker()
+aws_console_link = AWSLinker() if AWSLinker else None
 
 
 @timeit
 @aws_handle_regions
-def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_waf_classic_regional_web_acls(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict]:
     """
     Get WAF Classic Web ACLs for a specific region (for ALBs, etc.).
     """
     web_acls = []
     try:
-        client = boto3_session.client('waf-regional', region_name=region)
+        client = boto3_session.client("waf-regional", region_name=region)
         resp = client.list_web_acls()
-        for acl in resp.get('WebACLs', []):
-            acl['region'] = region
+        for acl in resp.get("WebACLs", []):
+            acl["region"] = region
             web_acls.append(acl)
 
         while resp.get("NextMarker"):
             resp = client.list_web_acls(
                 NextMarker=resp.get("NextMarker"),
             )
-            for acl in resp.get('WebACLs', []):
-                acl['region'] = region
+            for acl in resp.get("WebACLs", []):
+                acl["region"] = region
                 web_acls.append(acl)
 
     except EndpointConnectionError as e:
@@ -61,11 +67,11 @@ def get_waf_classic_global_web_acls(boto3_session: boto3.session.Session) -> Lis
     """
     web_acls = []
     try:
-        client = boto3_session.client('waf', region_name='us-east-1')
-        paginator = client.get_paginator('list_web_acls')
+        client = boto3_session.client("waf", region_name="us-east-1")
+        paginator = client.get_paginator("list_web_acls")
         for page in paginator.paginate():
-            for acl in page.get('WebACLs', []):
-                acl['region'] = 'global'
+            for acl in page.get("WebACLs", []):
+                acl["region"] = "global"
                 web_acls.append(acl)
         return web_acls
     except ClientError as e:
@@ -74,7 +80,9 @@ def get_waf_classic_global_web_acls(boto3_session: boto3.session.Session) -> Lis
 
 
 @timeit
-def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl: Dict) -> Dict:
+def get_waf_classic_details(
+    boto3_session: boto3.session.Session, web_acl: Dict
+) -> Dict:
     """
     Gets detailed information for a given Web ACL. It determines whether to use
     the 'waf' or 'waf-regional' client based on the ACL's region tag.
@@ -84,12 +92,12 @@ def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl: Dict)
     region = web_acl.get("region")
 
     try:
-        if region == 'global':
-            client = boto3_session.client('waf', region_name='us-east-1')
-            scope = 'CLOUDFRONT'
+        if region == "global":
+            client = boto3_session.client("waf", region_name="us-east-1")
+            scope = "CLOUDFRONT"
         else:
-            client = boto3_session.client('waf-regional', region_name=region)
-            scope = 'REGIONAL'
+            client = boto3_session.client("waf-regional", region_name=region)
+            scope = "REGIONAL"
 
         response = client.get_web_acl(WebACLId=web_acl_id)
         details = response.get("WebACL", {})
@@ -98,11 +106,11 @@ def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl: Dict)
             return {}
 
         # Add new details directly to the web_acl dictionary
-        web_acl['arn'] = details.get("WebACLArn")
-        web_acl['default_action'] = details.get("DefaultAction", {}).get("Type")
-        web_acl['rules_count'] = len(details.get("Rules", []))
-        web_acl['metric_name'] = details.get("MetricName")
-        web_acl['scope'] = scope
+        web_acl["arn"] = details.get("WebACLArn")
+        web_acl["default_action"] = details.get("DefaultAction", {}).get("Type")
+        web_acl["rules_count"] = len(details.get("Rules", []))
+        web_acl["metric_name"] = details.get("MetricName")
+        web_acl["scope"] = scope
         return web_acl
 
     except EndpointConnectionError as e:
@@ -112,12 +120,16 @@ def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl: Dict)
         logger.debug(f"Connection to WAF Regional timed out in {region}: {e}")
 
     except ClientError as e:
-        logger.error(f"Error retrieving Web ACL details for {web_acl_id} in region {region}: {e}")
+        logger.error(
+            f"Error retrieving Web ACL details for {web_acl_id} in region {region}: {e}"
+        )
         return {}
 
 
 @timeit
-def transform_waf_classic_web_acls(boto3_session: boto3.session.Session, web_acls: List[Dict]) -> List[Dict]:
+def transform_waf_classic_web_acls(
+    boto3_session: boto3.session.Session, web_acls: List[Dict]
+) -> List[Dict]:
     transformed_acls = []
     for web_acl in web_acls:
         # get_waf_classic_details now returns the fully enriched object
@@ -125,18 +137,32 @@ def transform_waf_classic_web_acls(boto3_session: boto3.session.Session, web_acl
 
         # Ensure we have a valid, enriched ACL with an ARN before adding it
         if detailed_acl and detailed_acl.get("arn"):
-            detailed_acl['consolelink'] = aws_console_link.get_console_link(arn=detailed_acl['arn'])
+            detailed_acl["consolelink"] = aws_console_link.get_console_link(
+                arn=detailed_acl["arn"]
+            )
             transformed_acls.append(detailed_acl)
 
     return transformed_acls
 
 
-def load_waf_classic_web_acls(session: neo4j.Session, web_acls: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    session.execute_write(_load_waf_classic_web_acls_tx, web_acls, current_aws_account_id, aws_update_tag)
+def load_waf_classic_web_acls(
+    session: neo4j.Session,
+    web_acls: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    session.execute_write(
+        _load_waf_classic_web_acls_tx, web_acls, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
-def _load_waf_classic_web_acls_tx(tx: neo4j.Transaction, web_acls: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
+def _load_waf_classic_web_acls_tx(
+    tx: neo4j.Transaction,
+    web_acls: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
     query: str = """
     UNWIND $Records as record
     WITH record WHERE record.arn IS NOT NULL
@@ -167,14 +193,24 @@ def _load_waf_classic_web_acls_tx(tx: neo4j.Transaction, web_acls: List[Dict], c
 
 
 @timeit
-def cleanup_waf_classic_web_acls(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_waf_classic_web_acls_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_waf_classic_web_acls(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "aws_import_waf_classic_web_acls_cleanup.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
 
 @timeit
 def sync_waf_classic(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     """
     Syncs both regional and global WAF Classic ACLs.
@@ -191,17 +227,24 @@ def sync_waf_classic(
     if not all_web_acls:
         return
 
-    logger.info(f"Found {len(all_web_acls)} total WAF Classic WebACLs (global and regional).")
+    logger.info(
+        f"Found {len(all_web_acls)} total WAF Classic WebACLs (global and regional)."
+    )
     transformed_acls = transform_waf_classic_web_acls(boto3_session, all_web_acls)
 
-    load_waf_classic_web_acls(neo4j_session, transformed_acls, current_aws_account_id, update_tag)
+    load_waf_classic_web_acls(
+        neo4j_session, transformed_acls, current_aws_account_id, update_tag
+    )
 
     cleanup_waf_classic_web_acls(neo4j_session, common_job_parameters)
 
 
 @timeit
 def get_waf_v2_web_acl_details(
-    client: boto3.client, acl: Dict, scope: str, region: str,
+    client: boto3.client,
+    acl: Dict,
+    scope: str,
+    region: str,
 ) -> Dict:
     """
     Get detailed information about a WAFv2 Web ACL
@@ -238,20 +281,26 @@ def get_waf_v2_global_acls(boto3_session: boto3.session.Session) -> List[Dict]:
 
 
 @timeit
-def get_waf_v2_regional_acls(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_waf_v2_regional_acls(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict]:
     """
     Get WAFv2 Web ACLs for a specific region.
     """
     regional_client = boto3_session.client("wafv2", region_name=region)
     return get_waf_v2_web_acls_for_scope(
-        regional_client, "REGIONAL", region,
+        regional_client,
+        "REGIONAL",
+        region,
     )
 
 
 @timeit
 @aws_handle_regions
 def get_waf_v2_web_acls_for_scope(
-    client: boto3.client, scope: str, region: str,
+    client: boto3.client,
+    scope: str,
+    region: str,
 ) -> List[Dict]:
     web_acls = []
     try:
@@ -266,7 +315,9 @@ def get_waf_v2_web_acls_for_scope(
                 NextMarker=resp.get("NextMarker"),
             )
             for acl in resp.get("WebACLs", []):
-                acl_with_details = get_waf_v2_web_acl_details(client, acl, scope, region)
+                acl_with_details = get_waf_v2_web_acl_details(
+                    client, acl, scope, region
+                )
                 if acl_with_details:
                     web_acls.append(acl_with_details)
     except ClientError as e:
@@ -279,17 +330,29 @@ def transform_waf_v2_web_acls(web_acls: List[Dict]) -> List[Dict]:
     transformed_acls = []
     for web_acl in web_acls:
         web_acl["arn"] = web_acl["ARN"]
-        web_acl["consolelink"] = aws_console_link.get_console_link(arn=web_acl['arn'])
+        web_acl["consolelink"] = aws_console_link.get_console_link(arn=web_acl["arn"])
         transformed_acls.append(web_acl)
     return transformed_acls
 
 
-def load_waf_v2_web_acls(session: neo4j.Session, web_acls: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    session.execute_write(_load_waf_v2_web_acls_tx, web_acls, current_aws_account_id, aws_update_tag)
+def load_waf_v2_web_acls(
+    session: neo4j.Session,
+    web_acls: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    session.execute_write(
+        _load_waf_v2_web_acls_tx, web_acls, current_aws_account_id, aws_update_tag
+    )
 
 
 @timeit
-def _load_waf_v2_web_acls_tx(tx: neo4j.Transaction, web_acls: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
+def _load_waf_v2_web_acls_tx(
+    tx: neo4j.Transaction,
+    web_acls: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
     query: str = """
     UNWIND $Records as record
     MERGE (web_acl:AWSWAFv2WebACL{id: record.arn})
@@ -319,14 +382,22 @@ def _load_waf_v2_web_acls_tx(tx: neo4j.Transaction, web_acls: List[Dict], curren
 
 
 @timeit
-def cleanup_waf_v2_web_acls(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('aws_import_waf_v2_web_acls_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_waf_v2_web_acls(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "aws_import_waf_v2_web_acls_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
 def sync_waf_v2(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     # 1. Call the global function ONCE
     all_web_acls = get_waf_v2_global_acls(boto3_session)
@@ -341,23 +412,43 @@ def sync_waf_v2(
 
     # 3. No de-duplication is needed
     transformed_acls = transform_waf_v2_web_acls(all_web_acls)
-    load_waf_v2_web_acls(neo4j_session, transformed_acls, current_aws_account_id, update_tag)
+    load_waf_v2_web_acls(
+        neo4j_session, transformed_acls, current_aws_account_id, update_tag
+    )
     cleanup_waf_v2_web_acls(neo4j_session, common_job_parameters)
 
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
-    update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    boto3_session: boto3.session.Session,
+    regions: List[str],
+    current_aws_account_id: str,
+    update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
 
     logger.info("Syncing WAF for account '%s', at %s.", current_aws_account_id, tic)
 
     try:
-        sync_waf_classic(neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters)
+        sync_waf_classic(
+            neo4j_session,
+            boto3_session,
+            regions,
+            current_aws_account_id,
+            update_tag,
+            common_job_parameters,
+        )
 
-        sync_waf_v2(neo4j_session, boto3_session, regions, current_aws_account_id, update_tag, common_job_parameters)
+        sync_waf_v2(
+            neo4j_session,
+            boto3_session,
+            regions,
+            current_aws_account_id,
+            update_tag,
+            common_job_parameters,
+        )
 
     except Exception as ex:
         logger.error("failed to process waf - %s", ex)

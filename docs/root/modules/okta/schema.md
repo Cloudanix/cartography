@@ -1,11 +1,15 @@
-## Okta Schema
+# Okta Schema
 
-.. _okta_schema:
+## Cross-Platform Integration: Okta to AWS
+
+See the [Okta module overview](index.md) for the complete cross-platform access
+path.
 
 ### OktaOrganization
 
 Representation of an [Okta Organization](https://developer.okta.com/docs/concepts/okta-organizations/).
 
+> **Ontology Mapping**: This node has the extra label `Tenant` to enable cross-platform queries for organizational tenants across different systems (e.g., AWSAccount, AzureTenant, GCPOrganization).
 
 | Field | Description |
 |-------|--------------|
@@ -47,61 +51,80 @@ Representation of an [Okta Organization](https://developer.okta.com/docs/concept
 
 Representation of an [Okta User](https://developer.okta.com/docs/reference/api/users/#user-object).
 
+> **Ontology Mapping**: This node has the extra label `UserAccount` to enable cross-platform queries for user accounts across different systems (e.g., AWSSSOUser, EntraUser, GitHubUser).
+
 | Field | Description |
 |-------|--------------|
-| id | user id  |
-| first_name | user first name  |
-| last_name | user last name  |
-| login | user usernmae used to login (usually email) |
-| email | user email |
-| second_email | user secondary email |
-| mobile_phone | user mobile phone |
-| created | date and time of creation |
-| activated | date and time of activation |
-| status_changed | date and time of the last state change |
-| last_login | date and time of last login |
-| okta_last_updated | date and time of last user property changes |
-| password_changed | date and time of last password change |
-| transition_to_status | date and time of last state transition change |
-| firstseen| Timestamp of when a sync job first discovered this node  |
-| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | Unique Okta user ID (e.g., "00u1a2b3c4d5e6f7g8h9") |
+| **email** | User's primary email address (also used for Human node linking) |
+| first_name | User's first name |
+| last_name | User's last name |
+| login | Username used for login (typically an email address) |
+| second_email | User's secondary email address, if configured |
+| created | ISO 8601 timestamp when the user was created in Okta |
+| activated | ISO 8601 timestamp when the user was activated |
+| status_changed | ISO 8601 timestamp of the last status change |
+| last_login | ISO 8601 timestamp of the user's last login |
+| okta_last_updated | ISO 8601 timestamp when user properties were last modified in Okta |
+| password_changed | ISO 8601 timestamp when the user's password was last changed |
+| transition_to_status | ISO 8601 timestamp of the last status transition |
+| firstseen | Timestamp when Cartography first discovered this node |
+| lastupdated | Timestamp when Cartography last updated this node |
 
 #### Relationships
 
- - An OktaOrganization contains OktaUsers
+- **OktaOrganization contains OktaUsers**: Every OktaUser belongs to an OktaOrganization
+    ```cypher
+    (:OktaOrganization)-[:RESOURCE]->(:OktaUser)
     ```
-    (OktaUser)<-[RESOURCE]->(OktaOrganization)
-    ```
- - OktaUsers are assigned OktaApplication
 
+- **OktaUser is an identity for a Human**: Links Okta identities to Human entities (matched by email)
+    ```cypher
+    (:Human)-[:IDENTITY_OKTA]->(:OktaUser)
     ```
-    (OktaUser)-[APPLICATION]->(OktaApplication)
-    ```
- - OktaUser is an identity for a Human
+    This relationship allows tracking the same person across multiple identity systems. The Human node is automatically created based on the OktaUser's email address.
 
+- **OktaUsers are assigned OktaApplications**: Tracks which applications a user has access to
+    ```cypher
+    (:OktaUser)-[:APPLICATION]->(:OktaApplication)
     ```
-    (OktaUser)<-[IDENTITY_OKTA]-(Human)
+
+- **OktaUser can be a member of OktaGroups**: Group membership for access control
+    ```cypher
+    (:OktaUser)-[:MEMBER_OF_OKTA_GROUP]->(:OktaGroup)
     ```
- - An OktaUser can be a member of an OktaGroup
-     ```
-    (OktaUser)-[MEMBER_OF_OKTA_GROUP]->(OktaGroup)
+
+- **OktaUser can be a member of OktaAdministrationRoles**: Administrative role assignments
+    ```cypher
+    (:OktaUser)-[:MEMBER_OF_OKTA_ROLE]->(:OktaAdministrationRole)
     ```
- - An OktaUser can be a member of an OktaAdministrationRole
-     ```
-    (OktaUser)-[MEMBER_OF_OKTA_ROLE]->(OktaAdministrationRole)
+
+- **OktaUsers can have authentication factors**: Multi-factor authentication methods (SMS, TOTP, WebAuthn, etc.)
+    ```cypher
+    (:OktaUser)-[:FACTOR]->(:OktaUserFactor)
     ```
- - OktaUsers can have authentication factors
-     ```
-    (OktaUser)-[FACTOR]->(OktaUserFactor)
+
+- **OktaUsers can assume AWS SSO identities via SAML federation**: Links to AWS Identity Center users
+    ```cypher
+    (:OktaUser)-[:CAN_ASSUME_IDENTITY]->(:AWSSSOUser)
     ```
+    This relationship is established when Okta is configured as a SAML identity provider for AWS Identity Center. The link is matched by `AWSSSOUser.external_id == OktaUser.id`.
+
+    Using the generic UserAccount label:
+    ```cypher
+    (:UserAccount)-[:CAN_ASSUME_IDENTITY]->(:AWSSSOUser)
+    ```
+    See the [Cross-Platform Integration](#cross-platform-integration-okta-to-aws) section above for the complete Okta → AWS access path.
 
 ### OktaGroup
 
 Representation of an [Okta Group](https://developer.okta.com/docs/reference/api/groups/#group-object).
 
+> **Ontology Mapping**: This node has the extra label `UserGroup` to enable cross-platform queries for user groups across different systems (e.g., AWSGroup, EntraGroup, GoogleWorkspaceGroup).
+
 | Field | Description |
 |-------|--------------|
-| id | application id  |
+| id | Unique Okta group ID |
 | name | group name |
 | description | group description |
 | sam_account_name | windows SAM account name mapped
@@ -115,7 +138,7 @@ Representation of an [Okta Group](https://developer.okta.com/docs/reference/api/
 
  - OktaOrganizations contain OktaGroups
     ```
-    (OktaGroup)<-[RESOURCE]->(OktaOrganizations)
+    (OktaOrganization)-[RESOURCE]->(OktaGroup)
     ```
  - OktaApplications can be assigned to OktaGroups
 
@@ -130,10 +153,16 @@ Representation of an [Okta Group](https://developer.okta.com/docs/reference/api/
      ```
     (OktaGroup)-[MEMBER_OF_OKTA_ROLE]->(OktaAdministrationRole)
     ```
+- Members of an Okta group can assume associated AWS roles if Okta SAML is configured with AWS.
+    ```
+    (AWSRole)-[ALLOWED_BY]->(OktaGroup)
+    ```
 
 ### OktaApplication
 
 Representation of an [Okta Application](https://developer.okta.com/docs/reference/api/apps/#application-object).
+
+> **Ontology Mapping**: This node has the extra label `ThirdPartyApp` to enable cross-platform queries for OAuth/SAML applications across different systems (e.g., EntraApplication, KeycloakClient).
 
 | Field | Description |
 |-------|--------------|
@@ -153,7 +182,7 @@ Representation of an [Okta Application](https://developer.okta.com/docs/referenc
 
   - OktaApplication is a resource of an OktaOrganization
     ```
-    (OktaApplication)<-[RESOURCE]->(OktaOrganization)
+    (OktaOrganization)-[RESOURCE]->(OktaApplication)
     ```
  - OktaGroups can be assigned OktaApplications
 
@@ -168,7 +197,7 @@ Representation of an [Okta Application](https://developer.okta.com/docs/referenc
 - OktaApplications have ReplyUris
 
     ```
-    (ReplyUri)-[REPLYURI]->(OktaApplication)
+    (OktaApplication)-[REPLYURI]->(ReplyUri)
     ```
 
 ### OktaUserFactor
@@ -204,7 +233,7 @@ Representation of an [Okta Trusted Origin](https://developer.okta.com/docs/refer
 | scopes | array of scope |
 | status | status |
 | created | date & time of creation in okta |
-| create_by | id of user who created the trusted origin |
+| created_by | id of user who created the trusted origin |
 | okta_last_updated | date and time of last property changes |
 | okta_last_updated_by | id of user who last updated the trusted origin |
 | firstseen| Timestamp of when a sync job first discovered this node  |
@@ -221,6 +250,8 @@ Representation of an [Okta Trusted Origin](https://developer.okta.com/docs/refer
 ### OktaAdministrationRole
 
 Representation of an [Okta Administration Role](https://developer.okta.com/docs/reference/api/roles/#role-object).
+
+> **Ontology Mapping**: This node has the extra label `PermissionRole` to enable cross-platform queries for permission roles across different systems (e.g., AWSRole, AzureRoleDefinition, GCPRole).
 
 | Field | Description |
 |-------|--------------|
@@ -246,7 +277,7 @@ Representation of an [Okta Administration Role](https://developer.okta.com/docs/
     (OktaOrganization)-[RESOURCE]->(OktaAdministrationRole)
     ```
 
-### Reply Uri
+### ReplyUri
 
 Representation of [Okta Application ReplyUri](https://developer.okta.com/docs/reference/api/apps/).
 
@@ -254,7 +285,6 @@ Representation of [Okta Application ReplyUri](https://developer.okta.com/docs/re
 |-------|--------------|
 | id | uri the app can send the reply to |
 | uri | uri the app can send the reply to |
-| valid | is the DNS of the reply uri valid. Invalid replyuris can lead to oath phishing |
 | firstseen| Timestamp of when a sync job first discovered this node |
 | lastupdated |  Timestamp of the last time the node was updated |
 
@@ -263,5 +293,5 @@ Representation of [Okta Application ReplyUri](https://developer.okta.com/docs/re
  - OktaApplications have ReplyUris
 
     ```
-    (ReplyUri)-[REPLYURI]->(OktaApplication)
+    (OktaApplication)-[REPLYURI]->(ReplyUri)
     ```

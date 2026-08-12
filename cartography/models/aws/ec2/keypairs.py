@@ -13,12 +13,12 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 @dataclass(frozen=True)
 class EC2KeyPairNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef('KeyPairArn')
-    arn: PropertyRef = PropertyRef('KeyPairArn', extra_index=True)
-    keyname: PropertyRef = PropertyRef('KeyName')
-    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True)
+    id: PropertyRef = PropertyRef('KeyPairArn', description="ARN of the EC2 key pair.")
+    arn: PropertyRef = PropertyRef('KeyPairArn', extra_index=True, description="ARN of the EC2 key pair.")
+    keyname: PropertyRef = PropertyRef('KeyName', description="Name of the EC2 key pair.")
+    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True, description="AWS region of the key pair.")
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-    consolelink: PropertyRef = PropertyRef('consolelink')
+    consolelink: PropertyRef = PropertyRef('consolelink', description="AWS console URL for the key pair.")
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class EC2KeyPairToAwsAccountRelProperties(CartographyRelProperties):
 
 
 @dataclass(frozen=True)
-class EC2KeyPairToAWSAccount(CartographyRelSchema):
+class EC2KeyPairToAWSAccountRel(CartographyRelSchema):
     target_node_label: str = 'AWSAccount'
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
         {'id': PropertyRef('AWS_ID', set_in_kwargs=True)},
@@ -43,7 +43,7 @@ class EC2KeyPairToEC2InstanceRelProperties(CartographyRelProperties):
 
 
 @dataclass(frozen=True)
-class EC2KeyPairToEC2Instance(CartographyRelSchema):
+class EC2KeyPairToEC2InstanceRel(CartographyRelSchema):
     target_node_label: str = 'EC2Instance'
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
         {'id': PropertyRef('InstanceId')},
@@ -57,9 +57,9 @@ class EC2KeyPairToEC2Instance(CartographyRelSchema):
 class EC2KeyPairSchema(CartographyNodeSchema):
     label: str = 'EC2KeyPair'
     properties: EC2KeyPairNodeProperties = EC2KeyPairNodeProperties()
-    sub_resource_relationship: EC2KeyPairToAWSAccount = EC2KeyPairToAWSAccount()
+    sub_resource_relationship: EC2KeyPairToAWSAccountRel = EC2KeyPairToAWSAccountRel()
     other_relationships: OtherRelationships = OtherRelationships(
         [
-            EC2KeyPairToEC2Instance(),
+            EC2KeyPairToEC2InstanceRel(),
         ],
     )

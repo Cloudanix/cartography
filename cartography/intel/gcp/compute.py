@@ -2031,18 +2031,21 @@ def sync_gcp_firewall_rules(
     cleanup_gcp_firewall_rules(neo4j_session, common_job_parameters)
 
 
-def _zones_to_regions(zones: List[str]) -> List[Set]:
+def _zones_to_regions(zones: List[Dict]) -> List[str]:
     """
     Return list of regions from the input list of zones
     :param zones: List of zones. This is the output from `get_zones_in_project()`.
     :return: List of regions available to the project
     """
-    regions = set()
+    regions: Set[str] = set()
     for zone in zones:
-        # Chop off the last 2 chars to turn the zone to a region
-        region = zone["name"][:-2]  # type: ignore
-        regions.add(region)
-    return list(regions)  # type: ignore
+        # Extract the region from the zone's region URL
+        # ("https://www.googleapis.com/compute/v1/projects/{project}/regions/{region}");
+        # chopping the zone name breaks for names whose suffix is not 2 chars.
+        region_url = zone.get("region", "")
+        if region_url:
+            regions.add(region_url.split("/")[-1])
+    return list(regions)
 
 
 def sync(

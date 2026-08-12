@@ -1,0 +1,66 @@
+from dataclasses import dataclass
+
+from cartography.models.core.common import PropertyRef
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.ontology.labels import THIRD_PARTY_APP
+from cartography.models.slack.extra_labels import SLACK_USER
+
+
+@dataclass(frozen=True)
+class SlackBotNodeProperties(CartographyNodeProperties):
+    id: PropertyRef = PropertyRef("id", description="Slack bot ID.")
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    name: PropertyRef = PropertyRef(
+        "name", extra_index=True, description="Slack bot name."
+    )
+    real_name: PropertyRef = PropertyRef("real_name", description="Bot display name.")
+    deleted: PropertyRef = PropertyRef(
+        "deleted", description="Whether the bot is deleted."
+    )
+    is_bot: PropertyRef = PropertyRef(
+        "is_bot", description="Whether the account is a bot."
+    )
+    is_app_user: PropertyRef = PropertyRef(
+        "is_app_user", description="Whether the bot is an application user."
+    )
+
+
+@dataclass(frozen=True)
+class SlackTeamToSlackBotRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# (:SlackTeam)-[:RESOURCE]->(:SlackBot)
+class SlackTeamToBotRel(CartographyRelSchema):
+    """A Slack workspace contains a bot account."""
+
+    target_node_label: str = "SlackTeam"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("TEAM_ID", set_in_kwargs=True)},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "RESOURCE"
+    properties: SlackTeamToSlackBotRelProperties = SlackTeamToSlackBotRelProperties()
+
+
+@dataclass(frozen=True)
+class SlackBotSchema(CartographyNodeSchema):
+    """A Slack bot with ThirdPartyApp and compatibility SlackUser labels."""
+
+    label: str = "SlackBot"
+    properties: SlackBotNodeProperties = SlackBotNodeProperties()
+    sub_resource_relationship: SlackTeamToBotRel = SlackTeamToBotRel()
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels(
+        [
+            THIRD_PARTY_APP,
+            SLACK_USER,  # DEPRECATED: will be deleted in v1
+        ],
+    )

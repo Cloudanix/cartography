@@ -1,17 +1,5 @@
 #!/bin/bash
 
-source_venv() {
-  VENV_DIR=$1
-  if [[ "$VIRTUAL_ENV" == "" ]]; then
-    if [[ ! -d "${VENV_DIR}"/venv ]]; then
-      virtualenv "${VENV_DIR}"/venv --python=python3
-    fi
-    source "${VENV_DIR}"/venv/bin/activate
-  else
-    echo "Found existing virtualenv"
-  fi
-}
-
 SCRIPT_DIR=$(dirname "$0")
 BUILD_DIR=build_docs
 [[ -z "${DOCS_OUTPUT_DIR}" ]] && DOCS_OUTPUT_DIR=generated/docs
@@ -24,12 +12,34 @@ mkdir -p "${DOCS_OUTPUT_DIR}"
 rm -rf "${GENERATED_RST_DIR}"
 mkdir -p "${GENERATED_RST_DIR}"
 
-source_venv "$BUILD_DIR"
-pip3 install -r "${SCRIPT_DIR}"/requirements.txt
-
 rsync -av "${SCRIPT_DIR}"/root/ "${SCRIPT_DIR}"/conf.py "${GENERATED_RST_DIR}"
 
 export EXIT_ON_BAD_CONFIG='false'
+
+# Keep the log out of DOCS_OUTPUT_DIR: that directory is published to gh-pages verbatim.
+SPHINX_LOG=$(mktemp)
+trap 'rm -f "${SPHINX_LOG}"' EXIT
+
 set -x
-sphinx-autogen -o "${GENERATED_RST_DIR}" "${GENERATED_RST_DIR}"/*.rst
-sphinx-build -j auto --keep-going -b html "${GENERATED_RST_DIR}" "${DOCS_OUTPUT_DIR}"
+
+sphinx-build -j auto --keep-going -b html "${GENERATED_RST_DIR}" "${DOCS_OUTPUT_DIR}" 2>&1 |
+    tee "${SPHINX_LOG}"
+SPHINX_STATUS="${PIPESTATUS[0]}"
+[[ "${SPHINX_STATUS}" -ne 0 ]] && exit "${SPHINX_STATUS}"
+
+if grep -q 'ERROR:' "${SPHINX_LOG}"; then
+    set +x
+    echo "ERROR: documentation build reported errors:" >&2
+    grep 'ERROR:' "${SPHINX_LOG}" >&2
+    exit 1
+fi
+
+# A broken cross-reference renders as a dead link without failing the build, which is how
+# 700 of them accumulated unnoticed. The remaining warning baseline is pre-existing, so
+# gate on this category and hard errors rather than on -W.
+if grep -q 'myst.xref_missing' "${SPHINX_LOG}"; then
+    set +x
+    echo "ERROR: broken documentation cross-references:" >&2
+    grep 'myst.xref_missing' "${SPHINX_LOG}" >&2
+    exit 1
+fi

@@ -7,11 +7,13 @@ from cartography.models.core.nodes import CartographyNodeSchema
 
 @dataclass(frozen=True)
 class BigfixRootNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef('id')
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+    id: PropertyRef = PropertyRef("id", description="BigFix root URL.")
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class BigfixRootSchema(CartographyNodeSchema):
-    label: str = 'BigfixRoot'
+    """A BigFix root server containing managed computers."""
+
+    label: str = "BigfixRoot"
     properties: BigfixRootNodeProperties = BigfixRootNodeProperties()

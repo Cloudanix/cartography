@@ -3,15 +3,20 @@ from dataclasses import dataclass
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import CartographyNodeProperties
 from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.ontology.labels import TENANT
 
 
 @dataclass(frozen=True)
 class LastpassTenantNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef('id')
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+    id: PropertyRef = PropertyRef("id", description="LastPass tenant ID.")
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class LastpassTenantSchema(CartographyNodeSchema):
-    label: str = 'LastpassTenant'
+    """Representation of a LastPass tenant."""
+
+    label: str = "LastpassTenant"
     properties: LastpassTenantNodeProperties = LastpassTenantNodeProperties()
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels([TENANT])

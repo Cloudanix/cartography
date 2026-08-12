@@ -5,7 +5,7 @@ from typing import Optional
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
-from azure.mgmt.resource import SubscriptionClient
+from azure.mgmt.resource.subscriptions import SubscriptionClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.credentials import Credentials

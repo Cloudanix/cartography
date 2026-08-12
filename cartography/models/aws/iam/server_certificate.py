@@ -1,0 +1,74 @@
+from dataclasses import dataclass
+
+from cartography.models.core.common import PropertyRef
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.ontology.labels import CERTIFICATE
+
+
+@dataclass(frozen=True)
+class AWSServerCertificateNodeProperties(CartographyNodeProperties):
+    id: PropertyRef = PropertyRef(
+        "ServerCertificateId", description="The server certificate ID"
+    )
+    arn: PropertyRef = PropertyRef(
+        "Arn", extra_index=True, description="The ARN of the server certificate"
+    )
+    server_certificate_id: PropertyRef = PropertyRef(
+        "ServerCertificateId",
+        extra_index=True,
+        description="The stable and unique ID for the server certificate",
+    )
+    server_certificate_name: PropertyRef = PropertyRef(
+        "ServerCertificateName",
+        extra_index=True,
+        description="The name of the server certificate",
+    )
+    path: PropertyRef = PropertyRef(
+        "Path", description="The path to the server certificate"
+    )
+    expiration: PropertyRef = PropertyRef(
+        "Expiration", description="The date on which the certificate is set to expire"
+    )
+    upload_date: PropertyRef = PropertyRef(
+        "UploadDate", description="The date the server certificate was uploaded"
+    )
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class AWSServerCertificateToAWSAccountRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class AWSServerCertificateToAWSAccountRel(CartographyRelSchema):
+    target_node_label: str = "AWSAccount"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("AWS_ID", set_in_kwargs=True)},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "RESOURCE"
+    properties: AWSServerCertificateToAWSAccountRelProperties = (
+        AWSServerCertificateToAWSAccountRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class AWSServerCertificateSchema(CartographyNodeSchema):
+    """Representation of an AWS [IAM Server Certificate](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ServerCertificateMetadata.html)."""
+
+    label: str = "AWSServerCertificate"
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels([CERTIFICATE])
+    properties: AWSServerCertificateNodeProperties = (
+        AWSServerCertificateNodeProperties()
+    )
+    sub_resource_relationship: AWSServerCertificateToAWSAccountRel = (
+        AWSServerCertificateToAWSAccountRel()
+    )

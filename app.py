@@ -419,14 +419,18 @@ def get_auth_creds(context, args):
     else:
         auth_creds = {
             "type": "self",
-            "aws_access_key_id": args.get("credentials", {}).get("awsAccessKeyID")
-            if "credentials" in args
-            else None,
-            "aws_secret_access_key": args.get("credentials", {}).get(
-                "awsSecretAccessKey",
-            )
-            if "credentials" in args
-            else None,
+            "aws_access_key_id": (
+                args.get("credentials", {}).get("awsAccessKeyID")
+                if "credentials" in args
+                else None
+            ),
+            "aws_secret_access_key": (
+                args.get("credentials", {}).get(
+                    "awsSecretAccessKey",
+                )
+                if "credentials" in args
+                else None
+            ),
         }
 
     return auth_creds
@@ -450,14 +454,18 @@ def get_logging_account_auth_creds(context, args):
     else:
         auth_creds = {
             "type": "self",
-            "aws_access_key_id": args.get("credentials", {}).get("awsAccessKeyID")
-            if "credentials" in args
-            else None,
-            "aws_secret_access_key": args.get("credentials", {}).get(
-                "awsSecretAccessKey",
-            )
-            if "credentials" in args
-            else None,
+            "aws_access_key_id": (
+                args.get("credentials", {}).get("awsAccessKeyID")
+                if "credentials" in args
+                else None
+            ),
+            "aws_secret_access_key": (
+                args.get("credentials", {}).get(
+                    "awsSecretAccessKey",
+                )
+                if "credentials" in args
+                else None
+            ),
         }
 
     args["loggingAccount"]["creds"] = auth_creds

@@ -1,0 +1,255 @@
+from cartography.models.ontology.mapping.specs import OntologyFieldMapping
+from cartography.models.ontology.mapping.specs import OntologyMapping
+from cartography.models.ontology.mapping.specs import OntologyNodeMapping
+
+# ThirdPartyApp ontology fields:
+# client_id (REQUIRED) - OAuth client identifier
+# name (REQUIRED) - Display name of the third-party application
+# enabled - Whether the third-party app is enabled/active
+# native_app - Whether this is a native application (vs web)
+# protocol - OAuth protocol type (oauth2, openid-connect, saml, etc.)
+
+googleworkspace_mapping = OntologyMapping(
+    module_name="googleworkspace",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="GoogleWorkspaceOAuthApp",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="client_id",
+                    node_field="client_id",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="name",
+                    node_field="display_text",
+                    required=True,
+                ),
+                # enabled: Not available - Google Workspace third-party apps don't have an enabled/disabled state
+                OntologyFieldMapping(
+                    ontology_field="native_app",
+                    node_field="native_app",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="protocol",
+                    node_field="",
+                    special_handling="static_value",
+                    extra={"value": "oauth2"},
+                ),
+            ],
+        ),
+    ],
+)
+
+keycloak_mapping = OntologyMapping(
+    module_name="keycloak",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="KeycloakClient",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="client_id",
+                    node_field="client_id",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="name",
+                    node_field="name",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="enabled",
+                    node_field="enabled",
+                ),
+                # native_app: Not available - Keycloak doesn't distinguish native vs web apps in this field
+                OntologyFieldMapping(
+                    ontology_field="protocol",
+                    node_field="protocol",
+                ),
+            ],
+        ),
+    ],
+)
+
+entra_mapping = OntologyMapping(
+    module_name="microsoft",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="EntraApplication",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="client_id",
+                    node_field="app_id",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="name",
+                    node_field="display_name",
+                    required=True,
+                ),
+                # enabled: Microsoft Graph exposes `accountEnabled` on the
+                # service principal (the tenant-local instance), not on the
+                # application registration. `_ont_enabled` is projected onto
+                # EntraApplication by the `ontology_entra_application_projection`
+                # analysis job, which copies it from the linked
+                # EntraServicePrincipal.
+                # native_app: Not available - Application type not currently ingested
+                OntologyFieldMapping(
+                    ontology_field="protocol",
+                    node_field="",
+                    special_handling="static_value",
+                    extra={"value": "oauth2"},
+                ),
+            ],
+        ),
+    ],
+)
+
+okta_mapping = OntologyMapping(
+    module_name="okta",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="OktaApplication",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="client_id",
+                    node_field="id",  # Note: This is Okta's internal app ID, not OAuth client_id
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="name",
+                    node_field="label",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="enabled",
+                    node_field="status",
+                    extra={"values": ["ACTIVE"]},
+                    special_handling="equal_boolean",
+                ),
+                # native_app: Not available - Application type not distinguished in current schema
+                OntologyFieldMapping(
+                    ontology_field="protocol",
+                    node_field="sign_on_mode",
+                ),
+            ],
+        ),
+    ],
+)
+
+slack_mapping = OntologyMapping(
+    module_name="slack",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SlackBot",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="client_id",
+                    node_field="id",  # Note: This is the bot's Slack user ID, not an OAuth client_id
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="name",
+                    node_field="name",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="enabled",
+                    node_field="deleted",
+                    special_handling="invert_boolean",
+                ),
+                # native_app: Not applicable to Slack bots
+                # protocol: Not applicable to Slack bots
+            ],
+        ),
+    ],
+)
+
+jumpcloud_mapping = OntologyMapping(
+    module_name="jumpcloud",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="JumpCloudSaaSApplication",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="client_id",
+                    node_field="id",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="name",
+                    node_field="name",
+                ),
+            ],
+        ),
+    ],
+)
+
+salesforce_mapping = OntologyMapping(
+    module_name="salesforce",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SalesforceConnectedApp",
+            fields=[
+                # Salesforce does not expose the OAuth consumer key via SOQL, so
+                # use the ConnectedApplication record id as the client identifier.
+                OntologyFieldMapping(
+                    ontology_field="client_id",
+                    node_field="id",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="name",
+                    node_field="name",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="protocol",
+                    node_field="",
+                    special_handling="static_value",
+                    extra={"value": "oauth2"},
+                ),
+            ],
+        ),
+    ],
+)
+
+netlify_mapping = OntologyMapping(
+    module_name="netlify",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="NetlifyServiceInstance",
+            fields=[
+                # Netlify add-ons are identified by slug, not by an OAuth client id, so the slug
+                # is the closest stable identifier the ontology's client_id can carry.
+                OntologyFieldMapping(
+                    ontology_field="client_id",
+                    node_field="service_slug",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="service_name", required=True
+                ),
+                # An add-on instance exists only while installed, so it is enabled by
+                # construction; Netlify reports no disabled state for one.
+                OntologyFieldMapping(
+                    ontology_field="enabled",
+                    node_field="",
+                    special_handling="static_value",
+                    extra={"value": True},
+                ),
+                # native_app / protocol: Netlify add-ons are provisioned server-side through
+                # Netlify's own add-on API, not through an OAuth flow, so neither applies.
+            ],
+        ),
+    ],
+)
+
+THIRDPARTYAPPS_ONTOLOGY_MAPPING: dict[str, OntologyMapping] = {
+    "googleworkspace": googleworkspace_mapping,
+    "salesforce": salesforce_mapping,
+    "keycloak": keycloak_mapping,
+    "microsoft": entra_mapping,
+    "okta": okta_mapping,
+    "slack": slack_mapping,
+    "jumpcloud": jumpcloud_mapping,
+    "netlify": netlify_mapping,
+}

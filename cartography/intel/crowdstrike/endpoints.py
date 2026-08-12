@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from typing import Dict
 from typing import List
 
@@ -6,6 +7,9 @@ import neo4j
 from falconpy.hosts import Hosts
 from falconpy.oauth2 import OAuth2
 
+from cartography.client.core.tx import load
+from cartography.models.crowdstrike.hosts import CrowdstrikeHostSchema
+from cartography.models.crowdstrike.tenant import CrowdstrikeTenantSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -24,61 +28,54 @@ def sync_hosts(
         load_host_data(neo4j_session, host_data, update_tag)
 
 
+@timeit
 def load_host_data(
-    neo4j_session: neo4j.Session, data: List[Dict], update_tag: int,
+    neo4j_session: neo4j.Session,
+    data: List[Dict],
+    update_tag: int,
 ) -> None:
     """
-    Transform and load scan information
+    Load Crowdstrike host data into Neo4j, grouping by CID so each batch is
+    scoped to its tenant.
     """
-    ingestion_cypher_query = """
-    UNWIND $Hosts AS host
-        MERGE (h:CrowdstrikeHost{id: host.device_id})
-        ON CREATE SET h.cid = host.cid,
-            h.cid = host.cid,
-            h.instance_id = host.instance_id,
-            h.firstseen = timestamp()
-        SET h.status = host.status,
-            h.hostname = host.hostname,
-            h.machine_domain = host.machine_domain,
-            h.crowdstrike_first_seen = host.first_seen,
-            h.crowdstrike_last_seen = host.last_seen,
-            h.local_ip = host.local_ip,
-            h.external_ip = host.external_ip,
-            h.cpu_signature = host.cpu_signature,
-            h.bios_manufacturer = host.bios_manufacturer,
-            h.bios_version = host.bios_version,
-            h.mac_address = host.mac_address,
-            h.os_version = host.os_version,
-            h.os_build = host.os_build,
-            h.platform_id = host.platform_id,
-            h.platform_name = host.platform_name,
-            h.service_provider = host.service_provider,
-            h.service_provider_account_id = host.service_provider_account_id,
-            h.agent_version = host.agent_version,
-            h.system_manufacturer = host.system_manufacturer,
-            h.system_product_name = host.system_product_name,
-            h.product_type = host.product_type,
-            h.product_type_desc = host.product_type_desc,
-            h.provision_status = host.provision_status,
-            h.reduced_functionality_mode = host.reduced_functionality_mode,
-            h.kernel_version = host.kernel_version,
-            h.major_version = host.major_version,
-            h.minor_version = host.minor_version,
-            h.tags = host.tags,
-            h.modified_timestamp = host.modified_timestamp,
-            h.lastupdated = $update_tag
-    """
-    logger.info(f"Loading {len(data)} crowdstrike hosts.")
-    neo4j_session.run(
-        ingestion_cypher_query,
-        Hosts=data,
-        update_tag=update_tag,
+    hosts_by_cid: dict[str, list[Dict]] = defaultdict(list)
+    missing_cid: list[str] = []
+    for host in data:
+        cid = host.get("cid")
+        if not cid:
+            missing_cid.append(host.get("device_id") or "<unknown>")
+            continue
+        hosts_by_cid[cid].append(host)
+    if missing_cid:
+        raise ValueError(
+            "CrowdStrike returned host records with no `cid`; refusing to load "
+            f"because the tenant scope cannot be resolved. Affected device_ids: {missing_cid}"
+        )
+    if not hosts_by_cid:
+        return
+    load(
+        neo4j_session,
+        CrowdstrikeTenantSchema(),
+        [{"id": cid} for cid in hosts_by_cid],
+        lastupdated=update_tag,
     )
+    for cid, hosts in hosts_by_cid.items():
+        load(
+            neo4j_session,
+            CrowdstrikeHostSchema(),
+            hosts,
+            lastupdated=update_tag,
+            CID=cid,
+        )
 
 
-def get_host_ids(client: Hosts) -> List[List[str]]:
+def get_host_ids(
+    client: Hosts,
+    crowdstrikeapi_filter: str = "",
+    crowdstrikeapi_limit: int = 5000,
+) -> List[List[str]]:
     ids = []
-    parameters = {"filter": 'service_provider:"AWS_EC2"', "limit": 400}
+    parameters = {"filter": crowdstrikeapi_filter, "limit": crowdstrikeapi_limit}
     response = client.QueryDevicesByFilter(parameters=parameters)
     body = response.get("body", {})
     resources = body.get("resources", [])

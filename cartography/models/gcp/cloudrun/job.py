@@ -1,0 +1,104 @@
+from dataclasses import dataclass
+
+from cartography.models.core.common import PropertyRef
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.ontology.labels import COMPUTE_SERVICE
+
+
+@dataclass(frozen=True)
+class GCPCloudRunJobProperties(CartographyNodeProperties):
+    id: PropertyRef = PropertyRef(
+        "id", description="Stable identifier for this resource."
+    )
+    name: PropertyRef = PropertyRef("name", description="Short name of the job.")
+    location: PropertyRef = PropertyRef(
+        "location", description="The GCP location where the job is deployed."
+    )
+    service_account_email: PropertyRef = PropertyRef(
+        "service_account_email",
+        description="The email of the service account used by this job.",
+    )
+    project_id: PropertyRef = PropertyRef(
+        "project_id", description="The GCP project ID this job belongs to."
+    )
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class ProjectToCloudRunJobRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class ProjectToCloudRunJobRel(CartographyRelSchema):
+    target_node_label: str = "GCPProject"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("project_id", set_in_kwargs=True)},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "RESOURCE"
+    properties: ProjectToCloudRunJobRelProperties = ProjectToCloudRunJobRelProperties()
+
+
+@dataclass(frozen=True)
+class CloudRunJobToServiceAccountRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# DEPRECATED: replaced by the canonical (:ComputeService)-[:RUNS_AS]->(:ServiceAccount)
+# edge (CloudRunJobToServiceAccountRunsAsRel). Kept for backward compatibility,
+# will be removed in v1.0.0.
+class CloudRunJobToServiceAccountRel(CartographyRelSchema):
+    target_node_label: str = "GCPServiceAccount"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"email": PropertyRef("service_account_email")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "USES_SERVICE_ACCOUNT"
+    properties: CloudRunJobToServiceAccountRelProperties = (
+        CloudRunJobToServiceAccountRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class CloudRunJobToServiceAccountRunsAsRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# Canonical ontology edge: (:ComputeService)-[:RUNS_AS]->(:ServiceAccount)
+class CloudRunJobToServiceAccountRunsAsRel(CartographyRelSchema):
+    target_node_label: str = "GCPServiceAccount"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"email": PropertyRef("service_account_email")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "RUNS_AS"
+    properties: CloudRunJobToServiceAccountRunsAsRelProperties = (
+        CloudRunJobToServiceAccountRunsAsRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class GCPCloudRunJobSchema(CartographyNodeSchema):
+    """A Google Cloud Cloud Run Job resource."""
+
+    label: str = "GCPCloudRunJob"
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels([COMPUTE_SERVICE])
+    properties: GCPCloudRunJobProperties = GCPCloudRunJobProperties()
+    sub_resource_relationship: ProjectToCloudRunJobRel = ProjectToCloudRunJobRel()
+    other_relationships: OtherRelationships = OtherRelationships(
+        [
+            CloudRunJobToServiceAccountRel(),
+            CloudRunJobToServiceAccountRunsAsRel(),
+        ],
+    )

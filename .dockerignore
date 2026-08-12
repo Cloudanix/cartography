@@ -6,6 +6,9 @@
 .venv*
 venv*
 venv/
+.compose
+.cache
+.local
 __pycache__/
 *.pyc
 .mypy_cache/

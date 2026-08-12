@@ -6,26 +6,31 @@ from typing import Tuple
 
 import neo4j
 from okta import UsersClient
+from okta.framework.PagedResults import PagedResults
 from okta.models.user import User
 
+from cartography.client.core.tx import run_write_query
 from cartography.intel.okta.sync_state import OktaSyncState
 from cartography.intel.okta.utils import check_rate_limit
+from cartography.intel.okta.utils import okta_paged_request_with_retry
 from cartography.util import timeit
-
 
 logger = logging.getLogger(__name__)
 
 
-def _create_user_client(okta_org: str, okta_api_key: str) -> UsersClient:
+def _create_user_client(
+    okta_org: str, okta_api_key: str, okta_base_domain: str = "okta.com"
+) -> UsersClient:
     """
     Create Okta User Client
     :param okta_org: Okta organization name
     :param okta_api_key: Okta API key
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: Instance of UsersClient
     """
     # https://github.com/okta/okta-sdk-python/blob/master/okta/models/user/User.py
     user_client = UsersClient(
-        base_url=f"https://{okta_org}.okta.com/",
+        base_url=f"https://{okta_org}.{okta_base_domain}/",
         api_token=okta_api_key,
     )
 
@@ -40,23 +45,42 @@ def _get_okta_users(user_client: UsersClient) -> List[Dict]:
     :return: Array of user data
     """
     user_list: List[Dict] = []
-    paged_users = user_client.get_paged_users()
+    paged_users = _get_okta_users_page(user_client, None)
 
     # TODO: Fix bug, we miss last page :(
     while True:
         user_list.extend(paged_users.result)
         check_rate_limit(paged_users.response)
         if not paged_users.is_last_page():
-            # Keep on fetching pages of users until the last page
-            paged_users = user_client.get_paged_users(url=paged_users.next_url)
+            # Keep on fetching pages of users until the last page. A missing
+            # next URL here would otherwise be treated as an initial request
+            # and re-fetch the first page forever.
+            next_url = paged_users.next_url
+            if not next_url:
+                raise ValueError("Okta paginated response was missing a next URL.")
+            paged_users = _get_okta_users_page(user_client, next_url)
         else:
             break
 
     return user_list
 
 
+def _get_okta_users_page(user_client: UsersClient, url: str | None) -> PagedResults:
+    def _request() -> PagedResults:
+        # The UsersClient pager calls ApiClient.get/get_path under the hood, so
+        # it can raise JSONDecodeError on a non-JSON Okta error body just like
+        # the other paged requests.
+        if url:
+            return user_client.get_paged_users(url=url)
+        return user_client.get_paged_users()
+
+    return okta_paged_request_with_retry(_request, "listing users")
+
+
 @timeit
-def transform_okta_user_list(okta_user_list: List[User]) -> Tuple[List[Dict], List[str]]:
+def transform_okta_user_list(
+    okta_user_list: List[User],
+) -> Tuple[List[Dict], List[str]]:
     users: List[Dict] = []
     user_ids: List[str] = []
 
@@ -91,7 +115,9 @@ def transform_okta_user(okta_user: User) -> Dict:
         user_props["activated"] = None
 
     if okta_user.statusChanged:
-        user_props["status_changed"] = okta_user.statusChanged.strftime("%m/%d/%Y, %H:%M:%S")
+        user_props["status_changed"] = okta_user.statusChanged.strftime(
+            "%m/%d/%Y, %H:%M:%S",
+        )
     else:
         user_props["status_changed"] = None
 
@@ -101,12 +127,16 @@ def transform_okta_user(okta_user: User) -> Dict:
         user_props["last_login"] = None
 
     if okta_user.lastUpdated:
-        user_props["okta_last_updated"] = okta_user.lastUpdated.strftime("%m/%d/%Y, %H:%M:%S")
+        user_props["okta_last_updated"] = okta_user.lastUpdated.strftime(
+            "%m/%d/%Y, %H:%M:%S",
+        )
     else:
         user_props["okta_last_updated"] = None
 
     if okta_user.passwordChanged:
-        user_props["password_changed"] = okta_user.passwordChanged.strftime("%m/%d/%Y, %H:%M:%S")
+        user_props["password_changed"] = okta_user.passwordChanged.strftime(
+            "%m/%d/%Y, %H:%M:%S",
+        )
     else:
         user_props["password_changed"] = None
 
@@ -120,7 +150,9 @@ def transform_okta_user(okta_user: User) -> Dict:
 
 @timeit
 def _load_okta_users(
-    neo4j_session: neo4j.Session, okta_org_id: str, user_list: List[Dict],
+    neo4j_session: neo4j.Session,
+    okta_org_id: str,
+    user_list: List[Dict],
     okta_update_tag: int,
 ) -> None:
     """
@@ -150,7 +182,14 @@ def _load_okta_users(
     new_user.okta_last_updated = user_data.okta_last_updated,
     new_user.password_changed = user_data.password_changed,
     new_user.transition_to_status = user_data.transition_to_status,
-    new_user.lastupdated = $okta_update_tag
+    new_user.lastupdated = $okta_update_tag,
+    new_user:UserAccount,
+    new_user._module_name = "cartography:okta",
+    new_user._ont_email = user_data.email,
+    new_user._ont_firstname = user_data.first_name,
+    new_user._ont_lastname = user_data.last_name,
+    new_user._ont_lastactivity = user_data.last_login,
+    new_user._ont_source = "okta"
     WITH new_user, org
     MERGE (org)-[org_r:RESOURCE]->(new_user)
     ON CREATE SET org_r.firstseen = timestamp()
@@ -164,7 +203,8 @@ def _load_okta_users(
     SET h.lastupdated = $okta_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_statement,
         ORG_ID=okta_org_id,
         USER_LIST=user_list,
@@ -174,8 +214,12 @@ def _load_okta_users(
 
 @timeit
 def sync_okta_users(
-    neo4j_session: neo4j.Session, okta_org_id: str, okta_update_tag: int,
-    okta_api_key: str, sync_state: OktaSyncState,
+    neo4j_session: neo4j.Session,
+    okta_org_id: str,
+    okta_update_tag: int,
+    okta_api_key: str,
+    sync_state: OktaSyncState,
+    okta_base_domain: str = "okta.com",
 ) -> None:
     """
     Sync okta users
@@ -184,11 +228,12 @@ def sync_okta_users(
     :param okta_update_tag: The timestamp value to set our new Neo4j resources with
     :param okta_api_key: Okta API key
     :param sync_state: Okta sync state
+    :param okta_base_domain: Base domain for Okta API requests (default: okta.com)
     :return: Nothing
     """
 
     logger.info("Syncing Okta users")
-    user_client = _create_user_client(okta_org_id, okta_api_key)
+    user_client = _create_user_client(okta_org_id, okta_api_key, okta_base_domain)
     data = _get_okta_users(user_client)
     users_data, user_ids = transform_okta_user_list(data)
 

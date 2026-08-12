@@ -85,3 +85,6 @@ def test_transform_api_keys_sets_custom():
     keys = [{"uid": "abc", "name": "projects/p/locations/global/keys/abc"}]
     result = iam.transform_api_keys(keys, "p")
     assert result[0]["managed_type"] == "custom"
+
+
+

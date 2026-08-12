@@ -1,0 +1,797 @@
+from cartography.models.ontology.mapping.specs import OntologyFieldMapping
+from cartography.models.ontology.mapping.specs import OntologyMapping
+from cartography.models.ontology.mapping.specs import OntologyNodeMapping
+
+entra_mapping = OntologyMapping(
+    module_name="microsoft",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="EntraUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email",
+                    node_field="email",
+                    required=True,
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="given_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="surname"),
+                OntologyFieldMapping(
+                    ontology_field="fullname", node_field="display_name"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="active", node_field="account_enabled"
+                ),
+            ],
+        ),
+    ],
+)
+lastpass_mapping = OntologyMapping(
+    module_name="lastpass",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="LastpassUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa",
+                    node_field="multifactor",
+                    special_handling="to_boolean",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="disabled",
+                    special_handling="invert_boolean",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_login"
+                ),
+            ],
+        ),
+    ],
+)
+gsuite_mapping = OntologyMapping(
+    module_name="gsuite",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="GSuiteUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="given_name"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="lastname", node_field="family_name"
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa", node_field="is_enrolled_in_2_sv"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="suspended",
+                    extra={"fields": ["archived"]},
+                    special_handling="nor_boolean",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_login_time"
+                ),
+            ],
+        ),
+    ],
+)
+googleworkspace_mapping = OntologyMapping(
+    module_name="googleworkspace",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="GoogleWorkspaceUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="given_name"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="lastname", node_field="family_name"
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa", node_field="is_enrolled_in_2_sv"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="suspended",
+                    extra={"fields": ["archived"]},
+                    special_handling="nor_boolean",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_login_time"
+                ),
+            ],
+        ),
+    ],
+)
+anthropic_mapping = OntologyMapping(
+    module_name="anthropic",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="AnthropicUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+            ],
+        ),
+    ],
+)
+airbyte_mapping = OntologyMapping(
+    module_name="airbyte",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="AirbyteUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+            ],
+        ),
+    ],
+)
+cloudflare_mapping = OntologyMapping(
+    module_name="cloudflare",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="CloudflareMember",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="firstname"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="lastname"),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="status",
+                    extra={"values": ["accepted"]},
+                    special_handling="equal_boolean",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa",
+                    node_field="two_factor_authentication_enabled",
+                ),
+            ],
+        ),
+    ],
+)
+duo_mapping = OntologyMapping(
+    module_name="duo",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="DuoUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="firstname"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="lastname"),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(ontology_field="fullname", node_field="realname"),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_login"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="status",
+                    extra={"values": ["active", "bypass"]},
+                    special_handling="equal_boolean",
+                ),
+            ],
+        ),
+    ],
+)
+github_mapping = OntologyMapping(
+    module_name="github",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="GitHubUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(ontology_field="fullname", node_field="fullname"),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa", node_field="has_2fa_enabled"
+                ),
+            ],
+        ),
+    ],
+)
+gitlab_mapping = OntologyMapping(
+    module_name="gitlab",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="GitLabUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="state",
+                    extra={"values": ["active"]},
+                    special_handling="equal_boolean",
+                ),
+            ],
+        ),
+    ],
+)
+keycloak_mapping = OntologyMapping(
+    module_name="keycloak",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="KeycloakUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="first_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="last_name"),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="enabled",
+                ),
+                OntologyFieldMapping(ontology_field="has_mfa", node_field="totp"),
+            ],
+        ),
+    ],
+)
+openai_mapping = OntologyMapping(
+    module_name="openai",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="OpenAIUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+            ],
+        ),
+    ],
+)
+scaleway_mapping = OntologyMapping(
+    module_name="scaleway",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="ScalewayUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="first_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="last_name"),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="locked",
+                    special_handling="invert_boolean",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_login_at"
+                ),
+                OntologyFieldMapping(ontology_field="has_mfa", node_field="mfa"),
+            ],
+        ),
+    ],
+)
+snipeit_mapping = OntologyMapping(
+    module_name="snipeit",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SnipeitUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+            ],
+        ),
+    ],
+)
+tailscale_mapping = OntologyMapping(
+    module_name="tailscale",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="TailscaleUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="fullname", node_field="display_name"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="username", node_field="login_name"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="status",
+                    extra={"values": ["active", "idle"]},
+                    special_handling="equal_boolean",
+                ),
+            ],
+        ),
+    ],
+)
+oci_mapping = OntologyMapping(
+    module_name="oci",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="OCIUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa", node_field="is_mfa_activated"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="lifecycle_state",
+                    extra={"values": ["ACTIVE"]},
+                    special_handling="equal_boolean",
+                ),
+            ],
+        ),
+    ],
+)
+okta_mapping = OntologyMapping(
+    module_name="okta",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="OktaUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="first_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="last_name"),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_login"
+                ),
+            ],
+        ),
+    ],
+)
+aws_mapping = OntologyMapping(
+    module_name="aws",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="AWSUser",
+            eligible_for_source=False,
+            fields=[
+                OntologyFieldMapping(ontology_field="username", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_authenticated"
+                ),
+            ],
+        ),
+        OntologyNodeMapping(
+            node_label="AWSSSOUser",
+            eligible_for_source=False,
+            fields=[
+                OntologyFieldMapping(ontology_field="username", node_field="user_name")
+            ],
+        ),
+    ],
+)
+slack_mapping = OntologyMapping(
+    module_name="slack",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SlackUser",
+            fields=[
+                OntologyFieldMapping(ontology_field="email", node_field="email"),
+                OntologyFieldMapping(ontology_field="username", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="first_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="last_name"),
+                OntologyFieldMapping(ontology_field="fullname", node_field="real_name"),
+                OntologyFieldMapping(ontology_field="has_mfa", node_field="has_mfa"),
+                OntologyFieldMapping(ontology_field="inactive", node_field="deleted"),
+            ],
+        ),
+    ],
+)
+spacelift_mapping = OntologyMapping(
+    module_name="spacelift",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SpaceliftUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                # firstname: not available in SpaceliftUser
+                # lastname: not available in SpaceliftUser
+                # has_mfa: not available in SpaceliftUser
+                # active/inactive: not available in SpaceliftUser
+                # lastactivity: not available in SpaceliftUser
+            ],
+        ),
+    ],
+)
+sentry_mapping = OntologyMapping(
+    module_name="sentry",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SentryUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa",
+                    node_field="has_2fa",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="pending",
+                    special_handling="invert_boolean",
+                ),
+            ],
+        ),
+    ],
+)
+pagerduty_mapping = OntologyMapping(
+    module_name="pagerduty",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="PagerDutyUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+            ],
+        ),
+    ],
+)
+jumpcloud_mapping = OntologyMapping(
+    module_name="jumpcloud",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="JumpCloudUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="firstname"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="lastname"),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="suspended",
+                    special_handling="invert_boolean",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa",
+                    node_field="mfa_configured",
+                ),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="lastlogin"
+                ),
+            ],
+        ),
+    ],
+)
+
+workos_useraccounts_mapping = OntologyMapping(
+    module_name="workos",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="WorkOSUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="first_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="last_name"),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_sign_in_at"
+                ),
+            ],
+        ),
+        OntologyNodeMapping(
+            node_label="WorkOSDirectoryUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="first_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="last_name"),
+                OntologyFieldMapping(
+                    ontology_field="active",
+                    node_field="state",
+                    extra={"values": ["active"]},
+                    special_handling="equal_boolean",
+                ),
+            ],
+        ),
+    ],
+)
+
+# UserAccount fields:
+# has_mfa
+# inactive
+# lastactivity
+
+netlify_mapping = OntologyMapping(
+    module_name="netlify",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="NetlifyUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="full_name"),
+                # Netlify returns one `full_name` string and never splits it, so firstname and
+                # lastname stay unmapped rather than guessed from a space.
+                OntologyFieldMapping(
+                    ontology_field="has_mfa", node_field="mfa_enabled"
+                ),
+                # active: not available at the identity level. Netlify's only signal is
+                # `pending`, which is true while an invitation to one specific team is
+                # outstanding. It lives on the MEMBER_OF edge, because a shared identity may be
+                # pending in one team and accepted in another, so projecting it onto the node
+                # would let whichever team synced last decide the answer. Ask
+                # `(:NetlifyUser)-[r:MEMBER_OF]->(:NetlifyAccount) WHERE NOT r.pending` instead.
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_activity_date"
+                ),
+            ],
+        ),
+    ],
+)
+
+subimage_mapping = OntologyMapping(
+    module_name="subimage",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SubImageTeamMember",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="first_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="last_name"),
+            ],
+        ),
+    ],
+)
+
+kubernetes_mapping = OntologyMapping(
+    module_name="kubernetes",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="KubernetesUser",
+            eligible_for_source=False,
+            fields=[
+                OntologyFieldMapping(ontology_field="username", node_field="name"),
+                # email: Not available
+            ],
+        ),
+    ],
+)
+
+salesforce_mapping = OntologyMapping(
+    module_name="salesforce",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SalesforceUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(
+                    ontology_field="firstname", node_field="first_name"
+                ),
+                OntologyFieldMapping(ontology_field="lastname", node_field="last_name"),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(ontology_field="active", node_field="is_active"),
+                OntologyFieldMapping(
+                    ontology_field="lastactivity", node_field="last_login_date"
+                ),
+            ],
+        ),
+    ],
+)
+vercel_mapping = OntologyMapping(
+    module_name="vercel",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="VercelUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="username", node_field="username"),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(ontology_field="active", node_field="confirmed"),
+            ],
+        ),
+    ],
+)
+
+railway_mapping = OntologyMapping(
+    module_name="railway",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="RailwayUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa", node_field="two_factor_auth_enabled"
+                ),
+                # username: Railway has no username, only email and display name.
+                # active: Railway does not expose an account status on workspace members.
+            ],
+        ),
+    ],
+)
+
+supabase_mapping = OntologyMapping(
+    module_name="supabase",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="SupabaseOrganizationMember",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                OntologyFieldMapping(ontology_field="username", node_field="user_name"),
+                OntologyFieldMapping(
+                    ontology_field="has_mfa",
+                    node_field="mfa_enabled",
+                    special_handling="to_boolean",
+                ),
+                # inactive: Not available. The members endpoint lists only current
+                # members, with no suspended or deactivated state.
+                # lastactivity: Not available.
+            ],
+        ),
+    ],
+)
+
+
+modal_mapping = OntologyMapping(
+    module_name="modal",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="ModalUser",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="email", node_field="email", required=True
+                ),
+                # Modal's display name doubles as the workspace username: it is the value
+                # the API uses to attribute object creation.
+                OntologyFieldMapping(
+                    ontology_field="username", node_field="display_name"
+                ),
+                OntologyFieldMapping(
+                    ontology_field="fullname", node_field="display_name"
+                ),
+                # inactive / lastactivity: deliberately unmapped. Modal reports removal and
+                # last-activity per *workspace membership*, not per account, and a ModalUser is
+                # a shared identity. Mapping them would mark a user removed from one workspace
+                # as globally inactive. They live on the MEMBER_OF relationship instead.
+                # firstname / lastname: Modal exposes only a single display name.
+                # has_mfa: not exposed; MFA is delegated to the identity provider.
+            ],
+        ),
+    ],
+)
+
+USERACCOUNTS_ONTOLOGY_MAPPING: dict[str, OntologyMapping] = {
+    "microsoft": entra_mapping,
+    "lastpass": lastpass_mapping,
+    "gsuite": gsuite_mapping,
+    "anthropic": anthropic_mapping,
+    "airbyte": airbyte_mapping,
+    "cloudflare": cloudflare_mapping,
+    "duo": duo_mapping,
+    "github": github_mapping,
+    "gitlab": gitlab_mapping,
+    "keycloak": keycloak_mapping,
+    "salesforce": salesforce_mapping,
+    "oci": oci_mapping,
+    "openai": openai_mapping,
+    "scaleway": scaleway_mapping,
+    "snipeit": snipeit_mapping,
+    "tailscale": tailscale_mapping,
+    "okta": okta_mapping,
+    "aws": aws_mapping,
+    "googleworkspace": googleworkspace_mapping,
+    "slack": slack_mapping,
+    "spacelift": spacelift_mapping,
+    "pagerduty": pagerduty_mapping,
+    "workos": workos_useraccounts_mapping,
+    "sentry": sentry_mapping,
+    "subimage": subimage_mapping,
+    "kubernetes": kubernetes_mapping,
+    "jumpcloud": jumpcloud_mapping,
+    "vercel": vercel_mapping,
+    "railway": railway_mapping,
+    "netlify": netlify_mapping,
+    "databricks": OntologyMapping(
+        module_name="databricks",
+        nodes=[
+            OntologyNodeMapping(
+                node_label="DatabricksUser",
+                fields=[
+                    OntologyFieldMapping(
+                        ontology_field="email", node_field="email", required=True
+                    ),
+                    OntologyFieldMapping(
+                        ontology_field="fullname", node_field="display_name"
+                    ),
+                    OntologyFieldMapping(ontology_field="active", node_field="active"),
+                ],
+            ),
+            OntologyNodeMapping(
+                node_label="DatabricksAccountUser",
+                fields=[
+                    OntologyFieldMapping(
+                        ontology_field="email", node_field="email", required=True
+                    ),
+                    OntologyFieldMapping(
+                        ontology_field="fullname", node_field="display_name"
+                    ),
+                    OntologyFieldMapping(ontology_field="active", node_field="active"),
+                ],
+            ),
+        ],
+    ),
+    "supabase": supabase_mapping,
+    "modal": modal_mapping,
+}

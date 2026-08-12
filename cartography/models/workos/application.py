@@ -1,0 +1,95 @@
+from dataclasses import dataclass
+
+from cartography.models.core.common import PropertyRef
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.ontology.labels import THIRD_PARTY_APP
+
+
+@dataclass(frozen=True)
+class WorkOSApplicationNodeProperties(CartographyNodeProperties):
+    id: PropertyRef = PropertyRef("id", description="WorkOS application ID.")
+    client_id: PropertyRef = PropertyRef(
+        "client_id", extra_index=True, description="OAuth client ID."
+    )
+    name: PropertyRef = PropertyRef("name", description="Application name.")
+    description: PropertyRef = PropertyRef(
+        "description", description="Application description."
+    )
+    application_type: PropertyRef = PropertyRef(
+        "application_type", description="Application type, such as m2m."
+    )
+    scopes: PropertyRef = PropertyRef(
+        "scopes", description="OAuth scopes granted to the application."
+    )
+    created_at: PropertyRef = PropertyRef(
+        "created_at", description="RFC 3339 timestamp when the application was created."
+    )
+    updated_at: PropertyRef = PropertyRef(
+        "updated_at", description="RFC 3339 timestamp when the application was updated."
+    )
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class WorkOSApplicationToEnvironmentRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# (:WorkOSEnvironment)-[:RESOURCE]->(:WorkOSApplication)
+class WorkOSApplicationToEnvironmentRel(CartographyRelSchema):
+    """The WorkOS environment contains this application as a resource."""
+
+    target_node_label: str = "WorkOSEnvironment"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("WORKOS_CLIENT_ID", set_in_kwargs=True)},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "RESOURCE"
+    properties: WorkOSApplicationToEnvironmentRelProperties = (
+        WorkOSApplicationToEnvironmentRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class WorkOSApplicationToOrganizationRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# (:WorkOSApplication)-[:BELONGS_TO]->(:WorkOSOrganization)
+class WorkOSApplicationToOrganizationRel(CartographyRelSchema):
+    """The WorkOS application belongs to its organization when one is assigned."""
+
+    target_node_label: str = "WorkOSOrganization"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("organization_id")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "BELONGS_TO"
+    properties: WorkOSApplicationToOrganizationRelProperties = (
+        WorkOSApplicationToOrganizationRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class WorkOSApplicationSchema(CartographyNodeSchema):
+    """A WorkOS Connect application with the canonical ThirdPartyApp label."""
+
+    label: str = "WorkOSApplication"
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels([THIRD_PARTY_APP])
+    properties: WorkOSApplicationNodeProperties = WorkOSApplicationNodeProperties()
+    sub_resource_relationship: WorkOSApplicationToEnvironmentRel = (
+        WorkOSApplicationToEnvironmentRel()
+    )
+    other_relationships: OtherRelationships = OtherRelationships(
+        rels=[WorkOSApplicationToOrganizationRel()],
+    )

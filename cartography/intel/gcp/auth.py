@@ -8,7 +8,9 @@ from google.oauth2 import credentials
 
 class AuthHelper:
 
-    def get_credentials(self, token_uri: str, account_email: str) -> credentials.Credentials:
+    def get_credentials(
+        self, token_uri: str, account_email: str
+    ) -> credentials.Credentials:
         try:
             session_string = str(uuid.uuid4())
 
@@ -39,21 +41,27 @@ class AuthHelper:
                 "https://www.googleapis.com/auth/datastore",
             ]
 
-            pload = {'sessionString': session_string, 'accountEmail': account_email, 'scopes': scopes}
+            pload = {
+                "sessionString": session_string,
+                "accountEmail": account_email,
+                "scopes": scopes,
+            }
             resp = requests.post(token_uri, json=pload)
-            if resp.status_code == requests.codes['ok']:
+            if resp.status_code == requests.codes["ok"]:
                 output = resp.json()
 
-                return credentials.Credentials(output['accessToken'])
+                return credentials.Credentials(output["accessToken"])
 
             else:
-                print(f'failed while getting access token: {resp.status_code}')
-                raise Exception(f'failed while getting access token: {resp.status_code}')
+                print(f"failed while getting access token: {resp.status_code}")
+                raise Exception(
+                    f"failed while getting access token: {resp.status_code}"
+                )
 
         except (ConnectionError, ConnectionRefusedError) as e:
-            print(f'failed to connect to token generator: {str(e)}')
-            raise Exception(f'{e}')
+            print(f"failed to connect to token generator: {str(e)}")
+            raise Exception(f"{e}")
 
         except Exception as e:
-            print(f'Failed while getting access token: {str(e)}')
-            raise Exception(f'{e}')
+            print(f"Failed while getting access token: {str(e)}")
+            raise Exception(f"{e}")

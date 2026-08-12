@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 
+from cartography.models.aws.extra_labels import LEGACY_EC2_SECURITY_GROUP
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import CartographyNodeProperties
 from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
 from cartography.models.core.relationships import CartographyRelProperties
 from cartography.models.core.relationships import CartographyRelSchema
 from cartography.models.core.relationships import LinkDirection
@@ -14,54 +16,74 @@ from cartography.models.core.relationships import TargetNodeMatcher
 @dataclass(frozen=True)
 class EC2SecurityGroupInstanceNodeProperties(CartographyNodeProperties):
     # arn: PropertyRef = PropertyRef('Arn', extra_index=True) # TODO use arn; #1024
-    id: PropertyRef = PropertyRef('GroupId')
-    groupid: PropertyRef = PropertyRef('GroupId', extra_index=True)
-    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True)
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+    id: PropertyRef = PropertyRef("GroupId", description="Same as `groupid`")
+    groupid: PropertyRef = PropertyRef(
+        "GroupId",
+        extra_index=True,
+        description="The ID of the security group. Note that these are globally unique in AWS.",
+    )
+    region: PropertyRef = PropertyRef(
+        "Region",
+        set_in_kwargs=True,
+        description="The AWS region this security group is installed in",
+    )
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class EC2SecurityGroupToAwsAccountRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+class EC2SecurityGroupToAWSAccountRelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class EC2SecurityGroupToAWSAccount(CartographyRelSchema):
-    target_node_label: str = 'AWSAccount'
+class EC2SecurityGroupToAWSAccountRel(CartographyRelSchema):
+    target_node_label: str = "AWSAccount"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('AWS_ID', set_in_kwargs=True)},
+        {"id": PropertyRef("AWS_ID", set_in_kwargs=True)},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "RESOURCE"
-    properties: EC2SecurityGroupToAwsAccountRelProperties = EC2SecurityGroupToAwsAccountRelProperties()
+    properties: EC2SecurityGroupToAWSAccountRelRelProperties = (
+        EC2SecurityGroupToAWSAccountRelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
-class EC2SecurityGroupToEC2InstanceRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+class EC2SecurityGroupToEC2InstanceRelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
-class EC2SecurityGroupToEC2Instance(CartographyRelSchema):
-    target_node_label: str = 'EC2Instance'
+class EC2SecurityGroupToEC2InstanceRel(CartographyRelSchema):
+    target_node_label: str = "AWSEC2Instance"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('InstanceId')},
+        {"id": PropertyRef("InstanceId")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "MEMBER_OF_EC2_SECURITY_GROUP"
-    properties: EC2SecurityGroupToEC2InstanceRelProperties = EC2SecurityGroupToEC2InstanceRelProperties()
+    properties: EC2SecurityGroupToEC2InstanceRelRelProperties = (
+        EC2SecurityGroupToEC2InstanceRelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
 class EC2SecurityGroupInstanceSchema(CartographyNodeSchema):
-    """
-    Security groups as known by describe-ec2-instances
-    """
-    label: str = 'EC2SecurityGroup'
-    properties: EC2SecurityGroupInstanceNodeProperties = EC2SecurityGroupInstanceNodeProperties()
-    sub_resource_relationship: EC2SecurityGroupToAWSAccount = EC2SecurityGroupToAWSAccount()
+    """Representation of an AWS EC2 [Security Group](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_SecurityGroup.html)."""
+
+    # Implementation note:
+    # Security groups as known by describe-ec2-instances
+
+    label: str = "AWSEC2SecurityGroup"
+    # DEPRECATED: legacy EC2SecurityGroup node label will be removed in v1.0.0.
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels([LEGACY_EC2_SECURITY_GROUP])
+    properties: EC2SecurityGroupInstanceNodeProperties = (
+        EC2SecurityGroupInstanceNodeProperties()
+    )
+    sub_resource_relationship: EC2SecurityGroupToAWSAccountRel = (
+        EC2SecurityGroupToAWSAccountRel()
+    )
     other_relationships: OtherRelationships = OtherRelationships(
         [
-            EC2SecurityGroupToEC2Instance(),
+            EC2SecurityGroupToEC2InstanceRel(),
         ],
     )

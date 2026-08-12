@@ -5,7 +5,7 @@ from typing import List
 import neo4j
 import requests
 from azure.core.exceptions import HttpResponseError
-from azure.mgmt.resource import SubscriptionClient
+from azure.mgmt.resource.subscriptions import SubscriptionClient
 
 from .util.credentials import Credentials
 from cartography.client.core.tx import run_write_query

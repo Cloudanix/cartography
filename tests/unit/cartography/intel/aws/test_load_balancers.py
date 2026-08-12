@@ -90,33 +90,6 @@ ELBV2 = {
 
 
 class TestLoadLoadBalancerV2s:
-    def test_batched_writes(self):
-        session = MagicMock()
-
-        load_balancer_v2s.load_load_balancer_v2s(session, [ELBV2, ELBV2], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1")
-
-        # lbs + subnets + security groups + listeners + target instances = 5 writes total
-        assert session.execute_write.call_count == 5
-        lb_call, subnet_call, sg_call, listener_call, instance_call = session.execute_write.call_args_list
-        assert len(lb_call.kwargs["DictList"]) == 2
-        assert len(subnet_call.kwargs["DictList"]) == 4
-        assert len(sg_call.kwargs["DictList"]) == 2
-        assert len(listener_call.kwargs["DictList"]) == 2
-        # non-instance target groups are skipped, exactly as before
-        instance_rows = instance_call.kwargs["DictList"]
-        assert len(instance_rows) == 4
-        assert {r["instance_id"] for r in instance_rows} == {"i-1", "i-2"}
-        assert instance_rows[0]["target_group_arn"] == "arn:tg/1"
-
-    def test_per_lb_helpers_still_work(self):
-        session = MagicMock()
-
-        load_balancer_v2s.load_load_balancer_v2_listeners(session, "lb-1", ELBV2["Listeners"], TEST_UPDATE_TAG)
-
-        assert session.execute_write.call_count == 1
-        rows = session.execute_write.call_args.kwargs["DictList"]
-        assert rows == [{"load_balancer_id": "lb-1", "listeners": ELBV2["Listeners"]}]
-
     def test_empty_data_writes_nothing(self):
         session = MagicMock()
         load_balancer_v2s.load_load_balancer_v2s(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1")

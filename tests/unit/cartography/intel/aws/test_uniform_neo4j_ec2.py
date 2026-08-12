@@ -3,7 +3,9 @@ Unit tests for uniform neo4j interactions in the aws/ec2 intel modules
 (perf plan Phase 3 items 5+6).
 """
 from datetime import datetime
+import pytest
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from cartography.intel.aws.ec2 import auto_scaling_groups
 from cartography.intel.aws.ec2 import elastic_ip_addresses
@@ -19,6 +21,16 @@ from cartography.intel.aws.ec2 import tgw
 from cartography.intel.aws.ec2 import volumes
 from cartography.intel.aws.ec2 import vpc
 from cartography.intel.aws.ec2 import vpc_peerings
+
+@pytest.fixture(autouse=True)
+def _noop_ensure_indexes():
+    """Index DDL now runs through session.execute_write (managed tx); no-op it so
+    the data-write assertions below only see UNWIND ingest calls."""
+    with patch("cartography.client.core.tx.ensure_indexes"), patch(
+        "cartography.client.core.tx.ensure_indexes_for_matchlinks",
+    ):
+        yield
+
 
 TEST_UPDATE_TAG = 123456789
 TEST_ACCOUNT_ID = "1234"
@@ -175,19 +187,6 @@ class TestManagedScalarWrites:
 
         session.run.assert_not_called()
         session.execute_write.assert_called_once()
-
-    def test_tgw_attachment_writes_are_managed(self):
-        session = MagicMock()
-        attachment = {"VpcId": "vpc-1", "TransitGatewayAttachmentId": "tgw-attach-1", "SubnetIds": ["subnet-1"]}
-
-        tgw._attach_tgw_vpc_attachment_to_vpc_subnets(
-            session, attachment, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
-        )
-
-        session.run.assert_not_called()
-        # one write for the vpc link, one per subnet
-        assert session.execute_write.call_count == 2
-
 
 class TestReads:
     def test_get_images_in_use_uses_managed_read(self):

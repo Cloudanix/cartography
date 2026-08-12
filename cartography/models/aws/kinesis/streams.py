@@ -12,20 +12,20 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 @dataclass(frozen=True)
 class KinesisStreamNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef('StreamARN')
-    arn: PropertyRef = PropertyRef('StreamARN')
-    name: PropertyRef = PropertyRef('StreamName')
-    consolelink: PropertyRef = PropertyRef('consolelink')
-    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True)
+    id: PropertyRef = PropertyRef('StreamARN', description="ARN of the Kinesis stream.")
+    arn: PropertyRef = PropertyRef('StreamARN', description="ARN of the Kinesis stream.")
+    name: PropertyRef = PropertyRef('StreamName', description="Name of the Kinesis stream.")
+    consolelink: PropertyRef = PropertyRef('consolelink', description="AWS console URL for the stream.")
+    region: PropertyRef = PropertyRef('Region', set_in_kwargs=True, description="AWS region of the stream.")
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-    status: PropertyRef = PropertyRef('StreamStatus')
-    stream_mode: PropertyRef = PropertyRef('StreamMode')
-    retention_period_hours: PropertyRef = PropertyRef('RetentionPeriodHours')
-    shard_count: PropertyRef = PropertyRef('OpenShardCount')
-    encryption_type: PropertyRef = PropertyRef('EncryptionType')
-    encrypted: PropertyRef = PropertyRef('Encrypted')
-    key_id: PropertyRef = PropertyRef('KeyId')
-    creation_timestamp: PropertyRef = PropertyRef('StreamCreationTimestamp')
+    status: PropertyRef = PropertyRef('StreamStatus', description="Current status of the stream.")
+    stream_mode: PropertyRef = PropertyRef('StreamMode', description="Capacity mode of the stream (PROVISIONED or ON_DEMAND).")
+    retention_period_hours: PropertyRef = PropertyRef('RetentionPeriodHours', description="Data retention period of the stream, in hours.")
+    shard_count: PropertyRef = PropertyRef('OpenShardCount', description="Number of open shards in the stream.")
+    encryption_type: PropertyRef = PropertyRef('EncryptionType', description="Server-side encryption type of the stream.")
+    encrypted: PropertyRef = PropertyRef('Encrypted', description="Whether server-side encryption is enabled.")
+    key_id: PropertyRef = PropertyRef('KeyId', description="KMS key id or ARN used for server-side encryption.")
+    creation_timestamp: PropertyRef = PropertyRef('StreamCreationTimestamp', description="Timestamp when the stream was created.")
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class KinesisStreamToAwsAccountRelProperties(CartographyRelProperties):
 
 @dataclass(frozen=True)
 # (:KinesisStream)<-[:RESOURCE]-(:AWSAccount)
-class KinesisStreamToAWSAccount(CartographyRelSchema):
+class KinesisStreamToAWSAccountRel(CartographyRelSchema):
     target_node_label: str = 'AWSAccount'
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
         {'id': PropertyRef('AWS_ID', set_in_kwargs=True)},
@@ -49,4 +49,4 @@ class KinesisStreamToAWSAccount(CartographyRelSchema):
 class KinesisStreamSchema(CartographyNodeSchema):
     label: str = 'KinesisStream'
     properties: KinesisStreamNodeProperties = KinesisStreamNodeProperties()
-    sub_resource_relationship: KinesisStreamToAWSAccount = KinesisStreamToAWSAccount()
+    sub_resource_relationship: KinesisStreamToAWSAccountRel = KinesisStreamToAWSAccountRel()

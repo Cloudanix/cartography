@@ -1,7 +1,9 @@
 import abc
+from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import field
-from typing import List
+from dataclasses import replace
+from enum import Enum
 from typing import Optional
 
 from cartography.models.core.common import PropertyRef
@@ -12,24 +14,55 @@ from cartography.models.core.relationships import OtherRelationships
 @dataclass(frozen=True)
 class CartographyNodeProperties(abc.ABC):
     """
-    Abstract base dataclass that represents the properties on a CartographyNodeSchema. This class is abstract so that we
-    can enforce that all subclasses have an id and a lastupdated field. These fields are assigned to the node in the
-    `SET` clause.
+    Abstract base dataclass that represents the properties on a CartographyNodeSchema.
+
+    This class is abstract to enforce that all subclasses have an id and a lastupdated field.
+    These fields are assigned to the node in the `SET` clause during Neo4j ingestion.
+
+    Attributes:
+        id (PropertyRef): The unique identifier for the node, set automatically.
+        lastupdated (PropertyRef): The timestamp of the last update, set automatically.
+
+    Examples:
+        >>> @dataclass(frozen=True)
+        ... class AWSUserProperties(CartographyNodeProperties):
+        ...     id: PropertyRef = PropertyRef('Arn')
+        ...     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+        ...     name: PropertyRef = PropertyRef('UserName')
+        ...     path: PropertyRef = PropertyRef('Path')
+
+        >>> # Cannot instantiate abstract class directly
+        >>> CartographyNodeProperties()  # Raises TypeError
+
+        >>> # Cannot use reserved word 'firstseen'
+        >>> @dataclass(frozen=True)
+        ... class BadProperties(CartographyNodeProperties):
+        ...     firstseen: PropertyRef = PropertyRef('firstseen')  # Raises TypeError
+
+    Note:
+        - The `firstseen` attribute is reserved and automatically set by the querybuilder
+        - All subclasses must define both `id` and `lastupdated` fields
+        - This class cannot be instantiated directly
     """
+
     id: PropertyRef = field(init=False)
     lastupdated: PropertyRef = field(init=False)
 
     def __post_init__(self):
         """
-        Data validation.
-        1. Prevents direct instantiation. This workaround is needed since this is a dataclass and an abstract
-        class without an abstract method defined. See https://stackoverflow.com/q/60590442.
-        2. Stops reserved words from being used as attribute names. See https://github.com/lyft/cartography/issues/1064.
+        Perform data validation on the CartographyNodeProperties instance.
+
+        This method enforces important constraints to ensure proper usage of the
+        CartographyNodeProperties class and prevent common errors.
+
+        Raises:
+            TypeError: If attempting to instantiate the abstract class directly.
+            TypeError: If the reserved word 'firstseen' is used as an attribute name.
         """
         if self.__class__ == CartographyNodeProperties:
             raise TypeError("Cannot instantiate abstract class.")
 
-        if hasattr(self, 'firstseen'):
+        if hasattr(self, "firstseen"):
             raise TypeError(
                 "`firstseen` is a reserved word and is automatically set by the querybuilder on cartography nodes, so "
                 f'it cannot be used on class "{type(self).__name__}(CartographyNodeProperties)". Please either choose '
@@ -37,66 +70,215 @@ class CartographyNodeProperties(abc.ABC):
             )
 
 
-@dataclass(frozen=True)
+class LabelKind(str, Enum):
+    """
+    Semantic role of an additional Cartography node label.
+
+    Attributes:
+        STANDARD: A provider-local or shared graph interface label.
+        ONTOLOGY: A cross-provider semantic label from Cartography's ontology.
+        COMPATIBILITY: A temporary alias retained for backward compatibility.
+    """
+
+    STANDARD = "standard"
+    ONTOLOGY = "ontology"
+    COMPATIBILITY = "compatibility"
+
+
+@dataclass(frozen=True, slots=True)
+class ExtraNodeLabel:
+    """
+    Declarative additional label applied to a Cartography node.
+
+    Empty conditions apply the label unconditionally; nonempty conditions require
+    every named node property to equal its configured value.
+
+    Attributes:
+        label: The Neo4j label name.
+        description: Human-readable documentation for the label.
+        kind: The label's semantic role.
+        conditions: Sorted node property names and exact string values that must match.
+        remove_in: Optional removal version for compatibility labels.
+        replacement_label: Optional replacement for a compatibility label.
+    """
+
+    label: str
+    description: str
+    kind: LabelKind = LabelKind.STANDARD
+    conditions: tuple[tuple[str, str], ...] = ()
+    remove_in: str | None = None
+    replacement_label: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.label:
+            raise ValueError("label must not be empty.")
+        if not self.description:
+            raise ValueError("description must not be empty.")
+        if not isinstance(self.kind, LabelKind):
+            raise TypeError("kind must be a LabelKind.")
+        if self.remove_in is not None and self.kind is not LabelKind.COMPATIBILITY:
+            raise ValueError(
+                "remove_in can only be set for compatibility labels.",
+            )
+        if (
+            self.replacement_label is not None
+            and self.kind is not LabelKind.COMPATIBILITY
+        ):
+            raise ValueError(
+                "replacement_label can only be set for compatibility labels.",
+            )
+        if self.replacement_label == "":
+            raise ValueError("replacement_label must not be empty.")
+
+        for condition in self.conditions:
+            if (
+                len(condition) != 2
+                or not isinstance(condition[0], str)
+                or not isinstance(condition[1], str)
+            ):
+                raise TypeError(
+                    "conditions must contain (field_name, value) string pairs.",
+                )
+
+        object.__setattr__(self, "conditions", tuple(sorted(self.conditions)))
+
+    def when(self, **conditions: str) -> "ExtraNodeLabel":
+        """Return this label definition with deterministic matching conditions."""
+        return replace(self, conditions=tuple(sorted(conditions.items())))
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class ExtraNodeLabels:
     """
-    Encapsulates a list of str representing additional labels for the CartographyNodeSchema that this is composed on.
-    This wrapping is used to ensure dataclass immutability for the CartographyNodeSchema.
+    Encapsulates an immutable collection of labels for CartographyNodeSchema.
+
+    Input iterables are normalized to a tuple while providing additional Neo4j
+    labels beyond the primary node label.
+
+    Attributes:
+        labels (tuple[ExtraNodeLabel, ...]): Declarative labels to apply to the node.
     """
-    labels: List[str]
+
+    labels: tuple[ExtraNodeLabel, ...]
+
+    def __init__(self, labels: Iterable[ExtraNodeLabel]) -> None:
+        immutable_labels = tuple(labels)
+        for label in immutable_labels:
+            if not isinstance(label, ExtraNodeLabel):
+                raise TypeError(
+                    "ExtraNodeLabels accepts only ExtraNodeLabel instances; "
+                    f"got {type(label).__name__}."
+                )
+        object.__setattr__(self, "labels", immutable_labels)
 
 
 @dataclass(frozen=True)
 class CartographyNodeSchema(abc.ABC):
     """
-    Abstract base dataclass that represents a graph node in cartography. This is used to dynamically generate graph
-    ingestion queries.
+    Abstract base dataclass that represents a graph node in cartography.
+
+    This class is used to dynamically generate graph ingestion queries for Neo4j.
+    It defines the structure and relationships of nodes in the cartography graph,
+    providing a declarative way to specify how data should be ingested.
+
+    Note:
+        - Subclasses must implement the abstract properties: `label` and `properties`
+        - Optional properties can be overridden to specify relationships and labels
     """
+
     @property
     @abc.abstractmethod
     def label(self) -> str:
         """
-        :return: The primary str label of the node.
+        Primary string label of the node.
+
+        This property defines the main Neo4j label that will be applied to nodes
+        of this type. It's used in the MERGE clause during ingestion.
+
+        Returns:
+            The primary label for the node (e.g., 'AWSUser', 'AWSEC2Instance').
         """
-        pass
 
     @property
     @abc.abstractmethod
     def properties(self) -> CartographyNodeProperties:
         """
-        :return: The properties of the node.
+        Properties of the node.
+
+        This property defines all the properties that will be set on the node
+        during ingestion, including how they map to the source data.
+
+        Returns:
+            CartographyNodeProperties: The properties definition for the node.
         """
-        pass
 
     @property
     def sub_resource_relationship(self) -> Optional[CartographyRelSchema]:
         """
-        Optional.
-        Allows subclasses to specify a subresource relationship for the given node. "Sub resource" is a term we made up
-        best defined by examples:
-        - In the AWS module, the subresource is an AWSAccount
-        - In Azure, the subresource is a Subscription
-        - In GCP, the subresource is a GCPProject
-        - In Okta, the subresource is an OktaOrganization
-        ... and so on and so forth.
-        :return:
+        The optional sub resource relationship for the node.
+
+        Allows subclasses to specify a subresource relationship for the given node.
+        "Sub resource" is a cartography term for the billing or organizational unit
+        that contains the resource.
+
+        Returns:
+            Optional[CartographyRelSchema]: The sub resource relationship schema,
+                or None if no sub resource relationship is defined.
+
+        Examples:
+            Sub resource examples by cloud provider:
+            - AWS: AWSAccount
+            - Azure: Subscription
+            - GCP: GCPProject
+            - Okta: OktaOrganization
         """
         return None
 
     @property
     def other_relationships(self) -> Optional[OtherRelationships]:
         """
-        Optional.
-        Allows subclasses to specify additional cartography relationships on the node.
-        :return: None if not overriden. Else return the node's OtherRelationships.
+        Optional additional cartography relationships on the node.
+
+        Allows subclasses to specify additional relationships beyond the sub resource
+        relationship. These relationships connect the node to other nodes in the graph.
+
+        Returns:
+            Optional[OtherRelationships]: The additional relationships for the node,
+                or None if no additional relationships are defined.
         """
         return None
 
     @property
     def extra_node_labels(self) -> Optional[ExtraNodeLabels]:
         """
-        Optional.
-        Allows specifying extra labels on the node.
-        :return: None if not overriden. Else return the ExtraNodeLabels specified on the node.
+        Optional extra labels to be applied to the node.
+
+        Allows specifying additional Neo4j labels beyond the primary label.
+        This is useful for creating taxonomies or adding classification labels.
+
+        Returns:
+            Optional[ExtraNodeLabels]: The extra labels for the node,
+                or None if no extra labels are defined.
         """
         return None
+
+    @property
+    def scoped_cleanup(self) -> bool:
+        """
+        Whether cleanups of this node must be scoped to the sub resource relationship.
+
+        This property controls the cleanup behavior for nodes of this type during
+        synchronization operations.
+
+        Returns:
+            bool: True if cleanups should be scoped to the sub resource (default),
+                False if cleanups should be global.
+
+        Note:
+            - If True (default): Only delete stale nodes in the current sub resource
+              (e.g., only clean up EC2 instances in the current AWS account)
+            - If False: Delete all stale nodes globally (designed for resource types
+              that don't have a "tenant"-like entity)
+            - This affects how the cleanup queries are generated
+        """
+        return True

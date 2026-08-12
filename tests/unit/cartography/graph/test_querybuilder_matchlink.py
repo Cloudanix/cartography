@@ -2,6 +2,7 @@ import pytest
 
 from cartography.graph.querybuilder import build_create_index_queries_for_matchlink
 from cartography.graph.querybuilder import build_matchlink_query
+from cartography.version import get_cartography_version
 from tests.data.graph.querybuilder.sample_models.matchlink import FakeMatchLinkMissingSubResourceProps
 from tests.data.graph.querybuilder.sample_models.matchlink import FakeRelWithoutSource
 from tests.data.graph.querybuilder.sample_models.matchlink import FakeUserToRoleMatchLink
@@ -18,12 +19,16 @@ class TestBuildMatchlinkQuery:
             MATCH (from:FakeUser{id: item.user_id})
             MATCH (to:FakeRole{name: item.role_name})
             MERGE (from)-[r:HAS_ROLE]->(to)
-            ON CREATE SET r.firstseen = timestamp()
+            ON CREATE SET
+                r.firstseen = timestamp(),
+                r._module_name = "unknown:tests.data.graph.querybuilder.sample_models.matchlink"
             SET
+                r._module_version = "{version}",
                 r.lastupdated = $lastupdated,
                 r._sub_resource_label = $_sub_resource_label,
-                r._sub_resource_id = $_sub_resource_id
+                r._sub_resource_id = $_sub_resource_id;
         """
+        expected = expected.replace("{version}", get_cartography_version())
         assert clean_query(query) == clean_query(expected)
 
     def test_inward_direction_flips_arrow(self):
@@ -46,7 +51,8 @@ class TestBuildCreateIndexQueriesForMatchlink:
         assert queries == [
             'CREATE INDEX IF NOT EXISTS FOR (n:FakeUser) ON (n.id);',
             'CREATE INDEX IF NOT EXISTS FOR (n:FakeRole) ON (n.name);',
-            'CREATE INDEX IF NOT EXISTS FOR ()-[r:HAS_ROLE]-() ON (r._sub_resource_label, r._sub_resource_id);',
+            'CREATE INDEX IF NOT EXISTS FOR ()-[r:HAS_ROLE]->() ON '
+            '(r._sub_resource_label, r._sub_resource_id);',
         ]
 
     def test_missing_source_matcher_returns_empty(self):

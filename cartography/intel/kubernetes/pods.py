@@ -1,107 +1,471 @@
+import json
 import logging
-from typing import Dict
-from typing import List
+from typing import Any
 
-from neo4j import Session
+import neo4j
+from kubernetes.client.models import V1Container
+from kubernetes.client.models import V1Pod
 
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.kubernetes.util import get_controller_owner_reference
 from cartography.intel.kubernetes.util import get_epoch
+from cartography.intel.kubernetes.util import k8s_paginate
 from cartography.intel.kubernetes.util import K8sClient
+from cartography.models.kubernetes.containers import KubernetesContainerSchema
+from cartography.models.kubernetes.pods import KubernetesPodSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
 
-@timeit
-def sync_pods(
-    session: Session, client: K8sClient, update_tag: int, cluster: Dict,
-) -> List[Dict]:
-    pods = get_pods(client, cluster)
-    load_pods(session, pods, update_tag)
-    return pods
+def _extract_pod_containers(pod: V1Pod, node_arch: str | None = None) -> dict[str, Any]:
+    pod_containers: list[V1Container] = pod.spec.containers
+    containers = dict()
+    for container in pod_containers:
+        containers[container.name] = {
+            "uid": f"{pod.metadata.uid}-{container.name}",
+            "name": container.name,
+            "image": container.image,
+            "namespace": pod.metadata.namespace,
+            "pod_id": pod.metadata.uid,
+            "image_pull_policy": container.image_pull_policy,
+            "architecture_normalized": node_arch,
+            "allow_privilege_escalation": None,
+            "run_as_non_root": None,
+            "run_as_user": None,
+            "seccomp_profile_type": None,
+            "added_capabilities": [],
+            "dropped_capabilities": [],
+            "host_ports": [],
+            "container_ports": json.dumps([]),
+            "container_port_numbers": [],
+        }
 
+        security_context = getattr(container, "security_context", None)
+        if security_context:
+            containers[container.name]["allow_privilege_escalation"] = getattr(
+                security_context, "allow_privilege_escalation", None
+            )
+            containers[container.name]["run_as_non_root"] = getattr(
+                security_context, "run_as_non_root", None
+            )
+            containers[container.name]["run_as_user"] = getattr(
+                security_context, "run_as_user", None
+            )
 
-@timeit
-def get_pods(client: K8sClient, cluster: Dict) -> List[Dict]:
-    pods = list()
-    for pod in client.core.list_pod_for_all_namespaces().items:
-        containers = {}
-        for container in pod.spec.containers:
-            containers[container.name] = {
-                "name": container.name,
-                "image": container.image,
-                "uid": f"{pod.metadata.uid}-{container.name}",
-            }
+            if getattr(security_context, "seccomp_profile", None):
+                containers[container.name]["seccomp_profile_type"] = getattr(
+                    security_context.seccomp_profile, "type", None
+                )
+
+            if getattr(security_context, "capabilities", None):
+                containers[container.name]["added_capabilities"] = sorted(
+                    security_context.capabilities.add or []
+                )
+                containers[container.name]["dropped_capabilities"] = sorted(
+                    security_context.capabilities.drop or []
+                )
+
+        ports = getattr(container, "ports", None)
+        if ports:
+            containers[container.name]["host_ports"] = sorted(
+                [port.host_port for port in ports if port.host_port is not None]
+            )
+
+            # The containerPorts a container *declares* (as opposed to the
+            # rarely-used host_ports). containerPort is optional in the pod spec,
+            # so an empty list means "declares no ports", NOT a guarantee that the
+            # container listens on nothing; a process can bind ports it never
+            # declared. Consumers should treat these as declared ports, not proof
+            # of the full listening set. Retain the full structured spec as JSON,
+            # plus a flat list of TCP/UDP port numbers for querying without parsing
+            # JSON. A protocol of None defaults to TCP per the Kubernetes API.
+            containers[container.name]["container_ports"] = json.dumps(
+                [
+                    {
+                        "container_port": port.container_port,
+                        "protocol": port.protocol,
+                        "name": port.name,
+                    }
+                    for port in ports
+                    if port.container_port is not None
+                ]
+            )
+            containers[container.name]["container_port_numbers"] = sorted(
+                {
+                    port.container_port
+                    for port in ports
+                    if port.container_port is not None
+                    and (port.protocol or "TCP") in ("TCP", "UDP")
+                }
+            )
+
+        # Extract resource requests and limits
+        if container.resources:
+            if container.resources.requests:
+                containers[container.name]["memory_request"] = (
+                    container.resources.requests.get("memory")
+                )
+                containers[container.name]["cpu_request"] = (
+                    container.resources.requests.get("cpu")
+                )
+            else:
+                containers[container.name]["memory_request"] = None
+                containers[container.name]["cpu_request"] = None
+
+            if container.resources.limits:
+                containers[container.name]["memory_limit"] = (
+                    container.resources.limits.get("memory")
+                )
+                containers[container.name]["cpu_limit"] = (
+                    container.resources.limits.get("cpu")
+                )
+            else:
+                containers[container.name]["memory_limit"] = None
+                containers[container.name]["cpu_limit"] = None
+        else:
+            containers[container.name]["memory_request"] = None
+            containers[container.name]["cpu_request"] = None
+            containers[container.name]["memory_limit"] = None
+            containers[container.name]["cpu_limit"] = None
+
         if pod.status and pod.status.container_statuses:
             for status in pod.status.container_statuses:
                 if status.name in containers:
-                    _state = 'waiting'
+                    _state = "waiting"
                     if status.state.running:
-                        _state = 'running'
+                        _state = "running"
                     elif status.state.terminated:
-                        _state = 'terminated'
+                        _state = "terminated"
                     try:
                         image_sha = status.image_id.split("@")[1]
                     except IndexError:
                         image_sha = None
-                    containers[status.name]["status"] = {
-                        "image_id": status.image_id,
-                        "image_sha": image_sha,
-                        "ready": status.ready,
-                        "started": status.started,
-                        "state": _state,
-                    }
-        pods.append(
+
+                    containers[status.name]["status_image_id"] = status.image_id
+                    containers[status.name]["status_image_sha"] = image_sha
+                    containers[status.name]["status_ready"] = status.ready
+                    containers[status.name]["status_started"] = status.started
+                    containers[status.name]["status_state"] = _state
+    return containers
+
+
+def _extract_pod_secrets(pod: V1Pod, cluster_name: str) -> tuple[list[str], list[str]]:
+    """
+    Extract all secret names referenced by a pod.
+    Returns a tuple of (volume_secret_ids, env_secret_ids).
+    Each list contains unique secret IDs in the format: {namespace}/{secret_name}
+    """
+    volume_secrets = set()
+    env_secrets = set()
+    namespace = pod.metadata.namespace
+
+    # 1. Secrets mounted as volumes
+    if pod.spec.volumes:
+        for volume in pod.spec.volumes:
+            if volume.secret and volume.secret.secret_name:
+                volume_secrets.add(
+                    f"{cluster_name}/{namespace}/{volume.secret.secret_name}"
+                )
+
+    # 2. Secrets from env / envFrom
+    containers_to_scan = []
+    if pod.spec.containers:
+        containers_to_scan.extend(pod.spec.containers)
+    if getattr(pod.spec, "init_containers", None):
+        containers_to_scan.extend(pod.spec.init_containers)
+    if getattr(pod.spec, "ephemeral_containers", None):
+        containers_to_scan.extend(pod.spec.ephemeral_containers)
+
+    for container in containers_to_scan:
+        # env[].valueFrom.secretKeyRef
+        if container.env:
+            for env in container.env:
+                if (
+                    env.value_from
+                    and env.value_from.secret_key_ref
+                    and env.value_from.secret_key_ref.name
+                ):
+                    env_secrets.add(
+                        f"{cluster_name}/{namespace}/{env.value_from.secret_key_ref.name}"
+                    )
+
+        # envFrom[].secretRef
+        if container.env_from:
+            for env_from in container.env_from:
+                if env_from.secret_ref and env_from.secret_ref.name:
+                    env_secrets.add(
+                        f"{cluster_name}/{namespace}/{env_from.secret_ref.name}"
+                    )
+
+    # Return unique secret IDs for each type
+    return list(volume_secrets), list(env_secrets)
+
+
+@timeit
+def get_pods(client: K8sClient) -> list[V1Pod]:
+    items = k8s_paginate(client.core.list_pod_for_all_namespaces)
+    return items
+
+
+def _format_pod_labels(labels: dict[str, str]) -> str:
+    return json.dumps(labels)
+
+
+def _resolve_pod_workload_parent(
+    pod: V1Pod,
+    replicaset_owner_map: dict[str, str],
+    workloads_available: bool = True,
+) -> dict[str, str | None]:
+    """Resolve a pod's single surfaced WORKLOAD_PARENT and its raw ReplicaSet owner.
+
+    Exactly one of the ``_workload_parent_*`` fields is set so the pod gets one
+    WORKLOAD_PARENT edge (mirrors the ECS task -> service/cluster gating). A pod
+    owned by a ReplicaSet collapses straight to the ReplicaSet's Deployment; the
+    raw ``_owner_replicaset_id`` is kept for the OWNED_BY edge. Pods with no
+    controller (or an unrecognised / bare-ReplicaSet controller) fall back to the
+    namespace.
+
+    When ``workloads_available`` is False the workload sync was skipped (e.g. the
+    apps/batch list verbs are not granted), so no controller node exists to point
+    at. Every controller-owned pod then falls back to a namespace WORKLOAD_PARENT
+    instead of pointing at a controller id that cannot match.
+    """
+    parent: dict[str, str | None] = {
+        "_workload_parent_deployment_id": None,
+        "_workload_parent_statefulset_id": None,
+        "_workload_parent_daemonset_id": None,
+        "_workload_parent_job_id": None,
+        "_owner_replicaset_id": None,
+        "_workload_parent_namespace_name": None,
+    }
+    owner = get_controller_owner_reference(pod.metadata)
+    if owner is None or not workloads_available:
+        parent["_workload_parent_namespace_name"] = pod.metadata.namespace
+        return parent
+
+    kind, uid = owner
+    if kind == "ReplicaSet":
+        parent["_owner_replicaset_id"] = uid
+        deployment_id = replicaset_owner_map.get(uid)
+        if deployment_id:
+            parent["_workload_parent_deployment_id"] = deployment_id
+        else:
+            # Bare ReplicaSet (no Deployment owner): the ReplicaSet is not
+            # surfaced, so anchor the pod to its namespace.
+            parent["_workload_parent_namespace_name"] = pod.metadata.namespace
+    elif kind == "StatefulSet":
+        parent["_workload_parent_statefulset_id"] = uid
+    elif kind == "DaemonSet":
+        parent["_workload_parent_daemonset_id"] = uid
+    elif kind == "Job":
+        parent["_workload_parent_job_id"] = uid
+    else:
+        # Unrecognised controller kind (e.g. a CRD-managed pod): anchor to the
+        # namespace so the pod still reaches the chain.
+        parent["_workload_parent_namespace_name"] = pod.metadata.namespace
+    return parent
+
+
+def transform_pods(
+    pods: list[V1Pod],
+    cluster_name: str,
+    node_arch_map: dict[str, str] | None = None,
+    replicaset_owner_map: dict[str, str] | None = None,
+    workloads_available: bool = True,
+) -> list[dict[str, Any]]:
+    transformed_pods = []
+    arch_map = node_arch_map or {}
+    rs_owner_map = replicaset_owner_map or {}
+
+    for pod in pods:
+        node_arch = arch_map.get(pod.spec.node_name or "")
+        containers = _extract_pod_containers(pod, node_arch=node_arch)
+        volume_secrets, env_secrets = _extract_pod_secrets(pod, cluster_name)
+        service_account_name = pod.spec.service_account_name or "default"
+        workload_parent = _resolve_pod_workload_parent(
+            pod, rs_owner_map, workloads_available=workloads_available
+        )
+        transformed_pods.append(
             {
+                **workload_parent,
                 "uid": pod.metadata.uid,
                 "name": pod.metadata.name,
                 "status_phase": pod.status.phase,
                 "creation_timestamp": get_epoch(pod.metadata.creation_timestamp),
                 "deletion_timestamp": get_epoch(pod.metadata.deletion_timestamp),
                 "namespace": pod.metadata.namespace,
+                "service_account_name": service_account_name,
+                "automount_service_account_token": getattr(
+                    pod.spec, "automount_service_account_token", None
+                ),
+                "host_pid": getattr(pod.spec, "host_pid", None),
+                "host_ipc": getattr(pod.spec, "host_ipc", None),
+                "host_network": getattr(pod.spec, "host_network", None),
+                "seccomp_profile_type": (
+                    getattr(pod.spec.security_context.seccomp_profile, "type", None)
+                    if getattr(pod.spec, "security_context", None)
+                    and getattr(pod.spec.security_context, "seccomp_profile", None)
+                    else None
+                ),
+                "host_path_volume_paths": sorted(
+                    [
+                        volume.host_path.path
+                        for volume in (pod.spec.volumes or [])
+                        if getattr(volume, "host_path", None)
+                        and getattr(volume.host_path, "path", None)
+                    ]
+                ),
+                "service_account_id": (
+                    f"{cluster_name}/{pod.metadata.namespace}/{service_account_name}"
+                ),
                 "node": pod.spec.node_name,
-                "cluster_uid": cluster["uid"],
-                "labels": pod.metadata.labels,
+                "node_id": (
+                    f"{cluster_name}/{pod.spec.node_name}"
+                    if pod.spec.node_name
+                    else None
+                ),
+                "architecture_normalized": node_arch,
+                "labels": _format_pod_labels(pod.metadata.labels),
                 "containers": list(containers.values()),
+                "secret_volume_ids": volume_secrets,
+                "secret_env_ids": env_secrets,
             },
         )
-    return pods
+    return transformed_pods
 
 
-def load_pods(session: Session, data: List[Dict], update_tag: int) -> None:
-    ingestion_cypher_query = """
-    UNWIND $pods as k8pod
-        MERGE (pod:KubernetesPod {id: k8pod.uid})
-        ON CREATE SET pod.firstseen = timestamp()
-        SET pod.lastupdated = $update_tag,
-            pod.name = k8pod.name,
-            pod.status_phase = k8pod.status_phase,
-            pod.created_at = k8pod.creation_timestamp,
-            pod.deleted_at = k8pod.deletion_timestamp
-        WITH pod, k8pod.namespace as ns, k8pod.cluster_uid as cuid, k8pod.containers as k8containers
-        MATCH (cluster:KubernetesCluster {id: cuid})-[:HAS_NAMESPACE]->(space:KubernetesNamespace {name: ns})
-        MERGE (space)-[rel1:HAS_POD]->(pod)
-        ON CREATE SET rel1.firstseen = timestamp()
-        SET rel1.lastupdated = $update_tag
-        WITH pod, space, cluster, k8containers
-        UNWIND k8containers as k8container
-            MERGE (container: KubernetesContainer {id: k8container.uid})
-            ON CREATE SET container.firstseen = timestamp()
-            SET container.image = k8container.image,
-                container.status_image_id = k8container.status.image_id,
-                container.status_image_sha = k8container.status.image_sha,
-                container.status_ready = k8container.status.ready,
-                container.status_started = k8container.status.started,
-                container.status_state = k8container.status.state,
-                container.name = k8container.name,
-                container.lastupdated = $update_tag
-            WITH pod, space, cluster, container
-            MERGE (pod)-[rel2:HAS_CONTAINER]->(container)
-            ON CREATE SET rel2.firstseen = timestamp()
-            SET rel2.lastupdated = $update_tag
-            WITH pod, space, container
-            MERGE (cluster)-[rel3:HAS_POD]->(pod)
-            ON CREATE SET rel3.firstseen = timestamp()
-            SET rel3.lastupdated = $update_tag
-    """
-    logger.info(f"Loading {len(data)} kubernetes pods.")
-    session.run(ingestion_cypher_query, pods=data, update_tag=update_tag)
+@timeit
+def load_pods(
+    session: neo4j.Session,
+    pods: list[dict[str, Any]],
+    update_tag: int,
+    cluster_id: str,
+    cluster_name: str,
+) -> None:
+    normalized_pods = []
+    for pod in pods:
+        service_account_name = pod.get("service_account_name") or "default"
+        # Partition the secret ids into disjoint sets so the canonical USES_SECRET
+        # edge carries the correct mount_method even when the same secret is used
+        # both as a volume and via env (otherwise one method would overwrite the
+        # other on the single MERGEd edge). Derived here so the data is correct
+        # regardless of how the pod dict was produced.
+        volume_set = set(pod.get("secret_volume_ids") or [])
+        env_set = set(pod.get("secret_env_ids") or [])
+        normalized_pods.append(
+            {
+                **pod,
+                "service_account_name": service_account_name,
+                "service_account_id": pod.get("service_account_id")
+                or f"{cluster_name}/{pod['namespace']}/{service_account_name}",
+                "secret_uses_volume_only_ids": sorted(volume_set - env_set),
+                "secret_uses_env_only_ids": sorted(env_set - volume_set),
+                "secret_uses_both_ids": sorted(volume_set & env_set),
+            },
+        )
+
+    load(
+        session,
+        KubernetesPodSchema(),
+        normalized_pods,
+        lastupdated=update_tag,
+        CLUSTER_ID=cluster_id,
+        CLUSTER_NAME=cluster_name,
+        # Mount method carried by the canonical USES_SECRET edges. The three
+        # source id lists are disjoint, so each (pod, secret) edge is written by
+        # exactly one loader and mount_method is never overwritten.
+        secret_mount_volume="volume",
+        secret_mount_env="env",
+        secret_mount_both="volume,env",
+    )
+
+
+def transform_containers(pods: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    containers = []
+    for pod in pods:
+        containers.extend(pod.get("containers", []))
+    return containers
+
+
+@timeit
+def load_containers(
+    session: neo4j.Session,
+    containers: list[dict[str, Any]],
+    update_tag: int,
+    cluster_id: str,
+    cluster_name: str,
+    region: str | None = None,
+) -> None:
+    load(
+        session,
+        KubernetesContainerSchema(),
+        containers,
+        lastupdated=update_tag,
+        CLUSTER_ID=cluster_id,
+        CLUSTER_NAME=cluster_name,
+        REGION=region,
+    )
+
+
+@timeit
+def cleanup(session: neo4j.Session, common_job_parameters: dict[str, Any]) -> None:
+    logger.debug("Running cleanup job for KubernetesContainer")
+    cleanup_job = GraphJob.from_node_schema(
+        KubernetesContainerSchema(), common_job_parameters
+    )
+    cleanup_job.run(session)
+
+    logger.debug("Running cleanup job for KubernetesPod")
+    cleanup_job = GraphJob.from_node_schema(
+        KubernetesPodSchema(), common_job_parameters
+    )
+    cleanup_job.run(session)
+
+
+@timeit
+def sync_pods(
+    session: neo4j.Session,
+    client: K8sClient,
+    update_tag: int,
+    common_job_parameters: dict[str, Any],
+    region: str | None = None,
+    node_arch_map: dict[str, str] | None = None,
+    replicaset_owner_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    pods = get_pods(client)
+
+    # replicaset_owner_map is None when the workload sync was skipped (e.g. the
+    # apps/batch list verbs are not granted): no controller nodes were ingested,
+    # so controller-owned pods must fall back to a namespace WORKLOAD_PARENT
+    # rather than pointing at a controller id that cannot match.
+    workloads_available = replicaset_owner_map is not None
+
+    transformed_pods = transform_pods(
+        pods,
+        client.name,
+        node_arch_map=node_arch_map,
+        replicaset_owner_map=replicaset_owner_map,
+        workloads_available=workloads_available,
+    )
+    load_pods(
+        session=session,
+        pods=transformed_pods,
+        update_tag=update_tag,
+        cluster_id=common_job_parameters["CLUSTER_ID"],
+        cluster_name=client.name,
+    )
+
+    transformed_containers = transform_containers(transformed_pods)
+    load_containers(
+        session=session,
+        containers=transformed_containers,
+        update_tag=update_tag,
+        cluster_id=common_job_parameters["CLUSTER_ID"],
+        cluster_name=client.name,
+        region=region,
+    )
+
+    cleanup(session, common_job_parameters)
+    return transformed_pods

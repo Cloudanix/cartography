@@ -189,8 +189,6 @@ def get_rest_api_client_certificate(stages: Dict, client: botocore.client.BaseCl
             except ClientError as e:
                 logger.warning(f"Failed to retrieve Client Certificate for Stage {stage['stageName']} - {e}")
                 raise
-        else:
-            return []
 
     return certificates
 

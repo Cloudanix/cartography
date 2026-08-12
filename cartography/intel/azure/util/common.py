@@ -1,6 +1,9 @@
+import logging
 from typing import List
 
 from cartography.intel.azure.resources import RESOURCE_FUNCTIONS
+
+logger = logging.getLogger(__name__)
 
 
 def parse_and_validate_azure_requested_syncs(azure_requested_syncs: str) -> List[str]:
@@ -19,3 +22,13 @@ def parse_and_validate_azure_requested_syncs(azure_requested_syncs: str) -> List
                 f'Our full list of valid values is: {valid_syncs}.',
             )
     return validated_resources
+
+
+def get_resource_group_from_id(resource_id: str) -> str:
+    """
+    Helper function to parse the resource group name from a full resource ID string.
+    e.g. /subscriptions/sub_id/resourceGroups/rg_name/providers/...
+    """
+    parts = resource_id.lower().split("/")
+    rg_index = parts.index("resourcegroups")
+    return parts[rg_index + 1]

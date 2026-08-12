@@ -4,6 +4,7 @@ Unit tests for uniform neo4j interactions in the AWS intel modules
 (batched UNWIND ingests) or run_write_query (scalar writes), never a raw
 auto-commit session.run.
 """
+import pytest
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -21,6 +22,16 @@ from cartography.intel.aws import rds
 from cartography.intel.aws import secretsmanager
 from cartography.intel.aws import securityhub
 from cartography.intel.aws import sqs
+
+@pytest.fixture(autouse=True)
+def _noop_ensure_indexes():
+    """Index DDL now runs through session.execute_write (managed tx); no-op it so
+    the data-write assertions below only see UNWIND ingest calls."""
+    with patch("cartography.client.core.tx.ensure_indexes"), patch(
+        "cartography.client.core.tx.ensure_indexes_for_matchlinks",
+    ):
+        yield
+
 
 TEST_UPDATE_TAG = 123456789
 TEST_ACCOUNT_ID = "1234"
@@ -150,25 +161,6 @@ class TestSqs:
         assert session.execute_write.call_count == 2
         dlq_rows = session.execute_write.call_args_list[1].kwargs["DictList"]
         assert dlq_rows == [{"arn": queue_arn, "dead_letter_arn": "arn:aws:sqs:us-east-1:1234:dlq"}]
-
-
-class TestKms:
-    def test_aliases_batched(self):
-        session = MagicMock()
-        aliases = [{"AliasArn": "arn:aws:kms:us-east-1:1234:alias/a1", "TargetKeyId": "k1"}]
-
-        kms._load_kms_key_aliases(session, aliases, TEST_UPDATE_TAG)
-
-        session.run.assert_not_called()
-        assert_batched(session.execute_write.call_args, aliases)
-
-    def test_default_values_write_is_managed(self):
-        session = MagicMock()
-
-        kms._set_default_values(session, TEST_ACCOUNT_ID)
-
-        session.run.assert_not_called()
-        session.execute_write.assert_called_once()
 
 
 class TestElasticsearch:

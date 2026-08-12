@@ -5,16 +5,21 @@ from typing import Dict
 from typing import List
 
 import neo4j
-from cloudconsolelink.clouds.gcp import GCPLinker
+
+try:
+    from cloudconsolelink.clouds.gcp import GCPLinker
+except ImportError:
+    GCPLinker = None
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
-from . import label
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
+from . import label
+
 logger = logging.getLogger(__name__)
-gcp_console_link = GCPLinker()
+gcp_console_link = GCPLinker() if GCPLinker else None
 
 PORT_MAP = {
     "mysql": 3306,
@@ -24,7 +29,9 @@ PORT_MAP = {
 
 
 @timeit
-def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_parameters) -> List[Dict]:
+def get_sql_instances(
+    sql: Resource, project_id: str, regions: list, common_job_parameters
+) -> List[Dict]:
     """
     Returns a list of sql instances for a given project.
 
@@ -46,9 +53,17 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
                 for item in response["items"]:
                     item["id"] = f"projects/{project_id}/instances/{item['name']}"
                     item["authorizedNetworksList"] = []
-                    for network in item.get("settings", {}).get("ipConfiguration", {}).get("authorizedNetworks", []):
+                    for network in (
+                        item.get("settings", {})
+                        .get("ipConfiguration", {})
+                        .get("authorizedNetworks", [])
+                    ):
                         item["authorizedNetworksList"].append(network["value"])
-                    item["ipV4Enabled"] = item.get("settings", {}).get("ipConfiguration", {}).get("ipV4Enabled", False)
+                    item["ipV4Enabled"] = (
+                        item.get("settings", {})
+                        .get("ipConfiguration", {})
+                        .get("ipV4Enabled", False)
+                    )
                     item["consolelink"] = gcp_console_link.get_console_link(
                         resource_name="sql_instance",
                         project_id=project_id,
@@ -67,7 +82,11 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
                     item["engineVersion"] = version[1:]
 
                     item["endpoint"] = next(
-                        (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIMARY"),
+                        (
+                            ip["ipAddress"]
+                            for ip in item.get("ipAddresses", [])
+                            if ip["type"] == "PRIMARY"
+                        ),
                         None,
                     )
                     item["public_ip"] = next(
@@ -84,14 +103,21 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
                     else:
                         if item.get("region") in regions:
                             sql_instances.append(item)
-            request = sql.instances().list_next(previous_request=request, previous_response=response)
+            request = sql.instances().list_next(
+                previous_request=request, previous_response=response
+            )
 
         return sql_instances
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
-                ("Could not retrieve Sql Instances on project %s due to permissions issues. Code: %s, Message: %s"),
+                (
+                    "Could not retrieve Sql Instances on project %s due to permissions issues. Code: %s, Message: %s"
+                ),
                 project_id,
                 err["code"],
                 err["message"],
@@ -102,7 +128,9 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
 
 
 @timeit
-def get_sql_users(sql: Resource, sql_instances: List[Dict], project_id: str) -> List[Dict]:
+def get_sql_users(
+    sql: Resource, sql_instances: List[Dict], project_id: str
+) -> List[Dict]:
     """
     Returns a list of sql instance users for a given project.
 
@@ -127,7 +155,9 @@ def get_sql_users(sql: Resource, sql_instances: List[Dict], project_id: str) -> 
                 if response.get("items", []):
                     for item in response["items"]:
                         item["instance_id"] = inst["id"]
-                        item["id"] = f"projects/{project_id}/instances/{inst['name']}/users/{item['name']}"
+                        item["id"] = (
+                            f"projects/{project_id}/instances/{inst['name']}/users/{item['name']}"
+                        )
                         item["consolelink"] = gcp_console_link.get_console_link(
                             project_id=project_id,
                             resource_name="sql_user",
@@ -144,7 +174,10 @@ def get_sql_users(sql: Resource, sql_instances: List[Dict], project_id: str) -> 
                     request = None
         except HttpError as e:
             err = json.loads(e.content.decode("utf-8"))["error"]
-            if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+            if (
+                err.get("status", "") == "PERMISSION_DENIED"
+                or err.get("message", "") == "Forbidden"
+            ):
                 logger.warning(
                     (
                         "Could not retrieve Sql Instance Users on project %s due to permissions issues.\
@@ -180,7 +213,9 @@ def get_sql_databases(sql: Resource, instance: Dict, project_id: str) -> List[Di
     """
     sql_database = []
     try:
-        request = sql.databases().list(project=project_id, instance=f"{instance['name']}")
+        request = sql.databases().list(
+            project=project_id, instance=f"{instance['name']}"
+        )
 
         response = request.execute()
 
@@ -190,7 +225,9 @@ def get_sql_databases(sql: Resource, instance: Dict, project_id: str) -> List[Di
                 item["state"] = instance["state"]
                 item["region"] = instance["region"]
                 item["instance_id"] = instance["id"]
-                item["id"] = f"projects/{project_id}/instances/{instance['name']}/databases/{item['name']}"
+                item["id"] = (
+                    f"projects/{project_id}/instances/{instance['name']}/databases/{item['name']}"
+                )
                 item["consolelink"] = gcp_console_link.get_console_link(
                     project_id=project_id,
                     resource_name="sql_instance",
@@ -200,7 +237,10 @@ def get_sql_databases(sql: Resource, instance: Dict, project_id: str) -> List[Di
 
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve Sql Instance database on project %s due to permissions issues.\
@@ -215,7 +255,9 @@ def get_sql_databases(sql: Resource, instance: Dict, project_id: str) -> List[Di
 
 
 @timeit
-def load_sql_instances(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+def load_sql_instances(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.execute_write(_load_sql_instances_tx, data_list, project_id, update_tag)
 
 
@@ -225,7 +267,9 @@ def load_sql_instances_vpc_network(
     project_id: str,
     update_tag: int,
 ) -> None:
-    session.execute_write(_load_sql_instances_vpc_network_tx, data_list, project_id, update_tag)
+    session.execute_write(
+        _load_sql_instances_vpc_network_tx, data_list, project_id, update_tag
+    )
 
 
 def _load_sql_instances_vpc_network_tx(
@@ -252,7 +296,9 @@ def _load_sql_instances_vpc_network_tx(
 
 
 @timeit
-def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def _load_sql_instances_tx(
+    tx: neo4j.Transaction, instances: List[Dict], project_id: str, gcp_update_tag: int
+) -> None:
     """
     :type neo4j_transaction: Neo4j transaction object
     :param neo4j transaction: The Neo4j transaction object
@@ -313,12 +359,16 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
 
 
 @timeit
-def load_sql_users(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+def load_sql_users(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.execute_write(_load_sql_users_tx, data_list, project_id, update_tag)
 
 
 @timeit
-def _load_sql_users_tx(tx: neo4j.Transaction, sql_users: List[Dict], project_id: str, gcp_update_tag: int) -> None:
+def _load_sql_users_tx(
+    tx: neo4j.Transaction, sql_users: List[Dict], project_id: str, gcp_update_tag: int
+) -> None:
     """
     :type neo4j_transaction: Neo4j transaction object
     :param neo4j transaction: The Neo4j transaction object
@@ -363,18 +413,28 @@ def _load_sql_users_tx(tx: neo4j.Transaction, sql_users: List[Dict], project_id:
 
 
 @timeit
-def load_sql_databases(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
+def load_sql_databases(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
     session.execute_write(_load_sql_databases_tx, data_list, project_id, update_tag)
 
 
 @timeit
-def load_public_ip_address(session: neo4j.Session, instance: Dict, project_id: str, update_tag: int) -> None:
+def load_public_ip_address(
+    session: neo4j.Session, instance: Dict, project_id: str, update_tag: int
+) -> None:
     session.execute_write(_load_public_ip_address_tx, instance, project_id, update_tag)
 
 
 @timeit
-def _load_public_ip_address_tx(tx: neo4j.Transaction, instance: Dict, project_id: str, gcp_update_tag: int) -> None:
-    ipAddresses = [ip.get("ipAddress") for ip in instance.get("ipAddresses", []) if ip.get("type") == "PRIMARY"]
+def _load_public_ip_address_tx(
+    tx: neo4j.Transaction, instance: Dict, project_id: str, gcp_update_tag: int
+) -> None:
+    ipAddresses = [
+        ip.get("ipAddress")
+        for ip in instance.get("ipAddresses", [])
+        if ip.get("type") == "PRIMARY"
+    ]
     ingest_public_ip = """
     UNWIND $ipAddresses as ip
     MERGE (p:GCPPublicIpAddress{ipAddress:ip})
@@ -489,7 +549,12 @@ def transform_sql_instances(sql_instances: List[Dict]) -> List[Dict]:
         # psc_primary_ip: "ip-address"
         # psc_consumer_project: "gcp-project-id-with-psc"
         # psc_region: "region"
-        if instance.get("settings", {}).get("ipConfiguration", {}).get("pscConfig", {}).get("pscEnabled"):
+        if (
+            instance.get("settings", {})
+            .get("ipConfiguration", {})
+            .get("pscConfig", {})
+            .get("pscEnabled")
+        ):
             transformed_instance["pscEnabled"] = True
             labels = instance.get("settings", {}).get("userLabels", {})
             psc_ip = labels.get("psc_primary_ip")
@@ -499,7 +564,9 @@ def transform_sql_instances(sql_instances: List[Dict]) -> List[Dict]:
                 continue
 
         if instance.get("settings", {}).get("userLabels", {}).get("psc_primary_ip"):
-            transformed_instance["endpoint"] = instance["settings"]["userLabels"]["psc_primary_ip"].replace("_", ".")
+            transformed_instance["endpoint"] = instance["settings"]["userLabels"][
+                "psc_primary_ip"
+            ].replace("_", ".")
             transformed_instance["pscEnabled"] = True
             transformed_instances.append(transformed_instance)
             continue
@@ -558,7 +625,9 @@ def sync(
     # logger.info("Transformed Cloud SQL Instances for project %s.", sql_instances)
 
     load_sql_instances(neo4j_session, sql_instances, project_id, gcp_update_tag)
-    load_sql_instances_vpc_network(neo4j_session, sql_instances, project_id, gcp_update_tag)
+    load_sql_instances_vpc_network(
+        neo4j_session, sql_instances, project_id, gcp_update_tag
+    )
     logger.info("Load GCP Cloud SQL Instances completed for project %s.", project_id)
     label.sync_labels(
         neo4j_session,

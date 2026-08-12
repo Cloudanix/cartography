@@ -3,33 +3,41 @@ from dataclasses import dataclass
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import CartographyNodeProperties
 from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
 from cartography.models.core.relationships import CartographyRelProperties
 from cartography.models.core.relationships import CartographyRelSchema
 from cartography.models.core.relationships import LinkDirection
 from cartography.models.core.relationships import make_target_node_matcher
 from cartography.models.core.relationships import OtherRelationships
 from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.ontology.labels import USER_GROUP
 
 
 @dataclass(frozen=True)
 class GitHubTeamNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef('url')
-    url: PropertyRef = PropertyRef('url')
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-    name: PropertyRef = PropertyRef('name', extra_index=True)
-    description: PropertyRef = PropertyRef('description')
+    id: PropertyRef = PropertyRef("url", description="GitHub team URL.")
+    url: PropertyRef = PropertyRef("url", description="GitHub team URL.")
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    name: PropertyRef = PropertyRef(
+        "name", extra_index=True, description="GitHub team slug."
+    )
+    description: PropertyRef = PropertyRef(
+        "description", description="GitHub team description."
+    )
 
 
 @dataclass(frozen=True)
 class GitHubTeamToRepoRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class GitHubTeamAdminRepoRel(CartographyRelSchema):
-    target_node_label: str = 'GitHubRepository'
+    """Grants a GitHub team administrative access to a repository."""
+
+    target_node_label: str = "GitHubRepository"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('ADMIN')},
+        {"id": PropertyRef("ADMIN")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "ADMIN"
@@ -38,9 +46,11 @@ class GitHubTeamAdminRepoRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class GitHubTeamMaintainRepoRel(CartographyRelSchema):
-    target_node_label: str = 'GitHubRepository'
+    """Grants a GitHub team maintain access to a repository."""
+
+    target_node_label: str = "GitHubRepository"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('MAINTAIN')},
+        {"id": PropertyRef("MAINTAIN")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "MAINTAIN"
@@ -49,9 +59,11 @@ class GitHubTeamMaintainRepoRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class GitHubTeamReadRepoRel(CartographyRelSchema):
-    target_node_label: str = 'GitHubRepository'
+    """Grants a GitHub team read access to a repository."""
+
+    target_node_label: str = "GitHubRepository"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('READ')},
+        {"id": PropertyRef("READ")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "READ"
@@ -60,9 +72,11 @@ class GitHubTeamReadRepoRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class GitHubTeamTriageRepoRel(CartographyRelSchema):
-    target_node_label: str = 'GitHubRepository'
+    """Grants a GitHub team triage access to a repository."""
+
+    target_node_label: str = "GitHubRepository"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('TRIAGE')},
+        {"id": PropertyRef("TRIAGE")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "TRIAGE"
@@ -71,9 +85,11 @@ class GitHubTeamTriageRepoRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class GitHubTeamWriteRepoRel(CartographyRelSchema):
-    target_node_label: str = 'GitHubRepository'
+    """Grants a GitHub team write access to a repository."""
+
+    target_node_label: str = "GitHubRepository"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('WRITE')},
+        {"id": PropertyRef("WRITE")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "WRITE"
@@ -81,25 +97,119 @@ class GitHubTeamWriteRepoRel(CartographyRelSchema):
 
 
 @dataclass(frozen=True)
+class GitHubTeamToUserRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class GitHubTeamMaintainerUserRel(CartographyRelSchema):
+    """Identifies a GitHub user as a team maintainer."""
+
+    target_node_label: str = "GitHubUser"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("MAINTAINER")},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "MAINTAINER"
+    properties: GitHubTeamToUserRelProperties = GitHubTeamToUserRelProperties()
+
+
+@dataclass(frozen=True)
+# DEPRECATED: replaced by the canonical (:UserAccount)-[:MEMBER_OF]->(:UserGroup)
+# edge (GitHubTeamMemberUserMemberOfRel). Kept for backward compatibility, will
+# be removed in v1.0.0.
+class GitHubTeamMemberUserRel(CartographyRelSchema):
+    """Defines the `MEMBER` relationship between GitHub resources."""
+
+    target_node_label: str = "GitHubUser"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("MEMBER")},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "MEMBER"
+    properties: GitHubTeamToUserRelProperties = GitHubTeamToUserRelProperties()
+
+
+@dataclass(frozen=True)
+# Canonical ontology edge: (:UserAccount)-[:MEMBER_OF]->(:UserGroup)
+class GitHubTeamMemberUserMemberOfRel(CartographyRelSchema):
+    """Links a GitHub user or child team to its parent organization or team."""
+
+    target_node_label: str = "GitHubUser"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("MEMBER")},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "MEMBER_OF"
+    properties: GitHubTeamToUserRelProperties = GitHubTeamToUserRelProperties()
+
+
+@dataclass(frozen=True)
 class GitHubTeamToOrganizationRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class GitHubTeamToOrganizationRel(CartographyRelSchema):
-    target_node_label: str = 'GitHubOrganization'
+    """Scopes a GitHub resource to its organization."""
+
+    target_node_label: str = "GitHubOrganization"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('org_login', set_in_kwargs=True)},
+        {"id": PropertyRef("org_url", set_in_kwargs=True)},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "RESOURCE"
-    properties: GitHubTeamToOrganizationRelProperties = GitHubTeamToOrganizationRelProperties()
+    properties: GitHubTeamToOrganizationRelProperties = (
+        GitHubTeamToOrganizationRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class GitHubTeamToChildTeamRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# DEPRECATED: replaced by the canonical (:UserGroup)-[:MEMBER_OF]->(:UserGroup)
+# edge (GitHubTeamChildTeamMemberOfRel). Kept for backward compatibility, will
+# be removed in v1.0.0.
+class GitHubTeamChildTeamRel(CartographyRelSchema):
+    """Defines the `MEMBER_OF_TEAM` relationship between GitHub resources."""
+
+    target_node_label: str = "GitHubTeam"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("MEMBER_OF_TEAM")},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "MEMBER_OF_TEAM"
+    properties: GitHubTeamToChildTeamRelProperties = (
+        GitHubTeamToChildTeamRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+# Canonical ontology edge: (:UserGroup)-[:MEMBER_OF]->(:UserGroup)
+class GitHubTeamChildTeamMemberOfRel(CartographyRelSchema):
+    """Links a GitHub user or child team to its parent organization or team."""
+
+    target_node_label: str = "GitHubTeam"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("MEMBER_OF_TEAM")},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "MEMBER_OF"
+    properties: GitHubTeamToChildTeamRelProperties = (
+        GitHubTeamToChildTeamRelProperties()
+    )
 
 
 @dataclass(frozen=True)
 class GitHubTeamSchema(CartographyNodeSchema):
-    label: str = 'GitHubTeam'
+    """A team in a GitHub organization."""
+
+    label: str = "GitHubTeam"
     properties: GitHubTeamNodeProperties = GitHubTeamNodeProperties()
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels([USER_GROUP])
     other_relationships: OtherRelationships = OtherRelationships(
         [
             GitHubTeamAdminRepoRel(),
@@ -107,6 +217,13 @@ class GitHubTeamSchema(CartographyNodeSchema):
             GitHubTeamReadRepoRel(),
             GitHubTeamTriageRepoRel(),
             GitHubTeamWriteRepoRel(),
+            GitHubTeamMaintainerUserRel(),
+            GitHubTeamMemberUserRel(),
+            GitHubTeamMemberUserMemberOfRel(),
+            GitHubTeamChildTeamRel(),
+            GitHubTeamChildTeamMemberOfRel(),
         ],
     )
-    sub_resource_relationship: GitHubTeamToOrganizationRel = GitHubTeamToOrganizationRel()
+    sub_resource_relationship: GitHubTeamToOrganizationRel = (
+        GitHubTeamToOrganizationRel()
+    )

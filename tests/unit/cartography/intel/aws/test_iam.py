@@ -32,11 +32,6 @@ def test__parse_principal_entries():
     assert principal_entries[3] == ("Federated", "test-provider-1")
 
 
-def test_get_account_from_arn():
-    result = iam.get_account_from_arn("arn:aws:iam::081157660428:role/TestRole")
-    assert result == "081157660428"
-
-
 def test_aws_role_managed_type():
     # Roles AWS reserves for itself are predefined.
     assert iam._aws_role_managed_type("/aws-service-role/access-analyzer.amazonaws.com/") == "predefined"

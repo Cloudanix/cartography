@@ -24,25 +24,9 @@ DESCRIBE_VMS = [
         "additional_capabilities": {
             "ultra_ssd_enabled": True,
         },
-        "network_interfaces": [
-            {
-                "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/test-nic",
-                "primary": False,
-                "delete_option": "Delete",
-            },
-            {
-                "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/test-nic1",
-                "primary": False,
-                "delete_option": "Detach",
-            },
-            {
-                "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/test-nic2",
-                "primary": True,
-                "delete_option": "Detach",
-            },
-        ],
         "priority": "Low",
         "eviction_policy": "Deallocate",
+        "tags": {"env": "prod", "service": "compute"},
     },
     {
         "id": "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM1",
@@ -69,25 +53,9 @@ DESCRIBE_VMS = [
         "additional_capabilities": {
             "ultra_ssd_enabled": True,
         },
-        "network_interfaces": [
-            {
-                "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/test-nic3",
-                "primary": False,
-                "delete_option": "Delete",
-            },
-            {
-                "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/test-nic4",
-                "primary": False,
-                "delete_option": "Detach",
-            },
-            {
-                "id": "/subscriptions/subid/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/test-nic5",
-                "primary": True,
-                "delete_option": "Detach",
-            },
-        ],
         "priority": "Low",
         "eviction_policy": "Deallocate",
+        "tags": {"env": "prod", "team": "alpha"},
     },
 ]
 
@@ -103,6 +71,7 @@ DESCRIBE_VM_DATA_DISKS = [
             "id": "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/disks/dd0",
         },
         "disk_size_gb": 30,
+        "vm_id": "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM",
     },
     {
         "lun": 0,
@@ -114,6 +83,7 @@ DESCRIBE_VM_DATA_DISKS = [
             "id": "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/disks/dd1",
         },
         "disk_size_gb": 30,
+        "vm_id": "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM",
     },
 ]
 
@@ -213,36 +183,6 @@ DESCRIBE_SNAPSHOTS = [
     },
 ]
 
-DESCRIBE_VMEXTENSIONS = [
-    {
-        "id":
-        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/\
-            virtualMachines/TestVM/extensions/extensions1",
-        "type":
-        "Microsoft.Compute/virtualMachines/extensions",
-        "resource_group":
-        "TestRG",
-        "name":
-        "extensions1",
-        "location": "West US",
-        "vm_id":
-        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM",
-    },
-    {
-        "id":
-        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/\
-            virtualMachines/TestVM1/extensions/extensions2",
-        "type":
-        "Microsoft.Compute/virtualMachines/extensions",
-        "resource_group":
-        "TestRG",
-        "name":
-        "extensions2",
-        "location": "West US",
-        "vm_id":
-        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM1",
-    },
-]
 
 DESCRIBE_VMAVAILABLESIZES = [
     {
@@ -286,32 +226,38 @@ DESCRIBE_VMAVAILABLESIZES = [
     },
 ]
 
-DESCRIBE_VMSCALESETS = [
+
+DESCRIBE_VMEXTENSIONS = [
     {
         "id":
         "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/\
-            virtualMachineScaleSets/set1",
+            virtualMachines/TestVM/extensions/extensions1",
         "type":
-        "Microsoft.Compute/virtualMachineScaleSets",
+        "Microsoft.Compute/virtualMachines/extensions",
         "resource_group":
         "TestRG",
         "name":
-        "set1",
+        "extensions1",
         "location": "West US",
+        "vm_id":
+        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM",
     },
     {
         "id":
         "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/\
-            virtualMachineScaleSets/set2",
+            virtualMachines/TestVM1/extensions/extensions2",
         "type":
-        "Microsoft.Compute/virtualMachineScaleSets",
+        "Microsoft.Compute/virtualMachines/extensions",
         "resource_group":
         "TestRG",
         "name":
-        "set2",
+        "extensions2",
         "location": "West US",
+        "vm_id":
+        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM1",
     },
 ]
+
 
 DESCRIBE_VMSCALESETEXTENSIONS = [
     {
@@ -343,3 +289,32 @@ DESCRIBE_VMSCALESETEXTENSIONS = [
             virtualMachineScaleSets/set2",
     },
 ]
+
+
+DESCRIBE_VMSCALESETS = [
+    {
+        "id":
+        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/\
+            virtualMachineScaleSets/set1",
+        "type":
+        "Microsoft.Compute/virtualMachineScaleSets",
+        "resource_group":
+        "TestRG",
+        "name":
+        "set1",
+        "location": "West US",
+    },
+    {
+        "id":
+        "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/\
+            virtualMachineScaleSets/set2",
+        "type":
+        "Microsoft.Compute/virtualMachineScaleSets",
+        "resource_group":
+        "TestRG",
+        "name":
+        "set2",
+        "location": "West US",
+    },
+]
+

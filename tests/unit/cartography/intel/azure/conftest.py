@@ -3,6 +3,7 @@ Mock unavailable third-party dependencies so azure unit tests can run
 without the full production install (cloudconsolelink, adal, msrestazure,
 azure-mgmt-*, msgraph, etc.).
 """
+import importlib
 import sys
 from unittest.mock import MagicMock
 
@@ -50,5 +51,9 @@ _MISSING_DEPS = [
 ]
 
 for _mod in _MISSING_DEPS:
-    if _mod not in sys.modules:
+    if _mod in sys.modules:
+        continue
+    try:
+        importlib.import_module(_mod)
+    except ImportError:
         sys.modules[_mod] = MagicMock()

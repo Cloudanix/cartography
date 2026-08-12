@@ -63,6 +63,12 @@ def all_concrete_node_schemas() -> List[CartographyNodeSchema]:
     def _concrete(cls: type) -> Set[type]:
         found: Set[type] = set()
         for sub in cls.__subclasses__():
+            # Skip fixture schemas defined inside test modules: when the whole suite
+            # runs, other tests' deliberately-malformed schemas register as
+            # subclasses and would crash query generation here.
+            if sub.__module__.startswith("tests."):
+                found |= _concrete(sub)
+                continue
             if not getattr(sub, "__abstractmethods__", None):
                 found.add(sub)
             found |= _concrete(sub)

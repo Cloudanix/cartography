@@ -5,16 +5,21 @@ from typing import Dict
 from typing import List
 
 import neo4j
-from cloudconsolelink.clouds.gcp import GCPLinker
+
+try:
+    from cloudconsolelink.clouds.gcp import GCPLinker
+except ImportError:
+    GCPLinker = None
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
-from . import label
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
+from . import label
+
 logger = logging.getLogger(__name__)
-gcp_console_link = GCPLinker()
+gcp_console_link = GCPLinker() if GCPLinker else None
 
 
 @timeit
@@ -24,27 +29,38 @@ def get_monitoring_alertpolicies(monitoring: Resource, project_id: str) -> List[
         req = monitoring.projects().alertPolicies().list(name=f"projects/{project_id}")
         while req is not None:
             res = req.execute()
-            if res.get('alertPolicies'):
-                for policy in res['alertPolicies']:
-                    policy['region'] = 'global'
-                    policy['id'] = policy['name']
-                    policy['policy_name'] = policy.get('name').split('/')[-1]
-                    policy['labels'] = policy.get('userLabels', {})
-                    policy['consolelink'] = gcp_console_link.get_console_link(
+            if res.get("alertPolicies"):
+                for policy in res["alertPolicies"]:
+                    policy["region"] = "global"
+                    policy["id"] = policy["name"]
+                    policy["policy_name"] = policy.get("name").split("/")[-1]
+                    policy["labels"] = policy.get("userLabels", {})
+                    policy["consolelink"] = gcp_console_link.get_console_link(
                         project_id=project_id,
-                        alert_policy_name=policy['name'], resource_name='cloud_monitoring_alert_policy',
+                        alert_policy_name=policy["name"],
+                        resource_name="cloud_monitoring_alert_policy",
                     )
                     policies.append(policy)
-            req = monitoring.projects().alertPolicies().list_next(previous_request=req, previous_response=res)
+            req = (
+                monitoring.projects()
+                .alertPolicies()
+                .list_next(previous_request=req, previous_response=res)
+            )
 
         return policies
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve monitoring alertpolicies on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -52,14 +68,20 @@ def get_monitoring_alertpolicies(monitoring: Resource, project_id: str) -> List[
 
 
 @timeit
-def load_monitoring_alertpolicies(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_monitoring_alertpolicies_tx, data_list, project_id, update_tag)
+def load_monitoring_alertpolicies(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.execute_write(
+        load_monitoring_alertpolicies_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def load_monitoring_alertpolicies_tx(
-    tx: neo4j.Transaction, data: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    data: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -90,14 +112,23 @@ def load_monitoring_alertpolicies_tx(
 
 
 @timeit
-def cleanup_monitoring_alertpolicies(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_monitoring_alertpolicies_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_monitoring_alertpolicies(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_monitoring_alertpolicies_cleanup.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
 
 @timeit
 def sync_monitoring_alertpolicies(
-    neo4j_session: neo4j.Session, monitoring: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    monitoring: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     policies = get_monitoring_alertpolicies(monitoring, project_id)
@@ -105,30 +136,50 @@ def sync_monitoring_alertpolicies(
     load_monitoring_alertpolicies(neo4j_session, policies, project_id, gcp_update_tag)
     cleanup_monitoring_alertpolicies(neo4j_session, common_job_parameters)
     label.sync_labels(
-        neo4j_session, policies, gcp_update_tag,
-        common_job_parameters, 'monitoring_alertpolicies', 'GCPMonitoringAlertPolicy',
+        neo4j_session,
+        policies,
+        gcp_update_tag,
+        common_job_parameters,
+        "monitoring_alertpolicies",
+        "GCPMonitoringAlertPolicy",
     )
 
 
 @timeit
-def get_monitoring_metric_descriptors(monitoring: Resource, project_id: str) -> List[Dict]:
+def get_monitoring_metric_descriptors(
+    monitoring: Resource, project_id: str
+) -> List[Dict]:
     metric_descriptors = []
     try:
-        req = monitoring.projects().metricDescriptors().list(name=f"projects/{project_id}")
+        req = (
+            monitoring.projects()
+            .metricDescriptors()
+            .list(name=f"projects/{project_id}")
+        )
         while req is not None:
             res = req.execute()
-            if res.get('metricDescriptors'):
-                metric_descriptors.extend(res.get('metricDescriptors', []))
-            req = monitoring.projects().metricDescriptors().list_next(previous_request=req, previous_response=res)
+            if res.get("metricDescriptors"):
+                metric_descriptors.extend(res.get("metricDescriptors", []))
+            req = (
+                monitoring.projects()
+                .metricDescriptors()
+                .list_next(previous_request=req, previous_response=res)
+            )
 
         return metric_descriptors
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve monitoring metric descriptors on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -136,26 +187,36 @@ def get_monitoring_metric_descriptors(monitoring: Resource, project_id: str) -> 
 
 
 @timeit
-def transform_metric_descriptors(metric_descriptors: List[Dict], project_id: str) -> List[Dict]:
+def transform_metric_descriptors(
+    metric_descriptors: List[Dict], project_id: str
+) -> List[Dict]:
     metric_descriptors = []
     for metric in metric_descriptors:
-        metric['region'] = 'global'
-        metric['id'] = f"projects/{project_id}/metricDescriptors/{metric['name']}"
-        metric['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='cloud_logging_metric')
+        metric["region"] = "global"
+        metric["id"] = f"projects/{project_id}/metricDescriptors/{metric['name']}"
+        metric["consolelink"] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name="cloud_logging_metric"
+        )
         metric_descriptors.append(metric)
 
     return metric_descriptors
 
 
 @timeit
-def load_monitoring_metric_descriptors(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_monitoring_metric_descriptors_tx, data_list, project_id, update_tag)
+def load_monitoring_metric_descriptors(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.execute_write(
+        load_monitoring_metric_descriptors_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def load_monitoring_metric_descriptors_tx(
-    tx: neo4j.Transaction, data: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    data: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -188,47 +249,77 @@ def load_monitoring_metric_descriptors_tx(
 
 
 @timeit
-def cleanup_monitoring_metric_descriptors(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_monitoring_metric_descriptors_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_monitoring_metric_descriptors(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_monitoring_metric_descriptors_cleanup.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
 
 @timeit
 def sync_monitoring_metric_descriptors(
-    neo4j_session: neo4j.Session, monitoring: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    monitoring: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     metric_des = get_monitoring_metric_descriptors(monitoring, project_id)
     metric_descriptors = transform_metric_descriptors(metric_des, project_id)
 
-    load_monitoring_metric_descriptors(neo4j_session, metric_descriptors, project_id, gcp_update_tag)
+    load_monitoring_metric_descriptors(
+        neo4j_session, metric_descriptors, project_id, gcp_update_tag
+    )
     cleanup_monitoring_metric_descriptors(neo4j_session, common_job_parameters)
 
 
 @timeit
-def get_monitoring_notification_channels(monitoring: Resource, project_id: str) -> List[Dict]:
+def get_monitoring_notification_channels(
+    monitoring: Resource, project_id: str
+) -> List[Dict]:
     channels = []
     try:
-        req = monitoring.projects().notificationChannels().list(name=f"projects/{project_id}")
+        req = (
+            monitoring.projects()
+            .notificationChannels()
+            .list(name=f"projects/{project_id}")
+        )
         while req is not None:
             res = req.execute()
-            if res.get('notificationChannels'):
-                for channel in res['notificationChannels']:
-                    channel['region'] = 'global'
-                    channel['id'] = channel['name']
-                    channel['channel_name'] = channel.get('name').split('/')[-1]
-                    channel['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='cloud_monitoring_notification_channels')
+            if res.get("notificationChannels"):
+                for channel in res["notificationChannels"]:
+                    channel["region"] = "global"
+                    channel["id"] = channel["name"]
+                    channel["channel_name"] = channel.get("name").split("/")[-1]
+                    channel["consolelink"] = gcp_console_link.get_console_link(
+                        project_id=project_id,
+                        resource_name="cloud_monitoring_notification_channels",
+                    )
                     channels.append(channel)
-            req = monitoring.projects().notificationChannels().list_next(previous_request=req, previous_response=res)
+            req = (
+                monitoring.projects()
+                .notificationChannels()
+                .list_next(previous_request=req, previous_response=res)
+            )
 
         return channels
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve monitoring notification channels on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -236,14 +327,20 @@ def get_monitoring_notification_channels(monitoring: Resource, project_id: str) 
 
 
 @timeit
-def load_monitoring_notification_channels(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_monitoring_notification_channels_tx, data_list, project_id, update_tag)
+def load_monitoring_notification_channels(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.execute_write(
+        load_monitoring_notification_channels_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def load_monitoring_notification_channels_tx(
-    tx: neo4j.Transaction, data: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    data: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -276,54 +373,86 @@ def load_monitoring_notification_channels_tx(
 
 
 @timeit
-def cleanup_monitoring_notification_channels(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_monitoring_notification_channels_cleanup.json', neo4j_session, common_job_parameters)
-
-
-@timeit
-def sync_monitoring_notification_channels(
-    neo4j_session: neo4j.Session, monitoring: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+def cleanup_monitoring_notification_channels(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
 ) -> None:
-
-    channels = get_monitoring_notification_channels(monitoring, project_id)
-
-    load_monitoring_notification_channels(neo4j_session, channels, project_id, gcp_update_tag)
-    cleanup_monitoring_notification_channels(neo4j_session, common_job_parameters)
-    label.sync_labels(
-        neo4j_session, channels, gcp_update_tag,
-        common_job_parameters, 'monitoring_notification_channels', 'GCPMonitoringNotificationChannel',
+    run_cleanup_job(
+        "gcp_monitoring_notification_channels_cleanup.json",
+        neo4j_session,
+        common_job_parameters,
     )
 
 
 @timeit
-def get_monitoring_uptimecheckconfigs(monitoring: Resource, project_id: str) -> List[Dict]:
+def sync_monitoring_notification_channels(
+    neo4j_session: neo4j.Session,
+    monitoring: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
+) -> None:
+
+    channels = get_monitoring_notification_channels(monitoring, project_id)
+
+    load_monitoring_notification_channels(
+        neo4j_session, channels, project_id, gcp_update_tag
+    )
+    cleanup_monitoring_notification_channels(neo4j_session, common_job_parameters)
+    label.sync_labels(
+        neo4j_session,
+        channels,
+        gcp_update_tag,
+        common_job_parameters,
+        "monitoring_notification_channels",
+        "GCPMonitoringNotificationChannel",
+    )
+
+
+@timeit
+def get_monitoring_uptimecheckconfigs(
+    monitoring: Resource, project_id: str
+) -> List[Dict]:
     configs = []
     try:
-        req = monitoring.projects().uptimeCheckConfigs().list(parent=f"projects/{project_id}")
+        req = (
+            monitoring.projects()
+            .uptimeCheckConfigs()
+            .list(parent=f"projects/{project_id}")
+        )
         while req is not None:
             res = req.execute()
-            if res.get('notificationChannels'):
-                for config in res['notificationChannels']:
-                    config['region'] = 'global'
-                    config['id'] = config['name']
-                    config['config_name'] = config.get('name').split('/')[-1]
-                    config['labels'] = config.get('userLabels', {})
-                    config['consolelink'] = gcp_console_link.get_console_link(
+            if res.get("notificationChannels"):
+                for config in res["notificationChannels"]:
+                    config["region"] = "global"
+                    config["id"] = config["name"]
+                    config["config_name"] = config.get("name").split("/")[-1]
+                    config["labels"] = config.get("userLabels", {})
+                    config["consolelink"] = gcp_console_link.get_console_link(
                         project_id=project_id,
-                        uptimecheck_config_name=config['name'], resource_name='cloud_monitoring_uptime_check_config',
+                        uptimecheck_config_name=config["name"],
+                        resource_name="cloud_monitoring_uptime_check_config",
                     )
                     configs.append(config)
-            req = monitoring.projects().uptimeCheckConfigs().list_next(previous_request=req, previous_response=res)
+            req = (
+                monitoring.projects()
+                .uptimeCheckConfigs()
+                .list_next(previous_request=req, previous_response=res)
+            )
 
         return configs
     except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        err = json.loads(e.content.decode("utf-8"))["error"]
+        if (
+            err.get("status", "") == "PERMISSION_DENIED"
+            or err.get("message", "") == "Forbidden"
+        ):
             logger.warning(
                 (
                     "Could not retrieve monitoring uptime check configs on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
+                ),
+                project_id,
+                err["code"],
+                err["message"],
             )
             return []
         else:
@@ -331,14 +460,20 @@ def get_monitoring_uptimecheckconfigs(monitoring: Resource, project_id: str) -> 
 
 
 @timeit
-def load_monitoring_uptimecheckconfigs(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_monitoring_uptimecheckconfigs_tx, data_list, project_id, update_tag)
+def load_monitoring_uptimecheckconfigs(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int
+) -> None:
+    session.execute_write(
+        load_monitoring_uptimecheckconfigs_tx, data_list, project_id, update_tag
+    )
 
 
 @timeit
 def load_monitoring_uptimecheckconfigs_tx(
-    tx: neo4j.Transaction, data: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction,
+    data: List[Dict],
+    project_id: str,
+    gcp_update_tag: int,
 ) -> None:
 
     query = """
@@ -371,29 +506,48 @@ def load_monitoring_uptimecheckconfigs_tx(
 
 
 @timeit
-def cleanup_monitoring_uptimecheckconfigs(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job('gcp_monitoring_uptimecheckconfigs_cleanup.json', neo4j_session, common_job_parameters)
+def cleanup_monitoring_uptimecheckconfigs(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "gcp_monitoring_uptimecheckconfigs_cleanup.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
 
 @timeit
 def sync_monitoring_uptimecheckconfigs(
-    neo4j_session: neo4j.Session, monitoring: Resource, project_id: str,
-    gcp_update_tag: int, common_job_parameters: Dict,
+    neo4j_session: neo4j.Session,
+    monitoring: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
 
     configs = get_monitoring_uptimecheckconfigs(monitoring, project_id)
 
-    load_monitoring_uptimecheckconfigs(neo4j_session, configs, project_id, gcp_update_tag)
+    load_monitoring_uptimecheckconfigs(
+        neo4j_session, configs, project_id, gcp_update_tag
+    )
     cleanup_monitoring_uptimecheckconfigs(neo4j_session, common_job_parameters)
     label.sync_labels(
-        neo4j_session, configs, gcp_update_tag,
-        common_job_parameters, 'monitoring_uptimecheckconfigs', 'GCPMonitoringUptimeCheckConfig',
+        neo4j_session,
+        configs,
+        gcp_update_tag,
+        common_job_parameters,
+        "monitoring_uptimecheckconfigs",
+        "GCPMonitoringUptimeCheckConfig",
     )
 
 
 def sync(
-    neo4j_session: neo4j.Session, monitoring: Resource, project_id: str, gcp_update_tag: int,
-    common_job_parameters: dict, regions: list,
+    neo4j_session: neo4j.Session,
+    monitoring: Resource,
+    project_id: str,
+    gcp_update_tag: int,
+    common_job_parameters: dict,
+    regions: list,
 ) -> None:
 
     tic = time.perf_counter()
@@ -401,20 +555,32 @@ def sync(
     logger.info(f"Syncing monitoring for project {project_id}, at {tic}")
 
     sync_monitoring_alertpolicies(
-        neo4j_session, monitoring, project_id,
-        gcp_update_tag, common_job_parameters,
+        neo4j_session,
+        monitoring,
+        project_id,
+        gcp_update_tag,
+        common_job_parameters,
     )
     sync_monitoring_metric_descriptors(
-        neo4j_session, monitoring, project_id,
-        gcp_update_tag, common_job_parameters,
+        neo4j_session,
+        monitoring,
+        project_id,
+        gcp_update_tag,
+        common_job_parameters,
     )
     sync_monitoring_notification_channels(
-        neo4j_session, monitoring, project_id,
-        gcp_update_tag, common_job_parameters,
+        neo4j_session,
+        monitoring,
+        project_id,
+        gcp_update_tag,
+        common_job_parameters,
     )
     sync_monitoring_uptimecheckconfigs(
-        neo4j_session, monitoring, project_id,
-        gcp_update_tag, common_job_parameters,
+        neo4j_session,
+        monitoring,
+        project_id,
+        gcp_update_tag,
+        common_job_parameters,
     )
 
     toc = time.perf_counter()

@@ -5,6 +5,7 @@ from typing import List
 
 import boto3
 import neo4j
+from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
@@ -15,6 +16,33 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+_RETRYABLE_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+class CloudTrailTransientRegionFailure(Exception):
+    """Raised when a regional CloudTrail endpoint fails transiently; consumers
+    (cloudtrail_management_events) skip the region instead of failing the sync."""
+
+
+def _is_retryable_cloudtrail_error(error: ClientError) -> bool:
+    error_code = error.response.get("Error", {}).get("Code", "")
+    status_code = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return (
+        error_code
+        in {
+            "RequestLimitExceeded",
+            "RequestThrottled",
+            "RequestTimeout",
+            "RequestTimeoutException",
+            "ServiceUnavailable",
+            "ServiceUnavailableException",
+            "Throttling",
+            "ThrottlingException",
+            "TooManyRequestsException",
+        }
+        or status_code in _RETRYABLE_HTTP_STATUS_CODES
+    )
 
 
 @timeit

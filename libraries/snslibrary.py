@@ -17,21 +17,25 @@ class SNSLibrary:
         session = Session()
 
         # if it's an offline test, use offline SNS
-        if os.getenv('IS_OFFLINE'):
+        if os.getenv("IS_OFFLINE"):
             try:
                 self.sns_client = session.client(
-                    'sns', region_name=self.context.region, endpoint_url=self.context.sns_offline_url,
+                    "sns",
+                    region_name=self.context.region,
+                    endpoint_url=self.context.sns_offline_url,
                 )
 
             except ClientError as e:
-                raise classify_error(self.context.logger, e, 'Failed to create SNS client')
+                raise classify_error(
+                    self.context.logger, e, "Failed to create SNS client"
+                )
 
         else:
-            self.sns_client = session.client('sns', region_name=self.context.region)
+            self.sns_client = session.client("sns", region_name=self.context.region)
 
     def publish(self, message, topic):
         try:
-            if self.context.app_env == 'PRODUCTION':
+            if self.context.app_env == "PRODUCTION":
                 self.sns_client.publish(
                     Message=message,
                     TopicArn=topic,
@@ -40,8 +44,10 @@ class SNSLibrary:
                 return True
 
             else:
-                self.context.logger.info('SNS Publish -> Non-Production environment')
+                self.context.logger.info("SNS Publish -> Non-Production environment")
                 return True
 
         except ClientError as e:
-            raise classify_error(self.context.logger, e, 'Failed to publish message', {'topic': topic})
+            raise classify_error(
+                self.context.logger, e, "Failed to publish message", {"topic": topic}
+            )

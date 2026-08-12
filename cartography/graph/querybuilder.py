@@ -1,12 +1,6 @@
 import logging
 from dataclasses import asdict
 from string import Template
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Set
-from typing import Tuple
-from typing import Union
 
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import CartographyNodeProperties
@@ -14,159 +8,858 @@ from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.models.core.nodes import ExtraNodeLabels
 from cartography.models.core.relationships import CartographyRelSchema
 from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import MatchLinkSubResource
 from cartography.models.core.relationships import OtherRelationships
 from cartography.models.core.relationships import SourceNodeMatcher
 from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.ontology.mapping import (
+    get_semantic_label_mapping_from_node_schema,
+)
+from cartography.models.ontology.mapping.specs import OntologyFieldMapping
+from cartography.version import get_cartography_version
 
 logger = logging.getLogger(__name__)
 
 
+def _build_ontology_field_statement_invert_boolean(
+    mapping_field: OntologyFieldMapping,
+    property_ref: PropertyRef,
+) -> str:
+    # toBooleanOrNull will return a boolean or null if it can't be converted
+    # coalesce will return the first non-null value, so if toBooleanOrNull returns null,
+    # we invert the boolean value of the property_ref existence
+    # ex: "false", "0", "no" => false; anything else => true; null/absent => true
+    invert_boolean_template = Template(
+        "i.$node_property = (NOT(coalesce(toBooleanOrNull($property_ref), false)))"
+    )
+    return invert_boolean_template.safe_substitute(
+        node_property=f"_ont_{mapping_field.ontology_field}",
+        property_ref=property_ref,
+    )
+
+
+def _build_ontology_field_statement_to_boolean(
+    mapping_field: OntologyFieldMapping,
+    property_ref: PropertyRef,
+) -> str:
+    # toBoleanOrNull will return a boolean or null if it can't be converted
+    # coalesce will return the first non-null value, so if toBooleanOrNull returns null,
+    # it will return whether the property_ref is not null (i.e., true if property_ref exists)
+    # this way, any non-null value is treated as true
+    # ex: "true", "1", "yes" => true; anything else => true; null/absent => false
+    to_boolean_template = Template(
+        "i.$node_property = coalesce(toBooleanOrNull($property_ref), ($property_ref IS NOT NULL))"
+    )
+    return to_boolean_template.safe_substitute(
+        node_property=f"_ont_{mapping_field.ontology_field}",
+        property_ref=property_ref,
+    )
+
+
+def _build_ontology_field_statement_equal_boolean(
+    mapping_field: OntologyFieldMapping,
+    property_ref: PropertyRef,
+) -> str | None:
+    # we check if the property_ref is in the list of expected boolean values
+    equal_boolean_template = Template(
+        "i.$node_property = ($property_ref IN $property_values)"
+    )
+    extra_field_values = mapping_field.extra.get("values")
+    if extra_field_values is None:
+        # should not occure due to unit test but failing gracefully
+        logger.warning(
+            "equal_boolean special handling requires 'values' in extra for field %s",
+            mapping_field.ontology_field,
+        )
+        return None
+    if not isinstance(extra_field_values, list):
+        logger.warning(
+            "equal_boolean special handling 'values' in extra for field %s must be a list",
+            mapping_field.ontology_field,
+        )
+        return None
+    return equal_boolean_template.substitute(
+        node_property=f"_ont_{mapping_field.ontology_field}",
+        property_ref=property_ref,
+        property_values=extra_field_values,
+    )
+
+
+def _escape_cypher_string(value: str) -> str:
+    r"""
+    Escape special characters in a string value for use in a Cypher string literal.
+
+    In Cypher, string literals are enclosed in double quotes, and the following characters
+    must be escaped with a backslash:
+    - Backslash (\) -> \\
+    - Double quote (") -> \"
+
+    :param value: The string value to escape
+    :return: The escaped string value safe for use in a Cypher string literal
+    """
+    # Escape backslashes first (must be done before escaping quotes)
+    escaped = value.replace("\\", "\\\\")
+    # Then escape double quotes
+    escaped = escaped.replace('"', '\\"')
+    return escaped
+
+
+def _build_ontology_field_statement_static_value(
+    mapping_field: OntologyFieldMapping,
+) -> str | None:
+    # Sets a static value for the ontology field
+    # The value is provided in extra['value']
+    static_value_template = Template("i.$node_property = $static_value")
+    extra_value = mapping_field.extra.get("value")
+    if extra_value is None:
+        # should not occur due to unit test but failing gracefully
+        logger.warning(
+            "static_value special handling requires 'value' in extra for field %s",
+            mapping_field.ontology_field,
+        )
+        return None
+
+    # Format the value appropriately for Cypher
+    if isinstance(extra_value, str):
+        formatted_value = f'"{_escape_cypher_string(extra_value)}"'
+    elif isinstance(extra_value, bool):
+        formatted_value = str(extra_value).lower()
+    else:
+        formatted_value = str(extra_value)
+
+    return static_value_template.substitute(
+        node_property=f"_ont_{mapping_field.ontology_field}",
+        static_value=formatted_value,
+    )
+
+
+def _build_ontology_field_statement_or_boolean(
+    mapping_field: OntologyFieldMapping,
+    node_property_map: dict[str, PropertyRef],
+) -> str | None:
+    # The or_clause is needed to avoid comparing nulls to boolean values
+    # See: https://neo4j.com/docs/cypher-manual/current/values-and-types/working-with-null/#cypher-null-logical-operators
+    or_clause = Template("coalesce(toBooleanOrNull($property_ref), false)")
+    or_boolean_template = Template("i.$node_property = ($property_condition)")
+    extra_fields = mapping_field.extra.get("fields")
+    if extra_fields is None:
+        # should not occure due to unit test but failing gracefully
+        logger.warning(
+            "or_boolean special handling requires 'fields' in extra for field %s",
+            mapping_field.ontology_field,
+        )
+        return None
+    if not isinstance(extra_fields, list):
+        # should not occure due to unit test but failing gracefully
+        logger.warning(
+            "or_boolean special handling 'fields' in extra for field %s must be a list",
+            mapping_field.ontology_field,
+        )
+        return None
+
+    property_conditions = [
+        or_clause.substitute(
+            property_ref=node_property_map.get(mapping_field.node_field),
+        )
+    ]
+    for extra_field in mapping_field.extra.get("fields", []):
+        extra_property_ref = node_property_map.get(extra_field)
+        if not extra_property_ref:
+            # Expected for Composite Node Pattern schemas (see comment in
+            # _build_ontology_node_properties_statement).
+            logger.debug(
+                "Extra field '%s' not found in node properties for or_boolean special handling of field %s",
+                extra_field,
+                mapping_field.ontology_field,
+            )
+            continue
+        property_conditions.append(
+            or_clause.substitute(
+                property_ref=extra_property_ref,
+            )
+        )
+    full_property_condition = " OR ".join(property_conditions)
+    return or_boolean_template.substitute(
+        node_property=f"_ont_{mapping_field.ontology_field}",
+        property_condition=full_property_condition,
+    )
+
+
+def _build_ontology_field_statement_nor_boolean(
+    mapping_field: OntologyFieldMapping,
+    node_property_map: dict[str, PropertyRef],
+) -> str | None:
+    nor_clause = Template("NOT(coalesce(toBooleanOrNull($property_ref), false))")
+    nor_boolean_template = Template("i.$node_property = ($property_condition)")
+    extra_fields = mapping_field.extra.get("fields")
+    if extra_fields is None:
+        # should not occure due to unit test but failing gracefully
+        logger.warning(
+            "nor_boolean special handling requires 'fields' in extra for field %s",
+            mapping_field.ontology_field,
+        )
+        return None
+    if not isinstance(extra_fields, list):
+        # should not occure due to unit test but failing gracefully
+        logger.warning(
+            "nor_boolean special handling 'fields' in extra for field %s must be a list",
+            mapping_field.ontology_field,
+        )
+        return None
+
+    property_conditions = [
+        nor_clause.substitute(
+            property_ref=node_property_map.get(mapping_field.node_field),
+        )
+    ]
+    for extra_field in mapping_field.extra.get("fields", []):
+        extra_property_ref = node_property_map.get(extra_field)
+        if not extra_property_ref:
+            # Expected for Composite Node Pattern schemas (see comment in
+            # _build_ontology_node_properties_statement).
+            logger.debug(
+                "Extra field '%s' not found in node properties for nor_boolean special handling of field %s",
+                extra_field,
+                mapping_field.ontology_field,
+            )
+            continue
+        property_conditions.append(
+            nor_clause.substitute(
+                property_ref=extra_property_ref,
+            )
+        )
+    full_property_condition = " AND ".join(property_conditions)
+    return nor_boolean_template.substitute(
+        node_property=f"_ont_{mapping_field.ontology_field}",
+        property_condition=full_property_condition,
+    )
+
+
+def _build_ontology_field_statement_mapping(
+    mapping_field: OntologyFieldMapping,
+    property_ref: PropertyRef,
+) -> str | None:
+    """Maps provider-specific values to normalized ontology values using a Cypher CASE expression.
+
+    The mapping dict is provided in extra['map'] as {source_value: normalized_value}.
+    Unmapped values result in NULL (property not set).
+    """
+    value_map = mapping_field.extra.get("map")
+    if value_map is None:
+        logger.warning(
+            "mapping special handling requires 'map' in extra for field %s",
+            mapping_field.ontology_field,
+        )
+        return None
+    if not isinstance(value_map, dict):
+        logger.warning(
+            "mapping special handling 'map' in extra for field %s must be a dict",
+            mapping_field.ontology_field,
+        )
+        return None
+
+    when_clauses = []
+    for source_val, normalized_val in value_map.items():
+        escaped_source = _escape_cypher_string(str(source_val))
+        escaped_normalized = _escape_cypher_string(str(normalized_val))
+        when_clauses.append(f'WHEN "{escaped_source}" THEN "{escaped_normalized}"')
+
+    case_expr = f"CASE {property_ref} " + " ".join(when_clauses) + " END"
+    return f"i._ont_{mapping_field.ontology_field} = {case_expr}"
+
+
+def _build_ontology_field_statement_coalesce(
+    mapping_field: OntologyFieldMapping,
+    node_property_map: dict[str, PropertyRef],
+) -> str | None:
+    """Maps the first non-null source field to an ontology field."""
+    extra_fields = mapping_field.extra.get("fields")
+    if extra_fields is None:
+        logger.warning(
+            "coalesce special handling requires 'fields' in extra for field %s",
+            mapping_field.ontology_field,
+        )
+        return None
+    if not isinstance(extra_fields, list):
+        logger.warning(
+            "coalesce special handling 'fields' in extra for field %s must be a list",
+            mapping_field.ontology_field,
+        )
+        return None
+
+    primary_property_ref = node_property_map.get(mapping_field.node_field)
+    if not primary_property_ref:
+        logger.debug(
+            "Field '%s' not found in node properties for coalesce special handling of field %s",
+            mapping_field.node_field,
+            mapping_field.ontology_field,
+        )
+        return None
+
+    property_refs = [primary_property_ref]
+    for extra_field in extra_fields:
+        extra_property_ref = node_property_map.get(extra_field)
+        if not extra_property_ref:
+            # Expected for Composite Node Pattern schemas (see comment in
+            # _build_ontology_node_properties_statement).
+            logger.debug(
+                "Extra field '%s' not found in node properties for coalesce special handling of field %s",
+                extra_field,
+                mapping_field.ontology_field,
+            )
+            continue
+        property_refs.append(extra_property_ref)
+
+    property_ref_expression = ", ".join(
+        str(property_ref) for property_ref in property_refs
+    )
+    return (
+        f"i._ont_{mapping_field.ontology_field} = coalesce({property_ref_expression})"
+    )
+
+
+def _build_ontology_node_properties_statement(
+    node_schema: CartographyNodeSchema,
+    node_property_map: dict[str, PropertyRef],
+) -> str:
+    # DOC
+    # Try to get the mapping for the given node schema
+    ontology_mapping = get_semantic_label_mapping_from_node_schema(node_schema)
+    if not ontology_mapping:
+        return ""
+
+    source = _get_module_from_schema(node_schema).rsplit(":", maxsplit=1)[-1]
+    set_clauses = [f"i._ont_source = '{source}'"]
+    for mapping_field in ontology_mapping.fields:
+        ontology_field_name = f"_ont_{mapping_field.ontology_field}"
+        node_propertyref = node_property_map.get(mapping_field.node_field)
+
+        # Handle static_value special handling first - it doesn't require a node_field
+        if mapping_field.special_handling == "static_value":
+            static_value_statement = _build_ontology_field_statement_static_value(
+                mapping_field
+            )
+            if static_value_statement:
+                set_clauses.append(static_value_statement)
+            continue
+
+        # Skip validation for special_handling that don't require node_field
+        if not node_propertyref:
+            # This is expected for schemas using the Composite Node Pattern,
+            # where multiple schema classes share the same node label but each
+            # only defines a subset of properties. The ontology mapping is
+            # looked up by label, so fields belonging to other schemas for the
+            # same label will not be present here.
+            logger.debug(
+                "Field '%s' not found in node properties for node schema %s",
+                mapping_field.node_field,
+                node_schema.__class__.__name__,
+            )
+            continue
+        if mapping_field.special_handling == "invert_boolean":
+            set_clauses.append(
+                _build_ontology_field_statement_invert_boolean(
+                    mapping_field,
+                    node_propertyref,
+                )
+            )
+        elif mapping_field.special_handling == "to_boolean":
+            set_clauses.append(
+                _build_ontology_field_statement_to_boolean(
+                    mapping_field,
+                    node_propertyref,
+                )
+            )
+        elif mapping_field.special_handling == "equal_boolean":
+            equal_boolean_statement = _build_ontology_field_statement_equal_boolean(
+                mapping_field,
+                node_propertyref,
+            )
+            if equal_boolean_statement:
+                set_clauses.append(equal_boolean_statement)
+        elif mapping_field.special_handling == "or_boolean":
+            or_boolean_statement = _build_ontology_field_statement_or_boolean(
+                mapping_field, node_property_map
+            )
+            if or_boolean_statement:
+                set_clauses.append(or_boolean_statement)
+        elif mapping_field.special_handling == "nor_boolean":
+            nor_boolean_statement = _build_ontology_field_statement_nor_boolean(
+                mapping_field, node_property_map
+            )
+            if nor_boolean_statement:
+                set_clauses.append(nor_boolean_statement)
+        elif mapping_field.special_handling == "mapping":
+            mapping_statement = _build_ontology_field_statement_mapping(
+                mapping_field, node_propertyref
+            )
+            if mapping_statement:
+                set_clauses.append(mapping_statement)
+        elif mapping_field.special_handling == "coalesce":
+            coalesce_statement = _build_ontology_field_statement_coalesce(
+                mapping_field, node_property_map
+            )
+            if coalesce_statement:
+                set_clauses.append(coalesce_statement)
+        else:
+            simple_field_template = Template("i.$node_property = $property_ref")
+            set_clauses.append(
+                simple_field_template.substitute(
+                    node_property=ontology_field_name,
+                    property_ref=node_propertyref,
+                )
+            )
+    if len(set_clauses) == 0:
+        return ""
+    # Add initial newline
+    return ",\n" + ",\n".join(set_clauses)
+
+
 def _build_node_properties_statement(
-        node_property_map: Dict[str, PropertyRef],
-        extra_node_labels: Optional[ExtraNodeLabels] = None,
+    node_property_map: dict[str, PropertyRef],
+    extra_node_labels: ExtraNodeLabels | None = None,
 ) -> str:
     """
     Generate a Neo4j clause that sets node properties using the given mapping of attribute names to PropertyRefs.
 
-    As seen in this example,
+    This function creates a SET clause for Neo4j queries that assigns values from the data item
+    to node properties, excluding the 'id' field which is handled by the MERGE clause.
+    It also handles setting extra node labels if provided.
 
-        node_property_map: Dict[str, PropertyRef] = {
-            'id': PropertyRef("Id"),
-            'node_prop_1': PropertyRef("Prop1"),
-            'node_prop_2': PropertyRef("Prop2", set_in_kwargs=True),
-        }
-        set_clause: str = _build_node_properties_statement(node_property_map)
+    Args:
+        node_property_map (Dict[str, PropertyRef]): Mapping of node attribute names as str to PropertyRef objects.
+        extra_node_labels (ExtraNodeLabels | None): Extra labels to add to the node.
+            Defaults to None.
 
-    the returned set_clause will be
-        ```
-        i.id = item.Id,
-        i.node_prop_1 = item.Prop1,
-        i.node_prop_2 = $Prop2
-        ```
-    where `i` is a reference to the Neo4j node.
-    :param node_property_map: Mapping of node attribute names as str to PropertyRef objects
-    :param extra_node_labels: Optional ExtraNodeLabels object to set on the node as string
-    :return: The resulting Neo4j SET clause to set the given attributes on the node
+    Returns:
+        str: The resulting Neo4j SET clause to set the given attributes on the node.
+
+    Examples:
+        >>> node_property_map = {
+        ...     'id': PropertyRef("Id"),
+        ...     'node_prop_1': PropertyRef("Prop1"),
+        ...     'node_prop_2': PropertyRef("Prop2", set_in_kwargs=True),
+        ... }
+        >>> set_clause = _build_node_properties_statement(node_property_map)
+        >>> set_clause
+        'i.node_prop_1 = item.Prop1,\\ni.node_prop_2 = $Prop2'
+        >>> # (note: 'id' is excluded as it's handled by MERGE)
+
+        >>> extra_node_labels = ExtraNodeLabels([RESOURCE, CLOUD_ASSET])
+        >>> set_clause = _build_node_properties_statement(
+        ...     node_property_map,
+        ...     extra_node_labels,
+        ... )
+        >>> set_clause
+        'i.node_prop_1 = item.Prop1,\\ni.node_prop_2 = $Prop2,\\n                i:Resource:CloudAsset'
+
+    Note:
+        The 'id' field is intentionally excluded from the SET clause as it's already
+        handled by the MERGE clause in the query pattern. The variable 'i' refers
+        to the Neo4j node being processed.
     """
-    ingest_fields_template = Template('i.$node_property = $property_ref')
+    ingest_fields_template = Template("i.$node_property = $property_ref")
 
-    set_clause = ',\n'.join([
-        ingest_fields_template.safe_substitute(node_property=node_property, property_ref=property_ref)
-        for node_property, property_ref in node_property_map.items()
-        if node_property != 'id'  # The `MERGE` clause will have already set `id`; let's not set it again.
-    ])
-
-    # Set extra labels on the node if specified
-    if extra_node_labels:
-        extra_labels = ':'.join([label for label in extra_node_labels.labels])
-        set_clause += f",\n                i:{extra_labels}"
-    return set_clause
-
-
-def _build_rel_properties_statement(rel_var: str, rel_property_map: Optional[Dict[str, PropertyRef]] = None) -> str:
-    """
-    Generate a Neo4j clause that sets relationship properties using the given mapping of attribute names to
-    PropertyRefs.
-
-    In this code example:
-
-        rel_property_map: Dict[str, PropertyRef] = {
-            'rel_prop_1': PropertyRef("Prop1"),
-            'rel_prop_2': PropertyRef("Prop2", static=True),
-        }
-        set_clause: str = _build_rel_properties_statement('r', rel_property_map)
-
-    the returned set_clause will be:
-
-        r.rel_prop_1 = item.Prop1,
-        r.rel_prop_2 = $Prop2
-
-    :param rel_var: The variable name to use for the relationship in the Neo4j query
-    :param rel_property_map: Mapping of relationship attribute names as str to PropertyRef objects
-    :return: The resulting Neo4j SET clause to set the given attributes on the relationship
-    """
-    set_clause = ''
-    ingest_fields_template = Template('$rel_var.$rel_property = $property_ref')
-
-    if rel_property_map:
-        set_clause += ',\n'.join([
+    set_clause = ",\n".join(
+        [
             ingest_fields_template.safe_substitute(
-                rel_var=rel_var,
-                rel_property=rel_property,
+                node_property=node_property,
                 property_ref=property_ref,
             )
-            for rel_property, property_ref in rel_property_map.items()
-        ])
+            for node_property, property_ref in node_property_map.items()
+            if node_property
+            != "id"  # The `MERGE` clause will have already set `id`; let's not set it again.
+        ],
+    )
+
+    # Set extra labels without conditions on the node.
+    if extra_node_labels:
+        labels_without_conditions = [
+            label.label for label in extra_node_labels.labels if not label.conditions
+        ]
+        if labels_without_conditions:
+            extra_labels = ":".join(labels_without_conditions)
+            set_clause += f",\n                i:{extra_labels}"
     return set_clause
 
 
-def _build_match_clause(matcher: Union[TargetNodeMatcher, SourceNodeMatcher]) -> str:
+def _build_conditional_labels_statement(
+    extra_node_labels: ExtraNodeLabels | None = None,
+) -> str:
+    r"""
+    Generate Neo4j clauses that apply conditional extra labels to the node of the current row.
+
+    Conditional labels are declared with ``ExtraNodeLabel.when(...)``. For each such label we emit a
+    pair of ``FOREACH`` clauses: one that adds the label when the conditions hold, and one that
+    removes it when they do not. ``FOREACH`` over a one-or-zero element list is the standard
+    pure-Cypher conditional-write idiom, so no APOC dependency is needed.
+
+    Applying the label row by row means a sync never has to scan a whole label to keep conditional
+    labels in sync: a node is either re-loaded (and corrected here) or no longer reported (and
+    deleted by cleanup).
+
+    Args:
+        extra_node_labels (ExtraNodeLabels | None): Extra labels declared on the node schema.
+            Defaults to None.
+
+    Returns:
+        str: Neo4j ``FOREACH`` clauses, or an empty string if there are no conditional labels.
+
+    Examples:
+        >>> extra_node_labels = ExtraNodeLabels([IMAGE.when(type="image")])
+        >>> print(_build_conditional_labels_statement(extra_node_labels))
+        FOREACH (_ IN CASE WHEN i.type = "image" THEN [1] ELSE [] END | SET i:Image)
+        FOREACH (_ IN CASE WHEN i.type = "image" THEN [] ELSE [1] END | REMOVE i:Image)
+
+    Note:
+        - The conditions name *node properties*, not source dict keys, so the predicate reads
+          ``i.<property>``. The preceding SET clause has already run for the current row, so the
+          value is up to date. This also keeps the semantics identical for schemas that share a
+          primary label but populate it from different source keys.
+        - Conditions within one label declaration are ANDed; several declarations of the same label
+          are ORed together.
+        - The negative clause inverts the branches of the same positive predicate rather than
+          negating it, so a node whose condition property is missing (``null`` predicate) still has
+          the stale label removed.
+        - A label declared both unconditionally and conditionally is left to the unconditional SET
+          clause; otherwise the negative clause would strip a label that was just applied.
+    """
+    if not extra_node_labels:
+        return ""
+
+    unconditional_labels = {
+        label.label for label in extra_node_labels.labels if not label.conditions
+    }
+
+    # Group condition sets by label name, preserving declaration order.
+    conditions_by_label: dict[str, list[tuple[tuple[str, str], ...]]] = {}
+    for label in extra_node_labels.labels:
+        if not label.conditions or label.label in unconditional_labels:
+            continue
+        conditions_by_label.setdefault(label.label, []).append(label.conditions)
+
+    if not conditions_by_label:
+        return ""
+
+    set_template = Template(
+        "FOREACH (_ IN CASE WHEN $predicate THEN [1] ELSE [] END | SET i:$label)",
+    )
+    remove_template = Template(
+        "FOREACH (_ IN CASE WHEN $predicate THEN [] ELSE [1] END | REMOVE i:$label)",
+    )
+
+    clauses = []
+    for label_name, condition_sets in conditions_by_label.items():
+        predicates = []
+        for conditions in condition_sets:
+            comparisons = [
+                f'i.{field_name} = "{_escape_cypher_string(str(field_value))}"'
+                for field_name, field_value in conditions
+            ]
+            predicates.append(" AND ".join(comparisons))
+
+        if len(predicates) == 1:
+            predicate = predicates[0]
+        else:
+            # Several declarations of the same label: the label applies if any of them matches.
+            predicate = " OR ".join(f"({p})" for p in predicates)
+
+        clauses.append(
+            set_template.safe_substitute(predicate=predicate, label=label_name),
+        )
+        clauses.append(
+            remove_template.safe_substitute(predicate=predicate, label=label_name),
+        )
+
+    # The first clause is indented by the ingestion query template; indent the rest to match.
+    return "\n            ".join(clauses)
+
+
+def _build_rel_properties_statement(
+    rel_var: str,
+    rel_property_map: dict[str, PropertyRef] | None = None,
+) -> str:
+    """
+    Generate a Neo4j clause that sets relationship properties using the given mapping of attribute names to PropertyRefs.
+
+    This function creates a SET clause for Neo4j relationships, mapping relationship
+    properties from the data item to the relationship variable.
+
+    Args:
+        rel_var (str): The variable name to use for the relationship in the Neo4j query.
+        rel_property_map (Optional[Dict[str, PropertyRef]], optional): Mapping of relationship
+            attribute names as str to PropertyRef objects. Defaults to None.
+
+    Returns:
+        str: The resulting Neo4j SET clause to set the given attributes on the relationship.
+            Returns empty string if rel_property_map is None or empty.
+
+    Examples:
+        >>> rel_property_map = {
+        ...     'rel_prop_1': PropertyRef("Prop1"),
+        ...     'rel_prop_2': PropertyRef("Prop2", set_in_kwargs=True),
+        ... }
+        >>> set_clause = _build_rel_properties_statement('r', rel_property_map)
+        >>> # Returns:
+        >>> # r.rel_prop_1 = item.Prop1,
+        >>> # r.rel_prop_2 = $Prop2
+
+        >>> # With empty property map
+        >>> set_clause = _build_rel_properties_statement('r', None)
+        >>> # Returns: ""
+
+    Note:
+        The rel_var parameter should match the relationship variable used in the
+        Neo4j MERGE or MATCH clause.
+    """
+    set_clause = ""
+    ingest_fields_template = Template("$rel_var.$rel_property = $property_ref")
+
+    if rel_property_map:
+        set_clause += ",\n".join(
+            [
+                ingest_fields_template.safe_substitute(
+                    rel_var=rel_var,
+                    rel_property=rel_property,
+                    property_ref=property_ref,
+                )
+                for rel_property, property_ref in rel_property_map.items()
+            ],
+        )
+    return set_clause
+
+
+def _build_match_clause(matcher: TargetNodeMatcher | SourceNodeMatcher) -> str:
     """
     Generate a Neo4j match statement on one or more keys and values for a given node.
-    :param matcher: A TargetNodeMatcher or SourceNodeMatcher object
-    :return: a Neo4j match clause
+
+    This function creates a property matching clause for Neo4j queries, typically used
+    within MATCH statements to identify nodes based on their properties.
+
+    Args:
+        matcher (TargetNodeMatcher | SourceNodeMatcher): A matcher object containing
+            the property keys and PropertyRef values to match against.
+
+    Returns:
+        str: A Neo4j match clause in the format "key1: value1, key2: value2, ...".
+
+    Examples:
+        >>> matcher = TargetNodeMatcher(
+        ...     id=PropertyRef('target_id'),
+        ...     name=PropertyRef('target_name')
+        ... )
+        >>> clause = _build_match_clause(matcher)
+        >>> # Returns: "id: item.target_id, name: item.target_name"
+
+        >>> # Used in a MATCH statement
+        >>> # MATCH (n:Node{id: item.target_id, name: item.target_name})
+
+    Note:
+        The returned clause is designed to be used within curly braces in Neo4j
+        MATCH statements for property-based node matching.
     """
     match = Template("$Key: $PropRef")
     matcher_asdict = asdict(matcher)
-    return ', '.join(match.safe_substitute(Key=key, PropRef=prop_ref) for key, prop_ref in matcher_asdict.items())
+    return ", ".join(
+        match.safe_substitute(Key=key, PropRef=prop_ref)
+        for key, prop_ref in matcher_asdict.items()
+    )
 
 
-def _build_where_clause_for_rel_match(node_var: str, matcher: TargetNodeMatcher) -> str:
+def _build_where_clause_for_rel_match(
+    node_var: str,
+    matcher: TargetNodeMatcher,
+) -> str:
     """
-    Same as _build_match_clause, but puts the matching logic in a WHERE clause.
-    This is intended specifically to use for joining with relationships where we need a case-insensitive match.
-    :param matcher: A TargetNodeMatcher object
-    :return: a Neo4j where clause
+    Generate a Neo4j WHERE clause for relationship matching with advanced matching options.
+
+    This function creates WHERE clauses for Neo4j queries, specifically designed for
+    relationship matching scenarios where case-insensitive, fuzzy, or one-to-many
+    matching is required.
+
+    Args:
+        node_var (str): The variable name to use for the node in the Neo4j query.
+        matcher (TargetNodeMatcher): A TargetNodeMatcher object containing properties
+            with matching configuration (ignore_case, fuzzy_and_ignore_case, one_to_many).
+
+    Returns:
+        str: A Neo4j WHERE clause with appropriate matching logic joined by AND operators.
+
+    Examples:
+        >>> matcher = TargetNodeMatcher(
+        ...     name=PropertyRef('name', ignore_case=True),
+        ...     tags=PropertyRef('tag_list', one_to_many=True)
+        ... )
+        >>> where_clause = _build_where_clause_for_rel_match('n', matcher)
+        >>> # Returns:
+        >>> # toLower(n.name) = toLower(item.name) AND
+        >>> # n.tags IN item.tag_list
+
+        >>> # With fuzzy matching
+        >>> matcher = TargetNodeMatcher(
+        ...     description=PropertyRef('desc', fuzzy_and_ignore_case=True)
+        ... )
+        >>> where_clause = _build_where_clause_for_rel_match('n', matcher)
+        >>> # Returns: toLower(n.description) CONTAINS toLower(item.desc)
+
+    Note:
+        This function is specifically intended for relationship joining where
+        case-insensitive or fuzzy matching is needed, unlike _build_match_clause
+        which only supports exact matching.
     """
     match = Template("$node_var.$key = $prop_ref")
     case_insensitive_match = Template("toLower($node_var.$key) = toLower($prop_ref)")
+    fuzzy_and_ignorecase_match = Template(
+        "toLower($node_var.$key) CONTAINS toLower($prop_ref)"
+    )
+    # This assumes that item.$prop_ref points to a list available on the data object
+    one_to_many_match = Template("$node_var.$key IN $prop_ref")
 
     matcher_asdict = asdict(matcher)
 
     result = []
     for key, prop_ref in matcher_asdict.items():
         if prop_ref.ignore_case:
-            prop_line = case_insensitive_match.safe_substitute(node_var=node_var, key=key, prop_ref=prop_ref)
+            prop_line = case_insensitive_match.safe_substitute(
+                node_var=node_var,
+                key=key,
+                prop_ref=prop_ref,
+            )
+        elif prop_ref.fuzzy_and_ignore_case:
+            prop_line = fuzzy_and_ignorecase_match.safe_substitute(
+                node_var=node_var, key=key, prop_ref=prop_ref
+            )
+        elif prop_ref.one_to_many:
+            # Allow a single node to be attached to multiple others at once using a list of IDs provided in kwargs
+            prop_line = one_to_many_match.safe_substitute(
+                node_var=node_var, key=key, prop_ref=prop_ref
+            )
         else:
-            prop_line = match.safe_substitute(node_var=node_var, key=key, prop_ref=prop_ref)
+            # Exact match (default; most efficient)
+            prop_line = match.safe_substitute(
+                node_var=node_var,
+                key=key,
+                prop_ref=prop_ref,
+            )
         result.append(prop_line)
-    return ' AND\n'.join(result)
+    return " AND\n".join(result)
 
 
-def _asdict_with_validate_relprops(link: CartographyRelSchema) -> Dict[str, PropertyRef]:
+def _asdict_with_validate_relprops(
+    link: CartographyRelSchema,
+) -> dict[str, PropertyRef]:
     """
-    Give a helpful error message when forgetting to put `()` when instantiating a CartographyRelSchema, as this
-    isn't always caught by IDEs.
+    Convert CartographyRelSchema properties to dict with validation and helpful error messages.
+
+    This function converts a CartographyRelSchema's properties to a dictionary while
+    providing helpful error messages when common instantiation mistakes are made,
+    such as forgetting to add parentheses when instantiating dataclass properties.
+
+    Args:
+        link (CartographyRelSchema): The CartographyRelSchema object to convert to a dict.
+
+    Returns:
+        Dict[str, PropertyRef]: A dictionary of relationship properties as str keys
+            mapped to PropertyRef values.
+
+    Raises:
+        TypeError: If the link's properties are not a dataclass instance, which indicates
+            that the user forgot to instantiate the properties dataclass with `()`.
+
+    Examples:
+        >>> # Correct usage
+        >>> class MyRelProps:
+        ...     prop1: PropertyRef = PropertyRef('prop1')
+        ...     prop2: PropertyRef = PropertyRef('prop2')
+        >>>
+        >>> rel_schema = CartographyRelSchema(
+        ...     target_node_label='Target',
+        ...     properties=MyRelProps(),  # Note the ()
+        ...     ...
+        ... )
+        >>> props_dict = _asdict_with_validate_relprops(rel_schema)
+        >>> # Returns: {'prop1': PropertyRef('prop1'), 'prop2': PropertyRef('prop2')}
+
+        >>> # Incorrect usage (missing parentheses)
+        >>> rel_schema = CartographyRelSchema(
+        ...     target_node_label='Target',
+        ...     properties=MyRelProps,  # Missing ()
+        ...     ...
+        ... )
+        >>> props_dict = _asdict_with_validate_relprops(rel_schema)
+        >>> # Raises TypeError with helpful message
+
+    Note:
+        This validation is particularly useful because IDEs don't always catch
+        the missing parentheses error when instantiating dataclass properties.
     """
     try:
-        rel_props_as_dict: Dict[str, PropertyRef] = asdict(link.properties)
+        rel_props_as_dict: dict[str, PropertyRef] = asdict(link.properties)
     except TypeError as e:
-        if e.args and e.args[0] and e.args == 'asdict() should be called on dataclass instances':
+        if (
+            e.args
+            and e.args[0]
+            and e.args == "asdict() should be called on dataclass instances"
+        ):
             logger.error(
-                f'TypeError thrown when trying to draw relation "{link.rel_label}" to a "{link.target_node_label}" '
-                f'node. Please make sure that you did not forget to write `()` when specifying `properties` in the'
-                f'dataclass. '
-                f'For example, do `properties: RelProp = RelProp()`; NOT `properties: RelProp = RelProp`.',
+                'TypeError thrown when trying to draw relation "%s" to a "%s" '
+                "node. Please make sure that you did not forget to write `()` when specifying `properties` in the"
+                "dataclass. "
+                "For example, do `properties: RelProp = RelProp()`; NOT `properties: RelProp = RelProp`.",
+                link.rel_label,
+                link.target_node_label,
             )
         raise
     return rel_props_as_dict
 
 
-def _build_attach_sub_resource_statement(sub_resource_link: Optional[CartographyRelSchema] = None) -> str:
+def _build_attach_sub_resource_statement(
+    sub_resource_link: CartographyRelSchema | None = None,
+) -> str:
     """
-    Generates a Neo4j statement to attach a sub resource to a node. A 'sub resource' is a term we made up to describe
-    billing units of a given resource. For example,
-    - In AWS, the sub resource is an AWSAccount.
-    - In Azure, the sub resource is a Subscription.
-    - In GCP, the sub resource is a GCPProject.
-    - etc.
-    This is a private function not meant to be called outside of build_ingest_query().
-    :param sub_resource_link: Optional: The CartographyRelSchema object connecting previous node(s) to the sub resource.
-    :return: a Neo4j clause that connects previous node(s) to a sub resource, taking into account the labels, attribute
-    keys, and directionality. If sub_resource_link is None, return an empty string.
+    Generate a Neo4j statement to attach a sub resource to a node.
+
+    A 'sub resource' is a cartography term for billing units of a given resource.
+    This function creates the Neo4j clause to connect nodes to their sub resources,
+    handling the relationship direction and properties appropriately.
+
+    Args:
+        sub_resource_link (Optional[CartographyRelSchema], optional): The CartographyRelSchema
+            object connecting previous node(s) to the sub resource. Defaults to None.
+
+    Returns:
+        str: A Neo4j clause that connects previous node(s) to a sub resource, taking into
+            account the labels, attribute keys, and directionality. Returns empty string
+            if sub_resource_link is None.
+
+    Examples:
+        Sub resource examples by cloud provider:
+        - AWS: AWSAccount
+        - Azure: Subscription
+        - GCP: GCPProject
+
+        >>> # AWS example
+        >>> sub_resource_link = CartographyRelSchema(
+        ...     target_node_label='AWSAccount',
+        ...     target_node_matcher=TargetNodeMatcher(id=PropertyRef('account_id')),
+        ...     direction=LinkDirection.INWARD,
+        ...     rel_label='RESOURCE',
+        ...     properties=SubResourceRel()
+        ... )
+        >>> statement = _build_attach_sub_resource_statement(sub_resource_link)
+        >>> # Returns Neo4j clause for connecting to AWS account
+
+        >>> # No sub resource
+        >>> statement = _build_attach_sub_resource_statement(None)
+        >>> # Returns: ""
+
+    Note:
+        This is a private function not meant to be called outside of build_ingest_query().
+        The generated statement includes proper firstseen timestamp handling and
+        relationship property setting.
     """
     if not sub_resource_link:
-        return ''
+        return ""
 
     sub_resource_attach_template = Template(
         """
@@ -175,6 +868,8 @@ def _build_attach_sub_resource_statement(sub_resource_link: Optional[Cartography
         $RelMergeClause
         ON CREATE SET r.firstseen = timestamp()
         SET
+            r._module_name = "$module_name",
+            r._module_version = "$module_version",
             $set_rel_properties_statement
         """,
     )
@@ -184,34 +879,81 @@ def _build_attach_sub_resource_statement(sub_resource_link: Optional[Cartography
     else:
         rel_merge_template = Template("""MERGE (i)-[r:$SubResourceRelLabel]->(j)""")
 
-    rel_merge_clause = rel_merge_template.safe_substitute(SubResourceRelLabel=sub_resource_link.rel_label)
+    rel_merge_clause = rel_merge_template.safe_substitute(
+        SubResourceRelLabel=sub_resource_link.rel_label,
+    )
 
-    rel_props_as_dict: Dict[str, PropertyRef] = _asdict_with_validate_relprops(sub_resource_link)
+    rel_props_as_dict: dict[str, PropertyRef] = _asdict_with_validate_relprops(
+        sub_resource_link,
+    )
 
     attach_sub_resource_statement = sub_resource_attach_template.safe_substitute(
         SubResourceLabel=sub_resource_link.target_node_label,
         MatchClause=_build_match_clause(sub_resource_link.target_node_matcher),
         RelMergeClause=rel_merge_clause,
+        module_name=_get_module_from_schema(sub_resource_link),
+        module_version=get_cartography_version(),
         SubResourceRelLabel=sub_resource_link.rel_label,
-        set_rel_properties_statement=_build_rel_properties_statement('r', rel_props_as_dict),
+        set_rel_properties_statement=_build_rel_properties_statement(
+            "r",
+            rel_props_as_dict,
+        ),
     )
     return attach_sub_resource_statement
 
 
 def _build_attach_additional_links_statement(
-        additional_relationships: Optional[OtherRelationships] = None,
+    additional_relationships: OtherRelationships | None = None,
 ) -> str:
     """
-    Generates a Neo4j statement to attach one or more CartographyRelSchemas to node(s) previously mentioned in the
-    query.
-    This is a private function not meant to be called outside of build_ingestion_query().
-    :param additional_relationships: Optional list of CartographyRelSchema describing what other relationships should
-    be created from the previous node(s) in this query.
-    :return: A Neo4j clause that connects previous node(s) to the given additional_links., taking into account the
-    labels, attribute keys, and directionality. If additional_relationships is None, return an empty string.
+    Generate a Neo4j statement to attach multiple additional relationships to nodes.
+
+    This function creates Neo4j clauses to connect nodes with additional relationships
+    beyond the sub resource relationship. It handles multiple relationship types,
+    directions, and properties in a single statement.
+
+    Args:
+        additional_relationships (Optional[OtherRelationships], optional): List of
+            CartographyRelSchema objects describing additional relationships to create
+            from the previous node(s) in the query. Defaults to None.
+
+    Returns:
+        str: A Neo4j clause that connects previous node(s) to the additional relationships,
+            taking into account labels, attribute keys, and directionality. Returns empty
+            string if additional_relationships is None.
+
+    Examples:
+        >>> # Multiple additional relationships
+        >>> additional_rels = OtherRelationships([
+        ...     CartographyRelSchema(
+        ...         target_node_label='Role',
+        ...         target_node_matcher=TargetNodeMatcher(name=PropertyRef('role_name')),
+        ...         direction=LinkDirection.OUTWARD,
+        ...         rel_label='HAS_ROLE',
+        ...         properties=RoleRel()
+        ...     ),
+        ...     CartographyRelSchema(
+        ...         target_node_label='Group',
+        ...         target_node_matcher=TargetNodeMatcher(id=PropertyRef('group_id')),
+        ...         direction=LinkDirection.INWARD,
+        ...         rel_label='MEMBER_OF',
+        ...         properties=GroupRel()
+        ...     )
+        ... ])
+        >>> statement = _build_attach_additional_links_statement(additional_rels)
+        >>> # Returns Neo4j UNION clause connecting to both Role and Group nodes
+
+        >>> # No additional relationships
+        >>> statement = _build_attach_additional_links_statement(None)
+        >>> # Returns: ""
+
+    Note:
+        This is a private function not meant to be called outside of build_ingestion_query().
+        The generated statement uses UNION to combine multiple relationship attachments
+        and includes proper firstseen timestamp handling.
     """
     if not additional_relationships:
-        return ''
+        return ""
 
     additional_links_template = Template(
         """
@@ -222,6 +964,8 @@ def _build_attach_additional_links_statement(
         $RelMerge
         ON CREATE SET $rel_var.firstseen = timestamp()
         SET
+            $rel_var._module_name = "$module_name",
+            $rel_var._module_version = "$module_version",
             $set_rel_properties_statement
         """,
     )
@@ -231,9 +975,13 @@ def _build_attach_additional_links_statement(
         rel_var = f"r{num}"
 
         if link.direction == LinkDirection.INWARD:
-            rel_merge_template = Template("""MERGE (i)<-[$rel_var:$AddlRelLabel]-($node_var)""")
+            rel_merge_template = Template(
+                """MERGE (i)<-[$rel_var:$AddlRelLabel]-($node_var)""",
+            )
         else:
-            rel_merge_template = Template("""MERGE (i)-[$rel_var:$AddlRelLabel]->($node_var)""")
+            rel_merge_template = Template(
+                """MERGE (i)-[$rel_var:$AddlRelLabel]->($node_var)""",
+            )
 
         rel_merge = rel_merge_template.safe_substitute(
             rel_var=rel_var,
@@ -245,40 +993,92 @@ def _build_attach_additional_links_statement(
 
         additional_ref = additional_links_template.safe_substitute(
             AddlLabel=link.target_node_label,
-            WhereClause=_build_where_clause_for_rel_match(node_var, link.target_node_matcher),
+            WhereClause=_build_where_clause_for_rel_match(
+                node_var,
+                link.target_node_matcher,
+            ),
             node_var=node_var,
             rel_var=rel_var,
             RelMerge=rel_merge,
-            set_rel_properties_statement=_build_rel_properties_statement(rel_var, rel_props_as_dict),
+            module_name=_get_module_from_schema(link),
+            module_version=get_cartography_version(),
+            set_rel_properties_statement=_build_rel_properties_statement(
+                rel_var,
+                rel_props_as_dict,
+            ),
         )
         links.append(additional_ref)
 
-    return 'UNION'.join(links)
+    return "UNION".join(links)
 
 
 def _build_attach_relationships_statement(
-        sub_resource_relationship: Optional[CartographyRelSchema],
-        other_relationships: Optional[OtherRelationships],
+    sub_resource_relationship: CartographyRelSchema | None,
+    other_relationships: OtherRelationships | None,
 ) -> str:
     """
-    Use Neo4j subqueries to attach sub resource and/or other relationships.
-    Subqueries allow the query to continue to run even if we only have data for some but not all the relationships
-    defined by a schema.
-    For example, if an EC2Instance has attachments to NetworkInterfaces and AWSAccounts, but our data only includes
-    EC2Instance to AWSAccount information, structuring the ingestion query with subqueries allows us to build a query
-    that will ignore the null relationships and continue to MERGE the ones that exist.
+    Generate Neo4j subqueries to attach sub resource and/or other relationships.
+
+    This function uses Neo4j subqueries to attach relationships, allowing the query
+    to continue running even if only partial relationship data is available. This
+    approach enables graceful handling of missing relationship data.
+
+    Args:
+        sub_resource_relationship (Optional[CartographyRelSchema]): CartographyRelSchema
+            that describes the sub resource relationship to attach.
+        other_relationships (Optional[OtherRelationships]): OtherRelationships object
+            that describes the additional relationships to attach.
+
+    Returns:
+        str: A Neo4j clause that attaches the sub resource and/or other relationships
+            to the previous node(s) in the query. Returns empty string if both
+            parameters are None.
+
+    Examples:
+        >>> # With both sub resource and other relationships
+        >>> sub_resource_rel = CartographyRelSchema(...)
+        >>> other_rels = OtherRelationships([...])
+        >>> statement = _build_attach_relationships_statement(sub_resource_rel, other_rels)
+        >>> # Returns:
+        >>> # WITH i, item
+        >>> # CALL {
+        >>> #     [sub resource attachment] UNION [other relationships attachment]
+        >>> # }
+
+        >>> # With only sub resource
+        >>> statement = _build_attach_relationships_statement(sub_resource_rel, None)
+        >>> # Returns subquery with only sub resource attachment
+
+        >>> # No relationships
+        >>> statement = _build_attach_relationships_statement(None, None)
+        >>> # Returns: ""
+
+    Note:
+        Subqueries allow the ingestion query to continue even if we only have data
+        for some relationships. For example, if an AWSEC2Instance has attachments to
+        NetworkInterfaces and AWSAccounts, but data only includes AWSEC2Instance to
+        AWSAccount information, the query will ignore null relationships and continue
+        to MERGE the existing ones.
     """
     if not sub_resource_relationship and not other_relationships:
         return ""
 
-    attach_sub_resource_statement = _build_attach_sub_resource_statement(sub_resource_relationship)
-    attach_additional_links_statement = _build_attach_additional_links_statement(other_relationships)
+    attach_sub_resource_statement = _build_attach_sub_resource_statement(
+        sub_resource_relationship,
+    )
+    attach_additional_links_statement = _build_attach_additional_links_statement(
+        other_relationships,
+    )
 
     statements = []
-    statements += [attach_sub_resource_statement] if attach_sub_resource_statement else []
-    statements += [attach_additional_links_statement] if attach_additional_links_statement else []
+    statements += (
+        [attach_sub_resource_statement] if attach_sub_resource_statement else []
+    )
+    statements += (
+        [attach_additional_links_statement] if attach_additional_links_statement else []
+    )
 
-    attach_relationships_statement = 'UNION'.join(stmt for stmt in statements)
+    attach_relationships_statement = "UNION".join(stmt for stmt in statements)
 
     query_template = Template(
         """
@@ -288,15 +1088,45 @@ def _build_attach_relationships_statement(
         }
         """,
     )
-    return query_template.safe_substitute(attach_relationships_statement=attach_relationships_statement)
+    return query_template.safe_substitute(
+        attach_relationships_statement=attach_relationships_statement,
+    )
 
 
 def rel_present_on_node_schema(
-        node_schema: CartographyNodeSchema,
-        rel_schema: CartographyRelSchema,
+    node_schema: CartographyNodeSchema,
+    rel_schema: CartographyRelSchema,
 ) -> bool:
     """
-    Answers the question: is the given rel_schema is present on the given node_schema?
+    Check if a relationship schema is present on a node schema.
+
+    This function determines whether a given relationship schema is defined
+    on the provided node schema, checking both sub resource relationships
+    and other relationships.
+
+    Args:
+        node_schema (CartographyNodeSchema): The node schema to check for the relationship.
+        rel_schema (CartographyRelSchema): The relationship schema to look for.
+
+    Returns:
+        bool: True if the relationship schema is present on the node schema, False otherwise.
+
+    Examples:
+        >>> node_schema = CartographyNodeSchema(
+        ...     label='AWSUser',
+        ...     sub_resource_relationship=account_rel,
+        ...     other_relationships=OtherRelationships([role_rel, group_rel])
+        ... )
+        >>> rel_present_on_node_schema(node_schema, account_rel)
+        True
+        >>> rel_present_on_node_schema(node_schema, role_rel)
+        True
+        >>> rel_present_on_node_schema(node_schema, unknown_rel)
+        False
+
+    Note:
+        This function is commonly used for validation in cleanup operations and
+        query building to ensure that only valid relationships are processed.
     """
     sub_res_rel, other_rels = filter_selected_relationships(node_schema, {rel_schema})
     if sub_res_rel or other_rels:
@@ -305,17 +1135,55 @@ def rel_present_on_node_schema(
 
 
 def filter_selected_relationships(
-        node_schema: CartographyNodeSchema,
-        selected_relationships: Set[CartographyRelSchema],
-) -> Tuple[Optional[CartographyRelSchema], Optional[OtherRelationships]]:
+    node_schema: CartographyNodeSchema,
+    selected_relationships: set[CartographyRelSchema],
+) -> tuple[CartographyRelSchema | None, OtherRelationships | None]:
     """
-    Ensures that selected relationships specified to build_ingestion_query() are actually present on
-    node_schema.sub_resource_relationship and node_schema.other_relationships.
-    :param node_schema: The node schema object to filter relationships against
-    :param selected_relationships: The set of relationships to check if they exist in the node schema. If empty set,
-    this means that no relationships have been selected. None is not an accepted value here.
-    :return: a tuple of the shape (sub resource rel [if present in selected_relationships], an OtherRelationships object
-    containing all values of node_schema.other_relationships that are present in selected_relationships)
+    Filter and validate selected relationships against a node schema.
+
+    This function ensures that selected relationships specified to build_ingestion_query()
+    are actually present on the node schema. It validates the relationships exist and
+    separates them into sub resource and other relationship categories.
+
+    Args:
+        node_schema (CartographyNodeSchema): The node schema object to filter relationships against.
+        selected_relationships (Set[CartographyRelSchema]): The set of relationships to check
+            if they exist in the node schema. If empty set, this means no relationships have
+            been selected. None is not an accepted value.
+
+    Returns:
+        Tuple[Optional[CartographyRelSchema], Optional[OtherRelationships]]: A tuple containing:
+            - Sub resource relationship (if present in selected_relationships)
+            - OtherRelationships object containing all other relationships from
+              selected_relationships that are present in the node schema
+
+    Raises:
+        ValueError: If any selected relationship is not defined on the node schema.
+
+    Examples:
+        >>> node_schema = CartographyNodeSchema(
+        ...     label='AWSEC2Instance',
+        ...     sub_resource_relationship=account_rel,
+        ...     other_relationships=OtherRelationships([vpc_rel, subnet_rel])
+        ... )
+        >>>
+        >>> # Select subset of relationships
+        >>> selected = {account_rel, vpc_rel}
+        >>> sub_rel, other_rels = filter_selected_relationships(node_schema, selected)
+        >>> # Returns: (account_rel, OtherRelationships([vpc_rel]))
+
+        >>> # Empty set means no relationships selected
+        >>> sub_rel, other_rels = filter_selected_relationships(node_schema, set())
+        >>> # Returns: (None, None)
+
+        >>> # Invalid relationship raises error
+        >>> invalid_selected = {unknown_rel}
+        >>> filter_selected_relationships(node_schema, invalid_selected)
+        >>> # Raises: ValueError
+
+    Note:
+        This function is used internally by build_ingestion_query() to validate
+        and filter the selected_relationships parameter.
     """
     # The empty set means no relationships are selected
     if selected_relationships == set():
@@ -341,33 +1209,59 @@ def filter_selected_relationships(
         sub_resource_rel = None
 
     # By this point, everything in selected_relationships is validated to be present in node_schema
-    filtered_other_rels = OtherRelationships([rel for rel in selected_relationships if rel != sub_resource_rel])
+    filtered_other_rels = OtherRelationships(
+        [rel for rel in selected_relationships if rel != sub_resource_rel],
+    )
 
     return sub_resource_rel, filtered_other_rels
 
 
 def build_ingestion_query(
-        node_schema: CartographyNodeSchema,
-        selected_relationships: Optional[Set[CartographyRelSchema]] = None,
+    node_schema: CartographyNodeSchema,
+    selected_relationships: set[CartographyRelSchema] | None = None,
 ) -> str:
     """
-    Generates a Neo4j query from the given CartographyNodeSchema to ingest the specified nodes and relationships so that
-    cartography module authors don't need to handwrite their own queries.
-    :param node_schema: The CartographyNodeSchema object to build a Neo4j query from.
-    :param selected_relationships: If specified, generates a query that attaches only the relationships in this optional
-    set of CartographyRelSchema. The RelSchema specified here _must_ be present in node_schema.sub_resource_relationship
-    or node_schema.other_relationships.
-    If selected_relationships is None (default), then we create a query using all RelSchema specified in
-    node_schema.sub_resource_relationship + node_schema.other_relationships.
-    If selected_relationships is the empty set, we create a query with no relationship attachments at all.
-    :return: An optimized Neo4j query that can be used to ingest nodes and relationships.
-    Important notes:
-    - The resulting query uses the UNWIND + MERGE pattern (see
-      https://neo4j.com/docs/cypher-manual/current/clauses/unwind/#unwind-creating-nodes-from-a-list-parameter) to batch
-      load the data for speed.
-    - The query assumes that a list of dicts will be passed to it through parameter $DictList.
-    - The query sets `firstseen` attributes on all the nodes and relationships that it creates.
-    - The query is intended to be supplied as input to cartography.core.client.tx.load_graph_data().
+    Generate a Neo4j query from a CartographyNodeSchema to ingest nodes and relationships.
+
+    This function creates an optimized Neo4j query that cartography module authors can use
+    instead of handwriting their own queries. It handles node creation, property setting,
+    and relationship attachment in a single optimized query.
+
+    Args:
+        node_schema (CartographyNodeSchema): The CartographyNodeSchema object to build a Neo4j query from.
+        selected_relationships (Optional[Set[CartographyRelSchema]], optional): If specified, generates
+            a query that attaches only the relationships in this set. The RelSchema specified must be
+            present in node_schema.sub_resource_relationship or node_schema.other_relationships.
+            Defaults to None (uses all relationships). If empty set, creates query with no relationships.
+
+    Returns:
+        str: An optimized Neo4j query that can be used to ingest nodes and relationships.
+
+    Examples:
+        >>> # Basic node schema with relationships
+        >>> node_schema = CartographyNodeSchema(
+        ...     label='AWSEC2Instance',
+        ...     properties=EC2InstanceProperties(),
+        ...     sub_resource_relationship=account_rel,
+        ...     other_relationships=OtherRelationships([vpc_rel, subnet_rel])
+        ... )
+        >>> query = build_ingestion_query(node_schema)
+        >>> # Returns complete ingestion query with all relationships
+
+        >>> # Query with selected relationships only
+        >>> selected_rels = {account_rel, vpc_rel}
+        >>> query = build_ingestion_query(node_schema, selected_rels)
+        >>> # Returns query with only account and VPC relationships
+
+        >>> # Query with no relationships
+        >>> query = build_ingestion_query(node_schema, set())
+        >>> # Returns query that only creates nodes, no relationships
+
+    Note:
+        - The resulting query uses the UNWIND + MERGE pattern for batch loading data efficiently
+        - The query assumes a list of dicts will be passed via parameter $DictList
+        - The query sets `firstseen` attributes on all created nodes and relationships
+        - The query is intended for use with cartography.core.client.tx.load_graph_data()
     """
     query_template = Template(
         """
@@ -375,59 +1269,124 @@ def build_ingestion_query(
             MERGE (i:$node_label{id: $dict_id_field})
             ON CREATE SET i.firstseen = timestamp()
             SET
+                i._module_name = "$module_name",
+                i._module_version = "$module_version",
                 $set_node_properties_statement
+                $set_ontology_node_properties_statement
+            $conditional_labels_statement
             $attach_relationships_statement
         """,
     )
 
     node_props: CartographyNodeProperties = node_schema.properties
-    node_props_as_dict: Dict[str, PropertyRef] = asdict(node_props)
+    node_props_as_dict: dict[str, PropertyRef] = asdict(node_props)
 
     # Handle selected relationships
-    sub_resource_rel: Optional[CartographyRelSchema] = node_schema.sub_resource_relationship
-    other_rels: Optional[OtherRelationships] = node_schema.other_relationships
+    sub_resource_rel: CartographyRelSchema | None = (
+        node_schema.sub_resource_relationship
+    )
+    other_rels: OtherRelationships | None = node_schema.other_relationships
     if selected_relationships or selected_relationships == set():
-        sub_resource_rel, other_rels = filter_selected_relationships(node_schema, selected_relationships)
+        sub_resource_rel, other_rels = filter_selected_relationships(
+            node_schema,
+            selected_relationships,
+        )
 
     ingest_query = query_template.safe_substitute(
         node_label=node_schema.label,
         dict_id_field=node_props.id,
+        module_name=_get_module_from_schema(node_schema),
+        module_version=get_cartography_version(),
         set_node_properties_statement=_build_node_properties_statement(
             node_props_as_dict,
             node_schema.extra_node_labels,
         ),
-        attach_relationships_statement=_build_attach_relationships_statement(sub_resource_rel, other_rels),
+        set_ontology_node_properties_statement=_build_ontology_node_properties_statement(
+            node_schema,
+            node_props_as_dict,
+        ),
+        conditional_labels_statement=_build_conditional_labels_statement(
+            node_schema.extra_node_labels,
+        ),
+        attach_relationships_statement=_build_attach_relationships_statement(
+            sub_resource_rel,
+            other_rels,
+        ),
     )
     return ingest_query
 
 
-def build_create_index_queries(node_schema: CartographyNodeSchema) -> List[str]:
+def build_create_index_queries(node_schema: CartographyNodeSchema) -> list[str]:
     """
     Generate queries to create indexes for the given CartographyNodeSchema and all node types attached to it via its
     relationships.
-    :param node_schema: The Cartography node_schema object
-    :return: A list of queries of the form `CREATE INDEX IF NOT EXISTS FOR (n:$TargetNodeLabel) ON (n.$TargetAttribute)`
+
+    This function creates Neo4j CREATE INDEX queries for optimal query performance.
+    It handles indexes for the main node schema, its relationships, and any extra
+    labels or properties that require indexing.
+
+    Args:
+        node_schema (CartographyNodeSchema): The Cartography node schema object to create indexes for.
+
+    Returns:
+        List[str]: A list of CREATE INDEX queries of the form
+                   `CREATE INDEX IF NOT EXISTS FOR (n:$TargetNodeLabel) ON (n.$TargetAttribute)`
+
+    Examples:
+        >>> node_schema = CartographyNodeSchema(
+        ...     label='AWSUser',
+        ...     properties=Properties(
+        ...         id=PropertyRef('id'),
+        ...         arn=PropertyRef('arn', extra_index=True),
+        ...         name=PropertyRef('name')
+        ...     ),
+        ...     sub_resource_relationship=account_rel,
+        ...     other_relationships=OtherRelationships([role_rel])
+        ... )
+        >>> queries = build_create_index_queries(node_schema)
+        >>> # Returns indexes for:
+        >>> # - AWSUser.id and AWSUser.lastupdated (standard indexes)
+        >>> # - AWSUser.arn (extra index due to extra_index=True)
+        >>> # - Target node properties from relationships
+        >>> # - Extra node labels if present
+
+    Note:
+        This function automatically creates indexes for 'id' and 'lastupdated' fields
+        on all node types, plus any properties marked with extra_index=True.
+        It also indexes target node properties from all relationships.
     """
-    index_template = Template('CREATE INDEX IF NOT EXISTS FOR (n:$TargetNodeLabel) ON (n.$TargetAttribute);')
+    index_template = Template(
+        "CREATE INDEX IF NOT EXISTS FOR (n:$TargetNodeLabel) ON (n.$TargetAttribute);",
+    )
 
     # First ensure an index exists for the node_schema and all extra labels on the `id` and `lastupdated` fields
     result = [
         index_template.safe_substitute(
             TargetNodeLabel=node_schema.label,
-            TargetAttribute='id',
+            TargetAttribute="id",
         ),
         index_template.safe_substitute(
             TargetNodeLabel=node_schema.label,
-            TargetAttribute='lastupdated',
+            TargetAttribute="lastupdated",
         ),
     ]
     if node_schema.extra_node_labels:
-        result.extend([
-            index_template.safe_substitute(
-                TargetNodeLabel=label,
-                TargetAttribute='id',  # Precondition: 'id' is defined on all cartography node_schema objects.
-            ) for label in node_schema.extra_node_labels.labels
-        ])
+        for label in node_schema.extra_node_labels.labels:
+            result.append(
+                index_template.safe_substitute(
+                    TargetNodeLabel=label.label,
+                    TargetAttribute="id",  # Precondition: 'id' is defined on all cartography node_schema objects.
+                ),
+            )
+            result.append(
+                index_template.safe_substitute(
+                    TargetNodeLabel=label.label,
+                    TargetAttribute="lastupdated",
+                ),
+            )
+            # No index is created for a label's condition fields: the conditions are evaluated
+            # against the already-bound node of the current row in the ingestion query, so there is
+            # no lookup for an index to serve.
 
     # Next, for all relationships possible out of this node, ensure that indexes exist for all target nodes' properties
     # as specified in their TargetNodeMatchers.
@@ -439,42 +1398,112 @@ def build_create_index_queries(node_schema: CartographyNodeSchema) -> List[str]:
     for rs in rel_schemas:
         for target_key in asdict(rs.target_node_matcher).keys():
             result.append(
-                index_template.safe_substitute(TargetNodeLabel=rs.target_node_label, TargetAttribute=target_key),
+                index_template.safe_substitute(
+                    TargetNodeLabel=rs.target_node_label,
+                    TargetAttribute=target_key,
+                ),
             )
 
     # Now, include extra indexes defined by the module author on the node schema's property refs.
-    node_props_as_dict: Dict[str, PropertyRef] = asdict(node_schema.properties)
-    result.extend([
-        index_template.safe_substitute(
-            TargetNodeLabel=node_schema.label,
-            TargetAttribute=prop_name,
-        ) for prop_name, prop_ref in node_props_as_dict.items() if prop_ref.extra_index
-    ])
+    node_props_as_dict: dict[str, PropertyRef] = asdict(node_schema.properties)
+    result.extend(
+        [
+            index_template.safe_substitute(
+                TargetNodeLabel=node_schema.label,
+                TargetAttribute=prop_name,
+            )
+            for prop_name, prop_ref in node_props_as_dict.items()
+            if prop_ref.extra_index
+        ],
+    )
+
+    # Create indexes on _ont_ fields for semantic labels (extra node labels).
+    # When a node has a semantic label mapping, index all _ont_ fields on the extra label
+    # so that cross-provider queries on the semantic label are fast.
+    ontology_mapping = get_semantic_label_mapping_from_node_schema(node_schema)
+    if ontology_mapping and node_schema.extra_node_labels:
+        for label in node_schema.extra_node_labels.labels:
+            result.append(
+                index_template.safe_substitute(
+                    TargetNodeLabel=label.label,
+                    TargetAttribute="_ont_source",
+                ),
+            )
+            for mapping_field in ontology_mapping.fields:
+                if not mapping_field.indexed:
+                    continue
+                result.append(
+                    index_template.safe_substitute(
+                        TargetNodeLabel=label.label,
+                        TargetAttribute=f"_ont_{mapping_field.ontology_field}",
+                    ),
+                )
+
     return result
 
 
-def build_create_index_queries_for_matchlink(rel_schema: CartographyRelSchema) -> List[str]:
+def build_create_index_queries_for_matchlink(
+    rel_schema: CartographyRelSchema,
+) -> list[str]:
     """
-    Generate CREATE INDEX queries for a matchlink rel schema: one per source-node match
-    key, one per target-node match key, and a composite relationship index on the
-    (_sub_resource_label, _sub_resource_id) props used by matchlink cleanup.
-    Only used for load_matchlinks(), where we match on and connect existing nodes.
-    Returns an empty list (with a warning) if the schema has no source matcher/label.
+    Generate queries to create indexes for the given CartographyRelSchema and all node types attached to it.
+
+    This function creates Neo4j CREATE INDEX queries specifically for matchlink operations,
+    which are used to connect existing nodes in the graph. It creates indexes for both
+    source and target node properties, plus composite relationship indexes.
+
+    Args:
+        rel_schema (CartographyRelSchema): The CartographyRelSchema object to create indexes for.
+
+    Returns:
+        List[str]: A list of CREATE INDEX queries for source nodes, target nodes, and relationships.
+                   Returns empty list if source_node_matcher is not defined.
+
+    Examples:
+        >>> rel_schema = CartographyRelSchema(
+        ...     source_node_label='User',
+        ...     source_node_matcher=SourceNodeMatcher(id=PropertyRef('user_id')),
+        ...     target_node_label='Role',
+        ...     target_node_matcher=TargetNodeMatcher(name=PropertyRef('role_name')),
+        ...     rel_label='HAS_ROLE',
+        ...     direction=LinkDirection.OUTWARD
+        ... )
+        >>> queries = build_create_index_queries_for_matchlink(rel_schema)
+        >>> # Returns:
+        >>> # - CREATE INDEX FOR (n:User) ON (n.id)
+        >>> # - CREATE INDEX FOR (n:Role) ON (n.name)
+        >>> # - CREATE INDEX FOR ()-[r:HAS_ROLE]->() ON (r._sub_resource_label, r._sub_resource_id)
+
+        >>> # Missing source node matcher
+        >>> incomplete_rel = CartographyRelSchema(target_node_label='Role', ...)
+        >>> queries = build_create_index_queries_for_matchlink(incomplete_rel)
+        >>> # Returns: [] (empty list with warning logged)
+
+    Note:
+        This function is only used for load_matchlinks() where we match and connect
+        existing nodes in the graph. It requires source_node_matcher to be defined
+        and creates composite indexes for relationship performance.
     """
     if not rel_schema.source_node_matcher or not rel_schema.source_node_label:
         logger.warning(
-            "No source node matcher or source node label found for %s; returning no index queries. "
-            "build_create_index_queries_for_matchlink() is only used for load_matchlinks().",
+            "No source node matcher or source node label found for %s; returning empty list. "
+            "Please note that build_create_index_queries_for_matchlink() is only used for load_matchlinks() where we match on "
+            "and connect existing nodes in the graph.",
             rel_schema.rel_label,
         )
         return []
 
-    index_template = Template('CREATE INDEX IF NOT EXISTS FOR (n:$NodeLabel) ON (n.$NodeAttribute);')
+    index_template = Template(
+        "CREATE INDEX IF NOT EXISTS FOR (n:$NodeLabel) ON (n.$NodeAttribute);",
+    )
 
-    result: List[str] = []
+    result = []
 
     def append_index_query(node_label: str, node_attribute: str) -> None:
-        query = index_template.safe_substitute(NodeLabel=node_label, NodeAttribute=node_attribute)
+        query = index_template.safe_substitute(
+            NodeLabel=node_label,
+            NodeAttribute=node_attribute,
+        )
         if query not in result:
             result.append(query)
 
@@ -482,68 +1511,446 @@ def build_create_index_queries_for_matchlink(rel_schema: CartographyRelSchema) -
         append_index_query(rel_schema.source_node_label, source_key)
     for target_key in asdict(rel_schema.target_node_matcher).keys():
         append_index_query(rel_schema.target_node_label, target_key)
+    if rel_schema.source_node_sub_resource:
+        for source_sub_resource_key in asdict(
+            rel_schema.source_node_sub_resource.target_node_matcher
+        ).keys():
+            append_index_query(
+                rel_schema.source_node_sub_resource.target_node_label,
+                source_sub_resource_key,
+            )
+    if rel_schema.target_node_sub_resource:
+        for target_sub_resource_key in asdict(
+            rel_schema.target_node_sub_resource.target_node_matcher
+        ).keys():
+            append_index_query(
+                rel_schema.target_node_sub_resource.target_node_label,
+                target_sub_resource_key,
+            )
 
-    result.append(
-        f'CREATE INDEX IF NOT EXISTS FOR ()-[r:{rel_schema.rel_label}]-() '
-        'ON (r._sub_resource_label, r._sub_resource_id);',
+    # Create a composite relationship index on the two stable keys of the cleanup predicate.
+    # `lastupdated` is deliberately excluded: it is rewritten on every sync, so including it in
+    # the composite key made Neo4j delete and reinsert every index entry on every run (37.2s vs
+    # 17.8s on a 2.79M-relationship warm load). It could not help the cleanup anyway, since `<>`
+    # is not a seekable predicate.
+    rel_index_template = Template(
+        "CREATE INDEX IF NOT EXISTS FOR ()$rel_direction[r:$RelLabel]$rel_direction_end() "
+        "ON (r._sub_resource_label, r._sub_resource_id);",
     )
+    if rel_schema.direction == LinkDirection.INWARD:
+        result.append(
+            rel_index_template.safe_substitute(
+                RelLabel=rel_schema.rel_label,
+                rel_direction="<-",
+                rel_direction_end="-",
+            )
+        )
+    else:
+        result.append(
+            rel_index_template.safe_substitute(
+                RelLabel=rel_schema.rel_label,
+                rel_direction="-",
+                rel_direction_end="->",
+            )
+        )
     return result
+
+
+def _build_matchlink_sub_resource_match(
+    sub_resource_var: str,
+    sub_resource: MatchLinkSubResource,
+) -> str:
+    return Template(
+        "MATCH ($sub_resource_var:$sub_resource_label{$match_clause})"
+    ).safe_substitute(
+        sub_resource_var=sub_resource_var,
+        sub_resource_label=sub_resource.target_node_label,
+        match_clause=_build_match_clause(sub_resource.target_node_matcher),
+    )
+
+
+def _matcher_signature(
+    matcher: TargetNodeMatcher | SourceNodeMatcher,
+) -> dict[str, dict]:
+    # PropertyRef has no __eq__, so compare via its __dict__. asdict() can't help
+    # because PropertyRef is not a dataclass and is passed through by reference.
+    return {key: vars(prop_ref) for key, prop_ref in vars(matcher).items()}
+
+
+def _matchlink_sub_resources_equal(
+    a: MatchLinkSubResource,
+    b: MatchLinkSubResource,
+) -> bool:
+    return (
+        a.target_node_label == b.target_node_label
+        and a.direction == b.direction
+        and a.rel_label == b.rel_label
+        and _matcher_signature(a.target_node_matcher)
+        == _matcher_signature(b.target_node_matcher)
+    )
+
+
+def _build_matchlink_endpoint_match(
+    endpoint_var: str,
+    endpoint_label: str,
+    matcher: TargetNodeMatcher | SourceNodeMatcher,
+    sub_resource_var: str | None,
+    sub_resource: MatchLinkSubResource | None,
+) -> str:
+    rel_pattern = ""
+    if sub_resource and sub_resource_var:
+        if sub_resource.direction == LinkDirection.INWARD:
+            rel_pattern = f"<-[:{sub_resource.rel_label}]-({sub_resource_var})"
+        else:
+            rel_pattern = f"-[:{sub_resource.rel_label}]->({sub_resource_var})"
+    return Template(
+        "MATCH ($endpoint_var:$endpoint_label{$match_clause})$rel_pattern"
+    ).safe_substitute(
+        endpoint_var=endpoint_var,
+        endpoint_label=endpoint_label,
+        match_clause=_build_match_clause(matcher),
+        rel_pattern=rel_pattern,
+    )
+
+
+def _validate_matchlink_cartesian_product_matcher(
+    matcher_name: str,
+    matcher: TargetNodeMatcher | SourceNodeMatcher | None,
+) -> tuple[str, PropertyRef]:
+    if matcher is None:
+        raise ValueError(
+            f"build_matchlink_cartesian_product_query() requires a {matcher_name} matcher."
+        )
+
+    matcher_fields = asdict(matcher)
+    if len(matcher_fields) != 1:
+        raise ValueError(
+            "build_matchlink_cartesian_product_query() supports exactly one source matcher key "
+            "and one target matcher key."
+        )
+
+    node_property, property_ref = next(iter(matcher_fields.items()))
+    if property_ref.ignore_case:
+        raise ValueError(
+            "build_matchlink_cartesian_product_query() does not support ignore_case matchers."
+        )
+    if property_ref.fuzzy_and_ignore_case:
+        raise ValueError(
+            "build_matchlink_cartesian_product_query() does not support fuzzy_and_ignore_case matchers."
+        )
+    if property_ref.one_to_many:
+        raise ValueError(
+            "build_matchlink_cartesian_product_query() does not support one_to_many matchers."
+        )
+    return node_property, property_ref
+
+
+def build_matchlink_cartesian_product_query(rel_schema: CartographyRelSchema) -> str:
+    """
+    Generate a query that links every matched source node to every matched target.
+
+    This is the querybuilder companion to ``load_matchlinks_cartesian_product()``.
+    It intentionally supports only the simple MatchLink shape where each
+    endpoint is matched by one exact property and relationship properties are
+    supplied from query kwargs. Row-specific relationship properties belong on
+    the regular ``build_matchlink_query()`` path instead.
+
+    Args:
+        rel_schema: A MatchLink relationship schema.
+
+    Returns:
+        A Cypher query that accepts ``SourceValues`` and ``TargetValues`` lists
+        and returns ``rel_count``.
+
+    Raises:
+        ValueError: If the schema uses unsupported matcher, sub-resource, or
+            relationship property shapes.
+    """
+    if not rel_schema.source_node_label:
+        raise ValueError(
+            f"No source node label found for {rel_schema.rel_label}. "
+            "MatchLink Cartesian product relationships require a source_node_label."
+        )
+
+    if rel_schema.source_node_sub_resource or rel_schema.target_node_sub_resource:
+        raise ValueError(
+            "build_matchlink_cartesian_product_query() does not support endpoint sub-resource matchers."
+        )
+
+    source_node_property, _ = _validate_matchlink_cartesian_product_matcher(
+        "source node",
+        rel_schema.source_node_matcher,
+    )
+    target_node_property, _ = _validate_matchlink_cartesian_product_matcher(
+        "target node",
+        rel_schema.target_node_matcher,
+    )
+
+    rel_props_as_dict = _asdict_with_validate_relprops(rel_schema)
+    if "_sub_resource_label" not in rel_props_as_dict:
+        raise ValueError(
+            f"Expected _sub_resource_label to be defined on {rel_schema.properties.__class__.__name__}. "
+            "Please include `_sub_resource_label: PropertyRef = PropertyRef('_sub_resource_label', set_in_kwargs=True)`"
+        )
+    if "_sub_resource_id" not in rel_props_as_dict:
+        raise ValueError(
+            f"Expected _sub_resource_id to be defined on {rel_schema.properties.__class__.__name__}. "
+            "Please include `_sub_resource_id: PropertyRef = PropertyRef('_sub_resource_id', set_in_kwargs=True)`"
+        )
+    for rel_property, property_ref in rel_props_as_dict.items():
+        if not property_ref.set_in_kwargs:
+            raise ValueError(
+                "build_matchlink_cartesian_product_query() only supports relationship properties "
+                f"set from kwargs. Unsupported property: {rel_property}."
+            )
+
+    # The generated query has no row object, so every relationship property must
+    # be set from kwargs and shared by the full source x target expansion.
+    if rel_schema.direction == LinkDirection.INWARD:
+        rel = f"(from)<-[r:{rel_schema.rel_label}]-(to)"
+    else:
+        rel = f"(from)-[r:{rel_schema.rel_label}]->(to)"
+
+    # `_module_name` identifies the module that owns this relationship's schema, so it is set once on
+    # create rather than rewritten on every sync. Everything else stays in the unconditional SET:
+    # `lastupdated` is the cleanup's liveness marker, `_module_version` tracks the cartography version
+    # that last wrote the relationship (as build_ingestion_query() does for nodes), and
+    # `_sub_resource_label`/`_sub_resource_id` must keep following the last writer, since a MatchLink
+    # is keyed only on its endpoints and label and so can be shared by several sub-resources.
+    matchlink_cartesian_product_query_template = Template(
+        """
+        UNWIND $SourceValues AS source_value
+            MATCH (from:$source_node_label{$source_node_property: source_value})
+        WITH collect(from) AS sources
+        UNWIND $TargetValues AS target_value
+            MATCH (to:$target_node_label{$target_node_property: target_value})
+        WITH sources, to
+        UNWIND sources AS from
+            MERGE $rel
+            ON CREATE SET
+                r.firstseen = timestamp(),
+                r._module_name = "$module_name"
+            SET
+                r._module_version = "$module_version",
+                $set_rel_properties_statement
+        RETURN count(r) AS rel_count;
+        """,
+    )
+
+    return matchlink_cartesian_product_query_template.safe_substitute(
+        source_node_label=rel_schema.source_node_label,
+        source_node_property=source_node_property,
+        target_node_label=rel_schema.target_node_label,
+        target_node_property=target_node_property,
+        rel=rel,
+        module_name=_get_module_from_schema(rel_schema),
+        module_version=get_cartography_version(),
+        set_rel_properties_statement=_build_rel_properties_statement(
+            "r",
+            rel_props_as_dict,
+        ),
+    )
 
 
 def build_matchlink_query(rel_schema: CartographyRelSchema) -> str:
     """
-    Generate a Neo4j query that links two nodes that already exist in the graph:
+    Generate a Neo4j query to link two existing nodes when given a CartographyRelSchema object.
 
-        UNWIND $DictList as item
-            MATCH (from:$SourceLabel{...})
-            MATCH (to:$TargetLabel{...})
-            MERGE (from)-[r:$RelLabel]->(to)   # arrow follows rel_schema.direction
-            ON CREATE SET r.firstseen = timestamp()
-            SET r....
+    This function creates a Neo4j query specifically for connecting existing nodes in the graph
+    based on their properties. It is designed for use with load_matchlinks() operations.
 
-    Only used for load_matchlinks(). The rel properties must include
-    _sub_resource_label and _sub_resource_id (set_in_kwargs=True) so that matchlink
-    cleanup can scope deletions to one sub-resource.
-    :param rel_schema: The CartographyRelSchema with source_node_matcher/label defined.
-    :return: The Neo4j ingestion query.
+    Args:
+        rel_schema (CartographyRelSchema): The CartographyRelSchema object to generate a query for.
+            This object must have:
+            - source_node_matcher and source_node_label defined
+            - CartographyRelProperties with _sub_resource_label and _sub_resource_id defined
+
+    Returns:
+        str: A Neo4j query that can be used to link two existing nodes.
+
+    Raises:
+        ValueError: If the rel_schema does not have a source_node_matcher or source_node_label defined,
+            or if the rel_schema properties do not have _sub_resource_label or _sub_resource_id defined.
+
+    Examples:
+        >>> rel_schema = CartographyRelSchema(
+        ...     source_node_label='User',
+        ...     source_node_matcher=SourceNodeMatcher(id=PropertyRef('user_id')),
+        ...     target_node_label='Role',
+        ...     target_node_matcher=TargetNodeMatcher(name=PropertyRef('role_name')),
+        ...     rel_label='HAS_ROLE',
+        ...     direction=LinkDirection.OUTWARD,
+        ...     properties=UserRoleRel(
+        ...         _sub_resource_label=PropertyRef('_sub_resource_label', set_in_kwargs=True),
+        ...         _sub_resource_id=PropertyRef('_sub_resource_id', set_in_kwargs=True)
+        ...     )
+        ... )
+        >>> query = build_matchlink_query(rel_schema)
+        >>> # Returns:
+        >>> # UNWIND $DictList as item
+        >>> #     MATCH (from:User{id: item.user_id})
+        >>> #     MATCH (to:Role{name: item.role_name})
+        >>> #     MERGE (from)-[r:HAS_ROLE]->(to)
+        >>> #     ON CREATE SET r.firstseen = timestamp(), r._module_name = "cartography:..."
+        >>> #     SET r._sub_resource_label = $_sub_resource_label, ...
+
+    Note:
+        This function is only used for load_matchlinks() operations where we need to
+        connect existing nodes. The _sub_resource_label and _sub_resource_id properties
+        are required for the cleanup query functionality.
     """
     if not rel_schema.source_node_matcher or not rel_schema.source_node_label:
         raise ValueError(
             f"No source node matcher or source node label found for {rel_schema.rel_label}. "
-            "MatchLink relationships require source_node_matcher and source_node_label to be defined.",
+            "MatchLink relationships require a source_node_matcher and source_node_label to be defined."
         )
 
-    rel_props_as_dict: Dict[str, PropertyRef] = _asdict_with_validate_relprops(rel_schema)
-    for required_prop in ('_sub_resource_label', '_sub_resource_id'):
-        if required_prop not in rel_props_as_dict:
-            raise ValueError(
-                f"Expected {required_prop} to be defined on {rel_schema.properties.__class__.__name__}. "
-                f"Please include `{required_prop}: PropertyRef = PropertyRef('{required_prop}', "
-                "set_in_kwargs=True)` - it is required by the matchlink cleanup query.",
+    rel_props_as_dict = _asdict_with_validate_relprops(rel_schema)
+
+    # These are needed for the cleanup query
+    if "_sub_resource_label" not in rel_props_as_dict:
+        raise ValueError(
+            f"Expected _sub_resource_label to be defined on {rel_schema.properties.__class__.__name__}. "
+            "Please include `_sub_resource_label: PropertyRef = PropertyRef('_sub_resource_label', set_in_kwargs=True)`"
+        )
+    if "_sub_resource_id" not in rel_props_as_dict:
+        raise ValueError(
+            f"Expected _sub_resource_id to be defined on {rel_schema.properties.__class__.__name__}. "
+            "Please include `_sub_resource_id: PropertyRef = PropertyRef('_sub_resource_id', set_in_kwargs=True)`"
+        )
+
+    source_sub_resource = rel_schema.source_node_sub_resource
+    target_sub_resource = rel_schema.target_node_sub_resource
+
+    source_sub_resource_var: str | None = None
+    target_sub_resource_var: str | None = None
+    sub_resource_match_statements: list[str] = []
+
+    # See build_matchlink_cartesian_product_query() for why only `_module_name` is set on create.
+    if source_sub_resource or target_sub_resource:
+        matchlink_query_template = Template(
+            """
+        $sub_resource_match
+        UNWIND $DictList as item
+            $source_match
+            $target_match
+            MERGE $rel
+            ON CREATE SET
+                r.firstseen = timestamp(),
+                r._module_name = "$module_name"
+            SET
+                r._module_version = "$module_version",
+                $set_rel_properties_statement;
+        """
+        )
+        if (
+            source_sub_resource
+            and target_sub_resource
+            and _matchlink_sub_resources_equal(source_sub_resource, target_sub_resource)
+        ):
+            # Same sub-resource on both sides — match it once and reuse the
+            # variable to avoid a redundant index lookup per query.
+            source_sub_resource_var = "sub_resource"
+            target_sub_resource_var = "sub_resource"
+            sub_resource_match_statements.append(
+                _build_matchlink_sub_resource_match(
+                    source_sub_resource_var, source_sub_resource
+                ),
             )
+        else:
+            if source_sub_resource:
+                source_sub_resource_var = "source_sub_resource"
+                sub_resource_match_statements.append(
+                    _build_matchlink_sub_resource_match(
+                        source_sub_resource_var, source_sub_resource
+                    ),
+                )
+            if target_sub_resource:
+                target_sub_resource_var = "target_sub_resource"
+                sub_resource_match_statements.append(
+                    _build_matchlink_sub_resource_match(
+                        target_sub_resource_var, target_sub_resource
+                    ),
+                )
+    else:
+        matchlink_query_template = Template(
+            """
+        UNWIND $DictList as item
+            $source_match
+            $target_match
+            MERGE $rel
+            ON CREATE SET
+                r.firstseen = timestamp(),
+                r._module_name = "$module_name"
+            SET
+                r._module_version = "$module_version",
+                $set_rel_properties_statement;
+        """
+        )
+    sub_resource_match = "\n        ".join(sub_resource_match_statements)
+
+    source_match = _build_matchlink_endpoint_match(
+        "from",
+        rel_schema.source_node_label,
+        rel_schema.source_node_matcher,
+        source_sub_resource_var,
+        source_sub_resource,
+    )
+
+    target_match = _build_matchlink_endpoint_match(
+        "to",
+        rel_schema.target_node_label,
+        rel_schema.target_node_matcher,
+        target_sub_resource_var,
+        target_sub_resource,
+    )
 
     if rel_schema.direction == LinkDirection.INWARD:
-        rel_merge_template = Template("MERGE (from)<-[r:$RelLabel]-(to)")
+        rel = f"(from)<-[r:{rel_schema.rel_label}]-(to)"
     else:
-        rel_merge_template = Template("MERGE (from)-[r:$RelLabel]->(to)")
-    rel_merge_clause = rel_merge_template.safe_substitute(RelLabel=rel_schema.rel_label)
+        rel = f"(from)-[r:{rel_schema.rel_label}]->(to)"
 
-    matchlink_query_template = Template(
-        """
-        UNWIND $DictList as item
-            MATCH (from:$SourceLabel{$SourceMatchClause})
-            MATCH (to:$TargetLabel{$TargetMatchClause})
-            $RelMergeClause
-            ON CREATE SET r.firstseen = timestamp()
-            SET
-                $set_rel_properties_statement
-        """,
-    )
     return matchlink_query_template.safe_substitute(
-        SourceLabel=rel_schema.source_node_label,
-        SourceMatchClause=_build_match_clause(rel_schema.source_node_matcher),
-        TargetLabel=rel_schema.target_node_label,
-        TargetMatchClause=_build_match_clause(rel_schema.target_node_matcher),
-        RelMergeClause=rel_merge_clause,
-        set_rel_properties_statement=_build_rel_properties_statement('r', rel_props_as_dict),
+        sub_resource_match=sub_resource_match,
+        source_match=source_match,
+        target_match=target_match,
+        rel=rel,
+        module_name=_get_module_from_schema(rel_schema),
+        module_version=get_cartography_version(),
+        set_rel_properties_statement=_build_rel_properties_statement(
+            "r",
+            rel_props_as_dict,
+        ),
     )
+
+
+def _get_module_from_schema(
+    schema,  #: "CartographyNodeSchema" | "CartographyRelSchema",
+) -> str:
+    """
+    Extract the module name from a Cartography schema object.
+
+    This function extracts and formats the module name from a CartographyNodeSchema
+    or CartographyRelSchema object. It expects schemas to be part of the official
+    cartography.models package hierarchy and returns a formatted string indicating
+    the specific cartography module.
+
+    Args:
+        schema: A CartographyNodeSchema or CartographyRelSchema object
+
+    Returns:
+        A formatted module name string in the format 'cartography:<module_name>'
+        or 'unknown:<full_module_path>' if the schema is not from cartography.models
+    """
+    # If the entity schema does not belong to the cartography.models package,
+    # we log a warning and return the full module path.
+    if not schema.__module__.startswith("cartography.models."):
+        logger.warning(
+            "The schema %s does not start with 'cartography.models.'. "
+            "This may indicate that the schema is not part of the official cartography models.",
+            schema.__module__,
+        )
+        return f"unknown:{schema.__module__}"
+    # Otherwise, we return the module path as a string.
+    parts = schema.__module__.split(".")
+    return f"cartography:{parts[2]}"

@@ -1,0 +1,58 @@
+import logging
+from typing import Any
+
+import neo4j
+
+from cartography.analysis.ontology.analysis import PUBLIC_IP_POINTS_TO_DEVICE
+from cartography.client.core.tx import load
+from cartography.graph.job import GraphJob
+from cartography.intel.ontology.utils import get_source_nodes_from_graph
+from cartography.models.ontology.publicip import PublicIPSchema
+from cartography.util import run_typed_analysis_job
+from cartography.util import timeit
+
+logger = logging.getLogger(__name__)
+
+
+@timeit
+def sync(
+    neo4j_session: neo4j.Session,
+    update_tag: int,
+    common_job_parameters: dict[str, Any],
+) -> None:
+    data = get_source_nodes_from_graph(neo4j_session, [], "publicips")
+    load_public_ips(
+        neo4j_session,
+        data,
+        update_tag,
+    )
+    run_typed_analysis_job(
+        PUBLIC_IP_POINTS_TO_DEVICE,
+        neo4j_session,
+        common_job_parameters,
+    )
+    cleanup(neo4j_session, common_job_parameters)
+
+
+@timeit
+def load_public_ips(
+    neo4j_session: neo4j.Session,
+    data: list[dict[str, Any]],
+    update_tag: int,
+) -> None:
+    load(
+        neo4j_session,
+        PublicIPSchema(),
+        data,
+        lastupdated=update_tag,
+    )
+
+
+@timeit
+def cleanup(
+    neo4j_session: neo4j.Session,
+    common_job_parameters: dict[str, Any],
+) -> None:
+    GraphJob.from_node_schema(PublicIPSchema(), common_job_parameters).run(
+        neo4j_session,
+    )

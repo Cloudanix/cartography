@@ -1,0 +1,366 @@
+from cartography.rules.data.frameworks.iso27001 import iso27001_annex_a
+from cartography.rules.data.frameworks.soc2 import soc2_tsc
+from cartography.rules.spec.model import Fact
+from cartography.rules.spec.model import Finding
+from cartography.rules.spec.model import Maturity
+from cartography.rules.spec.model import Module
+from cartography.rules.spec.model import Rule
+
+# AWS
+_aws_policy_manipulation_capabilities = Fact(
+    id="aws_policy_manipulation_capabilities",
+    name="Principals with IAM Policy Creation and Modification Capabilities",
+    description=(
+        "AWS IAM principals that can create, modify, or attach IAM policies to other principals. "
+    ),
+    cypher_query="""
+        MATCH (a:AWSAccount)-[:RESOURCE]->(principal:AWSPrincipal)
+        MATCH (principal)-[:POLICY]->(policy:AWSPolicy)-[:STATEMENT]->(allow_stmt:AWSPolicyStatement {effect:"Allow"})
+        WHERE NOT principal.name STARTS WITH 'AWSServiceRole'
+        AND NOT principal.name CONTAINS 'QuickSetup'
+        AND principal.name <> 'OrganizationAccountAccessRole'
+        WITH a, principal, policy, allow_stmt,
+            [label IN labels(principal) WHERE label <> 'AWSPrincipal'][0] AS principal_type,
+            [
+            'iam:CreatePolicy','iam:CreatePolicyVersion',
+            'iam:AttachUserPolicy','iam:AttachRolePolicy','iam:AttachGroupPolicy',
+            'iam:DetachUserPolicy','iam:DetachRolePolicy','iam:DetachGroupPolicy',
+            'iam:PutUserPolicy','iam:PutRolePolicy','iam:PutGroupPolicy'
+            ] AS patterns
+        // Step 1 - Collect (action, resource) pairs for allowed statements
+        UNWIND allow_stmt.action AS allow_action
+            WITH a, principal, principal_type, policy, allow_stmt, allow_action, patterns
+            WHERE ANY(p IN patterns WHERE allow_action = p)
+            OR allow_action = 'iam:*'
+            OR allow_action = '*'
+        WITH a, principal, principal_type, policy, allow_stmt, allow_action, allow_stmt.resource AS allow_resources
+        // Step 2 - Gather all Deny statements for the same principal
+        OPTIONAL MATCH (principal)-[:POLICY]->(:AWSPolicy)-[:STATEMENT]->(deny_stmt:AWSPolicyStatement {effect:"Deny"})
+        WITH a, principal, principal_type, policy, allow_action, allow_resources,
+            REDUCE(acc = [], ds IN collect(deny_stmt.action) | acc + ds) AS all_deny_actions
+        // Step 3 - Filter out denied actions (handles *, iam:*, exact, and prefix wildcards)
+        WHERE NOT (
+            '*' IN all_deny_actions OR
+            'iam:*' IN all_deny_actions OR
+            allow_action IN all_deny_actions OR
+            ANY(d IN all_deny_actions WHERE d ENDS WITH('*') AND allow_action STARTS WITH split(d,'*')[0])
+        )
+        // Step 4 - Aggregate one row per (account, principal, policy). Substitute a
+        // single-null list when the statement uses NotResource (no `resource`) so the
+        // principal stays visible; the null is stripped from the final resources list.
+        UNWIND coalesce(allow_resources, [null]) AS resource
+        WITH a, principal, principal_type, policy, allow_action, resource
+        WITH a, principal, principal_type, policy,
+             collect(DISTINCT allow_action) AS actions,
+             [r IN collect(DISTINCT resource) WHERE r IS NOT NULL] AS resources
+        RETURN
+            a.name AS account,
+            a.id   AS account_id,
+            principal.name AS principal_name,
+            principal.arn  AS principal_identifier,
+            principal_type,
+            policy.id      AS policy_id,
+            policy.name    AS policy_name,
+            actions,
+            resources,
+            // SSO-reserved roles (break-glass) can be triaged differently from app roles
+            principal.arn CONTAINS 'aws-reserved/sso.amazonaws.com' AS is_sso_reserved
+        ORDER BY account, principal_name, policy_name
+    """,
+    cypher_visual_query="""
+    MATCH p1=(a:AWSAccount)-[:RESOURCE]->(principal:AWSPrincipal)
+    MATCH p2=(principal)-[:POLICY]->(policy:AWSPolicy)-[:STATEMENT]->(stmt:AWSPolicyStatement)
+    WHERE NOT principal.name STARTS WITH 'AWSServiceRole'
+    AND NOT principal.name CONTAINS 'QuickSetup'
+    AND principal.name <> 'OrganizationAccountAccessRole'
+    AND stmt.effect = 'Allow'
+    AND ANY(action IN stmt.action WHERE
+        action CONTAINS 'iam:CreatePolicy' OR action CONTAINS 'iam:CreatePolicyVersion'
+        OR action CONTAINS 'iam:AttachUserPolicy' OR action CONTAINS 'iam:AttachRolePolicy'
+        OR action CONTAINS 'iam:AttachGroupPolicy' OR action CONTAINS 'iam:DetachUserPolicy'
+        OR action CONTAINS 'iam:DetachRolePolicy' OR action CONTAINS 'iam:DetachGroupPolicy'
+        OR action CONTAINS 'iam:PutUserPolicy' OR action CONTAINS 'iam:PutRolePolicy'
+        OR action CONTAINS 'iam:PutGroupPolicy' OR action = 'iam:*' OR action = '*'
+    )
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (principal:AWSPrincipal)
+    WHERE NOT principal.name STARTS WITH 'AWSServiceRole'
+    AND NOT principal.name CONTAINS 'QuickSetup'
+    AND principal.name <> 'OrganizationAccountAccessRole'
+    RETURN COUNT(principal) AS count
+    """,
+    asset_label="AWSPrincipal",
+    asset_id_field="principal_identifier",
+    identity_fields=("account_id", "principal_identifier", "policy_id"),
+    module=Module.AWS,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+# GCP
+_gcp_policy_manipulation_capabilities = Fact(
+    id="gcp_policy_manipulation_capabilities",
+    name="GCP Principals with Policy Administration Permissions",
+    description=(
+        "GCP principals bound to a role that grants `setIamPolicy` on a "
+        "project, folder, or organization, or that grants role / "
+        "permission management. Indirect privilege escalation surface."
+    ),
+    cypher_query="""
+    MATCH (binding:GCPPolicyBinding)-[:APPLIES_TO]->(scope)
+    WHERE any(label IN labels(scope)
+              WHERE label IN ['GCPProject', 'GCPFolder', 'GCPOrganization'])
+    MATCH (principal:GCPPrincipal)-[:HAS_ALLOW_POLICY]->(binding)
+    MATCH (binding)-[:GRANTS_ROLE]->(role:GCPRole)
+    WITH scope, principal, role,
+        [
+            'resourcemanager.projects.setIamPolicy',
+            'resourcemanager.folders.setIamPolicy',
+            'resourcemanager.organizations.setIamPolicy',
+            'iam.roles.create',
+            'iam.roles.update',
+            'iam.roles.delete'
+        ] AS patterns
+    WITH scope, principal, role, patterns,
+         [perm IN coalesce(role.permissions, [])
+            WHERE perm IN patterns OR perm = 'iam.*' OR perm = 'resourcemanager.*' OR perm = '*'] AS matched
+    WHERE size(matched) > 0
+    RETURN
+        scope.id AS account,
+        scope.id AS account_id,
+        coalesce(principal.email, principal.id) AS principal_name,
+        principal.id AS principal_identifier,
+        coalesce(
+            head([l IN ['GCPServiceAccount', 'GoogleWorkspaceUser', 'GoogleWorkspaceGroup']
+                  WHERE l IN labels(principal)]),
+            head([l IN ['ServiceAccount', 'UserAccount', 'UserGroup']
+                  WHERE l IN labels(principal)])
+        ) AS principal_type,
+        role.name AS policy_name,
+        matched AS actions,
+        [scope.id] AS resources
+    ORDER BY account, principal_name, policy_name
+    """,
+    cypher_visual_query="""
+    MATCH p1=(principal:GCPPrincipal)-[:HAS_ALLOW_POLICY]->(binding:GCPPolicyBinding)-[:APPLIES_TO]->(scope)
+    WHERE any(label IN labels(scope)
+              WHERE label IN ['GCPProject', 'GCPFolder', 'GCPOrganization'])
+    MATCH p2=(binding)-[:GRANTS_ROLE]->(role:GCPRole)
+    WHERE ANY(perm IN coalesce(role.permissions, []) WHERE
+        perm IN [
+            'resourcemanager.projects.setIamPolicy',
+            'resourcemanager.folders.setIamPolicy',
+            'resourcemanager.organizations.setIamPolicy',
+            'iam.roles.create',
+            'iam.roles.update',
+            'iam.roles.delete'
+        ]
+        OR perm = 'iam.*' OR perm = 'resourcemanager.*' OR perm = '*'
+    )
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (principal:GCPPrincipal)
+    RETURN COUNT(principal) AS count
+    """,
+    asset_label="GCPPrincipal",
+    asset_id_field="principal_identifier",
+    identity_fields=("account_id", "principal_identifier", "policy_name"),
+    module=Module.GCP,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+# Azure
+_azure_policy_manipulation_capabilities = Fact(
+    id="azure_policy_manipulation_capabilities",
+    name="Azure Principals with Policy Administration Permissions",
+    description=(
+        "Entra principals holding a role assignment whose role definition "
+        "grants permissions to manage role definitions or write at the "
+        "Microsoft.Authorization scope. Indirect privilege escalation "
+        "surface (creating roles, granting them, etc.)."
+    ),
+    cypher_query="""
+    MATCH (sub:AzureSubscription)-[:RESOURCE]->(ra:AzureRoleAssignment)
+    MATCH (ra)-[:ROLE_ASSIGNED]->(rd:AzureRoleDefinition)-[:HAS_PERMISSIONS]->(perm:AzurePermissions)
+    // EntraPrincipal is the umbrella label carried by EntraUser, EntraGroup and
+    // EntraServicePrincipal. Matching it directly keeps the returned rows aligned
+    // with the declared asset_label and lets Neo4j use the label index.
+    MATCH (principal:EntraPrincipal)-[:HAS_ROLE_ASSIGNMENT]->(ra)
+    // Treat each action / not_action as a case-insensitive glob: `.` is
+    // escaped to the regex char class `[.]`, `*` becomes `.*`. A `*`
+    // anywhere now correctly matches; built-in Contributor with
+    // not_actions like `Microsoft.Authorization/*/Write` drops the
+    // matching patterns instead of letting them flag.
+    WITH sub, ra, rd, perm, principal,
+         coalesce(perm.actions, []) AS role_actions,
+         coalesce(perm.not_actions, []) AS role_not_actions,
+        [
+            'Microsoft.Authorization/roleDefinitions/write',
+            'Microsoft.Authorization/roleDefinitions/delete',
+            'Microsoft.Authorization/policyDefinitions/write',
+            'Microsoft.Authorization/policyAssignments/write'
+        ] AS patterns
+    WITH sub, ra, rd, perm, principal, role_not_actions,
+        [
+            p IN patterns
+            WHERE ANY(a IN role_actions WHERE
+                toLower(p) =~ replace(replace(toLower(a), '.', '[.]'), '*', '.*')
+            )
+        ] AS granted
+    WITH sub, ra, rd, perm, principal,
+        [
+            p IN granted
+            WHERE NOT ANY(na IN role_not_actions WHERE
+                toLower(p) =~ replace(replace(toLower(na), '.', '[.]'), '*', '.*')
+            )
+        ] AS matched
+    WHERE size(matched) > 0
+    // Aggregate across multiple AzurePermissions blocks on the same role definition
+    // (and across multiple role assignments of the same role) so we emit one row per
+    // (principal, role definition).
+    UNWIND matched AS action
+    WITH sub, principal, rd, action, ra
+    WITH sub, principal, rd,
+         collect(DISTINCT action) AS actions,
+         collect(DISTINCT ra.scope) AS resources
+    RETURN
+        sub.id AS account,
+        sub.id AS account_id,
+        coalesce(principal.user_principal_name,
+                 principal.display_name,
+                 principal.id) AS principal_name,
+        principal.id AS principal_identifier,
+        [label IN labels(principal)
+            WHERE label IN ['EntraUser', 'EntraGroup', 'EntraServicePrincipal']][0] AS principal_type,
+        rd.id AS policy_id,
+        rd.role_name AS policy_name,
+        actions,
+        resources
+    ORDER BY account, principal_name, policy_name
+    """,
+    cypher_visual_query="""
+    MATCH p1=(sub:AzureSubscription)-[:RESOURCE]->(ra:AzureRoleAssignment)
+    MATCH p2=(ra)-[:ROLE_ASSIGNED]->(rd:AzureRoleDefinition)-[:HAS_PERMISSIONS]->(perm:AzurePermissions)
+    MATCH p3=(principal:EntraPrincipal)-[:HAS_ROLE_ASSIGNMENT]->(ra)
+    // Mirror the finding query: at least one searched pattern is granted
+    // by actions AND not shadowed by not_actions.
+    WHERE ANY(p IN [
+            'Microsoft.Authorization/roleDefinitions/write',
+            'Microsoft.Authorization/roleDefinitions/delete',
+            'Microsoft.Authorization/policyDefinitions/write',
+            'Microsoft.Authorization/policyAssignments/write'
+        ]
+        WHERE ANY(a IN coalesce(perm.actions, []) WHERE
+                  toLower(p) =~ replace(replace(toLower(a), '.', '[.]'), '*', '.*'))
+          AND NOT ANY(na IN coalesce(perm.not_actions, []) WHERE
+                  toLower(p) =~ replace(replace(toLower(na), '.', '[.]'), '*', '.*'))
+      )
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (ra:AzureRoleAssignment)
+    RETURN COUNT(ra) AS count
+    """,
+    asset_label="EntraPrincipal",
+    asset_id_field="principal_identifier",
+    identity_fields=("account_id", "principal_identifier", "policy_id"),
+    module=Module.AZURE,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+# Scaleway
+_scaleway_policy_manipulation_capabilities = Fact(
+    id="scaleway_policy_manipulation_capabilities",
+    name="Scaleway Principals with IAM Administration Permissions",
+    description=(
+        "Scaleway principals (users, applications or groups) granted the "
+        "`IAMManager` permission set, which gives full access to IAM: creating "
+        "and editing policies, permission sets and API keys for any principal. "
+        "Indirect privilege-escalation surface. The grant is resolved through "
+        "the materialized principal-[:HAS_ROLE]->PermissionSet edge; group "
+        "grants are inherited by members via MEMBER_OF."
+    ),
+    cypher_query="""
+    MATCH (org:ScalewayOrganization)-[:RESOURCE]->(ps:ScalewayPermissionSet)
+    WHERE ps.name = 'IAMManager'
+    // ScalewayPrincipal is the umbrella label carried by ScalewayUser,
+    // ScalewayApplication and ScalewayGroup. Matching it directly keeps the
+    // returned rows aligned with the declared asset_label.
+    MATCH (principal:ScalewayPrincipal)-[:HAS_ROLE]->(ps)
+    RETURN
+        org.id AS account,
+        org.id AS account_id,
+        coalesce(principal.email, principal.name, principal.id) AS principal_name,
+        principal.id AS principal_identifier,
+        head([l IN ['UserAccount', 'ServiceAccount', 'UserGroup']
+              WHERE l IN labels(principal)]) AS principal_type,
+        ps.id AS policy_id,
+        ps.name AS policy_name,
+        [ps.name] AS actions,
+        [org.id] AS resources
+    ORDER BY account, principal_name
+    """,
+    cypher_visual_query="""
+    MATCH p=(org:ScalewayOrganization)-[:RESOURCE]->(ps:ScalewayPermissionSet)<-[:HAS_ROLE]-(principal:ScalewayPrincipal)
+    WHERE ps.name = 'IAMManager'
+    RETURN *
+    """,
+    cypher_count_query="""
+    MATCH (principal:ScalewayPrincipal)
+    RETURN COUNT(principal) AS count
+    """,
+    asset_label="ScalewayPrincipal",
+    asset_id_field="principal_identifier",
+    identity_fields=("account_id", "principal_identifier", "policy_id"),
+    module=Module.SCALEWAY,
+    maturity=Maturity.EXPERIMENTAL,
+)
+
+
+# Findings
+class PolicyAdministrationPrivileges(Finding):
+    principal_name: str | None = None
+    principal_identifier: str | None = None
+    account: str | None = None
+    account_id: str | None = None
+    principal_type: str | None = None
+    policy_id: str | None = None
+    policy_name: str | None = None
+    actions: list[str] = []
+    resources: list[str] = []
+    # True for AWS IAM Identity Center (SSO) reserved roles; only the AWS fact sets it.
+    is_sso_reserved: bool = False
+
+
+policy_administration_privileges = Rule(
+    id="policy_administration_privileges",
+    name="Policy Administration Privileges",
+    description=(
+        "Principals can create, attach/detach, or write IAM policies—often enabling "
+        "indirect privilege escalation."
+    ),
+    output_model=PolicyAdministrationPrivileges,
+    facts=(
+        _aws_policy_manipulation_capabilities,
+        _azure_policy_manipulation_capabilities,
+        _gcp_policy_manipulation_capabilities,
+        _scaleway_policy_manipulation_capabilities,
+    ),
+    tags=(
+        "iam",
+        "stride:elevation_of_privilege",
+        "stride:spoofing",
+        "stride:tampering",
+    ),
+    version="0.2.1",
+    frameworks=(
+        iso27001_annex_a("5.18"),
+        iso27001_annex_a("8.2"),
+        soc2_tsc("CC6.3"),
+    ),
+)

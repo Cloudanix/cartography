@@ -1,0 +1,127 @@
+from cartography.models.ontology.mapping.specs import OntologyFieldMapping
+from cartography.models.ontology.mapping.specs import OntologyMapping
+from cartography.models.ontology.mapping.specs import OntologyNodeMapping
+
+# NetworkAccessControl fields:
+# name - Display name of the security group or firewall (REQUIRED)
+# direction - Traffic direction (inbound/outbound), if applicable
+
+# AWS
+aws_mapping = OntologyMapping(
+    module_name="aws",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="AWSEC2SecurityGroup",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="name", required=True
+                ),
+                # direction: intentionally not projected. AWS security groups
+                # are bidirectional containers and almost always carry both
+                # ingress and egress rules at the same time, so a single
+                # direction value at the SG level would be uniformly "BOTH"
+                # and not useful for cross-cloud correlation. Direction lives
+                # on the individual IpPermissionInbound / IpPermissionEgress
+                # rule nodes instead.
+            ],
+        ),
+    ],
+)
+
+# GCP
+gcp_mapping = OntologyMapping(
+    module_name="gcp",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="GCPFirewall",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="name", required=True
+                ),
+                OntologyFieldMapping(
+                    ontology_field="direction",
+                    node_field="direction",
+                    special_handling="mapping",
+                    extra={"map": {"INGRESS": "ingress", "EGRESS": "egress"}},
+                ),
+            ],
+        ),
+        OntologyNodeMapping(
+            node_label="GCPCloudArmorPolicy",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="name", required=True
+                ),
+                # direction: Not applicable (Cloud Armor applies to inbound traffic)
+            ],
+        ),
+    ],
+)
+
+# Azure
+azure_mapping = OntologyMapping(
+    module_name="azure",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="AzureNetworkSecurityGroup",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="name", required=True
+                ),
+                # direction: Not applicable (NSGs are bidirectional)
+            ],
+        ),
+        OntologyNodeMapping(
+            node_label="AzureFirewall",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="name", required=True
+                ),
+                # direction: Not applicable (bidirectional)
+            ],
+        ),
+    ],
+)
+
+# Databricks IP access lists are the workspace network access control.
+databricks_mapping = OntologyMapping(
+    module_name="databricks",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="DatabricksIpAccessList",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="label", required=True
+                ),
+                # direction: Not applicable (allow/block list, not directional)
+            ],
+        ),
+    ],
+)
+
+# Cloudflare rulesets are the engine behind the WAF. Only the access-control
+# phases carry the NetworkAccessControl label (conditional on the ruleset's
+# `security_ruleset` field), so cache and transform rulesets receive `_ont_name`
+# without becoming visible to firewall queries.
+cloudflare_mapping = OntologyMapping(
+    module_name="cloudflare",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="CloudflareRuleset",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="name", required=True
+                ),
+                # direction: Not applicable (rulesets act on inbound HTTP requests)
+            ],
+        ),
+    ],
+)
+
+FIREWALLS_ONTOLOGY_MAPPING: dict[str, OntologyMapping] = {
+    "aws": aws_mapping,
+    "gcp": gcp_mapping,
+    "azure": azure_mapping,
+    "databricks": databricks_mapping,
+    "cloudflare": cloudflare_mapping,
+}

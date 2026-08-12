@@ -1,0 +1,78 @@
+from dataclasses import dataclass
+
+from cartography.models.core.common import PropertyRef
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.models.extra_labels import IP_RANGE
+
+
+@dataclass(frozen=True)
+class IpRangeNodeProperties(CartographyNodeProperties):
+    id: PropertyRef = PropertyRef(
+        "range",
+        description='CIDR notation for the IP range. E.g. "0.0.0.0/0" for the whole internet.',
+    )
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    range: PropertyRef = PropertyRef(
+        "range",
+        extra_index=True,
+        description="CIDR range governed by this firewall rule.",
+    )
+
+
+@dataclass(frozen=True)
+class IpRangeToIpRuleRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class IpRangeToIpRuleRel(CartographyRelSchema):
+    target_node_label: str = "GCPIpRule"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {
+            "id": PropertyRef("ruleid"),
+        }
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "MEMBER_OF_IP_RULE"
+    properties: IpRangeToIpRuleRelProperties = IpRangeToIpRuleRelProperties()
+
+
+@dataclass(frozen=True)
+class IpRangeToProjectRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class IpRangeToProjectRel(CartographyRelSchema):
+    target_node_label: str = "GCPProject"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {
+            "id": PropertyRef("PROJECT_ID", set_in_kwargs=True),
+        }
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "RESOURCE"
+    properties: IpRangeToProjectRelProperties = IpRangeToProjectRelProperties()
+
+
+@dataclass(frozen=True)
+class IpRangeSchema(CartographyNodeSchema):
+    """Representation of an IP range or subnet."""
+
+    label: str = "GCPIpRange"
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels([IP_RANGE])
+    properties: IpRangeNodeProperties = IpRangeNodeProperties()
+    sub_resource_relationship: IpRangeToProjectRel = IpRangeToProjectRel()
+    other_relationships: OtherRelationships = OtherRelationships(
+        [
+            IpRangeToIpRuleRel(),
+        ]
+    )

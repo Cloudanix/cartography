@@ -28,7 +28,7 @@ DESCRIBE_CACHE_CLUSTERS = describe_cache_clusters_resp = {
             "AutoMinorVersionUpgrade": True,
             "SecurityGroups": [
                 {
-                    "SecurityGroupId": "sg-028e2522c72719996",
+                    "SecurityGroupId": "0",
                     "Status": "active",
                 },
                 {

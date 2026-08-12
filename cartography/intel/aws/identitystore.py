@@ -26,12 +26,16 @@ class PolicyType(enum.Enum):
 
 
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
-    client = boto3_session.client(service, region_name=region, config=get_botocore_config())
+    client = boto3_session.client(
+        service, region_name=region, config=get_botocore_config()
+    )
     return client
 
 
 @timeit
-def get_identity_center_instances_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_identity_center_instances_list(
+    boto3_session: boto3.session.Session, region: str
+) -> List[Dict]:
     instances: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sso-admin", region)
@@ -54,7 +58,9 @@ def load_identity_center_instance(
     update_tag: int,
     organization_id: str,
 ) -> None:
-    neo4j_session.execute_write(_load_identity_center_instance_tx, instance, update_tag, organization_id)
+    neo4j_session.execute_write(
+        _load_identity_center_instance_tx, instance, update_tag, organization_id
+    )
 
 
 @timeit
@@ -210,7 +216,9 @@ def get_managed_policies(
         managed_policies[managed_policy_key] = {}
         try:
             paginator = client.get_paginator("list_managed_policies_in_permission_set")
-            for page in paginator.paginate(InstanceArn=instance_arn, PermissionSetArn=permission_set_arn):
+            for page in paginator.paginate(
+                InstanceArn=instance_arn, PermissionSetArn=permission_set_arn
+            ):
                 policies.extend(page["AttachedManagedPolicies"])
 
         except Exception as e:
@@ -221,10 +229,12 @@ def get_managed_policies(
         for policy in policies:
             try:
                 policy.update(iam_client.get_policy(PolicyArn=policy["Arn"])["Policy"])
-                managed_policies[managed_policy_key][policy["PolicyName"]] = iam_resource.PolicyVersion(
-                    policy["Arn"],
-                    policy["DefaultVersionId"],
-                ).document["Statement"]
+                managed_policies[managed_policy_key][policy["PolicyName"]] = (
+                    iam_resource.PolicyVersion(
+                        policy["Arn"],
+                        policy["DefaultVersionId"],
+                    ).document["Statement"]
+                )
 
             except Exception as e:
                 logger.warning(
@@ -235,7 +245,12 @@ def get_managed_policies(
 
 
 @timeit
-def get_inline_policy(boto3_session: boto3.session.Session, instance_arn: str, permission_sets: dict, region: str):
+def get_inline_policy(
+    boto3_session: boto3.session.Session,
+    instance_arn: str,
+    permission_sets: dict,
+    region: str,
+):
     client = get_boto3_client(boto3_session, "sso-admin", region)
 
     inline_policies: Dict = {}
@@ -258,7 +273,9 @@ def get_inline_policy(boto3_session: boto3.session.Session, instance_arn: str, p
             ).get("InlinePolicy")
 
         except Exception as e:
-            logger.warning(f"Could not get inline policy for {instance_arn} - {permission_set_arn}; skipping. - {e}")
+            logger.warning(
+                f"Could not get inline policy for {instance_arn} - {permission_set_arn}; skipping. - {e}"
+            )
 
         if inline_policy:
             inline_policy = json.loads(inline_policy)
@@ -338,22 +355,39 @@ def load_identity_center_account_assignments(
     for assignment in assignments:
         for permissions_set in permissions_sets:
             if permissions_set["PermissionSetArn"] == assignment["PermissionSetArn"]:
-                permissions_set_id = f"{assignment['PrincipalId']}/{permissions_set['Name']}"
+                permissions_set_id = (
+                    f"{assignment['PrincipalId']}/{permissions_set['Name']}"
+                )
 
                 neo4j_session.execute_write(
-                    _load_identity_center_account_assignments_tx, assignment, permissions_set, instance_arn, update_tag,
+                    _load_identity_center_account_assignments_tx,
+                    assignment,
+                    permissions_set,
+                    instance_arn,
+                    update_tag,
                 )
 
                 # INFO: This is a temporary solution to skip Loading Policies for manual runs.
-                if common_job_parameters.get("MANUAL_RUN", False) or current_aws_account_id == "934101271236":
+                if (
+                    common_job_parameters.get("MANUAL_RUN", False)
+                    or current_aws_account_id == "934101271236"
+                ):
                     loaded_permissions_sets.append(permissions_set["PermissionSetArn"])
                     break
 
                 if managed_policies.get(permissions_set.get("PermissionSetArn")):
                     permissions_set_managed_policies = {
-                        permissions_set_id: copy.deepcopy(managed_policies.get(permissions_set["PermissionSetArn"], {})),
+                        permissions_set_id: copy.deepcopy(
+                            managed_policies.get(
+                                permissions_set["PermissionSetArn"], {}
+                            )
+                        ),
                     }
-                    transform_policy_data(permissions_set_managed_policies, PolicyType.managed.value, current_aws_account_id)
+                    transform_policy_data(
+                        permissions_set_managed_policies,
+                        PolicyType.managed.value,
+                        current_aws_account_id,
+                    )
                     load_policy_data(
                         neo4j_session,
                         permissions_set_managed_policies,
@@ -363,9 +397,15 @@ def load_identity_center_account_assignments(
                     )
                 if inline_policies.get(permissions_set.get("PermissionSetArn")):
                     permissions_set_inline_policies = {
-                        permissions_set_id: copy.deepcopy(inline_policies.get(permissions_set["PermissionSetArn"], {})),
+                        permissions_set_id: copy.deepcopy(
+                            inline_policies.get(permissions_set["PermissionSetArn"], {})
+                        ),
                     }
-                    transform_policy_data(permissions_set_inline_policies, PolicyType.inline.value, current_aws_account_id)
+                    transform_policy_data(
+                        permissions_set_inline_policies,
+                        PolicyType.inline.value,
+                        current_aws_account_id,
+                    )
                     load_policy_data(
                         neo4j_session,
                         permissions_set_inline_policies,
@@ -467,16 +507,25 @@ def sync_identity_center_permissions_sets(
     current_aws_account_id: str,
     common_job_parameters: Dict,
 ) -> None:
-    permissions_sets = get_identity_center_permissions_sets_list(boto3_session, instance, region)
+    permissions_sets = get_identity_center_permissions_sets_list(
+        boto3_session, instance, region
+    )
 
     # INFO: This is a temporary solution to skip Loading Policies for manual runs.
-    if common_job_parameters.get("MANUAL_RUN", False) or current_aws_account_id == "934101271236":
+    if (
+        common_job_parameters.get("MANUAL_RUN", False)
+        or current_aws_account_id == "934101271236"
+    ):
         managed_policies = {}
         inline_policies = {}
 
     else:
-        managed_policies = get_managed_policies(boto3_session, instance["InstanceArn"], permissions_sets, region)
-        inline_policies = get_inline_policy(boto3_session, instance["InstanceArn"], permissions_sets, region)
+        managed_policies = get_managed_policies(
+            boto3_session, instance["InstanceArn"], permissions_sets, region
+        )
+        inline_policies = get_inline_policy(
+            boto3_session, instance["InstanceArn"], permissions_sets, region
+        )
 
     users = get_identity_center_users_list(boto3_session, instance, region)
     groups = get_identity_center_groups_list(boto3_session, instance, region)
@@ -518,10 +567,17 @@ def sync_identity_center_permissions_sets(
 
         unloaded_permissions_sets.append(permissions_set)
         # INFO: This is a temporary solution to skip Loading Policies for manual runs.
-        if common_job_parameters.get("MANUAL_RUN", False) or current_aws_account_id == "934101271236":
+        if (
+            common_job_parameters.get("MANUAL_RUN", False)
+            or current_aws_account_id == "934101271236"
+        ):
             continue
-        unloaded_managed_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(managed_policies.get(permissions_set["PermissionSetArn"], {}))
-        unloaded_inline_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(inline_policies.get(permissions_set["PermissionSetArn"], {}))
+        unloaded_managed_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(
+            managed_policies.get(permissions_set["PermissionSetArn"], {})
+        )
+        unloaded_inline_policies[permissions_set["PermissionSetArn"]] = copy.deepcopy(
+            inline_policies.get(permissions_set["PermissionSetArn"], {})
+        )
 
     load_identity_center_permissions_sets(
         neo4j_session,
@@ -530,14 +586,32 @@ def sync_identity_center_permissions_sets(
         aws_update_tag,
     )
 
-    transform_policy_data(unloaded_managed_policies, PolicyType.managed.value, current_aws_account_id)
-    load_policy_data(neo4j_session, unloaded_managed_policies, PolicyType.managed.value, current_aws_account_id, aws_update_tag)
-    transform_policy_data(unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    transform_policy_data(
+        unloaded_managed_policies, PolicyType.managed.value, current_aws_account_id
+    )
+    load_policy_data(
+        neo4j_session,
+        unloaded_managed_policies,
+        PolicyType.managed.value,
+        current_aws_account_id,
+        aws_update_tag,
+    )
+    transform_policy_data(
+        unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id
+    )
+    load_policy_data(
+        neo4j_session,
+        unloaded_inline_policies,
+        PolicyType.inline.value,
+        current_aws_account_id,
+        aws_update_tag,
+    )
 
 
 @timeit
-def get_identity_center_users_list(boto3_session: boto3.session.Session, instance: Dict, region: str) -> List[Dict]:
+def get_identity_center_users_list(
+    boto3_session: boto3.session.Session, instance: Dict, region: str
+) -> List[Dict]:
     client = get_boto3_client(boto3_session, "identitystore", region)
 
     users: List[Dict] = []
@@ -565,7 +639,9 @@ def load_identity_center_users(
     users_list: List[Dict],
     update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_identity_center_users_tx, instance_arn, users_list, update_tag)
+    neo4j_session.execute_write(
+        _load_identity_center_users_tx, instance_arn, users_list, update_tag
+    )
 
 
 @timeit
@@ -616,11 +692,15 @@ def sync_identity_center_users(
     region: str,
 ) -> None:
     users = get_identity_center_users_list(boto3_session, instance, region)
-    load_identity_center_users(neo4j_session, instance["InstanceArn"], users, aws_update_tag)
+    load_identity_center_users(
+        neo4j_session, instance["InstanceArn"], users, aws_update_tag
+    )
 
 
 @timeit
-def get_identity_center_groups_list(boto3_session: boto3.session.Session, instance: Dict, region: str) -> List[Dict]:
+def get_identity_center_groups_list(
+    boto3_session: boto3.session.Session, instance: Dict, region: str
+) -> List[Dict]:
     client = get_boto3_client(boto3_session, "identitystore", region)
 
     groups: List[Dict] = []
@@ -648,7 +728,9 @@ def load_identity_center_groups(
     groups_list: List[Dict],
     update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_identity_center_groups_tx, instance_arn, groups_list, update_tag)
+    neo4j_session.execute_write(
+        _load_identity_center_groups_tx, instance_arn, groups_list, update_tag
+    )
 
 
 @timeit
@@ -701,7 +783,9 @@ def get_list_group_memberships(
     try:
         paginator = client.get_paginator("list_group_memberships")
 
-        for page in paginator.paginate(IdentityStoreId=instance["IdentityStoreId"], GroupId=group["GroupId"]):
+        for page in paginator.paginate(
+            IdentityStoreId=instance["IdentityStoreId"], GroupId=group["GroupId"]
+        ):
             group_memberships.extend(page["GroupMemberships"])
 
     except Exception as e:
@@ -718,11 +802,15 @@ def load_identity_center_group_memberships(
     memberships: List[Dict],
     update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_identity_center_group_memberships_tx, memberships, update_tag)
+    neo4j_session.execute_write(
+        _load_identity_center_group_memberships_tx, memberships, update_tag
+    )
 
 
 @timeit
-def _load_identity_center_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], update_tag: int) -> None:
+def _load_identity_center_group_memberships_tx(
+    tx: neo4j.Transaction, memberships: List[Dict], update_tag: int
+) -> None:
     ingest_memberships = """
     UNWIND $memberships AS membership
         MATCH (p:AWSGroup{id: membership.GroupId})
@@ -912,8 +1000,12 @@ def sync_scoped_groups(
     )
 
 
-def cleanup_identitystore(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("aws_import_identitystore_cleanup.json", neo4j_session, common_job_parameters)
+def cleanup_identitystore(
+    neo4j_session: neo4j.Session, common_job_parameters: Dict
+) -> None:
+    run_cleanup_job(
+        "aws_import_identitystore_cleanup.json", neo4j_session, common_job_parameters
+    )
 
 
 @timeit
@@ -947,7 +1039,13 @@ def sync_identitystore(
             sync_identity_center_groups(neo4j_session, boto3_session, instance, aws_update_tag, region)
 
         sync_identity_center_permissions_sets(
-            neo4j_session, boto3_session, instance, aws_update_tag, region, current_aws_account_id, common_job_parameters,
+            neo4j_session,
+            boto3_session,
+            instance,
+            aws_update_tag,
+            region,
+            current_aws_account_id,
+            common_job_parameters,
         )
 
     cleanup_identitystore(neo4j_session, common_job_parameters)
@@ -963,6 +1061,12 @@ def sync(
     common_job_parameters: Dict,
 ) -> None:
     tic = time.perf_counter()
-    sync_identitystore(neo4j_session, boto3_session, current_aws_account_id, update_tag, common_job_parameters)
+    sync_identitystore(
+        neo4j_session,
+        boto3_session,
+        current_aws_account_id,
+        update_tag,
+        common_job_parameters,
+    )
     toc = time.perf_counter()
     logger.info(f"Time to process identitystore: {toc - tic:0.4f} seconds")

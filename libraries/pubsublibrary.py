@@ -20,13 +20,13 @@ class PubSubLibrary:
         try:
             # When you publish a message, the client returns a message_id
             message_id = publisher.publish(topic_path, data=data).result()
-            logging.info(f'PubSub publish payload success: {message_id}')
+            logging.info(f"PubSub publish payload success: {message_id}")
 
             return True
 
         except Exception as ex:
-            logging.error(f'PubSub publish payload failed: {str(ex)}')
+            logging.error(f"PubSub publish payload failed: {str(ex)}")
 
             traceback.print_exception(type(ex), ex, ex.__traceback__)
 
-            raise PubSubPublishError(f'failed to publish message to {topic}')
+            raise PubSubPublishError(f"failed to publish message to {topic}")

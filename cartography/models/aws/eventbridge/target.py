@@ -1,0 +1,90 @@
+from dataclasses import dataclass
+
+from cartography.models.aws.extra_labels import LEGACY_EVENT_BRIDGE_TARGET
+from cartography.models.core.common import PropertyRef
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.nodes import ExtraNodeLabels
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import TargetNodeMatcher
+
+
+@dataclass(frozen=True)
+class EventBridgeTargetNodeProperties(CartographyNodeProperties):
+    id: PropertyRef = PropertyRef(
+        "Id", description="System-assigned eventbridge target ID"
+    )
+    arn: PropertyRef = PropertyRef(
+        "Arn",
+        extra_index=True,
+        description="The Amazon Resource Name (ARN) of the target",
+    )
+    rule_arn: PropertyRef = PropertyRef(
+        "RuleArn", description="The arn of the rule which is associated with target"
+    )
+    role_arn: PropertyRef = PropertyRef(
+        "RoleArn",
+        description="The Amazon Resource Name (ARN) of the role that is used for target invocation",
+    )
+    region: PropertyRef = PropertyRef(
+        "Region", set_in_kwargs=True, description="The region of the target"
+    )
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class EventBridgeTargetToAwsAccountRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class EventBridgeTargetToAWSAccountRel(CartographyRelSchema):
+    target_node_label: str = "AWSAccount"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("AWS_ID", set_in_kwargs=True)},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "RESOURCE"
+    properties: EventBridgeTargetToAwsAccountRelProperties = (
+        EventBridgeTargetToAwsAccountRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class EventBridgeTargetToEventBridgeRuleRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class EventBridgeTargetToEventBridgeRuleRel(CartographyRelSchema):
+    target_node_label: str = "AWSEventBridgeRule"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"arn": PropertyRef("RuleArn")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "LINKED_TO_RULE"
+    properties: EventBridgeTargetToEventBridgeRuleRelProperties = (
+        EventBridgeTargetToEventBridgeRuleRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class EventBridgeTargetSchema(CartographyNodeSchema):
+    """Representation of an AWS [EventBridge Target](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTargetsByRule.html)"""
+
+    label: str = "AWSEventBridgeTarget"
+    # DEPRECATED: legacy EventBridgeTarget node label will be removed in v1.0.0.
+    extra_node_labels: ExtraNodeLabels = ExtraNodeLabels([LEGACY_EVENT_BRIDGE_TARGET])
+    properties: EventBridgeTargetNodeProperties = EventBridgeTargetNodeProperties()
+    sub_resource_relationship: EventBridgeTargetToAWSAccountRel = (
+        EventBridgeTargetToAWSAccountRel()
+    )
+    other_relationships: OtherRelationships = OtherRelationships(
+        [
+            EventBridgeTargetToEventBridgeRuleRel(),
+        ]
+    )
