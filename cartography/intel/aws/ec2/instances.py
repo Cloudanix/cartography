@@ -17,6 +17,7 @@ from cartography.client.core.tx import load
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.ssm import get_instance_information
 from cartography.models.aws.ec2.instances import EC2InstanceSchema
 from cartography.models.aws.ec2.keypairs import EC2KeyPairSchema
 from cartography.models.aws.ec2.networkinterface_instance import EC2NetworkInterfaceInstanceSchema
@@ -250,6 +251,8 @@ def transform_ec2_instances(
                     "BootMode": instance.get("BootMode"),
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
                     "HibernationOptions": instance.get("HibernationOptions", {}).get("Configured"),
+                    "SsmEnabled": False,
+                    "SsmAgentVersion": None,
                     "Region": region,
                     "consolelink": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
@@ -507,6 +510,22 @@ def link_ec2_to_eks(neo4j_session: neo4j.Session, instance_list: List[Dict], upd
     load_graph_data(neo4j_session, nodegroup_query, instance_list, update_tag=update_tag)
 
 
+def enrich_ec2_instances_with_ssm_status(
+    instance_list: List[Dict[str, Any]],
+    instance_information: List[Dict[str, Any]],
+) -> None:
+    """
+    Set SsmEnabled and SsmAgentVersion on each EC2 instance dict from
+    DescribeInstanceInformation. An instance is SSM-enabled when it appears in
+    InstanceInformationList (it is a Systems Manager managed node).
+    """
+    info_by_id = {ii["InstanceId"]: ii for ii in instance_information}
+    for inst in instance_list:
+        info = info_by_id.get(inst["InstanceId"])
+        inst["SsmEnabled"] = info is not None
+        inst["SsmAgentVersion"] = info.get("AgentVersion") if info else None
+
+
 def load_ec2_instance_data(
     neo4j_session: neo4j.Session,
     region: str,
@@ -569,6 +588,24 @@ def sync_ec2_instances(
         logger.info("Syncing EC2 instances for region '%s' in account '%s'.", region, current_aws_account_id)
         reservations = get_ec2_instances(boto3_session, region)
         ec2_data = transform_ec2_instances(boto3_session, reservations, region, current_aws_account_id)
+        # DescribeInstanceInformation errors on terminated/shutting-down IDs (InvalidInstanceId).
+        instance_ids = [
+            inst["InstanceId"]
+            for inst in ec2_data.instance_list
+            if inst.get("State") not in ("terminated", "shutting-down")
+        ]
+        if instance_ids:
+            try:
+                ssm_info = get_instance_information(boto3_session, region, instance_ids)
+                enrich_ec2_instances_with_ssm_status(ec2_data.instance_list, ssm_info)
+            except Exception:
+                logger.warning(
+                    "Failed to get SSM instance information for region '%s' in account '%s'; "
+                    "loading EC2 instances with ssmenabled=false.",
+                    region,
+                    current_aws_account_id,
+                    exc_info=True,
+                )
         load_ec2_instance_data(
             neo4j_session,
             region,

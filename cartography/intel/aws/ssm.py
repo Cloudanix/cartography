@@ -9,7 +9,6 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load
-from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
@@ -69,31 +68,6 @@ def transform_instance_information(data_list: List[Dict[str, Any]], region: str,
         arn = f"arn:aws:ssm:{region}:{current_aws_account_id}:managed-instance/{ii['InstanceId']}"
         ii["consolelink"] = aws_console_link.get_console_link(arn=arn)
     return data_list
-
-
-def transform_ec2_ssm_status(
-        instance_ids: List[str],
-        instance_information: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """
-    Derive per-EC2 SSM managed status from DescribeInstanceInformation results.
-
-    An instance is SSM-enabled when it appears in InstanceInformationList (it is a
-    Systems Manager managed node). AgentVersion is the SSM Agent version on that node.
-    Instances queried but not returned are not currently registered with SSM.
-    """
-    info_by_id = {ii["InstanceId"]: ii for ii in instance_information}
-    status_list: List[Dict[str, Any]] = []
-    for instance_id in instance_ids:
-        info = info_by_id.get(instance_id)
-        status_list.append(
-            {
-                "InstanceId": instance_id,
-                "SsmEnabled": info is not None,
-                "SsmAgentVersion": info.get("AgentVersion") if info else None,
-            },
-        )
-    return status_list
 
 
 @timeit
@@ -167,38 +141,6 @@ def load_instance_patches(
 
 
 @timeit
-def load_ec2_ssm_status(
-    neo4j_session: neo4j.Session,
-    data: List[Dict[str, Any]],
-    region: str,
-    current_aws_account_id: str,
-) -> None:
-    """
-    Stamp ssmenabled and ssmagentversion on EC2Instance nodes.
-
-    Kept off EC2InstanceSchema so the EC2 instance load does not overwrite them.
-    Derived from SSM DescribeInstanceInformation: presence in InstanceInformationList
-    means the instance is a managed node.
-    """
-    if not data:
-        return
-    query = """
-    UNWIND $DictList AS item
-    MATCH (:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(i:EC2Instance{id: item.InstanceId})
-    WHERE i.region = $Region
-    SET i.ssmenabled = item.SsmEnabled,
-        i.ssmagentversion = item.SsmAgentVersion
-    """
-    load_graph_data(
-        neo4j_session,
-        query,
-        data,
-        AWS_ID=current_aws_account_id,
-        Region=region,
-    )
-
-
-@timeit
 def cleanup_ssm(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
     logger.info("Running SSM cleanup")
     GraphJob.from_node_schema(SSMInstanceInformationSchema(), common_job_parameters).run(neo4j_session)
@@ -223,12 +165,6 @@ def sync(
         data = get_instance_information(boto3_session, region, instance_ids)
         data = transform_instance_information(data, region, current_aws_account_id)
         load_instance_information(neo4j_session, data, region, current_aws_account_id, update_tag)
-        load_ec2_ssm_status(
-            neo4j_session,
-            transform_ec2_ssm_status(instance_ids, data),
-            region,
-            current_aws_account_id,
-        )
 
         data = get_instance_patches(boto3_session, region, instance_ids)
         data = transform_instance_patches(data, region, current_aws_account_id)

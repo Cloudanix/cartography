@@ -44,6 +44,8 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     bootmode: PropertyRef = PropertyRef("BootMode")
     instancelifecycle: PropertyRef = PropertyRef("InstanceLifecycle")
     hibernationoptions: PropertyRef = PropertyRef("HibernationOption")
+    ssmenabled: PropertyRef = PropertyRef("SsmEnabled")
+    ssmagentversion: PropertyRef = PropertyRef("SsmAgentVersion")
     consolelink: PropertyRef = PropertyRef("consolelink")
     arn: PropertyRef = PropertyRef("arn")
     userdata: PropertyRef = PropertyRef("UserData")
