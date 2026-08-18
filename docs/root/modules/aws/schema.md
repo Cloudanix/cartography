@@ -921,6 +921,29 @@ Our representation of an AWS [EC2 Instance](https://docs.aws.amazon.com/AWSEC2/l
 | bootmode | The boot mode of the instance.|
 | instancelifecycle | Indicates whether this is a Spot Instance or a Scheduled Instance.|
 | hibernationoptions | Indicates whether the instance is enabled for hibernation.|
+| ssmenabled | `true` when the instance is a Systems Manager managed node (`ssm:DescribeInstanceInformation` returns it). Set during the EC2 instance sync. Stopped and terminated instances are not returned by that API. |
+| ssmagentversion | SSM Agent version from `DescribeInstanceInformation.AgentVersion` when the instance is managed; otherwise unset. |
+| ssmpingstatus | SSM Agent connection status: `Online`, `ConnectionLost`, or `Inactive` (deprecated). |
+| ssmlastpingdatetime | Epoch seconds when the agent last pinged Systems Manager. |
+| ssmislatestversion | Whether the latest SSM Agent is running. Not reliable for older Windows Server nodes that used EC2Config. |
+| ssmplatformtype | SSM-reported OS platform type: `Windows`, `Linux`, or `MacOS`. Distinct from AMI `platform`. |
+| ssmplatformname | SSM-reported OS platform name (for example `Amazon Linux`). |
+| ssmplatformversion | SSM-reported OS platform version. |
+| ssmactivationid | Hybrid activation ID. Typically unset for EC2 instances. |
+| ssmiamrole | IAM role from Systems Manager Quick Setup host management, or the role on a hybrid node. Distinct from `iaminstanceprofile`. |
+| ssmregistrationdate | Epoch seconds when the node was registered with Systems Manager. |
+| ssmresourcetype | `EC2Instance` or `ManagedInstance`. |
+| ssmname | Name assigned at hybrid activation (`DefaultInstanceName`). Distinct from the EC2 Name tag. |
+| ssmipaddress | IP address reported by SSM Agent. Distinct from EC2 `privateipaddress` / `publicipaddress`. |
+| ssmcomputername | Fully qualified host name reported by SSM Agent. |
+| ssmassociationstatus | Status of SSM associations (`Success`, `Pending`, `Failed`). |
+| ssmlastassociationexecutiondate | Epoch seconds when associations last ran. |
+| ssmlastsuccessfulassociationexecutiondate | Epoch seconds of the last successful association run. |
+| ssmassociationoverviewdetailedstatus | Flattened `AssociationOverview.DetailedStatus`. |
+| ssmassociationstatusaggregatedcount | JSON string of `AssociationOverview.InstanceAssociationStatusAggregatedCount` (nested maps cannot be stored as Neo4j properties). |
+| ssmsourceid | Source resource ID (for Greengrass, the Thing name). |
+| ssmsourcetype | Source resource type, for example `AWS::EC2::Instance`. |
+| ssmsourcelocation | Location of the source resource in a third-party cloud. |
 
 
 #### Relationships
@@ -3236,8 +3259,11 @@ Representation of an AWS SSM [InstanceInformation](https://docs.aws.amazon.com/s
 | association\_status | The status of the association. |
 | last\_association\_execution\_date | The date the association was last run. |
 | last\_successful\_association\_execution\_date | The last date the association was successfully run. |
+| association\_overview\_detailed\_status | Flattened `AssociationOverview.DetailedStatus`. |
+| association\_status\_aggregated\_count | JSON string of `AssociationOverview.InstanceAssociationStatusAggregatedCount`. |
 | source\_id | The ID of the source resource. For AWS IoT Greengrass devices, SourceId is the Thing name. |
 | source\_type | The type of the source resource. For AWS IoT Greengrass devices, SourceType is AWS::IoT::Thing. |
+| source\_location | The location of the source resource in the third-party cloud environment. |
 
 #### Relationships
 

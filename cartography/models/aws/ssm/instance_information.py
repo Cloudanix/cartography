@@ -35,8 +35,11 @@ class SSMInstanceInformationNodeProperties(CartographyNodeProperties):
     association_status: PropertyRef = PropertyRef('AssociationStatus')
     last_association_execution_date: PropertyRef = PropertyRef('LastAssociationExecutionDate')
     last_successful_association_execution_date: PropertyRef = PropertyRef('LastSuccessfulAssociationExecutionDate')
+    association_overview_detailed_status: PropertyRef = PropertyRef('AssociationOverviewDetailedStatus')
+    association_status_aggregated_count: PropertyRef = PropertyRef('AssociationStatusAggregatedCount')
     source_id: PropertyRef = PropertyRef('SourceId')
     source_type: PropertyRef = PropertyRef('SourceType')
+    source_location: PropertyRef = PropertyRef('SourceLocation')
 
 
 @dataclass(frozen=True)

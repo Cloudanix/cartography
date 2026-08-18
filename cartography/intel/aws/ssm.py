@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from typing import Any
@@ -65,6 +66,12 @@ def transform_instance_information(data_list: List[Dict[str, Any]], region: str,
         ii["RegistrationDate"] = dict_date_to_epoch(ii, "RegistrationDate")
         ii["LastAssociationExecutionDate"] = dict_date_to_epoch(ii, "LastAssociationExecutionDate")
         ii["LastSuccessfulAssociationExecutionDate"] = dict_date_to_epoch(ii, "LastSuccessfulAssociationExecutionDate")
+        overview = ii.get("AssociationOverview") or {}
+        ii["AssociationOverviewDetailedStatus"] = overview.get("DetailedStatus")
+        aggregated = overview.get("InstanceAssociationStatusAggregatedCount")
+        ii["AssociationStatusAggregatedCount"] = (
+            json.dumps(aggregated) if aggregated is not None else None
+        )
         arn = f"arn:aws:ssm:{region}:{current_aws_account_id}:managed-instance/{ii['InstanceId']}"
         ii["consolelink"] = aws_console_link.get_console_link(arn=arn)
     return data_list
