@@ -1,10 +1,12 @@
 import base64
+import json
 import logging
 import time
 from collections import namedtuple
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
@@ -17,6 +19,7 @@ from cartography.client.core.tx import load
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.ssm import get_instance_information
 from cartography.models.aws.ec2.instances import EC2InstanceSchema
 from cartography.models.aws.ec2.keypairs import EC2KeyPairSchema
 from cartography.models.aws.ec2.networkinterface_instance import EC2NetworkInterfaceInstanceSchema
@@ -25,6 +28,7 @@ from cartography.models.aws.ec2.securitygroup_instance import EC2SecurityGroupIn
 from cartography.models.aws.ec2.subnet_instance import EC2SubnetInstanceSchema
 from cartography.models.aws.ec2.volumes import EBSVolumeInstanceSchema
 from cartography.util import aws_handle_regions
+from cartography.util import dict_date_to_epoch
 from cartography.util import timeit
 
 aws_console_link = AWSLinker()
@@ -250,6 +254,7 @@ def transform_ec2_instances(
                     "BootMode": instance.get("BootMode"),
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
                     "HibernationOptions": instance.get("HibernationOptions", {}).get("Configured"),
+                    **_default_ssm_instance_fields(),
                     "Region": region,
                     "consolelink": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
@@ -507,6 +512,109 @@ def link_ec2_to_eks(neo4j_session: neo4j.Session, instance_list: List[Dict], upd
     load_graph_data(neo4j_session, nodegroup_query, instance_list, update_tag=update_tag)
 
 
+def _default_ssm_instance_fields() -> Dict[str, Any]:
+    """SSM DescribeInstanceInformation fields on an unmanaged EC2 instance."""
+    return {
+        "SsmEnabled": False,
+        "SsmAgentVersion": None,
+        "SsmPingStatus": None,
+        "SsmLastPingDateTime": None,
+        "SsmIsLatestVersion": None,
+        "SsmPlatformType": None,
+        "SsmPlatformName": None,
+        "SsmPlatformVersion": None,
+        "SsmActivationId": None,
+        "SsmIamRole": None,
+        "SsmRegistrationDate": None,
+        "SsmResourceType": None,
+        "SsmName": None,
+        "SsmIpAddress": None,
+        "SsmComputerName": None,
+        "SsmAssociationStatus": None,
+        "SsmLastAssociationExecutionDate": None,
+        "SsmLastSuccessfulAssociationExecutionDate": None,
+        "SsmAssociationOverviewDetailedStatus": None,
+        "SsmAssociationStatusAggregatedCount": None,
+        "SsmSourceId": None,
+        "SsmSourceType": None,
+        "SsmSourceLocation": None,
+    }
+
+
+def _to_epoch(info: Dict[str, Any], key: str) -> Optional[int]:
+    value = info.get(key)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    return dict_date_to_epoch(info, key)
+
+
+def _ssm_fields_from_instance_information(info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Map SSM InstanceInformation onto EC2Instance properties.
+
+    Keys are prefixed with Ssm so they do not overwrite EC2 DescribeInstances
+    fields (platform, private IP, IAM instance profile, name from tags).
+    AssociationOverview is flattened: Neo4j cannot store nested maps.
+    Datetimes are stored as epoch seconds, matching SSMInstanceInformation.
+    """
+    fields = _default_ssm_instance_fields()
+    if not info:
+        return fields
+
+    overview = info.get("AssociationOverview") or {}
+    aggregated = overview.get("InstanceAssociationStatusAggregatedCount")
+    fields.update(
+        {
+            "SsmEnabled": True,
+            "SsmAgentVersion": info.get("AgentVersion"),
+            "SsmPingStatus": info.get("PingStatus"),
+            "SsmLastPingDateTime": _to_epoch(info, "LastPingDateTime"),
+            "SsmIsLatestVersion": info.get("IsLatestVersion"),
+            "SsmPlatformType": info.get("PlatformType"),
+            "SsmPlatformName": info.get("PlatformName"),
+            "SsmPlatformVersion": info.get("PlatformVersion"),
+            "SsmActivationId": info.get("ActivationId"),
+            "SsmIamRole": info.get("IamRole"),
+            "SsmRegistrationDate": _to_epoch(info, "RegistrationDate"),
+            "SsmResourceType": info.get("ResourceType"),
+            "SsmName": info.get("Name"),
+            "SsmIpAddress": info.get("IPAddress"),
+            "SsmComputerName": info.get("ComputerName"),
+            "SsmAssociationStatus": info.get("AssociationStatus"),
+            "SsmLastAssociationExecutionDate": _to_epoch(info, "LastAssociationExecutionDate"),
+            "SsmLastSuccessfulAssociationExecutionDate": _to_epoch(
+                info, "LastSuccessfulAssociationExecutionDate",
+            ),
+            "SsmAssociationOverviewDetailedStatus": overview.get("DetailedStatus"),
+            "SsmAssociationStatusAggregatedCount": (
+                json.dumps(aggregated) if aggregated is not None else None
+            ),
+            "SsmSourceId": info.get("SourceId"),
+            "SsmSourceType": info.get("SourceType"),
+            "SsmSourceLocation": info.get("SourceLocation"),
+        },
+    )
+    return fields
+
+
+def enrich_ec2_instances_with_ssm_status(
+    instance_list: List[Dict[str, Any]],
+    instance_information: List[Dict[str, Any]],
+) -> None:
+    """
+    Copy DescribeInstanceInformation attributes onto each EC2 instance dict.
+
+    An instance is SSM-enabled when it appears in InstanceInformationList
+    (it is a Systems Manager managed node). See
+    https://docs.aws.amazon.com/boto3/latest/reference/services/ssm/client/describe_instance_information.html
+    """
+    info_by_id = {ii["InstanceId"]: ii for ii in instance_information}
+    for inst in instance_list:
+        inst.update(_ssm_fields_from_instance_information(info_by_id.get(inst["InstanceId"])))
+
+
 def load_ec2_instance_data(
     neo4j_session: neo4j.Session,
     region: str,
@@ -569,6 +677,24 @@ def sync_ec2_instances(
         logger.info("Syncing EC2 instances for region '%s' in account '%s'.", region, current_aws_account_id)
         reservations = get_ec2_instances(boto3_session, region)
         ec2_data = transform_ec2_instances(boto3_session, reservations, region, current_aws_account_id)
+        # DescribeInstanceInformation errors on terminated/shutting-down IDs (InvalidInstanceId).
+        instance_ids = [
+            inst["InstanceId"]
+            for inst in ec2_data.instance_list
+            if inst.get("State") not in ("terminated", "shutting-down")
+        ]
+        if instance_ids:
+            try:
+                ssm_info = get_instance_information(boto3_session, region, instance_ids)
+                enrich_ec2_instances_with_ssm_status(ec2_data.instance_list, ssm_info)
+            except Exception:
+                logger.warning(
+                    "Failed to get SSM instance information for region '%s' in account '%s'; "
+                    "loading EC2 instances with ssmenabled=false.",
+                    region,
+                    current_aws_account_id,
+                    exc_info=True,
+                )
         load_ec2_instance_data(
             neo4j_session,
             region,

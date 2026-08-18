@@ -44,6 +44,35 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     bootmode: PropertyRef = PropertyRef("BootMode")
     instancelifecycle: PropertyRef = PropertyRef("InstanceLifecycle")
     hibernationoptions: PropertyRef = PropertyRef("HibernationOption")
+    ssmenabled: PropertyRef = PropertyRef("SsmEnabled")
+    ssmagentversion: PropertyRef = PropertyRef("SsmAgentVersion")
+    ssmpingstatus: PropertyRef = PropertyRef("SsmPingStatus")
+    ssmlastpingdatetime: PropertyRef = PropertyRef("SsmLastPingDateTime")
+    ssmislatestversion: PropertyRef = PropertyRef("SsmIsLatestVersion")
+    ssmplatformtype: PropertyRef = PropertyRef("SsmPlatformType")
+    ssmplatformname: PropertyRef = PropertyRef("SsmPlatformName")
+    ssmplatformversion: PropertyRef = PropertyRef("SsmPlatformVersion")
+    ssmactivationid: PropertyRef = PropertyRef("SsmActivationId")
+    ssmiamrole: PropertyRef = PropertyRef("SsmIamRole")
+    ssmregistrationdate: PropertyRef = PropertyRef("SsmRegistrationDate")
+    ssmresourcetype: PropertyRef = PropertyRef("SsmResourceType")
+    ssmname: PropertyRef = PropertyRef("SsmName")
+    ssmipaddress: PropertyRef = PropertyRef("SsmIpAddress")
+    ssmcomputername: PropertyRef = PropertyRef("SsmComputerName")
+    ssmassociationstatus: PropertyRef = PropertyRef("SsmAssociationStatus")
+    ssmlastassociationexecutiondate: PropertyRef = PropertyRef("SsmLastAssociationExecutionDate")
+    ssmlastsuccessfulassociationexecutiondate: PropertyRef = PropertyRef(
+        "SsmLastSuccessfulAssociationExecutionDate",
+    )
+    ssmassociationoverviewdetailedstatus: PropertyRef = PropertyRef(
+        "SsmAssociationOverviewDetailedStatus",
+    )
+    ssmassociationstatusaggregatedcount: PropertyRef = PropertyRef(
+        "SsmAssociationStatusAggregatedCount",
+    )
+    ssmsourceid: PropertyRef = PropertyRef("SsmSourceId")
+    ssmsourcetype: PropertyRef = PropertyRef("SsmSourceType")
+    ssmsourcelocation: PropertyRef = PropertyRef("SsmSourceLocation")
     consolelink: PropertyRef = PropertyRef("consolelink")
     arn: PropertyRef = PropertyRef("arn")
     userdata: PropertyRef = PropertyRef("UserData")
