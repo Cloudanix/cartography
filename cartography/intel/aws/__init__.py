@@ -660,7 +660,11 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             "IsCloudanixGenerated": True,
         }
 
-    common_job_parameters["ORGANIZATION_ID"] = organization["Id"]
+    common_job_parameters["ORGANIZATION_ID"] = (
+        f"{common_job_parameters['WORKSPACE_ID']}/{organization['Id']}"
+        if not organization.get("IsCloudanixGenerated")
+        else organization["Id"]
+    )
 
     if not aws_accounts:
         logger.warning(

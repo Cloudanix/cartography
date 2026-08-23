@@ -112,6 +112,7 @@ def load_aws_accounts(
     MERGE (org:AWSOrganization{id: $organizationId})
     ON CREATE SET org.firstseen = timestamp()
     SET org.lastupdated = $UPDATE_TAG,
+    org.organizationId = $rawOrganizationId,
     org.arn = $organizationArn,
     org.masterAccountArn = $masterAccountArn,
     org.masterAccountId = $masterAccountId,
@@ -141,6 +142,12 @@ def load_aws_accounts(
     """
     for account_name, account_id in aws_accounts.items():
         root_arn = f'arn:aws:iam::{account_id}:root'
+
+        if not organization.get("IsCloudanixGenerated"):
+            org_id = f"{common_job_parameters['WORKSPACE_ID']}/{organization.get('Id')}"
+        else:
+            org_id = organization.get("Id")
+
         run_write_query(
             neo4j_session,
             query,
@@ -151,7 +158,8 @@ def load_aws_accounts(
             RootArn=root_arn,
             region="global",
             UPDATE_TAG=aws_update_tag,
-            organizationId=organization.get("Id"),
+            organizationId=org_id,
+            rawOrganizationId=organization.get("Id"),
             isSystemGenerated=organization.get("IsSystemGenerated", None),
             organizationArn=organization.get("Arn", None),
             masterAccountArn=organization.get("MasterAccountArn", None),
