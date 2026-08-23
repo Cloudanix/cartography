@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 import time
 from typing import Dict
 from typing import List
@@ -81,23 +82,28 @@ def fetch_all(
     has_next_page = True
     data: List[Dict] = []
     retry = 0
+    last_exception = None
     while has_next_page:
         try:
             resp = fetch_page(token, api_url, organization, query, cursor)
             retry = 0
+            last_exception = None
         except requests.exceptions.Timeout:
             retry += 1
+            last_exception = sys.exc_info()
         except requests.exceptions.HTTPError:
             retry += 1
+            last_exception = sys.exc_info()
         except requests.exceptions.ChunkedEncodingError:
             retry += 1
+            last_exception = sys.exc_info()
 
-        if retry >= retries:
+        if last_exception and retry >= retries:
             logger.error(
                 f"GitHub: Could not retrieve page of resource `{resource_type}` due to HTTP error.",
-                exc_info=True,
+                exc_info=last_exception,
             )
-            raise
+            raise last_exception[1].with_traceback(last_exception[2])
         elif retry > 0:
             time.sleep(1 * retry)
             continue
