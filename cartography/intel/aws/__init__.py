@@ -610,6 +610,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "pagination": {},
         "PUBLIC_PORTS": ["20", "21", "22", "3306", "3389", "4333"],
         "IDENTITY_STORE_REGION": config.identity_store_region,
+        "IDENTITY_STORE_IDENTITYFIER": config.params.get('identityStoreIdentifier'),
         "AWS_INTERNAL_ACCOUNTS": config.aws_internal_accounts,
         "DEFAULT_DATETIME": '2000-01-01 00:00:00+00:00',
         "NULL_STRINGS": ['NONE', 'none', 'None', ''],

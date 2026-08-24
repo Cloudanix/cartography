@@ -929,6 +929,8 @@ def sync_identitystore(
     scoped_group_ids = common_job_parameters.get("GROUPS", [])
     instances = get_identity_center_instances_list(boto3_session, common_job_parameters["IDENTITY_STORE_REGION"])
     for instance in instances:
+        if instance['InstanceArn'] != common_job_parameters["IDENTITY_STORE_IDENTITYFIER"]:
+            continue
         load_identity_center_instance(
             neo4j_session,
             instance,
