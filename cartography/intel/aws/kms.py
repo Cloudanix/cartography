@@ -336,6 +336,8 @@ def load_kms_keys(
     kmskey.validto = k.ValidTo,
     kmskey.enabled = k.Enabled,
     kmskey.keystate = k.KeyState,
+    kmskey.keymanager = k.KeyManager,
+    kmskey.isdefault = CASE WHEN k.KeyManager = 'AWS' THEN true ELSE false END,
     kmskey.customkeystoreid = k.CustomKeyStoreId,
     kmskey.cloudhsmclusterid = k.CloudHsmClusterId,
     kmskey.lastupdated =$aws_update_tag,
