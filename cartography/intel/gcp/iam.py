@@ -54,6 +54,15 @@ def _gcp_key_managed_type(key_type: str) -> str:
     return MANAGED_TYPE_PREDEFINED if key_type == "SYSTEM_MANAGED" else MANAGED_TYPE_CUSTOM
 
 
+def _gcp_key_display_name(service_account: Dict) -> str:
+    """Human-readable name for a key: the parent SA display name, else the email local-part."""
+    display_name = (service_account.get("displayName") or "").strip()
+    if display_name:
+        return display_name
+    email = service_account.get("email") or service_account.get("id") or ""
+    return email.split("@")[0] if email else ""
+
+
 def set_used_state(session: neo4j.Session, project_id: str, common_job_parameters: Dict, update_tag: int) -> None:
     session.execute_write(_set_used_state_tx, project_id, common_job_parameters, update_tag)
 
@@ -141,6 +150,7 @@ def get_service_account_keys(iam: Resource, project_id: str, service_account: Di
             key['validAfterTime'] = key.get('validAfterTime')
             key['validBeforeTime'] = key.get('validBeforeTime')
             key['managed_type'] = _gcp_key_managed_type(key.get('keyType'))
+            key['displayname'] = _gcp_key_display_name(service_account)
 
         service_keys.extend(keys)
 
@@ -536,6 +546,7 @@ def load_service_account_keys(
     MERGE (u:GCPServiceAccountKey{id: sa.id})
     ON CREATE SET u.firstseen = timestamp()
     SET u.name=sa.name, u.serviceaccountid= $serviceaccount,
+    u.displayname = sa.displayname,
     u.region = $region,
     u.create_date = $createDate,
     u.keytype = sa.keyType, u.origin = sa.keyOrigin,
