@@ -556,7 +556,8 @@ def load_service_account_keys(
 
     u.validaftertime = sa.validAfterTime, u.lastupdated = $gcp_update_tag,
     u.disabled = sa.disabled,
-    u.managed_type = coalesce(sa.managed_type, CASE WHEN sa.keyType = 'SYSTEM_MANAGED' THEN 'predefined' ELSE 'custom' END)
+    u.managed_type = coalesce(sa.managed_type, CASE WHEN sa.keyType = 'SYSTEM_MANAGED' THEN 'predefined' ELSE 'custom' END),
+    u.is_default = (coalesce(sa.managed_type, CASE WHEN sa.keyType = 'SYSTEM_MANAGED' THEN 'predefined' ELSE 'custom' END) = 'predefined')
     WITH u, sa
     MATCH (:GCPProject{id: $project_id})-[:RESOURCE]->(d:GCPServiceAccount{id: $serviceaccount})
     MERGE (d)-[r:HAS_KEY]->(u)
