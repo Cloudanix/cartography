@@ -49,6 +49,14 @@ def test_gcp_key_managed_type():
     assert iam._gcp_key_managed_type(None) == "custom"
 
 
+def test_gcp_key_display_name():
+    sa = {"displayName": "gemini-user", "email": "gemini-user@p.iam.gserviceaccount.com"}
+    assert iam._gcp_key_display_name(sa) == "gemini-user"
+    assert iam._gcp_key_display_name({"email": "gemini-user@p.iam.gserviceaccount.com"}) == "gemini-user"
+    assert iam._gcp_key_display_name({"id": "fallback-sa@p.iam.gserviceaccount.com"}) == "fallback-sa"
+    assert iam._gcp_key_display_name({}) == ""
+
+
 def test_transform_roles_sets_managed_type():
     common_job_parameters = {"GCP_ORGANIZATION_ID": "organizations/123"}
     predefined = iam.transform_roles(

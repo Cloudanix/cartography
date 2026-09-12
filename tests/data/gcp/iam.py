@@ -44,6 +44,7 @@ IAM_SERVICE_ACCOUNT_KEYS = [
         'keyAlgorithm': 'KEY_ALG_RSA_2048',
         'validBeforeTime': '2019-10-02T15:01:23Z',
         'validAfterTime': '2020-10-02T15:01:23Z',
+        'displayname': 'abc',
     },
     {
         'name': 'defg@gmail.com/key456',
@@ -54,6 +55,7 @@ IAM_SERVICE_ACCOUNT_KEYS = [
         'keyAlgorithm': 'KEY_ALG_RSA_2048',
         'validBeforeTime': '2019-10-02T15:01:23Z',
         'validAfterTime': '2020-10-02T15:01:23Z',
+        'displayname': 'defg',
     },
 ]
 IAM_USERS = [
