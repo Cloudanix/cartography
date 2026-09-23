@@ -534,9 +534,9 @@ def list_all_regions(boto3_session, logger):
     except Exception as e:
         if is_aws_access_denied(e):
             # Customer IAM/SCP blocks DescribeRegions; expected, so keep it out of Sentry.
-            logger.info(f"DescribeRegions denied, falling back to input regions. Error - {e}")
+            logger.info(f"DescribeRegions denied: {e}")
         else:
-            logger.error(f"Failed retrieve enabled regions. Error - {e}")
+            logger.error(f"Failed to retrieve enabled regions. Error - {e}")
         return []
 
     return list(map(lambda region: region["RegionName"], regions["Regions"]))
