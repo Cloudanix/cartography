@@ -98,3 +98,38 @@ def test_resolve_sync_regions_nothing_discovered_does_not_log_error(mocker, capl
 
     assert cartography.intel.aws._resolve_sync_regions(MagicMock(), "123", []) == []
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_sync_multiple_accounts_empty_params_does_not_prefill_from_list_all_regions(mocker):
+    mocker.patch.object(cartography.intel.aws.organizations, "sync")
+    mocker.patch.object(cartography.intel.aws, "list_all_regions", return_value=["ap-south-1"])
+    mocker.patch("cartography.intel.aws.boto3.Session")
+    captured = {}
+
+    def _capture(*_args, **kwargs):
+        captured["regions"] = kwargs.get("regions")
+
+    mocker.patch.object(cartography.intel.aws, "_sync_one_account", side_effect=_capture)
+
+    config = MagicMock()
+    config.params = {"regions": []}
+    config.credentials = {
+        "type": "self",
+        "aws_access_key_id": "a",
+        "aws_secret_access_key": "b",
+    }
+    config.update_tag = 1
+    config.aws_excluded_regions = ["eu-west-1"]
+
+    cartography.intel.aws._sync_multiple_accounts(
+        MagicMock(),
+        {"profile": "123"},
+        {"Id": "o"},
+        config,
+        {"AWS_ACCOUNT_ID": "123"},
+        False,
+        aws_requested_syncs=[],
+    )
+
+    assert captured["regions"] == []
+    cartography.intel.aws.list_all_regions.assert_not_called()
