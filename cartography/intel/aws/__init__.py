@@ -25,6 +25,7 @@ from cartography.graph import write_timer
 from cartography.graph.session import Session
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.stats import get_stats_client
+from cartography.util import is_aws_access_denied
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_analysis_job
 from cartography.util import run_cleanup_job
@@ -515,7 +516,11 @@ def list_all_regions(boto3_session, logger):
         )
 
     except Exception as e:
-        logger.error(f"Failed retrieve enabled regions. Error - {e}")
+        if is_aws_access_denied(e):
+            # Customer IAM/SCP blocks DescribeRegions; expected, so keep it out of Sentry.
+            logger.info(f"DescribeRegions denied, falling back to input regions. Error - {e}")
+        else:
+            logger.error(f"Failed retrieve enabled regions. Error - {e}")
         return []
 
     return list(map(lambda region: region["RegionName"], regions["Regions"]))

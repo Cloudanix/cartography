@@ -266,6 +266,31 @@ AWSGetFunc = TypeVar("AWSGetFunc", bound=Callable[..., List])
 # https://github.com/lyft/cartography/issues/25
 
 
+# Denials the customer controls (IAM policy, SCP, region not enabled). Expected,
+# so callers log them below error level to keep them out of Sentry.
+AWS_ACCESS_DENIED_CODES = {
+    "AccessDenied",
+    "AccessDeniedException",
+    "AuthFailure",
+    "AuthorizationError",
+    "Client.UnauthorizedOperation",
+    "OptInRequired",
+    "UnauthorizedOperation",
+    "UnrecognizedClientException",
+}
+SCP_DENY_PHRASE = "explicit deny in a service control policy"
+
+
+def is_aws_access_denied(e: Exception) -> bool:
+    """
+    True when `e` is a botocore ClientError caused by an IAM/SCP denial or a disabled region.
+    """
+    if not isinstance(e, botocore.exceptions.ClientError):
+        return False
+    error = e.response.get("Error", {})
+    return error.get("Code", "") in AWS_ACCESS_DENIED_CODES or SCP_DENY_PHRASE in error.get("Message", "")
+
+
 def backoff_handler(details: Dict) -> None:
     """
     Handler that will be executed on exception by backoff mechanism
