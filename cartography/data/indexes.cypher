@@ -95,7 +95,7 @@ CREATE INDEX IF NOT EXISTS FOR (n:EKSCluster) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:EKSClusterNodeGroup) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ElasticacheCluster) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ElasticacheCluster) ON (n.arn);
-CREATE INDEX IF NOT EXISTS FOR (n:EasticIPAddress) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:ElasticIPAddress) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ELBListener) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ELBV2Listener) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:EMRCluster) ON (n.id);
@@ -488,10 +488,13 @@ CREATE INDEX IF NOT EXISTS FOR (n:OCIAutonomousDatabase) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIDbSystem) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIDbHome) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIDbNode) ON (n.id);
-// Property indexes for relationship-resolution MATCHes that key on a non-id field.
-// Without these, the loaders that link attachments/exports to their parents do a
-// full label scan per batch, buffering scan state into the write transaction.
 CREATE INDEX IF NOT EXISTS FOR (n:OCIVnicAttachment) ON (n.vnic_id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIBootVolumeAttachment) ON (n.boot_volume_id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIVolumeAttachment) ON (n.volume_id);
 CREATE INDEX IF NOT EXISTS FOR (n:OCIMountTarget) ON (n.export_set_id);
+CREATE INDEX IF NOT EXISTS FOR (n:Tag) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:BitbucketBranch) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:ModuleSyncMetadata) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:SyncMetadata) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:AzureNetworkInterface) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:GKENodePool) ON (n.id);

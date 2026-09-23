@@ -25,6 +25,7 @@ from cartography.graph import write_timer
 from cartography.graph.session import Session
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.stats import get_stats_client
+from cartography.util import is_aws_access_denied
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_analysis_job
 from cartography.util import run_cleanup_job
@@ -143,16 +144,12 @@ def _sync_one_account(
     _service_timings: Dict = {}
     _failed_services: Dict = {}
     logger.info(f"aws account={current_aws_account_id}: starting full sync")
-    regions.sort()
-
-    enabled_regions = _autodiscover_account_regions(boto3_session, current_aws_account_id)
-    enabled_regions.sort()
-
-    allowed_regions = get_allowed_regions(enabled_regions, boto3_session)
-    allowed_regions.sort()
-
-    if regions != allowed_regions:
-        regions = allowed_regions
+    regions = _resolve_sync_regions(boto3_session, current_aws_account_id, regions)
+    excluded = getattr(config, "aws_excluded_regions", None)
+    if excluded:
+        excluded_set = set(excluded)
+        regions = [r for r in regions if r not in excluded_set]
+        logger.info(f"Excluding regions: {excluded_set}. Remaining regions: {regions}")
 
     sync_args = _build_aws_sync_kwargs(
         neo4j_session,
@@ -434,6 +431,26 @@ def _sync_one_account(
     )
 
 
+def _resolve_sync_regions(boto3_session: boto3.session.Session, account_id: str, regions: List[str]) -> List[str]:
+    """
+    Regions from input params win: the web app already worked them out and stores them
+    per account. Discovery here needs ec2:DescribeRegions, which customer SCPs may deny
+    (CDX-AWS-BACKEND-PYTHON-MZ), so only fall back to it when no regions were given.
+
+    Pass only params.regions (empty if unset). Do not pass list_all_regions() output —
+    that is still DescribeRegions, and a non-empty list here skips get_allowed_regions().
+    """
+    if regions:
+        return sorted(regions)
+
+    enabled_regions = _autodiscover_account_regions(boto3_session, account_id)
+    allowed_regions = sorted(get_allowed_regions(enabled_regions, boto3_session))
+    if not allowed_regions:
+        # Global services (IAM, S3, ...) still sync, so carry on rather than fail the account.
+        logger.warning(f"aws account={account_id}: no regions provided or discovered, skipping regional syncs")
+    return allowed_regions
+
+
 def _autodiscover_account_regions(boto3_session: boto3.session.Session, account_id: str) -> List[str]:
     return ec2.get_ec2_regions(boto3_session, account_id)
 
@@ -515,7 +532,11 @@ def list_all_regions(boto3_session, logger):
         )
 
     except Exception as e:
-        logger.error(f"Failed retrieve enabled regions. Error - {e}")
+        if is_aws_access_denied(e):
+            # Customer IAM/SCP blocks DescribeRegions; expected, so keep it out of Sentry.
+            logger.info(f"DescribeRegions denied: {e}")
+        else:
+            logger.error(f"Failed to retrieve enabled regions. Error - {e}")
         return []
 
     return list(map(lambda region: region["RegionName"], regions["Regions"]))
@@ -558,21 +579,9 @@ def _sync_multiple_accounts(
 
         # _autodiscover_accounts(neo4j_session, boto3_session, account_id, config.update_tag, common_job_parameters)
 
-        # INFO: fetching active regions for customers instead of reading from parameters
-        if len(config.params.get("regions", [])) > 0:
-            regions = config.params.get("regions", [])
-
-        else:
-            regions = list_all_regions(boto3_session, logger)
-
-        if len(regions) == 0:
-            logger.info("regions could not be fetched. reading regions from input parameters")
-            regions = config.params.get("regions", [])
-
-        if config.aws_excluded_regions:
-            excluded = set(config.aws_excluded_regions)
-            regions = [r for r in regions if r not in excluded]
-            logger.info(f"Excluding regions: {excluded}. Remaining regions: {regions}")
+        # Only params.regions are authoritative. Prefilling from list_all_regions() made
+        # _resolve_sync_regions skip the DescribeVpcs allowlist for accounts with no input.
+        regions = list(config.params.get("regions") or [])
 
         _sync_one_account(
             neo4j_session,
