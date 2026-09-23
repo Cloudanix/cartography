@@ -144,16 +144,7 @@ def _sync_one_account(
     _service_timings: Dict = {}
     _failed_services: Dict = {}
     logger.info(f"aws account={current_aws_account_id}: starting full sync")
-    regions.sort()
-
-    enabled_regions = _autodiscover_account_regions(boto3_session, current_aws_account_id)
-    enabled_regions.sort()
-
-    allowed_regions = get_allowed_regions(enabled_regions, boto3_session)
-    allowed_regions.sort()
-
-    if regions != allowed_regions:
-        regions = allowed_regions
+    regions = _resolve_sync_regions(boto3_session, current_aws_account_id, regions)
 
     sync_args = _build_aws_sync_kwargs(
         neo4j_session,
@@ -433,6 +424,23 @@ def _sync_one_account(
             "failed_services": _failed_services,
         }),
     )
+
+
+def _resolve_sync_regions(boto3_session: boto3.session.Session, account_id: str, regions: List[str]) -> List[str]:
+    """
+    Regions from the input params win: the web app already worked them out and stores them
+    per account. Discovery here needs ec2:DescribeRegions, which customer SCPs may deny
+    (CDX-AWS-BACKEND-PYTHON-MZ), so only fall back to it when no regions were given.
+    """
+    if regions:
+        return sorted(regions)
+
+    enabled_regions = _autodiscover_account_regions(boto3_session, account_id)
+    allowed_regions = sorted(get_allowed_regions(enabled_regions, boto3_session))
+    if not allowed_regions:
+        # Global services (IAM, S3, ...) still sync, so carry on rather than fail the account.
+        logger.warning(f"aws account={account_id}: no regions provided or discovered, skipping regional syncs")
+    return allowed_regions
 
 
 def _autodiscover_account_regions(boto3_session: boto3.session.Session, account_id: str) -> List[str]:

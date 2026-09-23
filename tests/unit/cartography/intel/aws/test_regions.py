@@ -73,3 +73,28 @@ def test_region_discovery_unexpected_error_still_logged(discover, caplog):
     assert discover(session) == []
 
     assert [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
+def test_resolve_sync_regions_uses_provided_regions_without_discovery():
+    session = MagicMock()
+
+    assert cartography.intel.aws._resolve_sync_regions(session, "123", ["us-west-2", "eu-west-1"]) == [
+        "eu-west-1", "us-west-2",
+    ]
+    session.client.assert_not_called()
+
+
+def test_resolve_sync_regions_discovers_when_none_provided(mocker):
+    mocker.patch.object(cartography.intel.aws, "_autodiscover_account_regions", return_value=["us-west-2", "us-east-1"])
+    allowed = mocker.patch.object(cartography.intel.aws, "get_allowed_regions", return_value=["us-west-2", "us-east-1"])
+
+    assert cartography.intel.aws._resolve_sync_regions(MagicMock(), "123", []) == ["us-east-1", "us-west-2"]
+    allowed.assert_called_once()
+
+
+def test_resolve_sync_regions_nothing_discovered_does_not_log_error(mocker, caplog):
+    mocker.patch.object(cartography.intel.aws, "_autodiscover_account_regions", return_value=[])
+    mocker.patch.object(cartography.intel.aws, "get_allowed_regions", return_value=[])
+
+    assert cartography.intel.aws._resolve_sync_regions(MagicMock(), "123", []) == []
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
