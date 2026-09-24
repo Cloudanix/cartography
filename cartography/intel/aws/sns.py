@@ -10,6 +10,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
+from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -31,7 +32,7 @@ def list_subscriptions(boto3_session: boto3.session.Session, region):
             subscriptions.extend(page.get('Subscriptions', []))
 
     except ClientError as e:
-        logger.error(f'Failed to call SNS list_subscriptions: {region} - {e}')
+        log_aws_error(logger, f'Failed to call SNS list_subscriptions: {region} - {e}', e)
 
     return subscriptions
 
@@ -66,7 +67,7 @@ def get_sns_topic(boto3_session: boto3.session.Session, region: str) -> List[Dic
         return topics
 
     except ClientError as e:
-        logger.error(f'Failed to call SNS list_topics: {region} - {e}')
+        log_aws_error(logger, f'Failed to call SNS list_topics: {region} - {e}', e)
         return topics
 
 
@@ -88,7 +89,7 @@ def transform_topics(boto3_session: boto3.session.Session, tps: List[Dict], regi
 
         return topics
     except ClientError as e:
-        logger.error(f'Failed to call SNS list_topics: {region} - {e}')
+        log_aws_error(logger, f'Failed to call SNS list_topics: {region} - {e}', e)
         return topics
 
 

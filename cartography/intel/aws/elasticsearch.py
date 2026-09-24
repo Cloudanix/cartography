@@ -16,6 +16,7 @@ from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.dns import ingest_dns_record_by_fqdn
 from cartography.util import aws_handle_regions
+from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -246,7 +247,7 @@ def get_elasticsearch_reserved_instances(client: botocore.client.BaseClient, reg
         return reserved_instances
 
     except ClientError as e:
-        logger.error(f'Failed to call ES describe_reserved_elasticsearch_instances: {region} - {e}')
+        log_aws_error(logger, f'Failed to call ES describe_reserved_elasticsearch_instances: {region} - {e}', e)
         return reserved_instances
 
 

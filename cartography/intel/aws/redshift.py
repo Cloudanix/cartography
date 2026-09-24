@@ -11,6 +11,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
+from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -35,7 +36,7 @@ def get_redshift_reserved_node(boto3_session: boto3.session.Session, region: str
         return filter_active_redshift_reserved_nodes(reserved_nodes)
 
     except ClientError as e:
-        logger.error(f"Failed to call redshift describe_reserved_nodes: {region} - {e}")
+        log_aws_error(logger, f"Failed to call redshift describe_reserved_nodes: {region} - {e}", e)
         return reserved_nodes
 
 

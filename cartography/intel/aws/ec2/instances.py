@@ -29,6 +29,7 @@ from cartography.models.aws.ec2.subnet_instance import EC2SubnetInstanceSchema
 from cartography.models.aws.ec2.volumes import EBSVolumeInstanceSchema
 from cartography.util import aws_handle_regions
 from cartography.util import dict_date_to_epoch
+from cartography.util import log_aws_error
 from cartography.util import timeit
 
 aws_console_link = AWSLinker()
@@ -63,7 +64,7 @@ def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], r
             images = response.get("Images", [])
             image_details.update({image["ImageId"]: image for image in images})
         except ClientError as e:
-            logger.error(f"Error fetching image details for batch {i // 1000 + 1}: {e}")
+            log_aws_error(logger, f"Error fetching image details for batch {i // 1000 + 1}: {e}", e)
             continue
 
     return image_details

@@ -7,6 +7,7 @@ from botocore.exceptions import ClientError
 import cartography.intel.aws
 from cartography.intel.aws import ec2
 from cartography.util import is_aws_access_denied
+from cartography.util import log_aws_error
 
 SCP_MESSAGE = (
     "You are not authorized to perform this operation. User: arn:aws:sts::123:assumed-role/x "
@@ -41,6 +42,22 @@ def test_is_aws_access_denied_true(error):
 @pytest.mark.parametrize("error", [_client_error("InternalError"), ValueError("boom")])
 def test_is_aws_access_denied_false(error):
     assert not is_aws_access_denied(error)
+
+
+# Per-service denials (e.g. CDX-CARTOGRAPHY-INVENTORY-8CH SNS AuthorizationError, -88K Route53Domains)
+@pytest.mark.parametrize(
+    "error, level",
+    [
+        (_client_error("AuthorizationError"), logging.INFO),
+        (_client_error("SomeNewCode", SCP_MESSAGE), logging.INFO),
+        (_client_error("InternalError"), logging.ERROR),
+    ],
+)
+def test_log_aws_error_levels(error, level, caplog):
+    with caplog.at_level(logging.DEBUG):
+        log_aws_error(logging.getLogger("t"), "Failed to call X", error)
+
+    assert [r.levelno for r in caplog.records] == [level]
 
 
 # Regression for https://cloudanix.sentry.io/issues/CDX-AWS-BACKEND-PYTHON-MZ

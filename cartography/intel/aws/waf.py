@@ -12,6 +12,7 @@ from botocore.exceptions import EndpointConnectionError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.util import aws_handle_regions
+from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -48,7 +49,7 @@ def get_waf_classic_regional_web_acls(boto3_session: boto3.session.Session, regi
         logger.debug(f"Connection to WAF Regional timed out in {region}: {e}")
 
     except ClientError as e:
-        logger.error(f"Failed to list WAF Classic regional Web ACLs in {region}: {e}")
+        log_aws_error(logger, f"Failed to list WAF Classic regional Web ACLs in {region}: {e}", e)
 
     return web_acls
 
@@ -69,7 +70,7 @@ def get_waf_classic_global_web_acls(boto3_session: boto3.session.Session) -> Lis
                 web_acls.append(acl)
         return web_acls
     except ClientError as e:
-        logger.error(f"Failed to call WAF Classic Global list_web_acls: {e}")
+        log_aws_error(logger, f"Failed to call WAF Classic Global list_web_acls: {e}", e)
         return web_acls
 
 
@@ -112,7 +113,7 @@ def get_waf_classic_details(boto3_session: boto3.session.Session, web_acl: Dict)
         logger.debug(f"Connection to WAF Regional timed out in {region}: {e}")
 
     except ClientError as e:
-        logger.error(f"Error retrieving Web ACL details for {web_acl_id} in region {region}: {e}")
+        log_aws_error(logger, f"Error retrieving Web ACL details for {web_acl_id} in region {region}: {e}", e)
         return {}
 
 
@@ -221,9 +222,7 @@ def get_waf_v2_web_acl_details(
             "capacity": str(acl_details.get("Capacity", 0)),
         }
     except ClientError as e:
-        logger.error(
-            f'Failed to get WAF ACL details for {acl.get("Name", "Unknown")}: {e}',
-        )
+        log_aws_error(logger, f'Failed to get WAF ACL details for {acl.get("Name", "Unknown")}: {e}', e)
         return {}
 
 
@@ -270,7 +269,7 @@ def get_waf_v2_web_acls_for_scope(
                 if acl_with_details:
                     web_acls.append(acl_with_details)
     except ClientError as e:
-        logger.error(f"Failed to list WAF v2 ACLs for scope {scope} in {region}: {e}")
+        log_aws_error(logger, f"Failed to list WAF v2 ACLs for scope {scope} in {region}: {e}", e)
     return web_acls
 
 

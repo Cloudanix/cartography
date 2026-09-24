@@ -291,6 +291,17 @@ def is_aws_access_denied(e: Exception) -> bool:
     return error.get("Code", "") in AWS_ACCESS_DENIED_CODES or SCP_DENY_PHRASE in error.get("Message", "")
 
 
+def log_aws_error(log: logging.Logger, message: str, e: Exception) -> None:
+    """
+    Log a failed AWS call: info for customer IAM/SCP/region denials (expected, so they stay
+    out of Sentry), error for anything else.
+    """
+    if is_aws_access_denied(e):
+        log.info(message)
+        return
+    log.error(message)
+
+
 def backoff_handler(details: Dict) -> None:
     """
     Handler that will be executed on exception by backoff mechanism
