@@ -75,13 +75,37 @@ def test_region_discovery_unexpected_error_still_logged(discover, caplog):
     assert [r for r in caplog.records if r.levelno == logging.ERROR]
 
 
-def test_resolve_sync_regions_uses_provided_regions_without_discovery():
+def test_resolve_sync_regions_uses_provided_regions_without_discovery(mocker):
+    discover = mocker.patch.object(cartography.intel.aws, "_autodiscover_account_regions")
     session = MagicMock()
 
     assert cartography.intel.aws._resolve_sync_regions(session, "123", ["us-west-2", "eu-west-1"]) == [
         "eu-west-1", "us-west-2",
     ]
-    session.client.assert_not_called()
+    discover.assert_not_called()
+    session.client.return_value.describe_regions.assert_not_called()
+
+
+# Regression for https://cloudanix.sentry.io/issues/CDX-CARTOGRAPHY-INVENTORY-8GH (and siblings):
+# provided regions skipped the probe, so every service logged an SCP denial per locked region.
+def test_resolve_sync_regions_drops_provided_regions_denied_by_scp():
+    session = MagicMock()
+    denied = _client_error("UnauthorizedOperation", SCP_MESSAGE)
+    clients = {"ap-south-1": MagicMock(), "eu-west-2": MagicMock()}
+    clients["eu-west-2"].describe_vpcs.side_effect = denied
+    session.client.side_effect = lambda _svc, region_name, config: clients[region_name]
+
+    assert cartography.intel.aws._resolve_sync_regions(session, "123", ["eu-west-2", "ap-south-1"]) == ["ap-south-1"]
+
+
+def test_resolve_sync_regions_keeps_provided_regions_when_probe_allows_none(caplog):
+    session = MagicMock()
+    session.client.return_value.describe_vpcs.side_effect = _client_error("UnauthorizedOperation")
+
+    assert cartography.intel.aws._resolve_sync_regions(session, "123", ["us-west-2", "eu-west-1"]) == [
+        "eu-west-1", "us-west-2",
+    ]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
 def test_resolve_sync_regions_discovers_when_none_provided(mocker):

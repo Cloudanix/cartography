@@ -438,10 +438,19 @@ def _resolve_sync_regions(boto3_session: boto3.session.Session, account_id: str,
     (CDX-AWS-BACKEND-PYTHON-MZ), so only fall back to it when no regions were given.
 
     Pass only params.regions (empty if unset). Do not pass list_all_regions() output —
-    that is still DescribeRegions, and a non-empty list here skips get_allowed_regions().
+    that is still DescribeRegions.
+
+    Provided regions still go through the DescribeVpcs probe: the list can include regions
+    a region-lockdown SCP denies, and every service would then log a denial per region.
     """
     if regions:
-        return sorted(regions)
+        allowed_regions = sorted(get_allowed_regions(regions, boto3_session))
+        if not allowed_regions:
+            # No region answered the probe: "could not determine", not "no regions". Same
+            # contract as the web app's fetch_aws_regions, so keep the provided list.
+            logger.warning(f"aws account={account_id}: DescribeVpcs probe allowed no provided region, syncing all")
+            return sorted(regions)
+        return allowed_regions
 
     enabled_regions = _autodiscover_account_regions(boto3_session, account_id)
     allowed_regions = sorted(get_allowed_regions(enabled_regions, boto3_session))
