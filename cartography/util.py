@@ -320,13 +320,9 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
 
     This should be used on `get_` functions that normally return a list of items.
     """
+    # Skipped on top of is_aws_access_denied, which covers the IAM/SCP/opt-in denials.
     ERROR_CODES = [
-        "AccessDenied",
-        "AccessDeniedException",
-        "AuthFailure",
         "InvalidClientTokenId",
-        "UnauthorizedOperation",
-        "UnrecognizedClientException",
         "InternalServerErrorException",
     ]
 
@@ -349,7 +345,7 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
         except botocore.exceptions.ClientError as e:
             # The account is not authorized to use this service in this region
             # so we can continue without raising an exception
-            if e.response["Error"]["Code"] in ERROR_CODES:
+            if is_aws_access_denied(e) or e.response["Error"]["Code"] in ERROR_CODES:
                 logger.warning("{} in this region. Skipping...".format(e.response["Error"]["Message"]))
                 return []
             else:
