@@ -28,6 +28,7 @@ from cartography.graph.session import Session
 from cartography.intel.gcp import crm
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -875,12 +876,21 @@ def get_all_regions(compute: Resource, project_id: str):
 
             req = compute.regions().list_next(previous_request=req, previous_response=res)
     except googleapiclient.discovery.HttpError as http_error:
-        # Compute API disabled, or the customer did not grant compute.regions.list (any other 403): both are the
-        # customer's setup, not a bug (CDX-CARTOGRAPHY-INVENTORY-25B). Raising here aborted the whole project sync,
-        # so return [] ("unknown") and let each service handle its own access. Other HttpErrors still surface.
-        if not _is_service_not_enabled_error(http_error) and http_error.resp.status != 403:
-            raise
-        logger.info(f"Could not list regions on project {project_id}; skipping region lookup. Details: {http_error}")
+        # A missing API/permission is a project configuration issue and is safely downgraded. Transient 403s like
+        # quota/rate-limit responses are not permission denials and must keep surfacing so the sync does not silently
+        # skip an entire project's regions.
+        try:
+            err = json.loads(http_error.content.decode("utf-8")).get("error", {})
+        except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
+            err = {}
+
+        if _is_service_not_enabled_error(http_error) or is_permission_error(http_error, err):
+            logger.info(
+                f"Could not list regions on project {project_id}; skipping region lookup. Details: {http_error}",
+            )
+            return regions
+
+        raise
 
     return regions
 

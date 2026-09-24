@@ -35,6 +35,10 @@ REAL_PERMISSION_CONTENT = (
     b'{"error": {"code": 403, "message": "The caller does not have permission", '
     b'"errors": [{"reason": "forbidden"}]}}'
 )
+RATE_LIMIT_CONTENT = (
+    b'{"error": {"code": 403, "message": "Request is prohibited by quota or rate limit.", '
+    b'"errors": [{"reason": "rateLimitExceeded"}]}}'
+)
 NOT_FOUND_CONTENT = b'{"error": {"code": 404, "message": "Not found", "errors": [{"reason": "notFound"}]}}'
 
 
@@ -69,6 +73,17 @@ def test_get_all_regions_handles_missing_permission():
     compute.regions().list.return_value = req
 
     assert get_all_regions(compute, "no-perms") == []
+
+
+@pytest.mark.parametrize("content", [RATE_LIMIT_CONTENT])
+def test_get_all_regions_reraises_transient_403s(content):
+    compute = MagicMock()
+    req = MagicMock()
+    req.execute.side_effect = HttpError(resp=MagicMock(status=403), content=content)
+    compute.regions().list.return_value = req
+
+    with pytest.raises(HttpError):
+        get_all_regions(compute, "quota")
 
 
 def test_get_all_regions_reraises_other_http_errors():
