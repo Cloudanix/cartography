@@ -153,7 +153,7 @@ def run_cleanup_job(
 
     except Exception as e:
         logger.warning(
-            f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}"
+            f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}",
         )
         # to handle deadlocks retry transaction
         if retry < 2:
@@ -196,7 +196,7 @@ def merge_module_sync_metadata(
     """)
     neo4j_session.run(
         template.safe_substitute(
-            group_type=group_type, group_id=group_id, synced_type=synced_type
+            group_type=group_type, group_id=group_id, synced_type=synced_type,
         ),
         UPDATE_TAG=update_tag,
     )
@@ -293,7 +293,7 @@ def is_aws_access_denied(e: Exception) -> bool:
         return False
     error = e.response.get("Error", {})
     return error.get(
-        "Code", ""
+        "Code", "",
     ) in AWS_ACCESS_DENIED_CODES or SCP_DENY_PHRASE in error.get("Message", "")
 
 
@@ -314,8 +314,8 @@ def backoff_handler(details: Dict) -> None:
     """
     logger.warning(
         "Backing off {wait:0.1f} seconds after {tries} tries. Calling function {target}".format(
-            **details
-        )
+            **details,
+        ),
     )
 
 
@@ -358,8 +358,8 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
             if is_aws_access_denied(e) or e.response["Error"]["Code"] in ERROR_CODES:
                 logger.warning(
                     "{} in this region. Skipping...".format(
-                        e.response["Error"]["Message"]
-                    )
+                        e.response["Error"]["Message"],
+                    ),
                 )
                 return []
             else:
@@ -429,7 +429,7 @@ def batch(items: Iterable, size: int = DEFAULT_BATCH_SIZE) -> List[List]:
     batch(x, size=3) -> [[1, 2, 3], [4, 5, 6], [7, 8]]
     """
     items = list(items)
-    return [items[i : i + size] for i in range(0, len(items), size)]
+    return [items[i: i + size] for i in range(0, len(items), size)]
 
 
 def is_throttling_exception(exc: Exception) -> bool:
@@ -480,7 +480,7 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
     # nest_asyncio.apply()
     """
     CartographyThrottlingException = type(
-        "CartographyThrottlingException", (Exception,), {}
+        "CartographyThrottlingException", (Exception,), {},
     )
 
     @wraps(func)
@@ -494,7 +494,7 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
 
     # don't use @backoff as decorator, to preserve typing
     wrapped = backoff.on_exception(backoff.expo, CartographyThrottlingException)(
-        wrapper
+        wrapper,
     )
     call = partial(wrapped, *args, **kwargs)
     return asyncio.get_event_loop().run_in_executor(None, call)
@@ -528,7 +528,7 @@ def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
 
 
 def make_requests_url(
-    url: str, access_token: str, return_raw: bool = False
+    url: str, access_token: str, return_raw: bool = False,
 ) -> Union[Dict, requests.Response]:
     try:
         headers = {
