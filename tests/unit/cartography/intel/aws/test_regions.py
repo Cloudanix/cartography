@@ -125,6 +125,20 @@ def test_resolve_sync_regions_keeps_provided_regions_when_probe_allows_none(capl
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
+def test_resolve_sync_regions_keeps_provided_regions_on_unexpected_probe_errors(caplog):
+    session = MagicMock()
+    clients = {"us-west-2": MagicMock(), "eu-west-1": MagicMock()}
+    clients["us-west-2"].describe_vpcs.side_effect = _client_error("InternalError")
+    clients["eu-west-1"].describe_vpcs.return_value = {}
+    session.client.side_effect = lambda _svc, region_name, config: clients[region_name]
+
+    assert cartography.intel.aws._resolve_sync_regions(session, "123", ["us-west-2", "eu-west-1"]) == [
+        "eu-west-1",
+        "us-west-2",
+    ]
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+
+
 def test_resolve_sync_regions_discovers_when_none_provided(mocker):
     mocker.patch.object(cartography.intel.aws, "_autodiscover_account_regions", return_value=["us-west-2", "us-east-1"])
     allowed = mocker.patch.object(cartography.intel.aws, "get_allowed_regions", return_value=["us-west-2", "us-east-1"])

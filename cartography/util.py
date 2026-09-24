@@ -152,7 +152,9 @@ def run_cleanup_job(
         )
 
     except Exception as e:
-        logger.warning(f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}")
+        logger.warning(
+            f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}"
+        )
         # to handle deadlocks retry transaction
         if retry < 2:
             retry += 1
@@ -193,7 +195,9 @@ def merge_module_sync_metadata(
             n.lastupdated=$UPDATE_TAG
     """)
     neo4j_session.run(
-        template.safe_substitute(group_type=group_type, group_id=group_id, synced_type=synced_type),
+        template.safe_substitute(
+            group_type=group_type, group_id=group_id, synced_type=synced_type
+        ),
         UPDATE_TAG=update_tag,
     )
     stat_handler.incr(f"{group_type}_{group_id}_{synced_type}_lastupdated", update_tag)
@@ -288,7 +292,9 @@ def is_aws_access_denied(e: Exception) -> bool:
     if not isinstance(e, botocore.exceptions.ClientError):
         return False
     error = e.response.get("Error", {})
-    return error.get("Code", "") in AWS_ACCESS_DENIED_CODES or SCP_DENY_PHRASE in error.get("Message", "")
+    return error.get(
+        "Code", ""
+    ) in AWS_ACCESS_DENIED_CODES or SCP_DENY_PHRASE in error.get("Message", "")
 
 
 def log_aws_error(log: logging.Logger, message: str, e: Exception) -> None:
@@ -299,14 +305,18 @@ def log_aws_error(log: logging.Logger, message: str, e: Exception) -> None:
     if is_aws_access_denied(e):
         log.info(message)
         return
-    log.error(message)
+    log.error(message, exc_info=True)
 
 
 def backoff_handler(details: Dict) -> None:
     """
     Handler that will be executed on exception by backoff mechanism
     """
-    logger.warning("Backing off {wait:0.1f} seconds after {tries} tries. Calling function {target}".format(**details))
+    logger.warning(
+        "Backing off {wait:0.1f} seconds after {tries} tries. Calling function {target}".format(
+            **details
+        )
+    )
 
 
 # TODO Move this to cartography.intel.aws.util.common
@@ -346,7 +356,11 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
             # The account is not authorized to use this service in this region
             # so we can continue without raising an exception
             if is_aws_access_denied(e) or e.response["Error"]["Code"] in ERROR_CODES:
-                logger.warning("{} in this region. Skipping...".format(e.response["Error"]["Message"]))
+                logger.warning(
+                    "{} in this region. Skipping...".format(
+                        e.response["Error"]["Message"]
+                    )
+                )
                 return []
             else:
                 raise
@@ -396,9 +410,9 @@ def normalize_datetime(date_str: Optional[str]):
         return None, None
     try:
         # fromisoformat in Python < 3.11 does not handle 'Z' suffix
-        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         dt_utc = dt.astimezone(timezone.utc)
-        iso_str = dt_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        iso_str = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         timestamp_ms = int(dt_utc.timestamp() * 1000)
         return iso_str, timestamp_ms
     except (ValueError, TypeError):
@@ -415,7 +429,7 @@ def batch(items: Iterable, size: int = DEFAULT_BATCH_SIZE) -> List[List]:
     batch(x, size=3) -> [[1, 2, 3], [4, 5, 6], [7, 8]]
     """
     items = list(items)
-    return [items[i: i + size] for i in range(0, len(items), size)]
+    return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 def is_throttling_exception(exc: Exception) -> bool:
@@ -465,7 +479,9 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
     # import nest_asyncio
     # nest_asyncio.apply()
     """
-    CartographyThrottlingException = type("CartographyThrottlingException", (Exception,), {})
+    CartographyThrottlingException = type(
+        "CartographyThrottlingException", (Exception,), {}
+    )
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> R:
@@ -477,7 +493,9 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
             raise
 
     # don't use @backoff as decorator, to preserve typing
-    wrapped = backoff.on_exception(backoff.expo, CartographyThrottlingException)(wrapper)
+    wrapped = backoff.on_exception(backoff.expo, CartographyThrottlingException)(
+        wrapper
+    )
     call = partial(wrapped, *args, **kwargs)
     return asyncio.get_event_loop().run_in_executor(None, call)
 
@@ -509,7 +527,9 @@ def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
     return asyncio.get_event_loop().run_until_complete(asyncio.gather(*awaitables))
 
 
-def make_requests_url(url: str, access_token: str, return_raw: bool = False) -> Union[Dict, requests.Response]:
+def make_requests_url(
+    url: str, access_token: str, return_raw: bool = False
+) -> Union[Dict, requests.Response]:
     try:
         headers = {
             "Accept": "application/json",

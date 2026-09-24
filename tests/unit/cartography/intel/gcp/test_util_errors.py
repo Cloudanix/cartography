@@ -19,6 +19,8 @@ def _error(status: int, body: dict) -> HttpError:
         # Cloud SQL Admin (CDX-CARTOGRAPHY-INVENTORY-88A)
         (403, {'code': 403, 'message': 'The client is not authorized to make this request.', 'errors': [{'reason': 'notAuthorized'}]}, True),
         (403, {'code': 403, 'status': 'PERMISSION_DENIED', 'message': 'denied'}, True),
+        (403, {'code': 403, 'message': 'Request is prohibited by quota or rate limit.', 'errors': [{'reason': 'rateLimitExceeded'}]}, False),
+        (403, {'code': 403, 'message': 'Quota exceeded.', 'errors': [{'reason': 'quotaExceeded'}]}, False),
         (404, {'code': 404, 'message': 'Not found', 'errors': [{'reason': 'notFound'}]}, False),
         (503, {'code': 503, 'message': 'The service is currently unavailable.'}, False),
     ],
