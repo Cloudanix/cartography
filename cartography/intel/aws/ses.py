@@ -12,6 +12,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
+from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -34,7 +35,7 @@ def get_ses_identity(boto3_session: boto3.session.Session, region: str) -> List[
         return identity_names
 
     except (ClientError, ConnectTimeoutError, EndpointConnectionError) as e:
-        logger.error(f'Failed to call SES list_identities: {region} - {e}')
+        log_aws_error(logger, f'Failed to call SES list_identities: {region} - {e}', e)
         return identity_names
 
 
@@ -70,7 +71,7 @@ def transform_identities(boto3_session: boto3.session.Session, ids_names: List[D
             resources.append(identity)
 
     except (ClientError, ConnectTimeoutError, EndpointConnectionError) as e:
-        logger.error(f'Failed to call SES get_identity_dkim_attributes: {region} - {e}')
+        log_aws_error(logger, f'Failed to call SES get_identity_dkim_attributes: {region} - {e}', e)
 
     return resources
 

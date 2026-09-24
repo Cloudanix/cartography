@@ -14,6 +14,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -35,7 +36,7 @@ def get_domains(boto3_session: boto3.session.Session, region: str) -> List[Dict]
         return domains
 
     except ClientError as e:
-        logger.error(f'Failed to call Route53Domains list_domains: {region} - {e}')
+        log_aws_error(logger, f'Failed to call Route53Domains list_domains: {region} - {e}', e)
         return domains
 
 
@@ -52,7 +53,7 @@ def transform_domains(boto3_session: boto3.session.Session, dms: List[Dict], reg
             domain['details'] = client.get_domain_detail(DomainName=domain['DomainName'])
             domains.append(domain)
     except ClientError as e:
-        logger.error(f'Failed to call Route53Domains list_domains: {region} - {e}')
+        log_aws_error(logger, f'Failed to call Route53Domains list_domains: {region} - {e}', e)
 
     return domains
 

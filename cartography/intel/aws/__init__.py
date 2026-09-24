@@ -111,9 +111,13 @@ def concurrent_execution(
     except Exception as e:
         _status = "error"
         _err = {"error_type": type(e).__name__, "error_message": str(e)}
-        logger.warning(f"error to process service {service} account={current_aws_account_id} — {e}")
+        logger.warning(
+            f"error to process service {service} account={current_aws_account_id} — {e}",
+        )
     finally:
-        _elapsed = _result if _result is not None else round(time.perf_counter() - tic, 4)
+        _elapsed = (
+            _result if _result is not None else round(time.perf_counter() - tic, 4)
+        )
         _ev: Dict = {
             "event": "aws_service_timing",
             "account_id": current_aws_account_id,
@@ -164,12 +168,16 @@ def _sync_one_account(
         # BEGIN - Sequential Run
         for func_name in aws_requested_syncs:
             if func_name in RESOURCE_FUNCTIONS:
-
-                if func_name == "identitystore" and not config.params["workspace"].get("is_identity_sso_used"):
+                if func_name == "identitystore" and not config.params["workspace"].get(
+                    "is_identity_sso_used",
+                ):
                     continue
 
                 # Skip permission relationships and tags for now because they rely on data already being in the graph
-                if func_name not in ["permission_relationships", "resourcegroupstaggingapi"]:
+                if func_name not in [
+                    "permission_relationships",
+                    "resourcegroupstaggingapi",
+                ]:
                     logger.info(f"Processing {func_name}")
                     _svc_tic = time.perf_counter()
                     _svc_gw0 = write_timer.total()
@@ -179,20 +187,31 @@ def _sync_one_account(
                         RESOURCE_FUNCTIONS[func_name](**sync_args)
                     except Exception as e:
                         _svc_status = "error"
-                        _svc_err = {"error_type": type(e).__name__, "error_message": str(e)}
-                        logger.warning(f"error to process service {func_name} - {e}")
+                        _svc_err = {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e),
+                        }
+                        logger.warning(
+                            f"error to process service {func_name} - {e}",
+                        )
                     finally:
                         _svc_elapsed = round(time.perf_counter() - _svc_tic, 4)
                         _service_timings[func_name] = _svc_elapsed
                         if _svc_status == "error":
-                            _failed_services[func_name] = _svc_err.get("error_type", "error")
+                            _failed_services[func_name] = _svc_err.get(
+                                "error_type",
+                                "error",
+                            )
                         _sev: Dict = {
                             "event": "aws_service_timing",
                             "account_id": current_aws_account_id,
                             "service": func_name,
                             "run_mode": "sequential",
                             "duration_seconds": _svc_elapsed,
-                            "graph_write_seconds": round(write_timer.total() - _svc_gw0, 4),
+                            "graph_write_seconds": round(
+                                write_timer.total() - _svc_gw0,
+                                4,
+                            ),
                             "status": _svc_status,
                         }
                         if _svc_err:
@@ -203,7 +222,9 @@ def _sync_one_account(
                     continue
 
             else:
-                logger.warning(f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?')
+                logger.warning(
+                    f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?',
+                )
 
         # END - Sequential Run
 
@@ -217,12 +238,19 @@ def _sync_one_account(
             max_connection_lifetime=config.neo4j_max_connection_lifetime,
         )
         parallel_services = [
-            f for f in aws_requested_syncs
-            if f in RESOURCE_FUNCTIONS and f not in ["permission_relationships", "resourcegroupstaggingapi"] and
-            not (f == "identitystore" and not config.params["workspace"].get("is_identity_sso_used"))
+            f
+            for f in aws_requested_syncs
+            if f in RESOURCE_FUNCTIONS and
+            f not in ["permission_relationships", "resourcegroupstaggingapi"] and
+            not (
+                f == "identitystore" and
+                not config.params["workspace"].get("is_identity_sso_used")
+            )
         ]
         try:
-            with ThreadPoolExecutor(max_workers=min(8, len(parallel_services))) as executor:
+            with ThreadPoolExecutor(
+                max_workers=min(8, len(parallel_services)),
+            ) as executor:
                 futures: Dict = {}
 
                 for func_name in parallel_services:
@@ -238,7 +266,9 @@ def _sync_one_account(
                         )
                         futures[_f] = func_name
                     except Exception as e:
-                        logger.warning(f"error to append service {func_name} in futures - {e}")
+                        logger.warning(
+                            f"error to append service {func_name} in futures - {e}",
+                        )
 
                 for future in as_completed(futures):
                     _fn = futures[future]
@@ -420,54 +450,80 @@ def _sync_one_account(
         stat_handler=stat_handler,
     )
     logger.info(
-        json.dumps({
-            "event": "aws_account_timing_summary",
-            "account_id": current_aws_account_id,
-            "total_duration_seconds": round(time.perf_counter() - _account_tic, 4),
-            "service_timings": _service_timings,
-            "slowest_service": max(_service_timings, key=_service_timings.get) if _service_timings else None,
-            "failed_services": _failed_services,
-        }),
+        json.dumps(
+            {
+                "event": "aws_account_timing_summary",
+                "account_id": current_aws_account_id,
+                "total_duration_seconds": round(time.perf_counter() - _account_tic, 4),
+                "service_timings": _service_timings,
+                "slowest_service": max(_service_timings, key=_service_timings.get)
+                if _service_timings
+                else None,
+                "failed_services": _failed_services,
+            },
+        ),
     )
 
 
-def _resolve_sync_regions(boto3_session: boto3.session.Session, account_id: str, regions: List[str]) -> List[str]:
+def _resolve_sync_regions(
+    boto3_session: boto3.session.Session, account_id: str, regions: List[str],
+) -> List[str]:
     """
     Regions from input params win: the web app already worked them out and stores them
     per account. Discovery here needs ec2:DescribeRegions, which customer SCPs may deny
     (CDX-AWS-BACKEND-PYTHON-MZ), so only fall back to it when no regions were given.
 
     Pass only params.regions (empty if unset). Do not pass list_all_regions() output —
-    that is still DescribeRegions, and a non-empty list here skips get_allowed_regions().
+    that is still DescribeRegions.
+
+    Provided regions still go through the DescribeVpcs probe: the list can include regions
+    a region-lockdown SCP denies, and every service would then log a denial per region.
     """
     if regions:
-        return sorted(regions)
+        allowed_regions = sorted(get_allowed_regions(regions, boto3_session))
+        if not allowed_regions:
+            # No region answered the probe: "could not determine", not "no regions". Same
+            # contract as the web app's fetch_aws_regions, so keep the provided list.
+            logger.warning(
+                f"aws account={account_id}: DescribeVpcs probe did not confirm any provided region; "
+                "keeping the configured regions because the probe was inconclusive",
+            )
+            return sorted(regions)
+        return allowed_regions
 
     enabled_regions = _autodiscover_account_regions(boto3_session, account_id)
     allowed_regions = sorted(get_allowed_regions(enabled_regions, boto3_session))
     if not allowed_regions:
         # Global services (IAM, S3, ...) still sync, so carry on rather than fail the account.
-        logger.warning(f"aws account={account_id}: no regions provided or discovered, skipping regional syncs")
+        logger.warning(
+            f"aws account={account_id}: no regions provided or discovered, skipping regional syncs",
+        )
     return allowed_regions
 
 
-def _autodiscover_account_regions(boto3_session: boto3.session.Session, account_id: str) -> List[str]:
+def _autodiscover_account_regions(
+    boto3_session: boto3.session.Session, account_id: str,
+) -> List[str]:
     return ec2.get_ec2_regions(boto3_session, account_id)
 
 
 # Get list of all regions where API calls are not blocked
-def get_allowed_regions(enabled_regions: list[str], boto3_session: boto3.session.Session):
+def get_allowed_regions(
+    enabled_regions: list[str], boto3_session: boto3.session.Session,
+):
     allowed_regions = []
     config = botocore.config.Config(
         read_timeout=360,
         connect_timeout=60,
         retries={
-            'max_attempts': 2,
-            'mode': 'standard',
+            "max_attempts": 2,
+            "mode": "standard",
         },
     )
 
-    # Check for EC2 instances in each region to determine if the region is enabled
+    # Check for EC2 instances in each region to determine if the region is enabled.
+    # A non-access-denied probe failure is not evidence that the region is unavailable:
+    # keep the region and log it so operators can investigate without silently dropping it.
     for region in enabled_regions:
         try:
             ec2_region = boto3_session.client("ec2", region_name=region, config=config)
@@ -475,17 +531,19 @@ def get_allowed_regions(enabled_regions: list[str], boto3_session: boto3.session
             allowed_regions.append(region)
 
         except botocore.exceptions.ClientError as e:
-            if e.response["Error"]["Code"] in [
-                "UnauthorizedOperation",
-                "AccessDenied",
-                "AccessDeniedException",
-                "AuthorizationError",
-            ]:
+            if is_aws_access_denied(e):
                 logger.info(f"Access denied or region restricted: {region}")
-            else:
-                logger.info(f"Unexpected error occurred in region {region}: {e}")
+                continue
+            logger.error(
+                f"Unexpected AWS error while probing region {region}: {e}",
+                exc_info=True,
+            )
+            allowed_regions.append(region)
         except Exception as e:
-            logger.info(f"error occurred in region {region}: {e}")
+            logger.error(
+                f"Unexpected error occurred in region {region}: {e}", exc_info=True,
+            )
+            allowed_regions.append(region)
 
     return allowed_regions
 
@@ -508,18 +566,26 @@ def _autodiscover_accounts(
 
         # Filter out every account which is not in the ACTIVE status
         # and select only the Id and Name fields
-        filtered_accounts: Dict[str, str] = {x["Name"]: x["Id"] for x in accounts if x["Status"] == "ACTIVE"}
+        filtered_accounts: Dict[str, str] = {
+            x["Name"]: x["Id"] for x in accounts if x["Status"] == "ACTIVE"
+        }
 
         # Add them to the graph
         logger.info("Loading autodiscovered accounts.")
-        organizations.load_aws_accounts(neo4j_session, filtered_accounts, sync_tag, common_job_parameters)
+        organizations.load_aws_accounts(
+            neo4j_session, filtered_accounts, sync_tag, common_job_parameters,
+        )
     except botocore.exceptions.ClientError:
-        logger.warning(f"The current account ({account_id}) doesn't have enough permissions to perform autodiscovery.")
+        logger.warning(
+            f"The current account ({account_id}) doesn't have enough permissions to perform autodiscovery.",
+        )
 
 
 def list_all_regions(boto3_session, logger):
     try:
-        client = boto3_session.client("ec2", region_name="us-east-1", config=get_botocore_config())
+        client = boto3_session.client(
+            "ec2", region_name="us-east-1", config=get_botocore_config(),
+        )
         regions = client.describe_regions(
             Filters=[
                 {
@@ -551,14 +617,24 @@ def _sync_multiple_accounts(
     aws_best_effort_mode: bool,
     aws_requested_syncs: List[str] = [],
 ) -> bool:
-    logger.info("Syncing AWS accounts for org: %s - %s", ", ".join(accounts.values()), organization.get('Id'))
-    organizations.sync(neo4j_session, accounts, organization, config.update_tag, common_job_parameters)
+    logger.info(
+        "Syncing AWS accounts for org: %s - %s",
+        ", ".join(accounts.values()),
+        organization.get("Id"),
+    )
+    organizations.sync(
+        neo4j_session, accounts, organization, config.update_tag, common_job_parameters,
+    )
 
     for profile_name, account_id in accounts.items():
         if account_id != common_job_parameters["AWS_ACCOUNT_ID"]:
             continue
 
-        logger.info("Syncing AWS account with ID '%s' using configured profile '%s'.", account_id, profile_name)
+        logger.info(
+            "Syncing AWS account with ID '%s' using configured profile '%s'.",
+            account_id,
+            profile_name,
+        )
         common_job_parameters["AWS_ID"] = account_id
         # boto3_session = boto3.Session(profile_name=profile_name)
 
@@ -614,19 +690,19 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "UPDATE_TAG": config.update_tag,
         "permission_relationships_file": config.permission_relationships_file,
         "WORKSPACE_ID": config.params["workspace"]["id_string"],
-        "WORKSPACE_NAME": config.params['workspace']["name"],
+        "WORKSPACE_NAME": config.params["workspace"]["name"],
         "AWS_ACCOUNT_ID": config.params["workspace"]["account_id"],
         "pagination": {},
         "PUBLIC_PORTS": ["20", "21", "22", "3306", "3389", "4333"],
         "IDENTITY_STORE_REGION": config.identity_store_region,
-        "IDENTITY_STORE_IDENTITYFIER": config.params.get('identityStoreIdentifier'),
+        "IDENTITY_STORE_IDENTITYFIER": config.params.get("identityStoreIdentifier"),
         "AWS_INTERNAL_ACCOUNTS": config.aws_internal_accounts,
-        "DEFAULT_DATETIME": '2000-01-01 00:00:00+00:00',
-        "NULL_STRINGS": ['NONE', 'none', 'None', ''],
+        "DEFAULT_DATETIME": "2000-01-01 00:00:00+00:00",
+        "NULL_STRINGS": ["NONE", "none", "None", ""],
         "PARTIAL": config.partial,
         "MANUAL_RUN": config.manual_run,
         "DC": config.dc,
-        "GROUPS": config.params.get('groups', []),
+        "GROUPS": config.params.get("groups", []),
         "DEFAULT_REGION": config.params.get("defaultRegion", None),
     }
 
@@ -659,7 +735,9 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         return
 
     if config.aws_sync_all_profiles:
-        aws_accounts = organizations.get_aws_accounts_from_botocore_config(boto3_session)
+        aws_accounts = organizations.get_aws_accounts_from_botocore_config(
+            boto3_session,
+        )
     else:
         aws_accounts = organizations.get_aws_account_default(boto3_session)
 
@@ -699,9 +777,13 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             if service.get("pagination", None):
                 pagination = service.get("pagination", {})
                 pagination["hasNextPage"] = False
-                common_job_parameters["pagination"][service.get("name", None)] = pagination
+                common_job_parameters["pagination"][service.get("name", None)] = (
+                    pagination
+                )
 
-        requested_syncs = parse_and_validate_aws_requested_syncs(aws_requested_syncs_string[:-1])
+        requested_syncs = parse_and_validate_aws_requested_syncs(
+            aws_requested_syncs_string[:-1],
+        )
 
     sync_successful = _sync_multiple_accounts(
         neo4j_session,

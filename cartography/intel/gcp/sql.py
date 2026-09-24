@@ -10,6 +10,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -89,7 +90,7 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
         return sql_instances
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 ("Could not retrieve Sql Instances on project %s due to permissions issues. Code: %s, Message: %s"),
                 project_id,
@@ -144,7 +145,7 @@ def get_sql_users(sql: Resource, sql_instances: List[Dict], project_id: str) -> 
                     request = None
         except HttpError as e:
             err = json.loads(e.content.decode("utf-8"))["error"]
-            if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+            if is_permission_error(e, err):
                 logger.warning(
                     (
                         "Could not retrieve Sql Instance Users on project %s due to permissions issues.\
@@ -200,7 +201,7 @@ def get_sql_databases(sql: Resource, instance: Dict, project_id: str) -> List[Di
 
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve Sql Instance database on project %s due to permissions issues.\

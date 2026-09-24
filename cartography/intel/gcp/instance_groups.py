@@ -10,6 +10,7 @@ from cloudconsolelink.clouds.gcp import GCPLinker
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -71,7 +72,7 @@ def _get_zonal_managed_instance_groups(
         except HttpError as e:
             # Permissions issues are expected sometimes; skip safely.
             err = json.loads(e.content.decode("utf-8")).get("error", {})
-            if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+            if is_permission_error(e, err):
                 logger.warning("Skipping zonal MIGs for %s due to permissions. Project=%s", zone_name, project_id)
                 continue
             raise
@@ -107,7 +108,7 @@ def _get_regional_managed_instance_groups(compute: Resource, project_id: str, re
                     )
         except HttpError as e:
             err = json.loads(e.content.decode("utf-8")).get("error", {})
-            if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+            if is_permission_error(e, err):
                 logger.warning("Skipping regional MIGs for %s due to permissions. Project=%s", region, project_id)
                 continue
             raise
@@ -190,7 +191,7 @@ def _get_managed_instances_for_mig(compute: Resource, project_id: str, mig: Dict
                 )
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8")).get("error", {})
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 "Skipping managed instances for MIG due to permissions. Project=%s MIG=%s",
                 project_id,

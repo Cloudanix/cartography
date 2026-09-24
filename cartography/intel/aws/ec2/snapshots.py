@@ -24,7 +24,7 @@ EBS_SNAPSHOT_FILTERS = [
         "Values": ["self"],
     },
     {
-        "Name": "state",
+        "Name": "status",
         "Values": ["completed"],
     },
 ]

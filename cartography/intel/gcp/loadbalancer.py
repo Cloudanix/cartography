@@ -10,6 +10,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -32,7 +33,7 @@ def get_compute_zones(compute: Resource, project_id: str) -> List[Dict]:
         return compute_zones
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve zones on project %s due to permissions issues. Code: %s, Message: %s"
@@ -57,7 +58,7 @@ def get_global_health_checks(compute: Resource, project_id: str, common_job_para
         return global_health_checks
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve global health checks on project %s due to permissions issues. Code: %s, Message: %s"
@@ -99,7 +100,7 @@ def get_regional_health_checks(compute: Resource, project_id: str, region: str, 
         return regional_health_checks
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden' or err.get('code') == 400:
+        if is_permission_error(e, err) or err.get('code') == 400:
             logger.warning(
                 (
                     "Could not retrieve regional health checks on project %s due to permissions issues. Code: %s, Message: %s"
@@ -216,7 +217,7 @@ def get_global_instance_groups(compute: Resource, project_id: str, zone: Dict, c
         return global_instance_groups
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve global instance groups on project %s due to permissions issues. Code: %s, Message: %s"
@@ -266,7 +267,7 @@ def get_regional_instance_groups(compute: Resource, project_id: str, region: str
             return []
 
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve regional instance groups on project %s due to permissions issues. Code: %s, Message: %s"
@@ -384,7 +385,7 @@ def get_global_url_maps(compute: Resource, project_id: str, common_job_parameter
         return global_url_maps
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve global url maps on project %s due to permissions issues. Code: %s, Message: %s"
@@ -431,7 +432,7 @@ def get_regional_url_maps(compute: Resource, project_id: str, region: str, commo
             return []
 
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve regional url maps on project %s due to permissions issues. Code: %s, Message: %s"
@@ -543,7 +544,7 @@ def get_ssl_policies(compute: Resource, project_id: str, common_job_parameters) 
         return ssl_policies
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve ssl policies on project %s due to permissions issues. Code: %s, Message: %s"

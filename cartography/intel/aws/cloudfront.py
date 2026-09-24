@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.util import aws_handle_regions
+from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -31,7 +32,7 @@ def get_cloudfront_distributions(boto3_session: boto3.session.Session) -> List[D
         return distributions
 
     except ClientError as e:
-        logger.error(f'Failed to call CloudFront list_distributions: {e}')
+        log_aws_error(logger, f'Failed to call CloudFront list_distributions: {e}', e)
         return distributions
 
 

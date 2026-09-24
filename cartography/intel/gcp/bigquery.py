@@ -10,6 +10,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -43,7 +44,7 @@ def get_bigquery_dataset(bigquery: Resource, project_id: str, common_job_paramet
         return datasets
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve Bigquery datasets on project %s due to permissions issues. Code: %s, Message: %s"
@@ -75,7 +76,7 @@ def get_dataset_info(bigquery, dataset_id, project_id):
 
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve Bigquery dataset info on project %s due to permissions issues. Code: %s, Message: %s"
@@ -96,7 +97,7 @@ def get_dataset_access_info(bigquery, dataset_id, project_id):
         accesses = response.get('access', [])
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve Bigquery dataset info on project %s due to permissions issues. Code: %s, Message: %s"
@@ -189,7 +190,7 @@ def get_bigquery_tables(bigquery: Resource, dataset: Dict, project_id: str, comm
         return tables
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve Bigquery tables on project %s due to permissions issues. Code: %s, Message: %s"
@@ -222,7 +223,7 @@ def get_table_info(bigquery, project_id, dataset_id, table_id):
 
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve Bigquery table info on project %s due to permissions issues. Code: %s, Message: %s"

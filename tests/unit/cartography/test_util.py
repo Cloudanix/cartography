@@ -88,6 +88,28 @@ def test_aws_handle_regions(mocker):
         raises_unsupported_error(1, 2)
 
 
+# Regression for https://cloudanix.sentry.io/issues/CDX-CARTOGRAPHY-INVENTORY-6RE: denials missing from
+# the decorator's own code list were retried and then logged as "Giving up" errors.
+@pytest.mark.parametrize(
+    'code, message',
+    [
+        ('OptInRequired', 'The AWS Access Key Id needs a subscription for the service'),
+        ('AuthorizationError', 'not authorized'),
+        ('SomeNewCode', 'is not authorized to perform: x with an explicit deny in a service control policy'),
+    ],
+)
+def test_aws_handle_regions_skips_every_access_denial(code, message):
+    calls = []
+
+    @aws_handle_regions
+    def denied():
+        calls.append(1)
+        raise botocore.exceptions.ClientError({'Error': {'Code': code, 'Message': message}}, 'FakeOperation')
+
+    assert denied() == []
+    assert len(calls) == 1
+
+
 def test_batch(mocker):
     # Arrange
     x = range(12)
