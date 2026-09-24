@@ -25,6 +25,7 @@ from . import instance_groups
 from . import label
 from cartography.client.core.tx import load_graph_data
 from cartography.data.operating_systems import OPERATING_SYSTEMS
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import batch
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -66,7 +67,7 @@ def get_compute_disks(compute: Resource, project_id: str, zones: list, common_jo
         return disks
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 ("Could not retrieve compute disks on project %s due to permissions issues. Code: %s, Message: %s"),
                 project_id,
@@ -171,7 +172,7 @@ def get_https_proxies(compute: Resource, project_id: str, common_job_parameters)
 
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 ("Could not retrieve https proxies on project %s due to permissions issues. Code: %s, Message: %s"),
                 project_id,
@@ -210,7 +211,7 @@ def get_ssl_proxies(compute: Resource, project_id: str, common_job_parameters) -
 
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 ("Could not retrieve ssl proxies on project %s due to permissions issues. Code: %s, Message: %s"),
                 project_id,
@@ -418,7 +419,7 @@ def get_gcp_instance_policy_entities(item: Dict, compute: Resource) -> List[Reso
         return entity_list, public_access
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not GCP instance policy on project %s due to permissions issues.\

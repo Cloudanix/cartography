@@ -11,6 +11,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -39,7 +40,7 @@ def get_backend_buckets(compute: Resource, project_id: str) -> List[Dict]:
         return backend_buckets
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve backend buckets on project %s due to permissions issues. Code: %s, Message: %s"
@@ -130,7 +131,7 @@ def get_global_backend_services(compute: Resource, project_id: str) -> List[Dict
         return global_backend_services
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve global backend buckets on project %s due to permissions issues. Code: %s, Message: %s"
@@ -323,7 +324,7 @@ def get_regional_backend_services(compute: Resource, project_id: str, regions: l
         return regional_backend_services
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden' or err.get('code') == 400:
+        if is_permission_error(e, err) or err.get('code') == 400:
             logger.warning(
                 (
                     "Could not retrieve regional backend services on project %s due to permissions issues. Code: %s, Message: %s"
@@ -361,7 +362,7 @@ def get_global_url_maps(compute: Resource, project_id: str) -> List[Dict]:
         return global_url_maps
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve global url maps on project %s due to permissions issues. Code: %s, Message: %s"
@@ -458,7 +459,7 @@ def get_regional_url_maps(compute: Resource, project_id: str, region: Dict) -> L
         return regional_url_maps
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden' or err.get('code') == 400:
+        if is_permission_error(e, err) or err.get('code') == 400:
             logger.warning(
                 (
                     "Could not retrieve regional url maps on project %s due to permissions issues. Code: %s, Message: %s"

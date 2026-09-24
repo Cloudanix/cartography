@@ -11,6 +11,7 @@ from googleapiclient.discovery import Resource
 
 from . import label
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -44,7 +45,7 @@ def get_dns_zones(dns: Resource, project_id: str, common_job_parameters) -> List
         return zones
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve DNS zones on project %s due to permissions issues. Code: %s, Message: %s"
@@ -96,7 +97,7 @@ def get_dns_rrs(dns: Resource, zone: Dict, project_id: str) -> List[Resource]:
         return rrs
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve DNS RRS on project %s due to permissions issues. Code: %s, Message: %s"
@@ -153,7 +154,7 @@ def get_dns_keys(dns: Resource, zone: Dict, project_id: str) -> List[Resource]:
         return dns_keys
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve DNS Keys on project %s due to permissions issues. Code: %s, Message: %s"
@@ -204,7 +205,7 @@ def get_dns_policies(dns: Resource, project_id: str, common_job_parameters) -> L
         return policies
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve DNS policies on project %s due to permissions issues. Code: %s, Message: %s"
