@@ -606,18 +606,7 @@ def _sync_single_project(
     _failed_services: Dict = {}
     logger.info(f"gcp project={project_id}: starting full sync")
     all_regions = get_all_regions(resources.compute, project_id)
-
-    regions = []
-    if len(config.params.get("regions", [])) > 0:
-        input_regions = config.params.get("regions", [])
-
-        # INFO: if it's an invalid region in input parameters, ignore those
-        for region in input_regions:
-            if region in all_regions:
-                regions.append(region)
-
-    else:
-        regions = all_regions
+    regions = _resolve_sync_regions(all_regions, config.params.get("regions", []))
 
     if os.environ.get("LOCAL_RUN", "0") == "1":
         # BEGIN - Sequential Run
@@ -886,16 +875,26 @@ def get_all_regions(compute: Resource, project_id: str):
 
             req = compute.regions().list_next(previous_request=req, previous_response=res)
     except googleapiclient.discovery.HttpError as http_error:
-        # Only swallow the "Compute Engine API not enabled" case. Log at `info` so it is not reported to Sentry as an
-        # error (CDX-CARTOGRAPHY-INVENTORY-25B); without the API there are no regions/compute resources to sync. Any
-        # other HttpError is unexpected and re-raised so it still surfaces.
-        if not _is_service_not_enabled_error(http_error):
+        # Compute API disabled, or the customer did not grant compute.regions.list (any other 403): both are the
+        # customer's setup, not a bug (CDX-CARTOGRAPHY-INVENTORY-25B). Raising here aborted the whole project sync,
+        # so return [] ("unknown") and let each service handle its own access. Other HttpErrors still surface.
+        if not _is_service_not_enabled_error(http_error) and http_error.resp.status != 403:
             raise
-        logger.info(
-            f"Compute Engine API not enabled on project {project_id}; skipping region lookup. Details: {http_error}",
-        )
+        logger.info(f"Could not list regions on project {project_id}; skipping region lookup. Details: {http_error}")
 
     return regions
+
+
+def _resolve_sync_regions(all_regions: List[str], input_regions: List[str]) -> List[str]:
+    """
+    Regions to sync: the provided ones that exist, else all. When the region lookup came back empty (denied or
+    disabled) the provided regions are kept as-is, since empty means "could not determine", not "no regions".
+    """
+    if not input_regions:
+        return all_regions
+    if not all_regions:
+        return list(input_regions)
+    return [region for region in input_regions if region in all_regions]
 
 
 def _sync_multiple_projects(
