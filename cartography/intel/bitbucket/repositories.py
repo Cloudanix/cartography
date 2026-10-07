@@ -23,19 +23,59 @@ logger = logging.getLogger(__name__)
 bitbucket_linker = BitbucketUniqueId()
 
 
+class BitbucketAuthError(Exception):
+    """The repository list could not be read, so this sync has no repository data."""
+
+
+def ensure_repository_list_readable(access_token: str, workspace: str) -> None:
+    """Raise when the repository list itself cannot be read.
+
+    A later page or a single repository can still fail after this. Callers
+    that already have at least one repository should keep going.
+    """
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=100"
+    _response, status = _repository_page(url, access_token)
+    if status != 200:
+        raise BitbucketAuthError(f"bitbucket repository list failed: HTTP {status}")
+
+
+def _repository_page(url: str, access_token: str) -> tuple:
+    body, status = make_requests_url(url, access_token, return_status=True)
+    if not isinstance(body, dict):
+        body = {}
+    return body, status
+
+
 @timeit
-def get_repos(access_token: str, workspace: str) -> List[Dict]:
+def get_repos(access_token: str, workspace: str) -> tuple:
+    """Return repositories and whether every page was read.
+
+    The first page must be readable. A later page can fail; the repositories
+    already read are still returned and list_complete is False so cleanup is skipped.
+    """
     # https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-workspace-get
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=100"
 
-    response = make_requests_url(url, access_token)
-    repositories = response.get("values", [])
+    response, status = _repository_page(url, access_token)
+    if status != 200:
+        raise BitbucketAuthError(f"bitbucket repository list failed: HTTP {status}")
 
-    while "next" in response:
-        response = make_requests_url(response.get("next"), access_token)
+    repositories = response.get("values", [])
+    list_complete = True
+
+    while response.get("next"):
+        response, status = _repository_page(response.get("next"), access_token)
+        if status != 200:
+            list_complete = False
+            logger.warning(
+                "bitbucket repository page failed after %s repositories were read: HTTP %s",
+                len(repositories),
+                status,
+            )
+            break
         repositories.extend(response.get("values", []))
 
-    return repositories
+    return repositories, list_complete
 
 
 @timeit
@@ -297,7 +337,7 @@ def sync(
     )
 
     logger.info("Syncing Bitbucket All Repositories")
-    workspace_repos = get_repos(bitbucket_access_token, workspace_name)
+    workspace_repos, list_complete = get_repos(bitbucket_access_token, workspace_name)
     transformed_data = transform_repos(workspace_repos, workspace_name)
 
     # Load repositories
@@ -318,7 +358,12 @@ def sync(
     # Load languages
     load_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"])
 
-    cleanup(neo4j_session, common_job_parameters)
+    if list_complete:
+        cleanup(neo4j_session, common_job_parameters)
+    else:
+        logger.warning(
+            "skipping Bitbucket repository cleanup because a later page failed; repositories already read are kept",
+        )
 
     toc = time.perf_counter()
     logger.info(
