@@ -66,7 +66,7 @@ def concurrent_execution(
 
 
 @timeit
-def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: Dict, common_job_parameters: Dict) -> None:
+def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: Dict, common_job_parameters: Dict) -> bool:
     _org_tic = time.perf_counter()
     _service_timings: Dict = {}
     _failed_services: Dict = {}

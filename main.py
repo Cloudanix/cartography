@@ -627,7 +627,7 @@ def publish_response(logger, body, resp, params):
         # run after five hours with no response, and does not deactivate assets.
         logger.info(
             "cartography did not complete; not publishing a dataset. "
-            f"eventId={params.get('eventId')} message={resp.get('message')}"
+            f"eventId={params.get('eventId')} message={resp.get('message')}",
         )
         return
 

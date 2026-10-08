@@ -33,8 +33,8 @@ def ensure_repository_list_readable(access_token: str, workspace: str) -> None:
     A later page or a single repository can still fail after this. Callers
     that already have at least one repository should keep going.
     """
-    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=100"
-    _response, status = _repository_page(url, access_token)
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=1"
+    _, status = _repository_page(url, access_token)
     if status != 200:
         raise BitbucketAuthError(f"bitbucket repository list failed: HTTP {status}")
 
