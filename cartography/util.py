@@ -17,6 +17,7 @@ from typing import Iterable
 from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
 from typing import TypeVar
 from typing import Union
 
@@ -528,8 +529,8 @@ def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
 
 
 def make_requests_url(
-    url: str, access_token: str, return_raw: bool = False,
-) -> Union[Dict, requests.Response]:
+    url: str, access_token: str, return_raw: bool = False, return_status: bool = False,
+) -> Union[Dict, requests.Response, Tuple[Union[Dict, requests.Response], Optional[int]]]:
     try:
         headers = {
             "Accept": "application/json",
@@ -546,13 +547,17 @@ def make_requests_url(
             logger.warning(
                 f"non-200 response calling {url}: status={response.status_code} body={response.text[:100]!r}",
             )
+            if return_status:
+                return {}, response.status_code
             return {}
 
-        if return_raw:
-            return response
-
-        return response.json()
+        payload: Union[Dict, requests.Response] = response if return_raw else response.json()
+        if return_status:
+            return payload, response.status_code
+        return payload
 
     except RequestException as e:
         logger.info(f"failed to get response from {url}: {e}")
+        if return_status:
+            return {}, None
         return {}

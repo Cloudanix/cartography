@@ -736,13 +736,7 @@ class CLI:
         # Run cartography
         try:
             output = cartography.sync.run_with_config(self.sync, config)
-
-            return {
-                "status": "success",
-                "message": f"output - {output}",
-                "updateTag": output.get("UPDATE_TAG", None),
-                "pagination": output.get("pagination", None),
-            }
+            return _sync_response(output)
 
         except KeyboardInterrupt:
             # return 130
@@ -755,6 +749,30 @@ class CLI:
                 "status": "failure",
                 "message": f"error with: {str(e)}",
             }
+
+
+def _sync_response(output: dict) -> dict:
+    """Turn a sync return value into the payload published to inventory.
+
+    authFailed means the sync did not complete and produced nothing. That must
+    not be published, including as a failure. Rails errors the run after it
+    gets no response.
+    """
+    if isinstance(output, dict) and output.get("authFailed"):
+        return {
+            "status": "failure",
+            "message": output.get("message") or "cartography sync did not complete",
+            "authFailed": True,
+            "updateTag": None,
+            "pagination": None,
+        }
+
+    return {
+        "status": "success",
+        "message": f"output - {output}",
+        "updateTag": output.get("UPDATE_TAG", None),
+        "pagination": output.get("pagination", None),
+    }
 
 
 def main(argv=None):

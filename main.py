@@ -622,6 +622,15 @@ def get_bitbucket_access_token(logger, client_id: str, client_secret: str, refre
 
 
 def publish_response(logger, body, resp, params):
+    if resp.get("authFailed"):
+        # Do not publish a snapshot or a failure. Rails errors the inventory
+        # run after five hours with no response, and does not deactivate assets.
+        logger.info(
+            "cartography did not complete; not publishing a dataset. "
+            f"eventId={params.get('eventId')} message={resp.get('message')}",
+        )
+        return
+
     payload = {
         "status": resp["status"],
         "params": body["params"],
