@@ -8,7 +8,7 @@
         },
         {
             "__comment": "List EC2 Instance IAM Roles",
-            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(aa:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(i:EC2Instance)-[:USES]->(ar:AWSRole) SET (CASE WHEN NOT ar.arn IN coalesce(i.iamroles , []) THEN i END).iamroles = coalesce(i.iamroles , []) + ar.arn;",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(aa:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(i:EC2Instance)-[:USES]->(ar:AWSRole) WHERE i.state = 'running' SET (CASE WHEN NOT ar.arn IN coalesce(i.iamroles , []) THEN i END).iamroles = coalesce(i.iamroles , []) + ar.arn;",
             "iterative": false
         }
     ]
