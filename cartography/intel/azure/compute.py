@@ -62,6 +62,32 @@ def _extract_aks_tags(tags_dict) -> Dict:
     }
 
 
+def _get_vm_power_state(client: ComputeManagementClient, resource_group: str, vm_name: str) -> str:
+    """
+    Fetch the current power state of a VM from its instance view.
+
+    The virtual_machines.list_all() response does not include power state, so we have to
+    call the instance view separately. Instance view returns a list of statuses; the power
+    state is the one whose code starts with 'PowerState/' (e.g. 'PowerState/running',
+    'PowerState/deallocated', 'PowerState/stopped'). We return the normalized value after
+    the slash (e.g. 'running') so it can be filtered the same way as AWS state and GCP status.
+
+    Returns None if the resource group / vm name is missing or the lookup fails, so a single
+    VM problem never breaks the whole sync.
+    """
+    if not resource_group or not vm_name:
+        return None
+    try:
+        instance_view = client.virtual_machines.instance_view(resource_group, vm_name)
+        for status in (instance_view.statuses or []):
+            code = getattr(status, 'code', None) or ''
+            if code.startswith('PowerState/'):
+                return code.split('/', 1)[1]
+    except HttpResponseError as e:
+        logger.warning(f"Could not fetch power state for VM {vm_name} in {resource_group} - {e}")
+    return None
+
+
 def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
@@ -74,6 +100,7 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
         vm_data = []
         for vm in vm_data_raw:
             vm['resource_group'] = get_azure_resource_group_name(vm.get('id'))
+            vm['power_state'] = _get_vm_power_state(client, vm['resource_group'], vm.get('name'))
             vm['consolelink'] = azure_console_link.get_console_link(
                 id=vm['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
             )
@@ -165,6 +192,7 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.os_disk_name=vm.os_disk_name,
     v.vm_os=vm.os,
     v.os_version=vm.os_version,
+    v.power_state=vm.power_state,
     v.aks_cluster_name = vm.aks_cluster_name,
     v.aks_pool_name = vm.aks_pool_name,
     v.aks_cluster_rg = vm.aks_cluster_rg
