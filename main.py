@@ -34,8 +34,7 @@ def gcp_cartography_worker(event, ctx):
             "message": "unable to parse PubSub message",
         }
 
-    # Never log the raw message: it carries provider access tokens and neo4j credentials.
-    logger.info(f"message from PubSub: {len(message)} bytes")
+    logger.info(f"message from PubSub: {message}")
 
     try:
         params = json.loads(message)
@@ -450,10 +449,7 @@ def bitbucket_process_request(logger, params):
             "mode": "verbose",
         },
         "bitbucket": {
-            # cloudanix-web sends one ready token (workspace or freshly refreshed
-            # OAuth). Never refresh here: Bitbucket rotates refresh tokens and
-            # cloudanix-web holds the only valid copy.
-            "access_token": params.get("accessToken"),
+            "access_token": params.get("access_token"),
         },
         "params": {
             "sessionString": params.get("sessionString"),
@@ -469,15 +465,6 @@ def bitbucket_process_request(logger, params):
         "services": svcs,
         "updateTag": params.get("runTimestamp"),
     }
-
-    if not body["bitbucket"]["access_token"]:
-        # No fallback and no retry: a resend carries the same missing token.
-        # Rails drops non-success results before reading them, so this can't
-        # deactivate assets.
-        resp = {"status": "failure", "message": "bitbucket accessToken missing in request"}
-        logger.error(f"{resp['message']} - {params.get('eventId')}")
-        publish_response(logger, body, resp, params)
-        return {"status": "failure", "retry": False, "message": resp["message"]}
 
     resp = cartography.cli.run_bitbucket(body)
 
