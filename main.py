@@ -34,7 +34,8 @@ def gcp_cartography_worker(event, ctx):
             "message": "unable to parse PubSub message",
         }
 
-    logger.info(f"message from PubSub: {message}")
+    # Never log the raw message: it carries provider access tokens and neo4j credentials.
+    logger.info(f"message from PubSub: {len(message)} bytes")
 
     try:
         params = json.loads(message)
