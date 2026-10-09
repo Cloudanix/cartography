@@ -5,10 +5,6 @@ import json
 import logging
 import os
 
-import requests
-from requests import Response
-from requests.exceptions import RequestException
-
 import cartography.cli
 import utils.logger as lgr
 from libraries.pubsublibrary import PubSubLibrary
@@ -453,17 +449,7 @@ def bitbucket_process_request(logger, params):
             "mode": "verbose",
         },
         "bitbucket": {
-            "client_id": os.environ["CDX_BITBUCKET_CLIENT_ID"],
-            "client_secret": os.environ["CDX_BITBUCKET_CLIENT_SECRET"],
-            "refresh_token": params.get("refreshToken"),
-            # Prefer workspace access token (no OAuth refresh needed).
-            # Falls back to OAuth refresh token flow for legacy sources.
-            "access_token": params.get("workspaceAccessToken") or get_bitbucket_access_token(
-                logger,
-                os.environ["CDX_BITBUCKET_CLIENT_ID"],
-                os.environ["CDX_BITBUCKET_CLIENT_SECRET"],
-                params.get("refreshToken"),
-            ),
+            "access_token": params.get("access_token"),
         },
         "params": {
             "sessionString": params.get("sessionString"),
@@ -598,27 +584,6 @@ def gitlab_process_request(logger, params):
     logger.info(f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}")
 
     return {"status": "success"}
-
-
-def get_bitbucket_access_token(logger, client_id: str, client_secret: str, refresh_token: str):
-    try:
-        TOKEN_URL = "https://bitbucket.org/site/oauth2/access_token"
-        token_req_payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
-        response: Response = requests.post(
-            TOKEN_URL,
-            data=token_req_payload,
-            allow_redirects=False,
-            auth=(client_id, client_secret),
-        )
-        if response.status_code == requests.codes["ok"]:
-            output: dict = response.json()
-            return output.get("access_token")
-
-        return None
-
-    except RequestException as e:
-        logger.info(f"getting error access token{e}")
-        return None
 
 
 def publish_response(logger, body, resp, params):
