@@ -12,6 +12,7 @@ from googleapiclient.discovery import Resource
 
 from . import label
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import run_write_query
 from cartography.intel.gcp import external_idp
 from cartography.util import run_cleanup_job
@@ -52,6 +53,126 @@ def _gcp_service_account_managed_type(email: str) -> str:
 def _gcp_key_managed_type(key_type: str) -> str:
     # SYSTEM_MANAGED keys are created and rotated by Google; USER_MANAGED keys are customer-created.
     return MANAGED_TYPE_PREDEFINED if key_type == "SYSTEM_MANAGED" else MANAGED_TYPE_CUSTOM
+
+
+# IAM binding members that grant access to anyone on the internet.
+_GCP_PUBLIC_MEMBERS = frozenset({"allusers", "allauthenticatedusers"})
+
+
+def _gcp_service_account_project(email: str) -> str:
+    """Return the owning project id embedded in a service-account email, else ''.
+
+    Customer service accounts are "<name>@<project-id>.iam.gserviceaccount.com".
+    Google-managed agents live under other hosts (handled separately).
+    """
+    email = (email or "").lower()
+    suffix = ".iam.gserviceaccount.com"
+    if "@" not in email or not email.endswith(suffix):
+        return ""
+    host = email.split("@", 1)[1]
+    return host[: -len(suffix)]
+
+
+def classify_external_member(
+    member: str,
+    project_id: str,
+    organization_domains: frozenset,
+) -> Dict[str, str] | None:
+    """Classify a binding member as an external principal, or None if internal.
+
+    External = a principal the customer does not own:
+    * allUsers / allAuthenticatedUsers (public),
+    * a service account whose owning project differs from this project and is
+      not a Google-managed agent,
+    * a user/group/domain whose domain is outside the org's verified domains.
+
+    access_type is "CrossAccount" when the principal still belongs to the
+    customer org (e.g. a sibling project / verified domain), "ThirdParty"
+    otherwise. Returns a record with the raw member string as the principal.
+    """
+    raw = (member or "").strip()
+    if not raw:
+        return None
+    normalized = raw.lower()
+    if normalized.startswith("deleted:"):
+        return None
+
+    if normalized in _GCP_PUBLIC_MEMBERS:
+        return {"principal": raw, "member_type": "public", "access_type": "ThirdParty"}
+
+    if ":" not in raw:
+        return None
+    member_type, _, value = raw.partition(":")
+    member_type = member_type.lower()
+    value = value.lower()
+
+    if member_type == "serviceaccount":
+        if _gcp_service_account_managed_type(value) == MANAGED_TYPE_PREDEFINED:
+            return None  # Google-managed service agent, not a third party.
+        owning_project = _gcp_service_account_project(value)
+        if not owning_project or owning_project == (project_id or "").lower():
+            return None  # customer's own project
+        return {"principal": raw, "member_type": "serviceaccount", "access_type": "ThirdParty"}
+
+    if member_type == "domain":
+        if value in organization_domains:
+            return None
+        return {"principal": raw, "member_type": "domain", "access_type": "ThirdParty"}
+
+    if member_type in ("user", "group"):
+        domain = value.split("@")[-1] if "@" in value else ""
+        if domain and domain in organization_domains:
+            return None
+        return {"principal": raw, "member_type": member_type, "access_type": "ThirdParty"}
+
+    return None
+
+
+def _get_organization_domains(neo4j_session: neo4j.Session, project_id: str) -> frozenset:
+    """Return the set of domains the customer org owns, lowercased.
+
+    Derived from GCPDomain nodes already loaded for the org/project. An empty
+    set means user/group/domain members are treated as external (safe
+    over-report) until verified-domain data is ingested.
+    """
+    query = "MATCH (d:GCPDomain) WHERE d.name IS NOT NULL RETURN DISTINCT d.name AS name"
+    try:
+        rows = neo4j_session.execute_read(read_list_of_dicts_tx, query)
+    except Exception:
+        return frozenset()
+    return frozenset(row["name"].lower() for row in rows if row.get("name"))
+
+
+def load_gcp_external_principal(
+    neo4j_session: neo4j.Session,
+    role_id: str,
+    external_principal: Dict[str, str],
+    project_id: str,
+    gcp_update_tag: int,
+) -> None:
+    ingest_external_principal = """
+    MERGE (ep:GCPExternalPrincipal{principal: $PRINCIPAL})
+    ON CREATE SET ep.firstseen = timestamp()
+    SET ep.lastupdated = $gcp_update_tag,
+    ep.access_type = $ACCESS_TYPE,
+    ep.member_type = $MEMBER_TYPE,
+    ep.account_id = $PROJECT_ID
+    WITH ep
+    MATCH (role:GCPRole{id: $ROLE_ID})
+    MERGE (role)-[r:TRUSTS_GCP_PRINCIPAL]->(ep)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $gcp_update_tag
+    """
+    run_write_query(
+        neo4j_session,
+        ingest_external_principal,
+        ROLE_ID=role_id,
+        PRINCIPAL=external_principal["principal"],
+        ACCESS_TYPE=external_principal["access_type"],
+        MEMBER_TYPE=external_principal.get("member_type", ""),
+        PROJECT_ID=project_id,
+        gcp_update_tag=gcp_update_tag,
+    )
 
 
 def _gcp_key_display_name(service_account: Dict) -> str:
@@ -665,8 +786,19 @@ def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 
 @timeit
 def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id: str, organization_id: str, gcp_update_tag: int, common_job_parameters: Dict) -> None:
+    organization_domains = _get_organization_domains(neo4j_session, project_id)
     for binding in bindings:
         role_id = get_role_id(binding['role'], project_id, common_job_parameters)
+
+        # Emit an external-principal node for any member the customer does not own
+        # (public, foreign service accounts, out-of-org users/groups/domains), so
+        # the IAM Deep Dive can surface third-party access with a vendor label.
+        for member in binding['members']:
+            external_principal = classify_external_member(member, project_id, organization_domains)
+            if external_principal and role_id:
+                load_gcp_external_principal(
+                    neo4j_session, role_id, external_principal, project_id, gcp_update_tag,
+                )
 
         for member in binding['members']:
             if member.startswith('user:'):
