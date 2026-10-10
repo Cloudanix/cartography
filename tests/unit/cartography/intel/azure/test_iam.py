@@ -1,4 +1,6 @@
 import asyncio
+import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -104,6 +106,37 @@ def test_gather_group_members_fail_fast_skips_remaining_groups_after_auth_expiry
     assert any(isinstance(r, iam.GraphAuthenticationExpiredError) for r in results)
     # Circuit breaker must prevent calling Graph for every remaining group.
     assert call_count["n"] < 21
+
+
+def test_get_tenant_service_accounts_list_stringifies_graph_uuid_fields():
+    # https://cloudanix.sentry.io/issues/7784616181/
+    # msgraph-sdk types appOwnerOrganizationId / tokenEncryptionKeyId as uuid.UUID; they must
+    # leave as strings so managed_type can compare them and neo4j can store them.
+    # conftest stubs msgraph, so stand in for the SDK model (plain attributes, no as_dict).
+    from neo4j._codec.hydration.v1 import HydrationHandler
+    from neo4j._codec.packstream.v1 import Packer
+
+    first_party = SimpleNamespace(
+        id="sp-1",
+        app_owner_organization_id=uuid.UUID(iam.AZURE_MICROSOFT_TENANT_ID),
+        token_encryption_key_id=uuid.UUID(FOREIGN_TENANT),
+    )
+    customer_owned = SimpleNamespace(id="sp-2", app_owner_organization_id=uuid.UUID(CUSTOMER_TENANT))
+    unowned = SimpleNamespace(id="sp-3", app_owner_organization_id=None, token_encryption_key_id=None)
+    client = MagicMock()
+    client.service_principals.get = AsyncMock(
+        return_value=MagicMock(value=[first_party, customer_owned, unowned], odata_next_link=None),
+    )
+
+    with patch.object(iam.azure_console_link, "get_console_link", return_value="link"):
+        sps = asyncio.run(iam.get_tenant_service_accounts_list(client, CUSTOMER_TENANT))
+
+    assert [sp["managed_type"] for sp in sps] == ["predefined", "custom", "custom"]
+    assert sps[0]["app_owner_organization_id"] == iam.AZURE_MICROSOFT_TENANT_ID
+    assert sps[0]["token_encryption_key_id"] == FOREIGN_TENANT
+    assert sps[2]["app_owner_organization_id"] is None
+    # Same packer the neo4j driver uses for query parameters; raises on uuid.UUID.
+    Packer(MagicMock()).pack(sps, dehydration_hooks=HydrationHandler().new_hydration_scope().dehydration_hooks)
 
 
 def test_load_roles_tx_retains_principal_type_and_emits_external_merge():

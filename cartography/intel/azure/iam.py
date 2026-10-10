@@ -12,6 +12,7 @@ from typing import Set
 from typing import Tuple
 from typing import TypedDict
 from typing import Union
+from uuid import UUID
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
@@ -46,6 +47,10 @@ def _azure_role_managed_type(role: Dict) -> str:
     if role.get("type") == "Microsoft.Authorization/roleDefinitions" or role.get("role_type") == "BuiltInRole":
         return MANAGED_TYPE_PREDEFINED
     return MANAGED_TYPE_CUSTOM
+
+
+def _graph_guid_str(value: Optional[UUID]) -> Optional[str]:
+    return str(value) if value is not None else None
 
 
 def _azure_service_principal_managed_type(app_owner_organization_id: Optional[str]) -> str:
@@ -970,7 +975,8 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
                     "display_name": getattr(sp, "display_name", None),
                     "app_id": getattr(sp, "app_id", None),
                     "client_id": getattr(sp, "app_id", None),
-                    "app_owner_organization_id": getattr(sp, "app_owner_organization_id", None),
+                    # msgraph-sdk returns Edm.Guid fields as uuid.UUID, which neo4j can't store
+                    "app_owner_organization_id": _graph_guid_str(getattr(sp, "app_owner_organization_id", None)),
                     "account_enabled": getattr(sp, "account_enabled", None),
                     "app_display_name": getattr(sp, "app_display_name", None),
                     "app_role_assignment_required": getattr(sp, "app_role_assignment_required", None),
@@ -990,7 +996,7 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
                     ),
                     "service_principal_type": getattr(sp, "service_principal_type", None),
                     "sign_in_audience": getattr(sp, "sign_on_audience", None),
-                    "token_encryption_key_id": getattr(sp, "token_encryption_key_id", None),
+                    "token_encryption_key_id": _graph_guid_str(getattr(sp, "token_encryption_key_id", None)),
                 }
 
             # Add tenant-specific ID for consistency with previous implementation
