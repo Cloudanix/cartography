@@ -54,6 +54,34 @@ def _azure_service_principal_managed_type(app_owner_organization_id: Optional[st
     return MANAGED_TYPE_CUSTOM
 
 
+def azure_external_access_type(
+    home_tenant_id: Optional[str],
+    user_type: Optional[str],
+    tenant_id: str,
+) -> Optional[str]:
+    """Classify an assigned principal as external, or None if internal.
+
+    * A service principal whose home tenant (appOwnerOrganizationId) differs
+      from the customer tenant is a foreign multi-tenant app. Microsoft's own
+      first-party tenant is treated as a provider service (CrossAccount), any
+      other foreign tenant is ThirdParty.
+    * A Guest (B2B) user is an external identity federated from another tenant
+      (ThirdParty).
+    Returns "ThirdParty", "CrossAccount", or None (internal / same tenant).
+    """
+    home = (home_tenant_id or "").lower()
+    customer = (tenant_id or "").lower()
+    if home:
+        if home == customer:
+            return None
+        if home == AZURE_MICROSOFT_TENANT_ID:
+            return "CrossAccount"
+        return "ThirdParty"
+    if (user_type or "").lower() == "guest":
+        return "ThirdParty"
+    return None
+
+
 # A safe batch size for "in" filters with GUIDs to avoid 414 URI Too Long errors.
 # MS Graph URL limit is ~2048 chars. 36-char GUID + quotes/commas = ~39 chars.
 # 2048 / 39 = ~52. A batch size of 25 is safe.
@@ -942,6 +970,7 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
                     "display_name": getattr(sp, "display_name", None),
                     "app_id": getattr(sp, "app_id", None),
                     "client_id": getattr(sp, "app_id", None),
+                    "app_owner_organization_id": getattr(sp, "app_owner_organization_id", None),
                     "account_enabled": getattr(sp, "account_enabled", None),
                     "app_display_name": getattr(sp, "app_display_name", None),
                     "app_role_assignment_required": getattr(sp, "app_role_assignment_required", None),
@@ -1326,10 +1355,51 @@ def _load_roles_tx(
         {
             "role_id": ra.get("role_definition_id", ra.get("properties", {}).get("role_definition_id")),
             "principal_id": ra.get("principal_id", ra.get("properties", {}).get("principal_id")),
+            "principal_type": ra.get("principal_type", ra.get("properties", {}).get("principal_type")),
         }
         for ra in role_assignments_list
     ]
     tx.run(attach_role, role_assignments=prepared_assignments, update_tag=update_tag)
+
+    # Emit an AzureExternalPrincipal for any assigned principal homed outside the
+    # customer tenant (foreign multi-tenant service principal) or federated in as
+    # a Guest user, mirroring the AWS AWSExternalPrincipal model. The home tenant
+    # (app_owner_organization_id) and user_type live on the already-loaded
+    # principal nodes, so this joins against them rather than re-fetching.
+    attach_external_principals = """
+    UNWIND $role_assignments AS ra
+    MATCH (principal:AzurePrincipal{object_id: ra.principal_id})
+    MATCH (i:AzureRole{id: ra.role_id})
+    WITH principal, i,
+         toLower(coalesce(principal.app_owner_organization_id, '')) AS home_tenant,
+         toLower(coalesce(principal.user_type, '')) AS user_type
+    WHERE (home_tenant <> '' AND home_tenant <> $tenant_id)
+       OR user_type = 'guest'
+    WITH principal, i, home_tenant, user_type,
+         CASE
+            WHEN home_tenant = $ms_tenant_id THEN 'CrossAccount'
+            WHEN home_tenant <> '' THEN 'ThirdParty'
+            ELSE 'ThirdParty'
+         END AS access_type
+    MERGE (ep:AzureExternalPrincipal{principal: principal.object_id})
+    ON CREATE SET ep.firstseen = timestamp()
+    SET ep.lastupdated = $update_tag,
+        ep.access_type = access_type,
+        ep.home_tenant_id = home_tenant,
+        ep.app_id = principal.app_id,
+        ep.account_id = CASE WHEN home_tenant <> '' THEN home_tenant ELSE $tenant_id END,
+        ep.principal_type = CASE WHEN user_type = 'guest' THEN 'GuestUser' ELSE 'ServicePrincipal' END
+    MERGE (i)-[r:TRUSTS_AZURE_PRINCIPAL]->(ep)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+    tx.run(
+        attach_external_principals,
+        role_assignments=prepared_assignments,
+        update_tag=update_tag,
+        tenant_id=(tenant_id or "").lower(),
+        ms_tenant_id=AZURE_MICROSOFT_TENANT_ID,
+    )
 
 
 def _load_managed_identities_tx(

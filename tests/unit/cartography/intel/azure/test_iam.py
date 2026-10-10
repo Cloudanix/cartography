@@ -28,6 +28,27 @@ def test_azure_service_principal_managed_type():
     assert iam._azure_service_principal_managed_type(None) == "custom"
 
 
+CUSTOMER_TENANT = "00000000-1111-2222-3333-444444444444"
+FOREIGN_TENANT = "99999999-8888-7777-6666-555555555555"
+
+
+def test_azure_external_access_type_service_principals():
+    # Same-tenant SP is internal.
+    assert iam.azure_external_access_type(CUSTOMER_TENANT, None, CUSTOMER_TENANT) is None
+    # Microsoft first-party tenant is a provider service -> CrossAccount.
+    assert iam.azure_external_access_type(iam.AZURE_MICROSOFT_TENANT_ID, None, CUSTOMER_TENANT) == "CrossAccount"
+    # Any other foreign tenant -> ThirdParty (case-insensitive).
+    assert iam.azure_external_access_type(FOREIGN_TENANT.upper(), None, CUSTOMER_TENANT) == "ThirdParty"
+
+
+def test_azure_external_access_type_guest_users():
+    # Guest user with no home-tenant signal is still external.
+    assert iam.azure_external_access_type(None, "Guest", CUSTOMER_TENANT) == "ThirdParty"
+    # Member user in-tenant is internal.
+    assert iam.azure_external_access_type(None, "Member", CUSTOMER_TENANT) is None
+    assert iam.azure_external_access_type("", "", CUSTOMER_TENANT) is None
+
+
 def test_is_graph_auth_expired_error_detects_invalid_authentication_token():
     err = Exception(
         "APIError Code: 401 error: MainError(code='InvalidAuthenticationToken', "
@@ -83,3 +104,27 @@ def test_gather_group_members_fail_fast_skips_remaining_groups_after_auth_expiry
     assert any(isinstance(r, iam.GraphAuthenticationExpiredError) for r in results)
     # Circuit breaker must prevent calling Graph for every remaining group.
     assert call_count["n"] < 21
+
+
+def test_load_roles_tx_retains_principal_type_and_emits_external_merge():
+    tx = MagicMock()
+    role_assignments = [
+        {
+            "role_definition_id": "role-1",
+            "principal_id": "oid-1",
+            "principal_type": "ServicePrincipal",
+        },
+    ]
+
+    iam._load_roles_tx(tx, CUSTOMER_TENANT, [], role_assignments, 123, "sub-1")
+
+    run_calls = [c for c in tx.run.call_args_list if c.kwargs.get("role_assignments") is not None]
+    # The attach_role + attach_external_principals passes carry principal_type now.
+    prepared = run_calls[0].kwargs["role_assignments"][0]
+    assert prepared["principal_type"] == "ServicePrincipal"
+    assert prepared["role_id"] == "role-1"
+    # An external-principal MERGE pass runs with the customer + Microsoft tenant ids.
+    external_calls = [c for c in tx.run.call_args_list if "AzureExternalPrincipal" in c.args[0]]
+    assert len(external_calls) == 1
+    assert external_calls[0].kwargs["tenant_id"] == CUSTOMER_TENANT.lower()
+    assert external_calls[0].kwargs["ms_tenant_id"] == iam.AZURE_MICROSOFT_TENANT_ID
