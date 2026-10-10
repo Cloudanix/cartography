@@ -157,3 +157,40 @@ def test_oci_policy_managed_type():
     assert iam._oci_policy_managed_type({"name": "PSM-root-policy"}) == "predefined"
     assert iam._oci_policy_managed_type({"name": "dev_storage_use"}) == "custom"
     assert iam._oci_policy_managed_type({}) == "custom"
+
+
+FOREIGN_TENANCY = "ocid1.tenancy.oc1..foreignaaa"
+KNOWN_TENANCY = "ocid1.tenancy.oc1..knownbbb"
+
+
+def test_parse_external_tenancies_extracts_admit_endorse_define():
+    statements = [
+        "Allow group Administrators to manage all-resources in tenancy",  # no OCID -> ignored
+        f"Admit group NetworkAdmins of tenancy {FOREIGN_TENANCY} to manage virtual-network-family in compartment net",
+        f"Endorse group Auditors to read audit-events in tenancy {KNOWN_TENANCY}",
+        f"Define tenancy PartnerTenancy as {FOREIGN_TENANCY}",  # duplicate OCID -> deduped
+    ]
+
+    parsed = iam.parse_external_tenancies(statements)
+
+    principals = {p["principal"] for p in parsed}
+    assert principals == {FOREIGN_TENANCY, KNOWN_TENANCY}
+    verbs = {p["principal"]: p["statement_verb"] for p in parsed}
+    assert verbs[FOREIGN_TENANCY] == "admit"
+    assert verbs[KNOWN_TENANCY] == "endorse"
+
+
+def test_parse_external_tenancies_ignores_non_cross_tenancy_and_bad_input():
+    # A bare OCID mention without a cross-tenancy verb must not be treated as external.
+    bare_mention = f"Allow any-user to inspect tenancies where request.tenancy={FOREIGN_TENANCY}"
+    assert iam.parse_external_tenancies([bare_mention]) == []
+    assert iam.parse_external_tenancies([]) == []
+    assert iam.parse_external_tenancies([None, 123]) == []
+
+
+def test_oci_external_access_type_classifies_known_vs_third_party():
+    known = {KNOWN_TENANCY}
+    assert iam._oci_external_access_type(FOREIGN_TENANCY, KNOWN_TENANCY, known) == "ThirdParty"
+    assert iam._oci_external_access_type(KNOWN_TENANCY, "ocid1.tenancy.oc1..self", known) == "CrossAccount"
+    # Case-insensitive match against the customer's own tenancy id.
+    assert iam._oci_external_access_type(FOREIGN_TENANCY.upper(), FOREIGN_TENANCY, set()) == "CrossAccount"

@@ -12,9 +12,9 @@ import neo4j
 import oci
 
 from . import utils
+from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import run_write_query
-from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -441,6 +441,87 @@ def load_oci_policy_compartment_reference(
     )
 
 
+# Matches a tenancy OCID anywhere in a policy statement, e.g. the target of an
+# Admit/Endorse/Define cross-tenancy statement ("... in tenancy ocid1.tenancy.oc1..aaaa").
+TENANCY_OCID_PATTERN = re.compile(r"ocid1\.tenancy\.oc1\.\.[a-z0-9]+", re.IGNORECASE)
+# Cross-tenancy policy verbs. Admit/Endorse grant access across a tenancy
+# boundary; Define aliases a foreign tenancy OCID to a local name.
+CROSS_TENANCY_VERB_PATTERN = re.compile(r"\b(admit|endorse|define)\b", re.IGNORECASE)
+
+
+def parse_external_tenancies(statements: List[str]) -> List[Dict[str, str]]:
+    """Extract foreign tenancy OCIDs from cross-tenancy policy statements.
+
+    Returns one record per (statement, OCID) pair with the matched verb, so the
+    caller can classify and link each foreign tenancy a policy trusts. Only
+    statements that use a cross-tenancy verb (Admit/Endorse/Define) are
+    considered; a bare OCID mention elsewhere is ignored.
+    """
+    external: List[Dict[str, str]] = []
+    seen: set = set()
+    for statement in statements or []:
+        if not isinstance(statement, str):
+            continue
+        verb_match = CROSS_TENANCY_VERB_PATTERN.search(statement)
+        if not verb_match:
+            continue
+        verb = verb_match.group(1).lower()
+        for ocid_match in TENANCY_OCID_PATTERN.finditer(statement):
+            ocid = ocid_match.group(0).lower()
+            if ocid in seen:
+                continue
+            seen.add(ocid)
+            external.append({"principal": ocid, "statement_verb": verb})
+    return external
+
+
+def _oci_external_access_type(ocid: str, tenancy_id: str, known_tenancy_ids: set) -> str:
+    """Classify a foreign tenancy OCID as CrossAccount (known/own) or ThirdParty."""
+    normalized = ocid.lower()
+    if normalized == (tenancy_id or "").lower():
+        return "CrossAccount"
+    if normalized in known_tenancy_ids:
+        return "CrossAccount"
+    return "ThirdParty"
+
+
+def _get_known_tenancy_ids(neo4j_session: neo4j.Session) -> set:
+    """Return every OCITenancy OCID already loaded, used to split CrossAccount from ThirdParty."""
+    query = "MATCH (t:OCITenancy) WHERE t.id IS NOT NULL RETURN t.id AS ocid"
+    rows = neo4j_session.execute_read(read_list_of_dicts_tx, query)
+    return {row["ocid"].lower() for row in rows if row.get("ocid")}
+
+
+def load_oci_external_principal(
+    neo4j_session: neo4j.Session,
+    policy_id: str,
+    external_principal: Dict[str, str],
+    oci_update_tag: int,
+) -> None:
+    ingest_external_principal = """
+    MERGE (ep:OCIExternalPrincipal{principal: $PRINCIPAL})
+    ON CREATE SET ep.firstseen = timestamp()
+    SET ep.lastupdated = $oci_update_tag,
+    ep.access_type = $ACCESS_TYPE,
+    ep.account_id = $PRINCIPAL,
+    ep.statement_verb = $STATEMENT_VERB
+    WITH ep
+    MATCH (p:OCIPolicy{id: $POLICY_ID})
+    MERGE (p)-[r:TRUSTS_OCI_PRINCIPAL]->(ep)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $oci_update_tag
+    """
+    run_write_query(
+        neo4j_session,
+        ingest_external_principal,
+        POLICY_ID=policy_id,
+        PRINCIPAL=external_principal["principal"],
+        ACCESS_TYPE=external_principal["access_type"],
+        STATEMENT_VERB=external_principal.get("statement_verb", ""),
+        oci_update_tag=oci_update_tag,
+    )
+
+
 # Parse the statements inside OCI Policies and load the corresponding relationships they reference.
 def sync_oci_policy_references(
     neo4j_session: neo4j.Session,
@@ -451,6 +532,7 @@ def sync_oci_policy_references(
     groups = list(utils.get_groups_in_tenancy(neo4j_session, tenancy_id))
     compartments = list(utils.get_compartments_in_tenancy(neo4j_session, tenancy_id))
     policies = list(utils.get_policies_in_tenancy(neo4j_session, tenancy_id))
+    known_tenancy_ids = _get_known_tenancy_ids(neo4j_session)
     for policy in policies:
         check_compart = policy["compartmentid"]
         for statement in policy["statements"]:
@@ -471,6 +553,16 @@ def sync_oci_policy_references(
                             load_oci_policy_compartment_reference(
                                 neo4j_session, policy["ocid"], compartment['ocid'], tenancy_id, oci_update_tag,
                             )
+        # Cross-tenancy (Admit/Endorse/Define) statements reference a foreign
+        # tenancy OCID that no OCIGroup/OCICompartment node represents; emit an
+        # OCIExternalPrincipal the IAM Deep Dive can enrich with the vendor.
+        for external_principal in parse_external_tenancies(policy["statements"]):
+            external_principal["access_type"] = _oci_external_access_type(
+                external_principal["principal"], tenancy_id, known_tenancy_ids,
+            )
+            load_oci_external_principal(
+                neo4j_session, policy["ocid"], external_principal, oci_update_tag,
+            )
 
 
 def get_region_subscriptions_list_data(

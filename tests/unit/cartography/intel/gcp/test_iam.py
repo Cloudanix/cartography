@@ -43,6 +43,69 @@ def test_gcp_service_account_managed_type():
     assert iam._gcp_service_account_managed_type(None) == "custom"
 
 
+def test_classify_external_member_public_access():
+    for public in ("allUsers", "allAuthenticatedUsers"):
+        result = iam.classify_external_member(public, "my-project", frozenset())
+        assert result == {"principal": public, "member_type": "public", "access_type": "ThirdParty"}
+
+
+def test_classify_external_member_service_accounts():
+    domains = frozenset()
+    # Foreign-project SA is external.
+    foreign = "serviceAccount:svc@other-project.iam.gserviceaccount.com"
+    assert iam.classify_external_member(foreign, "my-project", domains) == {
+        "principal": foreign, "member_type": "serviceaccount", "access_type": "ThirdParty",
+    }
+    # Same-project SA is internal.
+    assert iam.classify_external_member(
+        "serviceAccount:svc@my-project.iam.gserviceaccount.com", "my-project", domains,
+    ) is None
+    # Google-managed service agent is not a third party.
+    assert iam.classify_external_member(
+        "serviceAccount:service-123@gcp-sa-pubsub.iam.gserviceaccount.com", "my-project", domains,
+    ) is None
+
+
+def test_classify_external_member_users_groups_domains():
+    domains = frozenset({"customer.com"})
+    # In-org user/group/domain are internal.
+    assert iam.classify_external_member("user:alice@customer.com", "my-project", domains) is None
+    assert iam.classify_external_member("group:team@customer.com", "my-project", domains) is None
+    assert iam.classify_external_member("domain:customer.com", "my-project", domains) is None
+    # Out-of-org are external.
+    assert iam.classify_external_member("user:bob@vendor.com", "my-project", domains)["access_type"] == "ThirdParty"
+    assert iam.classify_external_member("domain:vendor.com", "my-project", domains)["member_type"] == "domain"
+
+
+def test_classify_external_member_ignores_deleted_and_blank():
+    assert iam.classify_external_member("deleted:user:x@vendor.com?uid=1", "my-project", frozenset()) is None
+    assert iam.classify_external_member("", "my-project", frozenset()) is None
+    assert iam.classify_external_member("weirdmember", "my-project", frozenset()) is None
+
+
+@patch.object(iam, '_get_organization_domains', return_value=frozenset({"customer.com"}))
+@patch.object(iam, 'load_gcp_external_principal')
+@patch.object(iam, 'run_write_query')
+def test_load_bindings_emits_external_principals(mock_run_write_query, mock_load_ep, _mock_domains):
+    neo4j_session = MagicMock()
+    bindings = [{
+        'role': 'projects/p1/roles/custom1',
+        'parent': 'project',
+        'parent_id': 'p1',
+        'members': [
+            'user:alice@customer.com',                               # internal -> skipped
+            'user:bob@vendor.com',                                   # external
+            'serviceAccount:svc@other-project.iam.gserviceaccount.com',  # external
+            'allUsers',                                              # external public
+        ],
+    }]
+
+    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {})
+
+    emitted = [call.args[2]["principal"] for call in mock_load_ep.call_args_list]
+    assert emitted == ['user:bob@vendor.com', 'serviceAccount:svc@other-project.iam.gserviceaccount.com', 'allUsers']
+
+
 def test_gcp_key_managed_type():
     assert iam._gcp_key_managed_type("SYSTEM_MANAGED") == "predefined"
     assert iam._gcp_key_managed_type("USER_MANAGED") == "custom"
