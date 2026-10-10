@@ -539,10 +539,13 @@ def extend_visibility_timeout(message, receipt_handle, timeout_duration, stop_ev
             if elapsed_time >= max_runtime_seconds:
                 status = sqs_library.delete_message(receipt_handle)
                 if status:
+                    # Static title so Sentry groups it; never log the raw body, it carries credentials.
+                    params = json.loads(message["Body"])
                     context.logger.warning(
-                        f"Maximum runtime has been reached. Deleted message from queue - {json.loads(message['Body'])}",
+                        "Maximum runtime has been reached. Deleted message from queue",
                         extra={
-                            "message": message["Body"],
+                            "templateType": params.get("templateType"),
+                            "eventId": params.get("eventId"),
                             "handle": receipt_handle,
                             "status": status,
                         },
