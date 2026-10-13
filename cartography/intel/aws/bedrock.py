@@ -21,6 +21,25 @@ def get_boto3_client(boto3_session: boto3.session.Session, service: str, region:
 
 
 @timeit
+def get_bedrock_knowledge_bases_list(
+    boto3_session: boto3.session.Session,
+    region: str
+) -> List[Dict]:
+    knowledge_bases: List[Dict] = []
+    try:
+        client = get_boto3_client(boto3_session, "bedrock-agent", region)
+        paginator = client.get_paginator("list_knowledge_bases")
+        for page in paginator.paginate():
+            knowledge_bases.extend(page["knowledgeBaseSummaries"])
+
+        for kb in knowledge_bases:
+            kb["region"] = region
+            kb["consolelink"] = aws_console_link.get_console_link(arn=kb["knowledgeBaseArn"])
+    except Exception as e:
+        logger.warning(f"Could not list bedrock knowledge base, skipping... -{e}")
+    return knowledge_bases
+
+@timeit
 def get_bedrock_agents_list(boto3_session: boto3.session.Session, current_aws_account_id: str, region: str) -> List[Dict]:
     bedrock_agents: List[Dict] = []
     try:
@@ -43,6 +62,15 @@ def get_bedrock_agents_list(boto3_session: boto3.session.Session, current_aws_ac
 
 
 @timeit
+def load_bedrock_knowledge_bases(
+    neo4j_session: neo4j.Session,
+    bedrock_knowledge_bases: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_bedrock_knowledge_bases_tx, bedrock_knowledge_bases, current_aws_account_id, aws_update_tag)
+
+@timeit
 def load_bedrock_agents(
     neo4j_session: neo4j.Session,
     bedrock_agents: List[Dict],
@@ -51,6 +79,39 @@ def load_bedrock_agents(
 ) -> None:
     neo4j_session.execute_write(_load_bedrock_agents_tx, bedrock_agents, current_aws_account_id, aws_update_tag)
 
+
+@timeit
+def _load_bedrock_knowledge_bases_tx(
+    tx: neo4j.Transaction,
+    bedrock_knowledge_bases: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    ingest_bedrock_knowledge_bases = """
+    UNWIND $bedrock_knowledge_bases AS kb
+    MERGE (i:AWSBedrockKnowledgeBase{arn:kb.knowledgeBaseArn})
+    ON CREATE SET i.firstseen = timestamp(), 
+    i.arn = kb.knowledgeBaseArn, 
+    i.knowledgebaseid = kb.knowledgeBaseId
+    SET i.name = kb.name, 
+    i.status = kb.status, 
+    i.updatedat = kb.updatedAt,
+    i.lastupdated = $aws_update_tag, 
+    i.region = kb.region, 
+    i.consolelink = kb.consolelink
+    WITH i
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (aa)-[r:RESOURCE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+
+    tx.run(
+        ingest_bedrock_knowledge_bases,
+        bedrock_knowledge_bases=bedrock_knowledge_bases,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
 @timeit
 def _load_bedrock_agents_tx(
@@ -322,6 +383,14 @@ def sync_bedrock(
     logger.info(f"Total bedrock custom models: {len(custom_models_list)}")
 
     load_custom_models(neo4j_session, custom_models_list, current_aws_account_id, aws_update_tag)
+
+    knowledge_bases_list = []
+    for region in regions:
+        knowledge_bases_list.extend(get_bedrock_knowledge_bases_list(boto3_session, region))
+
+    logger.info(f"Total bedrock knowledge bases: {len(knowledge_bases_list)}")
+
+    load_bedrock_knowledge_bases(neo4j_session, knowledge_bases_list, current_aws_account_id, aws_update_tag)
 
 
 @timeit
