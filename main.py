@@ -449,7 +449,7 @@ def bitbucket_process_request(logger, params):
             "mode": "verbose",
         },
         "bitbucket": {
-            "access_token": params.get("access_token"),
+            "access_token": params.get("accessToken"),
         },
         "params": {
             "sessionString": params.get("sessionString"),
