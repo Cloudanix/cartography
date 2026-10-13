@@ -1021,45 +1021,70 @@ def sync_snapshot(
 
 
 @timeit
-def link_compute_to_aks(neo4j_session: neo4j.Session, update_tag: int) -> None:
-    """Links Azure VMs and VM Scale Sets to AKS Clusters and Node Pools based on tags."""
+def link_compute_to_aks(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    Links Azure VMs and VM Scale Sets to AKS Clusters and Agent Pools.
 
-    # AzureVirtualMachine and AzureVirtualMachineScaleSet are both AKS node types. The old query
-    # used `MATCH (node) WHERE node:A OR node:B`, which is an AllNodesScan (no anchoring label).
-    # Run one labelled query per type instead so the planner uses the label index.
+    A node belongs to a cluster when it sits in the cluster's node resource group (MC_*), or,
+    as a fallback, when its aks-managed-cluster-name/-rg tags name the cluster. AKS puts the
+    cluster-name/-rg tags on the MC_* resource group, not always on the VMSS, so the node
+    resource group is the primary match. Resource group names are compared lowercased: the
+    cluster's comes from the lowercased resource id, tags and VMSS keep the original case.
+
+    Scoped to this workspace's tenant and subscription: names and resource groups are only
+    unique per subscription, so an unscoped match links nodes across tenants.
+
+    Reads only graph state, so it must run after both the `aks` and `compute` syncs have loaded
+    (see sync_aks_node_links).
+    """
+    # AzureVirtualMachine and AzureVirtualMachineScaleSet are both AKS node types. One labelled
+    # query per type so the planner uses the label index instead of an AllNodesScan.
     # ponytail: template + loop, not UNION — Cypher forbids UNION around write clauses (MERGE).
     # Labels are trusted module constants, so str.format injection is safe.
     aks_node_labels = ("AzureVirtualMachine", "AzureVirtualMachineScaleSet")
 
-    # 1. Link VMs / VM Scale Sets to the AKS Cluster
-    cluster_query = """
-    MATCH (node:{label})
-    WHERE node.aks_cluster_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
-    MATCH (c:AzureCluster {{name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg}})
+    query = """
+    MATCH (:CloudanixWorkspace{{id: $WORKSPACE_ID}})-[:OWNER]->(:AzureTenant{{id: $AZURE_TENANT_ID}})
+        -[:RESOURCE]->(s:AzureSubscription{{id: $AZURE_SUBSCRIPTION_ID}})
+    MATCH (s)-[:RESOURCE]->(c:AzureCluster)
+    MATCH (s)-[:RESOURCE]->(node:{label})
+    WHERE toLower(node.resourcegroup) = c.node_resource_group
+       OR (node.aks_cluster_name = c.name AND toLower(node.aks_cluster_rg) = toLower(c.resourcegroup))
     MERGE (c)-[r:HAS_NODE]->(node)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
-    """
-
-    # 2. Link VMs / VM Scale Sets to the AKS Node Pool (Agent Pool)
-    pool_query = """
-    MATCH (node:{label})
-    WHERE node.aks_cluster_name IS NOT NULL AND node.aks_pool_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
-    MATCH (c:AzureCluster {{name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg}})-[:HAS]->(p:AzureClusterAgentPool {{name: node.aks_pool_name}})
-    MERGE (p)-[r:HAS_NODE]->(node)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    SET r.lastupdated = $UPDATE_TAG
+    WITH c, node WHERE node.aks_pool_name IS NOT NULL
+    MATCH (c)-[:HAS]->(p:AzureClusterAgentPool)
+    WHERE toLower(p.name) = toLower(node.aks_pool_name)
+    MERGE (p)-[r2:HAS_NODE]->(node)
+    ON CREATE SET r2.firstseen = timestamp()
+    SET r2.lastupdated = $UPDATE_TAG
     """
 
     for label in aks_node_labels:
-        run_write_query(neo4j_session, cluster_query.format(label=label), update_tag=update_tag)
-        run_write_query(neo4j_session, pool_query.format(label=label), update_tag=update_tag)
+        run_write_query(
+            neo4j_session,
+            query.format(label=label),
+            WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+            AZURE_TENANT_ID=common_job_parameters['AZURE_TENANT_ID'],
+            AZURE_SUBSCRIPTION_ID=common_job_parameters['AZURE_SUBSCRIPTION_ID'],
+            UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
+        )
 
 
 @timeit
 def cleanup_aks_compute_links(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """Removes stale HAS_NODE relationships between AKS resources and Compute resources."""
     run_cleanup_job('azure_aks_compute_links_cleanup.json', neo4j_session, common_job_parameters)
+
+
+def sync_aks_node_links(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    Post-sync step: `aks` and `compute` run in parallel, so linking inside either sync misses
+    nodes the other has not loaded yet. The subscription orchestrator calls this after both.
+    """
+    link_compute_to_aks(neo4j_session, common_job_parameters)
+    cleanup_aks_compute_links(neo4j_session, common_job_parameters)
 
 
 @timeit
@@ -1073,5 +1098,4 @@ def sync(
     sync_vm_scale_sets(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
     sync_disk(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
     sync_snapshot(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
-    link_compute_to_aks(neo4j_session, update_tag)
-    cleanup_aks_compute_links(neo4j_session, common_job_parameters)
+    # AKS -> VM/VMSS HAS_NODE links are made by sync_aks_node_links after the parallel run.

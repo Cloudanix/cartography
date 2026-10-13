@@ -12,6 +12,7 @@ from typing import Optional
 import neo4j
 from neo4j import GraphDatabase
 
+from . import compute
 from . import subscription
 from . import tag
 from . import tenant
@@ -232,6 +233,13 @@ def _sync_one_subscription(
         )
 
         # END - Parallel Run
+
+    # AKS node links need both AKS clusters and VMs/VMSS loaded; those syncs run in parallel.
+    if "aks" in requested_syncs or "compute" in requested_syncs:
+        try:
+            compute.sync_aks_node_links(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link AKS nodes for subscription {subscription_id} - {e}")
 
     # call tag.sync() at the last, don't change position of tag.sync()
     tag.sync(neo4j_session, credentials.arm_credentials, subscription_id, update_tag, common_job_parameters, config)
