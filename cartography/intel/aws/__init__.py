@@ -23,6 +23,7 @@ from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
 from cartography.graph.session import Session
+from cartography.intel.aws.ec2.instances import sync_eks_node_links
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.stats import get_stats_client
 from cartography.util import is_aws_access_denied
@@ -281,6 +282,13 @@ def _sync_one_account(
             shared_driver.close()
 
         # END - Parallel Run
+
+    # EKS node links need both EC2 instances and EKS clusters loaded; those syncs run in parallel.
+    if "ec2:instance" in aws_requested_syncs or "eks" in aws_requested_syncs:
+        try:
+            sync_eks_node_links(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link EKS nodes for account {current_aws_account_id} - {e}")
 
     # MAP IAM permissions
     if "permission_relationships" in aws_requested_syncs:
