@@ -24,6 +24,7 @@ from . import iam
 from . import instance_groups
 from . import label
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import batch
@@ -959,86 +960,56 @@ def load_gcp_instances(session: neo4j.Session, instances_list: List[Dict], gcp_u
     _attach_gcp_nic_access_configs(session, instances_list, gcp_update_tag)
     _attach_gcp_vpc(session, [i["partial_uri"] for i in instances_list], gcp_update_tag)
     _attach_instance_service_account(session, instances_list, gcp_update_tag)
-    # Link to GKE cluster and node pool when an instance carries GKE metadata labels.
-    # These labels (goog-gke-cluster-name, goog-gke-nodepool) are attached automatically
-    # by GCP to every Compute instance that is a GKE node.
-    _link_instance_to_gke_cluster(session, instances_list, gcp_update_tag)
-    _link_instance_to_gke_node_pool(session, instances_list, gcp_update_tag)
+    # GKE -> instance HAS_NODE links are made by sync_gke_node_links after the parallel run.
 
     load_gcp_instance_image_relations(session, instances_list, gcp_update_tag)
 
 
-def _gke_cluster_id(instance: Dict) -> str:
-    """Same format as get_gke_clusters(): projects/{project}/locations/{region}/clusters/{name}."""
-    return (
-        f"projects/{instance['project_id']}/locations/{instance['region']}"
-        f"/clusters/{instance['gke_cluster_name']}"
+@timeit
+def link_gke_nodes(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    Create (GKECluster|GKENodePool)-[:HAS_NODE]->(GCPInstance) from the gke_* labels stored on
+    GCPInstance.
+
+    The cluster id is rebuilt the way get_gke_clusters() builds it
+    (projects/{project}/locations/{region}/clusters/{name}); it embeds the globally unique
+    project id and the cluster must hang off the same project, so a node can never link to
+    another tenant's cluster. MATCH, not MERGE: a missing cluster/pool skips the link instead
+    of creating a stub.
+
+    Reads only graph state, so it must run after both the `compute` and `gke` syncs have loaded
+    (see sync_gke_node_links).
+    """
+    query = """
+    MATCH (p:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(i:GCPInstance)
+    WHERE i.gke_cluster_name IS NOT NULL
+    MATCH (p)-[:RESOURCE]->(c:GKECluster{
+        id: 'projects/' + p.id + '/locations/' + i.region + '/clusters/' + i.gke_cluster_name
+    })
+    MERGE (c)-[r:HAS_NODE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UPDATE_TAG
+    WITH c, i WHERE i.gke_node_pool_name IS NOT NULL
+    MATCH (c)-[:HAS_NODE_POOL]->(pool:GKENodePool{id: c.id + '/nodePools/' + i.gke_node_pool_name})
+    MERGE (pool)-[r2:HAS_NODE]->(i)
+    ON CREATE SET r2.firstseen = timestamp()
+    SET r2.lastupdated = $UPDATE_TAG
+    """
+    run_write_query(
+        neo4j_session,
+        query,
+        GCP_PROJECT_ID=common_job_parameters['GCP_PROJECT_ID'],
+        UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
     )
 
 
-def _build_gke_cluster_link_rows(instances_list: List[Dict]) -> List[Dict]:
-    return [
-        {"cluster_id": _gke_cluster_id(i), "instance_id": i["partial_uri"]}
-        for i in instances_list if i.get("gke_cluster_name")
-    ]
-
-
-def _build_gke_node_pool_link_rows(instances_list: List[Dict]) -> List[Dict]:
-    return [
-        {
-            "node_pool_id": f"{_gke_cluster_id(i)}/nodePools/{i['gke_node_pool_name']}",
-            "instance_id": i["partial_uri"],
-        }
-        for i in instances_list
-        if i.get("gke_cluster_name") and i.get("gke_node_pool_name")
-    ]
-
-
-@timeit
-def _link_instance_to_gke_cluster(
-    neo4j_session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int,
-) -> None:
+def sync_gke_node_links(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """
-    Create (GKECluster)-[:HAS_NODE]->(GCPInstance) relationships for every instance that
-    carries GKE metadata labels.
-
-    Uses MATCH for GKECluster (not MERGE) so that if the GKE sync has not yet
-    run for this project the relationship is simply skipped rather than creating
-    a dangling, property-less GKECluster stub.
+    Post-sync step: `compute` and `gke` run in parallel, so linking inside either sync misses
+    nodes the other has not loaded yet. The project orchestrator calls this after both.
     """
-    query = """
-    UNWIND $DictList AS item
-    MATCH (cluster:GKECluster{id: item.cluster_id})
-    MATCH (i:GCPInstance{id: item.instance_id})
-    MERGE (cluster)-[r:HAS_NODE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $gcp_update_tag
-    """
-    load_graph_data(neo4j_session, query, _build_gke_cluster_link_rows(instances_list), gcp_update_tag=gcp_update_tag)
-
-
-@timeit
-def _link_instance_to_gke_node_pool(
-    neo4j_session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int,
-) -> None:
-    """
-    Create (GKENodePool)-[:HAS_NODE]->(GCPInstance) relationships for every instance that
-    carries GKE cluster + node pool metadata labels.
-
-    Uses MATCH for GKENodePool (not MERGE) so that if the GKE sync has not yet
-    run for this project the relationship is simply skipped.
-    """
-    query = """
-    UNWIND $DictList AS item
-    MATCH (pool:GKENodePool{id: item.node_pool_id})
-    MATCH (i:GCPInstance{id: item.instance_id})
-    MERGE (pool)-[r:HAS_NODE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $gcp_update_tag
-    """
-    load_graph_data(
-        neo4j_session, query, _build_gke_node_pool_link_rows(instances_list), gcp_update_tag=gcp_update_tag,
-    )
+    link_gke_nodes(neo4j_session, common_job_parameters)
+    cleanup_gke_compute_links(neo4j_session, common_job_parameters)
 
 
 @timeit
@@ -1924,7 +1895,6 @@ def sync_gcp_instances(
 
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_instances(neo4j_session, common_job_parameters)
-    cleanup_gke_compute_links(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, instance_list, gcp_update_tag, common_job_parameters, "instances", "GCPInstance")
 
 
