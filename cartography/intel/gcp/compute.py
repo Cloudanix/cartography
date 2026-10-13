@@ -542,10 +542,11 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
         res["region"] = f"{x[0]}-{x[1]}"
 
         # Extract GKE metadata labels if this instance is a Kubernetes node.
-        # GCP automatically attaches these labels to all GKE-managed Compute instances.
+        # GKE attaches goog-k8s-cluster-name / goog-k8s-node-pool-name to every node VM;
+        # the goog-gke-* keys are kept as a fallback for anything already relying on them.
         labels = res.get("labels", {})
-        res["gke_cluster_name"] = labels.get("goog-gke-cluster-name")
-        res["gke_node_pool_name"] = labels.get("goog-gke-nodepool")
+        res["gke_cluster_name"] = labels.get("goog-k8s-cluster-name") or labels.get("goog-gke-cluster-name")
+        res["gke_node_pool_name"] = labels.get("goog-k8s-node-pool-name") or labels.get("goog-gke-nodepool")
 
         scheduling = res.get("scheduling", {})
         res["is_spot_instance"] = scheduling.get("provisioningModel") == "SPOT" or scheduling.get("preemptible") is True

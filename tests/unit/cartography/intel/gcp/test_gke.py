@@ -9,6 +9,8 @@ Run:
 The neo4j_session fixture is provided by cartography's conftest.py.
 GKE_CLUSTERS is imported from tests/data/gke.py.
 """
+import pytest
+
 from cartography.intel.gcp.compute import load_gcp_instances
 from cartography.intel.gcp.compute import transform_gcp_instances
 from cartography.intel.gcp.gke import get_gke_clusters
@@ -222,10 +224,19 @@ def test_load_gke_node_pools_cluster_missing_node_pools_key(neo4j_session):
 # Tests: transform_gcp_instances – GKE label extraction
 # ---------------------------------------------------------------------------
 
-def test_transform_gcp_instances_extracts_gke_labels(mocker):
+@pytest.mark.parametrize(
+    "cluster_key,pool_key",
+    [
+        # Labels GKE actually puts on node VMs.
+        ("goog-k8s-cluster-name", "goog-k8s-node-pool-name"),
+        # Legacy keys, kept as a fallback.
+        ("goog-gke-cluster-name", "goog-gke-nodepool"),
+    ],
+)
+def test_transform_gcp_instances_extracts_gke_labels(mocker, cluster_key, pool_key):
     """
-    transform_gcp_instances must read goog-gke-cluster-name and goog-gke-nodepool
-    from instance labels and expose them as gke_cluster_name / gke_node_pool_name.
+    transform_gcp_instances must read the GKE cluster/node-pool labels from instance
+    labels and expose them as gke_cluster_name / gke_node_pool_name.
     """
     raw_instance = {
         "id": "11111",
@@ -240,8 +251,8 @@ def test_transform_gcp_instances_extracts_gke_labels(mocker):
         ),
         "status": "RUNNING",
         "labels": {
-            "goog-gke-cluster-name": "test-cluster",
-            "goog-gke-nodepool": "default-111-111-111-111-gke-17",
+            cluster_key: "test-cluster",
+            pool_key: "default-111-111-111-111-gke-17",
         },
         "networkInterfaces": [
             {
