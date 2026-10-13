@@ -10,7 +10,6 @@ def test_load_vm_scale_sets_writes_consolelink_on_every_run():
     compute._load_vm_scale_sets_tx(tx, "sub-1", [scale_set], 42)
 
     query = tx.run.call_args_list[0].args[0]
-    # The key was misspelled 'consolelinke' and only set on create, so exports never saw it.
-    assert "REMOVE a.consolelinke" in query
+    # Was only set on create, so exports never saw it.
     set_clause = query.split("SET a.lastupdated", 1)[1]
     assert "a.consolelink = set.consolelink" in set_clause
