@@ -550,10 +550,11 @@ def _load_vm_scale_sets_tx(
     a.type = set.type,
     a.location = set.location,
     a.region = set.location,
-    a.consolelinke = set.consolelink,
     a.resourcegroup = set.resource_group
     SET a:AzureVMScaleSet
+    REMOVE a.consolelinke
     SET a.lastupdated = $update_tag,
+    a.consolelink = set.consolelink,
     a.name = set.name,
     a.aks_cluster_name = set.aks_cluster_name,
     a.aks_pool_name = set.aks_pool_name,
