@@ -19,7 +19,7 @@ CLUSTERS = [
 ]
 
 # node pool linked to cluster-0 (HAS_NODE_POOL) and to instance oci.instance.0
-# (CONTAINS_NODE, resolved from the nested nodes[].ocid).
+# (HAS_NODE, from the nested nodes[].ocid stored as node_ids).
 NODE_POOLS = [
     {
         "id": "oci.oke.pool.0",

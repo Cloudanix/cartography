@@ -136,15 +136,13 @@ class TestBatchedLoaders:
 
     def test_ec2_to_eks_links(self):
         session = MagicMock()
-        instance_list = [{"InstanceId": "i-1", "EksClusterName": "c1", "EksNodeGroupName": "ng1"}]
+        params = {"WORKSPACE_ID": "w1", "AWS_ID": TEST_ACCOUNT_ID, "UPDATE_TAG": TEST_UPDATE_TAG}
 
-        instances.link_ec2_to_eks(session, instance_list, TEST_UPDATE_TAG)
+        instances.link_ec2_to_eks(session, params)
 
         session.run.assert_not_called()
-        # cluster links + node group links
-        assert session.execute_write.call_count == 2
-        for call in session.execute_write.call_args_list:
-            assert_batched(call, instance_list)
+        # cluster + node group links in one managed write (scoping covered by integration test)
+        session.execute_write.assert_called_once()
 
     def test_vpc_cidr_association_set(self):
         session = MagicMock()

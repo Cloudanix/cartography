@@ -9,6 +9,9 @@ Run:
 The neo4j_session fixture is provided by cartography's conftest.py.
 GKE_CLUSTERS is imported from tests/data/gke.py.
 """
+import pytest
+
+from cartography.intel.gcp.compute import link_gke_nodes
 from cartography.intel.gcp.compute import load_gcp_instances
 from cartography.intel.gcp.compute import transform_gcp_instances
 from cartography.intel.gcp.gke import get_gke_clusters
@@ -19,6 +22,7 @@ from tests.data.gcp.gke import GKE_CLUSTERS
 TEST_PROJECT_ID = "test-cluster"
 TEST_UPDATE_TAG = 123456789
 TEST_UPDATE_TAG_2 = 999999999
+LINK_PARAMS = {"GCP_PROJECT_ID": TEST_PROJECT_ID, "UPDATE_TAG": TEST_UPDATE_TAG}
 
 
 # ---------------------------------------------------------------------------
@@ -222,10 +226,19 @@ def test_load_gke_node_pools_cluster_missing_node_pools_key(neo4j_session):
 # Tests: transform_gcp_instances – GKE label extraction
 # ---------------------------------------------------------------------------
 
-def test_transform_gcp_instances_extracts_gke_labels(mocker):
+@pytest.mark.parametrize(
+    "cluster_key,pool_key",
+    [
+        # Labels GKE actually puts on node VMs.
+        ("goog-k8s-cluster-name", "goog-k8s-node-pool-name"),
+        # Legacy keys, kept as a fallback.
+        ("goog-gke-cluster-name", "goog-gke-nodepool"),
+    ],
+)
+def test_transform_gcp_instances_extracts_gke_labels(mocker, cluster_key, pool_key):
     """
-    transform_gcp_instances must read goog-gke-cluster-name and goog-gke-nodepool
-    from instance labels and expose them as gke_cluster_name / gke_node_pool_name.
+    transform_gcp_instances must read the GKE cluster/node-pool labels from instance
+    labels and expose them as gke_cluster_name / gke_node_pool_name.
     """
     raw_instance = {
         "id": "11111",
@@ -240,8 +253,8 @@ def test_transform_gcp_instances_extracts_gke_labels(mocker):
         ),
         "status": "RUNNING",
         "labels": {
-            "goog-gke-cluster-name": "test-cluster",
-            "goog-gke-nodepool": "default-111-111-111-111-gke-17",
+            cluster_key: "test-cluster",
+            pool_key: "default-111-111-111-111-gke-17",
         },
         "networkInterfaces": [
             {
@@ -323,6 +336,7 @@ def test_load_gcp_instances_links_gke_node_to_cluster(neo4j_session):
     load_gke_clusters(neo4j_session, GKE_CLUSTERS, TEST_PROJECT_ID, TEST_UPDATE_TAG)
 
     load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run(
         "MATCH (c:GKECluster{id: $ClusterId})-[:HAS_NODE]->(i:GCPInstance) RETURN i.instancename AS name",
@@ -340,6 +354,7 @@ def test_load_gcp_instances_links_gke_node_to_pool(neo4j_session):
     load_gke_node_pools(neo4j_session, GKE_CLUSTERS, TEST_PROJECT_ID, TEST_UPDATE_TAG)
 
     load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run(
         "MATCH (p:GKENodePool{id: $PoolId})-[:HAS_NODE]->(i:GCPInstance) RETURN i.instancename AS name",
@@ -355,6 +370,7 @@ def test_load_gcp_instances_no_gke_links_for_plain_vms(neo4j_session):
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
 
     load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG)
+    link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run("MATCH ()-[r:HAS_NODE]->() RETURN r").data()
     assert len(result) == 0
@@ -364,12 +380,13 @@ def test_load_gcp_instances_gke_link_skipped_when_cluster_missing(neo4j_session)
     """
     If the GKE sync has not run (cluster node absent), HAS_NODE links must be
     silently skipped rather than raising an error.
-    The MATCH-not-MERGE pattern in _link_instance_to_gke_cluster guarantees this.
+    The MATCH-not-MERGE pattern in link_gke_nodes guarantees this.
     """
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
     # Deliberately do NOT call load_gke_clusters
 
     load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     instances = neo4j_session.run("MATCH (i:GCPInstance) RETURN i").data()
     assert len(instances) == 1

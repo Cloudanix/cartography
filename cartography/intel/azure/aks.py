@@ -126,7 +126,8 @@ def _load_aks_managed_clusters_tx(
     a.consolelink = aks.consolelink,
     a.resourcegroup = aks.resource_group
     SET a.lastupdated = $update_tag,
-    a.name = aks.name
+    a.name = aks.name,
+    a.node_resource_group = toLower(aks.node_resource_group)
     WITH a
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(a)

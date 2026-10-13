@@ -20,6 +20,7 @@ from neo4j import GraphDatabase
 from oauth2client.client import ApplicationDefaultCredentialsError
 from oauth2client.client import GoogleCredentials
 
+from . import compute
 from . import label
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
@@ -747,6 +748,13 @@ def _sync_single_project(
             logger.info(f"gcp project={project_id}: no enabled services to sync in parallel; skipping")
 
         # END - Parallel Run
+
+    # GKE node links need both GCP instances and GKE clusters loaded; those syncs run in parallel.
+    if "compute" in requested_syncs or "gke" in requested_syncs:
+        try:
+            compute.sync_gke_node_links(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link GKE nodes for project {project_id} - {e}")
 
     for service_name in common_job_parameters["service_labels"]:
         common_job_parameters["service_label"] = service_name

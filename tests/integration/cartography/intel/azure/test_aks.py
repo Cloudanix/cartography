@@ -515,10 +515,12 @@ def test_load_container_relationships(neo4j_session):
     assert actual == expected
 
 
-def test_link_compute_to_aks(neo4j_session):
-    # Guards link_compute_to_aks: BOTH AzureVirtualMachine and AzureVirtualMachineScaleSet,
-    # when tagged with aks_cluster_name/_rg/_pool_name, must link via HAS_NODE to the AKS
-    # cluster and its agent pool. This fails if the per-label query rewrite drops a label.
+def test_sync_aks_node_links(neo4j_session):
+    # Guards sync_aks_node_links: BOTH AzureVirtualMachine and AzureVirtualMachineScaleSet link
+    # via HAS_NODE to the AKS cluster and its agent pool, matched by
+    #   - the cluster's node resource group (MC_*), case-insensitively, with no cluster tags, or
+    #   - the aks-managed-cluster-name/-rg tags, case-insensitively;
+    # and never across subscriptions/workspaces, even with identical names and tags.
     #
     #   (AzureCluster)-[:HAS_NODE]->(vm / vmss)
     #   (AzureCluster)-[:HAS]->(AzureClusterAgentPool)-[:HAS_NODE]->(vm / vmss)
@@ -526,38 +528,53 @@ def test_link_compute_to_aks(neo4j_session):
     # Unique ids so this is isolated from the other (module-scoped) tests in this file.
     neo4j_session.run(
         """
-        MERGE (c:AzureCluster {id: 'aks-link-cluster', name: 'AksLinkCluster', resourcegroup: 'AksLinkRG'})
-        MERGE (p:AzureClusterAgentPool {id: 'aks-link-pool', name: 'akslinkpool'})
-        MERGE (c)-[:HAS]->(p)
-        MERGE (:AzureVirtualMachine {
-            id: 'aks-link-vm',
-            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'akslinkpool'
+        MERGE (:CloudanixWorkspace {id: 'aksl-w1'})-[:OWNER]->(:AzureTenant {id: 'aksl-t1'})
+            -[:RESOURCE]->(s1:AzureSubscription {id: 'aksl-s1'})
+        MERGE (:CloudanixWorkspace {id: 'aksl-w2'})-[:OWNER]->(:AzureTenant {id: 'aksl-t2'})
+            -[:RESOURCE]->(s2:AzureSubscription {id: 'aksl-s2'})
+        MERGE (s1)-[:RESOURCE]->(c:AzureCluster {
+            id: 'aksl-cluster', name: 'AksLinkCluster', resourcegroup: 'akslinkrg',
+            node_resource_group: 'mc_akslinkrg_akslinkcluster_eastus'
         })
-        MERGE (:AzureVirtualMachineScaleSet {
-            id: 'aks-link-vmss',
-            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'akslinkpool'
+        MERGE (c)-[:HAS]->(:AzureClusterAgentPool {id: 'aksl-pool', name: 'nodepool1'})
+        MERGE (s1)-[:RESOURCE]->(:AzureVirtualMachineScaleSet {
+            id: 'aksl-vmss-noderg', resourcegroup: 'MC_AksLinkRG_AksLinkCluster_eastus', aks_pool_name: 'nodepool1'
         })
+        MERGE (s1)-[:RESOURCE]->(:AzureVirtualMachine {
+            id: 'aksl-vm-tags', resourcegroup: 'other',
+            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'NodePool1'
+        })
+        MERGE (s1)-[:RESOURCE]->(:AzureVirtualMachine {id: 'aksl-vm-unrelated', resourcegroup: 'other'})
+        MERGE (s2)-[:RESOURCE]->(:AzureVirtualMachineScaleSet {
+            id: 'aksl-vmss-foreign', resourcegroup: 'MC_AksLinkRG_AksLinkCluster_eastus',
+            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'nodepool1'
+        })
+        MERGE (s1)-[:RESOURCE]->(old:AzureVirtualMachine {id: 'aksl-vm-old', resourcegroup: 'other'})
+        MERGE (c)-[:HAS_NODE {lastupdated: 1}]->(old)
         """,
     )
 
-    compute.link_compute_to_aks(neo4j_session, TEST_UPDATE_TAG)
+    compute.sync_aks_node_links(
+        neo4j_session,
+        {
+            'WORKSPACE_ID': 'aksl-w1',
+            'AZURE_TENANT_ID': 'aksl-t1',
+            'AZURE_SUBSCRIPTION_ID': 'aksl-s1',
+            'UPDATE_TAG': TEST_UPDATE_TAG,
+        },
+    )
 
-    cluster_linked = {
-        r['nid'] for r in neo4j_session.run(
+    links = {
+        (r['s'], r['n']) for r in neo4j_session.run(
             """
-            MATCH (c:AzureCluster {id: 'aks-link-cluster'})-[:HAS_NODE]->(node)
-            RETURN node.id AS nid;
+            MATCH (s)-[:HAS_NODE]->(n) WHERE n.id STARTS WITH 'aksl-'
+            RETURN s.id AS s, n.id AS n
             """,
         )
     }
-    pool_linked = {
-        r['nid'] for r in neo4j_session.run(
-            """
-            MATCH (p:AzureClusterAgentPool {id: 'aks-link-pool'})-[:HAS_NODE]->(node)
-            RETURN node.id AS nid;
-            """,
-        )
+    assert links == {
+        ('aksl-cluster', 'aksl-vmss-noderg'),
+        ('aksl-cluster', 'aksl-vm-tags'),
+        ('aksl-pool', 'aksl-vmss-noderg'),
+        ('aksl-pool', 'aksl-vm-tags'),
     }
-
-    assert cluster_linked == {'aks-link-vm', 'aks-link-vmss'}
-    assert pool_linked == {'aks-link-vm', 'aks-link-vmss'}

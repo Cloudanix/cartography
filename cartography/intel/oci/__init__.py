@@ -21,6 +21,7 @@ from oci.exceptions import ProfileNotFound
 from . import compartment
 from . import database
 from . import iam
+from . import oke
 from . import organizations
 from . import storage
 from . import tags
@@ -202,6 +203,14 @@ def _sync_multiple_compartments(
         )
 
         del common_job_parameters["OCI_COMPARTMENT_ID"]
+
+    # OKE pools and their worker instances can sit in different compartments, which sync one
+    # after another; link nodes only once every compartment has been synced.
+    if "oke" in requested_syncs or "compute" in requested_syncs:
+        try:
+            oke.sync_oke_node_links(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.error("Error linking OCI OKE nodes: %s", e, exc_info=True)
 
     # Tags cleanup is tenancy-wide, so it must run only after every compartment
     # in this run has been synced with the current update tag.
