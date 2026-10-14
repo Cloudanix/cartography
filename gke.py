@@ -40,27 +40,31 @@ def republish_message_to_pubsub(
     message_data: dict,
     template_type: str,
     logger: Logger,
-    retry_reason: str = "unknown",
+    retry_reason: str = "sigterm",
 ) -> bool:
     """
-    Republish a failed message back to the same request topic.
+    Republish an interrupted request back to its own request topic.
 
-    retry_reason distinguishes SIGTERM (spot preemption) from handler failures
-    and unexpected exceptions. The original request is published again; this
-    does not publish an inventory result snapshot.
+    Only SIGTERM (spot preemption, KEDA rollout, activeDeadlineSeconds) retries.
+    _retry_count travels inside the message, so a request that was already
+    retried carries its count into the next job. After CDX_MAX_RETRIES retries
+    (3 in the ScaledJobs) the request is dropped.
     """
     try:
         retry_count = message_data.get("_retry_count", 0)
         max_retries = int(os.environ.get("CDX_MAX_RETRIES", "3"))
 
         if retry_count >= max_retries:
-            logger.debug(
-                f"Message exceeded max retries ({max_retries}). Dropping message.",
+            # WARNING, not DEBUG: the ScaledJobs run at CDX_LOG_LEVEL=INFO and
+            # this is the point where an inventory request is lost.
+            logger.warning(
+                "Message exceeded max retries. Dropping message.",
                 extra={
                     "retry_count": retry_count,
                     "max_retries": max_retries,
                     "template_type": template_type,
                     "retry_reason": retry_reason,
+                    "event_id": message_data.get("eventId"),
                 },
             )
             return False
@@ -74,16 +78,12 @@ def republish_message_to_pubsub(
         message_data["metadata"]["isRetry"] = True
         message_data["metadata"]["retryReason"] = retry_reason
 
-        topic_mapping: dict = {
-            CDX_GITHUB_TEMPLATE_TYPE: message_data.get("requestTopic", None),
-            CDX_BITBUCKET_TEMPLATE_TYPE: message_data.get("requestTopic", None),
-            CDX_GITLAB_TEMPLATE_TYPE: message_data.get("requestTopic", None),
-        }
-
-        topic = topic_mapping.get(template_type)
+        # inventory-sync-aws sets requestTopic to <scm>-cartography-events-request,
+        # the topic this job's subscription reads from.
+        topic = message_data.get("requestTopic")
         if not topic:
-            logger.debug(
-                "No topic mapping found for template type",
+            logger.warning(
+                "No requestTopic on message. Cannot republish.",
                 extra={"template_type": template_type, "retry_reason": retry_reason},
             )
             return False
@@ -107,7 +107,7 @@ def republish_message_to_pubsub(
             )
             return True
 
-        logger.debug(
+        logger.warning(
             "Failed to republish message to PubSub topic",
             extra={
                 "retry_count": message_data["_retry_count"],
@@ -142,6 +142,9 @@ def handle_sigterm(signum, frame):
     published.
     """
     global sigterm_received
+    if sigterm_received:
+        # Already republishing. Running again would publish a second copy.
+        return
     sigterm_received = True
 
     logging.warning("SIGTERM received. Initiating graceful shutdown.")
@@ -170,24 +173,58 @@ def handle_sigterm(signum, frame):
     except Exception as ex:
         logging.error(f"SIGTERM republish failed: {ex}")
 
+    # Python runs this handler on the main thread at the next bytecode, which
+    # interrupts requests/neo4j socket waits and the GitHub sync's as_completed().
+    # SystemExit is not caught by CLI.process (`except Exception`); Sync.run logs
+    # it and re-raises, so publish_response never runs for the killed request.
     sys.exit(0)
 
 
 def task_processing_handler(subscriber, subscription_path, received_message):
     """
-    Ack one pulled message, run the inventory handler, and republish on failure.
+    Ack one pulled message and run the inventory handler.
+
+    Only SIGTERM republishes (see handle_sigterm). Sync errors are already
+    published as failure results by main.publish_response, so they are not retried.
     """
     global current_payload
     message = received_message.message
     ack_id = received_message.ack_id
 
+    # Outside the try so the except block can always log.
+    logger = lgr.get_logger(os.environ.get("CDX_LOG_LEVEL") or "INFO")
+
     try:
-        logger = lgr.get_logger(os.environ.get("CDX_LOG_LEVEL"))
         logger.info("cartography sync gcp worker request received via PubSub")
 
-        payload: dict = json.loads(message.data)
+        try:
+            payload: dict = json.loads(message.data)
+        except ValueError:
+            # Unparseable data can never succeed. Unacked, Pub/Sub would
+            # redeliver it forever and KEDA would keep starting jobs for it.
+            logger.warning("Unable to parse PubSub message. Dropping message.", extra={"ack_id": ack_id})
+            subscriber.acknowledge(
+                request={
+                    "subscription": subscription_path,
+                    "ack_ids": [ack_id],
+                },
+            )
+            return False
+
         template_type = payload.get("templateType")
         logger.debug("Processing message", extra={"template_type": template_type, "ack_id": ack_id})
+
+        # _retry_count is set by an earlier job's SIGTERM republish.
+        if payload.get("_retry_count"):
+            logger.info(
+                "Processing retried message",
+                extra={
+                    "template_type": template_type,
+                    "event_id": payload.get("eventId"),
+                    "retry_count": payload.get("_retry_count"),
+                    "retry_reason": (payload.get("metadata") or {}).get("retryReason"),
+                },
+            )
 
         template_handlers = {
             CDX_GITHUB_TEMPLATE_TYPE: github_process_request,
@@ -260,40 +297,16 @@ def task_processing_handler(subscriber, subscription_path, received_message):
             logger.debug("Message processed successfully", extra={"template_type": template_type, "response": response})
             return True
 
-        logger.debug("Message processing failed", extra={"template_type": template_type, "response": response})
-
-        republished = republish_message_to_pubsub(
-            original_payload,
-            template_type,
-            logger,
-            retry_reason="handler_failure",
-        )
-        if republished:
-            logger.info("Message republished to PubSub successfully", extra={"template_type": template_type})
-        else:
-            logger.debug("Failed to republish message to PubSub", extra={"template_type": template_type})
-
+        logger.warning("Message processing failed", extra={"template_type": template_type, "response": response})
         return False
 
     except Exception as ex:
         logger.error(f"Failed to process message: {ex}")
 
-        if sigterm_received:
-            return False
-
-        current_payload = None
-
-        try:
-            payload = json.loads(message.data)
-            template_type = payload.get("templateType", "NA")
-
-            if republish_message_to_pubsub(payload, template_type, logger, retry_reason="exception"):
-                logger.info("Message republished to PubSub after exception")
-            else:
-                logger.debug("Failed to republish message to PubSub after exception")
-
-        except Exception as republish_ex:
-            logger.error(f"Failed to republish message after exception: {republish_ex}")
+        if not sigterm_received:
+            # Not a preemption, so no retry. If the ack itself failed, Pub/Sub
+            # still owns the message and redelivers it.
+            current_payload = None
 
         return False
 

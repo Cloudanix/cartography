@@ -1,4 +1,6 @@
 import json
+import os
+import signal
 import sys
 import types
 from unittest.mock import MagicMock
@@ -144,25 +146,116 @@ def test_sigterm_during_processing_republishes_once_and_skips_failure_republish(
     assert "injected-secret" not in body
 
 
-def test_handler_failure_republishes_original_request_once():
+def test_handler_failure_is_not_republished():
     received = ReceivedMessage(_request_payload())
     subscriber = MagicMock()
 
     with patch("gke.bitbucket_process_request", return_value={"status": "failure"}) as handler:
         with patch("gke.PubSubLibrary") as pubsub_cls:
-            pubsub_cls.return_value.publish.return_value = True
             ok = gke.task_processing_handler(subscriber, "subscriptions/bitbucket", received)
 
     assert ok is False
     subscriber.acknowledge.assert_called_once()
-    assert pubsub_cls.return_value.publish.call_count == 1
-    _project_id, body, topic = pubsub_cls.return_value.publish.call_args.args
-    published = json.loads(body)
-    assert topic == "bitbucket-cartography-events-request"
-    assert published["metadata"]["retryReason"] == "handler_failure"
-    assert published["_retry_count"] == 1
-    assert "neo4j" not in published
-    assert "injected-secret" not in body
+    pubsub_cls.return_value.publish.assert_not_called()
     handler_payload = handler.call_args.args[1]
     assert handler_payload["neo4j"]["pwd"] == "injected-secret"
     assert gke.current_payload is None
+
+
+def test_handler_exception_is_not_republished():
+    subscriber = MagicMock()
+
+    with patch("gke.bitbucket_process_request", side_effect=KeyError("message")):
+        with patch("gke.PubSubLibrary") as pubsub_cls:
+            ok = gke.task_processing_handler(subscriber, "subscriptions/bitbucket", ReceivedMessage(_request_payload()))
+
+    assert ok is False
+    pubsub_cls.return_value.publish.assert_not_called()
+    assert gke.current_payload is None
+
+
+def test_malformed_message_is_acked_and_dropped():
+    received = ReceivedMessage({})
+    received.message.data = b"{not-json"
+    subscriber = MagicMock()
+
+    with patch("gke.PubSubLibrary") as pubsub_cls:
+        ok = gke.task_processing_handler(subscriber, "subscriptions/bitbucket", received)
+
+    assert ok is False
+    subscriber.acknowledge.assert_called_once()
+    pubsub_cls.return_value.publish.assert_not_called()
+
+
+def test_second_sigterm_does_not_republish_again():
+    gke.current_payload = _request_payload()
+    gke.sigterm_received = True
+
+    with patch("gke.PubSubLibrary") as pubsub_cls:
+        assert gke.handle_sigterm(15, None) is None
+
+    pubsub_cls.return_value.publish.assert_not_called()
+    assert "_retry_count" not in gke.current_payload
+
+
+def test_retry_count_carries_across_jobs_and_stops_after_three_sigterms():
+    """Each loop is one KEDA job: pull the last republished body, get preempted."""
+    body = json.dumps(_request_payload())
+    published_counts = []
+
+    def _preempted(logger, payload):
+        gke.handle_sigterm(15, None)
+
+    for _job in range(4):
+        gke.current_payload = None
+        gke.sigterm_received = False
+        received = ReceivedMessage({})
+        received.message.data = body.encode("utf-8")
+
+        with patch("gke.bitbucket_process_request", side_effect=_preempted):
+            with patch("gke.PubSubLibrary") as pubsub_cls:
+                pubsub_cls.return_value.publish.return_value = True
+                with pytest.raises(SystemExit):
+                    gke.task_processing_handler(MagicMock(), "subscriptions/bitbucket", received)
+
+        if pubsub_cls.return_value.publish.called:
+            body = pubsub_cls.return_value.publish.call_args.args[1]
+            published_counts.append(json.loads(body)["_retry_count"])
+
+    # Original run + 3 retries. The 4th preemption drops the request.
+    assert published_counts == [1, 2, 3]
+    final = json.loads(body)
+    assert final["metadata"]["retryCount"] == 3
+    assert final["metadata"]["retryReason"] == "sigterm"
+    assert final["eventId"] == "c5771acd-a2ae-4b04-bef5-b71c75e51f18"
+    assert "neo4j" not in final
+
+
+def test_real_os_sigterm_during_handler_republishes_once():
+    """Deliver an actual SIGTERM to this process mid-sync, as the kubelet does."""
+    subscriber = MagicMock()
+    previous = signal.signal(signal.SIGTERM, gke.handle_sigterm)
+
+    def _sync_interrupted_by_kubelet(logger, payload):
+        os.kill(os.getpid(), signal.SIGTERM)
+        # The handler runs at the next bytecode and raises SystemExit first.
+        raise AssertionError("SIGTERM handler did not interrupt the sync")
+
+    try:
+        with patch("gke.bitbucket_process_request", side_effect=_sync_interrupted_by_kubelet):
+            with patch("gke.PubSubLibrary") as pubsub_cls:
+                pubsub_cls.return_value.publish.return_value = True
+                with pytest.raises(SystemExit) as exc:
+                    gke.task_processing_handler(
+                        subscriber,
+                        "subscriptions/bitbucket",
+                        ReceivedMessage(_request_payload()),
+                    )
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert exc.value.code == 0
+    assert pubsub_cls.return_value.publish.call_count == 1
+    published = json.loads(pubsub_cls.return_value.publish.call_args.args[1])
+    assert published["metadata"]["retryReason"] == "sigterm"
+    assert "neo4j" not in published
