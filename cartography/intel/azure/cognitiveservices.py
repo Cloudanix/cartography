@@ -212,6 +212,93 @@ def _load_deployments_tx(
 
 
 @timeit
+def get_rai_policies_list(client: CognitiveServicesManagementClient, account: Dict) -> List[Dict]:
+    try:
+        policies = []
+        for policy in client.rai_policies.list(
+            resource_group_name=account['resource_group'], account_name=account['name'],
+        ):
+            try:
+                policies.append(policy.as_dict())
+            except (KeyError, AttributeError) as e:
+                logger.warning("Skipping RAI policy due to serialization error: %s", e)
+        return policies
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving RAI policies - {e}")
+        return []
+
+
+@timeit
+def transform_rai_policies(policies: List[Dict], account: Dict, common_job_parameters: Dict) -> List[Dict]:
+    data: List[Dict] = []
+    for policy in policies:
+        policy['account_id'] = account.get('id')
+        policy['account_name'] = account.get('name')
+        policy['resource_group'] = account.get('resource_group')
+        props = policy.get('properties', {}) or {}
+        policy['mode'] = props.get('mode')
+        policy['base_policy_name'] = props.get('base_policy_name')
+        policy['policy_type'] = props.get('type')
+        try:
+            policy['consolelink'] = azure_console_link.get_console_link(
+                id=policy['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+            )
+        except (ValueError, KeyError) as e:
+            logger.warning("Could not generate console link for RAI policy: %s", e)
+            policy['consolelink'] = ''
+        data.append(policy)
+    return data
+
+
+@timeit
+def load_rai_policies(
+    neo4j_session: neo4j.Session, subscription_id: str, policies: List[Dict], update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_rai_policies_tx, subscription_id, policies, update_tag)
+
+
+@timeit
+def _load_rai_policies_tx(
+    tx: neo4j.Transaction, subscription_id: str, policies: List[Dict], update_tag: int,
+) -> None:
+    ingest_policies = """
+    UNWIND $policies AS pol
+    MERGE (i:AzureRaiPolicy{id: pol.id})
+    ON CREATE SET i.firstseen = timestamp()
+    SET i.name = pol.name,
+    i.type = pol.policy_type,
+    i.mode = pol.mode,
+    i.base_policy_name = pol.base_policy_name,
+    i.account_name = pol.account_name,
+    i.resourcegroup = pol.resource_group,
+    i.consolelink = pol.consolelink,
+    i.lastupdated = $update_tag
+    WITH i, pol
+    MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
+    MERGE (owner)-[r:RESOURCE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    WITH i, pol
+    MATCH (acc:AzureCognitiveServicesAccount{id: pol.account_id})
+    MERGE (acc)-[hp:HAS_RAI_POLICY]->(i)
+    ON CREATE SET hp.firstseen = timestamp()
+    SET hp.lastupdated = $update_tag
+    WITH i, pol
+    MATCH (dep:AzureCognitiveServicesDeployment)<-[:HAS_DEPLOYMENT]-(acc:AzureCognitiveServicesAccount{id: pol.account_id})
+    WHERE dep.rai_policy_name = pol.name
+    MERGE (dep)-[gb:GOVERNED_BY]->(i)
+    ON CREATE SET gb.firstseen = timestamp()
+    SET gb.lastupdated = $update_tag
+    """
+    tx.run(
+        ingest_policies,
+        policies=policies,
+        SUBSCRIPTION_ID=subscription_id,
+        update_tag=update_tag,
+    )
+
+
+@timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job('azure_import_cognitiveservices_cleanup.json', neo4j_session, common_job_parameters)
 
@@ -231,11 +318,16 @@ def sync(
     logger.info(f"Total cognitive services accounts: {len(accounts)}")
     load_accounts(neo4j_session, subscription_id, accounts, update_tag)
 
-    # Deployments are scoped per account.
+    # Deployments and RAI policies are scoped per account. Load deployments first
+    # so the GOVERNED_BY link from deployment -> policy can match.
     for account in accounts:
         deployments = get_deployments_list(client, account)
         deployments = transform_deployments(deployments, account, common_job_parameters)
         load_deployments(neo4j_session, subscription_id, deployments, update_tag)
+
+        policies = get_rai_policies_list(client, account)
+        policies = transform_rai_policies(policies, account, common_job_parameters)
+        load_rai_policies(neo4j_session, subscription_id, policies, update_tag)
 
     cleanup(neo4j_session, common_job_parameters)
 
