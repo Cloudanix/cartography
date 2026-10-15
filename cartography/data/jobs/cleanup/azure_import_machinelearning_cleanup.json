@@ -1,0 +1,95 @@
+{
+    "statements": [
+        {
+            "query": "MATCH (n:AzureMLOnlineDeployment)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLOnlineDeployment)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureMLOnlineEndpoint)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLOnlineEndpoint)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureMLModel)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLModel)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureMLBatchDeployment)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLBatchDeployment)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureMLBatchEndpoint)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLBatchEndpoint)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureMLCompute)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLCompute)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureMLDatastore)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLDatastore)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureMLConnection)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLConnection)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureMLWorkspace)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:AzureMLWorkspace)<-[r:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        }
+    ],
+    "name": "cleanup Azure Machine Learning related resources"
+}
