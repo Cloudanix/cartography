@@ -210,6 +210,148 @@ def get_bedrock_flows_list(
 
 
 @timeit
+def get_bedrock_foundation_models_list(
+    boto3_session: boto3.session.Session,
+    region: str
+) -> List[Dict]:
+    foundation_models: List[Dict] = []
+    try:
+        client = get_boto3_client(boto3_session, "bedrock", region)
+        response = client.list_foundation_models()
+        models = response.get("modelSummaries")
+
+        for model in models:
+            model["region"] = region
+            model["consolelink"] = aws_console_link.get_console_link(arn=model["modelArn"])
+            model["arn"] = model.get("modelArn", "")
+            # Flatten list / nested fields to scalars for Neo4j, matching the
+            # rest of this module which stores scalar properties.
+            model["inputModalitiesStr"] = ",".join(model.get("inputModalities", []) or [])
+            model["outputModalitiesStr"] = ",".join(model.get("outputModalities", []) or [])
+            model["customizationsSupportedStr"] = ",".join(model.get("customizationsSupported", []) or [])
+            model["inferenceTypesSupportedStr"] = ",".join(model.get("inferenceTypesSupported", []) or [])
+            model["modelLifecycleStatus"] = model.get("modelLifecycle", {}).get("status")
+            foundation_models.append(model)
+
+    except Exception as e:
+        logger.warning(f"Could not list bedrock foundation models. skipping. - {e}")
+    return foundation_models
+
+
+@timeit
+def get_bedrock_provisioned_throughputs_list(
+    boto3_session: boto3.session.Session,
+    region: str,
+) -> List[Dict]:
+    provisioned_throughputs: List[Dict] = []
+    try:
+        client = get_boto3_client(boto3_session, "bedrock", region)
+        paginator = client.get_paginator("list_provisioned_model_throughputs")
+        for page in paginator.paginate():
+            provisioned_throughputs.extend(page["provisionedModelSummaries"])
+
+        for pt in provisioned_throughputs:
+            pt["region"] = region
+            pt["consolelink"] = aws_console_link.get_console_link(arn=pt["provisionedModelArn"])
+    except Exception as e:
+        logger.warning(f"Could not list bedrock provisioned throughputs. skipping. - {e}")
+    return provisioned_throughputs
+
+
+@timeit
+def get_bedrock_agent_aliases_list(
+    boto3_session: boto3.session.Session,
+    bedrock_agents: List[Dict],
+    region: str,
+) -> List[Dict]:
+    agent_aliases: List[Dict] = []
+    client = get_boto3_client(boto3_session, "bedrock-agent", region)
+    # list_agent_aliases is scoped to a single agent, so iterate the agents we
+    # already collected for this region.
+    for agent in bedrock_agents:
+        if agent.get("region") != region:
+            continue
+        agent_id = agent["agentId"]
+        agent_arn = agent["arn"]
+        try:
+            agent_alias_list: List[Dict] = []
+            paginator = client.get_paginator("list_agent_aliases")
+            for page in paginator.paginate(agentId=agent_id):
+                agent_alias_list.extend(page["agentAliasSummaries"])
+
+            for alias in agent_alias_list:
+                alias["region"] = region
+                alias["agentId"] = agent_id
+                alias["agentArn"] = agent_arn
+                # Agent aliases have no ARN in the summary; use a composite id.
+                alias["id"] = f"{agent_id}/{alias['agentAliasId']}"
+                alias["consolelink"] = aws_console_link.get_console_link(arn=agent_arn)
+
+            agent_aliases.extend(agent_alias_list)
+        except Exception as e:
+            logger.warning(
+                f"Could not list bedrock agent aliases for agent {agent_id}. skipping. - {e}",
+            )
+
+    return agent_aliases
+
+
+@timeit
+def get_bedrock_flow_aliases_list(
+    boto3_session: boto3.session.Session,
+    bedrock_flows: List[Dict],
+    region: str,
+) -> List[Dict]:
+    flow_aliases: List[Dict] = []
+    client = get_boto3_client(boto3_session, "bedrock-agent", region)
+    # list_flow_aliases is scoped to a single flow, so iterate the flows we
+    # already collected for this region.
+    for flow in bedrock_flows:
+        if flow.get("region") != region:
+            continue
+        flow_id = flow["id"]
+        flow_arn = flow["arn"]
+        try:
+            flow_alias_list: List[Dict] = []
+            paginator = client.get_paginator("list_flow_aliases")
+            for page in paginator.paginate(flowIdentifier=flow_id):
+                flow_alias_list.extend(page["flowAliasSummaries"])
+
+            for alias in flow_alias_list:
+                alias["region"] = region
+                alias["flowArn"] = flow_arn
+                alias["consolelink"] = aws_console_link.get_console_link(arn=alias["arn"])
+
+            flow_aliases.extend(flow_alias_list)
+        except Exception as e:
+            logger.warning(
+                f"Could not list bedrock flow aliases for flow {flow_id}. skipping. - {e}",
+            )
+
+    return flow_aliases
+
+
+@timeit
+def get_bedrock_prompts_list(
+    boto3_session: boto3.session.Session,
+    region: str,
+) -> List[Dict]:
+    prompts: List[Dict] = []
+    try:
+        client = get_boto3_client(boto3_session, "bedrock-agent", region)
+        paginator = client.get_paginator("list_prompts")
+        for page in paginator.paginate():
+            prompts.extend(page["promptSummaries"])
+
+        for prompt in prompts:
+            prompt["region"] = region
+            prompt["consolelink"] = aws_console_link.get_console_link(arn=prompt["arn"])
+    except Exception as e:
+        logger.warning(f"Could not list bedrock prompts. skipping. - {e}")
+    return prompts
+
+
+@timeit
 def load_bedrock_knowledge_bases(
     neo4j_session: neo4j.Session,
     bedrock_knowledge_bases: List[Dict],
@@ -227,6 +369,256 @@ def load_bedrock_data_sources(
     aws_update_tag: int,
 ) -> None:
     neo4j_session.execute_write(_load_bedrock_data_sources_tx, bedrock_data_sources, current_aws_account_id, aws_update_tag)
+
+
+@timeit
+def load_bedrock_foundation_models(
+    neo4j_session: neo4j.Session,
+    bedrock_foundation_models: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_bedrock_foundation_models_tx, bedrock_foundation_models, current_aws_account_id, aws_update_tag)
+
+@timeit
+def _load_bedrock_foundation_models_tx(
+    tx: neo4j.Transaction,
+    bedrock_foundation_models: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    ingest_bedrock_foundation_models = """
+    UNWIND $bedrock_foundation_models AS fm
+    MERGE (i:AWSBedrockFoundationModel{arn:fm.arn})
+    ON CREATE SET i.firstseen = timestamp(),
+    i.arn = fm.arn,
+    i.modelid = fm.modelId
+    SET i.name = fm.modelName,
+    i.providername = fm.providerName,
+    i.inputmodalities = fm.inputModalitiesStr,
+    i.outputmodalities = fm.outputModalitiesStr,
+    i.customizationssupported = fm.customizationsSupportedStr,
+    i.inferencetypessupported = fm.inferenceTypesSupportedStr,
+    i.responsestreamingsupported = fm.responseStreamingSupported,
+    i.modellifecyclestatus = fm.modelLifecycleStatus,
+    i.lastupdated = $aws_update_tag,
+    i.region = fm.region,
+    i.consolelink = fm.consolelink
+    WITH i
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (aa)-[r:RESOURCE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+
+    tx.run(
+        ingest_bedrock_foundation_models,
+        bedrock_foundation_models=bedrock_foundation_models,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
+
+
+@timeit
+def load_bedrock_provisioned_throughputs(
+    neo4j_session: neo4j.Session,
+    bedrock_provisioned_throughputs: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_bedrock_provisioned_throughputs_tx, bedrock_provisioned_throughputs, current_aws_account_id, aws_update_tag)
+
+
+@timeit
+def _load_bedrock_provisioned_throughputs_tx(
+    tx: neo4j.Transaction,
+    bedrock_provisioned_throughputs: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    ingest_bedrock_provisioned_throughputs = """
+    UNWIND $bedrock_provisioned_throughputs AS pt
+    MERGE (i:AWSBedrockProvisionedModelThroughput{arn:pt.provisionedModelArn})
+    ON CREATE SET i.firstseen = timestamp(),
+    i.arn = pt.provisionedModelArn
+    SET i.name = pt.provisionedModelName,
+    i.status = pt.status,
+    i.modelarn = pt.modelArn,
+    i.foundationmodelarn = pt.foundationModelArn,
+    i.modelunits = pt.modelUnits,
+    i.desiredmodelunits = pt.desiredModelUnits,
+    i.commitmentduration = pt.commitmentDuration,
+    i.creationtime = pt.creationTime,
+    i.lastmodifiedtime = pt.lastModifiedTime,
+    i.lastupdated = $aws_update_tag,
+    i.region = pt.region,
+    i.consolelink = pt.consolelink
+    WITH i, pt
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (aa)-[r:RESOURCE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    FOREACH (_ IN CASE WHEN pt.modelArn IS NULL THEN [] ELSE [1] END |
+        MERGE (m:AWSBedrockFoundationModel{arn: pt.modelArn})
+        MERGE (i)-[pm:PROVISIONS_MODEL]->(m)
+        ON CREATE SET pm.firstseen = timestamp()
+        SET pm.lastupdated = $aws_update_tag
+    )
+    """
+
+    tx.run(
+        ingest_bedrock_provisioned_throughputs,
+        bedrock_provisioned_throughputs=bedrock_provisioned_throughputs,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
+
+
+@timeit
+def load_bedrock_agent_aliases(
+    neo4j_session: neo4j.Session,
+    bedrock_agent_aliases: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_bedrock_agent_aliases_tx, bedrock_agent_aliases, current_aws_account_id, aws_update_tag)
+
+
+@timeit
+def _load_bedrock_agent_aliases_tx(
+    tx: neo4j.Transaction,
+    bedrock_agent_aliases: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    ingest_bedrock_agent_aliases = """
+    UNWIND $bedrock_agent_aliases AS alias
+    MERGE (i:AWSBedrockAgentAlias{id:alias.id})
+    ON CREATE SET i.firstseen = timestamp(),
+    i.id = alias.id,
+    i.agentaliasid = alias.agentAliasId
+    SET i.name = alias.agentAliasName,
+    i.status = alias.agentAliasStatus,
+    i.agentid = alias.agentId,
+    i.createdat = alias.createdAt,
+    i.updatedat = alias.updatedAt,
+    i.lastupdated = $aws_update_tag,
+    i.region = alias.region,
+    i.consolelink = alias.consolelink
+    WITH i, alias
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (aa)-[r:RESOURCE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    WITH i, alias
+    MATCH (agent:AWSBedrockAgent{arn: alias.agentArn})
+    MERGE (agent)-[haa:HAS_ALIAS]->(i)
+    ON CREATE SET haa.firstseen = timestamp()
+    SET haa.lastupdated = $aws_update_tag
+    """
+
+    tx.run(
+        ingest_bedrock_agent_aliases,
+        bedrock_agent_aliases=bedrock_agent_aliases,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
+
+
+@timeit
+def load_bedrock_flow_aliases(
+    neo4j_session: neo4j.Session,
+    bedrock_flow_aliases: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_bedrock_flow_aliases_tx, bedrock_flow_aliases, current_aws_account_id, aws_update_tag)
+
+
+@timeit
+def _load_bedrock_flow_aliases_tx(
+    tx: neo4j.Transaction,
+    bedrock_flow_aliases: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    ingest_bedrock_flow_aliases = """
+    UNWIND $bedrock_flow_aliases AS alias
+    MERGE (i:AWSBedrockFlowAlias{arn:alias.arn})
+    ON CREATE SET i.firstseen = timestamp(),
+    i.arn = alias.arn,
+    i.flowaliasid = alias.id
+    SET i.name = alias.name,
+    i.flowid = alias.flowId,
+    i.createdat = alias.createdAt,
+    i.updatedat = alias.updatedAt,
+    i.lastupdated = $aws_update_tag,
+    i.region = alias.region,
+    i.consolelink = alias.consolelink
+    WITH i, alias
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (aa)-[r:RESOURCE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    WITH i, alias
+    MATCH (flow:AWSBedrockFlow{arn: alias.flowArn})
+    MERGE (flow)-[hfa:HAS_ALIAS]->(i)
+    ON CREATE SET hfa.firstseen = timestamp()
+    SET hfa.lastupdated = $aws_update_tag
+    """
+
+    tx.run(
+        ingest_bedrock_flow_aliases,
+        bedrock_flow_aliases=bedrock_flow_aliases,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
+
+
+@timeit
+def load_bedrock_prompts(
+    neo4j_session: neo4j.Session,
+    bedrock_prompts: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_bedrock_prompts_tx, bedrock_prompts, current_aws_account_id, aws_update_tag)
+
+
+@timeit
+def _load_bedrock_prompts_tx(
+    tx: neo4j.Transaction,
+    bedrock_prompts: List[Dict],
+    current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    ingest_bedrock_prompts = """
+    UNWIND $bedrock_prompts AS prompt
+    MERGE (i:AWSBedrockPrompt{arn:prompt.arn})
+    ON CREATE SET i.firstseen = timestamp(),
+    i.arn = prompt.arn,
+    i.promptid = prompt.id
+    SET i.name = prompt.name,
+    i.description = prompt.description,
+    i.version = prompt.version,
+    i.createdat = prompt.createdAt,
+    i.updatedat = prompt.updatedAt,
+    i.lastupdated = $aws_update_tag,
+    i.region = prompt.region,
+    i.consolelink = prompt.consolelink
+    WITH i
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (aa)-[r:RESOURCE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+
+    tx.run(
+        ingest_bedrock_prompts,
+        bedrock_prompts=bedrock_prompts,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
 
 
 @timeit
@@ -752,6 +1144,46 @@ def sync_bedrock(
     logger.info(f"Total bedrock flows: {len(flows_list)}")
 
     load_bedrock_flows(neo4j_session, flows_list, current_aws_account_id, aws_update_tag)
+
+    foundation_models_list = []
+    for region in regions:
+        foundation_models_list.extend(get_bedrock_foundation_models_list(boto3_session, region))
+
+    logger.info(f"Total bedrock foundation models: {len(foundation_models_list)}")
+
+    load_bedrock_foundation_models(neo4j_session, foundation_models_list, current_aws_account_id, aws_update_tag)
+
+    provisioned_throughputs_list = []
+    for region in regions:
+        provisioned_throughputs_list.extend(get_bedrock_provisioned_throughputs_list(boto3_session, region))
+
+    logger.info(f"Total bedrock provisioned throughputs: {len(provisioned_throughputs_list)}")
+
+    load_bedrock_provisioned_throughputs(neo4j_session, provisioned_throughputs_list, current_aws_account_id, aws_update_tag)
+
+    agent_aliases_list = []
+    for region in regions:
+        agent_aliases_list.extend(get_bedrock_agent_aliases_list(boto3_session, bedrock_agents, region))
+
+    logger.info(f"Total bedrock agent aliases: {len(agent_aliases_list)}")
+
+    load_bedrock_agent_aliases(neo4j_session, agent_aliases_list, current_aws_account_id, aws_update_tag)
+
+    flow_aliases_list = []
+    for region in regions:
+        flow_aliases_list.extend(get_bedrock_flow_aliases_list(boto3_session, flows_list, region))
+
+    logger.info(f"Total bedrock flow aliases: {len(flow_aliases_list)}")
+
+    load_bedrock_flow_aliases(neo4j_session, flow_aliases_list, current_aws_account_id, aws_update_tag)
+
+    prompts_list = []
+    for region in regions:
+        prompts_list.extend(get_bedrock_prompts_list(boto3_session, region))
+
+    logger.info(f"Total bedrock prompts: {len(prompts_list)}")
+
+    load_bedrock_prompts(neo4j_session, prompts_list, current_aws_account_id, aws_update_tag)
 
 
 @timeit
