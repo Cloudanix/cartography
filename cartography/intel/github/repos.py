@@ -1,4 +1,5 @@
 import configparser
+import json
 import logging
 import time
 from datetime import datetime
@@ -17,9 +18,10 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import describe_request_error
-from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import get_retry_delay_seconds
+from cartography.intel.github.util import handle_rate_limit_sleep
 from cartography.intel.github.util import is_retryable_request_error
 from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
@@ -118,6 +120,41 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
 # Note: In the above query, `HEAD` references the default branch.
 # See https://stackoverflow.com/questions/48935381/github-graphql-api-default-branch-in-repository
 
+# Branches of one repo, paginated. The repo listing itself comes from REST (see `get`); this
+# only adds what REST lacks: every branch with its head commit date, and the default branch ref id.
+GITHUB_REPO_BRANCHES_PAGINATED_GRAPHQL = """
+    query($owner: String!, $name: String!, $cursor: String) {
+        repository(owner: $owner, name: $name) {
+            defaultBranchRef {
+                name
+                id
+                target {
+                    ... on Commit {
+                        committedDate
+                    }
+                }
+            }
+            refs(first: 100, refPrefix: "refs/heads/", after: $cursor) {
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
+                edges {
+                    node {
+                        name
+                        id
+                        target {
+                            ... on Commit {
+                                committedDate
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+
 
 @timeit
 def get(token: str, api_url: str, organization: str) -> List[Dict]:
@@ -167,7 +204,85 @@ def get(token: str, api_url: str, organization: str) -> List[Dict]:
             if ((rest_repo.get("owner") or {}).get("login") or "").lower() == organization.lower()
         ]
 
-    return [_normalize_rest_repo(rest_repo) for rest_repo in rest_repos]
+    normalized = [_normalize_rest_repo(rest_repo) for rest_repo in rest_repos]
+    for repo in normalized:
+        _attach_branches(token, api_url, repo)
+    return normalized
+
+
+def _attach_branches(token: str, api_url: str, repo: Dict[str, Any]) -> None:
+    """
+    Fill `refs` and the default branch ref id on a REST-normalized repo, the shape
+    `_transform_branches` and `_transform_repo_objects` read. The REST repo listing carries
+    neither, so without this no GitHubBranch is linked to the repo (Bitbucket, GitLab and
+    Azure DevOps fetch their branches the same way, per repo). A failed fetch is logged and the
+    repo is synced without branches; one repo's branch list must not fail the org sync.
+    """
+    owner = (repo.get("owner") or {}).get("login")
+    if not owner:
+        return
+
+    try:
+        branch_refs = get_repo_branch_refs(token, api_url, owner, repo["name"])
+    except requests.exceptions.RequestException as err:
+        logger.warning(
+            f"GitHub branch listing failed for repo `{owner}/{repo['name']}` "
+            f"({describe_request_error(err)}); syncing it without branches.",
+        )
+        return
+    if branch_refs is None:
+        return
+
+    default_ref = branch_refs["defaultBranchRef"]
+    edges = branch_refs["edges"]
+    # The default branch is always kept by _transform_branches, so make sure it is listed.
+    if default_ref and all(edge["node"]["name"] != default_ref["name"] for edge in edges):
+        edges.append({"node": default_ref})
+    if default_ref:
+        repo["defaultBranchRef"] = {"name": default_ref["name"], "id": default_ref["id"]}
+    repo["refs"] = {"edges": edges}
+
+
+def get_repo_branch_refs(token: str, api_url: str, owner: str, name: str) -> Optional[Dict[str, Any]]:
+    """
+    List every branch of one repo with its head commit date, via GitHub GraphQL.
+    The REST branches endpoint has no commit date, which the 180-day activity filter in
+    `_transform_branches` needs.
+    ponytail: no page cap, same as Bitbucket's get_branches; cap it if a repo with thousands of
+    branches makes the sync slow.
+    :return: {"defaultBranchRef": ref or None, "edges": [{"node": ref}, ...]}, or None when GitHub
+    does not return the repository (e.g. access revoked mid-sync).
+    """
+    handle_rate_limit_sleep(token)
+    edges: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    while True:
+        repository = _fetch_branch_page(token, api_url, owner, name, cursor)
+        if repository is None:
+            return None
+
+        refs = repository.get("refs") or {}
+        edges.extend(refs.get("edges") or [])
+        page_info = refs.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            return {"defaultBranchRef": repository.get("defaultBranchRef"), "edges": edges}
+        cursor = page_info.get("endCursor")
+
+
+def _fetch_branch_page(
+    token: str, api_url: str, owner: str, name: str, cursor: Optional[str], retries: int = 5,
+) -> Optional[Dict[str, Any]]:
+    variables = json.dumps({"owner": owner, "name": name, "cursor": cursor})
+    attempt = 0
+    while True:
+        try:
+            response = call_github_api(GITHUB_REPO_BRANCHES_PAGINATED_GRAPHQL, variables, token, api_url)
+            return (response.get("data") or {}).get("repository")
+        except requests.exceptions.RequestException as err:
+            attempt += 1
+            if attempt >= retries or not is_retryable_request_error(err):
+                raise
+            time.sleep(get_retry_delay_seconds(err, attempt))
 
 
 def transform(repos_json: List[Dict]) -> Dict:
@@ -390,7 +505,7 @@ def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Di
             )
 
 
-def _transform_collaborators(collaborators: Dict, repo_url: str, transformed_collaborators: Dict) -> None:
+def _transform_collaborators(collaborators: Optional[Dict], repo_url: str, transformed_collaborators: Dict) -> None:
     """
     Performs data adjustments for outside collaborators in a GitHub repo.
     Output data shape = [{permission, repo_url, url (the user's URL), login, name}, ...]
