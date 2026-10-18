@@ -1128,12 +1128,37 @@ def get_model_packages_list(boto3_session: boto3.session.Session, region: str) -
         client = get_boto3_client(boto3_session, "sagemaker", region)
 
         paginator = client.get_paginator("list_model_packages")
+
+        # Unversioned (standalone) model packages are returned by the default
+        # call, but *versioned* packages registered inside a model package group
+        # are only returned when ModelPackageGroupName is supplied. List both so
+        # registry versions aren't missed.
         for page in paginator.paginate():
             packages.extend(page["ModelPackageSummaryList"])
 
+        groups = get_model_package_groups_list(boto3_session, region)
+        for group in groups:
+            group_name = group["ModelPackageGroupName"]
+            try:
+                for page in paginator.paginate(ModelPackageGroupName=group_name):
+                    packages.extend(page["ModelPackageSummaryList"])
+            except Exception as e:
+                logger.warning(
+                    f"Could not list model packages for group {group_name}. skipping. - {e}",
+                )
+
+        # De-duplicate by ARN (a package could appear in both listings).
+        seen = set()
+        deduped: List[Dict] = []
         for package in packages:
+            arn = package.get("ModelPackageArn")
+            if arn in seen:
+                continue
+            seen.add(arn)
             package["region"] = region
-            package["consolelink"] = aws_console_link.get_console_link(arn=package["ModelPackageArn"])
+            package["consolelink"] = aws_console_link.get_console_link(arn=arn)
+            deduped.append(package)
+        packages = deduped
 
     except Exception as e:
         logger.warning(
