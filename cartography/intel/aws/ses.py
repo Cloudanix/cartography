@@ -11,6 +11,8 @@ from botocore.exceptions import EndpointConnectionError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
@@ -40,7 +42,10 @@ def get_ses_identity(boto3_session: boto3.session.Session, region: str) -> List[
 
 
 @timeit
-def transform_identities(boto3_session: boto3.session.Session, ids_names: List[Dict], region: str, current_aws_account_id: str) -> List[Dict]:
+def transform_identities(
+    boto3_session: boto3.session.Session, ids_names: List[Dict], region: str, current_aws_account_id: str,
+    partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     resources = []
     try:
         client = boto3_session.client('ses', region_name=region, config=get_botocore_config())
@@ -60,10 +65,11 @@ def transform_identities(boto3_session: boto3.session.Session, ids_names: List[D
             dkim_attributes.update(client.get_identity_dkim_attributes(Identities=ids_names).get('DkimAttributes', {}))
 
         for identity_name in ids_names:
+            arn = f"arn:{partition}:ses:{region}:{current_aws_account_id}:identity/{identity_name}"
             identity = {
                 'name': identity_name,
-                'arn': f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}",
-                'consolelink': aws_console_link.get_console_link(arn=f"arn:aws:ses:{region}:{current_aws_account_id}:identity/{identity_name}"),
+                'arn': arn,
+                'consolelink': aws_console_link.get_console_link(arn=arn),
                 'region': region,
                 'dkim': dkim_attributes.get(identity_name, {}),
                 'verification': identity_verifications.get(identity_name, {}),
@@ -127,6 +133,7 @@ def sync(
 
     ses_enabled_regions = ["af-south-1", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ca-central-1", "eu-central-1", "eu-north-1", "eu-south-1", "eu-west-1", "eu-west-2", "eu-west-3", "il-central-1", "me-south-1", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"]
 
+    partition = get_partition_from_params(common_job_parameters)
     identities = []
     for region in regions:
         logger.info("Syncing SES for region '%s' in account '%s'.", region, current_aws_account_id)
@@ -135,7 +142,7 @@ def sync(
             continue
 
         ids = get_ses_identity(boto3_session, region)
-        identities.extend(transform_identities(boto3_session, ids, region, current_aws_account_id))
+        identities.extend(transform_identities(boto3_session, ids, region, current_aws_account_id, partition=partition))
 
     logger.info(f"Total SES Identities: {len(identities)}")
 

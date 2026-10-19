@@ -11,6 +11,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.models.aws.dynamodb.gsi import DynamoDBGSISchema
 from cartography.models.aws.dynamodb.tables import DynamoDBTableSchema
 from cartography.stats import get_stats_client
@@ -37,7 +39,9 @@ def get_dynamodb_tables(boto3_session: boto3.session.Session, region: str) -> Li
 
 
 @timeit
-def transform_dynamodb_tables(dynamodb_tables: List, region: str, current_aws_account_id: str) -> Any:
+def transform_dynamodb_tables(
+    dynamodb_tables: List, region: str, current_aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> Any:
     ddb_table_data: List[Dict[str, Any]] = []
     ddb_gsi_data: List[Dict[str, Any]] = []
 
@@ -55,7 +59,7 @@ def transform_dynamodb_tables(dynamodb_tables: List, region: str, current_aws_ac
         for gsi in table['Table'].get('GlobalSecondaryIndexes', []):
             table_name = table['Table']['TableName']
             consolelink = aws_console_link.get_console_link(
-                arn=f"arn:aws:dynamodb:{region}:{current_aws_account_id}:secondary_indexes/{table_name}",
+                arn=f"arn:{partition}:dynamodb:{region}:{current_aws_account_id}:secondary_indexes/{table_name}",
             )
             ddb_gsi_data.append({
                 'Arn': gsi['IndexArn'],
@@ -112,10 +116,13 @@ def sync_dynamodb_tables(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.info("Syncing DynamoDB for region in '%s' in account '%s'.", region, current_aws_account_id)
         dynamodb_tables = get_dynamodb_tables(boto3_session, region)
-        ddb_table_data, ddb_gsi_data = transform_dynamodb_tables(dynamodb_tables, region, current_aws_account_id)
+        ddb_table_data, ddb_gsi_data = transform_dynamodb_tables(
+            dynamodb_tables, region, current_aws_account_id, partition=partition,
+        )
         load_dynamodb_tables(neo4j_session, ddb_table_data, region, current_aws_account_id, aws_update_tag)
         load_dynamodb_gsi(neo4j_session, ddb_gsi_data, region, current_aws_account_id, aws_update_tag)
 

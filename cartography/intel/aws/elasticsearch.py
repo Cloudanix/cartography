@@ -14,6 +14,8 @@ from policyuniverse.policy import Policy
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.intel.dns import ingest_dns_record_by_fqdn
 from cartography.util import aws_handle_regions
 from cartography.util import log_aws_error
@@ -45,10 +47,15 @@ def _get_es_domains(client: botocore.client.BaseClient) -> List[Dict]:
 
 
 @timeit
-def transform_es_domains(dms: List[Dict], region: str, account_id: str) -> List[Dict]:
+def transform_es_domains(
+    dms: List[Dict], region: str, account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     domains = []
     for domain in dms:
-        domain['arn'] = f"arn:aws:es:{region if region else ''}:{account_id if account_id else ''}:domain/{domain['DomainName']}"
+        domain['arn'] = (
+            f"arn:{partition}:es:{region if region else ''}:{account_id if account_id else ''}"
+            f":domain/{domain['DomainName']}"
+        )
         domain['consolelink'] = aws_console_link.get_console_link(arn=domain['arn'])
         domain['region'] = region
         domain['isPublicFacing'] = False
@@ -231,7 +238,9 @@ def filter_active_elasticsearch_reserved_instances(reserved_instances: List[Dict
 
 @timeit
 @aws_handle_regions
-def get_elasticsearch_reserved_instances(client: botocore.client.BaseClient, region: str, current_aws_account_id: str) -> List[Dict]:
+def get_elasticsearch_reserved_instances(
+    client: botocore.client.BaseClient, region: str, current_aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     reserved_instances = []
     try:
         paginator = client.get_paginator('describe_reserved_elasticsearch_instances')
@@ -241,7 +250,10 @@ def get_elasticsearch_reserved_instances(client: botocore.client.BaseClient, reg
             reserved_instances.extend(page.get('ReservedElasticsearchInstances', []))
         reserved_instances = filter_active_elasticsearch_reserved_instances(reserved_instances)
         for reserved_instance in reserved_instances:
-            reserved_instance['arn'] = f"arn:aws:es:{region}:{current_aws_account_id}:reserved-instances/{reserved_instance['ReservedElasticsearchInstanceId']}"
+            reserved_instance['arn'] = (
+                f"arn:{partition}:es:{region}:{current_aws_account_id}"
+                f":reserved-instances/{reserved_instance['ReservedElasticsearchInstanceId']}"
+            )
             reserved_instance['region'] = region
             reserved_instance['consolelink'] = aws_console_link.get_console_link(arn=reserved_instance['arn'])
 
@@ -315,13 +327,16 @@ def sync(
     tic = time.perf_counter()
     logger.info("Syncing Elasticsearch Service for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     data = []
     reserved_instances = []
     for region in regions:
         client = boto3_session.client('es', region_name=region, config=get_botocore_config())
         domains = _get_es_domains(client)
-        data.extend(transform_es_domains(domains, region, current_aws_account_id))
-        reserved_instances.extend(get_elasticsearch_reserved_instances(client, region, current_aws_account_id))
+        data.extend(transform_es_domains(domains, region, current_aws_account_id, partition=partition))
+        reserved_instances.extend(
+            get_elasticsearch_reserved_instances(client, region, current_aws_account_id, partition=partition),
+        )
 
     logger.info(f"Total ElasticSearch Domains: {len(data)}")
 
