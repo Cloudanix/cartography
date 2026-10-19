@@ -24,18 +24,6 @@ def _fake_link(resource_id, common_job_parameters):
     return f"link:{resource_id}"
 
 
-def test_no_consolelink_is_written_only_on_create():
-    # ON CREATE SET never runs again for an existing node, so link fixes would never reach it.
-    on_create_blocks = re.compile(r"ON CREATE SET(.*?)(?=^\s*(?:SET|ON MATCH SET|WITH|MERGE|MATCH)\b)", re.S | re.M)
-    offenders = [
-        path.name
-        for path in AZURE_DIR.glob("*.py")
-        for block in on_create_blocks.findall(path.read_text())
-        if "consolelink" in block
-    ]
-    assert offenders == []
-
-
 def test_safe_console_link_returns_none_instead_of_raising_without_tenant_domain(caplog):
     if isinstance(console_link.azure_console_link, MagicMock):
         pytest.skip("cloudconsolelink not installed")

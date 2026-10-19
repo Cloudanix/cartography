@@ -1028,9 +1028,8 @@ def _load_policy_tx(
     policy.region = $region,
     policy.name = $PolicyName,
     policy.arn = $PolicyArn,
-    policy.managed_type = $ManagedType,
-    policy.consolelink = $consolelink
-    SET policy.lastupdated = $aws_update_tag
+    policy.managed_type = $ManagedType
+    SET policy.lastupdated = $aws_update_tag, policy.consolelink = $consolelink
     WITH policy
     MATCH (principal:AWSPrincipal{arn: $PrincipalArn})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1051,7 +1050,8 @@ def _load_policy_tx(
 
     policy = policy_name.split("/")[-1]
     policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
-    consolelink = aws_console_link.get_console_link(arn=policy_arn)
+    # Same rule as load_policy_data: an inline policy shows on its IAM principal's page.
+    consolelink = aws_console_link.get_console_link(arn=principal_arn) if ":iam::" in principal_arn else None
 
     tx.run(
         ingest_policy,
@@ -1074,9 +1074,8 @@ def _load_policy_tx(
     policy.region = $region,
     policy.name = $PolicyName,
     policy.arn = $PolicyArn,
-    policy.managed_type = $ManagedType,
-    policy.consolelink = $consolelink
-    SET policy.lastupdated = $aws_update_tag
+    policy.managed_type = $ManagedType
+    SET policy.lastupdated = $aws_update_tag, policy.consolelink = $consolelink
     WITH policy
     MATCH (principal:AWSPrincipal{id: $PrincipalArn})
     MERGE (policy) <-[r:POLICY]-(principal)
