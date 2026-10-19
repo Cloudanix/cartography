@@ -18,6 +18,7 @@ class GitHubTeamNodeProperties(CartographyNodeProperties):
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
     name: PropertyRef = PropertyRef('name', extra_index=True)
     description: PropertyRef = PropertyRef('description')
+    consolelink: PropertyRef = PropertyRef('consolelink')
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@ import time
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import neo4j
@@ -10,6 +11,8 @@ import neo4j
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.github.util import fetch_all
+from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_web_base_url
 from cartography.intel.github.util import PaginatedGraphqlData
 from cartography.models.github.teams import GitHubTeamSchema
 from cartography.util import run_cleanup_job
@@ -114,6 +117,7 @@ def transform_teams(
     team_paginated_data: PaginatedGraphqlData,
     org_data: Dict[str, Any],
     team_repo_data: Dict[str, Any],
+    web_base_url: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     result = []
     for team in team_paginated_data.nodes:
@@ -121,6 +125,9 @@ def transform_teams(
         repo_info = {
             "name": team_name,
             "url": team["url"],
+            "consolelink": get_console_link(
+                "team", base_url=web_base_url, owner=org_data.get("login"), team=team_name,
+            ),
             "description": team["description"],
             "repo_count": team["repositories"]["totalCount"],
             "org_url": org_data["url"],
@@ -177,7 +184,7 @@ def sync_github_teams(
 
     teams_paginated, org_data = get_teams(organization, github_url, github_api_key)
     team_repos = _get_team_repos_for_multiple_teams(teams_paginated.nodes, organization, github_url, github_api_key)
-    processed_data = transform_teams(teams_paginated, org_data, team_repos)
+    processed_data = transform_teams(teams_paginated, org_data, team_repos, get_web_base_url(github_url))
     load_team_repos(neo4j_session, processed_data, common_job_parameters["UPDATE_TAG"], org_data["login"])
     common_job_parameters["org_login"] = org_data["login"]
     cleanup(neo4j_session, common_job_parameters)

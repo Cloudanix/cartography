@@ -7,6 +7,7 @@ from typing import Optional
 import neo4j
 
 from .util import call_azure_devops_api_pagination
+from .util import get_console_link
 from .util import validate_project_data
 from cartography.client.core.tx import load_graph_data
 from cartography.util import normalize_datetime
@@ -94,7 +95,8 @@ def load_projects(
         p.last_activity_at = project.last_activity_at,
         p.last_activity_at_timestamp = project.last_activity_at_timestamp,
         p.description = project.description,
-        p.capabilities = project.capabilities
+        p.capabilities = project.capabilities,
+        p.consolelink = project.consolelink
 
     WITH p, project
     MATCH (org:AzureDevOpsOrganization{id: $OrganizationName})
@@ -136,6 +138,9 @@ def sync(
             iso_str, ts_ms = normalize_datetime(project.get("lastUpdateTime"))
             project["last_activity_at"] = iso_str
             project["last_activity_at_timestamp"] = ts_ms
+            project["consolelink"] = get_console_link(
+                "project", base_url=azure_devops_url, organization=organization_name, project=project.get("name"),
+            )
         load_projects(neo4j_session, projects, organization_name, common_job_parameters)
         cleanup(neo4j_session, common_job_parameters)
     logger.info(f"Processed {len(projects) if projects else 0} projects for org '{organization_name}'")

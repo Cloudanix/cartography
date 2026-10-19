@@ -10,11 +10,16 @@ from typing import List
 from typing import NamedTuple
 from typing import Optional
 from typing import Tuple
+from urllib.parse import urlparse
 
 import requests
+from cloudconsolelink.clouds.git import GitLinker
 
 
 logger = logging.getLogger(__name__)
+git_linker = GitLinker()
+GITHUB_API_HOST = "api.github.com"
+GITHUB_WEB_BASE_URL = "https://github.com"
 # Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
 _TIMEOUT = (60, 60)
 _GRAPHQL_RATE_LIMIT_REMAINING_THRESHOLD = 500
@@ -24,6 +29,29 @@ _TRANSIENT_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 class PaginatedGraphqlData(NamedTuple):
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
+
+
+def get_web_base_url(api_url: str) -> str:
+    """
+    Return the GitHub web host for a configured API url, e.g. https://api.github.com/graphql -> https://github.com,
+    and GitHub Enterprise https://ghe.acme.com/api/graphql -> https://ghe.acme.com.
+    """
+    parsed = urlparse(api_url or "")
+    if not parsed.netloc or parsed.netloc == GITHUB_API_HOST:
+        return GITHUB_WEB_BASE_URL
+    return f"{parsed.scheme or 'https'}://{parsed.netloc}"
+
+
+def get_console_link(resource_name: str, base_url: Optional[str] = None, **params: Optional[str]) -> Optional[str]:
+    """
+    Web link for a GitHub entity, or None (logged) when an identifier is missing; never fails a sync.
+    """
+    try:
+        link: str = git_linker.get_console_link("github", resource_name, base_url=base_url, **params)
+    except ValueError as e:
+        logger.debug(f"Skipping GitHub {resource_name} console link: {e}")
+        return None
+    return link
 
 
 def get_http_status_code(err: BaseException) -> Optional[int]:

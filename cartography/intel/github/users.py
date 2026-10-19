@@ -9,6 +9,8 @@ import neo4j
 
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import fetch_all
+from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_web_base_url
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_cleanup_job
@@ -68,6 +70,12 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
     return users.edges, org
 
 
+def transform_users(user_data: List[Dict], web_base_url: str) -> List[Dict]:
+    for user in user_data:
+        user["consolelink"] = get_console_link("user", base_url=web_base_url, login=user["node"].get("login"))
+    return user_data
+
+
 @timeit
 def load_organization_users(
     neo4j_session: neo4j.Session,
@@ -92,6 +100,7 @@ def load_organization_users(
     u.is_site_admin = user.node.isSiteAdmin,
     u.email = user.node.email,
     u.company = user.node.company,
+    u.consolelink = user.consolelink,
     u.lastupdated = $UpdateTag
 
     MERGE (u)-[r:MEMBER_OF]->(org)
@@ -126,6 +135,7 @@ def sync(
     logger.info("Syncing GitHub Users in account %s - url %s", organization, github_url)
 
     user_data, org_data = get_users(github_api_key, github_url, organization)
+    user_data = transform_users(user_data, get_web_base_url(github_url))
 
     common_job_parameters["ORGANIZATION_ID"] = org_data.get("login")
 

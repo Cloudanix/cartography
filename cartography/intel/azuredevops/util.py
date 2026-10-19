@@ -9,11 +9,25 @@ from typing import Tuple
 
 import requests
 from azure.identity import ClientSecretCredential
+from cloudconsolelink.clouds.git import GitLinker
 
 logger = logging.getLogger(__name__)
 TIMEOUT = (60, 60)
 MAX_RETRIES = 3
 RETRY_DELAY = 1
+git_linker = GitLinker()
+
+
+def get_console_link(resource_name: str, base_url: Optional[str] = None, **params: Optional[str]) -> Optional[str]:
+    """
+    Web link for an Azure DevOps entity, or None (logged) when an identifier is missing; never fails a sync.
+    """
+    try:
+        link: str = git_linker.get_console_link("azuredevops", resource_name, base_url=base_url, **params)
+    except ValueError as e:
+        logger.debug(f"Skipping Azure DevOps {resource_name} console link: {e}")
+        return None
+    return link
 
 
 def get_access_token(
