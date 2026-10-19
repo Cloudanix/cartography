@@ -71,6 +71,7 @@ def load_alarms(
         a.metric_compartment_id = alarm.metric_compartment_id,
         a.destinations = alarm.destinations,
         a.region = $REGION,
+        a.consolelink = alarm.consolelink,
         a.lastupdated = $oci_update_tag
         WITH a, alarm
         MATCH (cc:OCICompartment{id: alarm.compartment_id})
@@ -91,6 +92,7 @@ def load_alarms(
             "lifecycle_state": alarm.get("lifecycle-state"),
             "metric_compartment_id": alarm.get("metric-compartment-id", ""),
             "destinations": alarm.get("destinations", []),
+            "consolelink": utils.get_console_link("alarm", region=region, ocid=alarm.get("id")),
         }
         for alarm in alarms
     ]
@@ -165,6 +167,7 @@ def load_cloud_guard(
     cg.status = $STATUS,
     cg.reporting_region = $REPORTING_REGION,
     cg.region = $REGION,
+    cg.consolelink = $CONSOLELINK,
     cg.lastupdated = $oci_update_tag
     WITH cg
     MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -181,6 +184,10 @@ def load_cloud_guard(
         STATUS=config_data.get("status", "DISABLED"),
         REPORTING_REGION=config_data.get("reporting-region", ""),
         REGION=region,
+        # Cloud Guard is managed from its reporting region.
+        CONSOLELINK=utils.get_console_link(
+            "cloud_guard", region=config_data.get("reporting-region") or region,
+        ),
         oci_update_tag=oci_update_tag,
     )
 
@@ -253,6 +260,7 @@ def load_event_rules(
         er.lifecycle_state = rule.lifecycle_state,
         er.description = rule.description,
         er.region = $REGION,
+        er.consolelink = rule.consolelink,
         er.lastupdated = $oci_update_tag
         WITH er, rule
         MATCH (cc:OCICompartment{id: rule.compartment_id})
@@ -271,6 +279,7 @@ def load_event_rules(
             "lifecycle_state": rule.get("lifecycle-state"),
             "description": rule.get("description", ""),
             "time_created": str(rule.get("time-created", "")),
+            "consolelink": utils.get_console_link("events_rule", region=region, ocid=rule.get("id")),
         }
         for rule in rules
     ]
@@ -352,6 +361,7 @@ def load_notification_topics(
         t.description = topic.description,
         t.api_endpoint = topic.api_endpoint,
         t.region = $REGION,
+        t.consolelink = topic.consolelink,
         t.lastupdated = $oci_update_tag
         WITH t, topic
         MATCH (cc:OCICompartment{id: topic.compartment_id})
@@ -370,6 +380,9 @@ def load_notification_topics(
             "description": topic.get("description", ""),
             "api_endpoint": topic.get("api-endpoint", ""),
             "time_created": str(topic.get("time-created", "")),
+            "consolelink": utils.get_console_link(
+                "notification_topic", region=region, ocid=topic.get("topic-id", topic.get("id", "")),
+            ),
         }
         for topic in topics
     ]

@@ -78,6 +78,7 @@ def load_audit_configuration(
         ac.compartment_id = $COMPARTMENT_ID,
         ac.retention_period_days = $RETENTION_PERIOD_DAYS,
         ac.region = $REGION,
+        ac.consolelink = $CONSOLELINK,
         ac.lastupdated = $oci_update_tag
     WITH ac
     MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -94,6 +95,7 @@ def load_audit_configuration(
         COMPARTMENT_ID=compartment_id,
         RETENTION_PERIOD_DAYS=retention,
         REGION=region,
+        CONSOLELINK=utils.get_console_link("tenancy"),
         oci_update_tag=oci_update_tag,
     )
 
@@ -185,6 +187,7 @@ def load_log_groups(
             g.description = lg.description,
             g.lifecycle_state = lg.lifecycle_state,
             g.region = $REGION,
+            g.consolelink = lg.consolelink,
             g.lastupdated = $oci_update_tag
         WITH g, lg
         MATCH (cc:OCICompartment{id: lg.compartment_id})
@@ -201,6 +204,7 @@ def load_log_groups(
             "description": lg.get("description", ""),
             "lifecycle_state": lg.get("lifecycle-state", ""),
             "time_created": str(lg.get("time-created", "")),
+            "consolelink": utils.get_console_link("log_group", region=region, ocid=lg.get("id")),
         }
         for lg in log_groups
     ]
@@ -238,6 +242,7 @@ def load_logs(
             l.source_resource = log.source_resource,
             l.source_category = log.source_category,
             l.region = $REGION,
+            l.consolelink = log.consolelink,
             l.lastupdated = $oci_update_tag
         WITH l
         MATCH (lg:OCILogGroup{id: $LOG_GROUP_ID})
@@ -262,6 +267,9 @@ def load_logs(
             "source_resource": source.get("resource", ""),
             "source_category": source.get("category", ""),
             "time_created": str(log_entry.get("time-created", "")),
+            "consolelink": utils.get_console_link(
+                "log", region=region, ocid=log_entry.get("id"), log_group_id=log_group_id,
+            ),
         })
 
     load_graph_data(

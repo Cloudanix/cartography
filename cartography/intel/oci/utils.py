@@ -1,13 +1,36 @@
 # Copyright (c) 2020, Oracle and/or its affiliates.
 # OCI intel module - utility functions
 import json
+import logging
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
+from cloudconsolelink.clouds.oci import OCILinker
 
 from cartography.client.core.tx import read_list_of_dicts_tx
+
+logger = logging.getLogger(__name__)
+
+oci_console_link = OCILinker()
+
+
+def get_console_link(resource_name: str, **kwargs: Any) -> Optional[str]:
+    """
+    Build the OCI console link for a resource.
+
+    :param resource_name: OCILinker resource name, e.g. "compute_instance", "bucket".
+    :param kwargs: identifiers the link needs (region, ocid, namespace, bucket_name, ...).
+    :return: the console URL, or None when a required identifier is missing.
+    A missing link must never fail a sync, so OCILinker's ValueError is swallowed here.
+    """
+    try:
+        return oci_console_link.get_console_link(resource_name=resource_name, **kwargs)
+    except ValueError:
+        logger.debug("No OCI console link for %s: missing identifiers", resource_name)
+        return None
 
 
 # Generic way to turn a OCI python object into the json response that you would see from calling the REST API.

@@ -103,6 +103,7 @@ def load_container_repositories(
     repo.namespace = $NAMESPACE,
     repo.billable_size_in_gbs = $BILLABLE_SIZE_IN_GBS,
     repo.region = $REGION,
+    repo.consolelink = $CONSOLELINK,
     repo.lastupdated = $oci_update_tag
     WITH repo
     MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -127,6 +128,7 @@ def load_container_repositories(
             NAMESPACE=repo.get("namespace", ""),
             BILLABLE_SIZE_IN_GBS=repo.get("billable-size-in-gbs", 0),
             REGION=region,
+            CONSOLELINK=utils.get_console_link("container_repository", region=region, ocid=repo.get("id")),
             TIME_CREATED=str(repo.get("time-created", "")),
             oci_update_tag=oci_update_tag,
         )
@@ -220,6 +222,7 @@ def load_container_images(
     img.layers_size_in_bytes = $LAYERS_SIZE_IN_BYTES,
     img.time_last_pushed = $TIME_LAST_PUSHED,
     img.region = $REGION,
+    img.consolelink = $CONSOLELINK,
     img.lastupdated = $oci_update_tag
     WITH img
     MATCH (repo:OCIContainerRepository{id: $REPOSITORY_ID})
@@ -244,6 +247,9 @@ def load_container_images(
             LAYERS_SIZE_IN_BYTES=image.get("layers-size-in-bytes", 0),
             TIME_LAST_PUSHED=str(image.get("time-last-pushed", "")),
             REGION=region,
+            CONSOLELINK=utils.get_console_link(
+                "container_image", region=region, ocid=image.get("id"), repository_id=image.get("repository-id", ""),
+            ),
             TIME_CREATED=str(image.get("time-created", "")),
             oci_update_tag=oci_update_tag,
         )

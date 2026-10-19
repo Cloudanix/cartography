@@ -167,6 +167,8 @@ def transform_buckets(
             "approximate_size": merged.get("approximate-size"),
             "time_created": str(merged.get("time-created", "")),
             "region": region,
+            # Buckets may carry a synthetic id; the console addresses them by namespace + name.
+            "consolelink": utils.get_console_link("bucket", region=region, namespace=namespace, bucket_name=name),
             "freeform-tags": merged.get("freeform-tags") or {},
             "defined-tags": merged.get("defined-tags") or {},
         })
@@ -208,6 +210,7 @@ def load_buckets(
             b.approximate_count = bucket.approximate_count,
             b.approximate_size = bucket.approximate_size,
             b.region = bucket.region,
+            b.consolelink = bucket.consolelink,
             b.lastupdated = $oci_update_tag
         WITH b
         MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -321,6 +324,7 @@ def transform_block_volumes(
             "is_auto_tune_enabled": v.get("is-auto-tune-enabled"),
             "time_created": str(v.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("block_volume", region=region, ocid=v.get("id")),
         })
     return transformed
 
@@ -358,6 +362,7 @@ def load_block_volumes(
             vol.auto_tuned_vpus_per_gb = v.auto_tuned_vpus_per_gb,
             vol.is_auto_tune_enabled = v.is_auto_tune_enabled,
             vol.region = v.region,
+            vol.consolelink = v.consolelink,
             vol.lastupdated = $oci_update_tag
         WITH vol
         MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -486,6 +491,7 @@ def transform_boot_volumes(
             "source_id": source.get("id"),
             "time_created": str(v.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("boot_volume", region=region, ocid=v.get("id")),
         })
     return transformed
 
@@ -517,6 +523,7 @@ def load_boot_volumes(
             bv.source_type = v.source_type,
             bv.source_id = v.source_id,
             bv.region = v.region,
+            bv.consolelink = v.consolelink,
             bv.lastupdated = $oci_update_tag
         WITH bv
         MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -672,6 +679,10 @@ def transform_volume_backups(
             "time_request_received": str(b.get("time-request-received", "")),
             "region": region,
         })
+    for bk in out:
+        bk["consolelink"] = utils.get_console_link(
+            "volume_backup", region=region, ocid=bk["ocid"], source_kind=bk["source_kind"],
+        )
     return out
 
 
@@ -707,6 +718,7 @@ def load_volume_backups(
             b.expiration_time = bk.expiration_time,
             b.time_request_received = bk.time_request_received,
             b.region = bk.region,
+            b.consolelink = bk.consolelink,
             b.lastupdated = $oci_update_tag
     """
     load_graph_data(neo4j_session, ingest_backups, backups, oci_update_tag=oci_update_tag)
@@ -859,6 +871,7 @@ def transform_file_systems(
             "parent_file_system_id": fs.get("parent-file-system-id"),
             "time_created": str(fs.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("file_system", region=region, ocid=fs.get("id")),
         })
     return transformed
 
@@ -884,6 +897,7 @@ def transform_mount_targets(
             "nsg_ids": mt.get("nsg-ids") or [],
             "time_created": str(mt.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("mount_target", region=region, ocid=mt.get("id")),
         })
     return transformed
 
@@ -931,6 +945,7 @@ def load_file_systems(
             f.source_snapshot_id = fs.source_snapshot_id,
             f.parent_file_system_id = fs.parent_file_system_id,
             f.region = fs.region,
+            f.consolelink = fs.consolelink,
             f.lastupdated = $oci_update_tag
         WITH f
         MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -968,6 +983,7 @@ def load_mount_targets(
             m.private_ip_ids = mt.private_ip_ids,
             m.nsg_ids = mt.nsg_ids,
             m.region = mt.region,
+            m.consolelink = mt.consolelink,
             m.lastupdated = $oci_update_tag
         WITH m
         MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
