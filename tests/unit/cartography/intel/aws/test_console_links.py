@@ -50,6 +50,14 @@ def test_sso_link_opens_the_instance_region():
     assert link == f"https://{REGION}.console.aws.amazon.com/singlesignon/home?region={REGION}"
 
 
+def test_sso_link_is_none_for_a_malformed_arn():
+    # Raised IndexError / ARNTooShortError / InvalidPartitionError out of the user and group sync.
+    assert identitystore.get_sso_console_link("ssoins-1", REGION) is None
+    assert identitystore.get_sso_console_link("arn:aws:sso", REGION) is None
+    assert identitystore.get_sso_console_link("arn:bogus:sso:::instance/ssoins-1", REGION) is None
+    assert identitystore.get_sso_console_link(None, REGION) is None
+
+
 def test_eks_cluster_without_arn_gets_no_link():
     clusters = eks.transform([{"name": "c1"}])
 

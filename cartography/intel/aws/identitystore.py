@@ -7,6 +7,7 @@ from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
@@ -32,11 +33,22 @@ def get_boto3_client(boto3_session: boto3.session.Session, service: str, region:
     return client
 
 
-def get_sso_console_link(arn: str, region: str) -> str:
+def get_sso_console_link(arn: str, region: str) -> Optional[str]:
+    """
+    Identity Center console link for an instance, permission set, user or group ARN, or None when the ARN
+    is malformed; one bad ARN must not fail the user or group sync.
+
+    cloudconsolelink 4.2.0 has no per-principal page, so every user, group and permission set gets the
+    instance's region-scoped Identity Center home, not a deep link.
+    """
     # Identity Center ARNs carry no region; put the instance's region in so the link opens it there.
-    tokens = arn.split(":")
-    tokens[3] = region
-    return aws_console_link.get_console_link(arn=":".join(tokens))
+    tokens = (arn or "").split(":")
+    try:
+        tokens[3] = region
+        return aws_console_link.get_console_link(arn=":".join(tokens))
+    except (IndexError, ValueError) as e:
+        logger.debug("Skipping Identity Center console link for %s: %s", arn, e)
+        return None
 
 
 @timeit
