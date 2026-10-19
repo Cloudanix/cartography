@@ -12,6 +12,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from .util import get_botocore_config
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -107,7 +109,7 @@ def load_cidr_association_set(
 @timeit
 def load_ec2_vpcs(
     neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
-    update_tag: int,
+    update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     # https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-vpcs.html
     # {
@@ -161,7 +163,7 @@ def load_ec2_vpcs(
     for vpc in data:
         region = vpc.get('region', '')
         vpc_id = vpc["VpcId"]  # fail if not present
-        vpc_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:vpc/{vpc_id}"
+        vpc_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:vpc/{vpc_id}"
         consolelink = aws_console_link.get_console_link(arn=vpc_arn)
         vpc_name = vpc_id
         for tag in vpc.get("Tags", []):
@@ -225,7 +227,10 @@ def sync_vpc(
 
     logger.info(f"Total VPCs: {len(data)}")
 
-    load_ec2_vpcs(neo4j_session, data, current_aws_account_id, update_tag)
+    load_ec2_vpcs(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
     cleanup_ec2_vpcs(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

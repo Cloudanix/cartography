@@ -9,11 +9,13 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
-from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import load
+from cartography.client.core.tx import load_graph_data
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.util.arns import build_arn
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.models.aws.ec2.volumes import EBSVolumeSchema
 from cartography.util import aws_handle_regions
 from cartography.util import timeit
@@ -45,16 +47,18 @@ def get_volumes(boto3_session: boto3.session.Session, region: str) -> List[Dict]
     return volumes
 
 
-def transform_volumes(volumes: List[Dict[str, Any]], region: str, current_aws_account_id: str) -> List[Dict[str, Any]]:
+def transform_volumes(
+    volumes: List[Dict[str, Any]], region: str, current_aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict[str, Any]]:
     result = []
     for volume in volumes:
         attachments = volume.get('Attachments', [])
         active_attachments = [a for a in attachments if a['State'] == 'attached']
-        volume_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:volume/{volume['VolumeId']}"
         volume_id = volume['VolumeId']
+        volume_arn = build_arn('ec2', current_aws_account_id, 'volume', volume_id, region, partition)
         consolelink = aws_console_link.get_console_link(arn=volume_arn)
         raw_vol = ({
-            'Arn': build_arn('ec2', current_aws_account_id, 'volume', volume_id, region),
+            'Arn': volume_arn,
             'AvailabilityZone': volume.get('AvailabilityZone'),
             'CreateTime': volume.get('CreateTime'),
             'Encrypted': volume.get('Encrypted'),
@@ -87,6 +91,7 @@ def transform_volumes(volumes: List[Dict[str, Any]], region: str, current_aws_ac
 @timeit
 def load_volumes(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_volumes = """
     UNWIND $DictList as volume
@@ -116,7 +121,7 @@ def load_volumes(
     """
 
     for volume in data:
-        console_arn = f"arn:aws:ec2:{volume['region']}:{current_aws_account_id}:volume/{volume['VolumeId']}"
+        console_arn = f"arn:{partition}:ec2:{volume['region']}:{current_aws_account_id}:volume/{volume['VolumeId']}"
         volume['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
     load_graph_data(
         neo4j_session,
@@ -160,15 +165,16 @@ def sync_ebs_volumes(
 
     logger.info("Syncing volumes for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     transformed_data = []
     for region in regions:
         logger.debug("Syncing volumes for region '%s' in account '%s'.", region, current_aws_account_id)
         data = get_volumes(boto3_session, region)
-        transformed_data.extend(transform_volumes(data, region, current_aws_account_id))
+        transformed_data.extend(transform_volumes(data, region, current_aws_account_id, partition=partition))
 
     logger.info(f"Total EC2 Volumes: {len(transformed_data)}")
 
-    load_volumes(neo4j_session, transformed_data, current_aws_account_id, update_tag)
+    load_volumes(neo4j_session, transformed_data, current_aws_account_id, update_tag, partition=partition)
     load_volume_relationships(neo4j_session, transformed_data, current_aws_account_id, update_tag)
     cleanup_volumes(neo4j_session, common_job_parameters)
 

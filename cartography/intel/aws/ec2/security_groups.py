@@ -12,6 +12,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from .util import get_botocore_config
 from cartography.client.core.tx import load_graph_data
 from cartography.graph.job import GraphJob
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.models.aws.ec2.securitygroup_instance import EC2SecurityGroupInstanceSchema
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -173,7 +175,7 @@ def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dic
 @timeit
 def load_ec2_security_groupinfo(
     neo4j_session: neo4j.Session, data: List[Dict],
-    current_aws_account_id: str, update_tag: int,
+    current_aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_security_group = """
     UNWIND $DictList AS item
@@ -199,7 +201,7 @@ def load_ec2_security_groupinfo(
     for group in data:
         region = group.get('region', '')
         group_id = group["GroupId"]
-        group_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:security-group/{group_id}"
+        group_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:security-group/{group_id}"
 
         consolelink = ''
         try:
@@ -254,7 +256,10 @@ def sync_ec2_security_groupinfo(
 
     logger.info(f"Total EC2 Security Groups: {len(data)}")
 
-    load_ec2_security_groupinfo(neo4j_session, data, current_aws_account_id, update_tag)
+    load_ec2_security_groupinfo(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
     cleanup_ec2_security_groupinfo(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

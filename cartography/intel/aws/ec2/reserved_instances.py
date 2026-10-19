@@ -10,6 +10,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -35,7 +37,7 @@ def get_reserved_instances(boto3_session: boto3.session.Session, region: str) ->
 @timeit
 def load_reserved_instances(
         neo4j_session: neo4j.Session, data: List[Dict], region: str,
-        current_aws_account_id: str, update_tag: int,
+        current_aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_reserved_instances = """
     UNWIND $DictList as res
@@ -59,7 +61,10 @@ def load_reserved_instances(
     for r_instance in data:
         r_instance['Start'] = str(r_instance['Start'])
         r_instance['End'] = str(r_instance['End'])
-        r_instance['Arn'] = f"arn:aws:ec2:{region}:{current_aws_account_id}:reserved-instances/{r_instance['ReservedInstancesId']}"
+        r_instance['Arn'] = (
+            f"arn:{partition}:ec2:{region}:{current_aws_account_id}"
+            f":reserved-instances/{r_instance['ReservedInstancesId']}"
+        )
         r_instance['consolelink'] = aws_console_link.get_console_link(arn=r_instance['Arn'])
 
     load_graph_data(
@@ -91,13 +96,14 @@ def sync_ec2_reserved_instances(
 
     logger.info("Syncing EC2 Reserved Instances for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.debug("Syncing reserved instances for region '%s' in account '%s'.", region, current_aws_account_id)
         data = get_reserved_instances(boto3_session, region)
 
         logger.info(f"Total EBS Reserved Instances: {len(data)} for {region}")
 
-        load_reserved_instances(neo4j_session, data, region, current_aws_account_id, update_tag)
+        load_reserved_instances(neo4j_session, data, region, current_aws_account_id, update_tag, partition=partition)
     cleanup_reserved_instances(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

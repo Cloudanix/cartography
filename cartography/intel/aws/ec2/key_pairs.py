@@ -11,6 +11,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from .util import get_botocore_config
 from cartography.client.core.tx import run_write_query
 from cartography.graph.job import GraphJob
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.models.aws.ec2.keypairs import EC2KeyPairSchema
 from cartography.util import aws_handle_regions
 from cartography.util import timeit
@@ -43,7 +45,7 @@ def get_ec2_key_pairs(boto3_session: boto3.session.Session, region: str) -> List
 @timeit
 def load_ec2_key_pairs(
     neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
-    update_tag: int,
+    update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_key_pair = """
     MERGE (keypair:KeyPair:EC2KeyPair{arn: $ARN, id: $ARN})
@@ -62,7 +64,7 @@ def load_ec2_key_pairs(
         region = key_pair.get('region', '')
         key_name = key_pair["KeyName"]
         key_fingerprint = key_pair.get("KeyFingerprint")
-        key_pair_arn = f'arn:aws:ec2:{region}:{current_aws_account_id}:key-pair/{key_name}'
+        key_pair_arn = f'arn:{partition}:ec2:{region}:{current_aws_account_id}:key-pair/{key_name}'
 
         consolelink = aws_console_link.get_console_link(arn=key_pair_arn)
 
@@ -100,7 +102,10 @@ def sync_ec2_key_pairs(
 
     logger.info(f"Total EC2 Key Pairs: {len(data)}")
 
-    load_ec2_key_pairs(neo4j_session, data, current_aws_account_id, update_tag)
+    load_ec2_key_pairs(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
     cleanup_ec2_key_pairs(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

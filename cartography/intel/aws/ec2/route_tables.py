@@ -9,6 +9,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -76,12 +78,14 @@ def get_route_tables_data(boto3_session: boto3.session.Session, region: str) -> 
 @timeit
 def load_route_tables(
     neo4j_session: neo4j.Session, data: List[Dict], aws_account_id: str,
-    aws_update_tag: int,
+    aws_update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     routes: List[Dict] = []
     associations: List[Dict] = []
     for route_table in data:
-        route_table['arn'] = f"arn:aws:ec2:{route_table['region']}:{aws_account_id}:route-table/{route_table['RouteTableId']}"
+        route_table['arn'] = (
+            f"arn:{partition}:ec2:{route_table['region']}:{aws_account_id}:route-table/{route_table['RouteTableId']}"
+        )
         route_table['consolelink'] = aws_console_link.get_console_link(arn=route_table['arn'])
         associations.extend(route_table['Associations'])
         for route in route_table['Routes']:
@@ -216,7 +220,10 @@ def sync_route_tables(
 
     logger.info(f"Total route tables: {len(data)}")
 
-    load_route_tables(neo4j_session, data, current_aws_account_id, update_tag)
+    load_route_tables(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
     cleanup_route_tables(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

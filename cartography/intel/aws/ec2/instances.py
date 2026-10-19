@@ -13,13 +13,15 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
-from cartography.client.core.tx import load
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.ssm import get_instance_information
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.models.aws.ec2.instances import EC2InstanceSchema
 from cartography.models.aws.ec2.keypairs import EC2KeyPairSchema
 from cartography.models.aws.ec2.networkinterface_instance import EC2NetworkInterfaceInstanceSchema
@@ -154,6 +156,7 @@ def transform_ec2_instances(
     reservations: List[Dict[str, Any]],
     region: str,
     current_aws_account_id: str,
+    partition: str = DEFAULT_PARTITION,
 ) -> Ec2Data:
     reservation_list = []
     instance_list = []
@@ -179,7 +182,7 @@ def transform_ec2_instances(
                 instance.get("NetworkInterfaces") or [{}]
             )[0].get("Association", {}).get("IpOwnerId")
             is_static_ip = False if ip_owner_id == "amazon" else True if ip_owner_id else None
-            InstanceArn = f"arn:aws:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
+            InstanceArn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
             launch_time = instance.get("LaunchTime")
             launch_time_unix = str(time.mktime(launch_time.timetuple())) if launch_time else None
             # user_data = get_instance_user_data(boto3_session, region, instance_id)
@@ -277,7 +280,7 @@ def transform_ec2_instances(
 
             if instance.get("KeyName"):
                 key_name = instance["KeyName"]
-                key_pair_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:key-pair/{key_name}"
+                key_pair_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:key-pair/{key_name}"
                 keypair_list.append(
                     {
                         "KeyPairArn": key_pair_arn,
@@ -693,10 +696,13 @@ def sync_ec2_instances(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     tic = time.perf_counter()
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.info("Syncing EC2 instances for region '%s' in account '%s'.", region, current_aws_account_id)
         reservations = get_ec2_instances(boto3_session, region)
-        ec2_data = transform_ec2_instances(boto3_session, reservations, region, current_aws_account_id)
+        ec2_data = transform_ec2_instances(
+            boto3_session, reservations, region, current_aws_account_id, partition=partition,
+        )
         # DescribeInstanceInformation errors on terminated/shutting-down IDs (InvalidInstanceId).
         instance_ids = [
             inst["InstanceId"]

@@ -10,6 +10,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
 from cartography.client.core.tx import run_write_query
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -148,7 +150,7 @@ def _attach_shared_transit_gateway(
 @timeit
 def load_tgw_attachments(
     neo4j_session: neo4j.Session, data: List[Dict], region: str, current_aws_account_id: str,
-    update_tag: int,
+    update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_transit_gateway = """
     MERGE (tgwa:AWSTransitGatewayAttachment{id: $TgwAttachmentId})
@@ -175,7 +177,7 @@ def load_tgw_attachments(
 
     for tgwa in data:
         tgwa_id = tgwa["TransitGatewayAttachmentId"]
-        tgwa_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:transit-gateway-attachment/{tgwa_id}"
+        tgwa_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:transit-gateway-attachment/{tgwa_id}"
 
         run_write_query(
             neo4j_session,
@@ -260,6 +262,7 @@ def sync_transit_gateways(
     tic = time.perf_counter()
 
     logger.info("Syncing EC2 Transit Gateways for account '%s', at %s.", current_aws_account_id, tic)
+    partition = get_partition_from_params(common_job_parameters)
 
     for region in regions:
         logger.info("Syncing AWS Transit Gateways for region '%s' in account '%s'.", region, current_aws_account_id)
@@ -277,7 +280,7 @@ def sync_transit_gateways(
         tgw_vpc_attachments = get_tgw_vpc_attachments(boto3_session, region)
         load_tgw_attachments(
             neo4j_session, tgw_attachments + tgw_vpc_attachments,
-            region, current_aws_account_id, update_tag,
+            region, current_aws_account_id, update_tag, partition=partition,
         )
     cleanup_transit_gateways(neo4j_session, common_job_parameters)
 
