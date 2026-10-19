@@ -61,6 +61,16 @@ Deliberately not fixed here (not link bugs; separate PRs):
 Links still pointing at a list/parent page (no confident deep URL): Lambda layers, regional GCP URL maps,
 GCP public IPs, Artifact Registry packages, Azure container repositories/images (never written in practice).
 
+Shared links, not deep links (cloudconsolelink 4.2.0 has no per-principal page). Do not treat these
+`consolelink` values as identifying the node:
+- AWS Identity Center user, group and permission set: every one stores the instance's region-scoped
+  Identity Center home (`singlesignon/home?region=`). A library deep link reaches them only once the ARN
+  resource type (`{InstanceArn}/user/{id}` parses as `instance`) matches a template.
+- Bitbucket member: the workspace user directory (`<workspace>/workspace/settings/user-directory`).
+- Azure DevOps user: the organization users page (`<org>/_settings/users`).
+- AWS inline policy: the owning IAM principal's page. Identity Center permission-set policies get no link.
+- AWS flow log: the watched VPC, subnet or ENI; transit gateway flow logs get no link.
+
 ## Out of scope
 
 Kubernetes and DigitalOcean syncs are disabled in `cartography/sync.py`; k8s nodes lack cloud/account/region so no console link is buildable.
