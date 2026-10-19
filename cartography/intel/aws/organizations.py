@@ -8,6 +8,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import run_write_query
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -143,8 +144,9 @@ def load_aws_accounts(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UPDATE_TAG;
     """
+    partition = get_partition_from_params(common_job_parameters)
     for account_name, account_id in aws_accounts.items():
-        root_arn = f'arn:aws:iam::{account_id}:root'
+        root_arn = f'arn:{partition}:iam::{account_id}:root'
 
         if not organization.get("IsCloudanixGenerated"):
             org_id = f"{common_job_parameters['WORKSPACE_ID']}/{organization.get('Id')}"

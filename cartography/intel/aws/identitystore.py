@@ -16,6 +16,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.iam import load_policy_data
 from cartography.intel.aws.iam import transform_policy_data
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -394,6 +395,7 @@ def load_identity_center_account_assignments(
                         PolicyType.inline.value,
                         current_aws_account_id,
                         update_tag,
+                        get_partition_from_params(common_job_parameters),
                     )
                 loaded_permissions_sets.append(permissions_set["PermissionSetArn"])
 
@@ -558,7 +560,10 @@ def sync_identity_center_permissions_sets(
     transform_policy_data(unloaded_managed_policies, PolicyType.managed.value, current_aws_account_id)
     load_policy_data(neo4j_session, unloaded_managed_policies, PolicyType.managed.value, current_aws_account_id, aws_update_tag)
     transform_policy_data(unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    load_policy_data(
+        neo4j_session, unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag,
+        get_partition_from_params(common_job_parameters),
+    )
 
 
 @timeit

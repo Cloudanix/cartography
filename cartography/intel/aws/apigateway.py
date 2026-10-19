@@ -19,6 +19,8 @@ from policyuniverse.policy import Policy
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
@@ -28,13 +30,13 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
-def build_apigateway_arn(region: str, path: str) -> str:
+def build_apigateway_arn(region: str, path: str, partition: str = DEFAULT_PARTITION) -> str:
     """
     Build an API Gateway ARN in AWS's documented form: no account id and a path with a
     leading slash, e.g. arn:aws:apigateway:us-east-1::/restapis/a1b2c3.
     https://docs.aws.amazon.com/apigateway/latest/developerguide/arn-format-reference.html
     """
-    return f"arn:aws:apigateway:{region}::/{path}"
+    return f"arn:{partition}:apigateway:{region}::/{path}"
 
 
 def get_apigateway_console_link(arn: str) -> str:
@@ -62,11 +64,15 @@ def get_client_certificates(boto3_session: boto3.session.Session, region: str) -
 
 
 @timeit
-def transform_client_certificates(certs: List[Dict], region: str, account_id: str) -> List[Dict]:
+def transform_client_certificates(
+    certs: List[Dict], region: str, account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     certificates = []
     for certificate in certs:
         certificate['region'] = region
-        certificate['arn'] = build_apigateway_arn(region, f"clientcertificates/{certificate['clientCertificateId']}")
+        certificate['arn'] = build_apigateway_arn(
+            region, f"clientcertificates/{certificate['clientCertificateId']}", partition,
+        )
         certificate['consolelink'] = get_apigateway_console_link(certificate['arn'])
         certificates.append(certificate)
 
@@ -117,10 +123,11 @@ def sync_client_certificates(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    partition = get_partition_from_params(common_job_parameters)
     data = []
     for region in regions:
         certs = get_client_certificates(boto3_session, region)
-        data.extend(transform_client_certificates(certs, region, current_aws_account_id))
+        data.extend(transform_client_certificates(certs, region, current_aws_account_id, partition))
 
     logger.info(f"Total API Gateway Certificates: {len(data)}")
 
@@ -154,6 +161,7 @@ def transform_apigateway_rest_apis(apis):
 @aws_handle_regions
 def get_rest_api_details(
         boto3_session: boto3.session.Session, rest_apis: List[Dict], aws_account_id: str,
+        partition: str = DEFAULT_PARTITION,
 ) -> Generator[Any, Any, Any]:
     """
     Iterates over all API Gateway REST APIs.
@@ -163,7 +171,7 @@ def get_rest_api_details(
         client = boto3_session.client('apigateway', region_name=api['region'], config=get_botocore_config())
         stages = get_rest_api_stages(api, client)
         cert = get_rest_api_client_certificate(stages, client)
-        certificate = transform_rest_api_client_certificate(cert, api['region'], aws_account_id)
+        certificate = transform_rest_api_client_certificate(cert, api['region'], aws_account_id, partition)
         resources = get_rest_api_resources(api, client)
         policy = get_rest_api_policy(api, client)
         yield api['id'], stages, certificate, resources, policy, api['region']
@@ -206,7 +214,9 @@ def get_rest_api_client_certificate(stages: Dict, client: botocore.client.BaseCl
 
 
 @timeit
-def transform_rest_api_client_certificate(certs: List[Dict], api_region: str, aws_account_id: str) -> List[Dict]:
+def transform_rest_api_client_certificate(
+    certs: List[Dict], api_region: str, aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     certificates = []
 
     # neo4j does not accept datetime objects and values. This loop is used to convert date values to string.
@@ -214,7 +224,9 @@ def transform_rest_api_client_certificate(certs: List[Dict], api_region: str, aw
         certificate['region'] = api_region
         certificate['createdDate'] = str(certificate['createdDate'])
         certificate['expirationDate'] = str(certificate.get('expirationDate'))
-        certificate['arn'] = build_apigateway_arn(api_region, f"clientcertificates/{certificate['clientCertificateId']}")
+        certificate['arn'] = build_apigateway_arn(
+            api_region, f"clientcertificates/{certificate['clientCertificateId']}", partition,
+        )
         certificate['consolelink'] = get_apigateway_console_link(certificate['arn'])
 
         certificates.append(certificate)
@@ -248,7 +260,7 @@ def get_rest_api_policy(api: Dict, client: botocore.client.BaseClient) -> List[A
 @timeit
 def load_apigateway_rest_apis(
     neo4j_session: neo4j.Session, rest_apis: List[Dict], current_aws_account_id: str,
-    aws_update_tag: int,
+    aws_update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the details of API Gateway REST APIs into neo4j.
@@ -279,7 +291,7 @@ def load_apigateway_rest_apis(
     for api in rest_apis:
         region = api['region']
         api['createdDate'] = str(api['createdDate']) if 'createdDate' in api else None
-        api['Arn'] = build_apigateway_arn(region, f"restapis/{api['id']}")
+        api['Arn'] = build_apigateway_arn(region, f"restapis/{api['id']}", partition)
         api['consolelink'] = get_apigateway_console_link(api['Arn'])
 
     load_graph_data(
@@ -330,7 +342,7 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
 
 @timeit
 def _load_apigateway_stages(
-        neo4j_session: neo4j.Session, stages: List, update_tag: int,
+        neo4j_session: neo4j.Session, stages: List, update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the Stage resource details into neo4j.
@@ -361,7 +373,9 @@ def _load_apigateway_stages(
     # these values to string.
     for stage in stages:
         stage['createdDate'] = str(stage['createdDate'])
-        stage['arn'] = build_apigateway_arn(stage['region'], f"restapis/{stage['apiId']}/stages/{stage['stageName']}")
+        stage['arn'] = build_apigateway_arn(
+            stage['region'], f"restapis/{stage['apiId']}/stages/{stage['stageName']}", partition,
+        )
         stage['consolelink'] = get_apigateway_console_link(stage['arn'])
 
     load_graph_data(
@@ -405,7 +419,7 @@ def _load_apigateway_certificates(
 
 @timeit
 def _load_apigateway_resources(
-        neo4j_session: neo4j.Session, resources: List, update_tag: int,
+        neo4j_session: neo4j.Session, resources: List, update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the API Gateway Resource details into neo4j.
@@ -430,7 +444,7 @@ def _load_apigateway_resources(
 
     for resource in resources:
         resource['arn'] = build_apigateway_arn(
-            resource['region'], f"restapis/{resource['apiId']}/resources/{resource['id']}",
+            resource['region'], f"restapis/{resource['apiId']}/resources/{resource['id']}", partition,
         )
         resource['consolelink'] = get_apigateway_console_link(resource['arn'])
 
@@ -488,10 +502,11 @@ def load_rest_api_details(
         common_job_parameters,
     )
 
+    partition = get_partition_from_params(common_job_parameters)
     _load_apigateway_policies(neo4j_session, policies, update_tag)
-    _load_apigateway_stages(neo4j_session, stages, update_tag)
+    _load_apigateway_stages(neo4j_session, stages, update_tag, partition)
     _load_apigateway_certificates(neo4j_session, certificates, update_tag)
-    _load_apigateway_resources(neo4j_session, resources, update_tag)
+    _load_apigateway_resources(neo4j_session, resources, update_tag, partition)
     _set_default_values(neo4j_session, aws_account_id)
 
 
@@ -537,9 +552,10 @@ def sync_apigateway_rest_apis(
 
     logger.info(f"Total API Gateway APIs: {len(data)}")
 
-    load_apigateway_rest_apis(neo4j_session, data, current_aws_account_id, aws_update_tag)
+    partition = get_partition_from_params(common_job_parameters)
+    load_apigateway_rest_apis(neo4j_session, data, current_aws_account_id, aws_update_tag, partition)
 
-    stages_certificate_resources = get_rest_api_details(boto3_session, data, current_aws_account_id)
+    stages_certificate_resources = get_rest_api_details(boto3_session, data, current_aws_account_id, partition)
 
     load_rest_api_details(
         neo4j_session, stages_certificate_resources, current_aws_account_id, aws_update_tag, common_job_parameters,

@@ -21,6 +21,8 @@ from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.permission_relationships import parse_statement_node
 from cartography.intel.aws.permission_relationships import principal_allowed_on_resource
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -1019,6 +1021,7 @@ def _load_policy_tx(
     principal_arn: str,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_policy = """
     MERGE (policy:AWSPolicy{id: $PolicyId})
@@ -1049,7 +1052,7 @@ def _load_policy_tx(
         """
 
     policy = policy_name.split("/")[-1]
-    policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
+    policy_arn = f"arn:{partition}:iam::{current_aws_account_id}:policy/{policy}"
     # Same rule as load_policy_data: an inline policy shows on its IAM principal's page.
     consolelink = aws_console_link.get_console_link(arn=principal_arn) if ":iam::" in principal_arn else None
 
@@ -1117,6 +1120,7 @@ def load_policy(
     principal_arn: str,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     neo4j_session.execute_write(
         _load_policy_tx,
@@ -1126,6 +1130,7 @@ def load_policy(
         principal_arn,
         current_aws_account_id,
         aws_update_tag,
+        partition,
     )
 
 
@@ -1272,6 +1277,7 @@ def load_policy_data(
     policy_type: str,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     policy_rows = []
     statement_rows = []
@@ -1280,7 +1286,8 @@ def load_policy_data(
         for policy_name, statements in policy_list.items():
             policy_id = transform_policy_id(current_aws_account_id, policy_type, policy_name)
             policy = policy_name.split("/")[-1]
-            policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
+            # Only inline policies store this arn (ON CREATE); managed ones keep the API's.
+            policy_arn = f"arn:{partition}:iam::{current_aws_account_id}:policy/{policy}"
             # Inline policies have no console page of their own; an IAM one shows on its principal's page.
             # An Identity Center permission set's inline policy has no IAM page, so it gets no link.
             is_iam_inline = policy_type == PolicyType.inline.value and ":iam::" in principal_arn
@@ -1326,7 +1333,10 @@ def sync_users(
         pass
 
     else:
-        sync_user_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+        sync_user_inline_policies(
+            boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag,
+            get_partition_from_params(common_job_parameters),
+        )
 
         sync_user_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
@@ -1360,10 +1370,13 @@ def sync_user_inline_policies(
     neo4j_session: neo4j.Session,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     policy_data = get_user_policy_data(boto3_session, data["Users"])
     transform_policy_data(policy_data, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    load_policy_data(
+        neo4j_session, policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag, partition,
+    )
 
 
 @timeit
@@ -1386,7 +1399,10 @@ def sync_groups(
         pass
 
     else:
-        sync_groups_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+        sync_groups_inline_policies(
+            boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag,
+            get_partition_from_params(common_job_parameters),
+        )
 
         sync_group_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
@@ -1419,10 +1435,13 @@ def sync_groups_inline_policies(
     neo4j_session: neo4j.Session,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     policy_data = get_group_policy_data(boto3_session, data["Groups"])
     transform_policy_data(policy_data, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    load_policy_data(
+        neo4j_session, policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag, partition,
+    )
 
 
 @timeit
@@ -1447,7 +1466,10 @@ def sync_roles(
         pass
 
     else:
-        sync_role_inline_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
+        sync_role_inline_policies(
+            current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag,
+            get_partition_from_params(common_job_parameters),
+        )
 
         sync_role_managed_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
 
@@ -1481,11 +1503,14 @@ def sync_role_inline_policies(
     data: Dict,
     neo4j_session: neo4j.Session,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     logger.info("Syncing IAM role inline policies for account '%s'.", current_aws_account_id)
     inline_policy_data = get_role_policy_data(boto3_session, data["Roles"])
     transform_policy_data(inline_policy_data, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, inline_policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    load_policy_data(
+        neo4j_session, inline_policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag, partition,
+    )
 
 
 @timeit
@@ -1523,13 +1548,14 @@ def sync_user_access_keys(
     query = "MATCH (user:AWSPrincipal)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ACCOUNT_ID}) WHERE user:AWSUser OR user:AWSServiceAccount return user.name as name"
     result = neo4j_session.execute_read(read_list_of_dicts_tx, query, AWS_ACCOUNT_ID=current_aws_account_id)
     usernames = [r["name"] for r in result]
+    partition = get_partition_from_params(common_job_parameters)
     for name in usernames:
         access_keys = get_account_access_key_data(boto3_session, name)
         if access_keys:
             consolelink = aws_console_link.get_console_link(
-                arn=f"arn:aws:iam::{current_aws_account_id}:access_keys/{name}",
+                arn=f"arn:{partition}:iam::{current_aws_account_id}:access_keys/{name}",
             )
-            account_access_keys = {f"arn:aws:iam::{current_aws_account_id}:user/{name}": access_keys}
+            account_access_keys = {f"arn:{partition}:iam::{current_aws_account_id}:user/{name}": access_keys}
             load_user_access_keys(neo4j_session, account_access_keys, aws_update_tag, consolelink)
     run_cleanup_job(
         "aws_import_account_access_key_cleanup.json",
