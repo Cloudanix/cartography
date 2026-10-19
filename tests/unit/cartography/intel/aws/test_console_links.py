@@ -18,6 +18,17 @@ def test_flow_log_links_the_watched_vpc():
     )
 
 
+def test_flow_log_on_a_transit_gateway_gets_no_link():
+    logs = cloudwatch.transform_flow_logs(
+        [{"FlowLogId": "fl-2", "ResourceId": "tgw-attach-1"}, {"FlowLogId": "fl-3", "ResourceId": "tgw-1"}],
+        ACCOUNT_ID,
+        REGION,
+    )
+
+    # No vcp-flow-log template exists, so a fallback would store the EC2 service home as the resource link.
+    assert [log["consolelink"] for log in logs] == [None, None]
+
+
 def test_event_rule_links_its_real_arn():
     arn = f"arn:aws:events:{REGION}:{ACCOUNT_ID}:rule/nightly"
     rules = cloudwatch.transform_rules([{"Name": "nightly", "Arn": arn}], REGION, ACCOUNT_ID)

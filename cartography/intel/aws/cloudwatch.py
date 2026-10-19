@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
@@ -488,12 +489,21 @@ def get_cloudwatch_flowlogs(boto3_session: boto3.session.Session, region: str) -
 FLOW_LOG_RESOURCE_TYPES = {"vpc-": "vpc", "subnet-": "subnet", "eni-": "network-interface"}
 
 
-def _flow_log_console_arn(flowlog: Dict, current_aws_account_id: str, region: str) -> str:
+def _flow_log_console_link(flowlog: Dict, current_aws_account_id: str, region: str) -> Optional[str]:
+    """
+    Link to the console page of the VPC, subnet or ENI the flow log watches, or None for any other
+    resource (transit gateway, attachment): cloudconsolelink has no page for those, and the synthetic
+    vcp-flow-log node id would only resolve to the EC2 service home.
+    """
+    # Assumes the watched resource is in this account and the aws partition: DescribeFlowLogs does not
+    # return the resource's owner. A shared VPC owned by another account, or GovCloud/China, will not open.
     resource_id = flowlog.get("ResourceId") or ""
     for prefix, resource_type in FLOW_LOG_RESOURCE_TYPES.items():
         if resource_id.startswith(prefix):
-            return f"arn:aws:ec2:{region}:{current_aws_account_id}:{resource_type}/{resource_id}"
-    return flowlog["arn"]
+            return aws_console_link.get_console_link(
+                arn=f"arn:aws:ec2:{region}:{current_aws_account_id}:{resource_type}/{resource_id}",
+            )
+    return None
 
 
 @timeit
@@ -502,9 +512,7 @@ def transform_flow_logs(logs: List[Dict], current_aws_account_id: str, region: s
     for flowlog in logs:
         # "vcp" typo is the node id (MERGE key); kept so existing nodes and findings keep their identity.
         flowlog["arn"] = f"arn:aws:ec2:{region}:{current_aws_account_id}:vcp-flow-log/{flowlog['FlowLogId']}"
-        flowlog["consolelink"] = aws_console_link.get_console_link(
-            arn=_flow_log_console_arn(flowlog, current_aws_account_id, region),
-        )
+        flowlog["consolelink"] = _flow_log_console_link(flowlog, current_aws_account_id, region)
         flowlog["region"] = region
         flowlogs.append(flowlog)
 
