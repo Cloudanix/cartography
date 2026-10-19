@@ -52,7 +52,7 @@ def transform_client_certificates(certs: List[Dict], region: str, account_id: st
     for certificate in certs:
         certificate['region'] = region
         console_arn = f"arn:aws:apigateway:{region}:{account_id}:clientcertificates/{certificate['clientCertificateId']}"
-        # certificate['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
+        certificate['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
         certificate['arn'] = console_arn
         certificates.append(certificate)
 
@@ -151,11 +151,6 @@ def get_rest_api_details(
         cert = get_rest_api_client_certificate(stages, client)
         certificate = transform_rest_api_client_certificate(cert, api['region'], aws_account_id)
         resources = get_rest_api_resources(api, client)
-        for resource in resources:
-            # console_arn = f"arn:aws:apigateway:{api['region']}::/{api['id']}"
-            # resource['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
-            resource['consolelink'] = ''
-
         policy = get_rest_api_policy(api, client)
         yield api['id'], stages, certificate, resources, policy, api['region']
 
@@ -206,7 +201,7 @@ def transform_rest_api_client_certificate(certs: List[Dict], api_region: str, aw
         certificate['createdDate'] = str(certificate['createdDate'])
         certificate['expirationDate'] = str(certificate.get('expirationDate'))
         certificate['arn'] = f"arn:aws:apigateway:{api_region}:{aws_account_id}:clientcertificates/{certificate['clientCertificateId']}"
-        # certificate['consolelink'] = aws_console_link.get_console_link(arn=certificate['arn'])
+        certificate['consolelink'] = aws_console_link.get_console_link(arn=certificate['arn'])
 
         certificates.append(certificate)
 
@@ -421,6 +416,7 @@ def _load_apigateway_resources(
 
     for resource in resources:
         resource['arn'] = f"arn:aws:apigateway:{resource['region']}::restapis/{resource['apiId']}/resources/{resource['id']}"
+        resource['consolelink'] = aws_console_link.get_console_link(arn=resource['arn'])
 
     load_graph_data(
         neo4j_session,

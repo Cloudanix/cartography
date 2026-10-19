@@ -280,6 +280,7 @@ def transform_policies_data(current_aws_account_id: str, policies: List[Dict]) -
     for policy in policies:
         policy["id"] = transform_policy_id(current_aws_account_id, PolicyType.managed.value, policy.get("PolicyName"))
         policy["managed_type"] = _aws_policy_managed_type(policy.get("Arn", ""))
+        policy["consolelink"] = aws_console_link.get_console_link(arn=policy["Arn"]) if policy.get("Arn") else None
     return policies
 
 
@@ -479,9 +480,9 @@ def load_users(
     UNWIND $DictList AS item
     MERGE (unode:AWSUser{arn: item.arn})
     ON CREATE SET unode:AWSPrincipal, unode.userid = item.userid, unode.firstseen = timestamp(),
-    unode.consolelink = item.consolelink,
     unode.createdate = item.createdate
     SET unode.name = item.username, unode.user_name = item.username,
+    unode.consolelink = item.consolelink,
     unode.path = item.path, unode.passwordlastused = item.passwordlastused,
     unode.region = 'global',
     unode.consoleloginenabled = item.consoleloginenabled,
@@ -530,9 +531,9 @@ def load_service_accounts(
     UNWIND $DictList AS item
     MERGE (sanode:AWSServiceAccount{arn: item.arn})
     ON CREATE SET sanode:AWSPrincipal, sanode.userid = item.userid, sanode.firstseen = timestamp(),
-    sanode.consolelink = item.consolelink,
     sanode.createdate = item.createdate
     SET sanode.name = item.username, sanode.user_name = item.username,
+    sanode.consolelink = item.consolelink,
     sanode.path = item.path, sanode.passwordlastused = item.passwordlastused,
     sanode.region = 'global',
     sanode.consoleloginenabled = item.consoleloginenabled,
@@ -612,6 +613,7 @@ def _load_policies_for_account_tx(
             p.default_version_id = policy.DefaultVersionId,
             p.is_attachable = policy.IsAttachable,
             p.region = $region,
+            p.consolelink = policy.consolelink,
             p.managed_type = coalesce(policy.managed_type, CASE WHEN policy.Arn STARTS WITH 'arn:aws:iam::aws:policy/' THEN 'predefined' ELSE 'custom' END),
             p.lastupdated = $update_tag
         WITH p
@@ -712,9 +714,9 @@ def load_roles(
     MERGE (rnode:AWSRole{arn: item.arn})
     ON CREATE SET rnode:AWSPrincipal, rnode.roleid = item.roleid, rnode.firstseen = timestamp(),
     rnode.region = 'global',
-    rnode.consolelink = item.consolelink,
     rnode.createdate = item.createdate
     SET rnode.name = item.rolename, rnode.path = item.path,
+    rnode.consolelink = item.consolelink,
     rnode.lastuseddate = item.lastuseddate, rnode.lastusedregion = item.lastusedregion,
     rnode.is_service_role = item.is_service_role,
     rnode.is_sso_reserved_role = item.is_sso_reserved_role,
@@ -932,9 +934,9 @@ def load_user_access_keys(
     ON CREATE SET key.firstseen = timestamp(),
     key.region = 'global',
     key.createdate = item.createdate,
-    key.rotatedate = item.createdate,
-    key.consolelink = $consolelink
+    key.rotatedate = item.createdate
     SET key.status = item.status,
+    key.consolelink = $consolelink,
     key.keyage = item.keyage,
     key.lastuseddate = item.lastuseddate,
     key.lastupdated = $aws_update_tag
@@ -1192,8 +1194,8 @@ def _batch_load_policies(
         policy.region = 'global',
         policy.name = item.policy_name,
         policy.arn = item.policy_arn,
-        policy.managed_type = $ManagedType,
-        policy.consolelink = item.consolelink
+        policy.managed_type = $ManagedType
+        SET policy.consolelink = item.consolelink
         """
 
     ingest_policy = f"""
@@ -1277,12 +1279,15 @@ def load_policy_data(
             policy_id = transform_policy_id(current_aws_account_id, policy_type, policy_name)
             policy = policy_name.split("/")[-1]
             policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
+            # Inline policies have no console page of their own; they show on the owning principal's page.
+            is_iam_inline = policy_type == PolicyType.inline.value and ":iam::" in principal_arn
+            link_arn = principal_arn if is_iam_inline else policy_arn
             policy_rows.append({
                 "policy_id": policy_id,
                 "policy_name": policy_name,
                 "principal_arn": principal_arn,
                 "policy_arn": policy_arn,
-                "consolelink": aws_console_link.get_console_link(arn=policy_arn),
+                "consolelink": aws_console_link.get_console_link(arn=link_arn),
             })
             statement_rows.append({"policy_id": policy_id, "statements": statements})
 

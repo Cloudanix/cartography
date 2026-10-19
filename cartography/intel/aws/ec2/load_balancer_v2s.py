@@ -204,7 +204,8 @@ def _load_lb_v2_listener_rows(neo4j_session: neo4j.Session, listener_rows: List[
         l.targetgrouparn = data.TargetGroupArn
         SET l.lastupdated = $update_tag,
         l.ssl_policy = data.SslPolicy,
-        l.arn = data.ListenerArn
+        l.arn = data.ListenerArn,
+        l.consolelink = elbv2.consolelink
         WITH l, elbv2
         MERGE (elbv2)-[r:ELBV2_LISTENER]->(l)
         ON CREATE SET r.firstseen = timestamp()

@@ -135,6 +135,7 @@ def _load_kms_key_aliases(neo4j_session: neo4j.Session, aliases: List[Dict], upd
     ON CREATE SET a.firstseen = timestamp(), a.targetkeyid = alias.TargetKeyId
     SET a.aliasname = alias.AliasName, a.lastupdated = $UpdateTag,
     a.region = alias.region,
+    a.consolelink = alias.consolelink,
     a.arn = alias.AliasArn
     WITH a, alias
     MATCH (kmskey:KMSKey{id: alias.TargetKeyId})
@@ -241,6 +242,7 @@ def load_kms_key_details(
         if len(alias) > 0:
             for ali in alias:
                 ali['region'] = region
+                ali['consolelink'] = aws_console_link.get_console_link(arn=ali['AliasArn'])
             aliases.extend(alias)
         if len(grants) > 0:
             for grant in grants:

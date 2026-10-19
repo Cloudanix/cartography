@@ -62,7 +62,9 @@ def load_emr_clusters(
 ) -> None:
     logger.info(f"Loading EMR {len(cluster_data)} clusters for region '{region}' into graph.")
     for cluster in cluster_data:
-        cluster['consolelink'] = aws_console_link.get_console_link(arn=cluster.get('ClusterArn', ''))
+        cluster['consolelink'] = (
+            aws_console_link.get_console_link(arn=cluster['ClusterArn']) if cluster.get('ClusterArn') else None
+        )
     load(
         neo4j_session,
         EMRClusterSchema(),

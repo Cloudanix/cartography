@@ -256,9 +256,8 @@ def load_ns_records(neo4j_session: neo4j.Session, records: List[Dict], zone_name
     MERGE (a:DNSRecord:AWSDNSRecord{id: record.id})
     ON CREATE SET a.firstseen = timestamp(), a.name = record.name,
     a.region = record.Region,
-    a.consolelink = $consolelink,
     a.type = record.type
-    SET a.lastupdated = $update_tag, a.value = record.name
+    SET a.lastupdated = $update_tag, a.value = record.name, a.consolelink = $consolelink
     WITH a,record
     MATCH (zone:AWSDNSZone{zoneid: record.zoneid})
     MERGE (a)-[r:MEMBER_OF_DNS_ZONE]->(zone)

@@ -82,10 +82,10 @@ def load_ecr_repositories(
         ON CREATE SET repo.firstseen = timestamp(),
             repo.arn = ecr_repo.repositoryArn,
             repo.name = ecr_repo.repositoryName,
-            repo.consolelink = ecr_repo.consolelink,
             repo.region = ecr_repo.region,
             repo.created_at = ecr_repo.createdAt
         SET repo.lastupdated = $aws_update_tag,
+            repo.consolelink = ecr_repo.consolelink,
             repo.uri = ecr_repo.repositoryUri
         WITH repo
 

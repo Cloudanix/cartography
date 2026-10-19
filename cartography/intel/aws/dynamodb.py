@@ -53,7 +53,10 @@ def transform_dynamodb_tables(dynamodb_tables: List, region: str, current_aws_ac
             'ProvisionedThroughputWriteCapacityUnits': table['Table']['ProvisionedThroughput']['WriteCapacityUnits'],
         })
         for gsi in table['Table'].get('GlobalSecondaryIndexes', []):
-            consolelink = aws_console_link.get_console_link(arn=f"arn:aws:dynamodb::{current_aws_account_id}:secondary_indexes/{table['Table']['TableName']}")
+            table_name = table['Table']['TableName']
+            consolelink = aws_console_link.get_console_link(
+                arn=f"arn:aws:dynamodb:{region}:{current_aws_account_id}:secondary_indexes/{table_name}",
+            )
             ddb_gsi_data.append({
                 'Arn': gsi['IndexArn'],
                 'TableArn': table['Table']['TableArn'],

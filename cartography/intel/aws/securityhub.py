@@ -69,7 +69,7 @@ def load_hub(
         region="global",
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
-        consolelink=aws_console_link.get_console_link(arn=data.get('HubArn', '')),
+        consolelink=aws_console_link.get_console_link(arn=data['HubArn']) if data.get('HubArn') else None,
     )
 
 

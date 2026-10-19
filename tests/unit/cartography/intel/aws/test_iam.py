@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 from cartography.intel.aws import iam
 
 SINGLE_STATEMENT = {
@@ -64,3 +66,15 @@ def test_transform_policies_data_sets_managed_type():
     result = iam.transform_policies_data("000000000000", policies)
     assert result[0]["managed_type"] == "predefined"
     assert result[1]["managed_type"] == "custom"
+    assert result[0]["consolelink"] == (
+        "https://console.aws.amazon.com/iam/home?#/policies/arn:aws:iam::aws:policy/AdministratorAccess"
+    )
+
+
+def test_load_policy_data_links_inline_policy_to_its_principal():
+    session = MagicMock()
+    role_arn = "arn:aws:iam::000000000000:role/app"
+    iam.load_policy_data(session, {role_arn: {"inline-pol": []}}, iam.PolicyType.inline.value, "000000000000", 1)
+
+    policy_row = session.execute_write.call_args_list[0].kwargs["DictList"][0]
+    assert policy_row["consolelink"] == iam.aws_console_link.get_console_link(arn=role_arn)

@@ -243,6 +243,7 @@ def get_elasticsearch_reserved_instances(client: botocore.client.BaseClient, reg
         for reserved_instance in reserved_instances:
             reserved_instance['arn'] = f"arn:aws:es:{region}:{current_aws_account_id}:reserved-instances/{reserved_instance['ReservedElasticsearchInstanceId']}"
             reserved_instance['region'] = region
+            reserved_instance['consolelink'] = aws_console_link.get_console_link(arn=reserved_instance['arn'])
 
         return reserved_instances
 
@@ -268,6 +269,7 @@ def _load_elasticsearch_reserved_instances_tx(tx: neo4j.Transaction, reserved_in
     SET instance.lastupdated = $aws_update_tag,
         instance.name = record.ReservedElasticsearchInstanceId,
         instance.region = record.region,
+        instance.consolelink = record.consolelink,
         instance.fixed_price = record.FixedPrice,
         instance.reserved_elasticsearch_instance_offering_id = record.ReservedElasticsearchInstanceOfferingId,
         instance.reservation_name = record.ReservationName,

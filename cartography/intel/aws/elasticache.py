@@ -52,6 +52,8 @@ def get_elasticache_clusters(boto3_session: boto3.session.Session, region: str) 
     for cluster in clusters:
         cluster['region'] = region
         cluster['consolelink'] = aws_console_link.get_console_link(arn=cluster['ARN'])
+        topic_arn = (cluster.get('NotificationConfiguration') or {}).get('TopicArn')
+        cluster['topic_consolelink'] = aws_console_link.get_console_link(arn=topic_arn) if topic_arn else None
     return clusters
 
 
@@ -83,7 +85,8 @@ def load_elasticache_clusters(
         ON CREATE SET topic.firstseen = timestamp(),
             topic.arn = elasticache_cluster.NotificationConfiguration.TopicArn
         SET topic.lastupdated = $aws_update_tag,
-            topic.status = elasticache_cluster.NotificationConfiguration.Status
+            topic.status = elasticache_cluster.NotificationConfiguration.Status,
+            topic.consolelink = elasticache_cluster.topic_consolelink
 
         MERGE (topic)-[r:CACHE_CLUSTER]->(cluster)
         ON CREATE SET r.firstseen = timestamp()

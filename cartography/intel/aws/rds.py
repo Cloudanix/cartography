@@ -85,6 +85,7 @@ def get_rds_reserved_db_instances_data(boto3_session: boto3.session.Session, reg
     for instance in instances:
         instance['region'] = region
         instance['name'] = instance['ReservedDBInstanceArn'].split(':')[-1]
+        instance['consolelink'] = aws_console_link.get_console_link(arn=instance['ReservedDBInstanceArn'])
     return instances
 
 
@@ -121,6 +122,7 @@ def _load_rds_reserved_db_instances_tx(
             instance.state = rds_instance.State,
             instance.lease_id = rds_instance.LeaseId,
             instance.region = rds_instance.region,
+            instance.consolelink = rds_instance.consolelink,
             instance.lastupdated = $aws_update_tag
         WITH instance
         MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -772,7 +774,8 @@ def _attach_ec2_subnet_groups(
             sng.description = rds_sng.DBSubnetGroupDescription,
             sng.status = rds_sng.DBSubnetGroupStatus,
             sng.lastupdated = $aws_update_tag,
-            sng.arn = rds_sng.arn
+            sng.arn = rds_sng.arn,
+            sng.consolelink = rds_sng.consolelink
         WITH sng, rds_sng.instance_arn AS instance_arn
         MATCH (rds:RDSInstance{id: instance_arn})
         MERGE (rds)-[r:MEMBER_OF_DB_SUBNET_GROUP]->(sng)
@@ -784,6 +787,7 @@ def _attach_ec2_subnet_groups(
         region = instance['region']
         db_sng = instance['DBSubnetGroup']
         db_sng['arn'] = _get_db_subnet_group_arn(region, current_aws_account_id, db_sng['DBSubnetGroupName'])
+        db_sng['consolelink'] = aws_console_link.get_console_link(arn=db_sng['arn'])
         db_sng['instance_arn'] = instance['DBInstanceArn']
         db_sng['region'] = region
         db_sngs.append(db_sng)
