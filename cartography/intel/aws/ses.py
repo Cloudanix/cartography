@@ -131,9 +131,10 @@ def sync(
 
     logger.info("Syncing SES for account '%s', at %s.", current_aws_account_id, tic)
 
-    ses_enabled_regions = ["af-south-1", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ca-central-1", "eu-central-1", "eu-north-1", "eu-south-1", "eu-west-1", "eu-west-2", "eu-west-3", "il-central-1", "me-south-1", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"]
-
     partition = get_partition_from_params(common_job_parameters)
+    # SES runs in a subset of regions per partition (none in aws-cn); botocore's bundled
+    # endpoint data lists them without an API call.
+    ses_enabled_regions = set(boto3_session.get_available_regions('ses', partition_name=partition))
     identities = []
     for region in regions:
         logger.info("Syncing SES for region '%s' in account '%s'.", region, current_aws_account_id)
