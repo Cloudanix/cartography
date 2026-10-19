@@ -629,11 +629,15 @@ def sync_region_subscriptions(
     logger.debug("Syncing IAM region subscriptions for account '%s'.", current_tenancy_id)
     data = get_region_subscriptions_list_data(iam, current_tenancy_id)
     load_region_subscriptions(neo4j_session, data["RegionSubscriptions"], current_tenancy_id, oci_update_tag)
-    return next(
+    home_region = next(
         (r["region-name"] for r in data["RegionSubscriptions"] if r.get("is-home-region")),
         "",
     )
-    # run_cleanup_job('oci_import_region_subscriptions_cleanup.json', neo4j_session, common_job_parameters)
+    if not home_region:
+        logger.warning(
+            "No home region subscription for tenancy '%s'; OCI policies get no console link.", current_tenancy_id,
+        )
+    return home_region
 
 
 def sync(

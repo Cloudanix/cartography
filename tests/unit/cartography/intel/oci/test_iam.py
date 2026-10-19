@@ -206,6 +206,16 @@ def test_sync_region_subscriptions_returns_home_region(mock_get, mock_load):
     mock_load.assert_called_once()
 
 
+@patch.object(iam, "load_region_subscriptions")
+@patch.object(iam, "get_region_subscriptions_list_data")
+def test_sync_region_subscriptions_warns_without_a_home_region(mock_get, mock_load, caplog):
+    mock_get.return_value = {"RegionSubscriptions": [{"region-name": "us-ashburn-1", "is-home-region": False}]}
+
+    with caplog.at_level("WARNING", logger=iam.__name__):
+        assert iam.sync_region_subscriptions(MagicMock(), MagicMock(), "ocid1.tenancy.oc1..a", 1, {}) == ""
+    assert "No home region subscription" in caplog.text
+
+
 @patch.object(iam, "load_graph_data")
 def test_load_policies_sets_home_region_console_link(mock_load_graph_data):
     policy = {
