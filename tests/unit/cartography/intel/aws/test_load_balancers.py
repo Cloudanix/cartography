@@ -39,6 +39,8 @@ class TestLoadLoadBalancers:
 
         assert len(lb_call.kwargs["DictList"]) == 2
         assert lb_call.kwargs["DictList"][0]["arn"].endswith(f"loadbalancer/{ELB['DNSName']}")
+        assert lb_call.kwargs["DictList"][0]["consolelink"].startswith("https://us-east-1.console.aws.amazon.com/ec2/")
+        assert "elb.consolelink = item.consolelink" in lb_call.args[1]
         assert len(subnet_call.kwargs["DictList"]) == 4  # 2 subnets x 2 lbs
         assert len(sg_call.kwargs["DictList"]) == 2
         assert source_sg_call.kwargs["DictList"][0]["group_name"] == "default"
@@ -82,8 +84,10 @@ ELBV2 = {
     "SecurityGroups": ["sg-1"],
     "Listeners": [{"ListenerArn": "arn:listener/1", "Port": 443, "Protocol": "HTTPS"}],
     "TargetGroups": [
-        {"TargetType": "instance", "TargetGroupArn": "arn:tg/1", "Port": 8080, "Protocol": "HTTP",
-         "Targets": ["i-1", "i-2"]},
+        {
+            "TargetType": "instance", "TargetGroupArn": "arn:tg/1", "Port": 8080, "Protocol": "HTTP",
+            "Targets": ["i-1", "i-2"],
+        },
         {"TargetType": "ip", "TargetGroupArn": "arn:tg/2", "Targets": ["10.0.0.1"]},
     ],
 }
@@ -102,6 +106,8 @@ class TestLoadLoadBalancerV2s:
         assert len(subnet_call.kwargs["DictList"]) == 4
         assert len(sg_call.kwargs["DictList"]) == 2
         assert len(listener_call.kwargs["DictList"]) == 2
+        # listeners have no console page; they reuse their load balancer's link
+        assert "l.consolelink = elbv2.consolelink" in listener_call.args[1]
         # non-instance target groups are skipped, exactly as before
         instance_rows = instance_call.kwargs["DictList"]
         assert len(instance_rows) == 4

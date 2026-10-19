@@ -33,7 +33,7 @@ setup(
     },
     dependency_links=[],
     install_requires=[
-        "cloudconsolelink>=4.0.1",
+        "cloudconsolelink>=4.2.0",
         "backoff>=2.1.2",
         "boto3>=1.15.1",
         "botocore>=1.18.1",

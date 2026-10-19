@@ -48,9 +48,9 @@ def load_load_balancer_listeners(
         MERGE (l:Endpoint:ELBListener{id: elb.id + toString(data.Listener.LoadBalancerPort) +
                 toString(data.Listener.Protocol)})
         ON CREATE SET l.port = data.Listener.LoadBalancerPort, l.protocol = data.Listener.Protocol,
-        l.consolelink = item.consolelink,
         l.firstseen = timestamp()
-        SET l.instance_port = data.Listener.InstancePort, l.instance_protocol = data.Listener.InstanceProtocol,
+        SET l.consolelink = item.consolelink,
+        l.instance_port = data.Listener.InstancePort, l.instance_protocol = data.Listener.InstanceProtocol,
         l.policy_names = data.PolicyNames,
         l.lastupdated = $update_tag
         WITH l, elb
@@ -87,7 +87,7 @@ def load_load_balancers(
     ON CREATE SET elb.firstseen = timestamp(), elb.createdtime = item.createdtime
     SET elb.lastupdated = $update_tag, elb.name = item.name, elb.dnsname = item.id,
     elb.canonicalhostedzonename = item.hosted_zone_name, elb.canonicalhostedzonenameid = item.hosted_zone_name_id,
-    elb.scheme = item.scheme, elb.region = item.region, elb.arn = item.arn
+    elb.scheme = item.scheme, elb.region = item.region, elb.arn = item.arn, elb.consolelink = item.consolelink
     WITH elb
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(elb)
@@ -145,6 +145,7 @@ def load_load_balancers(
             "scheme": lb.get("Scheme", ""),
             "region": region,
             "arn": load_balancer_arn,
+            "consolelink": consolelink,
         })
         subnet_rows.extend(
             {"load_balancer_id": load_balancer_id, "subnet_id": subnet_id}

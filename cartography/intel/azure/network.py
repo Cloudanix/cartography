@@ -7,15 +7,14 @@ from typing import List
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.network import NetworkManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def load_networks(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
@@ -180,9 +179,7 @@ def get_networks_list(client: NetworkManagementClient, regions: list, common_job
         network_data = []
         for network in networks_list:
             network['resource_group'] = get_azure_resource_group_name(network.get('id'))
-            network['consolelink'] = azure_console_link.get_console_link(
-                id=network['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            network['consolelink'] = safe_console_link(network['id'], common_job_parameters)
             network['isDefault'] = False  # since in Azure all the VPCs are created by the user and no defaults exist
             if regions is None:
                 network_data.append(network)
@@ -207,7 +204,7 @@ def _load_networks_tx(tx: neo4j.Transaction, subscription_id: str, networks_list
     n.resourcegroup = network.resource_group
     SET n.lastupdated = $update_tag,
     n.name = network.name,
-    n.consolelink = network.consolelink,
+    n.consolelink = coalesce(network.consolelink, n.consolelink),
     n.resource_guid = network.resource_guid,
     n.provisioning_state=network.provisioning_state,
     n.enable_ddos_protection=network.enable_ddos_protection,
@@ -288,9 +285,7 @@ def get_networks_subnets_list(networks_list: List[Dict], client: NetworkManageme
                 subnet['type'] = "Microsoft.Network/Subnets"
                 subnet['location'] = network.get('location', 'global')
                 subnet['network_security_group_id'] = subnet.get('network_security_group', {}).get('id', None)
-                subnet['consolelink'] = azure_console_link.get_console_link(
-                    id=subnet['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                subnet['consolelink'] = safe_console_link(subnet['id'], common_job_parameters)
                 subnet['isDefault'] = False  # subnets in Azure are created by user and not by default
             networks_subnets_list.extend(subnets_list)
         return networks_subnets_list
@@ -314,7 +309,7 @@ def _load_networks_subnets_tx(
     SET n.name = subnet.name,
     n.lastupdated = $update_tag,
     n.region= subnet.location,
-    n.consolelink = subnet.consolelink,
+    n.consolelink = coalesce(subnet.consolelink, n.consolelink),
     n.resource_group_name=subnet.resource_group,
     n.private_endpoint_network_policies=subnet.private_endpoint_network_policies,
     n.private_link_service_network_policies=subnet.private_link_service_network_policies,
@@ -385,9 +380,7 @@ def get_network_routetables_list(client: NetworkManagementClient, regions: list,
         tables_data = []
         for routetable in network_routetables_list:
             routetable['resource_group'] = get_azure_resource_group_name(routetable.get('id'))
-            routetable['consolelink'] = azure_console_link.get_console_link(
-                id=routetable['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            routetable['consolelink'] = safe_console_link(routetable['id'], common_job_parameters)
             routetable['isDefault'] = False
             if regions is None:
                 tables_data.append(routetable)
@@ -414,7 +407,7 @@ def _load_network_routetables_tx(
     n.resourcegroup = routetable.resource_group
     SET n.lastupdated = $update_tag,
     n.name = routetable.name,
-    n.consolelink = routetable.consolelink,
+    n.consolelink = coalesce(routetable.consolelink, n.consolelink),
     n.etag=routetable.etag,
     n.is_default=routetable.isDefault
     WITH n
@@ -462,7 +455,8 @@ def _load_network_bastion_hosts_tx(
         n.location = bastion_host.location,
         n.region = bastion_host.location,
         n.dns_name = bastion_host.dns_name
-        SET n.lastupdated = $update_tag
+        SET n.lastupdated = $update_tag,
+        n.consolelink = coalesce(bastion_host.consolelink, n.consolelink)
         WITH n
         MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
         MERGE (owner)-[r:RESOURCE]->(n)
@@ -551,9 +545,7 @@ def get_network_bastion_list(client: NetworkManagementClient, regions: list, com
                 bastion_host['subnets'].append(
                     {"subnet_id": ip_conf.get('subnet', {}).get('id', None)},
                 )
-            bastion_host['consolelink'] = azure_console_link.get_console_link(
-                id=bastion_host['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            bastion_host['consolelink'] = safe_console_link(bastion_host['id'], common_job_parameters)
             if regions is None:
                 data.append(bastion_host)
             else:
@@ -596,9 +588,7 @@ def get_network_routes_list(network_routetables_list: List[Dict], client: Networ
                 route['resource_group'] = get_azure_resource_group_name(route.get('id'))
                 route['routetable_id'] = route['id'][:route['id'].index("/routes")]
                 route['location'] = routetable.get('location', 'global')
-                route['consolelink'] = azure_console_link.get_console_link(
-                    id=route['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                route['consolelink'] = safe_console_link(route['id'], common_job_parameters)
             network_routes_list.extend(routes_list)
         return network_routes_list
 
@@ -621,7 +611,7 @@ def _load_network_routes_tx(
     n.region = route.location,
     n.address_prefix = route.address_prefix,
     n.next_hop_type = route.next_hop_type,
-    n.consolelink = route.consolelink,
+    n.consolelink = coalesce(route.consolelink, n.consolelink),
     n.lastupdated = $azure_update_tag,
     n.etag=route.etag
     WITH n, route
@@ -678,9 +668,7 @@ def get_network_security_groups_list(client: NetworkManagementClient, regions: l
         group_list = []
         for network in network_security_groups_list:
             network['resource_group'] = get_azure_resource_group_name(network.get('id'))
-            network['consolelink'] = azure_console_link.get_console_link(
-                id=network['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            network['consolelink'] = safe_console_link(network['id'], common_job_parameters)
             network['isDefault'] = False  # SGs are created by users and not created by default
             if regions is None:
                 group_list.append(network)
@@ -704,9 +692,8 @@ def _load_network_security_groups_tx(
     n.type = network.type,
     n.location = network.location,
     n.region = network.location,
-    n.consolelink = network.consolelink,
     n.resourcegroup = network.resource_group
-    SET n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(network.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = network.name,
     n.etag=network.etag,
     n.is_default=network.isDefault
@@ -779,9 +766,7 @@ def get_network_nat_gateway(client: NetworkManagementClient, regions: list, comm
         group_list = []
         for network in nat_gateways_list:
             network['resource_group'] = get_azure_resource_group_name(network.get('id'))
-            network['consolelink'] = azure_console_link.get_console_link(
-                id=network['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            network['consolelink'] = safe_console_link(network['id'], common_job_parameters)
             if regions is None:
                 group_list.append(network)
             else:
@@ -804,9 +789,8 @@ def _load_network_nat_gateway_tx(
     n.type = network.type,
     n.location = network.location,
     n.region = network.location,
-    n.consolelink = network.consolelink,
     n.resourcegroup = network.resource_group
-    SET n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(network.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = network.name,
     n.id = network.id,
     n.etag=network.etag
@@ -912,9 +896,7 @@ def get_network_security_rules_list(
                     'properties', {},
                 ).get('destination_port_ranges', None)
                 rule['destination_address_prefix'] = rule.get('destination_address_prefix', None)
-                rule['consolelink'] = azure_console_link.get_console_link(
-                    id=rule['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                rule['consolelink'] = safe_console_link(rule['id'], common_job_parameters)
             network_security_rules_list.extend(security_rules_list)
         return network_security_rules_list
 
@@ -936,13 +918,12 @@ def _load_network_security_rules_tx(
     n.source_port_range = rule.source_port_range,
     n.protocol = rule.protocol,
     n.direction = rule.direction,
-    n.consolelink = rule.consolelink,
     n.destination_address_prefix = rule.destination_address_prefix,
     n.source_address_prefix = rule.source_address_prefix,
     n.destination_port_ranges = rule.destination_port_ranges,
     n.destination_port_range = rule.destination_port_range,
     n.type = rule.type
-    SET n.name = rule.name,
+    SET n.consolelink = coalesce(rule.consolelink, n.consolelink), n.name = rule.name,
     n.region = rule.location,
     n.lastupdated = $azure_update_tag,
     n.etag = rule.etag
@@ -1108,9 +1089,7 @@ def get_public_ip_addresses_list(client: NetworkManagementClient, regions: list,
         public_ip_addresses_list = list(map(lambda x: x.as_dict(), client.public_ip_addresses.list_all()))
         publicip_list = []
         for ip in public_ip_addresses_list:
-            ip['consolelink'] = azure_console_link.get_console_link(
-                id=ip['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            ip['consolelink'] = safe_console_link(ip['id'], common_job_parameters)
             ip["is_static_ip"] = False
             if ip.get("public_ip_allocation_method") == "Static":
                 ip["is_static_ip"] = True
@@ -1137,12 +1116,11 @@ def _load_public_ip_addresses_tx(
     n.id =address.id,
     n.location = address.location,
     n.region = address.location,
-    n.consolelink = address.consolelink,
     n.source='azure',
     n.type='Internal',
     n.resource=address.type,
     n.isPublicFacing = true
-    SET n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(address.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = address.name,
     n.ipAddress = address.ip_address,
     n.publicIpAllocationMethod = address.public_ip_allocation_method,
@@ -1192,10 +1170,9 @@ def get_network_interfaces_list(client: NetworkManagementClient, regions: list, 
                 interface['subnet'].append(
                     {'subnet_id': conf.get('subnet', {}).get('id', None)},
                 )
+                conf['consolelink'] = safe_console_link(conf.get('id'), common_job_parameters)
 
-            interface['consolelink'] = azure_console_link.get_console_link(
-                id=interface['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            interface['consolelink'] = safe_console_link(interface['id'], common_job_parameters)
             if regions is None:
                 interfaces_list.append(interface)
             else:
@@ -1221,9 +1198,14 @@ def get_load_balancers_list(client: NetworkManagementClient, regions: list, comm
                     load_balancer['public_ip_address'].append(
                         {'public_ip_id': public_ip_id},
                     )
-            load_balancer['consolelink'] = azure_console_link.get_console_link(
-                id=load_balancer['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+                frontend_ip_configuration['consolelink'] = safe_console_link(
+                    frontend_ip_configuration.get('id'), common_job_parameters,
+                )
+            for backend_address_pool in load_balancer.get('backend_address_pools', []):
+                backend_address_pool['consolelink'] = safe_console_link(
+                    backend_address_pool.get('id'), common_job_parameters,
+                )
+            load_balancer['consolelink'] = safe_console_link(load_balancer['id'], common_job_parameters)
             if regions is None:
                 load_balancer_list.append(load_balancer)
             else:
@@ -1244,9 +1226,8 @@ def _load_network_interfaces_tx(
     ON CREATE SET n.firstseen = timestamp(),
     n.type = interface.type,
     n.location = interface.location,
-    n.consolelink = interface.consolelink,
     n.region = interface.location
-    SET n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(interface.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = interface.name
     WITH n, interface
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -1297,9 +1278,8 @@ def _load_load_balancers_tx(
     ON CREATE SET n.firstseen = timestamp(),
     n.type = lb.type,
     n.location = lb.location,
-    n.consolelink = lb.consolelink,
     n.region = lb.location
-    SET n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(lb.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = lb.name
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -1344,6 +1324,7 @@ def _load_frontend_ip_configurations_tx(
         ON CREATE SET fipc.firstseen = timestamp(),
         fipc.type = config.type
         SET fipc.name = config.name,
+        fipc.consolelink = coalesce(config.consolelink, fipc.consolelink),
         fipc.private_ip_address = config.private_ip_address,
         fipc.lastupdated = $update_tag
         WITH fipc,config
@@ -1378,6 +1359,7 @@ def _load_backend_address_pools_tx(
             ON CREATE SET bap.firstseen = timestamp(),
             bap.type = b_pool.type
             SET bap.name = b_pool.name,
+            bap.consolelink = coalesce(b_pool.consolelink, bap.consolelink),
             bap.lastupdated = $update_tag
             WITH n, bap, b_pool
             MERGE (n)-[rel:HAS]->(bap)
@@ -1430,6 +1412,7 @@ def _load_ip_configurations_tx(
     ipc.private_ip_allocation_method = ip_conf.private_ip_allocation_method,
     ipc.private_ip_address_version = ip_conf.private_ip_address_version
     SET ipc.lastupdated = $update_tag,
+    ipc.consolelink = coalesce(ip_conf.consolelink, ipc.consolelink),
     ipc.name = ip_conf.name
     WITH ipc, n
     MERGE (n)-[r:CONTAINS]->(ipc)
@@ -1571,7 +1554,7 @@ def transform_usages(usages: List[Dict], network: Dict, common_job_parameters: D
     usages_list: List[Dict] = []
     for usage in usages:
         usage['network_id'] = usage['id'][:usage['id'].index("/subnets")]
-        usage['consolelink'] = azure_console_link.get_console_link(id=usage['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+        usage['consolelink'] = safe_console_link(usage['id'], common_job_parameters)
         usage['location'] = network.get('location', 'global')
     usages_list.extend(usages)
 
@@ -1589,7 +1572,7 @@ def _load_usages_tx(
     ON CREATE SET n.firstseen = timestamp()
     SET n.currentValue = usage.currentValue,
     n.region= usage.location,
-    n.consolelink = usage.consolelink,
+    n.consolelink = coalesce(usage.consolelink, n.consolelink),
     n.lastupdated = $azure_update_tag,
     n.limit=usage.limit,
     n.unit=usage.unit

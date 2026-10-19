@@ -51,7 +51,7 @@ def transform_subscriptions(subscriptions: List[Dict], project_id: str) -> List[
         subscription['subscription_name'] = subscription['id'].split('/')[-1]
         subscription['consolelink'] = gcp_console_link.get_console_link(
             project_id=project_id,
-            subscription_name=subscription['subscription_name'], resource_name='cloud_pubsub_subscription',
+            subscription_id=subscription['subscription_name'], resource_name='cloud_pubsub_subscription',
         )
         subscriptions.append(subscription)
 

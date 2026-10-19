@@ -7,9 +7,11 @@ from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
+from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.iam import load_policy_data
@@ -18,6 +20,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker()
 
 
 class PolicyType(enum.Enum):
@@ -28,6 +31,24 @@ class PolicyType(enum.Enum):
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
     client = boto3_session.client(service, region_name=region, config=get_botocore_config())
     return client
+
+
+def get_sso_console_link(arn: str, region: str) -> Optional[str]:
+    """
+    Identity Center console link for an instance, permission set, user or group ARN, or None when the ARN
+    is malformed; one bad ARN must not fail the user or group sync.
+
+    cloudconsolelink 4.2.0 has no per-principal page, so every user, group and permission set gets the
+    instance's region-scoped Identity Center home, not a deep link.
+    """
+    # Identity Center ARNs carry no region; put the instance's region in so the link opens it there.
+    tokens = (arn or "").split(":")
+    try:
+        tokens[3] = region
+        return aws_console_link.get_console_link(arn=":".join(tokens))
+    except (IndexError, ValueError) as e:
+        logger.debug("Skipping Identity Center console link for %s: %s", arn, e)
+        return None
 
 
 @timeit
@@ -165,7 +186,8 @@ def _load_identity_center_permissions_sets_tx(
             p.is_sso = true,
             p.description = permissions_set.Description,
             p.session_duration = permissions_set.SessionDuration,
-            p.relay_state = permissions_set.RelayState
+            p.relay_state = permissions_set.RelayState,
+            p.consolelink = permissions_set.consolelink
         WITH p
             MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})
             MERGE (i)-[r:RESOURCE]->(p)
@@ -400,7 +422,8 @@ def _load_identity_center_account_assignments_tx(
                         p.lastupdated = $update_tag,
                         p.name = $permissions_set.Name,
                         p.arn = $permissions_set.PermissionSetArn,
-                        p.session_duration = $permissions_set.SessionDuration
+                        p.session_duration = $permissions_set.SessionDuration,
+                        p.consolelink = $permissions_set.consolelink
                 MERGE (a:AWSAccount{id: $assignment.AccountId})
                     ON CREATE SET
                         a.firstseen = timestamp()
@@ -468,6 +491,8 @@ def sync_identity_center_permissions_sets(
     common_job_parameters: Dict,
 ) -> None:
     permissions_sets = get_identity_center_permissions_sets_list(boto3_session, instance, region)
+    for permissions_set in permissions_sets:
+        permissions_set["consolelink"] = get_sso_console_link(permissions_set["PermissionSetArn"], region)
 
     # INFO: This is a temporary solution to skip Loading Policies for manual runs.
     if common_job_parameters.get("MANUAL_RUN", False) or current_aws_account_id == "934101271236":
@@ -554,6 +579,7 @@ def get_identity_center_users_list(boto3_session: boto3.session.Session, instanc
 
     for user in users:
         user["arn"] = f"{instance['InstanceArn']}/user/{user['UserId']}"
+        user["consolelink"] = get_sso_console_link(user["arn"], region)
 
     return users
 
@@ -589,7 +615,8 @@ def _load_identity_center_users_tx(
             u.arn = user.arn
         SET
             u.lastupdated = $update_tag,
-            u.name = user.DisplayName
+            u.name = user.DisplayName,
+            u.consolelink = user.consolelink
         WITH u
             MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})
             MERGE (i)-[r:RESOURCE]->(u)
@@ -637,6 +664,7 @@ def get_identity_center_groups_list(boto3_session: boto3.session.Session, instan
 
     for group in groups:
         group["arn"] = f"{instance['InstanceArn']}/group/{group['GroupId']}"
+        group["consolelink"] = get_sso_console_link(group["arn"], region)
 
     return groups
 
@@ -670,7 +698,8 @@ def _load_identity_center_groups_tx(
         SET
             g.lastupdated = $update_tag,
             g.is_sso = true,
-            g.name = group.DisplayName
+            g.name = group.DisplayName,
+            g.consolelink = group.consolelink
         WITH g
             MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})
             MERGE (i)-[r:RESOURCE]->(g)

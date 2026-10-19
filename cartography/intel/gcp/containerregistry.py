@@ -53,6 +53,13 @@ def get_artifact_registry_repositories(
 
                     if result.get("repositories"):
                         for repo in result["repositories"]:
+                            consolelink = gcp_console_link.get_console_link(
+                                project_id=project_id,
+                                resource_name="artifact_registry_repository",
+                                region=location,
+                                instance_name=repo["name"].split("/")[-1],
+                                repository_format=repo.get("format"),
+                            )
                             repo_dict = {
                                 "name": repo["name"],
                                 "display_name": repo.get("displayName", ""),
@@ -65,12 +72,9 @@ def get_artifact_registry_repositories(
                                 "kms_key_name": repo.get("kmsKeyName", ""),
                                 "size_bytes": repo.get("sizeBytes", 0),
                                 "labels": repo.get("labels", {}),
-                                "console_link": gcp_console_link.get_console_link(
-                                    project_id=project_id,
-                                    resource_name="artifact_registry_repository",
-                                    location=location,
-                                    repository_name=repo["name"].split("/")[-1],
-                                ),
+                                "consolelink": consolelink,
+                                # console_link kept for readers of the old property name
+                                "console_link": consolelink,
                             }
                             repositories.append(repo_dict)
 
@@ -104,6 +108,7 @@ def get_container_registry_repositories(
         else:
             gcr_locations = locations
 
+        consolelink = gcp_console_link.get_console_link(project_id=project_id, resource_name="container_registry")
         for location in gcr_locations:
             try:
                 # Get repositories from Container Registry
@@ -132,10 +137,8 @@ def get_container_registry_repositories(
                             "kms_key_name": "",
                             "size_bytes": 0,
                             "labels": {},
-                            "console_link": gcp_console_link.get_console_link(
-                                project_id=project_id,
-                                resource_name="container_registry",
-                            ),
+                            "consolelink": consolelink,
+                            "console_link": consolelink,
                         }
                         repositories.append(repo_dict)
                 except HttpError as e:
@@ -153,10 +156,8 @@ def get_container_registry_repositories(
                             "kms_key_name": "",
                             "size_bytes": 0,
                             "labels": {},
-                            "console_link": gcp_console_link.get_console_link(
-                                project_id=project_id,
-                                resource_name="container_registry",
-                            ),
+                            "consolelink": consolelink,
+                            "console_link": consolelink,
                         }
                         repositories.append(repo_dict)
 
@@ -355,6 +356,7 @@ def _load_artifact_registry_repositories_tx(
         r.kms_key_name = repo.kms_key_name,
         r.size_bytes = repo.size_bytes,
         r.labels = repo.labels,
+        r.consolelink = repo.consolelink,
         r.console_link = repo.console_link
 
     WITH r
@@ -394,6 +396,7 @@ def _load_container_registry_repositories_tx(
         r.kms_key_name = repo.kms_key_name,
         r.size_bytes = repo.size_bytes,
         r.labels = repo.labels,
+        r.consolelink = repo.consolelink,
         r.console_link = repo.console_link
 
     WITH r

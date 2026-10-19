@@ -100,7 +100,8 @@ def load_oci_compartments(
         c.description = comp.description,
         c.lifecycle_state = comp.lifecycle_state,
         c.compartmentid = comp.parent_compartment_id,
-        c.managed_type = comp.managed_type
+        c.managed_type = comp.managed_type,
+        c.consolelink = comp.consolelink
         WITH t, c
         MERGE (t)-[r:OWNER]->(c)
         ON CREATE SET r.firstseen = timestamp()
@@ -115,6 +116,7 @@ def load_oci_compartments(
             'time_created': comp.get('timeCreated', ''),
             'parent_compartment_id': comp.get('parentCompartmentId', tenancy_id),
             'managed_type': _oci_compartment_managed_type(comp, tenancy_id),
+            'consolelink': utils.get_console_link('compartment', ocid=comp['compartmentId']),
         }
         for comp in compartments
     ]

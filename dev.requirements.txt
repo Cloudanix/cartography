@@ -15,7 +15,7 @@ netaddr~=0.8.0
 maya~=0.6.1
 pytz~=2022.6
 
-cloudconsolelink~=4.0.1
+cloudconsolelink~=4.2.0
 sentry-sdk~=2.60.0
 
 # AWS Lambda Specific requirements

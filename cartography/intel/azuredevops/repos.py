@@ -5,10 +5,12 @@ from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 
 from .util import call_azure_devops_api_pagination
+from .util import get_console_link
 from .util import validate_repository_data
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
@@ -122,6 +124,7 @@ def load_repositories(
         r.visibility = repo.project_visibility,
         r.is_private = CASE WHEN repo.project_visibility = 'private' THEN true ELSE false END,
         r.primary_language = repo.primary_language,
+        r.consolelink = repo.consolelink,
         r.lastupdated = $UpdateTag
     WITH r
 
@@ -139,7 +142,15 @@ def load_repositories(
     )
 
 
-def transform_branches_data(branches: List[Dict], repo_id: str, default_branch: str = None) -> List[Dict]:
+def transform_branches_data(
+    branches: List[Dict],
+    repo_id: str,
+    default_branch: Optional[str] = None,
+    base_url: Optional[str] = None,
+    organization: Optional[str] = None,
+    project: Optional[str] = None,
+    repo_name: Optional[str] = None,
+) -> List[Dict]:
     """
     Transform branch data and filter to include only:
     - Branches active in the last 180 days
@@ -153,6 +164,10 @@ def transform_branches_data(branches: List[Dict], repo_id: str, default_branch: 
         commit = branch.get("commit", {})
         committer = commit.get("committer", {})
         commit_date_str = committer.get("date")
+        consolelink = get_console_link(
+            "branch", base_url=base_url, organization=organization, project=project, repo=repo_name,
+            branch=branch_name,
+        )
 
         # Always include default branch
         if default_branch and branch_name == default_branch:
@@ -161,6 +176,7 @@ def transform_branches_data(branches: List[Dict], repo_id: str, default_branch: 
                 "id": f"{repo_id}:{branch_name}",
                 "name": branch_name,
                 "commitDate": commit_date_str,
+                "consolelink": consolelink,
             })
             continue
 
@@ -173,6 +189,7 @@ def transform_branches_data(branches: List[Dict], repo_id: str, default_branch: 
                     "id": f"{repo_id}:{branch_name}",
                     "name": branch_name,
                     "commitDate": commit_date_str,
+                    "consolelink": consolelink,
                 })
         else:
             # No date available, include the branch
@@ -181,6 +198,7 @@ def transform_branches_data(branches: List[Dict], repo_id: str, default_branch: 
                 "id": f"{repo_id}:{branch_name}",
                 "name": branch_name,
                 "commitDate": commit_date_str,
+                "consolelink": consolelink,
             })
 
     return transformed_branches
@@ -201,6 +219,7 @@ def load_branches_data(
     ON CREATE SET b.firstseen = timestamp()
     SET b.name = branch.name,
         b.commitDate = branch.commitDate,
+        b.consolelink = branch.consolelink,
         b.lastupdated = $UpdateTag
     WITH b, branch
 
@@ -295,6 +314,13 @@ def sync(
                 repo["project_visibility"] = project_visibility
                 # primary_language not available in Azure DevOps API
                 repo["primary_language"] = None
+                repo["consolelink"] = get_console_link(
+                    "repository",
+                    base_url=azure_devops_url,
+                    organization=organization_name,
+                    project=project.get("name"),
+                    repo=repo.get("name"),
+                )
 
             load_repositories(neo4j_session, repos, project_id, common_job_parameters)
 
@@ -309,7 +335,15 @@ def sync(
                 )
                 if branches:
                     default_branch = repo.get("defaultBranch")  # already normalized above
-                    transformed_branches = transform_branches_data(branches, repo["id"], default_branch)
+                    transformed_branches = transform_branches_data(
+                        branches,
+                        repo["id"],
+                        default_branch,
+                        azure_devops_url,
+                        organization_name,
+                        project.get("name"),
+                        repo.get("name"),
+                    )
                     load_branches_data(neo4j_session, transformed_branches, common_job_parameters)
                     _update_repo_last_activity(neo4j_session, repo["id"], transformed_branches, default_branch)
 

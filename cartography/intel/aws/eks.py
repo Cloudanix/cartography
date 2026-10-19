@@ -89,7 +89,9 @@ def transform(cluster_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     for cluster_dict in cluster_data:
         transformed_dict = cluster_dict.copy()
         transformed_dict['clusterLogging'] = _process_logging(transformed_dict)
-        transformed_dict['consolelink'] = aws_console_link.get_console_link(arn=transformed_dict.get('arn'))
+        transformed_dict['consolelink'] = (
+            aws_console_link.get_console_link(arn=transformed_dict['arn']) if transformed_dict.get('arn') else None
+        )
         transformed_dict['clusterEndpointPublic'] = transformed_dict.get('resourcesVpcConfig', {}).get(
             'endpointPublicAccess',
         )

@@ -67,6 +67,7 @@ def load_vaults(
         v.crypto_endpoint = vault.crypto_endpoint,
         v.management_endpoint = vault.management_endpoint,
         v.region = $REGION,
+        v.consolelink = vault.consolelink,
         v.lastupdated = $oci_update_tag
         WITH v, vault
         MATCH (cc:OCICompartment{id: vault.compartment_id})
@@ -85,6 +86,7 @@ def load_vaults(
             "crypto_endpoint": vault.get("crypto-endpoint", ""),
             "management_endpoint": vault.get("management-endpoint", ""),
             "time_created": str(vault.get("time-created", "")),
+            "consolelink": utils.get_console_link("vault", region=region, ocid=vault.get("id")),
         }
         for vault in vaults
     ]
@@ -194,6 +196,7 @@ def load_keys(
         k.lifecycle_state = key.lifecycle_state,
         k.current_key_version = key.current_key_version,
         k.region = $REGION,
+        k.consolelink = key.consolelink,
         k.lastupdated = $oci_update_tag
         WITH k
         MATCH (v:OCIKmsVault{id: $VAULT_ID})
@@ -212,6 +215,7 @@ def load_keys(
             "lifecycle_state": key.get("lifecycle-state"),
             "current_key_version": key.get("current-key-version", ""),
             "time_created": str(key.get("time-created", "")),
+            "consolelink": utils.get_console_link("key", region=region, ocid=key.get("id")),
         }
         for key in keys
     ]

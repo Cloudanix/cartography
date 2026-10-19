@@ -117,6 +117,7 @@ def transform_rrs(rrsets: List, zone: Dict, project_id: str):
         resource_record_set['zone'] = zone['id']
         resource_record_set['consolelink'] = gcp_console_link.get_console_link(
             resource_name='dns_resource_record_set', project_id=project_id, dns_zone_name=zone['name'], dns_rrset_name=resource_record_set['name'],
+            dns_type=resource_record_set.get('type'),
         )
         resource_record_set[
             "id"
@@ -172,7 +173,9 @@ def transform_dns_keys(dnsKeys: List, project_id: str, zone: Dict):
 
     for key in dnsKeys:
         key['zone'] = zone['id']
-        key['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='dns_home')
+        key['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='dns_zone', dns_zone_name=zone['name'],
+        )
         key['id'] = f"projects/{project_id}/managedZones/{zone['name']}/dnsKeys/{key['id']}"
         list_keys.append(key)
 

@@ -208,7 +208,7 @@ def load_gke_node_pools(
     :param clusters: Processed cluster list from get_gke_clusters(). Each dict must
                      have an "id" key (set by get_gke_clusters) and a "nodePools" list.
     :type project_id: str
-    :param project_id: The GCP project ID (used only for logging)
+    :param project_id: The GCP project ID (used for logging and console links)
     :type gcp_update_tag: int
     :param gcp_update_tag: Timestamp to stamp on all upserted nodes and relationships
     :rtype: NoneType
@@ -219,6 +219,7 @@ def load_gke_node_pools(
     pool_records = []
     for cluster in clusters:
         cluster_id = cluster["id"]
+        location = cluster.get("location") or cluster.get("zone")
         for pool in cluster.get("nodePools", []):
             config = pool.get("config", {})
             pool_records.append(
@@ -236,6 +237,13 @@ def load_gke_node_pools(
                     "auto_repair": pool.get("management", {}).get("autoRepair"),
                     "max_pods_per_node": pool.get("maxPodsConstraint", {}).get("maxPodsPerNode"),
                     "self_link": pool.get("selfLink"),
+                    "consolelink": gcp_console_link.get_console_link(
+                        resource_name="gke_node_pool",
+                        project_id=project_id,
+                        zone=location,
+                        gke_cluster_name=cluster["name"],
+                        node_pool_name=pool["name"],
+                    ) if location else None,
                 },
             )
 
@@ -274,6 +282,7 @@ def _load_gke_node_pools_tx(tx: neo4j.Transaction, pool_records: List[Dict], gcp
         p.auto_repair = pool.auto_repair,
         p.max_pods_per_node = pool.max_pods_per_node,
         p.self_link = pool.self_link,
+        p.consolelink = pool.consolelink,
         p.lastupdated = $gcp_update_tag
     WITH p, pool
     MATCH (cluster:GKECluster{id: pool.cluster_id})

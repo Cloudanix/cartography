@@ -3,13 +3,19 @@ Mock unavailable third-party dependencies so azure unit tests can run
 without the full production install (cloudconsolelink, adal, msrestazure,
 azure-mgmt-*, msgraph, etc.).
 """
+import importlib.util
 import sys
 from unittest.mock import MagicMock
 
-_MISSING_DEPS = [
+# Pure-python with no deps: use the real linker when installed so tests see actual link output.
+_OPTIONAL_REAL_DEPS = [
     "cloudconsolelink",
     "cloudconsolelink.clouds",
     "cloudconsolelink.clouds.azure",
+]
+
+_MISSING_DEPS = [
+    *(m for m in _OPTIONAL_REAL_DEPS if importlib.util.find_spec("cloudconsolelink") is None),
     "adal",
     "msrestazure",
     "msrestazure.azure_active_directory",

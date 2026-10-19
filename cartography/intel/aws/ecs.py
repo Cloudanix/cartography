@@ -157,6 +157,7 @@ def load_ecs_clusters(
             c.settings_container_insights = cluster.settings_container_insights,
             c.capacity_providers = cluster.capacityProviders,
             c.attachments_status = cluster.attachmentsStatus,
+            c.consolelink = cluster.consolelink,
             c.lastupdated = $aws_update_tag
         WITH c
         MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -169,6 +170,7 @@ def load_ecs_clusters(
         for setting in cluster.get("settings", []):
             setting_name = camel_to_snake(setting["name"])
             cluster[f"settings_{setting_name}"] = setting["value"]
+        cluster["consolelink"] = aws_console_link.get_console_link(arn=cluster["clusterArn"])
 
         clusters.append(cluster)
 
@@ -206,6 +208,7 @@ def load_ecs_container_instances(
             i.agent_connected = instance.agentConnected,
             i.agent_update_status = instance.agentUpdateStatus,
             i.registered_at = instance.registeredAt,
+            i.consolelink = instance.consolelink,
             i.lastupdated = $aws_update_tag
         WITH i
         MATCH (c:ECSCluster{id: $ClusterARN})
@@ -216,6 +219,7 @@ def load_ecs_container_instances(
     instances: List[Dict[str, Any]] = []
     for instance in data:
         instance["registeredAt"] = dict_date_to_epoch(instance, "registeredAt")
+        instance["consolelink"] = aws_console_link.get_console_link(arn=instance["containerInstanceArn"])
         instances.append(instance)
 
     load_graph_data(
@@ -265,6 +269,7 @@ def load_ecs_services(
             s.enable_ecs_managed_tags = service.enableECSManagedTags,
             s.propagate_tags = service.propagateTags,
             s.enable_execute_command = service.enableExecuteCommand,
+            s.consolelink = service.consolelink,
             s.lastupdated = $aws_update_tag
         WITH s
         MATCH (c:ECSCluster{id: $ClusterARN})
@@ -280,6 +285,7 @@ def load_ecs_services(
     services: List[Dict[str, Any]] = []
     for service in data:
         service["createdAt"] = dict_date_to_epoch(service, "createdAt")
+        service["consolelink"] = aws_console_link.get_console_link(arn=service["serviceArn"])
         services.append(service)
 
     load_graph_data(
@@ -415,6 +421,7 @@ def load_ecs_tasks(
             t.task_definition_arn = task.taskDefinitionArn,
             t.version = task.version,
             t.ephemeral_storage_size_in_gib = task.ephemeralStorage.sizeInGiB,
+            t.consolelink = task.consolelink,
             t.lastupdated = $aws_update_tag
         WITH t
         MATCH (c:ECSCluster{id: $ClusterARN})
@@ -443,6 +450,7 @@ def load_ecs_tasks(
         task["startedAt"] = dict_date_to_epoch(task, "startedAt")
         task["stoppedAt"] = dict_date_to_epoch(task, "stoppedAt")
         task["stoppingAt"] = dict_date_to_epoch(task, "stoppingAt")
+        task["consolelink"] = aws_console_link.get_console_link(arn=task["taskArn"])
         containers.extend(task["containers"])
         tasks.append(task)
 

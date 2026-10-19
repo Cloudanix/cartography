@@ -172,6 +172,7 @@ def load_instances(
         inode.shape = instance.shape,
         inode.lifecycle_state = instance.lifecycle_state,
         inode.region = $REGION,
+        inode.consolelink = instance.consolelink,
         inode.image_id = instance.image_id,
         inode.are_legacy_imds_endpoints_disabled = instance.are_legacy_imds_endpoints_disabled,
         inode.is_secure_boot_enabled = instance.is_secure_boot_enabled,
@@ -211,6 +212,7 @@ def load_instances(
             "time_created": str(instance.get("time-created", "")),
             "vm_os": None,
             "vm_os_version": None,
+            "consolelink": utils.get_console_link("compute_instance", region=region, ocid=instance.get("id")),
         })
 
     load_graph_data(
@@ -316,6 +318,7 @@ def load_images(
     tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
+    region: str = "",
 ) -> None:
     """
     Ingest OCI Image data into Neo4j.
@@ -332,6 +335,7 @@ def load_images(
         img.operating_system_version = image.operating_system_version,
         img.lifecycle_state = image.lifecycle_state,
         img.size_in_mbs = image.size_in_mbs,
+        img.consolelink = image.consolelink,
         img.lastupdated = $oci_update_tag
         WITH img, image
         MATCH (cc:OCICompartment{id: image.compartment_id})
@@ -350,6 +354,7 @@ def load_images(
             "lifecycle_state": image.get("lifecycle-state"),
             "size_in_mbs": image.get("size-in-mbs"),
             "time_created": str(image.get("time-created", "")),
+            "consolelink": utils.get_console_link("compute_image", region=region, ocid=image.get("id")),
         }
         for image in images
     ]
@@ -604,6 +609,7 @@ def load_boot_volumes(
         bv.image_id = vol.image_id,
         bv.has_backup_policy = vol.has_backup_policy,
         bv.region = $REGION,
+        bv.consolelink = vol.consolelink,
         bv.lastupdated = $oci_update_tag
         WITH bv, vol
         MATCH (cc:OCICompartment{id: vol.compartment_id})
@@ -633,6 +639,7 @@ def load_boot_volumes(
             "image_id": volume.get("image-id", ""),
             "has_backup_policy": volume.get("_has_backup_policy", False),
             "time_created": str(volume.get("time-created", "")),
+            "consolelink": utils.get_console_link("boot_volume", region=region, ocid=volume.get("id")),
         }
         for volume in boot_volumes
     ]
@@ -691,6 +698,7 @@ def load_block_volumes(
         bv.vpus_per_gb = vol.vpus_per_gb,
         bv.has_backup_policy = vol.has_backup_policy,
         bv.region = $REGION,
+        bv.consolelink = vol.consolelink,
         bv.lastupdated = $oci_update_tag
         WITH bv, vol
         MATCH (cc:OCICompartment{id: vol.compartment_id})
@@ -719,6 +727,7 @@ def load_block_volumes(
             "vpus_per_gb": volume.get("vpus-per-gb"),
             "has_backup_policy": volume.get("_has_backup_policy", False),
             "time_created": str(volume.get("time-created", "")),
+            "consolelink": utils.get_console_link("block_volume", region=region, ocid=volume.get("id")),
         }
         for volume in block_volumes
     ]
@@ -871,6 +880,7 @@ def sync_images(
     tenancy_id: str,
     oci_update_tag: int,
     common_job_parameters: Dict[str, Any],
+    region: str = "",
 ) -> None:
     """
     Sync all images across all compartments in the tenancy.
@@ -882,7 +892,7 @@ def sync_images(
         data = get_image_list_data(compute, compartment["ocid"])
         if data["Images"]:
             total += len(data["Images"])
-            load_images(neo4j_session, data["Images"], tenancy_id, compartment["ocid"], oci_update_tag)
+            load_images(neo4j_session, data["Images"], tenancy_id, compartment["ocid"], oci_update_tag, region)
             tags.sync_tags(neo4j_session, data["Images"], 'OCIImage', oci_update_tag, common_job_parameters)
     logger.info(f"Time to process OCI images for tenancy '{tenancy_id}' ({total} images): {time.perf_counter() - tic:0.4f} seconds")
 
@@ -987,7 +997,7 @@ def sync(
         sync_vnic_attachments(neo4j_session, compute, compartments, tenancy_id, oci_update_tag, common_job_parameters, network_client)
 
         # Sync images
-        sync_images(neo4j_session, compute, compartments, tenancy_id, oci_update_tag, common_job_parameters)
+        sync_images(neo4j_session, compute, compartments, tenancy_id, oci_update_tag, common_job_parameters, region)
 
         # Enrich instances with OS info from their boot images
         _enrich_instances_with_image_os(neo4j_session, compartment_ocid, oci_update_tag)

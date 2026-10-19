@@ -1,6 +1,7 @@
 import base64
 import logging
 import time
+from functools import partial
 from typing import Any
 from typing import Dict
 from typing import List
@@ -10,10 +11,16 @@ from typing import Tuple
 import requests
 from azure.identity import ClientSecretCredential
 
+from cartography.intel import git_links
+
 logger = logging.getLogger(__name__)
 TIMEOUT = (60, 60)
 MAX_RETRIES = 3
 RETRY_DELAY = 1
+
+# Web link for an Azure DevOps entity, or None (logged) when an identifier is missing or the configured
+# org url is not plain http(s); never fails a sync. The org url's userinfo, query and fragment are dropped.
+get_console_link = partial(git_links.get_console_link, "azuredevops")
 
 
 def get_access_token(

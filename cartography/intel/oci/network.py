@@ -67,6 +67,7 @@ def load_vcns(
         v.dns_label = vcn.dns_label,
         v.lifecycle_state = vcn.lifecycle_state,
         v.region = $REGION,
+        v.consolelink = vcn.consolelink,
         v.lastupdated = $oci_update_tag
         WITH v, vcn
         MATCH (cc:OCICompartment{id: vcn.compartment_id})
@@ -84,6 +85,7 @@ def load_vcns(
             "dns_label": vcn.get("dns-label", ""),
             "lifecycle_state": vcn.get("lifecycle-state"),
             "time_created": str(vcn.get("time-created", "")),
+            "consolelink": utils.get_console_link("vcn", region=region, ocid=vcn.get("id")),
         }
         for vcn in vcns
     ]
@@ -167,6 +169,7 @@ def load_subnets(
         s.subnet_domain_name = subnet.subnet_domain_name,
         s.prohibit_public_ip_on_vnic = subnet.prohibit_public_ip,
         s.region = $REGION,
+        s.consolelink = subnet.consolelink,
         s.lastupdated = $oci_update_tag
         WITH s, subnet
         MATCH (vcn:OCIVcn{id: subnet.vcn_id})
@@ -190,6 +193,7 @@ def load_subnets(
             "subnet_domain_name": subnet.get("subnet-domain-name", ""),
             "prohibit_public_ip": subnet.get("prohibit-public-ip-on-vnic", False),
             "time_created": str(subnet.get("time-created", "")),
+            "consolelink": utils.get_console_link("subnet", region=region, ocid=subnet.get("id")),
         }
         for subnet in subnets
     ]
@@ -268,6 +272,7 @@ def load_security_lists(
         s.ingress_security_rules = sl.ingress_rules,
         s.egress_security_rules = sl.egress_rules,
         s.region = $REGION,
+        s.consolelink = sl.consolelink,
         s.lastupdated = $oci_update_tag
         WITH s, sl
         MATCH (vcn:OCIVcn{id: sl.vcn_id})
@@ -289,6 +294,7 @@ def load_security_lists(
             "ingress_rules": json.dumps(ingress_rules) if ingress_rules else "[]",
             "egress_rules": json.dumps(egress_rules) if egress_rules else "[]",
             "time_created": str(sl.get("time-created", "")),
+            "consolelink": utils.get_console_link("security_list", region=region, ocid=sl.get("id")),
         })
     load_graph_data(
         neo4j_session, ingest_security_list, rows,
@@ -365,6 +371,7 @@ def load_network_security_groups(
         g.vcn_id = nsg.vcn_id,
         g.lifecycle_state = nsg.lifecycle_state,
         g.region = $REGION,
+        g.consolelink = nsg.consolelink,
         g.lastupdated = $oci_update_tag
         WITH g, nsg
         MATCH (vcn:OCIVcn{id: nsg.vcn_id})
@@ -381,6 +388,7 @@ def load_network_security_groups(
             "vcn_id": nsg.get("vcn-id", ""),
             "lifecycle_state": nsg.get("lifecycle-state"),
             "time_created": str(nsg.get("time-created", "")),
+            "consolelink": utils.get_console_link("network_security_group", region=region, ocid=nsg.get("id")),
         }
         for nsg in nsgs
     ]
@@ -596,6 +604,7 @@ def load_internet_gateways(
         igw.is_enabled = gw.is_enabled,
         igw.lifecycle_state = gw.lifecycle_state,
         igw.region = $REGION,
+        igw.consolelink = gw.consolelink,
         igw.lastupdated = $oci_update_tag
         WITH igw, gw
         MATCH (vcn:OCIVcn{id: gw.vcn_id})
@@ -613,6 +622,7 @@ def load_internet_gateways(
             "is_enabled": gw.get("is-enabled", True),
             "lifecycle_state": gw.get("lifecycle-state"),
             "time_created": str(gw.get("time-created", "")),
+            "consolelink": utils.get_console_link("internet_gateway", region=region, ocid=gw.get("id")),
         }
         for gw in gateways
     ]
@@ -692,6 +702,7 @@ def load_nat_gateways(
         nat.block_traffic = gw.block_traffic,
         nat.lifecycle_state = gw.lifecycle_state,
         nat.region = $REGION,
+        nat.consolelink = gw.consolelink,
         nat.lastupdated = $oci_update_tag
         WITH nat, gw
         MATCH (vcn:OCIVcn{id: gw.vcn_id})
@@ -710,6 +721,7 @@ def load_nat_gateways(
             "block_traffic": gw.get("block-traffic", False),
             "lifecycle_state": gw.get("lifecycle-state"),
             "time_created": str(gw.get("time-created", "")),
+            "consolelink": utils.get_console_link("nat_gateway", region=region, ocid=gw.get("id")),
         }
         for gw in gateways
     ]
@@ -789,6 +801,7 @@ def load_route_tables(
         t.lifecycle_state = rt.lifecycle_state,
         t.route_rules = rt.route_rules,
         t.region = $REGION,
+        t.consolelink = rt.consolelink,
         t.lastupdated = $oci_update_tag
         WITH t, rt
         MATCH (vcn:OCIVcn{id: rt.vcn_id})
@@ -808,6 +821,7 @@ def load_route_tables(
             "lifecycle_state": rt.get("lifecycle-state"),
             "route_rules": json.dumps(route_rules) if route_rules else "[]",
             "time_created": str(rt.get("time-created", "")),
+            "consolelink": utils.get_console_link("route_table", region=region, ocid=rt.get("id")),
         })
     load_graph_data(
         neo4j_session, ingest_rt, rows,
@@ -945,6 +959,7 @@ def load_vnics(
         v.skip_source_dest_check = vnic.skip_source_dest_check,
         v.subnet_id = vnic.subnet_id,
         v.region = $REGION,
+        v.consolelink = vnic.consolelink,
         v.lastupdated = $oci_update_tag
         WITH v, vnic
         OPTIONAL MATCH (subnet:OCISubnet{id: vnic.subnet_id})
@@ -977,6 +992,9 @@ def load_vnics(
             "skip_source_dest_check": vnic.get("skip-source-dest-check", False),
             "subnet_id": vnic.get("subnet-id", ""),
             "time_created": str(vnic.get("time-created", "")),
+            "consolelink": utils.get_console_link(
+                "vnic", region=region, ocid=vnic.get("id"), instance_id=vnic.get("_instance_id", ""),
+            ),
         }
         for vnic in vnics
     ]
@@ -1004,7 +1022,7 @@ def sync_vnics(
         "MATCH (:OCICompartment{id: $COMPARTMENT_ID})-[:RESOURCE]->(inst:OCIInstance)"
         "-[:OCI_VNIC_ATTACHMENT]->(attachment:OCIVnicAttachment) "
         "WHERE attachment.vnic_id IS NOT NULL AND inst.region = $REGION "
-        "RETURN DISTINCT attachment.vnic_id as vnic_id"
+        "RETURN DISTINCT attachment.vnic_id as vnic_id, inst.id as instance_id"
     )
     for compartment in compartments:
         attachments = neo4j_session.execute_read(
@@ -1014,6 +1032,7 @@ def sync_vnics(
         for attachment in attachments:
             vnic = get_vnic_data(network_client, attachment["vnic_id"])
             if vnic:
+                vnic["_instance_id"] = attachment.get("instance_id", "")
                 vnics.append(vnic)
         if vnics:
             load_vnics(neo4j_session, vnics, region, oci_update_tag)
@@ -1091,6 +1110,7 @@ def load_flow_logs(
         fl.source_category = log.source_category,
         fl.source_resource = log.source_resource,
         fl.region = $REGION,
+        fl.consolelink = log.consolelink,
         fl.lastupdated = $oci_update_tag
         WITH fl, log.source_resource as source_resource
         OPTIONAL MATCH (subnet:OCISubnet{id: source_resource})
@@ -1124,6 +1144,9 @@ def load_flow_logs(
             "source_category": source.get("category", ""),
             "source_resource": source.get("resource", ""),
             "time_created": str(log.get("time-created", "")),
+            "consolelink": utils.get_console_link(
+                "log", region=region, ocid=log.get("id"), log_group_id=log.get("log-group-id", log_group_id),
+            ),
         })
 
     load_graph_data(

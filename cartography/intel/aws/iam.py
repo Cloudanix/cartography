@@ -280,6 +280,7 @@ def transform_policies_data(current_aws_account_id: str, policies: List[Dict]) -
     for policy in policies:
         policy["id"] = transform_policy_id(current_aws_account_id, PolicyType.managed.value, policy.get("PolicyName"))
         policy["managed_type"] = _aws_policy_managed_type(policy.get("Arn", ""))
+        policy["consolelink"] = aws_console_link.get_console_link(arn=policy["Arn"]) if policy.get("Arn") else None
     return policies
 
 
@@ -479,9 +480,9 @@ def load_users(
     UNWIND $DictList AS item
     MERGE (unode:AWSUser{arn: item.arn})
     ON CREATE SET unode:AWSPrincipal, unode.userid = item.userid, unode.firstseen = timestamp(),
-    unode.consolelink = item.consolelink,
     unode.createdate = item.createdate
     SET unode.name = item.username, unode.user_name = item.username,
+    unode.consolelink = item.consolelink,
     unode.path = item.path, unode.passwordlastused = item.passwordlastused,
     unode.region = 'global',
     unode.consoleloginenabled = item.consoleloginenabled,
@@ -530,9 +531,9 @@ def load_service_accounts(
     UNWIND $DictList AS item
     MERGE (sanode:AWSServiceAccount{arn: item.arn})
     ON CREATE SET sanode:AWSPrincipal, sanode.userid = item.userid, sanode.firstseen = timestamp(),
-    sanode.consolelink = item.consolelink,
     sanode.createdate = item.createdate
     SET sanode.name = item.username, sanode.user_name = item.username,
+    sanode.consolelink = item.consolelink,
     sanode.path = item.path, sanode.passwordlastused = item.passwordlastused,
     sanode.region = 'global',
     sanode.consoleloginenabled = item.consoleloginenabled,
@@ -612,6 +613,7 @@ def _load_policies_for_account_tx(
             p.default_version_id = policy.DefaultVersionId,
             p.is_attachable = policy.IsAttachable,
             p.region = $region,
+            p.consolelink = policy.consolelink,
             p.managed_type = coalesce(policy.managed_type, CASE WHEN policy.Arn STARTS WITH 'arn:aws:iam::aws:policy/' THEN 'predefined' ELSE 'custom' END),
             p.lastupdated = $update_tag
         WITH p
@@ -712,9 +714,9 @@ def load_roles(
     MERGE (rnode:AWSRole{arn: item.arn})
     ON CREATE SET rnode:AWSPrincipal, rnode.roleid = item.roleid, rnode.firstseen = timestamp(),
     rnode.region = 'global',
-    rnode.consolelink = item.consolelink,
     rnode.createdate = item.createdate
     SET rnode.name = item.rolename, rnode.path = item.path,
+    rnode.consolelink = item.consolelink,
     rnode.lastuseddate = item.lastuseddate, rnode.lastusedregion = item.lastusedregion,
     rnode.is_service_role = item.is_service_role,
     rnode.is_sso_reserved_role = item.is_sso_reserved_role,
@@ -932,9 +934,9 @@ def load_user_access_keys(
     ON CREATE SET key.firstseen = timestamp(),
     key.region = 'global',
     key.createdate = item.createdate,
-    key.rotatedate = item.createdate,
-    key.consolelink = $consolelink
+    key.rotatedate = item.createdate
     SET key.status = item.status,
+    key.consolelink = $consolelink,
     key.keyage = item.keyage,
     key.lastuseddate = item.lastuseddate,
     key.lastupdated = $aws_update_tag
@@ -1026,9 +1028,8 @@ def _load_policy_tx(
     policy.region = $region,
     policy.name = $PolicyName,
     policy.arn = $PolicyArn,
-    policy.managed_type = $ManagedType,
-    policy.consolelink = $consolelink
-    SET policy.lastupdated = $aws_update_tag
+    policy.managed_type = $ManagedType
+    SET policy.lastupdated = $aws_update_tag, policy.consolelink = $consolelink
     WITH policy
     MATCH (principal:AWSPrincipal{arn: $PrincipalArn})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1049,7 +1050,8 @@ def _load_policy_tx(
 
     policy = policy_name.split("/")[-1]
     policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
-    consolelink = aws_console_link.get_console_link(arn=policy_arn)
+    # Same rule as load_policy_data: an inline policy shows on its IAM principal's page.
+    consolelink = aws_console_link.get_console_link(arn=principal_arn) if ":iam::" in principal_arn else None
 
     tx.run(
         ingest_policy,
@@ -1072,9 +1074,8 @@ def _load_policy_tx(
     policy.region = $region,
     policy.name = $PolicyName,
     policy.arn = $PolicyArn,
-    policy.managed_type = $ManagedType,
-    policy.consolelink = $consolelink
-    SET policy.lastupdated = $aws_update_tag
+    policy.managed_type = $ManagedType
+    SET policy.lastupdated = $aws_update_tag, policy.consolelink = $consolelink
     WITH policy
     MATCH (principal:AWSPrincipal{id: $PrincipalArn})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1192,15 +1193,17 @@ def _batch_load_policies(
         policy.region = 'global',
         policy.name = item.policy_name,
         policy.arn = item.policy_arn,
-        policy.managed_type = $ManagedType,
-        policy.consolelink = item.consolelink
+        policy.managed_type = $ManagedType
         """
 
+    # A managed policy's link is written by sync_policies from its real ARN (AWS-managed policies live
+    # under arn:aws:iam::aws:policy/); only an inline policy's link is known here.
+    link_clause = "" if policy_type == PolicyType.managed.value else ", policy.consolelink = item.consolelink"
     ingest_policy = f"""
     UNWIND $DictList AS item
     MERGE (policy:AWSPolicy{{id: item.policy_id}})
     {create_clause}
-    SET policy.lastupdated = $aws_update_tag
+    SET policy.lastupdated = $aws_update_tag{link_clause}
     WITH policy, item
     MATCH (principal:AWSPrincipal{{arn: item.principal_arn}})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1210,7 +1213,7 @@ def _batch_load_policies(
     UNWIND $DictList AS item
     MERGE (policy:AWSPolicy{{id: item.policy_id}})
     {create_clause}
-    SET policy.lastupdated = $aws_update_tag
+    SET policy.lastupdated = $aws_update_tag{link_clause}
     WITH policy, item
     MATCH (principal:AWSPrincipal{{id: item.principal_arn}})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1231,9 +1234,11 @@ def _batch_load_policy_statements(
     neo4j_session: neo4j.Session,
     statement_rows: List[Dict],
     aws_update_tag: int,
-    consolelink: str,
 ) -> None:
-    """Batched equivalent of load_policy_statements: one write for all policies."""
+    """
+    Batched equivalent of load_policy_statements: one write for all policies. A statement has no console
+    page of its own, so it carries its policy's link.
+    """
     ingest_policy_statement = """
         UNWIND $DictList AS item
         MATCH (policy:AWSPolicy{id: item.policy_id})
@@ -1244,7 +1249,7 @@ def _batch_load_policy_statements(
         statement.effect = statement_data.Effect,
         statement.action = statement_data.Action,
         statement.region = 'global',
-        statement.consolelink = $consolelink,
+        statement.consolelink = policy.consolelink,
         statement.notaction = statement_data.NotAction,
         statement.resource = statement_data.Resource,
         statement.notresource = statement_data.NotResource,
@@ -1256,8 +1261,7 @@ def _batch_load_policy_statements(
         SET r.lastupdated = $aws_update_tag
         """
     load_graph_data(
-        neo4j_session, ingest_policy_statement, statement_rows,
-        consolelink=consolelink, aws_update_tag=aws_update_tag,
+        neo4j_session, ingest_policy_statement, statement_rows, aws_update_tag=aws_update_tag,
     )
 
 
@@ -1277,17 +1281,20 @@ def load_policy_data(
             policy_id = transform_policy_id(current_aws_account_id, policy_type, policy_name)
             policy = policy_name.split("/")[-1]
             policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
+            # Inline policies have no console page of their own; an IAM one shows on its principal's page.
+            # An Identity Center permission set's inline policy has no IAM page, so it gets no link.
+            is_iam_inline = policy_type == PolicyType.inline.value and ":iam::" in principal_arn
             policy_rows.append({
                 "policy_id": policy_id,
                 "policy_name": policy_name,
                 "principal_arn": principal_arn,
                 "policy_arn": policy_arn,
-                "consolelink": aws_console_link.get_console_link(arn=policy_arn),
+                "consolelink": aws_console_link.get_console_link(arn=principal_arn) if is_iam_inline else None,
             })
             statement_rows.append({"policy_id": policy_id, "statements": statements})
 
     _batch_load_policies(neo4j_session, policy_rows, policy_type, aws_update_tag)
-    _batch_load_policy_statements(neo4j_session, statement_rows, aws_update_tag, consolelink="")
+    _batch_load_policy_statements(neo4j_session, statement_rows, aws_update_tag)
 
 
 @timeit

@@ -29,3 +29,15 @@ def test_replace_char_in_dict():
     adjusted_dict = utils.replace_char_in_dict(JSON_OCI_OBJECT)
     assert isinstance(adjusted_dict, dict)
     assert "compartment-id" in adjusted_dict.keys()
+
+
+def test_get_console_link():
+    assert utils.get_console_link("compute_instance", region="us-phoenix-1", ocid="ocid1.instance.oc1..a") == (
+        "https://cloud.oracle.com/compute/instances/ocid1.instance.oc1..a?region=us-phoenix-1"
+    )
+
+
+def test_get_console_link_missing_identifiers_returns_none():
+    # A missing region/ocid must not raise out of a sync.
+    assert utils.get_console_link("compute_instance", region="", ocid="ocid1.instance.oc1..a") is None
+    assert utils.get_console_link("compute_instance", region="us-phoenix-1", ocid=None) is None

@@ -51,7 +51,9 @@ def get_dataflow_jobs(dataflow: Resource, project_id: str, regions: list, common
 def transform_jobs(jobs: List[Dict], project_id: str) -> List[Dict]:
     transformed_jobs = []
     for job in jobs:
-        job['consolelink'] = ''  # TODO
+        job['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='dataflow_job', region=job.get('location'), job_id=job.get('id'),
+        ) if job.get('location') and job.get('id') else None
 
         big_table_details = job.get('jobMetadata', {}).get('bigTableDetails', [])
         big_tables = []

@@ -3,10 +3,13 @@ import time
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from urllib.parse import quote
 
 import neo4j
 
+from cartography.intel.gitlab.common import get_console_link
+from cartography.intel.gitlab.common import get_web_base_url
 from cartography.intel.gitlab.pagination import paginate_request
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -24,6 +27,13 @@ def get_group_members(hosted_domain: str, access_token: str, group_id: int):
     url = f"{hosted_domain}/api/v4/groups/{url_encoded_group_id}/members?per_page=100"
     members = paginate_request(url, access_token)
 
+    return members
+
+
+def transform_members(members: List[Dict], hosted_domain: Optional[str]) -> List[Dict]:
+    base_url = get_web_base_url(hosted_domain)
+    for member in members:
+        member["consolelink"] = get_console_link("member", base_url=base_url, username=member.get("username"))
     return members
 
 
@@ -65,6 +75,7 @@ def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_j
         mem.locked = member.locked,
         mem.membership_state = member.membership_state,
         mem.web_url = member.web_url,
+        mem.consolelink = member.consolelink,
         mem.lastupdated = $UpdateTag
 
     WITH mem
@@ -107,7 +118,7 @@ def sync(
 
     logger.info("Syncing Members for Gitlab Group '%s', at %s.", group_name, tic)
 
-    group_members = get_group_members(hosted_domain, access_token, group_id)
+    group_members = transform_members(get_group_members(hosted_domain, access_token, group_id), hosted_domain)
 
     load_members_data(neo4j_session, group_members, common_job_parameters, group_id)
     cleanup(neo4j_session, common_job_parameters)

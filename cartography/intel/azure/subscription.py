@@ -6,15 +6,14 @@ from typing import Optional
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.resource import SubscriptionClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def get_all_azure_subscriptions(credentials: Credentials, common_job_parameters: Dict) -> List[Dict]:
@@ -41,10 +40,7 @@ def get_all_azure_subscriptions(credentials: Credentials, common_job_parameters:
             'subscriptionId': sub.subscription_id,
             'displayName': sub.display_name,
             'state': sub.state,
-            'consolelink': azure_console_link.get_console_link(
-                id=sub.subscription_id,
-                primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            ),
+            'consolelink': safe_console_link(sub.subscription_id, common_job_parameters),
         })
 
     return subscriptions
@@ -73,10 +69,7 @@ def get_current_azure_subscription(credentials: Credentials, subscription_id: Op
             'subscriptionId': sub.subscription_id,
             'displayName': sub.display_name,
             'state': sub.state,
-            'consolelink': azure_console_link.get_console_link(
-                id=sub.subscription_id,
-                primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            ),
+            'consolelink': safe_console_link(sub.subscription_id, common_job_parameters),
         },
     ]
 
@@ -95,7 +88,7 @@ def load_azure_subscriptions(
     ON CREATE SET as.firstseen = timestamp(), as.path = item.id,
     as.region = 'global'
     SET as.lastupdated = $update_tag, as.name = item.displayName, as.state = item.state,
-    as.consolelink = item.consolelink
+    as.consolelink = coalesce(item.consolelink, as.consolelink)
     WITH as, at
     MERGE (at)-[r:RESOURCE]->(as)
     ON CREATE SET r.firstseen = timestamp()

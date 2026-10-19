@@ -203,6 +203,7 @@ def transform_clusters(
             "available_kubernetes_upgrades": [x for x in (merged.get("available-kubernetes-upgrades") or []) if x is not None],
             "time_created": str(merged.get("metadata", {}).get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("oke_cluster", region=region, ocid=cluster_id),
         })
     return transformed
 
@@ -288,6 +289,9 @@ def transform_node_pools(
             ),
             "time_created": str(merged.get("metadata", {}).get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link(
+                "oke_node_pool", region=region, ocid=pool_id, cluster_id=merged.get("cluster-id") or "",
+            ),
             "nodes": node_records,
         })
     return transformed
@@ -338,6 +342,7 @@ def load_clusters(
             cl.image_policy_kms_keys = c.image_policy_kms_keys,
             cl.available_kubernetes_upgrades = c.available_kubernetes_upgrades,
             cl.region = c.region,
+            cl.consolelink = c.consolelink,
             cl.lastupdated = $oci_update_tag
         WITH cl
         MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -397,6 +402,7 @@ def load_node_pools(
             np.eviction_grace_duration = p.eviction_grace_duration,
             np.is_force_delete_after_grace_duration = p.is_force_delete_after_grace_duration,
             np.region = p.region,
+            np.consolelink = p.consolelink,
             np.node_ids = [n IN coalesce(p.nodes, []) WHERE n.ocid IS NOT NULL | n.ocid],
             np.lastupdated = $oci_update_tag
         WITH np, p

@@ -18,18 +18,17 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.authorization import AuthorizationManagementClient
 from azure.mgmt.msi import ManagedServiceIdentityClient
-from cloudconsolelink.clouds.azure import AzureLinker
 from msgraph import GraphServiceClient
 from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
 from msgraph.generated.users.users_request_builder import UsersRequestBuilder
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.timing import get_current_context
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 scopes = ["https://graph.microsoft.com/.default"]
 
@@ -267,7 +266,7 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
 
         # Custom properties we use internally
         custom_id = f"tenants/{tenant_id}/users/{user_id}"
-        consolelink = azure_console_link.get_console_link(id=user_id, iam_entity_type="user")
+        consolelink = safe_console_link(user_id, {}, iam_entity_type="user")
 
         # Map to our internal structure
         usr = {
@@ -302,7 +301,7 @@ def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
         "id": f"tenants/{tenant_id}/users/{user['object_id']}",
-        "consolelink": azure_console_link.get_console_link(id=user["object_id"], iam_entity_type="user"),
+        "consolelink": safe_console_link(user["object_id"], {}, iam_entity_type="user"),
         "object_id": user["object_id"],
         "user_principal_name": user["user_principal_name"],
         "email": user["mail"],
@@ -333,12 +332,11 @@ def _load_tenant_users_tx(
     MERGE (i:AzureUser{id: user.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.consolelink = user.consolelink,
     i.object_id = user.object_id,
     i.object_type = user.object_type,
     i.region = $region
     SET i.lastupdated = $update_tag,
-    i.consolelink = user.consolelink,
+    i.consolelink = coalesce(user.consolelink, i.consolelink),
     i.user_principal_name = user.user_principal_name,
     i.email = user.email,
     i.name = user.name,
@@ -467,10 +465,7 @@ async def get_tenant_groups_list(
             # Add tenant-specific ID for consistency with previous implementation
             group_dict["object_id"] = group_id
             group_dict["id"] = f"tenants/{tenant_id}/Groups/{group_id}"
-            group_dict["consolelink"] = azure_console_link.get_console_link(
-                iam_entity_type="group",
-                id=group_id,
-            )
+            group_dict["consolelink"] = safe_console_link(group_id, {}, iam_entity_type="group")
 
             tenant_groups_list.append(group_dict)
 
@@ -495,6 +490,7 @@ def _load_tenant_groups_tx(
     i.region = $region,
     i.name = group.display_name
     SET i.lastupdated = $update_tag,
+    i.consolelink = coalesce(group.consolelink, i.consolelink),
     i.mail = group.mail,
     i.object_id = group.object_id,
     i.visibility = group.visibility,
@@ -860,10 +856,7 @@ async def get_tenant_applications_list(client: GraphServiceClient, tenant_id: st
             # Add tenant-specific ID for consistency with previous implementation
             app_dict["object_id"] = app_dict.get("id")
             app_dict["id"] = f"tenants/{tenant_id}/Applications/{app_dict.get('id')}"
-            app_dict["consolelink"] = azure_console_link.get_console_link(
-                iam_entity_type="application",
-                id=app_dict.get("app_id"),
-            )
+            app_dict["consolelink"] = safe_console_link(app_dict.get("app_id"), {}, iam_entity_type="application")
 
             tenant_applications_list.append(app_dict)
 
@@ -887,9 +880,8 @@ def _load_tenant_applications_tx(
     i.firstseen = timestamp(),
     i.object_id = app.object_id,
     i.region = $region,
-    i.consolelink = app.consolelink,
     i.app_id = app.app_id
-    SET i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(app.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.name = app.display_name,
     i.publisher_domain = app.publisher_domain,
     i.sign_in_audience = app.sign_in_audience,
@@ -1002,10 +994,8 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
             # Add tenant-specific ID for consistency with previous implementation
             sp_dict["object_id"] = sp_dict.get("id")
             sp_dict["id"] = f"tenants/{tenant_id}/ServiceAccounts/{sp_dict.get('id')}"
-            sp_dict["consolelink"] = azure_console_link.get_console_link(
-                id=sp_dict.get("id"),
-                app_id=sp_dict.get("app_id"),
-                iam_entity_type="service_principal",
+            sp_dict["consolelink"] = safe_console_link(
+                sp_dict.get("object_id"), {}, app_id=sp_dict.get("app_id") or "", iam_entity_type="service_principal",
             )
             sp_dict["managed_type"] = _azure_service_principal_managed_type(
                 sp_dict.get("app_owner_organization_id"),
@@ -1031,10 +1021,9 @@ def _load_tenant_service_accounts_tx(
     MERGE (i:AzureServiceAccount{id: service.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.consolelink = service.consolelink,
     i.region = $region,
     i.object_id = service.object_id
-    SET i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(service.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.name = service.display_name,
     i.account_enabled = service.account_enabled,
     i.app_id = service.app_id,
@@ -1147,11 +1136,9 @@ async def get_tenant_domains_list(client: GraphServiceClient, tenant_id: str) ->
                     }
 
             # Add custom properties
+            # Graph's domain id is the domain name, which is what the portal link needs.
+            domain_dict["consolelink"] = safe_console_link(domain_dict.get("id"), {}, iam_entity_type="domain")
             domain_dict["id"] = f"tenants/{tenant_id}/domains/{domain_dict.get('id')}"
-            domain_dict["consolelink"] = azure_console_link.get_console_link(
-                id=domain_dict.get("id"),
-                iam_entity_type="domain",
-            )
 
             tenant_domains_list.append(domain_dict)
 
@@ -1173,10 +1160,9 @@ def _load_tenant_domains_tx(
     MERGE (i:AzureDomain{id: domain.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.consolelink = domain.consolelink,
     i.region = $region,
     i.create_date = $createDate
-    SET i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(domain.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.authentication_type = domain.authentication_type,
     i.availability_status = domain.availability_status,
     i.is_admin_managed = domain.is_admin_managed,
@@ -1245,10 +1231,7 @@ def get_roles_list(
             role["managed_type"] = role["role_owner_type"]
 
             role["identity_id"] = role["id"].split("/")[-1]
-            role["consolelink"] = azure_console_link.get_console_link(
-                id=role["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            role["consolelink"] = safe_console_link(role["id"], common_job_parameters)
             permissions = []
             for permission in role.get("permissions", []):
                 for action in permission.get("actions", []):
@@ -1290,10 +1273,7 @@ def get_managed_identity_list(
         )
 
         for managed_identity in managed_identity_list:
-            managed_identity["consolelink"] = azure_console_link.get_console_link(
-                id=managed_identity["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            managed_identity["consolelink"] = safe_console_link(managed_identity["id"], common_job_parameters)
             managed_identity["location"] = managed_identity.get("location", "").replace(" ", "").lower()
         return managed_identity_list
     except HttpResponseError as e:
@@ -1314,10 +1294,9 @@ def _load_roles_tx(
     MERGE (i:AzureRole{id: role.id})
     ON CREATE SET i.firstseen = timestamp(),
     i.name = role.role_name,
-    i.consolelink = role.consolelink,
     i.region = $region,
     i.create_date = $createDate
-    SET i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(role.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.roleName = role.role_name,
     i.permissions = role.permissions,
     i.type = role.type,
@@ -1393,6 +1372,7 @@ def _load_roles_tx(
         ep.access_type = access_type,
         ep.home_tenant_id = home_tenant,
         ep.app_id = principal.app_id,
+        ep.consolelink = coalesce(principal.consolelink, ep.consolelink),
         ep.account_id = CASE WHEN home_tenant <> '' THEN home_tenant ELSE $tenant_id END,
         ep.principal_type = CASE WHEN user_type = 'guest' THEN 'GuestUser' ELSE 'ServicePrincipal' END
     MERGE (i)-[r:TRUSTS_AZURE_PRINCIPAL]->(ep)
@@ -1423,7 +1403,7 @@ def _load_managed_identities_tx(
     i.region = managed_identity.location
     SET i.lastupdated = $update_tag,
     i.name = managed_identity.name,
-    i.consolelink = managed_identity.consolelink,
+    i.consolelink = coalesce(managed_identity.consolelink, i.consolelink),
     i.location = managed_identity.location,
     i.region = managed_identity.location,
     i.type = managed_identity.type,

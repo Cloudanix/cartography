@@ -6,10 +6,13 @@ from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from urllib.parse import quote
 
 import neo4j
 
+from cartography.intel.gitlab.common import get_console_link
+from cartography.intel.gitlab.common import get_web_base_url
 from cartography.intel.gitlab.pagination import paginate_request
 from cartography.util import make_requests_url
 from cartography.util import normalize_datetime
@@ -56,8 +59,12 @@ def get_project_branches(hosted_domain: str, access_token: str, project_id: int)
     return branches
 
 
-def transform_projects_data(projects: List[Dict]) -> List[Dict]:
+def transform_projects_data(projects: List[Dict], hosted_domain: Optional[str] = None) -> List[Dict]:
+    base_url = get_web_base_url(hosted_domain)
     for project in projects:
+        project["consolelink"] = get_console_link(
+            "project", base_url=base_url, project_path=project.get("path_with_namespace"),
+        )
         project["is_private"] = project["visibility"] == "private"
         project["archived"] = project.get("archived", False)
         iso_str, ts_ms = normalize_datetime(project.get("last_activity_at"))
@@ -67,7 +74,13 @@ def transform_projects_data(projects: List[Dict]) -> List[Dict]:
     return projects
 
 
-def transform_branches_data(branches: List[Dict], project_id: int, project_path: str, default_branch: str = None) -> List[Dict]:
+def transform_branches_data(
+    branches: List[Dict],
+    project_id: int,
+    project_path: str,
+    default_branch: str = None,
+    hosted_domain: Optional[str] = None,
+) -> List[Dict]:
     """
     Transform branch data and filter to include only:
     - Branches active in the last 180 days
@@ -75,11 +88,13 @@ def transform_branches_data(branches: List[Dict], project_id: int, project_path:
     """
     transformed_branches = []
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
+    base_url = get_web_base_url(hosted_domain)
 
     for branch in branches:
         branch_name = branch["name"]
         commit = branch.get("commit", {})
         committed_date_str = commit.get("committed_date")
+        consolelink = get_console_link("branch", base_url=base_url, project_path=project_path, branch=branch_name)
 
         # Always include default branch
         if branch_name == default_branch:
@@ -89,6 +104,7 @@ def transform_branches_data(branches: List[Dict], project_id: int, project_path:
                 "id": f"{project_id}:{branch_name}",
                 "name": branch_name,
                 "committed_date": committed_date_str,
+                "consolelink": consolelink,
             })
             continue
 
@@ -102,6 +118,7 @@ def transform_branches_data(branches: List[Dict], project_id: int, project_path:
                     "id": f"{project_id}:{branch_name}",
                     "name": branch_name,
                     "committed_date": committed_date_str,
+                    "consolelink": consolelink,
                 })
         else:
             transformed_branches.append({
@@ -110,6 +127,7 @@ def transform_branches_data(branches: List[Dict], project_id: int, project_path:
                 "id": f"{project_id}:{branch_name}",
                 "name": branch_name,
                 "committed_date": committed_date_str,
+                "consolelink": consolelink,
             })
 
     return transformed_branches
@@ -153,6 +171,7 @@ def _load_branches_data(
     SET br.name = branch.name,
     br.committed_date = branch.committed_date,
     br.projectid = branch.project_id,
+    br.consolelink = branch.consolelink,
     br.lastupdated = $UpdateTag
 
     WITH br, branch
@@ -201,6 +220,7 @@ def _load_projects_data(
         pro.last_activity_at_timestamp = project.last_activity_at_timestamp,
         pro.default_branch = project.default_branch,
         pro.primary_language = project.primary_language,
+        pro.consolelink = project.consolelink,
         pro.lastupdated = $UpdateTag
 
     WITH pro, project
@@ -256,7 +276,7 @@ def sync(
             primary_language = max(project_languages, key=project_languages.get)
             project["primary_language"] = primary_language.lower()
 
-    group_projects = transform_projects_data(group_projects)
+    group_projects = transform_projects_data(group_projects, hosted_domain)
 
     load_projects_data(neo4j_session, group_projects, common_job_parameters, group_id)
 
@@ -268,6 +288,7 @@ def sync(
             project["id"],
             project.get("path_with_namespace", project["path"]),
             project.get("default_branch"),
+            hosted_domain,
         )
         load_branches_data(neo4j_session, transformed_branches, common_job_parameters)
 

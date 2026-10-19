@@ -109,7 +109,8 @@ def get_apis(apigateway: Resource, project_id: str, regions: list, common_job_pa
                         api['entities'] = api_entities
                         api['public_access'] = public_access
                         api['consolelink'] = gcp_console_link.get_console_link(
-                            resource_name='api', project_id=project_id, managed_service_name=api['managedService'], api_name=api['displayName'],
+                            resource_name='api', project_id=project_id,
+                            managed_service_name=api['managedService'], api_name=api['api_name'],
                         )
                         apis.append(api)
                 req = apigateway.projects().locations().apis().list_next(previous_request=req, previous_response=res)

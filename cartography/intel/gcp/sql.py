@@ -194,7 +194,7 @@ def get_sql_databases(sql: Resource, instance: Dict, project_id: str) -> List[Di
                 item["id"] = f"projects/{project_id}/instances/{instance['name']}/databases/{item['name']}"
                 item["consolelink"] = gcp_console_link.get_console_link(
                     project_id=project_id,
-                    resource_name="sql_instance",
+                    resource_name="sql_database",
                     sql_instance_name=instance["name"],
                 )
                 sql_database.append(item)

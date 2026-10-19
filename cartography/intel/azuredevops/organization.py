@@ -7,6 +7,7 @@ from typing import Optional
 import neo4j
 
 from .util import call_azure_devops_api
+from .util import get_console_link
 from .util import validate_organization_data
 from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
@@ -69,6 +70,7 @@ def load_organization(
         org.type = $OrgType,
         org.description = $OrgDescription,
         org.created_date = $OrgCreatedDate,
+        org.consolelink = $OrgConsoleLink,
         org.lastupdated = $UpdateTag
     WITH org
 
@@ -86,6 +88,7 @@ def load_organization(
         OrgType=org_data.get("type"),
         OrgDescription=org_data.get("description"),
         OrgCreatedDate=org_data.get("createdDate"),
+        OrgConsoleLink=org_data.get("consolelink"),
         UpdateTag=common_job_parameters["UPDATE_TAG"],
         workspace_id=common_job_parameters["WORKSPACE_ID"],
     )
@@ -111,6 +114,7 @@ def sync(
     org_data = {
         "name": org_name,
         "url": f"{url}/{org_name}",
+        "consolelink": get_console_link("organization", base_url=url, organization=org_name),
     }
     if org_data:
         load_organization(neo4j_session, org_data, common_job_parameters)

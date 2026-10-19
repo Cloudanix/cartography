@@ -8,6 +8,7 @@ import neo4j
 
 from .util import call_azure_devops_api
 from .util import call_azure_devops_api_pagination
+from .util import get_console_link
 from .util import validate_user_data
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
@@ -16,13 +17,15 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 
 
-def transform_user(user_data: Dict) -> Dict:
+def transform_user(user_data: Dict, consolelink: Optional[str] = None) -> Dict:
     """
     Transforms the user data from the API into a flattened dictionary.
+    consolelink: the organization's users page; Azure DevOps has no per-user page.
     """
     transformed = {
         "id": user_data.get("id"),
         "lastAccessedDate": user_data.get("lastAccessedDate"),
+        "consolelink": consolelink,
     }
 
     user = user_data.get("user", {})
@@ -118,6 +121,7 @@ def load_users(
         u.status = user.status,
         u.member = user.member,
         u.group_entitlements = user.groupEntitlements,
+        u.consolelink = user.consolelink,
         u.lastupdated = $UpdateTag
     WITH u
 
@@ -156,7 +160,8 @@ def sync(
     logger.info(f"Syncing users for organization '{org_name}'")
     users = get_users(url, org_name, access_token)
     if users:
-        transformed_users = [transform_user(user_data) for user_data in users]
+        users_link = get_console_link("user", base_url=url, organization=org_name)
+        transformed_users = [transform_user(user_data, users_link) for user_data in users]
         load_users(neo4j_session, transformed_users, org_name, common_job_parameters)
         cleanup(neo4j_session, common_job_parameters)
     logger.info(f"Processed {len(users) if users else 0} users for org '{org_name}'")

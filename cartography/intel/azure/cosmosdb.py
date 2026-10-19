@@ -13,8 +13,8 @@ from azure.core.exceptions import ClientAuthenticationError
 from azure.core.exceptions import HttpResponseError
 from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.cosmosdb import CosmosDBManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
@@ -23,7 +23,6 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 @timeit
@@ -61,9 +60,7 @@ def get_database_account_list(credentials: Credentials, subscription_id: str, re
         database_account['publicNetworkAccess'] = database_account.get(
             'properties', {},
         ).get('public_network_access', 'Disabled')
-        database_account['consolelink'] = azure_console_link.get_console_link(
-            id=database_account['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        database_account['consolelink'] = safe_console_link(database_account['id'], common_job_parameters)
         database_account['location'] = database_account.get('location', '').replace(" ", "").lower()
         if regions is None:
             account_list.append(database_account)
@@ -120,7 +117,7 @@ def load_database_account_data(
     d.publicnetworkaccess = da.public_network_access,
     d.enablecassandraconnector = da.enable_cassandra_connector,
     d.connectoroffer = da.connector_offer,
-    d.consolelink = da.consolelink,
+    d.consolelink = coalesce(da.consolelink, d.consolelink),
     d.disablekeybasedmetadatawriteaccess = da.disable_key_based_metadata_write_access,
     d.keyvaulturi = da.key_vault_key_uri,
     d.enablefreetier = da.enable_free_tier,
@@ -517,7 +514,7 @@ def _load_cosmosdb_virtual_network_rules(
         database_account_id = database_account['id']
         virtual_network_rules = database_account['virtual_network_rules']
         for network_rule in virtual_network_rules:
-            network_rule['consolelink'] = azure_console_link.get_console_link(id=network_rule['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+            network_rule['consolelink'] = safe_console_link(network_rule['id'], common_job_parameters)
 
         ingest_virtual_network_rules = """
         UNWIND $DictList AS vnr
@@ -526,7 +523,7 @@ def _load_cosmosdb_virtual_network_rules(
         rules.region = $region
         SET rules.lastupdated = $azure_update_tag,
         rules.ignoremissingvnetserviceendpoint = vnr.ignore_missing_v_net_service_endpoint,
-        rules.consolelink = vnr.consolelink
+        rules.consolelink = coalesce(vnr.consolelink, rules.consolelink)
         WITH rules
         MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
         MERGE (d)-[r:CONFIGURED_WITH]->(rules)
@@ -702,10 +699,7 @@ def transform_database_account_resources(
         resource['database_account_name'] = name
         resource['database_account_id'] = account_id
         resource['resource_group_name'] = resource_group
-        resource['consolelink'] = azure_console_link.get_console_link(
-            id=resource['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        resource['consolelink'] = safe_console_link(resource['id'], common_job_parameters)
     return resources
 
 
@@ -776,7 +770,7 @@ def _load_sql_databases(neo4j_session: neo4j.Session, sql_databases: List[Dict],
     sdb.region = database.location
     SET sdb.name = database.name,
     sdb.throughput = database.options.throughput,
-    sdb.consolelink = database.consolelink,
+    sdb.consolelink = coalesce(database.consolelink, sdb.consolelink),
     sdb.maxthroughput = database.options.autoscale_setting.max_throughput,
     sdb.lastupdated = $azure_update_tag
     WITH sdb, database
@@ -807,7 +801,7 @@ def _load_cassandra_keyspaces(neo4j_session: neo4j.Session, cassandra_keyspaces:
     ck.region = keyspace.location
     SET ck.name = keyspace.name,
     ck.lastupdated = $azure_update_tag,
-    ck.consolelink = keyspace.consolelink,
+    ck.consolelink = coalesce(keyspace.consolelink, ck.consolelink),
     ck.throughput = keyspace.options.throughput,
     ck.maxthroughput = keyspace.options.autoscale_setting.max_throughput
     WITH ck, keyspace
@@ -837,7 +831,7 @@ def _load_mongodb_databases(neo4j_session: neo4j.Session, mongodb_databases: Lis
     mdb.location = database.location,
     mdb.region = database.location
     SET mdb.name = database.name,
-    mdb.consolelink = database.consolelink,
+    mdb.consolelink = coalesce(database.consolelink, mdb.consolelink),
     mdb.throughput = database.options.throughput,
     mdb.maxthroughput = database.options.autoscale_setting.max_throughput,
     mdb.lastupdated = $azure_update_tag
@@ -868,7 +862,7 @@ def _load_table_resources(neo4j_session: neo4j.Session, table_resources: List[Di
     tr.location = table.location,
     tr.region = table.location
     SET tr.name = table.name,
-    tr.consolelink = table.consolelink,
+    tr.consolelink = coalesce(table.consolelink, tr.consolelink),
     tr.lastupdated = $azure_update_tag,
     tr.throughput = table.options.throughput,
     tr.maxthroughput = table.options.autoscale_setting.max_throughput
@@ -973,10 +967,7 @@ def load_sql_database_details(neo4j_session: neo4j.Session, details: List[Tuple[
         if len(container) > 0:
             for c in container:
                 c['database_id'] = database_id
-                c['consolelink'] = azure_console_link.get_console_link(
-                    id=c['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                c['consolelink'] = safe_console_link(c['id'], common_job_parameters)
             containers.extend(container)
 
     _load_sql_containers(neo4j_session, containers, update_tag)
@@ -998,7 +989,7 @@ def _load_sql_containers(neo4j_session: neo4j.Session, containers: List[Dict], u
     c.throughput = container.options.throughput,
     c.maxthroughput = container.options.autoscale_setting.max_throughput,
     c.container = container.resource.id,
-    c.consolelink = container.consolelink,
+    c.consolelink = coalesce(container.consolelink, c.consolelink),
     c.defaultttl = container.resource.default_ttl,
     c.analyticalttl = container.resource.analytical_storage_ttl,
     c.isautomaticindexingpolicy = container.resource.indexing_policy.automatic,
@@ -1105,10 +1096,7 @@ def load_cassandra_keyspace_details(
     for keyspace_id, cassandra_table in details:
         if len(cassandra_table) > 0:
             for t in cassandra_table:
-                t['consolelink'] = azure_console_link.get_console_link(
-                    id=t['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                t['consolelink'] = safe_console_link(t['id'], common_job_parameters)
                 t['keyspace_id'] = keyspace_id
             cassandra_tables.extend(cassandra_table)
 
@@ -1128,7 +1116,7 @@ def _load_cassandra_tables(neo4j_session: neo4j.Session, cassandra_tables: List[
     ct.region = table.location
     SET ct.name = table.name,
     ct.lastupdated = $azure_update_tag,
-    ct.consolelink = table.consolelink,
+    ct.consolelink = coalesce(table.consolelink, ct.consolelink),
     ct.throughput = table.options.throughput,
     ct.maxthroughput = table.options.autoscale_setting.max_throughput,
     ct.container = table.resource.id,
@@ -1236,7 +1224,7 @@ def load_mongodb_databases_details(
     for database_id, collection in details:
         if len(collection) > 0:
             for c in collection:
-                c['consolelink'] = azure_console_link.get_console_link(id=c['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+                c['consolelink'] = safe_console_link(c['id'], common_job_parameters)
                 c['database_id'] = database_id
             collections.extend(collection)
 
@@ -1256,7 +1244,7 @@ def _load_collections(neo4j_session: neo4j.Session, collections: List[Dict], upd
     col.region = collection.location
     SET col.name = collection.name,
     col.lastupdated = $azure_update_tag,
-    col.consolelink = collection.consolelink,
+    col.consolelink = coalesce(collection.consolelink, col.consolelink),
     col.throughput = collection.options.throughput,
     col.maxthroughput = collection.options.autoscale_setting.max_throughput,
     col.collectionname = collection.resource.id,

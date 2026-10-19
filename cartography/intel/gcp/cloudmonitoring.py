@@ -141,7 +141,9 @@ def transform_metric_descriptors(metric_descriptors: List[Dict], project_id: str
     for metric in metric_descriptors:
         metric['region'] = 'global'
         metric['id'] = f"projects/{project_id}/metricDescriptors/{metric['name']}"
-        metric['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='cloud_logging_metric')
+        metric['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='cloud_monitoring_metric_descriptor',
+        )
         metric_descriptors.append(metric)
 
     return metric_descriptors

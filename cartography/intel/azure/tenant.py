@@ -7,6 +7,7 @@ import requests
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.resource import SubscriptionClient
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
@@ -100,7 +101,8 @@ def load_azure_tenant(
     at.displayName = $displayName,
     at.country = $country,
     at.countryCode = $countryCode,
-    at.defaultDomain = $defaultDomain
+    at.defaultDomain = $defaultDomain,
+    at.consolelink = coalesce($consolelink, at.consolelink)
     WITH w, at
     MERGE (w)-[o:OWNER]->(at)
     ON CREATE SET o.firstseen = timestamp()
@@ -127,6 +129,7 @@ def load_azure_tenant(
         country=tenant_obj['country'],
         countryCode=tenant_obj['countryCode'],
         defaultDomain=tenant_obj['defaultDomain'],
+        consolelink=safe_console_link(tenant_obj.get('tenantId'), common_job_parameters, iam_entity_type='tenant'),
         userEmail=current_user.get('email'),
         userId=current_user.get('id'),
         userName=current_user.get('name'),

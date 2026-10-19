@@ -103,6 +103,7 @@ def load_compartments(
         cnode.createdate = comp.create_date
         SET cnode.ocid = comp.ocid, cnode.name = comp.name, cnode.compartmentid = comp.compartment_id,
         cnode.managed_type = comp.managed_type,
+        cnode.consolelink = comp.consolelink,
         cnode.lastupdated = $oci_update_tag
         WITH cnode
         MATCH (tenancy:OCITenancy{id: $OCI_TENANCY_ID})
@@ -121,6 +122,7 @@ def load_compartments(
                 current_oci_tenancy_id,
             ),
             "create_date": compartment["time-created"],
+            "consolelink": utils.get_console_link("compartment", ocid=compartment["id"]),
         }
         for compartment in compartments
     ]
@@ -150,6 +152,7 @@ def load_users(
         unode.can_use_customer_secret_keys = user.can_use_customer_secret_keys,
         unode.can_use_smtp_credentials = user.can_use_smtp_credentials,
         unode.managed_type = user.managed_type,
+        unode.consolelink = user.consolelink,
         unode.lastupdated = $oci_update_tag
         WITH unode
         MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
@@ -174,6 +177,7 @@ def load_users(
             "can_use_smtp_credentials": user["capabilities"]["can-use-smtp-credentials"],
             "compartment_id": user["compartment-id"],
             "managed_type": MANAGED_TYPE_CUSTOM,
+            "consolelink": utils.get_console_link("user", ocid=user["id"]),
         }
         for user in users
     ]
@@ -227,6 +231,7 @@ def load_groups(
         SET gnode.ocid = grp.ocid, gnode.name = grp.group_name, gnode.compartmentid = grp.compartment_id,
         gnode.lastupdated = $oci_update_tag,
         gnode.managed_type = grp.managed_type,
+        gnode.consolelink = grp.consolelink,
         gnode.description = grp.description
         WITH gnode
         MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
@@ -243,6 +248,7 @@ def load_groups(
             "compartment_id": group["compartment-id"],
             "description": group["description"],
             "managed_type": _oci_group_managed_type(group),
+            "consolelink": utils.get_console_link("group", ocid=group["id"]),
         }
         for group in groups
     ]
@@ -332,6 +338,7 @@ def load_policies(
     policies: List[Dict[str, Any]],
     current_tenancy_id: str,
     oci_update_tag: int,
+    home_region: str = "",
 ) -> None:
     ingest_policy = """
     UNWIND $DictList AS policy
@@ -341,6 +348,7 @@ def load_policies(
         pnode.description = policy.description,
         pnode.statements = policy.statements,
         pnode.managed_type = policy.managed_type,
+        pnode.consolelink = policy.consolelink,
         pnode.updatedate = policy.policy_update, pnode.lastupdated = $oci_update_tag
         With pnode
         MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
@@ -359,6 +367,8 @@ def load_policies(
             "managed_type": _oci_policy_managed_type(policy),
             "create_date": str(policy["time-created"]),
             "policy_update": str(policy["version-date"]),
+            # Policies are IAM resources, managed in the tenancy's home region.
+            "consolelink": utils.get_console_link("policy", region=home_region, ocid=policy["id"]),
         }
         for policy in policies
     ]
@@ -382,6 +392,7 @@ def sync_policies(
     current_tenancy_id: str,
     oci_update_tag: int,
     common_job_parameters: Dict[str, Any],
+    home_region: str = "",
 ) -> None:
     logger.debug("Syncing IAM policies for account '%s'.", current_tenancy_id)
     compartments = utils.get_compartments_in_tenancy(neo4j_session, current_tenancy_id)
@@ -391,7 +402,7 @@ def sync_policies(
         )
         data = get_policy_list_data(iam, compartment["ocid"])
         if (data["Policies"]):
-            load_policies(neo4j_session, data["Policies"], current_tenancy_id, oci_update_tag)
+            load_policies(neo4j_session, data["Policies"], current_tenancy_id, oci_update_tag, home_region)
     run_cleanup_job('oci_import_policies_cleanup.json', neo4j_session, common_job_parameters)
 
 
@@ -613,11 +624,20 @@ def sync_region_subscriptions(
     current_tenancy_id: str,
     oci_update_tag: int,
     common_job_parameters: Dict[str, Any],
-) -> None:
+) -> str:
+    """Load the tenancy's region subscriptions and return its home region name ('' if none)."""
     logger.debug("Syncing IAM region subscriptions for account '%s'.", current_tenancy_id)
     data = get_region_subscriptions_list_data(iam, current_tenancy_id)
     load_region_subscriptions(neo4j_session, data["RegionSubscriptions"], current_tenancy_id, oci_update_tag)
-    # run_cleanup_job('oci_import_region_subscriptions_cleanup.json', neo4j_session, common_job_parameters)
+    home_region = next(
+        (r["region-name"] for r in data["RegionSubscriptions"] if r.get("is-home-region")),
+        "",
+    )
+    if not home_region:
+        logger.warning(
+            "No home region subscription for tenancy '%s'; OCI policies get no console link.", current_tenancy_id,
+        )
+    return home_region
 
 
 def sync(
@@ -635,8 +655,9 @@ def sync(
     sync_group_memberships(neo4j_session, iam, tenancy_id, oci_update_tag, common_job_parameters)
     # Compartment sync is handled by compartment.py in __init__.py, not here
     # sync_compartments(neo4j_session, iam, tenancy_id, oci_update_tag, common_job_parameters)
-    sync_policies(neo4j_session, iam, tenancy_id, oci_update_tag, common_job_parameters)
+    # Region subscriptions first: policy console links need the tenancy's home region.
+    home_region = sync_region_subscriptions(neo4j_session, iam, tenancy_id, oci_update_tag, common_job_parameters)
+    sync_policies(neo4j_session, iam, tenancy_id, oci_update_tag, common_job_parameters, home_region)
     sync_oci_policy_references(neo4j_session, tenancy_id, oci_update_tag, common_job_parameters)
-    sync_region_subscriptions(neo4j_session, iam, tenancy_id, oci_update_tag, common_job_parameters)
     toc = time.perf_counter()
     logger.info(f"Time to process OCI IAM for tenancy '{tenancy_id}': {toc - tic:0.4f} seconds")

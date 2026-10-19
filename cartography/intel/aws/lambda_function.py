@@ -287,7 +287,7 @@ def get_lambda_function_details(
 @timeit
 def load_lambda_function_details(
     neo4j_session: neo4j.Session,
-    lambda_function_details: List[Tuple[str, List[Dict], List[Dict], List[Dict]]],
+    lambda_function_details: List[Tuple[str, List[Dict], List[Dict], List[Dict], str]],
     update_tag: int,
     current_aws_account_id: str,
 ) -> None:
@@ -301,7 +301,7 @@ def load_lambda_function_details(
                 function_name = function_arn.split(":")[-1]
                 alias["region"] = region
                 alias["consolelink"] = aws_console_link.get_console_link(
-                    arn=f"arn:aws:lambda::{current_aws_account_id}:alias/{function_name}",
+                    arn=f"arn:aws:lambda:{region}:{current_aws_account_id}:alias/{function_name}",
                 )
             lambda_aliases.extend(aliases)
         if len(event_source_mappings) > 0:
@@ -310,7 +310,7 @@ def load_lambda_function_details(
                 function_name = function_arn.split(":")[-1]
                 event["region"] = region
                 event["consolelink"] = aws_console_link.get_console_link(
-                    arn=f"arn:aws:lambda::{current_aws_account_id}:event-source-mapping/{function_name}",
+                    arn=f"arn:aws:lambda:{region}:{current_aws_account_id}:event-source-mapping/{function_name}",
                 )
             lambda_event_source_mappings.extend(event_source_mappings)
         if len(layers) > 0:
@@ -318,7 +318,7 @@ def load_lambda_function_details(
                 layer["FunctionArn"] = function_arn
                 function_name = function_arn.split(":")[-1]
                 layer["consolelink"] = aws_console_link.get_console_link(
-                    arn=f"arn:aws:lambda::{current_aws_account_id}:layer/{function_name}",
+                    arn=f"arn:aws:lambda:{region}:{current_aws_account_id}:layer/{function_name}",
                 )
                 layer["region"] = region
             lambda_layers.extend(layers)

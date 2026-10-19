@@ -43,8 +43,10 @@ def transform_subscriptions(subs: List[Dict], region: str) -> List[Dict]:
     for subscription in subs:
         # subscription arn - arn:aws:sns:<region>:<account_id>:<topic_name>:<subscription_id>
         subscription['arn'] = subscription['SubscriptionArn']
-        # subscription['consolelink'] = aws_console_link.get_console_link(arn=subscription['arn'])
-        subscription['consolelink'] = ''
+        # Unconfirmed subscriptions carry "PendingConfirmation" instead of an ARN.
+        subscription['consolelink'] = None
+        if subscription['arn'].startswith('arn:'):
+            subscription['consolelink'] = aws_console_link.get_console_link(arn=subscription['arn'])
         subscription['region'] = region
         subscription['name'] = subscription['SubscriptionArn'].split(':')[-1]
         subscriptions.append(subscription)
@@ -81,8 +83,7 @@ def transform_topics(boto3_session: boto3.session.Session, tps: List[Dict], regi
         for topic in tps:
             topic['region'] = region
             topic['name'] = topic['TopicArn'].split(':')[-1]
-            # topic['consolelink'] = aws_console_link.get_console_link(arn=topic['TopicArn'])
-            topic['consolelink'] = ''
+            topic['consolelink'] = aws_console_link.get_console_link(arn=topic['TopicArn'])
             topic['attributes'] = client.get_topic_attributes(TopicArn=topic['TopicArn']).get('Attributes', {})
             topic['subscriptions'] = list(filter(lambda s: s['TopicArn'] == topic['TopicArn'], subscriptions))
             topics.append(topic)

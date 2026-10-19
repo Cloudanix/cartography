@@ -20,7 +20,9 @@ from packaging.utils import canonicalize_name
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import describe_request_error
+from cartography.intel.github.util import get_console_link
 from cartography.intel.github.util import get_retry_delay_seconds
+from cartography.intel.github.util import get_web_base_url
 from cartography.intel.github.util import handle_rate_limit_sleep
 from cartography.intel.github.util import is_retryable_request_error
 from cartography.util import normalize_datetime
@@ -285,11 +287,12 @@ def _fetch_branch_page(
             time.sleep(get_retry_delay_seconds(err, attempt))
 
 
-def transform(repos_json: List[Dict]) -> Dict:
+def transform(repos_json: List[Dict], web_base_url: Optional[str] = None) -> Dict:
     """
     Parses the JSON returned from GitHub API to create data for graph ingestion
     :param repos_json: the list of individual repository nodes from GitHub. See tests.data.github.repos.GET_REPOS for
     data shape.
+    :param web_base_url: GitHub web host for console links (GitHub Enterprise); None means github.com.
     :return: Dict containing the repos, repo->language mapping, owners->repo mapping, outside collaborators->repo
     mapping, and Python requirements files (if any) in a repo.
     """
@@ -308,10 +311,10 @@ def transform(repos_json: List[Dict]) -> Dict:
     transformed_branches: List[Dict] = []
     for repo_object in repos_json:
         _transform_repo_languages(repo_object["url"], repo_object, transformed_repo_languages)
-        _transform_repo_objects(repo_object, transformed_repo_list)
+        _transform_repo_objects(repo_object, transformed_repo_list, web_base_url)
         _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
         _transform_collaborators(repo_object.get("collaborators"), repo_object["url"], transformed_collaborators)
-        _transform_branches(repo_object["url"], repo_object, transformed_branches)
+        _transform_branches(repo_object["url"], repo_object, transformed_branches, web_base_url)
         # _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
         # _transform_setup_cfg_requirements(repo_object["setupCfg"], repo_object["url"], transformed_requirements_files)
 
@@ -355,7 +358,9 @@ def transform(repos_json: List[Dict]) -> Dict:
     return results
 
 
-def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Dict]) -> None:
+def _transform_branches(
+    repo_url: str, repo: Dict, transformed_branches: List[Dict], web_base_url: Optional[str] = None,
+) -> None:
     """
     Transform branch data and filter to include only:
     - Branches active in the last 180 days
@@ -366,12 +371,16 @@ def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Di
 
     default_branch = repo.get("defaultBranchRef", {}).get("name") if repo.get("defaultBranchRef") else None
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
+    owner = (repo.get("owner") or {}).get("login")
 
     for edge in (repo["refs"].get("edges") or []):
         node = edge["node"]
         branch_name = node["name"]
         target = node.get("target")
         committed_date_str = target.get("committedDate") if target else None
+        consolelink = get_console_link(
+            "branch", base_url=web_base_url, owner=owner, repo=repo.get("name"), branch=branch_name,
+        )
 
         # Always include default branch
         if branch_name == default_branch:
@@ -380,6 +389,7 @@ def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Di
                 "branch_id": f"{repo_url}:{node['id']}",
                 "name": branch_name,
                 "last_commit_timestamp": committed_date_str,
+                "consolelink": consolelink,
             })
             continue
 
@@ -392,6 +402,7 @@ def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Di
                     "branch_id": f"{repo_url}:{node['id']}",
                     "name": branch_name,
                     "last_commit_timestamp": committed_date_str,
+                    "consolelink": consolelink,
                 })
         else:
             # No date available, include the branch
@@ -400,6 +411,7 @@ def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Di
                 "branch_id": f"{repo_url}:{node['id']}",
                 "name": branch_name,
                 "last_commit_timestamp": committed_date_str,
+                "consolelink": consolelink,
             })
 
 
@@ -418,12 +430,15 @@ def _create_git_url_from_ssh_url(ssh_url: str) -> str:
     return ssh_url.replace("/", ":").replace("git@", "git://")
 
 
-def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) -> None:
+def _transform_repo_objects(
+    input_repo_object: Dict, out_repo_list: List[Dict], web_base_url: Optional[str] = None,
+) -> None:
     """
     Performs data transforms including creating necessary IDs for unique nodes in the graph related to GitHub repos,
     their default branches, and languages.
     :param input_repo_object: A repository node from GitHub; see tests.data.github.repos.GET_REPOS for data shape.
     :param out_repo_list: Out-param to append transformed repos to.
+    :param web_base_url: GitHub web host for the console link; None means github.com.
     :return: Nothing
     """
     # Create a unique ID for a GitHubBranch node representing the default branch of this repo object.
@@ -465,6 +480,12 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
             "sshurl": ssh_url,
             "updatedat": input_repo_object["updatedAt"],
             "pushedat": input_repo_object["pushedAt"],
+            "consolelink": get_console_link(
+                "repository",
+                base_url=web_base_url,
+                owner=(input_repo_object.get("owner") or {}).get("login"),
+                repo=input_repo_object["name"],
+            ),
         },
     )
 
@@ -679,6 +700,7 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
     repo.updatedat = repository.updatedat,
     repo.last_activity_at = repository.last_activity_at,
     repo.last_activity_at_timestamp = repository.last_activity_at_timestamp,
+    repo.consolelink = repository.consolelink,
     repo.lastupdated = $UpdateTag
 
     WITH repo
@@ -826,6 +848,7 @@ def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_d
     ON CREATE SET branch.firstseen = timestamp()
     SET branch.name = branch_info.name,
     branch.last_commit_timestamp = branch_info.last_commit_timestamp,
+    branch.consolelink = branch_info.consolelink,
     branch.lastupdated = $UpdateTag
 
     WITH branch, branch_info
@@ -1089,7 +1112,7 @@ def sync(
     # repos_list = get_org_repos(organization, github_api_key)
     repos_json = get(github_api_key, github_url, organization)
 
-    repo_data = transform(repos_json)
+    repo_data = transform(repos_json, get_web_base_url(github_url))
     load(neo4j_session, common_job_parameters, repo_data)
 
     run_cleanup_job("github_repos_cleanup.json", neo4j_session, common_job_parameters)

@@ -5,12 +5,14 @@ from typing import Dict
 import boto3
 import botocore.exceptions
 import neo4j
+from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker()
 
 
 def get_account_from_arn(arn: str) -> str:
@@ -114,6 +116,7 @@ def load_aws_accounts(
     SET org.lastupdated = $UPDATE_TAG,
     org.organizationId = $rawOrganizationId,
     org.arn = $organizationArn,
+    org.consolelink = $consolelink,
     org.masterAccountArn = $masterAccountArn,
     org.masterAccountId = $masterAccountId,
     org.masterAccountEmail = $masterAccountEmail,
@@ -162,6 +165,7 @@ def load_aws_accounts(
             rawOrganizationId=organization.get("Id"),
             isSystemGenerated=organization.get("IsSystemGenerated", None),
             organizationArn=organization.get("Arn", None),
+            consolelink=aws_console_link.get_console_link(arn=organization["Arn"]) if organization.get("Arn") else None,
             masterAccountArn=organization.get("MasterAccountArn", None),
             masterAccountId=organization.get("MasterAccountId", None),
             masterAccountEmail=organization.get("MasterAccountEmail", None),

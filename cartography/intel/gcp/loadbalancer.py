@@ -288,7 +288,7 @@ def transform_regional_instance_groups(instance_groups: List, project_id: str, r
         instancegroup['region'] = region
         instancegroup['consolelink'] = gcp_console_link.get_console_link(
             project_id=project_id, instance_group_name=instancegroup['name'],
-            region=instancegroup['name'], resource_name='regional_instance_group',
+            region=region, resource_name='regional_instance_group',
         )
         list_instance_groups.append(instancegroup)
 
@@ -403,7 +403,9 @@ def transform_global_url_maps(url_maps: List, project_id: str):
     for url_map in url_maps:
         url_map['region'] = 'global'
         url_map['type'] = 'global'
-        url_map['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='load_balancer_home')
+        url_map['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='url_map', instance_name=url_map['name'],
+        )
         url_map['id'] = f"projects/{project_id}/global/urlmaps/{url_map['name']}"
         list_url_maps.append(url_map)
 

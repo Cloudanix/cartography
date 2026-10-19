@@ -10,6 +10,7 @@ from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 from requests.exceptions import RequestException
 
 from .common import cleanse_string
+from .common import get_console_link
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -39,15 +40,17 @@ def transform_members(workspace_members: List[Dict], workspace: str) -> List[Dic
             member['user']['uuid'] = member['user']['uuid'].replace('{', '').replace('}', '')
 
             member_name = (
-                member["user"].get("nickname")
-                or member["user"].get("display_name")
-                or member["user"].get("uuid")
+                member["user"].get("nickname") or
+                member["user"].get("display_name") or
+                member["user"].get("uuid")
             )
             data = {
                 "workspace": workspace,
                 "member": cleanse_string(member_name),
             }
             member['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="member")
+            # Bitbucket has no per-user page; link the workspace's user directory.
+            member['consolelink'] = get_console_link("member", workspace=workspace)
             transformed_members.append(member)
 
         except Exception as e:
@@ -75,6 +78,7 @@ def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_j
     mem.name= member.user.display_name,
     mem.account_id=member.user.account_id,
     mem.unique_id = member.uniqueId,
+    mem.consolelink = member.consolelink,
     mem.lastupdated = $UpdateTag
 
     WITH mem,member

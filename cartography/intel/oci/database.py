@@ -195,6 +195,7 @@ def transform_autonomous_databases(
             "available_upgrade_versions": adb.get("available-upgrade-versions") or [],
             "time_created": str(adb.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("autonomous_database", region=region, ocid=adb.get("id")),
         })
     return transformed
 
@@ -264,6 +265,7 @@ def load_autonomous_databases(
             a.role = adb.role,
             a.available_upgrade_versions = adb.available_upgrade_versions,
             a.region = adb.region,
+            a.consolelink = adb.consolelink,
             a.lastupdated = $oci_update_tag
         WITH a
         MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -408,6 +410,7 @@ def transform_db_systems(
             "maintenance_window_preference": maintenance.get("preference"),
             "time_created": str(sys.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("db_system", region=region, ocid=sys.get("id")),
         })
     return transformed
 
@@ -463,6 +466,7 @@ def load_db_systems(
             sys.iorm_lifecycle_state = s.iorm_lifecycle_state,
             sys.maintenance_window_preference = s.maintenance_window_preference,
             sys.region = s.region,
+            sys.consolelink = s.consolelink,
             sys.lastupdated = $oci_update_tag
         WITH sys
         MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
@@ -548,6 +552,9 @@ def transform_db_homes(
             "last_patch_history_entry_id": h.get("last-patch-history-entry-id"),
             "time_created": str(h.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link(
+                "db_home", region=region, ocid=h.get("id"), db_system_id=h.get("db-system-id") or "",
+            ),
         })
     return transformed
 
@@ -580,6 +587,7 @@ def load_db_homes(
             dh.is_encrypted_with_cmk = h.is_encrypted_with_cmk,
             dh.last_patch_history_entry_id = h.last_patch_history_entry_id,
             dh.region = h.region,
+            dh.consolelink = h.consolelink,
             dh.lastupdated = $oci_update_tag
         WITH dh, h
         MATCH (sys:OCIDbSystem{id: h.db_system_id})
@@ -661,6 +669,9 @@ def transform_db_nodes(
             ),
             "time_created": str(n.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link(
+                "db_node", region=region, ocid=n.get("id"), db_system_id=n.get("db-system-id") or "",
+            ),
         })
     return transformed
 
@@ -695,6 +706,7 @@ def load_db_nodes(
             dn.time_maintenance_window_start = n.time_maintenance_window_start,
             dn.time_maintenance_window_end = n.time_maintenance_window_end,
             dn.region = n.region,
+            dn.consolelink = n.consolelink,
             dn.lastupdated = $oci_update_tag
         WITH dn, n
         MATCH (sys:OCIDbSystem{id: n.db_system_id})

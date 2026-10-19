@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
@@ -121,8 +122,7 @@ def get_event_rules(boto3_session: boto3.session.Session, region, account_id):
 def transform_rules(rules: List[Dict], region: str, account_id) -> List[Dict]:
     event_rules = []
     for event_rule in rules:
-        console_arn = f"arn:aws:cloudwatch:{region if region else ''}:{account_id if account_id else ''}:rule/{event_rule['Name']}"
-        event_rule["consolelink"] = aws_console_link.get_console_link(arn=console_arn)
+        event_rule["consolelink"] = aws_console_link.get_console_link(arn=event_rule["Arn"])
         event_rule["region"] = region
         event_rules.append(event_rule)
 
@@ -214,8 +214,6 @@ def transform_log_groups(boto3_session: boto3.session.Session, groups: List, reg
     try:
         kms_client = boto3_session.client("kms", region_name=region, config=get_botocore_config())
         for log_group in groups:
-            log_group["arn"] = log_group["arn"]
-            log_group["arn"].replace("/", "$252F")
             log_group["consolelink"] = aws_console_link.get_console_link(arn=log_group["arn"])
             log_group["region"] = region
             if log_group.get("kmsKeyId"):
@@ -487,11 +485,34 @@ def get_cloudwatch_flowlogs(boto3_session: boto3.session.Session, region: str) -
         return flowlogs
 
 
+# Flow logs have no console page of their own; they are listed on the VPC, subnet or ENI they watch.
+FLOW_LOG_RESOURCE_TYPES = {"vpc-": "vpc", "subnet-": "subnet", "eni-": "network-interface"}
+
+
+def _flow_log_console_link(flowlog: Dict, current_aws_account_id: str, region: str) -> Optional[str]:
+    """
+    Link to the console page of the VPC, subnet or ENI the flow log watches, or None for any other
+    resource (transit gateway, attachment): cloudconsolelink has no page for those, and the synthetic
+    vcp-flow-log node id would only resolve to the EC2 service home.
+    """
+    # Assumes the watched resource is in this account and the aws partition: DescribeFlowLogs does not
+    # return the resource's owner. A shared VPC owned by another account, or GovCloud/China, will not open.
+    resource_id = flowlog.get("ResourceId") or ""
+    for prefix, resource_type in FLOW_LOG_RESOURCE_TYPES.items():
+        if resource_id.startswith(prefix):
+            return aws_console_link.get_console_link(
+                arn=f"arn:aws:ec2:{region}:{current_aws_account_id}:{resource_type}/{resource_id}",
+            )
+    return None
+
+
 @timeit
 def transform_flow_logs(logs: List[Dict], current_aws_account_id: str, region: str) -> List[Dict]:
     flowlogs = []
     for flowlog in logs:
+        # "vcp" typo is the node id (MERGE key); kept so existing nodes and findings keep their identity.
         flowlog["arn"] = f"arn:aws:ec2:{region}:{current_aws_account_id}:vcp-flow-log/{flowlog['FlowLogId']}"
+        flowlog["consolelink"] = _flow_log_console_link(flowlog, current_aws_account_id, region)
         flowlog["region"] = region
         flowlogs.append(flowlog)
 
@@ -522,6 +543,7 @@ def _load_cloudwatch_flowlogs_tx(
     SET log.lastupdated = $aws_update_tag,
         log.name = record.FlowLogId,
         log.region = record.region,
+        log.consolelink = record.consolelink,
         log.creation_time = record.CreationTime,
         log.deliver_logs_status = record.DeliverLogsStatus,
         log.flow_log_id = record.FlowLogId,
