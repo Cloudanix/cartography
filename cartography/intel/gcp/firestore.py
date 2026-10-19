@@ -40,7 +40,7 @@ def get_firestore_databases(firestore: Resource, project_id: str, regions: list,
                 database['id'] = database['name']
                 database['database_name'] = database['name'].split('/')[-1]
                 database['consolelink'] = gcp_console_link.get_console_link(
-                    resource_name='firestore_collection', project_id=project_id, firestore_collection_name=database['name'].split("/")[-1],
+                    resource_name='firestore_database', project_id=project_id, database_name=database['database_name'],
                 )
                 if regions is None or len(regions) == 0:
                     firestore_databases.append(database)
@@ -126,7 +126,9 @@ def transform_indexes(indexes: List[Dict], database: Dict, project_id: str) -> L
         index['id'] = index['name']
         index['index_name'] = index['name'].split('/')[-1]
         index['region'] = database.get('locationId', 'global')
-        index['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='firestore_index')
+        index['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='firestore_index', database_name=database.get('database_name'),
+        )
         firestore_indexes.append(index)
 
     return firestore_indexes

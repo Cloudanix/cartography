@@ -379,7 +379,9 @@ def transform_global_url_maps(url_maps: List[Dict], project_id: str) -> List[Dic
     for url_map in url_maps:
         url_map['region'] = 'global'
         url_map['type'] = 'global'
-        url_map['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='cdn_home')
+        url_map['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='url_map', instance_name=url_map['name'],
+        )
         url_map['id'] = f"projects/{project_id}/global/urlmaps/{url_map['name']}"
         global_url_maps.append(url_map)
 

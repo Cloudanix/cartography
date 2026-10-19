@@ -189,7 +189,11 @@ def get_https_proxies(compute: Resource, project_id: str, common_job_parameters)
 def transform_https_proxies(proxies: List, project_id: str) -> List[Resource]:
     list_proxies = []
     for proxy in proxies:
-        proxy["consolelink"] = gcp_console_link.get_console_link(project_id=project_id, resource_name="vpc_home")
+        proxy["consolelink"] = gcp_console_link.get_console_link(
+            project_id=project_id,
+            resource_name="target_https_proxy",
+            instance_name=proxy["name"],
+        )
         proxy["id"] = f"projects/{project_id}/global/targetHttpsProxies/{proxy['name']}"
         proxy["type"] = "https"
         list_proxies.append(proxy)
@@ -228,7 +232,11 @@ def get_ssl_proxies(compute: Resource, project_id: str, common_job_parameters) -
 def transform_ssl_proxies(proxies: List, project_id: str) -> List[Resource]:
     list_proxies = []
     for proxy in proxies:
-        proxy["consolelink"] = gcp_console_link.get_console_link(project_id=project_id, resource_name="vpc_home")
+        proxy["consolelink"] = gcp_console_link.get_console_link(
+            project_id=project_id,
+            resource_name="target_ssl_proxy",
+            instance_name=proxy["name"],
+        )
         proxy["id"] = f"projects/{project_id}/global/targetSslProxies/{proxy['name']}"
         proxy["type"] = "ssl"
         list_proxies.append(proxy)
@@ -573,15 +581,17 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
             res["networkIP"] = nic.get("networkIP", None)
             nic["subnet_partial_uri"] = _parse_compute_full_uri_to_partial_uri(nic["subnetwork"])
             nic["vpc_partial_uri"] = _parse_compute_full_uri_to_partial_uri(nic["network"])
+            # nic["network"] is a full self-link; the console wants only the network name.
+            network_name = nic["network"].split("/")[-1]
             nic["consolelink"] = gcp_console_link.get_console_link(
                 project_id=prefix_fields.project_id,
-                network_name=nic["network"],
+                network_name=network_name,
                 resource_name="compute_instance_vpc_network",
             )
             for accessconfig in nic.get("accessConfigs", []):
                 accessconfig["consolelink"] = gcp_console_link.get_console_link(
                     project_id=prefix_fields.project_id,
-                    network_name=nic["network"],
+                    network_name=network_name,
                     resource_name="compute_instance_vpc_network",
                 )
                 if not res.get("natIP", None):
@@ -597,8 +607,29 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
             if disk.get("boot"):
                 res["sourceImage"] = disk.get("initializeParams", {}).get("sourceImage")
                 break
+        res["source_image_consolelink"] = _image_consolelink(res.get("sourceImage"), prefix_fields.project_id)
         instance_list.append(res)
     return instance_list
+
+
+def _image_consolelink(source_image: Optional[str], project_id: str) -> Optional[str]:
+    """
+    Console link for a boot image self-link such as
+    https://www.googleapis.com/compute/v1/projects/debian-cloud/global/images/debian-12-bookworm-v20240101.
+    Family references (.../images/family/debian-12) name no single image, so they get no link.
+    """
+    parts = (source_image or "").split("/")
+    if "projects" not in parts or "images" not in parts or "family" in parts:
+        return None
+    name_index = parts.index("images") + 1
+    if name_index >= len(parts) or not parts[name_index]:
+        return None
+    return gcp_console_link.get_console_link(
+        resource_name="compute_image",
+        project_id=project_id,
+        image_name=parts[name_index],
+        image_project=parts[parts.index("projects") + 1],
+    )
 
 
 def _parse_instance_uri_prefix(prefix: str) -> InstanceUriPrefix:
@@ -1033,7 +1064,8 @@ def _load_gcp_instance_image_relations_tx(
     MERGE (img:GCPImage {id: instance.sourceImage})
     ON CREATE SET img.firstseen = timestamp()
     SET img.lastupdated = $gcp_update_tag,
-        img.self_link = instance.sourceImage
+        img.self_link = instance.sourceImage,
+        img.consolelink = instance.source_image_consolelink
     WITH img, instance
     MATCH (i:GCPInstance {id: instance.partial_uri})
     MERGE (i)-[:HAS]->(img)

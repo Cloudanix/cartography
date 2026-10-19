@@ -50,7 +50,9 @@ def transform_instances(instances: List[Dict], project_id: str) -> List[Dict]:
         instance['region'] = 'global'
         instance['id'] = instance['name']
         instance['instance_name'] = instance['name'].split('/')[-1]
-        instance['consolelink'] = ''  # TODO
+        instance['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='cloud_spanner_instance', instance_name=instance['instance_name'],
+        )
         transformed_instances.append(instance)
     return transformed_instances
 
@@ -231,7 +233,10 @@ def transform_instances_databases(databases: List[Dict], project_id: str) -> Lis
         database['id'] = database['name']
         database['database_name'] = database['name'].split('/')[-1]
         database['instance_id'] = "/".join(database['name'].split('/')[:-2])
-        database['consolelink'] = ''  # TODO
+        database['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='cloud_spanner_database',
+            instance_name=database['instance_id'].split('/')[-1], database_name=database['database_name'],
+        )
         transformed_databases.append(database)
     return transformed_databases
 
@@ -311,7 +316,9 @@ def transform_instances_backups(backups: List[Dict], project_id: str) -> List[Di
         backup['backup_name'] = backup['name'].split('/')[-1]
         backup['id'] = backup['name']
         backup['instance_id'] = "/".join(backup['name'].split('/')[:-2])
-        backup['consolelink'] = ''  # TODO
+        backup['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='spanner_backup', instance_name=backup['instance_id'].split('/')[-1],
+        )
         transformed_backups.append(backup)
     return transformed_backups
 

@@ -8,6 +8,7 @@ from typing import Dict
 from typing import List
 
 import neo4j
+from cloudconsolelink.clouds.gcp import GCPLinker
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
@@ -16,6 +17,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+gcp_console_link = GCPLinker()
 
 
 @timeit
@@ -98,7 +100,8 @@ def load_gcp_organizations(neo4j_session: neo4j.Session, data: List[Dict], gcp_u
     org.lifecyclestate = $LifecycleState,
     org.lastupdated = $gcp_update_tag,
     org.directory_customer_id = $DirectoryCustomerId,
-    org.is_cloudanix_generated = $IsCloudanixGenerated
+    org.is_cloudanix_generated = $IsCloudanixGenerated,
+    org.consolelink = $consolelink
     WITH w, org
     MERGE (w)-[o:OWNER]->(org)
     ON CREATE SET o.firstseen = timestamp()
@@ -115,6 +118,9 @@ def load_gcp_organizations(neo4j_session: neo4j.Session, data: List[Dict], gcp_u
             LifecycleState=org_object.get('lifecycleState', None),
             DirectoryCustomerId=org_object.get('owner', {}).get('directoryCustomerId', None),
             IsCloudanixGenerated=org_object.get('IsCloudanixGenerated', None),
+            consolelink=gcp_console_link.get_console_link(
+                resource_name='organization', organization_id=org_object['name'],
+            ),
             gcp_update_tag=gcp_update_tag,
         )
 
@@ -148,6 +154,7 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
         folder.displayname = $DisplayName,
         folder.lifecyclestate = $LifecycleState,
         folder.parent_id = $ParentId,
+        folder.consolelink = $consolelink,
         folder.lastupdated = $gcp_update_tag
         WITH parent, folder
         MERGE (parent)-[r:RESOURCE]->(folder)
@@ -162,6 +169,7 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
             DisplayName=folder.get('displayName', None),
             region="global",
             LifecycleState=folder.get('lifecycleState', None),
+            consolelink=gcp_console_link.get_console_link(resource_name='folder', folder_id=folder['name']),
             gcp_update_tag=gcp_update_tag,
         )
 
@@ -190,6 +198,7 @@ def load_gcp_projects(
     project.displayname = $DisplayName,
     project.lifecyclestate = $LifecycleState,
     project.accountid = $WorkspaceAccountId,
+    project.consolelink = $consolelink,
     project.lastupdated = $gcp_update_tag
     WITH w, project
     MERGE (w)-[o:OWNER]->(project)
@@ -210,6 +219,7 @@ def load_gcp_projects(
             LifecycleState=project.get('lifecycleState', None),
             region="global",
             WorkspaceAccountId=project['projectId'],
+            consolelink=gcp_console_link.get_console_link(resource_name='project', project_id=project['projectId']),
             gcp_update_tag=gcp_update_tag,
         )
         if project.get('parent'):
