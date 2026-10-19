@@ -369,7 +369,10 @@ def get_external_access_roles(boto3_session: boto3.session.Session, common_job_p
             paginator = analyzer_client.get_paginator("list_findings_v2")
             for page in paginator.paginate(
                 analyzerArn=analyzers_list[0].get("arn"),
-                filter={"resourceType": {"eq": ["AWS::IAM::Role"]}},
+                filter={
+                    "resourceType": {"eq": ["AWS::IAM::Role"]},
+                    "status": {"eq": ["ACTIVE"]},
+                },
             ):
                 findings.extend(page.get("findings", []))
             return findings
@@ -396,8 +399,12 @@ def transform_roles(
 
     try:
         client = boto3_session.client("organizations")
-        response = client.list_accounts()
-        internal_accounts = [account["Id"] for account in response["Accounts"]]
+        paginator = client.get_paginator("list_accounts")
+        internal_accounts = [
+            account["Id"]
+            for page in paginator.paginate()
+            for account in page["Accounts"]
+        ]
     except Exception:
         internal_accounts = []
 
