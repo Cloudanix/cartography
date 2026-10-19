@@ -48,7 +48,7 @@ def load_reserved_instances(
     ri.productdescription = res.ProductDescription, ri.state = res.State, ri.currencycode = res.CurrencyCode,
     ri.instancetenancy = res.InstanceTenancy, ri.offeringclass = res.OfferingClass,
     ri.offeringtype = res.OfferingType, ri.scope = res.Scope, ri.fixedprice = res.FixedPrice, ri.region=$Region,
-    ri.arn = ri.Arn
+    ri.arn = res.Arn
     WITH ri
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(ri)
