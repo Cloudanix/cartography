@@ -54,7 +54,7 @@ def load_vpc_peerings(
     pcx.accepter_region = vpc_peering.AccepterVpcInfo.Region,
     pcx.status_code = vpc_peering.Status.Code,
     pcx.status_message = vpc_peering.Status.Message,
-    pcx.arn = vpc_peering.Arn,
+    pcx.arn = vpc_peering.arn,
     pcx.consolelink = vpc_peering.consolelink
 
 
