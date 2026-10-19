@@ -7,15 +7,14 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.keyvault.certificates import CertificateClient
 from azure.mgmt.keyvault import KeyVaultManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def load_key_vaults(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
@@ -104,13 +103,7 @@ def transform_key_vaults(key_vaults: List[Dict], regions: List, common_job_param
         vault['created_on'] = (vault.get('systemData') or {}).get('createdAt')
         vault['updated_on'] = (vault.get('systemData') or {}).get('lastModifiedAt')
         vault['resource_group'] = get_azure_resource_group_name(vault.get('id'))
-        try:
-            vault['consolelink'] = azure_console_link.get_console_link(
-                id=vault['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
-        except (ValueError, KeyError) as e:
-            logger.warning("Could not generate console link for key vault: %s", e)
-            vault['consolelink'] = ''
+        vault['consolelink'] = safe_console_link(vault.get('id'), common_job_parameters)
         if regions is None:
             key_vaults_data.append(vault)
         else:
@@ -188,13 +181,7 @@ def get_key_vault_keys_list(client: KeyVaultManagementClient, vault: Dict) -> Li
 def transform_key_vaults_keys(keys: List[Dict], vault_id: str, common_job_parameters):
     keys_data = []
     for key in keys:
-        try:
-            key['consolelink'] = azure_console_link.get_console_link(
-                id=key.get('key_uri', ''), primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
-        except (ValueError, KeyError) as e:
-            logger.warning("Could not generate console link for key vault key: %s", e)
-            key['consolelink'] = ''
+        key['consolelink'] = safe_console_link(key.get('key_uri'), common_job_parameters)
         key['vault_id'] = vault_id
         keys_data.append(key)
     return keys_data
@@ -254,14 +241,7 @@ def get_key_vault_secrets(client: KeyVaultManagementClient, vault: Dict) -> List
 def transform_key_vault_secrets(secrets: List[Dict], vault_id: str, common_job_parameters):
     secrets_data = []
     for secret in secrets:
-        try:
-            secret['consolelink'] = azure_console_link.get_console_link(
-                id=(secret.get('properties') or {}).get('secret_uri', ''),
-                primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
-        except (ValueError, KeyError) as e:
-            logger.warning("Could not generate console link for key vault secret: %s", e)
-            secret['consolelink'] = ''
+        secret['consolelink'] = safe_console_link((secret.get('properties') or {}).get('secret_uri'), common_job_parameters)
         secret['vault_id'] = vault_id
         secrets_data.append(secret)
     return secrets_data
@@ -333,13 +313,7 @@ def transform_key_vault_certificates(certificates: List[Dict], vault_id: str, co
     certificates_data = []
     for certificate in certificates:
         certificate['vault_id'] = vault_id
-        try:
-            certificate['consolelink'] = azure_console_link.get_console_link(
-                id=certificate.get('id', ''), primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
-        except (ValueError, KeyError) as e:
-            logger.warning("Could not generate console link for key vault certificate: %s", e)
-            certificate['consolelink'] = ''
+        certificate['consolelink'] = safe_console_link(certificate.get('id'), common_job_parameters)
         certificates_data.append(certificate)
 
     return certificates_data

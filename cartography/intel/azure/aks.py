@@ -8,7 +8,6 @@ from azure.core.exceptions import HttpResponseError
 from azure.mgmt.containerinstance import ContainerInstanceManagementClient
 from azure.mgmt.containerregistry import ContainerRegistryManagementClient
 from azure.mgmt.containerservice import ContainerServiceClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
@@ -17,7 +16,6 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def load_aks_managed_clusters(
@@ -266,14 +264,7 @@ def get_container_registries_list(
         registry_data = []
         for registry in container_registries_list:
             registry["resource_group"] = get_azure_resource_group_name(registry.get("id"))
-            try:
-                registry["consolelink"] = azure_console_link.get_console_link(
-                    id=registry["id"],
-                    primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-                )
-            except (ValueError, KeyError) as e:
-                logger.warning("Could not generate console link for container registry %s: %s", registry.get("id"), e)
-                registry["consolelink"] = ""
+            registry["consolelink"] = safe_console_link(registry.get("id"), common_job_parameters)
             if regions is None:
                 registry_data.append(registry)
             else:

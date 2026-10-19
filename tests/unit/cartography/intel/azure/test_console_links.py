@@ -11,6 +11,7 @@ import pytest
 import cartography.intel.azure
 from cartography.intel.azure import compute
 from cartography.intel.azure import iam
+from cartography.intel.azure import key_vaults
 from cartography.intel.azure import network
 from cartography.intel.azure import tenant
 from cartography.intel.azure.util import console_link
@@ -134,3 +135,12 @@ def test_tenant_and_graph_entities_without_an_id_load_without_a_link():
     client.domains.get = AsyncMock(return_value=MagicMock(value=[SimpleNamespace(id=None)]))
     [domain] = asyncio.run(iam.get_tenant_domains_list(client, "tenant-1"))
     assert domain["consolelink"] is None
+
+
+def test_key_vault_children_without_tenant_domain_keep_their_stored_link():
+    if isinstance(console_link.azure_console_link, MagicMock):
+        pytest.skip("cloudconsolelink not installed")
+
+    [key] = key_vaults.transform_key_vaults_keys([{"key_uri": "https://kv.vault.azure.net/keys/k"}], "v", {})
+    # None (not '') so the loader's coalesce() keeps the link a previous sync stored.
+    assert key["consolelink"] is None
