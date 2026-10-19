@@ -28,6 +28,21 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
+def build_apigateway_arn(region: str, path: str) -> str:
+    """
+    Build an API Gateway ARN in AWS's documented form: no account id and a path with a
+    leading slash, e.g. arn:aws:apigateway:us-east-1::/restapis/a1b2c3.
+    https://docs.aws.amazon.com/apigateway/latest/developerguide/arn-format-reference.html
+    """
+    return f"arn:aws:apigateway:{region}::/{path}"
+
+
+def get_apigateway_console_link(arn: str) -> str:
+    # cloudconsolelink only deep-links the legacy slashless form (::restapis/...);
+    # the documented form falls back to the service home page.
+    return aws_console_link.get_console_link(arn=arn.replace('::/', '::', 1))
+
+
 @timeit
 @aws_handle_regions
 def get_client_certificates(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
@@ -51,9 +66,8 @@ def transform_client_certificates(certs: List[Dict], region: str, account_id: st
     certificates = []
     for certificate in certs:
         certificate['region'] = region
-        console_arn = f"arn:aws:apigateway:{region}:{account_id}:clientcertificates/{certificate['clientCertificateId']}"
-        certificate['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
-        certificate['arn'] = console_arn
+        certificate['arn'] = build_apigateway_arn(region, f"clientcertificates/{certificate['clientCertificateId']}")
+        certificate['consolelink'] = get_apigateway_console_link(certificate['arn'])
         certificates.append(certificate)
 
     return certificates
@@ -200,8 +214,8 @@ def transform_rest_api_client_certificate(certs: List[Dict], api_region: str, aw
         certificate['region'] = api_region
         certificate['createdDate'] = str(certificate['createdDate'])
         certificate['expirationDate'] = str(certificate.get('expirationDate'))
-        certificate['arn'] = f"arn:aws:apigateway:{api_region}:{aws_account_id}:clientcertificates/{certificate['clientCertificateId']}"
-        certificate['consolelink'] = aws_console_link.get_console_link(arn=certificate['arn'])
+        certificate['arn'] = build_apigateway_arn(api_region, f"clientcertificates/{certificate['clientCertificateId']}")
+        certificate['consolelink'] = get_apigateway_console_link(certificate['arn'])
 
         certificates.append(certificate)
 
@@ -265,8 +279,8 @@ def load_apigateway_rest_apis(
     for api in rest_apis:
         region = api['region']
         api['createdDate'] = str(api['createdDate']) if 'createdDate' in api else None
-        api['Arn'] = f"arn:aws:apigateway:{region}::restapis/{api['id']}"
-        api['consolelink'] = aws_console_link.get_console_link(arn=api['Arn'])
+        api['Arn'] = build_apigateway_arn(region, f"restapis/{api['id']}")
+        api['consolelink'] = get_apigateway_console_link(api['Arn'])
 
     load_graph_data(
         neo4j_session,
@@ -347,8 +361,8 @@ def _load_apigateway_stages(
     # these values to string.
     for stage in stages:
         stage['createdDate'] = str(stage['createdDate'])
-        stage['arn'] = f"arn:aws:apigateway:{stage['region']}::restapis/{stage['apiId']}/stages/{stage['stageName']}"
-        stage['consolelink'] = aws_console_link.get_console_link(arn=stage['arn'])
+        stage['arn'] = build_apigateway_arn(stage['region'], f"restapis/{stage['apiId']}/stages/{stage['stageName']}")
+        stage['consolelink'] = get_apigateway_console_link(stage['arn'])
 
     load_graph_data(
         neo4j_session,
@@ -415,8 +429,10 @@ def _load_apigateway_resources(
     """
 
     for resource in resources:
-        resource['arn'] = f"arn:aws:apigateway:{resource['region']}::restapis/{resource['apiId']}/resources/{resource['id']}"
-        resource['consolelink'] = aws_console_link.get_console_link(arn=resource['arn'])
+        resource['arn'] = build_apigateway_arn(
+            resource['region'], f"restapis/{resource['apiId']}/resources/{resource['id']}",
+        )
+        resource['consolelink'] = get_apigateway_console_link(resource['arn'])
 
     load_graph_data(
         neo4j_session,
