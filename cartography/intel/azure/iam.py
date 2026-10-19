@@ -18,7 +18,6 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.authorization import AuthorizationManagementClient
 from azure.mgmt.msi import ManagedServiceIdentityClient
-from cloudconsolelink.clouds.azure import AzureLinker
 from msgraph import GraphServiceClient
 from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
 from msgraph.generated.users.users_request_builder import UsersRequestBuilder
@@ -30,7 +29,6 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 scopes = ["https://graph.microsoft.com/.default"]
 
@@ -268,7 +266,7 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
 
         # Custom properties we use internally
         custom_id = f"tenants/{tenant_id}/users/{user_id}"
-        consolelink = azure_console_link.get_console_link(id=user_id, iam_entity_type="user")
+        consolelink = safe_console_link(user_id, {}, iam_entity_type="user")
 
         # Map to our internal structure
         usr = {
@@ -303,7 +301,7 @@ def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
         "id": f"tenants/{tenant_id}/users/{user['object_id']}",
-        "consolelink": azure_console_link.get_console_link(id=user["object_id"], iam_entity_type="user"),
+        "consolelink": safe_console_link(user["object_id"], {}, iam_entity_type="user"),
         "object_id": user["object_id"],
         "user_principal_name": user["user_principal_name"],
         "email": user["mail"],
@@ -467,10 +465,7 @@ async def get_tenant_groups_list(
             # Add tenant-specific ID for consistency with previous implementation
             group_dict["object_id"] = group_id
             group_dict["id"] = f"tenants/{tenant_id}/Groups/{group_id}"
-            group_dict["consolelink"] = azure_console_link.get_console_link(
-                iam_entity_type="group",
-                id=group_id,
-            )
+            group_dict["consolelink"] = safe_console_link(group_id, {}, iam_entity_type="group")
 
             tenant_groups_list.append(group_dict)
 
@@ -861,10 +856,7 @@ async def get_tenant_applications_list(client: GraphServiceClient, tenant_id: st
             # Add tenant-specific ID for consistency with previous implementation
             app_dict["object_id"] = app_dict.get("id")
             app_dict["id"] = f"tenants/{tenant_id}/Applications/{app_dict.get('id')}"
-            app_dict["consolelink"] = azure_console_link.get_console_link(
-                iam_entity_type="application",
-                id=app_dict.get("app_id"),
-            )
+            app_dict["consolelink"] = safe_console_link(app_dict.get("app_id"), {}, iam_entity_type="application")
 
             tenant_applications_list.append(app_dict)
 
@@ -1002,10 +994,8 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
             # Add tenant-specific ID for consistency with previous implementation
             sp_dict["object_id"] = sp_dict.get("id")
             sp_dict["id"] = f"tenants/{tenant_id}/ServiceAccounts/{sp_dict.get('id')}"
-            sp_dict["consolelink"] = azure_console_link.get_console_link(
-                id=sp_dict.get("object_id"),
-                app_id=sp_dict.get("app_id"),
-                iam_entity_type="service_principal",
+            sp_dict["consolelink"] = safe_console_link(
+                sp_dict.get("object_id"), {}, app_id=sp_dict.get("app_id") or "", iam_entity_type="service_principal",
             )
             sp_dict["managed_type"] = _azure_service_principal_managed_type(
                 sp_dict.get("app_owner_organization_id"),
@@ -1147,10 +1137,7 @@ async def get_tenant_domains_list(client: GraphServiceClient, tenant_id: str) ->
 
             # Add custom properties
             # Graph's domain id is the domain name, which is what the portal link needs.
-            domain_dict["consolelink"] = azure_console_link.get_console_link(
-                id=domain_dict.get("id"),
-                iam_entity_type="domain",
-            )
+            domain_dict["consolelink"] = safe_console_link(domain_dict.get("id"), {}, iam_entity_type="domain")
             domain_dict["id"] = f"tenants/{tenant_id}/domains/{domain_dict.get('id')}"
 
             tenant_domains_list.append(domain_dict)

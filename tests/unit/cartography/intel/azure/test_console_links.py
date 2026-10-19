@@ -12,6 +12,7 @@ import cartography.intel.azure
 from cartography.intel.azure import compute
 from cartography.intel.azure import iam
 from cartography.intel.azure import network
+from cartography.intel.azure import tenant
 from cartography.intel.azure.util import console_link
 
 AZURE_DIR = pathlib.Path(cartography.intel.azure.__file__).parent
@@ -107,7 +108,7 @@ def test_service_principal_and_domain_links_use_graph_ids_not_custom_ids():
     )
     client.domains.get = AsyncMock(return_value=MagicMock(value=[SimpleNamespace(id="acme.com")]))
 
-    with patch.object(iam.azure_console_link, "get_console_link", return_value="link") as link:
+    with patch.object(console_link.azure_console_link, "get_console_link", return_value="link") as link:
         [sp] = asyncio.run(iam.get_tenant_service_accounts_list(client, "tenant-1"))
         [domain] = asyncio.run(iam.get_tenant_domains_list(client, "tenant-1"))
 
@@ -115,3 +116,21 @@ def test_service_principal_and_domain_links_use_graph_ids_not_custom_ids():
     assert link.call_args_list[1].kwargs["id"] == "acme.com"
     assert sp["id"] == "tenants/tenant-1/ServiceAccounts/sp-oid"
     assert domain["id"] == "tenants/tenant-1/domains/acme.com"
+
+
+def test_tenant_and_graph_entities_without_an_id_load_without_a_link():
+    if isinstance(console_link.azure_console_link, MagicMock):
+        pytest.skip("cloudconsolelink not installed")
+    tenant_obj = dict.fromkeys(
+        ["id", "tenantId", "tenantCategory", "tenantType", "displayName", "country", "countryCode", "defaultDomain"],
+        "",
+    )
+
+    with patch.object(tenant, "run_write_query") as write:
+        tenant.load_azure_tenant(MagicMock(), tenant_obj, {"id": "u"}, 1, {"WORKSPACE_ID": "w"})
+    assert write.call_args.kwargs["consolelink"] is None
+
+    client = MagicMock()
+    client.domains.get = AsyncMock(return_value=MagicMock(value=[SimpleNamespace(id=None)]))
+    [domain] = asyncio.run(iam.get_tenant_domains_list(client, "tenant-1"))
+    assert domain["consolelink"] is None
