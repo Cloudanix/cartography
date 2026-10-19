@@ -6,16 +6,15 @@ from typing import List
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.web import WebSiteManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 from msrest.exceptions import DeserializationError
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def load_function_apps(
@@ -121,9 +120,7 @@ def get_function_apps_list(client: WebSiteManagementClient, regions: list, commo
             function['resource_group'] = get_azure_resource_group_name(function.get('id'))
             function['hostNamesDisabled'] = function.get('properties', {}).get('host_names_disabled', True)
             function['location'] = function.get('location', '').replace(" ", "").lower()
-            function['consolelink'] = azure_console_link.get_console_link(
-                id=function['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            function['consolelink'] = safe_console_link(function['id'], common_job_parameters)
             if regions is None:
                 function_list.append(function)
             else:
@@ -148,10 +145,9 @@ def _load_function_apps_tx(
     f.type = function_app.type,
     f.location = function_app.location,
     f.region = function_app.location,
-    f.consolelink = function_app.consolelink,
     f.hostNamesDisabled = function_app.hostNamesDisabled,
     f.resourcegroup = function_app.resource_group
-    SET f.lastupdated = $update_tag,
+    SET f.consolelink = function_app.consolelink, f.lastupdated = $update_tag,
     f.name = function_app.name,
     f.container_size = function_app.container_size,
     f.default_host_name=function_app.default_host_name,
@@ -279,9 +275,7 @@ def get_function_apps_configuration_list(
                     :conf['id'].
                     index("/config/web")
                 ]
-                conf['consolelink'] = azure_console_link.get_console_link(
-                    id=conf['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                conf['consolelink'] = safe_console_link(conf['id'], common_job_parameters)
                 conf["location"] = function.get("location")
                 conf['publicNetworkAccess'] = conf.get('properties', {}).get('public_network_access', 'Disabled')
             function_apps_conf_list.extend(apps_conf_list)
@@ -420,9 +414,7 @@ def get_function_apps_functions_list(
                 index("/functions")
             ]
             fun["location"] = function.get("location", "global")
-            fun['consolelink'] = azure_console_link.get_console_link(
-                id=fun['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            fun['consolelink'] = safe_console_link(fun['id'], common_job_parameters)
 
         function_apps_functions_list.extend(functions_list)
 
@@ -535,10 +527,7 @@ def get_function_apps_deployments_list(
 def transform_deployments(deployments_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_deployments_list: List[Dict] = []
     for deployment in deployments_list:
-        deployment['consolelink'] = azure_console_link.get_console_link(
-            id=deployment['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        deployment['consolelink'] = safe_console_link(deployment['id'], common_job_parameters)
         deployment['resource_group'] = get_azure_resource_group_name(deployment.get('id'))
         deployment['function_app_id'] = deployment[
             'id'
@@ -652,10 +641,7 @@ def get_function_apps_backups_list(
 def transform_backups(backups_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_backups_list: List[Dict] = []
     for backup in backups_list:
-        backup['consolelink'] = azure_console_link.get_console_link(
-            id=backup['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        backup['consolelink'] = safe_console_link(backup['id'], common_job_parameters)
         backup['resource_group'] = get_azure_resource_group_name(backup.get('id'))
         backup['function_app_id'] = backup['id'][
             :backup['id'].
@@ -772,10 +758,7 @@ def get_function_apps_processes_list(
 def transform_processes(processes_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_processes_list: List[Dict] = []
     for process in processes_list:
-        process['consolelink'] = azure_console_link.get_console_link(
-            id=process['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        process['consolelink'] = safe_console_link(process['id'], common_job_parameters)
         process['resource_group'] = get_azure_resource_group_name(process.get('id'))
         process['function_app_id'] = process['id'][
             :process['id'].
@@ -891,7 +874,7 @@ def get_function_apps_snapshots_list(
 def transform_snapshots(snapshots_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_snapshots_list: List[Dict] = []
     for snapshot in snapshots_list:
-        snapshot['consolelink'] = azure_console_link.get_console_link(id=snapshot['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+        snapshot['consolelink'] = safe_console_link(snapshot['id'], common_job_parameters)
         snapshot['resource_group'] = get_azure_resource_group_name(snapshot.get('id'))
         snapshot['function_app_id'] = snapshot['id'][
             :snapshot['id'].
@@ -1006,7 +989,7 @@ def get_function_apps_webjobs_list(
 def transform_webjobs(webjobs_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_webjobs_list: List[Dict] = []
     for webjob in webjobs_list:
-        webjob['consolelink'] = azure_console_link.get_console_link(id=webjob['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+        webjob['consolelink'] = safe_console_link(webjob['id'], common_job_parameters)
         webjob['resource_group'] = get_azure_resource_group_name(webjob.get('id'))
         webjob['function_app_id'] = webjob['id'][
             :webjob['id'].

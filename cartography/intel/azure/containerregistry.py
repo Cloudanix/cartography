@@ -8,32 +8,20 @@ from typing import Optional
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.containerregistry import ContainerRegistryManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def get_client(credentials: Credentials, subscription_id: str) -> ContainerRegistryManagementClient:
     from .util.timing import get_timing_policy
     client = ContainerRegistryManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
     return client
-
-
-def _safe_console_link(resource_id: str, common_job_parameters: Dict) -> str:
-    try:
-        return azure_console_link.get_console_link(
-            id=resource_id,
-            primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-        )
-    except (ValueError, KeyError) as e:
-        logger.warning("Could not generate console link for %s: %s", resource_id, e)
-        return ''
 
 
 def get_registry_list(
@@ -72,7 +60,7 @@ def get_registry_list(
                 if registry.policies and registry.policies.retention_policy
                 else None,
                 "creation_date": registry.creation_date.isoformat() if registry.creation_date else None,
-                "console_link": _safe_console_link(registry.id, common_job_parameters),
+                "console_link": safe_console_link(registry.id, common_job_parameters),
                 "subscription_id": subscription_id,
                 "type": registry.type,
                 "tags": json.dumps(registry.tags) if registry.tags else None,
@@ -192,6 +180,7 @@ def _load_registries_tx(tx: neo4j.Transaction, subscription_id: str, data_list: 
         r.retention_policy_status = registry.retention_policy_status,
         r.creation_date = registry.creation_date,
         r.console_link = registry.console_link,
+        r.consolelink = registry.console_link,
         r.type = registry.type,
         r.tags = registry.tags
 

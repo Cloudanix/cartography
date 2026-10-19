@@ -9,9 +9,9 @@ from typing import List
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.resource import ResourceManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 from neo4j import GraphDatabase
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.timing import get_timing_policy
 from cartography.config import Config
@@ -21,7 +21,6 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def load_resource_groups(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
@@ -46,9 +45,7 @@ def get_resource_groups_list(client: ResourceManagementClient, common_job_parame
         resource_groups_list = list(map(lambda x: x.as_dict(), client.resource_groups.list()))
         for group in resource_groups_list:
             group['name']=group.get('name','').lower()
-            group['consolelink'] = azure_console_link.get_console_link(
-                id=group['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            group['consolelink'] = safe_console_link(group['id'], common_job_parameters)
 
         return resource_groups_list
 
@@ -66,10 +63,9 @@ def _load_resource_groups_tx(
     ON CREATE SET t.firstseen = timestamp(),
     t.type = group.type,
     t.location = group.location,
-    t.consolelink = group.consolelink,
     t.region = group.location,
     t.managedBy = group.managedBy
-    SET t.lastupdated = $update_tag,
+    SET t.consolelink = group.consolelink, t.lastupdated = $update_tag,
     t.name = group.name
     WITH t
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})

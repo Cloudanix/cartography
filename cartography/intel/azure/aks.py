@@ -10,6 +10,7 @@ from azure.mgmt.containerregistry import ContainerRegistryManagementClient
 from azure.mgmt.containerservice import ContainerServiceClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
@@ -96,10 +97,7 @@ def get_aks_managed_clusters_list(
         for aks in aks_managed_clusters_list:
             aks["resource_group"] = get_azure_resource_group_name(aks.get("id"))
             aks["publicNetworkAccess"] = aks.get("properties", {}).get("public_network_access", "Disabled")
-            aks["consolelink"] = azure_console_link.get_console_link(
-                id=aks["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            aks["consolelink"] = safe_console_link(aks["id"], common_job_parameters)
             if regions is None:
                 aks_managed_clusters_data.append(aks)
             else:
@@ -123,9 +121,8 @@ def _load_aks_managed_clusters_tx(
     a.location = aks.location,
     a.region = aks.location,
     a.publicNetworkAccess = aks.publicNetworkAccess,
-    a.consolelink = aks.consolelink,
     a.resourcegroup = aks.resource_group
-    SET a.lastupdated = $update_tag,
+    SET a.consolelink = aks.consolelink, a.lastupdated = $update_tag,
     a.name = aks.name,
     a.node_resource_group = toLower(aks.node_resource_group)
     WITH a
@@ -182,10 +179,7 @@ def get_aks_managed_cluster_agentpools_list(
         agentpools_data = []
         for agentpool in agentpools_list:
             agentpool["resource_group"] = get_azure_resource_group_name(agentpool.get("id"))
-            agentpool["consolelink"] = azure_console_link.get_console_link(
-                id=agentpool["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            agentpool["consolelink"] = safe_console_link(agentpool["id"], common_job_parameters)
             agentpools_data.append(agentpool)
         return agentpools_data
 
@@ -205,9 +199,8 @@ def _load_aks_managed_cluster_agentpools_tx(
     a.count = pool.count,
     a.host_group_id = pool.host_group_id,
     a.max_pods = pool.max_pods,
-    a.consolelink = pool.consolelink,
     a.resourcegroup = pool.resource_group
-    SET a.lastupdated = $update_tag,
+    SET a.consolelink = pool.consolelink, a.lastupdated = $update_tag,
     a.name = pool.name
     WITH a
     MATCH (c:AzureCluster{id: $cluster_id})
@@ -307,9 +300,8 @@ def _load_container_registries_tx(
     a.type = registry.type,
     a.location = registry.location,
     a.region = registry.location,
-    a.consolelink = registry.consolelink,
     a.resourcegroup = registry.resource_group
-    SET a.lastupdated = $update_tag,
+    SET a.consolelink = registry.consolelink, a.lastupdated = $update_tag,
     a.name = registry.name
     WITH a
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -417,10 +409,7 @@ def get_container_registry_replications_list(
         for replication in container_registry_replications_list:
             replication["resource_group"] = get_azure_resource_group_name(replication.get("id"))
             replication["container_registry_id"] = replication["id"][: replication["id"].index("/replications")]
-            replication["consolelink"] = azure_console_link.get_console_link(
-                id=replication["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            replication["consolelink"] = safe_console_link(replication["id"], common_job_parameters)
 
         return container_registry_replications_list
 
@@ -441,9 +430,8 @@ def _load_container_registry_replications_tx(
     a.type = replication.type,
     a.location = replication.location,
     a.region = replication.location,
-    a.consolelink = replication.consolelink,
     a.resourcegroup = replication.resource_group
-    SET a.lastupdated = $update_tag,
+    SET a.consolelink = replication.consolelink, a.lastupdated = $update_tag,
     a.name = replication.name
     WITH a,replication
     MATCH (owner:AzureContainerRegistry{id: replication.container_registry_id})
@@ -525,10 +513,7 @@ def get_container_registry_runs_list(
                 run["location"] = container_registry.get("location", "global")
                 run["resource_group"] = get_azure_resource_group_name(run.get("id"))
                 run["container_registry_id"] = run["id"][: run["id"].index("/runs")]
-                run["consolelink"] = azure_console_link.get_console_link(
-                    id=run["id"],
-                    primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-                )
+                run["consolelink"] = safe_console_link(run["id"], common_job_parameters)
             container_registry_runs_list.extend(registry_runs_list)
 
         return container_registry_runs_list
@@ -550,9 +535,8 @@ def _load_container_registry_runs_tx(
     a.type = run.type,
     a.location=run.location,
     a.region=run.location,
-    a.consolelink = run.consolelink,
     a.resourcegroup = run.resource_group
-    SET a.lastupdated = $update_tag,
+    SET a.consolelink = run.consolelink, a.lastupdated = $update_tag,
     a.name = run.name
     WITH a,run
     MATCH (owner:AzureContainerRegistry{id: run.container_registry_id})
@@ -632,10 +616,7 @@ def get_container_registry_tasks_list(
         for task in container_registry_tasks_list:
             task["resource_group"] = get_azure_resource_group_name(task.get("id"))
             task["container_registry_id"] = task["id"][: task["id"].index("/tasks")]
-            task["consolelink"] = azure_console_link.get_console_link(
-                id=task["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            task["consolelink"] = safe_console_link(task["id"], common_job_parameters)
 
         return container_registry_tasks_list
 
@@ -656,9 +637,8 @@ def _load_container_registry_tasks_tx(
     a.type = task.type,
     a.location=task.location,
     a.region=task.location,
-    a.conolelink = task.consolelink,
     a.resourcegroup = task.resource_group
-    SET a.lastupdated = $update_tag,
+    SET a.consolelink = task.consolelink, a.lastupdated = $update_tag,
     a.name = task.name
     WITH a,task
     MATCH (owner:AzureContainerRegistry{id: task.container_registry_id})
@@ -741,10 +721,7 @@ def get_container_registry_webhooks_list(
         for webhook in container_registry_webhooks_list:
             webhook["resource_group"] = get_azure_resource_group_name(webhook.get("id"))
             webhook["container_registry_id"] = webhook["id"][: webhook["id"].index("/webhooks")]
-            webhook["consolelink"] = azure_console_link.get_console_link(
-                id=webhook["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            webhook["consolelink"] = safe_console_link(webhook["id"], common_job_parameters)
 
         return container_registry_webhooks_list
 
@@ -765,9 +742,8 @@ def _load_container_registry_webhooks_tx(
     a.type = webhook.type,
     a.location=webhook.location,
     a.region=webhook.location,
-    a.consolelink = webhook.consolelink,
     a.resourcegroup = webhook.resource_group
-    SET a.lastupdated = $update_tag,
+    SET a.consolelink = webhook.consolelink, a.lastupdated = $update_tag,
     a.name = webhook.name
     WITH a,webhook
     MATCH (owner:AzureContainerRegistry{id: webhook.container_registry_id})
@@ -836,10 +812,7 @@ def get_container_groups_list(
         group_data = []
         for group in container_groups_list:
             group["resource_group"] = get_azure_resource_group_name(group.get("id"))
-            group["consolelink"] = azure_console_link.get_console_link(
-                id=group["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            group["consolelink"] = safe_console_link(group["id"], common_job_parameters)
             if regions is None:
                 group_data.append(group)
             else:
@@ -866,9 +839,8 @@ def _load_container_groups_tx(
     a.type = group.type,
     a.location = group.location,
     a.region = group.location,
-    a.consolelink = group.consolelink,
     a.resourcegroup = group.resource_group
-    SET a.lastupdated = $update_tag,
+    SET a.consolelink = group.consolelink, a.lastupdated = $update_tag,
     a.name = group.name
     WITH a
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})

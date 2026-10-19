@@ -12,8 +12,8 @@ from azure.core.exceptions import ClientAuthenticationError
 from azure.core.exceptions import HttpResponseError
 from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.storage import StorageManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.timing import get_timing_policy
 from cartography.client.core.tx import load_graph_data
@@ -23,7 +23,6 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 @timeit
@@ -60,9 +59,7 @@ def get_storage_account_list(credentials: Credentials, subscription_id: str, reg
         storage_account['allowBlobPublicAccess'] = storage_account.get(
             'properties', {},
         ).get('allow_blob_public_access', False)
-        storage_account['consolelink'] = azure_console_link.get_console_link(
-            id=storage_account['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        storage_account['consolelink'] = safe_console_link(storage_account['id'], common_job_parameters)
         storage_account['location'] = storage_account.get('location', '').replace(" ", "").lower()
         if regions is None:
             account_list.append(storage_account)
@@ -286,9 +283,7 @@ def load_storage_account_details(
                 service['storage_account_name'] = name
                 service['storage_account_id'] = account_id
                 service['resource_group_name'] = resourceGroup
-                service['consolelink'] = azure_console_link.get_console_link(
-                    id=service['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                service['consolelink'] = safe_console_link(service['id'], common_job_parameters)
             queue_services.extend(queue_service)
 
         if len(table_service) > 0:
@@ -296,9 +291,7 @@ def load_storage_account_details(
                 service['storage_account_name'] = name
                 service['storage_account_id'] = account_id
                 service['resource_group_name'] = resourceGroup
-                service['consolelink'] = azure_console_link.get_console_link(
-                    id=service['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                service['consolelink'] = safe_console_link(service['id'], common_job_parameters)
             table_services.extend(table_service)
 
         if len(file_service) > 0:
@@ -306,9 +299,7 @@ def load_storage_account_details(
                 service['storage_account_name'] = name
                 service['storage_account_id'] = account_id
                 service['resource_group_name'] = resourceGroup
-                service['consolelink'] = azure_console_link.get_console_link(
-                    id=service['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                service['consolelink'] = safe_console_link(service['id'], common_job_parameters)
             file_services.extend(file_service)
 
         if len(blob_service) > 0:
@@ -316,9 +307,7 @@ def load_storage_account_details(
                 service['storage_account_name'] = name
                 service['storage_account_id'] = account_id
                 service['resource_group_name'] = resourceGroup
-                service['consolelink'] = azure_console_link.get_console_link(
-                    id=service['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                service['consolelink'] = safe_console_link(service['id'], common_job_parameters)
             blob_services.extend(blob_service)
 
     _load_queue_services(neo4j_session, queue_services, update_tag)
@@ -604,10 +593,7 @@ def load_queue_services_details(
         if len(queue) > 0:
             for q in queue:
                 q['service_id'] = queue_service_id
-                q['consolelink'] = azure_console_link.get_console_link(
-                    id=q['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                q['consolelink'] = safe_console_link(q['id'], common_job_parameters)
             queues.extend(queue)
 
     _load_queues(neo4j_session, queues, update_tag)
@@ -727,10 +713,7 @@ def load_table_services_details(
         if len(table) > 0:
             for t in table:
                 t['service_id'] = table_service_id
-                t['consolelink'] = azure_console_link.get_console_link(
-                    id=t['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                t['consolelink'] = safe_console_link(t['id'], common_job_parameters)
             tables.extend(table)
 
     _load_tables(neo4j_session, tables, update_tag)
@@ -854,10 +837,7 @@ def load_file_services_details(
         if len(share) > 0:
             for s in share:
                 s['service_id'] = file_service_id
-                s['consolelink'] = azure_console_link.get_console_link(
-                    id=s['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                s['consolelink'] = safe_console_link(s['id'], common_job_parameters)
             shares.extend(share)
 
     _load_shares(neo4j_session, shares, update_tag)
@@ -988,10 +968,7 @@ def load_blob_services_details(
         if len(container) > 0:
             for c in container:
                 c['service_id'] = blob_service_id
-                c['consolelink'] = azure_console_link.get_console_link(
-                    id=c['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                c['consolelink'] = safe_console_link(c['id'], common_job_parameters)
                 c['public_access'] = c['public_access'].lower()
             blob_containers.extend(container)
 

@@ -13,8 +13,8 @@ from azure.core.exceptions import ClientAuthenticationError
 from azure.core.exceptions import HttpResponseError
 from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.cosmosdb import CosmosDBManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
@@ -23,7 +23,6 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 @timeit
@@ -61,9 +60,7 @@ def get_database_account_list(credentials: Credentials, subscription_id: str, re
         database_account['publicNetworkAccess'] = database_account.get(
             'properties', {},
         ).get('public_network_access', 'Disabled')
-        database_account['consolelink'] = azure_console_link.get_console_link(
-            id=database_account['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        database_account['consolelink'] = safe_console_link(database_account['id'], common_job_parameters)
         database_account['location'] = database_account.get('location', '').replace(" ", "").lower()
         if regions is None:
             account_list.append(database_account)
@@ -517,7 +514,7 @@ def _load_cosmosdb_virtual_network_rules(
         database_account_id = database_account['id']
         virtual_network_rules = database_account['virtual_network_rules']
         for network_rule in virtual_network_rules:
-            network_rule['consolelink'] = azure_console_link.get_console_link(id=network_rule['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+            network_rule['consolelink'] = safe_console_link(network_rule['id'], common_job_parameters)
 
         ingest_virtual_network_rules = """
         UNWIND $DictList AS vnr
@@ -702,10 +699,7 @@ def transform_database_account_resources(
         resource['database_account_name'] = name
         resource['database_account_id'] = account_id
         resource['resource_group_name'] = resource_group
-        resource['consolelink'] = azure_console_link.get_console_link(
-            id=resource['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        resource['consolelink'] = safe_console_link(resource['id'], common_job_parameters)
     return resources
 
 
@@ -973,10 +967,7 @@ def load_sql_database_details(neo4j_session: neo4j.Session, details: List[Tuple[
         if len(container) > 0:
             for c in container:
                 c['database_id'] = database_id
-                c['consolelink'] = azure_console_link.get_console_link(
-                    id=c['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                c['consolelink'] = safe_console_link(c['id'], common_job_parameters)
             containers.extend(container)
 
     _load_sql_containers(neo4j_session, containers, update_tag)
@@ -1105,10 +1096,7 @@ def load_cassandra_keyspace_details(
     for keyspace_id, cassandra_table in details:
         if len(cassandra_table) > 0:
             for t in cassandra_table:
-                t['consolelink'] = azure_console_link.get_console_link(
-                    id=t['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                t['consolelink'] = safe_console_link(t['id'], common_job_parameters)
                 t['keyspace_id'] = keyspace_id
             cassandra_tables.extend(cassandra_table)
 
@@ -1236,7 +1224,7 @@ def load_mongodb_databases_details(
     for database_id, collection in details:
         if len(collection) > 0:
             for c in collection:
-                c['consolelink'] = azure_console_link.get_console_link(id=c['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+                c['consolelink'] = safe_console_link(c['id'], common_job_parameters)
                 c['database_id'] = database_id
             collections.extend(collection)
 

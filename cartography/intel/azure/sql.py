@@ -20,12 +20,12 @@ from azure.mgmt.rdbms.postgresql_flexibleservers import PostgreSQLManagementClie
 from azure.mgmt.sql import SqlManagementClient
 from azure.mgmt.sql.models import SecurityAlertPolicyName
 from azure.mgmt.sql.models import TransparentDataEncryptionName
-from cloudconsolelink.clouds.azure import AzureLinker
 from msrestazure.azure_exceptions import CloudError
 from netaddr import *
 
 from . import network
 from . import tag as azure_tag
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.timing import get_timing_policy
 from cartography.client.core.tx import load_graph_data
@@ -35,7 +35,6 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 PORT_MAP = {
     "microsoft.sql": 1433,
@@ -284,9 +283,11 @@ def _enrich_server_data(
     """
     server['resourceGroup'] = get_azure_resource_group_name(server.get('id'))
     server['publicNetworkAccess'] = server.get('properties', {}).get('public_network_access', 'Disabled')
-    server['consolelink'] = azure_console_link.get_console_link(
-        id=server['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-    )
+    server['consolelink'] = safe_console_link(server['id'], common_job_parameters)
+    for private_endpoint_connection in server.get('private_endpoint_connections') or []:
+        private_endpoint_connection['consolelink'] = safe_console_link(
+            private_endpoint_connection.get('id'), common_job_parameters,
+        )
 
     engine, engine_version, port = _extract_engine_info(server)
     server['engine'] = engine
@@ -387,6 +388,7 @@ def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server
     ON CREATE SET aspec.firstseen = timestamp()
     SET aspec.provisioning_state = pec.properties.provisioning_state,
     aspec.private_endpoint = pec.properties.private_endpoint.id,
+    aspec.consolelink = pec.consolelink,
     aspec.lastupdated = $azure_update_tag
     MERGE (s)-[r:HAS]->(aspec)
     ON CREATE SET r.firstseen = timestamp()
@@ -669,54 +671,42 @@ def load_server_details(
             for alias in dns_alias:
                 alias['server_name'] = name
                 alias['server_id'] = server_id
-                alias['consolelink'] = azure_console_link.get_console_link(
-                    id=alias['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                alias['consolelink'] = safe_console_link(alias['id'], common_job_parameters)
                 dns_aliases.append(alias)
 
         if len(ad_admin) > 0:
             for admin in ad_admin:
                 admin['server_name'] = name
                 admin['server_id'] = server_id
-                admin['consolelink'] = azure_console_link.get_console_link(
-                    id=admin['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                admin['consolelink'] = safe_console_link(admin['id'], common_job_parameters)
                 ad_admins.append(admin)
 
         if len(r_database) > 0:
             for rdb in r_database:
                 rdb['server_name'] = name
                 rdb['server_id'] = server_id
-                rdb['consolelink'] = azure_console_link.get_console_link(
-                    id=rdb['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                rdb['consolelink'] = safe_console_link(rdb['id'], common_job_parameters)
                 recoverable_databases.append(rdb)
 
         if len(rd_database) > 0:
             for rddb in rd_database:
                 rddb['server_name'] = name
                 rddb['server_id'] = server_id
-                rddb['consolelink'] = azure_console_link.get_console_link(
-                    id=rddb['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                rddb['consolelink'] = safe_console_link(rddb['id'], common_job_parameters)
                 restorable_dropped_databases.append(rddb)
 
         if len(fg) > 0:
             for group in fg:
                 group['server_name'] = name
                 group['server_id'] = server_id
-                group['consolelink'] = azure_console_link.get_console_link(
-                    id=group['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                group['consolelink'] = safe_console_link(group['id'], common_job_parameters)
                 failover_groups.append(group)
 
         if len(elastic_pool) > 0:
             for pool in elastic_pool:
                 pool['server_name'] = name
                 pool['server_id'] = server_id
-                pool['consolelink'] = azure_console_link.get_console_link(
-                    id=pool['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                pool['consolelink'] = safe_console_link(pool['id'], common_job_parameters)
                 elastic_pools.append(pool)
 
         if len(database) > 0:
@@ -724,9 +714,7 @@ def load_server_details(
                 db['server_name'] = name
                 db['server_id'] = server_id
                 db['resource_group_name'] = rg
-                db['consolelink'] = azure_console_link.get_console_link(
-                    id=db['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                db['consolelink'] = safe_console_link(db['id'], common_job_parameters)
                 databases.append(db)
 
         if len(firewall_rules) > 0:
@@ -734,9 +722,7 @@ def load_server_details(
                 rules['server_name'] = name
                 rules['server_id'] = server_id
                 rules['resource_group_name'] = rg
-                rules['consolelink'] = azure_console_link.get_console_link(
-                    id=rules['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                rules['consolelink'] = safe_console_link(rules['id'], common_job_parameters)
                 fw_rules.append(rules)
 
     _load_server_dns_aliases(neo4j_session, dns_aliases, update_tag)
@@ -842,6 +828,7 @@ def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], upd
     rule.region = fw_rule.location,
     rule.start_ip_address = fw_rule.start_ip_address,
     rule.end_ip_address = fw_rule.end_ip_address,
+    rule.consolelink = fw_rule.consolelink,
     rule.lastupdated = $azure_update_tag
     WITH rule, fw_rule
     MATCH (s: AzureSQLServer{id: fw_rule.server_id})
@@ -1450,35 +1437,27 @@ def load_database_details(
     for databaseId, replication_link, db_threat_detection_policy, restore_point, transparent_data_encryption in details:
         if len(replication_link) > 0:
             for link in replication_link:
-                link['consolelink'] = azure_console_link.get_console_link(
-                    id=link['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                link['consolelink'] = safe_console_link(link['id'], common_job_parameters)
                 link['database_id'] = databaseId
                 replication_links.append(link)
 
         if len(db_threat_detection_policy) > 0:
             db_threat_detection_policy['database_id'] = databaseId
-            db_threat_detection_policy['consolelink'] = azure_console_link.get_console_link(
-                id=db_threat_detection_policy['id'],
-                primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+            db_threat_detection_policy['consolelink'] = safe_console_link(
+                db_threat_detection_policy['id'], common_job_parameters,
             )
             threat_detection_policies.append(db_threat_detection_policy)
 
         if len(restore_point) > 0:
             for point in restore_point:
                 point['database_id'] = databaseId
-                point['consolelink'] = azure_console_link.get_console_link(
-                    id=point['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                point['consolelink'] = safe_console_link(point['id'], common_job_parameters)
                 restore_points.append(point)
 
         if len(transparent_data_encryption) > 0:
             transparent_data_encryption['database_id'] = databaseId
-            transparent_data_encryption['consolelink'] = azure_console_link.get_console_link(
-                id=transparent_data_encryption['id'],
-                primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+            transparent_data_encryption['consolelink'] = safe_console_link(
+                transparent_data_encryption['id'], common_job_parameters,
             )
             encryptions_list.append(transparent_data_encryption)
 
@@ -1681,7 +1660,7 @@ def _load_transparent_data_encryptions(
     tae.region = e.location
     SET tae.name = e.name,
     tae.status = e.status,
-    tae.consolelink = tae.consolelink,
+    tae.consolelink = e.consolelink,
     tae.lastupdated = $azure_update_tag
     WITH tae, e
     MATCH (d:AzureSQLDatabase{id: e.database_id})

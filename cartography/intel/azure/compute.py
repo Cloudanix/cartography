@@ -6,9 +6,9 @@ from typing import List
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.compute import ComputeManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
 from . import vmss
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
@@ -17,7 +17,6 @@ from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def load_vm_extensions(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
@@ -101,9 +100,7 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
         for vm in vm_data_raw:
             vm['resource_group'] = get_azure_resource_group_name(vm.get('id'))
             vm['power_state'] = _get_vm_power_state(client, vm['resource_group'], vm.get('name'))
-            vm['consolelink'] = azure_console_link.get_console_link(
-                id=vm['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            vm['consolelink'] = safe_console_link(vm['id'], common_job_parameters)
             aks_tags = _extract_aks_tags(vm.get('tags', {}))
             vm['aks_cluster_name'] = aks_tags['aks_cluster_name']
             vm['aks_pool_name'] = aks_tags['aks_pool_name']
@@ -171,9 +168,8 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     ON CREATE SET v.firstseen = timestamp(),
     v.type = vm.type, v.location = vm.location,
     v.region = vm.location,
-    v.consolelink = vm.consolelink,
     v.resourcegroup = vm.resource_group
-    SET v:VirtualMachine
+    SET v.consolelink = vm.consolelink, v:VirtualMachine
     SET v.lastupdated = $update_tag, v.name = vm.name,
     v.vm_id = vm.vm_id,
     v.plan = vm.plan.product, v.size = vm.hardware_profile.vm_size,
@@ -356,7 +352,7 @@ def get_vm_extensions_list(vm_list: List[Dict], client: ComputeManagementClient,
                 'id': extension.id,
                 'resource_group': get_azure_resource_group_name(extension.id),
                 'vm_id': extension.id[:extension.id.index("/extensions")],
-                'consolelink': azure_console_link.get_console_link(id=vm['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name']),  # noqa: E501
+                'consolelink': safe_console_link(extension.id, common_job_parameters),
                 'type': extension.type,
                 'name': extension.name,
                 'location': extension.location,
@@ -374,9 +370,8 @@ def _load_vm_extensions_tx(tx: neo4j.Transaction, vm_extensions_list: List[Dict]
     UNWIND $vm_extensions_list AS extension
     MERGE (v:AzureVirtualMachineExtension{id: extension.id})
     ON CREATE SET v.firstseen = timestamp(), v.location = extension.location,
-    v.consolelink = extension.consolelink,
     v.region = extension.location
-    SET v.lastupdated = $update_tag, v.name = extension.name,
+    SET v.consolelink = extension.consolelink, v.lastupdated = $update_tag, v.name = extension.name,
     v.type = extension.type
     WITH v,extension
     MATCH (owner:AzureVirtualMachine{id: extension.vm_id})
@@ -521,9 +516,7 @@ def get_vm_scale_sets_list(credentials: Credentials, subscription_id: str, regio
         for set in vm_scale_sets_list:
             x = set['id'].split('/')
             set['resource_group'] = x[x.index('resourceGroups') + 1]
-            set['consolelink'] = azure_console_link.get_console_link(
-                id=set['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            set['consolelink'] = safe_console_link(set['id'], common_job_parameters)
             aks_tags = _extract_aks_tags(set.get('tags', {}))
             set['aks_cluster_name'] = aks_tags['aks_cluster_name']
             set['aks_pool_name'] = aks_tags['aks_pool_name']
@@ -639,9 +632,7 @@ def get_vm_scale_sets_extensions_list(vm_scale_sets_list: List[Dict], client: Co
                 x = extension['id'].split('/')
                 extension['resource_group'] = x[x.index('resourceGroups') + 1]
                 extension['set_id'] = extension['id'][:extension['id'].index("/extensions")]
-                extension['consolelink'] = azure_console_link.get_console_link(
-                    id=extension['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                extension['consolelink'] = safe_console_link(extension['id'], common_job_parameters)
 
             vm_scale_sets_extensions_list.extend(extensions_list)
 
@@ -823,9 +814,7 @@ def get_disks(credentials: Credentials, subscription_id: str, regions: list, com
         for disk in disk_list:
             x = disk['id'].split('/')
             disk['resource_group'] = x[x.index('resourceGroups') + 1]
-            disk['consolelink'] = azure_console_link.get_console_link(
-                id=disk['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            disk['consolelink'] = safe_console_link(disk['id'], common_job_parameters)
             if regions is None:
                 disk_data.append(disk)
             else:
@@ -845,9 +834,8 @@ def load_disks(neo4j_session: neo4j.Session, subscription_id: str, disk_list: Li
     ON CREATE SET d.firstseen = timestamp(),
     d.type = disk.type, d.location = disk.location,
     d.region = disk.location,
-    d.consolelink = disk.consolelink,
     d.resourcegroup = disk.resource_group
-    SET d.lastupdated = $update_tag, d.name = disk.name,
+    SET d.consolelink = disk.consolelink, d.lastupdated = $update_tag, d.name = disk.name,
     d.createoption = disk.creation_data.create_option, d.disksizegb = disk.disk_size_gb,
     d.encryption = disk.encryption_settings_collection.enabled, d.maxshares = disk.max_shares,
     d.network_access_policy = disk.network_access_policy,
@@ -901,9 +889,7 @@ def get_snapshots_list(credentials: Credentials, subscription_id: str, regions: 
         for snapshot in snapshots:
             x = snapshot['id'].split('/')
             snapshot['resource_group'] = x[x.index('resourceGroups') + 1]
-            snapshot['consolelink'] = azure_console_link.get_console_link(
-                id=snapshot['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            snapshot['consolelink'] = safe_console_link(snapshot['id'], common_job_parameters)
             if regions is None:
                 snapshot_list.append(snapshot)
             else:
@@ -923,9 +909,9 @@ def load_snapshots(neo4j_session: neo4j.Session, subscription_id: str, snapshots
     ON CREATE SET s.firstseen = timestamp(),
     s.resourcegroup = snapshot.resource_group,
     s.type = snapshot.type, s.location = snapshot.location,
-    s.consolelink = snapshot.consolelink,
     s.region = snapshot.location
-    SET s.lastupdated = $update_tag, s.name = snapshot.name, s.time_created = snapshot.time_created,
+    SET s.consolelink = snapshot.consolelink,
+    s.lastupdated = $update_tag, s.name = snapshot.name, s.time_created = snapshot.time_created,
     s.createoption = snapshot.creation_data.create_option, s.disksizegb = snapshot.disk_size_gb,
     s.encryption = snapshot.encryption_settings_collection.enabled, s.incremental = snapshot.incremental,
     s.network_access_policy = snapshot.network_access_policy, s.ostype = snapshot.os_type,
