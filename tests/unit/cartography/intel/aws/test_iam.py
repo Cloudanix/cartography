@@ -1,3 +1,4 @@
+import re
 from unittest.mock import MagicMock
 
 from cartography.intel.aws import iam
@@ -56,6 +57,24 @@ def test_aws_policy_managed_type():
     # Customer-managed policy ARNs carry the customer account id.
     assert iam._aws_policy_managed_type("arn:aws:iam::000000000000:policy/my-policy") == "custom"
     assert iam._aws_policy_managed_type("") == "custom"
+
+
+def test_aws_policy_managed_type_other_partitions():
+    assert iam._aws_policy_managed_type("arn:aws-us-gov:iam::aws:policy/ReadOnlyAccess") == "predefined"
+    assert iam._aws_policy_managed_type("arn:aws-cn:iam::aws:policy/ReadOnlyAccess") == "predefined"
+    assert iam._aws_policy_managed_type("arn:aws-us-gov:iam::000000000000:policy/my-policy") == "custom"
+
+
+def test_load_policies_cypher_fallback_matches_any_partition():
+    tx = MagicMock()
+    iam._load_policies_for_account_tx(tx, [{"id": "p", "Arn": "arn:aws-cn:iam::aws:policy/X"}], "000000000000", 1)
+    query = tx.run.call_args.args[0]
+    pattern = tx.run.call_args.kwargs["aws_managed_policy_arn_pattern"]
+    assert "policy.Arn =~ $aws_managed_policy_arn_pattern" in query
+    # Cypher =~ is a full match, like re.fullmatch.
+    assert re.fullmatch(pattern, "arn:aws-cn:iam::aws:policy/X")
+    assert re.fullmatch(pattern, "arn:aws-us-gov:iam::aws:policy/X")
+    assert not re.fullmatch(pattern, "arn:aws-cn:iam::000000000000:policy/X")
 
 
 def test_transform_policies_data_sets_managed_type():

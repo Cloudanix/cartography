@@ -1,6 +1,7 @@
 import enum
 import json
 import logging
+import re
 import time
 from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
@@ -251,8 +252,9 @@ MANAGED_TYPE_CUSTOM = "custom"
 
 # Role paths that AWS reserves for service-linked / service / SSO-reserved roles it manages.
 _AWS_PREDEFINED_ROLE_PATHS = ["/aws-service-role/", "/service-role/", "/aws-reserved/"]
-# Prefix of AWS-managed (vs customer-managed) policy ARNs.
-_AWS_MANAGED_POLICY_ARN_PREFIX = "arn:aws:iam::aws:policy/"
+# AWS-managed (vs customer-managed) policy ARNs in any partition (aws, aws-us-gov, aws-cn, ...).
+# Full-match form so the same pattern works with Python re.fullmatch and Cypher =~.
+_AWS_MANAGED_POLICY_ARN_PATTERN = r"arn:[^:]+:iam::aws:policy/.*"
 
 
 def _aws_role_managed_type(path: str) -> str:
@@ -263,7 +265,8 @@ def _aws_role_managed_type(path: str) -> str:
 
 
 def _aws_policy_managed_type(arn: str) -> str:
-    return MANAGED_TYPE_PREDEFINED if str(arn or "").startswith(_AWS_MANAGED_POLICY_ARN_PREFIX) else MANAGED_TYPE_CUSTOM
+    is_aws_managed = re.fullmatch(_AWS_MANAGED_POLICY_ARN_PATTERN, str(arn or ""))
+    return MANAGED_TYPE_PREDEFINED if is_aws_managed else MANAGED_TYPE_CUSTOM
 
 
 @timeit
@@ -616,7 +619,7 @@ def _load_policies_for_account_tx(
             p.is_attachable = policy.IsAttachable,
             p.region = $region,
             p.consolelink = policy.consolelink,
-            p.managed_type = coalesce(policy.managed_type, CASE WHEN policy.Arn STARTS WITH 'arn:aws:iam::aws:policy/' THEN 'predefined' ELSE 'custom' END),
+            p.managed_type = coalesce(policy.managed_type, CASE WHEN policy.Arn =~ $aws_managed_policy_arn_pattern THEN 'predefined' ELSE 'custom' END),
             p.lastupdated = $update_tag
         WITH p
             MATCH (i:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -642,6 +645,7 @@ def _load_policies_for_account_tx(
             policy_type=PolicyType.managed.value,
             region="global",
             update_tag=update_tag,
+            aws_managed_policy_arn_pattern=_AWS_MANAGED_POLICY_ARN_PATTERN,
         )
 
 
