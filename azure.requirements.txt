@@ -35,6 +35,9 @@ azure-identity>=1.5.0
 azure-mgmt-containerinstance>=1.5.0
 azure-mgmt-containerregistry>=2.8.0
 azure-mgmt-containerservice>=4.4.0
+azure-mgmt-cognitiveservices>=13.0.0
+azure-mgmt-machinelearningservices>=1.0.0
+azure-mgmt-search>=9.0.0
 azure-mgmt-keyvault>=1.1.0
 azure-graphrbac==0.61.1
 azure-mgmt-authorization==1.0.0
