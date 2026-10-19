@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone as tz
+from functools import partial
 from typing import Any
 from typing import Dict
 from typing import List
@@ -13,12 +14,15 @@ from typing import Tuple
 from urllib.parse import urlparse
 
 import requests
-from cloudconsolelink.clouds.git import GitLinker
+
+from cartography.intel import git_links
 
 
 logger = logging.getLogger(__name__)
-git_linker = GitLinker()
 GITHUB_API_HOST = "api.github.com"
+# GHE.com data residency: the API is served at api.<tenant>.ghe.com, the web UI at <tenant>.ghe.com.
+GHEC_API_HOST_PREFIX = "api."
+GHEC_HOST_SUFFIX = ".ghe.com"
 GITHUB_WEB_BASE_URL = "https://github.com"
 # Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
 _TIMEOUT = (60, 60)
@@ -34,24 +38,21 @@ class PaginatedGraphqlData(NamedTuple):
 def get_web_base_url(api_url: str) -> str:
     """
     Return the GitHub web host for a configured API url, e.g. https://api.github.com/graphql -> https://github.com,
-    and GitHub Enterprise https://ghe.acme.com/api/graphql -> https://ghe.acme.com.
+    GitHub Enterprise Server https://ghe.acme.com/api/graphql -> https://ghe.acme.com, and GHE.com
+    https://api.acme.ghe.com/graphql -> https://acme.ghe.com. Credentials, paths and non-http(s) urls never
+    reach the link; those fall back to https://github.com.
     """
-    parsed = urlparse(api_url or "")
-    if not parsed.netloc or parsed.netloc == GITHUB_API_HOST:
+    base = git_links.safe_base_url(api_url, keep_path=False)
+    host = urlparse(base).hostname if base else None
+    if not base or not host or host == GITHUB_API_HOST:
         return GITHUB_WEB_BASE_URL
-    return f"{parsed.scheme or 'https'}://{parsed.netloc}"
+    if host.startswith(GHEC_API_HOST_PREFIX) and host.endswith(GHEC_HOST_SUFFIX):
+        return base.replace(f"://{GHEC_API_HOST_PREFIX}", "://", 1)
+    return base
 
 
-def get_console_link(resource_name: str, base_url: Optional[str] = None, **params: Optional[str]) -> Optional[str]:
-    """
-    Web link for a GitHub entity, or None (logged) when an identifier is missing; never fails a sync.
-    """
-    try:
-        link: str = git_linker.get_console_link("github", resource_name, base_url=base_url, **params)
-    except ValueError as e:
-        logger.debug(f"Skipping GitHub {resource_name} console link: {e}")
-        return None
-    return link
+# Web link for a GitHub entity, or None (logged) when an identifier is missing; never fails a sync.
+get_console_link = partial(git_links.get_console_link, "github")
 
 
 def get_http_status_code(err: BaseException) -> Optional[int]:

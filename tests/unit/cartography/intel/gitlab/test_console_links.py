@@ -8,6 +8,8 @@ def test_get_web_base_url() -> None:
     assert get_web_base_url(None) is None
     assert get_web_base_url("gitlab.acme.com/") == "https://gitlab.acme.com"
     assert get_web_base_url("http://gitlab.internal") == "http://gitlab.internal"
+    assert get_web_base_url("https://user:token@gitlab.example.com/") == "https://gitlab.example.com"
+    assert get_web_base_url("javascript://example.com") is None
 
 
 def test_transforms_set_console_links() -> None:

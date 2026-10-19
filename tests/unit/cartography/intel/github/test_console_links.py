@@ -31,6 +31,9 @@ def test_get_web_base_url() -> None:
     assert get_web_base_url("https://api.github.com/graphql") == "https://github.com"
     assert get_web_base_url("https://ghe.acme.com/api/graphql") == "https://ghe.acme.com"
     assert get_web_base_url("") == "https://github.com"
+    assert get_web_base_url("https://api.acme.ghe.com/graphql") == "https://acme.ghe.com"
+    assert get_web_base_url("https://user:ghp_x@ghe.acme.com/api/graphql") == "https://ghe.acme.com"
+    assert get_web_base_url("javascript://evil.com") == "https://github.com"
 
 
 def test_transform_sets_repo_and_branch_console_links() -> None:
