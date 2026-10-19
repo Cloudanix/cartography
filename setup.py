@@ -33,7 +33,7 @@ setup(
     },
     dependency_links=[],
     install_requires=[
-        "cloudconsolelink>=4.2.0",
+        "cloudconsolelink>=4.3.0",
         "backoff>=2.1.2",
         # get_partition_for_region (util/arns.py) needs boto3 1.19.5 / botocore 1.22.5.
         "boto3>=1.19.5",
