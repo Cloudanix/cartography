@@ -14,6 +14,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.stats import get_stats_client
 from cartography.util import aws_handle_regions
 from cartography.util import aws_paginate
@@ -174,12 +176,14 @@ def get_rds_security_groups(boto3_session: boto3.session.Session, region: str) -
 
 
 @timeit
-def transform_rds_sgs(secgs: List[Dict], region: str, account_id: str) -> List[Dict]:
+def transform_rds_sgs(
+    secgs: List[Dict], region: str, account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     secgroups = []
     for secgroup in secgs:
         secgroup['GroupId'] = secgroup.get('DBSecurityGroupName', '')
         secgroup['arn'] = secgroup.get('DBSecurityGroupArn', '')
-        group_arn = f"arn:aws:ec2:{region}:{account_id}:security-group/{secgroup['GroupId']}"
+        group_arn = f"arn:{partition}:ec2:{region}:{account_id}:security-group/{secgroup['GroupId']}"
         secgroup['consolelink'] = aws_console_link.get_console_link(arn=group_arn)
         secgroup['region'] = region
         secgroups.append(secgroup)
@@ -251,11 +255,12 @@ def sync_rds_security_groups(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    partition = get_partition_from_params(common_job_parameters)
     data = []
     for region in regions:
         logger.info("Syncing RDS security groups for region '%s' in account '%s'.", region, current_aws_account_id)
         sgs = get_rds_security_groups(boto3_session, region)
-        data.extend(transform_rds_sgs(sgs, region, current_aws_account_id))
+        data.extend(transform_rds_sgs(sgs, region, current_aws_account_id, partition=partition))
 
     logger.info(f"Total RDS Security Groups: {len(data)}")
 
@@ -535,7 +540,7 @@ def get_rds_instance_data(boto3_session: boto3.session.Session, region: str) -> 
 @timeit
 def load_rds_instances(
     neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str,
-    aws_update_tag: int,
+    aws_update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the RDS instances to neo4j and link them to necessary nodes.
@@ -637,7 +642,7 @@ def load_rds_instances(
         aws_update_tag=aws_update_tag,
     )
     _attach_ec2_security_groups(neo4j_session, secgroups, aws_update_tag)
-    _attach_ec2_subnet_groups(neo4j_session, subnets, current_aws_account_id, aws_update_tag)
+    _attach_ec2_subnet_groups(neo4j_session, subnets, current_aws_account_id, aws_update_tag, partition)
     _attach_read_replicas(neo4j_session, read_replicas, aws_update_tag)
     _attach_clusters(neo4j_session, clusters, aws_update_tag)
 
@@ -760,7 +765,7 @@ def _attach_snapshots(neo4j_session: neo4j.Session, snapshots: List[Dict], aws_u
 @timeit
 def _attach_ec2_subnet_groups(
     neo4j_session: neo4j.Session, instances: List[Dict], current_aws_account_id: str,
-    aws_update_tag: int,
+    aws_update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Attach RDS instances to their EC2 subnet groups
@@ -786,7 +791,7 @@ def _attach_ec2_subnet_groups(
     for instance in instances:
         region = instance['region']
         db_sng = instance['DBSubnetGroup']
-        db_sng['arn'] = _get_db_subnet_group_arn(region, current_aws_account_id, db_sng['DBSubnetGroupName'])
+        db_sng['arn'] = _get_db_subnet_group_arn(region, current_aws_account_id, db_sng['DBSubnetGroupName'], partition)
         db_sng['consolelink'] = aws_console_link.get_console_link(arn=db_sng['arn'])
         db_sng['instance_arn'] = instance['DBInstanceArn']
         db_sng['region'] = region
@@ -826,10 +831,9 @@ def _attach_ec2_subnets_to_subnetgroup(
     """
     subnets = []
     for subnet_group in db_subnet_groups:
-        region = subnet_group['region']
         for subnet in subnet_group.get('Subnets', []):
             sn_id = subnet.get('SubnetIdentifier')
-            sng_arn = _get_db_subnet_group_arn(region, current_aws_account_id, subnet_group['DBSubnetGroupName'])
+            sng_arn = subnet_group['arn']
             az = subnet.get('SubnetAvailabilityZone', {}).get('Name')
             subnets.append({
                 'sn_id': sn_id,
@@ -924,15 +928,17 @@ def _validate_rds_endpoint(rds: Dict) -> Dict:
     return ep
 
 
-def _get_db_subnet_group_arn(region: str, current_aws_account_id: str, db_subnet_group_name: str) -> str:
+def _get_db_subnet_group_arn(
+    region: str, current_aws_account_id: str, db_subnet_group_name: str, partition: str = DEFAULT_PARTITION,
+) -> str:
     """
     Return an ARN for the DB subnet group name by concatenating the account name and region.
     This is done to avoid another AWS API call since the describe_db_instances boto call does not return the DB subnet
     group ARN.
-    Form is arn:aws:rds:{region}:{account-id}:subgrp:{subnet-group-name}
+    Form is arn:{partition}:rds:{region}:{account-id}:subgrp:{subnet-group-name}
     as per https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html
     """
-    return f"arn:aws:rds:{region}:{current_aws_account_id}:subgrp:{db_subnet_group_name}"
+    return f"arn:{partition}:rds:{region}:{current_aws_account_id}:subgrp:{db_subnet_group_name}"
 
 
 @timeit
@@ -1002,7 +1008,9 @@ def sync_rds_instances(
 
     logger.info(f"Total RDS Instances: {len(data)}")
 
-    load_rds_instances(neo4j_session, data, current_aws_account_id, update_tag)
+    load_rds_instances(
+        neo4j_session, data, current_aws_account_id, update_tag, get_partition_from_params(common_job_parameters),
+    )
     cleanup_rds_instances_and_db_subnet_groups(neo4j_session, common_job_parameters)
 
 

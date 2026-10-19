@@ -10,6 +10,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -81,6 +83,7 @@ def get_snapshot_attribute(client, snapshot_id, attribute_name):
 @timeit
 def load_snapshots(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_snapshots = """
     UNWIND $DictList as snapshot
@@ -103,7 +106,7 @@ def load_snapshots(
     for snapshot in data:
         region = snapshot.get('region', '')
         snapshot['StartTime'] = str(snapshot['StartTime'])
-        snapshot['Arn'] = f"arn:aws:ec2:{region}:{current_aws_account_id}:snapshot/{snapshot['SnapshotId']}"
+        snapshot['Arn'] = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:snapshot/{snapshot['SnapshotId']}"
         snapshot['consolelink'] = aws_console_link.get_console_link(arn=snapshot['Arn'])
 
     load_graph_data(
@@ -180,7 +183,10 @@ def sync_ebs_snapshots(
 
     logger.info(f"Total EBS Snapshot: {len(data)}")
 
-    load_snapshots(neo4j_session, data, current_aws_account_id, update_tag)
+    load_snapshots(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
 
     snapshot_volumes = get_snapshot_volumes(data)
 

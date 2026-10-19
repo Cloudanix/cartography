@@ -9,6 +9,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -34,7 +36,7 @@ def get_vpc_peerings_data(boto3_session: boto3.session.Session, region: str) -> 
 @timeit
 def load_vpc_peerings(
     neo4j_session: neo4j.Session, data: List[Dict], region: str,
-    aws_account_id: str, update_tag: int,
+    aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_vpc_peerings = """
     UNWIND $DictList AS vpc_peering
@@ -52,7 +54,7 @@ def load_vpc_peerings(
     pcx.accepter_region = vpc_peering.AccepterVpcInfo.Region,
     pcx.status_code = vpc_peering.Status.Code,
     pcx.status_message = vpc_peering.Status.Message,
-    pcx.arn = vpc_peering.Arn,
+    pcx.arn = vpc_peering.arn,
     pcx.consolelink = vpc_peering.consolelink
 
 
@@ -91,7 +93,9 @@ def load_vpc_peerings(
     """
 
     for item in data:
-        item['arn'] = f"arn:aws:ec2:{region}:{aws_account_id}:vpc-peering-connection/{item['VpcPeeringConnectionId']}"
+        item['arn'] = (
+            f"arn:{partition}:ec2:{region}:{aws_account_id}:vpc-peering-connection/{item['VpcPeeringConnectionId']}"
+        )
         item['consolelink'] = aws_console_link.get_console_link(arn=item['arn'])
 
     load_graph_data(
@@ -189,13 +193,14 @@ def sync_vpc_peerings(
 
     logger.info("Syncing EC2 VPC Peerings for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.debug("Syncing EC2 VPC peering for region '%s' in account '%s'.", region, current_aws_account_id)
         data = get_vpc_peerings_data(boto3_session, region)
 
         logger.info(f"Total VPC Peering data: {len(data)} for {region}")
 
-        load_vpc_peerings(neo4j_session, data, region, current_aws_account_id, update_tag)
+        load_vpc_peerings(neo4j_session, data, region, current_aws_account_id, update_tag, partition=partition)
         load_accepter_cidrs(neo4j_session, data, region, current_aws_account_id, update_tag)
         load_requester_cidrs(neo4j_session, data, region, current_aws_account_id, update_tag)
     cleanup_vpc_peerings(neo4j_session, common_job_parameters)

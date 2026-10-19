@@ -13,6 +13,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from .util import get_botocore_config
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.models.aws.ec2.networkinterfaces import EC2NetworkInterfaceSchema
 from cartography.models.aws.ec2.privateip_networkinterface import EC2PrivateIpNetworkInterfaceSchema
 from cartography.models.aws.ec2.securitygroup_networkinterface import EC2SecurityGroupNetworkInterfaceSchema
@@ -50,7 +52,9 @@ def get_network_interface_data(boto3_session: boto3.session.Session, region: str
     return subnets
 
 
-def transform_network_interface_data(data_list: List[Dict[str, Any]], region: str,aws_account_id) -> Ec2NetworkData:
+def transform_network_interface_data(
+    data_list: List[Dict[str, Any]], region: str, aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> Ec2NetworkData:
     network_interface_list = []
     private_ip_list = []
     sg_list = []
@@ -68,7 +72,9 @@ def transform_network_interface_data(data_list: List[Dict[str, Any]], region: st
             elb_match = re.match(r'^ELB (.*)', network_interface.get('Description', ''))
             if elb_match:
                 elb_v2_id = elb_match[1]
-        network_interface_arn= f"arn:aws:ec2:{region}:{aws_account_id}:network-interface/{network_interface['NetworkInterfaceId']}"
+        network_interface_arn = (
+            f"arn:{partition}:ec2:{region}:{aws_account_id}:network-interface/{network_interface['NetworkInterfaceId']}"
+        )
 
         # TODO issue #1024 change this to arn when ready
         network_interface_id = network_interface['NetworkInterfaceId']
@@ -90,8 +96,8 @@ def transform_network_interface_data(data_list: List[Dict[str, Any]], region: st
                 'SubnetId': network_interface.get('SubnetId'),
                 'ElbV1Id': elb_v1_id,
                 'ElbV2Id': elb_v2_id,
-                'Arn':network_interface_arn,
-                'consolelink':aws_console_link.get_console_link(arn=network_interface_arn),
+                'Arn': network_interface_arn,
+                'consolelink': aws_console_link.get_console_link(arn=network_interface_arn),
             },
         )
         if network_interface.get('PrivateIpAddresses'):
@@ -243,10 +249,12 @@ def cleanup_network_interfaces(neo4j_session: neo4j.Session, common_job_paramete
 
 
 @timeit
-def transform_network_interfaces(network_interfaces: List[Dict], region: str, aws_account_id: str) -> List[Dict]:
+def transform_network_interfaces(
+    network_interfaces: List[Dict], region: str, aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     # arn:${Partition}:ec2:${Region}:${Account}:network-interface/${NetworkInterfaceId}
     for ni in network_interfaces:
-        ni['Arn'] = f"arn:aws:ec2:{region}:{aws_account_id}:network-interface/{ni['NetworkInterfaceId']}"
+        ni['Arn'] = f"arn:{partition}:ec2:{region}:{aws_account_id}:network-interface/{ni['NetworkInterfaceId']}"
 
     return network_interfaces
 
@@ -264,11 +272,12 @@ def sync_network_interfaces(
 
     logger.info("Syncing EC2 Network Interfaces for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.info(f"Syncing EC2 network interfaces for region '{region}' in account '{current_aws_account_id}'.")
         data = get_network_interface_data(boto3_session, region)
         logger.info(f"Total Network Interfaces: {len(data)} for {region}")
-        ec2_network_data = transform_network_interface_data(data, region,current_aws_account_id)
+        ec2_network_data = transform_network_interface_data(data, region, current_aws_account_id, partition=partition)
         load_network_data(
             neo4j_session,
             region,

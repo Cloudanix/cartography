@@ -35,8 +35,9 @@ setup(
     install_requires=[
         "cloudconsolelink>=4.2.0",
         "backoff>=2.1.2",
-        "boto3>=1.15.1",
-        "botocore>=1.18.1",
+        # get_partition_for_region (util/arns.py) needs boto3 1.19.5 / botocore 1.22.5.
+        "boto3>=1.19.5",
+        "botocore>=1.22.5",
         "dnspython>=1.15.0",
         "neo4j>=5.0.0,<6.0.0",
         "policyuniverse>=1.1.0.0",

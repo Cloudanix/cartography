@@ -16,6 +16,8 @@ from policyuniverse.policy import Policy
 
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -290,6 +292,7 @@ def load_lambda_function_details(
     lambda_function_details: List[Tuple[str, List[Dict], List[Dict], List[Dict], str]],
     update_tag: int,
     current_aws_account_id: str,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     lambda_aliases: List[Dict] = []
     lambda_event_source_mappings: List[Dict] = []
@@ -301,7 +304,7 @@ def load_lambda_function_details(
                 function_name = function_arn.split(":")[-1]
                 alias["region"] = region
                 alias["consolelink"] = aws_console_link.get_console_link(
-                    arn=f"arn:aws:lambda:{region}:{current_aws_account_id}:alias/{function_name}",
+                    arn=f"arn:{partition}:lambda:{region}:{current_aws_account_id}:alias/{function_name}",
                 )
             lambda_aliases.extend(aliases)
         if len(event_source_mappings) > 0:
@@ -310,7 +313,10 @@ def load_lambda_function_details(
                 function_name = function_arn.split(":")[-1]
                 event["region"] = region
                 event["consolelink"] = aws_console_link.get_console_link(
-                    arn=f"arn:aws:lambda:{region}:{current_aws_account_id}:event-source-mapping/{function_name}",
+                    arn=(
+                        f"arn:{partition}:lambda:{region}:{current_aws_account_id}"
+                        f":event-source-mapping/{function_name}"
+                    ),
                 )
             lambda_event_source_mappings.extend(event_source_mappings)
         if len(layers) > 0:
@@ -318,7 +324,7 @@ def load_lambda_function_details(
                 layer["FunctionArn"] = function_arn
                 function_name = function_arn.split(":")[-1]
                 layer["consolelink"] = aws_console_link.get_console_link(
-                    arn=f"arn:aws:lambda:{region}:{current_aws_account_id}:layer/{function_name}",
+                    arn=f"arn:{partition}:lambda:{region}:{current_aws_account_id}:layer/{function_name}",
                 )
                 layer["region"] = region
             lambda_layers.extend(layers)
@@ -454,7 +460,10 @@ def sync_lambda_functions(
 
     load_lambda_functions(neo4j_session, data, current_aws_account_id, aws_update_tag)
     lambda_function_details = get_lambda_function_details(boto3_session, data)
-    load_lambda_function_details(neo4j_session, lambda_function_details, aws_update_tag, current_aws_account_id)
+    load_lambda_function_details(
+        neo4j_session, lambda_function_details, aws_update_tag, current_aws_account_id,
+        get_partition_from_params(common_job_parameters),
+    )
 
     cleanup_lambda(neo4j_session, common_job_parameters)
 

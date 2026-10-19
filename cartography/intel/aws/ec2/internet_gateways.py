@@ -9,6 +9,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -91,12 +93,11 @@ def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> 
 @timeit
 def load_internet_gateways(
     neo4j_session: neo4j.Session, internet_gateways: List[Dict], region: str,
-    current_aws_account_id: str, update_tag: int,
+    current_aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     logger.info("Loading %d Internet Gateways in %s.", len(internet_gateways), region)
-    # TODO: Right now this won't work in non-AWS commercial (GovCloud, China) as partition is hardcoded
     for igw in internet_gateways:
-        arn = f"arn:aws:ec2:{region}:{igw.get('OwnerId', '')}:internet-gateway/{igw['InternetGatewayId']}"
+        arn = f"arn:{partition}:ec2:{region}:{igw.get('OwnerId', '')}:internet-gateway/{igw['InternetGatewayId']}"
         igw['consolelink'] = aws_console_link.get_console_link(arn=arn)
     query = """
     UNWIND $DictList as igw
@@ -107,7 +108,7 @@ def load_internet_gateways(
         SET
             ig.ownerid = igw.OwnerId,
             ig.lastupdated = $aws_update_tag,
-            ig.arn = "arn:aws:ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
+            ig.arn = "arn:"+$partition+":ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
             ig.is_default = igw.isDefault,
             ig.consolelink = igw.consolelink
         WITH igw, ig
@@ -130,6 +131,7 @@ def load_internet_gateways(
         query,
         internet_gateways,
         region=region,
+        partition=partition,
         aws_account_id=current_aws_account_id,
         aws_update_tag=update_tag,
     )
@@ -149,13 +151,16 @@ def sync_internet_gateways(
     tic = time.perf_counter()
     logger.info("Syncing EC2 Internet Gateways for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.info("Syncing Internet Gateways for region '%s' in account '%s'.", region, current_aws_account_id)
         internet_gateways = get_internet_gateways(boto3_session, region)
 
         logger.info(f"Total Internet Gateways: {len(internet_gateways)} for {region}")
 
-        load_internet_gateways(neo4j_session, internet_gateways, region, current_aws_account_id, update_tag)
+        load_internet_gateways(
+            neo4j_session, internet_gateways, region, current_aws_account_id, update_tag, partition=partition,
+        )
 
     cleanup(neo4j_session, common_job_parameters)
     toc = time.perf_counter()

@@ -8,6 +8,8 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -21,7 +23,10 @@ def get_boto3_client(boto3_session: boto3.session.Session, service: str, region:
 
 
 @timeit
-def get_bedrock_agents_list(boto3_session: boto3.session.Session, current_aws_account_id: str, region: str) -> List[Dict]:
+def get_bedrock_agents_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str,
+    partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     bedrock_agents: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "bedrock-agent", region)
@@ -32,7 +37,9 @@ def get_bedrock_agents_list(boto3_session: boto3.session.Session, current_aws_ac
 
         for bedrock_agent in bedrock_agents:
             bedrock_agent["region"] = region
-            bedrock_agent["arn"] = f"arn:aws:bedrock:{region}:{current_aws_account_id}:agent/{bedrock_agent['agentId']}"
+            bedrock_agent["arn"] = (
+                f"arn:{partition}:bedrock:{region}:{current_aws_account_id}:agent/{bedrock_agent['agentId']}"
+            )
             bedrock_agent["consolelink"] = aws_console_link.get_console_link(arn=bedrock_agent["arn"])
 
     except Exception as e:
@@ -291,9 +298,12 @@ def sync_bedrock(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: str, current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    partition = get_partition_from_params(common_job_parameters)
     bedrock_agents = []
     for region in regions:
-        bedrock_agents.extend(get_bedrock_agents_list(boto3_session, current_aws_account_id, region))
+        bedrock_agents.extend(
+            get_bedrock_agents_list(boto3_session, current_aws_account_id, region, partition=partition),
+        )
 
     logger.info(f"Total bedrock agents: {len(bedrock_agents)}")
 

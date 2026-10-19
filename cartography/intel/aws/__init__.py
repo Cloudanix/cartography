@@ -25,6 +25,8 @@ from cartography.graph import write_timer
 from cartography.graph.session import Session
 from cartography.intel.aws.ec2.instances import sync_eks_node_links
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import get_partition
+from cartography.intel.aws.util.arns import PARTITION_PARAM
 from cartography.stats import get_stats_client
 from cartography.util import is_aws_access_denied
 from cartography.util import merge_module_sync_metadata
@@ -692,6 +694,16 @@ def _sync_multiple_accounts(
     # run_cleanup_job('aws_post_ingestion_dns_cleanup.json', neo4j_session, common_job_parameters)
 
 
+def _get_account_partition(boto3_session: boto3.session.Session, config: Config) -> str:
+    """
+    Partition of the synced account, so built ARNs read arn:aws-cn:/arn:aws-us-gov: where needed.
+    Any region of the account identifies it: prefer the configured ones over the session default.
+    """
+    configured_regions = config.params.get("regions") or []
+    region = config.params.get("defaultRegion") or next(iter(configured_regions), None) or boto3_session.region_name
+    return get_partition(boto3_session, region)
+
+
 @timeit
 def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     common_job_parameters = {
@@ -741,6 +753,8 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             e,
         )
         return
+
+    common_job_parameters[PARTITION_PARAM] = _get_account_partition(boto3_session, config)
 
     if config.aws_sync_all_profiles:
         aws_accounts = organizations.get_aws_accounts_from_botocore_config(

@@ -10,6 +10,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import batch
 from cartography.util import log_aws_error
@@ -119,7 +121,7 @@ def get_event_rules(boto3_session: boto3.session.Session, region, account_id):
 
 
 @timeit
-def transform_rules(rules: List[Dict], region: str, account_id) -> List[Dict]:
+def transform_rules(rules: List[Dict], region: str, account_id, partition: str = DEFAULT_PARTITION) -> List[Dict]:
     event_rules = []
     for event_rule in rules:
         event_rule["consolelink"] = aws_console_link.get_console_link(arn=event_rule["Arn"])
@@ -322,13 +324,18 @@ def get_metrics(boto3_session: boto3.session.Session, region):
 
 
 @timeit
-def transform_metrics(mets: List[Dict], account_id: str, region: str) -> List[Dict]:
+def transform_metrics(
+    mets: List[Dict], account_id: str, region: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     metrics = []
     for metric in mets:
-        console_arn = f"arn:aws:cloudwatch:{region if region else ''}:{account_id if account_id else ''}:metrics/{metric['MetricName']}"
+        console_arn = (
+            f"arn:{partition}:cloudwatch:{region if region else ''}:{account_id if account_id else ''}"
+            f":metrics/{metric['MetricName']}"
+        )
         # metric['consolelink'] = aws_console_link.get_console_link(console_arn)
         metric["consolelink"] = aws_console_link.get_console_link(console_arn)
-        metric["arn"] = f"arn:aws:cloudwatch:{region}:{account_id}:metrics/{metric['MetricName']}"
+        metric["arn"] = f"arn:{partition}:cloudwatch:{region}:{account_id}:metrics/{metric['MetricName']}"
         metric["region"] = region
         metrics.append(metric)
 
@@ -507,11 +514,13 @@ def _flow_log_console_link(flowlog: Dict, current_aws_account_id: str, region: s
 
 
 @timeit
-def transform_flow_logs(logs: List[Dict], current_aws_account_id: str, region: str) -> List[Dict]:
+def transform_flow_logs(
+    logs: List[Dict], current_aws_account_id: str, region: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     flowlogs = []
     for flowlog in logs:
         # "vcp" typo is the node id (MERGE key); kept so existing nodes and findings keep their identity.
-        flowlog["arn"] = f"arn:aws:ec2:{region}:{current_aws_account_id}:vcp-flow-log/{flowlog['FlowLogId']}"
+        flowlog["arn"] = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:vcp-flow-log/{flowlog['FlowLogId']}"
         flowlog["consolelink"] = _flow_log_console_link(flowlog, current_aws_account_id, region)
         flowlog["region"] = region
         flowlogs.append(flowlog)
@@ -590,13 +599,14 @@ def sync(
     log_groups = []
     # metrics = []
     rules = []
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.info("Syncing Cloudwatch for region '%s' in account '%s'.", region, current_aws_account_id)
 
         alms = get_cloudwatch_alarm(boto3_session, region)
         alarms.extend(transform_alarms(alms, region))
         flgs = get_cloudwatch_flowlogs(boto3_session, region)
-        flowlogs.extend(transform_flow_logs(flgs, current_aws_account_id, region))
+        flowlogs.extend(transform_flow_logs(flgs, current_aws_account_id, region, partition=partition))
         ebs = get_event_buses(boto3_session, region)
         event_buses.extend(transform_event_buses(ebs, region))
         log_g = get_log_groups(boto3_session, region)
@@ -638,7 +648,7 @@ def sync(
 
     for region in regions:
         rls = get_event_rules(boto3_session, region, current_aws_account_id)
-        rules.extend(transform_rules(rls, region, current_aws_account_id))
+        rules.extend(transform_rules(rls, region, current_aws_account_id, partition=partition))
 
     load_event_rules(neo4j_session, rules, current_aws_account_id, update_tag)
 

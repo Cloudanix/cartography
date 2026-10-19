@@ -11,6 +11,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -63,7 +65,9 @@ def get_elastic_ip_addresses(boto3_session: boto3.session.Session, region: str) 
 
 
 @timeit
-def transform_elastic_ip_addresses(elastic_ip_addresses: List[Dict], current_aws_account_id: str) -> List[Dict]:
+def transform_elastic_ip_addresses(
+    elastic_ip_addresses: List[Dict], current_aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     addresses: List[Dict] = []
     for address in elastic_ip_addresses:
         if not address.get('AllocationId'):
@@ -77,7 +81,10 @@ def transform_elastic_ip_addresses(elastic_ip_addresses: List[Dict], current_aws
             )
             continue
 
-        address['arn'] = f"arn:aws:ec2:{address.get('region')}:{current_aws_account_id}:elastic-ip/{address.get('AllocationId')}"
+        address['arn'] = (
+            f"arn:{partition}:ec2:{address.get('region')}:{current_aws_account_id}"
+            f":elastic-ip/{address.get('AllocationId')}"
+        )
         address['consolelink'] = aws_console_link.get_console_link(arn=address['arn'])
         addresses.append(address)
 
@@ -162,7 +169,9 @@ def sync_elastic_ip_addresses(
 
     logger.info(f"Total Elastic IP Addresses: {len(addresses)}")
 
-    addresses = transform_elastic_ip_addresses(addresses, current_aws_account_id)
+    addresses = transform_elastic_ip_addresses(
+        addresses, current_aws_account_id, partition=get_partition_from_params(common_job_parameters),
+    )
     load_elastic_ip_addresses(neo4j_session, addresses, current_aws_account_id, update_tag)
     cleanup_elastic_ip_addresses(neo4j_session, common_job_parameters)
 

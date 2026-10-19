@@ -9,6 +9,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -79,7 +81,7 @@ def load_load_balancer_subnets(
 @timeit
 def load_load_balancers(
     neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
-    update_tag: int,
+    update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_load_balancer = """
     UNWIND $DictList AS item
@@ -130,10 +132,9 @@ def load_load_balancers(
     for lb in data:
         region = lb.get('region', '')
         load_balancer_id = lb["DNSName"]
-        load_balancer_arn = \
-            f"arn:aws:elasticloadbalancing:{region}:{current_aws_account_id}:loadbalancer/{load_balancer_id}"
-        console_arn = \
-            f"arn:aws:elasticloadbalancing:{region}:{current_aws_account_id}:loadbalancer/{lb['LoadBalancerName']}"
+        arn_prefix = f"arn:{partition}:elasticloadbalancing:{region}:{current_aws_account_id}:loadbalancer"
+        load_balancer_arn = f"{arn_prefix}/{load_balancer_id}"
+        console_arn = f"{arn_prefix}/{lb['LoadBalancerName']}"
         consolelink = aws_console_link.get_console_link(arn=console_arn)
 
         lb_rows.append({
@@ -206,7 +207,10 @@ def sync_load_balancers(
 
     logger.info(f"Total Load Balancers: {len(data)}")
 
-    load_load_balancers(neo4j_session, data, current_aws_account_id, update_tag)
+    load_load_balancers(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
     cleanup_load_balancers(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

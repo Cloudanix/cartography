@@ -20,6 +20,8 @@ from policyuniverse.policy import Policy
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_cleanup_job
@@ -798,7 +800,10 @@ def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) 
 
 
 @timeit
-def load_s3_buckets(neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str, aws_update_tag: int) -> None:
+def load_s3_buckets(
+    neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str, aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
+) -> None:
     ingest_bucket = """
     MERGE (bucket:S3Bucket{id:$BucketName})
     ON CREATE SET bucket.firstseen = timestamp(),
@@ -823,7 +828,7 @@ def load_s3_buckets(neo4j_session: neo4j.Session, data: Dict, current_aws_accoun
     # so we map to that directly
 
     for bucket in data["Buckets"]:
-        arn = "arn:aws:s3:::" + bucket["Name"]
+        arn = f"arn:{partition}:s3:::{bucket['Name']}"
         consolelink = aws_console_link.get_console_link(arn=arn)
         run_write_query(
             neo4j_session,
@@ -863,7 +868,8 @@ def sync(
     logger.info(f"s3 account={current_aws_account_id}: bucket list fetch done — {len(bucket_data)} buckets in {time.perf_counter() - tic:0.4f}s")
 
     t1 = time.perf_counter()
-    load_s3_buckets(neo4j_session, bucket_data, current_aws_account_id, update_tag)
+    partition = get_partition_from_params(common_job_parameters)
+    load_s3_buckets(neo4j_session, bucket_data, current_aws_account_id, update_tag, partition)
     logger.info(f"s3 account={current_aws_account_id}: bucket load done in {time.perf_counter() - t1:0.4f}s")
 
     t1 = time.perf_counter()

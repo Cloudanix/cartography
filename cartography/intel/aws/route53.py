@@ -14,6 +14,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -41,13 +43,16 @@ def get_domains(boto3_session: boto3.session.Session, region: str) -> List[Dict]
 
 
 @timeit
-def transform_domains(boto3_session: boto3.session.Session, dms: List[Dict], region: str, account_id: str) -> List[Dict]:
+def transform_domains(
+    boto3_session: boto3.session.Session, dms: List[Dict], region: str, account_id: str,
+    partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     domains = []
     try:
         client = boto3_session.client('route53domains', region_name=region, config=get_botocore_config())
         for domain in dms:
             domain['arn'] = domain['DomainName']
-            console_arn = f"arn:aws:route53:{region}:{account_id}:domains/{domain['DomainName']}"
+            console_arn = f"arn:{partition}:route53:{region}:{account_id}:domains/{domain['DomainName']}"
             domain['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
             domain['region'] = region
             domain['details'] = client.get_domain_detail(DomainName=domain['DomainName'])
@@ -422,7 +427,7 @@ def transform_zone(zone: Dict) -> Dict:
 @timeit
 def load_dns_details(
     neo4j_session: neo4j.Session, dns_details: List[Tuple[Dict, List[Dict]]], current_aws_id: str,
-    update_tag: int,
+    update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Create the paths
@@ -443,7 +448,7 @@ def load_dns_details(
         for record_set in zone_record_sets:
             if record_set['Type'] == 'A' or record_set['Type'] == 'CNAME':
                 record = transform_record_set(record_set, zone['Id'], record_set['Name'][:-1])
-                record['arn'] = f"arn:aws:route53:::recordset/{record['id']}"
+                record['arn'] = f"arn:{partition}:route53:::recordset/{record['id']}"
 
                 if record is not None:
                     record["Region"] = record_set.get("Region", "global")
@@ -457,7 +462,7 @@ def load_dns_details(
 
             if record_set['Type'] == 'NS':
                 record = transform_ns_record_set(record_set, zone['Id'])
-                record['arn'] = f"arn:aws:route53:::recordset/{record['id']}"
+                record['arn'] = f"arn:{partition}:route53:::recordset/{record['id']}"
                 if record is not None:
                     record["Region"] = record_set.get("Region", "global")
 
@@ -498,10 +503,14 @@ def get_zones(client: botocore.client.BaseClient) -> List[Dict]:
 
 
 @timeit
-def transform_zones(client: botocore, zns: List[Dict]) -> List[Tuple[Dict, List[Dict]]]:
+def transform_zones(
+    client: botocore, zns: List[Dict], partition: str = DEFAULT_PARTITION,
+) -> List[Tuple[Dict, List[Dict]]]:
     results: List[Tuple[Dict, List[Dict]]] = []
     for hosted_zone in zns:
-        hosted_zone['arn'] = f"arn:aws:route53:::hostedzone/{hosted_zone['Id']}"
+        # The API Id is "/hostedzone/Z123"; the ARN takes only the bare zone id.
+        zone_id = hosted_zone['Id'].split('/')[-1]
+        hosted_zone['arn'] = f"arn:{partition}:route53:::hostedzone/{zone_id}"
         hosted_zone['consolelink'] = aws_console_link.get_console_link(arn=hosted_zone['arn'])
         record_sets = get_zone_record_sets(client, hosted_zone['Id'])
         results.append((hosted_zone, record_sets))
@@ -534,12 +543,13 @@ def sync(
 
     logger.info("Syncing Route53 for account '%s', at %s.", current_aws_account_id, tic)
     client = boto3_session.client('route53')
+    partition = get_partition_from_params(common_job_parameters)
     zns = get_zones(client)
-    zones = transform_zones(client, zns)
+    zones = transform_zones(client, zns, partition)
 
     logger.info(f"Total Route53 Zones: {len(zones)}")
 
-    load_dns_details(neo4j_session, zones, current_aws_account_id, update_tag)
+    load_dns_details(neo4j_session, zones, current_aws_account_id, update_tag, partition)
     link_sub_zones(neo4j_session, update_tag)
     cleanup_route53(neo4j_session, common_job_parameters)
 
@@ -552,7 +562,7 @@ def sync(
         logger.info("Syncing Route53 Domains for region '%s' in account '%s'.", region, current_aws_account_id)
 
         dms = get_domains(boto3_session, region)
-        domains.extend(transform_domains(boto3_session, dms, region, current_aws_account_id))
+        domains.extend(transform_domains(boto3_session, dms, region, current_aws_account_id, partition))
 
     logger.info(f"Total Route Domains: {len(domains)}")
 
