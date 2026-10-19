@@ -87,7 +87,7 @@ def load_storage_account_data(
     SET s.lastupdated = $azure_update_tag,
     s.kind = account.kind,
     s.name = account.name,
-    s.consolelink = account.consolelink,
+    s.consolelink = coalesce(account.consolelink, s.consolelink),
     s.creationtime = account.creation_time,
     s.hnsenabled = account.is_hns_enabled,
     s.primarylocation = account.primary_location,
@@ -333,7 +333,7 @@ def _load_queue_services(
     MERGE (qs:AzureStorageQueueService{id: qservice.id})
     ON CREATE SET qs.firstseen = timestamp(), qs.type = qservice.type, qs.region = $region
     SET qs.name = qservice.name,
-    qs.consolelink = qservice.consolelink,
+    qs.consolelink = coalesce(qservice.consolelink, qs.consolelink),
     qs.region = $region,
     qs.lastupdated = $azure_update_tag
     WITH qs, qservice
@@ -385,7 +385,7 @@ def _load_table_services(
     MERGE (ts:AzureStorageTableService{id: tservice.id})
     ON CREATE SET ts.firstseen = timestamp(), ts.type = tservice.type, ts.region = $region
     SET ts.name = tservice.name,
-    ts.consolelink = tservice.consolelink,
+    ts.consolelink = coalesce(tservice.consolelink, ts.consolelink),
     ts.region = $region,
     ts.lastupdated = $azure_update_tag
     WITH ts, tservice
@@ -438,7 +438,7 @@ def _load_file_services(
     MERGE (fs:AzureStorageFileService{id: fservice.id})
     ON CREATE SET fs.firstseen = timestamp(), fs.type = fservice.type, fs.region = $region
     SET fs.name = fservice.name,
-    fs.consolelink = fservice.consolelink,
+    fs.consolelink = coalesce(fservice.consolelink, fs.consolelink),
     fs.region = $region,
     fs.lastupdated = $azure_update_tag
     WITH fs, fservice
@@ -490,7 +490,7 @@ def _load_blob_services(
     MERGE (bs:AzureStorageBlobService{id: bservice.id})
     ON CREATE SET bs.firstseen = timestamp(), bs.type = bservice.type, bs.region = $region
     SET bs.name = bservice.name,
-    bs.consolelink = bservice.consolelink,
+    bs.consolelink = coalesce(bservice.consolelink, bs.consolelink),
     bs.region = $region,
     bs.lastupdated = $azure_update_tag
     WITH bs, bservice
@@ -610,7 +610,7 @@ def _load_queues(neo4j_session: neo4j.Session, queues: List[Dict], update_tag: i
     ON CREATE SET q.firstseen = timestamp(), q.type = queue.type, q.region = $region
     SET q.name = queue.name,
     q.region = $region,
-    q.consolelink = queue.consolelink,
+    q.consolelink = coalesce(queue.consolelink, q.consolelink),
     q.lastupdated = $azure_update_tag
     WITH q, queue
     MATCH (qs:AzureStorageQueueService{id: queue.service_id})
@@ -730,7 +730,7 @@ def _load_tables(neo4j_session: neo4j.Session, tables: List[Dict], update_tag: i
     ON CREATE SET t.firstseen = timestamp(), t.type = table.type, t.region = $region
     SET t.name = table.name,
     t.region = $region,
-    t.consolelink = table.consolelink,
+    t.consolelink = coalesce(table.consolelink, t.consolelink),
     t.tablename = table.table_name,
     t.lastupdated = $azure_update_tag
     WITH t, table
@@ -858,7 +858,7 @@ def _load_shares(neo4j_session: neo4j.Session, shares: List[Dict], update_tag: i
     share.region = $region,
     share.sharequota = s.share_quota,
     share.accesstier = s.access_tier,
-    share.consolelink = s.consolelink,
+    share.consolelink = coalesce(s.consolelink, share.consolelink),
     share.deleted = s.deleted,
     share.accesstierchangetime = s.access_tier_change_time,
     share.accesstierstatus = s.access_tier_status,
@@ -994,7 +994,7 @@ def _load_blob_containers(
     bc.defaultencryptionscope = blob.default_encryption_scope,
     bc.publicaccess = blob.public_access,
     bc.leasestatus = blob.lease_status,
-    bc.consolelink = blob.consolelink,
+    bc.consolelink = coalesce(blob.consolelink, bc.consolelink),
     bc.leasestate = blob.lease_state,
     bc.lastmodifiedtime = blob.last_modified_time,
     bc.remainingretentiondays = blob.remaining_retention_days,

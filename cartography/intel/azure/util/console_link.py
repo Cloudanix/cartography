@@ -1,4 +1,6 @@
 import logging
+from functools import lru_cache
+from typing import Any
 from typing import Dict
 from typing import Optional
 
@@ -8,20 +10,28 @@ logger = logging.getLogger(__name__)
 azure_console_link = AzureLinker()
 
 
-def safe_console_link(resource_id: Optional[str], common_job_parameters: Dict) -> str:
+def safe_console_link(resource_id: Optional[str], common_job_parameters: Dict) -> Optional[str]:
     """
     Build the Azure portal link for an ARM resource id (or Key Vault data-plane URI).
 
     :param resource_id: ARM id, e.g. /subscriptions/<sub>/resourceGroups/<rg>/providers/<ns>/<type>/<name>
     :param common_job_parameters: must carry Azure_Primary_AD_Domain_Name
-    :return: the portal link, or '' when the id or tenant domain is missing. AzureLinker raises
+    :return: the portal link, or None when the id or tenant domain is missing. AzureLinker raises
         ValueError in that case; one unlinkable resource must not abort the whole module sync.
+        Loaders write it as coalesce(item.consolelink, n.consolelink), so None keeps the link a
+        previous sync stored instead of blanking it.
     """
+    domain = common_job_parameters.get('Azure_Primary_AD_Domain_Name', '')
     try:
-        return azure_console_link.get_console_link(
-            id=resource_id,
-            primary_ad_domain_name=common_job_parameters.get('Azure_Primary_AD_Domain_Name', ''),
-        )
+        return azure_console_link.get_console_link(id=resource_id, primary_ad_domain_name=domain)
     except ValueError as e:
-        logger.warning("Could not generate console link for %s: %s", resource_id, e)
-        return ''
+        if not domain:
+            _warn_missing_tenant_domain(common_job_parameters.get('UPDATE_TAG'))
+        logger.debug("Could not generate console link for %s: %s", resource_id, e)
+        return None
+
+
+@lru_cache(maxsize=1)
+def _warn_missing_tenant_domain(update_tag: Any) -> None:
+    # Cached on the update tag: one warning per sync instead of one per ARM id.
+    logger.warning("Azure_Primary_AD_Domain_Name is missing; Azure console links keep their previous value this sync")

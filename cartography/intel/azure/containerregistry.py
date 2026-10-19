@@ -179,8 +179,8 @@ def _load_registries_tx(tx: neo4j.Transaction, subscription_id: str, data_list: 
         r.quarantine_policy_status = registry.quarantine_policy_status,
         r.retention_policy_status = registry.retention_policy_status,
         r.creation_date = registry.creation_date,
-        r.console_link = registry.console_link,
-        r.consolelink = registry.console_link,
+        r.console_link = coalesce(registry.console_link, r.console_link),
+        r.consolelink = coalesce(registry.console_link, r.consolelink),
         r.type = registry.type,
         r.tags = registry.tags
 

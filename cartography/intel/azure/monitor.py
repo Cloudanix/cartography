@@ -76,7 +76,7 @@ def _load_monitor_log_profiles_tx(
     log.region = l.location,
     log.service_bus_rule_id = l.service_bus_rule_id,
     log.storage_account_id = l.storage_account_id
-    SET log.consolelink = l.consolelink, log.lastupdated = $update_tag,
+    SET log.consolelink = coalesce(l.consolelink, log.consolelink), log.lastupdated = $update_tag,
     log.name = l.name,
     log.region = l.location
     WITH log

@@ -338,7 +338,7 @@ def _load_tenant_users_tx(
     i.object_type = user.object_type,
     i.region = $region
     SET i.lastupdated = $update_tag,
-    i.consolelink = user.consolelink,
+    i.consolelink = coalesce(user.consolelink, i.consolelink),
     i.user_principal_name = user.user_principal_name,
     i.email = user.email,
     i.name = user.name,
@@ -495,7 +495,7 @@ def _load_tenant_groups_tx(
     i.region = $region,
     i.name = group.display_name
     SET i.lastupdated = $update_tag,
-    i.consolelink = group.consolelink,
+    i.consolelink = coalesce(group.consolelink, i.consolelink),
     i.mail = group.mail,
     i.object_id = group.object_id,
     i.visibility = group.visibility,
@@ -889,7 +889,7 @@ def _load_tenant_applications_tx(
     i.object_id = app.object_id,
     i.region = $region,
     i.app_id = app.app_id
-    SET i.consolelink = app.consolelink, i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(app.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.name = app.display_name,
     i.publisher_domain = app.publisher_domain,
     i.sign_in_audience = app.sign_in_audience,
@@ -1033,7 +1033,7 @@ def _load_tenant_service_accounts_tx(
     i.firstseen = timestamp(),
     i.region = $region,
     i.object_id = service.object_id
-    SET i.consolelink = service.consolelink, i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(service.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.name = service.display_name,
     i.account_enabled = service.account_enabled,
     i.app_id = service.app_id,
@@ -1175,7 +1175,7 @@ def _load_tenant_domains_tx(
     i.firstseen = timestamp(),
     i.region = $region,
     i.create_date = $createDate
-    SET i.consolelink = domain.consolelink, i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(domain.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.authentication_type = domain.authentication_type,
     i.availability_status = domain.availability_status,
     i.is_admin_managed = domain.is_admin_managed,
@@ -1309,7 +1309,7 @@ def _load_roles_tx(
     i.name = role.role_name,
     i.region = $region,
     i.create_date = $createDate
-    SET i.consolelink = role.consolelink, i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(role.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.roleName = role.role_name,
     i.permissions = role.permissions,
     i.type = role.type,
@@ -1385,7 +1385,7 @@ def _load_roles_tx(
         ep.access_type = access_type,
         ep.home_tenant_id = home_tenant,
         ep.app_id = principal.app_id,
-        ep.consolelink = principal.consolelink,
+        ep.consolelink = coalesce(principal.consolelink, ep.consolelink),
         ep.account_id = CASE WHEN home_tenant <> '' THEN home_tenant ELSE $tenant_id END,
         ep.principal_type = CASE WHEN user_type = 'guest' THEN 'GuestUser' ELSE 'ServicePrincipal' END
     MERGE (i)-[r:TRUSTS_AZURE_PRINCIPAL]->(ep)
@@ -1416,7 +1416,7 @@ def _load_managed_identities_tx(
     i.region = managed_identity.location
     SET i.lastupdated = $update_tag,
     i.name = managed_identity.name,
-    i.consolelink = managed_identity.consolelink,
+    i.consolelink = coalesce(managed_identity.consolelink, i.consolelink),
     i.location = managed_identity.location,
     i.region = managed_identity.location,
     i.type = managed_identity.type,

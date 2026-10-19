@@ -88,7 +88,7 @@ def load_azure_subscriptions(
     ON CREATE SET as.firstseen = timestamp(), as.path = item.id,
     as.region = 'global'
     SET as.lastupdated = $update_tag, as.name = item.displayName, as.state = item.state,
-    as.consolelink = item.consolelink
+    as.consolelink = coalesce(item.consolelink, as.consolelink)
     WITH as, at
     MERGE (at)-[r:RESOURCE]->(as)
     ON CREATE SET r.firstseen = timestamp()

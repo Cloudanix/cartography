@@ -169,7 +169,7 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.type = vm.type, v.location = vm.location,
     v.region = vm.location,
     v.resourcegroup = vm.resource_group
-    SET v.consolelink = vm.consolelink, v:VirtualMachine
+    SET v.consolelink = coalesce(vm.consolelink, v.consolelink), v:VirtualMachine
     SET v.lastupdated = $update_tag, v.name = vm.name,
     v.vm_id = vm.vm_id,
     v.plan = vm.plan.product, v.size = vm.hardware_profile.vm_size,
@@ -371,8 +371,8 @@ def _load_vm_extensions_tx(tx: neo4j.Transaction, vm_extensions_list: List[Dict]
     MERGE (v:AzureVirtualMachineExtension{id: extension.id})
     ON CREATE SET v.firstseen = timestamp(), v.location = extension.location,
     v.region = extension.location
-    SET v.consolelink = extension.consolelink, v.lastupdated = $update_tag, v.name = extension.name,
-    v.type = extension.type
+    SET v.consolelink = coalesce(extension.consolelink, v.consolelink), v.lastupdated = $update_tag,
+    v.name = extension.name, v.type = extension.type
     WITH v,extension
     MATCH (owner:AzureVirtualMachine{id: extension.vm_id})
     MERGE (owner)-[r:CONTAIN]->(v)
@@ -546,7 +546,7 @@ def _load_vm_scale_sets_tx(
     a.resourcegroup = set.resource_group
     SET a:AzureVMScaleSet
     SET a.lastupdated = $update_tag,
-    a.consolelink = set.consolelink,
+    a.consolelink = coalesce(set.consolelink, a.consolelink),
     a.name = set.name,
     a.aks_cluster_name = set.aks_cluster_name,
     a.aks_pool_name = set.aks_pool_name,
@@ -653,7 +653,7 @@ def _load_vm_scale_sets_extensions_tx(
     SET v.lastupdated = $update_tag, v.name = extension.name,
     v.location = extension.location,
     v.region = extension.location,
-    v.consolelink = extension.consolelink,
+    v.consolelink = coalesce(extension.consolelink, v.consolelink),
     v.type = extension.type
     WITH v,extension
     MATCH (owner:AzureVirtualMachineScaleSet{id: extension.set_id})
@@ -835,7 +835,7 @@ def load_disks(neo4j_session: neo4j.Session, subscription_id: str, disk_list: Li
     d.type = disk.type, d.location = disk.location,
     d.region = disk.location,
     d.resourcegroup = disk.resource_group
-    SET d.consolelink = disk.consolelink, d.lastupdated = $update_tag, d.name = disk.name,
+    SET d.consolelink = coalesce(disk.consolelink, d.consolelink), d.lastupdated = $update_tag, d.name = disk.name,
     d.createoption = disk.creation_data.create_option, d.disksizegb = disk.disk_size_gb,
     d.encryption = disk.encryption_settings_collection.enabled, d.maxshares = disk.max_shares,
     d.network_access_policy = disk.network_access_policy,
@@ -910,7 +910,7 @@ def load_snapshots(neo4j_session: neo4j.Session, subscription_id: str, snapshots
     s.resourcegroup = snapshot.resource_group,
     s.type = snapshot.type, s.location = snapshot.location,
     s.region = snapshot.location
-    SET s.consolelink = snapshot.consolelink,
+    SET s.consolelink = coalesce(snapshot.consolelink, s.consolelink),
     s.lastupdated = $update_tag, s.name = snapshot.name, s.time_created = snapshot.time_created,
     s.createoption = snapshot.creation_data.create_option, s.disksizegb = snapshot.disk_size_gb,
     s.encryption = snapshot.encryption_settings_collection.enabled, s.incremental = snapshot.incremental,

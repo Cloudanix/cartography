@@ -122,7 +122,7 @@ def _load_aks_managed_clusters_tx(
     a.region = aks.location,
     a.publicNetworkAccess = aks.publicNetworkAccess,
     a.resourcegroup = aks.resource_group
-    SET a.consolelink = aks.consolelink, a.lastupdated = $update_tag,
+    SET a.consolelink = coalesce(aks.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = aks.name,
     a.node_resource_group = toLower(aks.node_resource_group)
     WITH a
@@ -200,7 +200,7 @@ def _load_aks_managed_cluster_agentpools_tx(
     a.host_group_id = pool.host_group_id,
     a.max_pods = pool.max_pods,
     a.resourcegroup = pool.resource_group
-    SET a.consolelink = pool.consolelink, a.lastupdated = $update_tag,
+    SET a.consolelink = coalesce(pool.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = pool.name
     WITH a
     MATCH (c:AzureCluster{id: $cluster_id})
@@ -301,7 +301,7 @@ def _load_container_registries_tx(
     a.location = registry.location,
     a.region = registry.location,
     a.resourcegroup = registry.resource_group
-    SET a.consolelink = registry.consolelink, a.lastupdated = $update_tag,
+    SET a.consolelink = coalesce(registry.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = registry.name
     WITH a
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -431,7 +431,7 @@ def _load_container_registry_replications_tx(
     a.location = replication.location,
     a.region = replication.location,
     a.resourcegroup = replication.resource_group
-    SET a.consolelink = replication.consolelink, a.lastupdated = $update_tag,
+    SET a.consolelink = coalesce(replication.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = replication.name
     WITH a,replication
     MATCH (owner:AzureContainerRegistry{id: replication.container_registry_id})
@@ -536,7 +536,7 @@ def _load_container_registry_runs_tx(
     a.location=run.location,
     a.region=run.location,
     a.resourcegroup = run.resource_group
-    SET a.consolelink = run.consolelink, a.lastupdated = $update_tag,
+    SET a.consolelink = coalesce(run.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = run.name
     WITH a,run
     MATCH (owner:AzureContainerRegistry{id: run.container_registry_id})
@@ -638,7 +638,7 @@ def _load_container_registry_tasks_tx(
     a.location=task.location,
     a.region=task.location,
     a.resourcegroup = task.resource_group
-    SET a.consolelink = task.consolelink, a.lastupdated = $update_tag,
+    SET a.consolelink = coalesce(task.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = task.name
     WITH a,task
     MATCH (owner:AzureContainerRegistry{id: task.container_registry_id})
@@ -743,7 +743,7 @@ def _load_container_registry_webhooks_tx(
     a.location=webhook.location,
     a.region=webhook.location,
     a.resourcegroup = webhook.resource_group
-    SET a.consolelink = webhook.consolelink, a.lastupdated = $update_tag,
+    SET a.consolelink = coalesce(webhook.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = webhook.name
     WITH a,webhook
     MATCH (owner:AzureContainerRegistry{id: webhook.container_registry_id})
@@ -840,7 +840,7 @@ def _load_container_groups_tx(
     a.location = group.location,
     a.region = group.location,
     a.resourcegroup = group.resource_group
-    SET a.consolelink = group.consolelink, a.lastupdated = $update_tag,
+    SET a.consolelink = coalesce(group.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = group.name
     WITH a
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})

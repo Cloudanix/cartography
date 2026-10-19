@@ -65,7 +65,7 @@ def _load_resource_groups_tx(
     t.location = group.location,
     t.region = group.location,
     t.managedBy = group.managedBy
-    SET t.consolelink = group.consolelink, t.lastupdated = $update_tag,
+    SET t.consolelink = coalesce(group.consolelink, t.consolelink), t.lastupdated = $update_tag,
     t.name = group.name
     WITH t
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})

@@ -61,7 +61,7 @@ def _load_security_contacts_tx(
     c.name = cont.name,
     c.region = cont.region,
     c.phone = cont.phone
-    SET c.consolelink = cont.consolelink, c.lastupdated = $update_tag
+    SET c.consolelink = coalesce(cont.consolelink, c.consolelink), c.lastupdated = $update_tag
     WITH c
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(c)

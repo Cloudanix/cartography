@@ -147,7 +147,7 @@ def _load_function_apps_tx(
     f.region = function_app.location,
     f.hostNamesDisabled = function_app.hostNamesDisabled,
     f.resourcegroup = function_app.resource_group
-    SET f.consolelink = function_app.consolelink, f.lastupdated = $update_tag,
+    SET f.consolelink = coalesce(function_app.consolelink, f.consolelink), f.lastupdated = $update_tag,
     f.name = function_app.name,
     f.container_size = function_app.container_size,
     f.default_host_name=function_app.default_host_name,
@@ -306,7 +306,7 @@ def _load_function_apps_configurations_tx(
     fc.php_version=function_conf.php_version,
     fc.location = function_conf.location,
     fc.region = function_conf.location,
-    fc.consolelink = function_conf.consolelink,
+    fc.consolelink = coalesce(function_conf.consolelink, fc.consolelink),
     fc.publicNetworkAccess = function_conf.publicNetworkAccess,
     fc.python_version=function_conf.python_version,
     fc.node_version=function_conf.node_version,
@@ -437,7 +437,7 @@ def _load_function_apps_functions_tx(
     f.region = function.location,
     f.resource_group_name=function.resource_group,
     f.href=function.href,
-    f.consolelink = function.consolelink,
+    f.consolelink = coalesce(function.consolelink, f.consolelink),
     f.language=function.language,
     f.is_disabled=function.is_disabled
     WITH f, function
@@ -550,7 +550,7 @@ def _load_function_apps_deployments_tx(
     f.type = function_deploy.type
     SET f.name = function_deploy.name,
     f.lastupdated = $azure_update_tag,
-    f.consolelink = function_deploy.consolelink,
+    f.consolelink = coalesce(function_deploy.consolelink, f.consolelink),
     f.location = function_deploy.location,
     f.region = function_deploy.location,
     f.resource_group_name=function_deploy.resource_group
@@ -666,7 +666,7 @@ def _load_function_apps_backups_tx(
     f.region = function_backup.location,
     f.type = function_backup.type
     SET f.name = function_backup.name,
-    f.consolelink = function_backup.consolelink,
+    f.consolelink = coalesce(function_backup.consolelink, f.consolelink),
     f.lastupdated = $azure_update_tag,
     f.resource_group_name=function_backup.resource_group
     WITH f, function_backup
@@ -783,7 +783,7 @@ def _load_function_apps_processes_tx(
     f.region = function_process.location,
     f.type = function_process.type
     SET f.name = function_process.name,
-    f.consolelink = function_process.consolelink,
+    f.consolelink = coalesce(function_process.consolelink, f.consolelink),
     f.lastupdated = $azure_update_tag,
     f.resource_group_name=function_process.resource_group
     WITH f, function_process
@@ -899,7 +899,7 @@ def _load_function_apps_snapshots_tx(
     f.region = function_snapshot.location,
     f.type = function_snapshot.type
     SET f.name = function_snapshot.name,
-    f.consolelink = function_snapshot.consolelink,
+    f.consolelink = coalesce(function_snapshot.consolelink, f.consolelink),
     f.lastupdated = $azure_update_tag,
     f.resource_group_name=function_snapshot.resource_group
     WITH f, function_snapshot
@@ -1014,7 +1014,7 @@ def _load_function_apps_webjobs_tx(
     f.region = function_webjob.location,
     f.type = function_webjob.type
     SET f.name = function_webjob.name,
-    f.consolelink = function_webjob.consolelink,
+    f.consolelink = coalesce(function_webjob.consolelink, f.consolelink),
     f.lastupdated = $azure_update_tag,
     f.resource_group_name=function_webjob.resource_group
     WITH f, function_webjob

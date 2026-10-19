@@ -204,7 +204,7 @@ def _load_networks_tx(tx: neo4j.Transaction, subscription_id: str, networks_list
     n.resourcegroup = network.resource_group
     SET n.lastupdated = $update_tag,
     n.name = network.name,
-    n.consolelink = network.consolelink,
+    n.consolelink = coalesce(network.consolelink, n.consolelink),
     n.resource_guid = network.resource_guid,
     n.provisioning_state=network.provisioning_state,
     n.enable_ddos_protection=network.enable_ddos_protection,
@@ -309,7 +309,7 @@ def _load_networks_subnets_tx(
     SET n.name = subnet.name,
     n.lastupdated = $update_tag,
     n.region= subnet.location,
-    n.consolelink = subnet.consolelink,
+    n.consolelink = coalesce(subnet.consolelink, n.consolelink),
     n.resource_group_name=subnet.resource_group,
     n.private_endpoint_network_policies=subnet.private_endpoint_network_policies,
     n.private_link_service_network_policies=subnet.private_link_service_network_policies,
@@ -407,7 +407,7 @@ def _load_network_routetables_tx(
     n.resourcegroup = routetable.resource_group
     SET n.lastupdated = $update_tag,
     n.name = routetable.name,
-    n.consolelink = routetable.consolelink,
+    n.consolelink = coalesce(routetable.consolelink, n.consolelink),
     n.etag=routetable.etag,
     n.is_default=routetable.isDefault
     WITH n
@@ -456,7 +456,7 @@ def _load_network_bastion_hosts_tx(
         n.region = bastion_host.location,
         n.dns_name = bastion_host.dns_name
         SET n.lastupdated = $update_tag,
-        n.consolelink = bastion_host.consolelink
+        n.consolelink = coalesce(bastion_host.consolelink, n.consolelink)
         WITH n
         MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
         MERGE (owner)-[r:RESOURCE]->(n)
@@ -611,7 +611,7 @@ def _load_network_routes_tx(
     n.region = route.location,
     n.address_prefix = route.address_prefix,
     n.next_hop_type = route.next_hop_type,
-    n.consolelink = route.consolelink,
+    n.consolelink = coalesce(route.consolelink, n.consolelink),
     n.lastupdated = $azure_update_tag,
     n.etag=route.etag
     WITH n, route
@@ -693,7 +693,7 @@ def _load_network_security_groups_tx(
     n.location = network.location,
     n.region = network.location,
     n.resourcegroup = network.resource_group
-    SET n.consolelink = network.consolelink, n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(network.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = network.name,
     n.etag=network.etag,
     n.is_default=network.isDefault
@@ -790,7 +790,7 @@ def _load_network_nat_gateway_tx(
     n.location = network.location,
     n.region = network.location,
     n.resourcegroup = network.resource_group
-    SET n.consolelink = network.consolelink, n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(network.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = network.name,
     n.id = network.id,
     n.etag=network.etag
@@ -923,7 +923,7 @@ def _load_network_security_rules_tx(
     n.destination_port_ranges = rule.destination_port_ranges,
     n.destination_port_range = rule.destination_port_range,
     n.type = rule.type
-    SET n.consolelink = rule.consolelink, n.name = rule.name,
+    SET n.consolelink = coalesce(rule.consolelink, n.consolelink), n.name = rule.name,
     n.region = rule.location,
     n.lastupdated = $azure_update_tag,
     n.etag = rule.etag
@@ -1120,7 +1120,7 @@ def _load_public_ip_addresses_tx(
     n.type='Internal',
     n.resource=address.type,
     n.isPublicFacing = true
-    SET n.consolelink = address.consolelink, n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(address.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = address.name,
     n.ipAddress = address.ip_address,
     n.publicIpAllocationMethod = address.public_ip_allocation_method,
@@ -1227,7 +1227,7 @@ def _load_network_interfaces_tx(
     n.type = interface.type,
     n.location = interface.location,
     n.region = interface.location
-    SET n.consolelink = interface.consolelink, n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(interface.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = interface.name
     WITH n, interface
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -1279,7 +1279,7 @@ def _load_load_balancers_tx(
     n.type = lb.type,
     n.location = lb.location,
     n.region = lb.location
-    SET n.consolelink = lb.consolelink, n.lastupdated = $update_tag,
+    SET n.consolelink = coalesce(lb.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = lb.name
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -1324,7 +1324,7 @@ def _load_frontend_ip_configurations_tx(
         ON CREATE SET fipc.firstseen = timestamp(),
         fipc.type = config.type
         SET fipc.name = config.name,
-        fipc.consolelink = config.consolelink,
+        fipc.consolelink = coalesce(config.consolelink, fipc.consolelink),
         fipc.private_ip_address = config.private_ip_address,
         fipc.lastupdated = $update_tag
         WITH fipc,config
@@ -1359,7 +1359,7 @@ def _load_backend_address_pools_tx(
             ON CREATE SET bap.firstseen = timestamp(),
             bap.type = b_pool.type
             SET bap.name = b_pool.name,
-            bap.consolelink = b_pool.consolelink,
+            bap.consolelink = coalesce(b_pool.consolelink, bap.consolelink),
             bap.lastupdated = $update_tag
             WITH n, bap, b_pool
             MERGE (n)-[rel:HAS]->(bap)
@@ -1412,7 +1412,7 @@ def _load_ip_configurations_tx(
     ipc.private_ip_allocation_method = ip_conf.private_ip_allocation_method,
     ipc.private_ip_address_version = ip_conf.private_ip_address_version
     SET ipc.lastupdated = $update_tag,
-    ipc.consolelink = ip_conf.consolelink,
+    ipc.consolelink = coalesce(ip_conf.consolelink, ipc.consolelink),
     ipc.name = ip_conf.name
     WITH ipc, n
     MERGE (n)-[r:CONTAINS]->(ipc)
@@ -1572,7 +1572,7 @@ def _load_usages_tx(
     ON CREATE SET n.firstseen = timestamp()
     SET n.currentValue = usage.currentValue,
     n.region= usage.location,
-    n.consolelink = usage.consolelink,
+    n.consolelink = coalesce(usage.consolelink, n.consolelink),
     n.lastupdated = $azure_update_tag,
     n.limit=usage.limit,
     n.unit=usage.unit

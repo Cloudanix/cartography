@@ -132,7 +132,7 @@ def _load_key_vaults_tx(
     k.uri = vault.properties.vault_uri,
     k.network_acl_default_action = vault.properties.network_acls.default_action,
     k.resourcegroup = vault.resource_group
-    SET k.consolelink = vault.consolelink, k.lastupdated = $update_tag,
+    SET k.consolelink = coalesce(vault.consolelink, k.consolelink), k.lastupdated = $update_tag,
     k.name = vault.name
     WITH k
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -219,7 +219,7 @@ def _load_key_vaults_keys_tx(
     k.updated = key.attributes.updated,
     k.exportable = key.attributes.exportable,
     k.managed = key.managed
-    SET k.consolelink = key.consolelink, k.lastupdated = $update_tag
+    SET k.consolelink = coalesce(key.consolelink, k.consolelink), k.lastupdated = $update_tag
     WITH k, key
     MATCH (keyvault:AzureKeyVault{id: key.vault_id})
     MERGE (keyvault)-[r:HAS_KEY]->(k)
@@ -287,7 +287,7 @@ def _load_key_vault_secrets_tx(
     s.updated = sec.properties.attributes.updated,
     s.contentType = sec.content_type,
     s.managed = s.managed
-    SET s.consolelink = sec.consolelink, s.lasupdated = $update_tag
+    SET s.consolelink = coalesce(sec.consolelink, s.consolelink), s.lasupdated = $update_tag
     WITH s, sec
     MATCH (keyvault:AzureKeyVault{id: sec.vault_id})
     MERGE (keyvault)-[r:HAS_SECRET]->(s)
@@ -364,7 +364,7 @@ def _load_key_vault_certificates_tx(
     c.contentType = cert.content_type,
     c.keyId = cert.kid,
     c.secretId = cert.sid
-    SET c.consolelink = cert.consolelink, c.lasupdated = $update_tag
+    SET c.consolelink = coalesce(cert.consolelink, c.consolelink), c.lasupdated = $update_tag
     WITH c, cert
     MATCH (keyvault:AzureKeyVault{id: cert.vault_id})
     MERGE (keyvault)-[r:HAS_CERTIFICATE]->(c)

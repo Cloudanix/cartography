@@ -34,15 +34,33 @@ def test_no_consolelink_is_written_only_on_create():
     assert offenders == []
 
 
-def test_safe_console_link_returns_empty_instead_of_raising_without_tenant_domain():
+def test_safe_console_link_returns_none_instead_of_raising_without_tenant_domain(caplog):
     if isinstance(console_link.azure_console_link, MagicMock):
         pytest.skip("cloudconsolelink not installed")
+    console_link._warn_missing_tenant_domain.cache_clear()
 
-    assert console_link.safe_console_link(VNET, {}) == ""
-    assert console_link.safe_console_link(None, {"Azure_Primary_AD_Domain_Name": "x.onmicrosoft.com"}) == ""
+    with caplog.at_level("WARNING", logger=console_link.__name__):
+        assert console_link.safe_console_link(VNET, {"UPDATE_TAG": 1}) is None
+        assert console_link.safe_console_link(f"{VNET}/subnets/a", {"UPDATE_TAG": 1}) is None
+    assert len(caplog.records) == 1  # once per sync, not once per resource
+
+    assert console_link.safe_console_link(None, {"Azure_Primary_AD_Domain_Name": "x.onmicrosoft.com"}) is None
     assert console_link.safe_console_link(VNET, {"Azure_Primary_AD_Domain_Name": "x.onmicrosoft.com"}).startswith(
         "https://portal.azure.com/#@x.onmicrosoft.com/resource/subscriptions/sub-1/",
     )
+
+
+def test_a_failed_link_never_overwrites_the_stored_one():
+    # safe_console_link returns None on failure; a plain `SET n.consolelink = item.consolelink` would erase the
+    # link a previous sync stored, so every Azure loader must write it through coalesce().
+    plain_write = re.compile(r"\.(consolelink|console_link) = (?!coalesce\()\w+\.")
+    offenders = [
+        f"{path.relative_to(AZURE_DIR)}:{lineno}"
+        for path in AZURE_DIR.rglob("*.py")
+        for lineno, line in enumerate(path.read_text().splitlines(), 1)
+        if plain_write.search(line)
+    ]
+    assert offenders == []
 
 
 def test_vm_extensions_link_to_their_own_id_not_the_last_vm():
