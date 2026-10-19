@@ -44,6 +44,23 @@ Bump the pin in `setup.py` and every `*.requirements.txt`.
 - oci: nothing wired. Every OCI node needs `OCILinker()` (node `region` is already the full name; IAM nodes need tenancy home region; buckets pass `namespace` + `name`).
 - github/gitlab/bitbucket/azuredevops: nothing wired. Use the new `GitLinker` (library) for every label; where the API already returns a web URL (GitHub org/repo/team `url`, GitLab `web_url`, Bitbucket repo `console_link`, ADO repo `weburl`) either works. Branches need the parent repo path stored on the branch at transform time.
 
+## Status (2026-10-19)
+
+Library: cloudconsolelink 4.2.0 released. Cartography branch `console-links-4.2` wires it for every
+provider (one commit each); unit tests show no new failures.
+
+Deliberately not fixed here (not link bugs; separate PRs):
+- gcp transforms that reset input to `[]` (apigateway locations, metric descriptors, cloudrun, pubsub):
+  nodes are never written. Their link args are already correct.
+- gcp/pubsublite.py `project_id` stored as a tuple; Pub/Sub Lite is shut down, module can likely go.
+- gitlab/projects.py GitLabProject MERGE id churn (new node every run).
+- aws flow log node id keeps the `vcp-flow-log` typo: changing it would recreate every node.
+- aws pending SNS subscriptions all share id `PendingConfirmation`.
+- ~58 pre-existing unit failures/errors (integration fixtures in tests/unit, stale mocks, neo4j 5 imports).
+
+Links still pointing at a list/parent page (no confident deep URL): Lambda layers, regional GCP URL maps,
+GCP public IPs, Artifact Registry packages, Azure container repositories/images (never written in practice).
+
 ## Out of scope
 
 Kubernetes and DigitalOcean syncs are disabled in `cartography/sync.py`; k8s nodes lack cloud/account/region so no console link is buildable.
