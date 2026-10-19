@@ -78,3 +78,27 @@ def test_load_policy_data_links_inline_policy_to_its_principal():
 
     policy_row = session.execute_write.call_args_list[0].kwargs["DictList"][0]
     assert policy_row["consolelink"] == iam.aws_console_link.get_console_link(arn=role_arn)
+
+    policy_query, sso_policy_query, statement_query = (c.args[1] for c in session.execute_write.call_args_list)
+    # Refreshed on every sync, not hidden in the create clause.
+    for query in (policy_query, sso_policy_query):
+        assert "SET policy.lastupdated = $aws_update_tag, policy.consolelink = item.consolelink" in query
+    # Statements carry their policy's link instead of being blanked each sync.
+    assert "statement.consolelink = policy.consolelink" in statement_query
+    assert "consolelink" not in session.execute_write.call_args_list[2].kwargs
+
+
+def test_load_policy_data_does_not_invent_an_iam_arn_for_a_permission_set_policy():
+    session = MagicMock()
+    iam.load_policy_data(session, {"user-1/AdminAccess": {"inline-pol": []}}, iam.PolicyType.inline.value, "0" * 12, 1)
+
+    assert session.execute_write.call_args_list[0].kwargs["DictList"][0]["consolelink"] is None
+
+
+def test_load_policy_data_leaves_managed_policy_links_to_sync_policies():
+    # sync_policies writes the link from the policy's real ARN; a name-built one is wrong for AWS-managed policies.
+    session = MagicMock()
+    user_arn = "arn:aws:iam::000000000000:user/alice"
+    iam.load_policy_data(session, {user_arn: {"AdministratorAccess": []}}, iam.PolicyType.managed.value, "0" * 12, 1)
+
+    assert "policy.consolelink" not in session.execute_write.call_args_list[0].args[1]

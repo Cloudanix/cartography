@@ -1195,14 +1195,16 @@ def _batch_load_policies(
         policy.name = item.policy_name,
         policy.arn = item.policy_arn,
         policy.managed_type = $ManagedType
-        SET policy.consolelink = item.consolelink
         """
 
+    # A managed policy's link is written by sync_policies from its real ARN (AWS-managed policies live
+    # under arn:aws:iam::aws:policy/); only an inline policy's link is known here.
+    link_clause = "" if policy_type == PolicyType.managed.value else ", policy.consolelink = item.consolelink"
     ingest_policy = f"""
     UNWIND $DictList AS item
     MERGE (policy:AWSPolicy{{id: item.policy_id}})
     {create_clause}
-    SET policy.lastupdated = $aws_update_tag
+    SET policy.lastupdated = $aws_update_tag{link_clause}
     WITH policy, item
     MATCH (principal:AWSPrincipal{{arn: item.principal_arn}})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1212,7 +1214,7 @@ def _batch_load_policies(
     UNWIND $DictList AS item
     MERGE (policy:AWSPolicy{{id: item.policy_id}})
     {create_clause}
-    SET policy.lastupdated = $aws_update_tag
+    SET policy.lastupdated = $aws_update_tag{link_clause}
     WITH policy, item
     MATCH (principal:AWSPrincipal{{id: item.principal_arn}})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1233,9 +1235,11 @@ def _batch_load_policy_statements(
     neo4j_session: neo4j.Session,
     statement_rows: List[Dict],
     aws_update_tag: int,
-    consolelink: str,
 ) -> None:
-    """Batched equivalent of load_policy_statements: one write for all policies."""
+    """
+    Batched equivalent of load_policy_statements: one write for all policies. A statement has no console
+    page of its own, so it carries its policy's link.
+    """
     ingest_policy_statement = """
         UNWIND $DictList AS item
         MATCH (policy:AWSPolicy{id: item.policy_id})
@@ -1246,7 +1250,7 @@ def _batch_load_policy_statements(
         statement.effect = statement_data.Effect,
         statement.action = statement_data.Action,
         statement.region = 'global',
-        statement.consolelink = $consolelink,
+        statement.consolelink = policy.consolelink,
         statement.notaction = statement_data.NotAction,
         statement.resource = statement_data.Resource,
         statement.notresource = statement_data.NotResource,
@@ -1258,8 +1262,7 @@ def _batch_load_policy_statements(
         SET r.lastupdated = $aws_update_tag
         """
     load_graph_data(
-        neo4j_session, ingest_policy_statement, statement_rows,
-        consolelink=consolelink, aws_update_tag=aws_update_tag,
+        neo4j_session, ingest_policy_statement, statement_rows, aws_update_tag=aws_update_tag,
     )
 
 
@@ -1279,20 +1282,20 @@ def load_policy_data(
             policy_id = transform_policy_id(current_aws_account_id, policy_type, policy_name)
             policy = policy_name.split("/")[-1]
             policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
-            # Inline policies have no console page of their own; they show on the owning principal's page.
+            # Inline policies have no console page of their own; an IAM one shows on its principal's page.
+            # An Identity Center permission set's inline policy has no IAM page, so it gets no link.
             is_iam_inline = policy_type == PolicyType.inline.value and ":iam::" in principal_arn
-            link_arn = principal_arn if is_iam_inline else policy_arn
             policy_rows.append({
                 "policy_id": policy_id,
                 "policy_name": policy_name,
                 "principal_arn": principal_arn,
                 "policy_arn": policy_arn,
-                "consolelink": aws_console_link.get_console_link(arn=link_arn),
+                "consolelink": aws_console_link.get_console_link(arn=principal_arn) if is_iam_inline else None,
             })
             statement_rows.append({"policy_id": policy_id, "statements": statements})
 
     _batch_load_policies(neo4j_session, policy_rows, policy_type, aws_update_tag)
-    _batch_load_policy_statements(neo4j_session, statement_rows, aws_update_tag, consolelink="")
+    _batch_load_policy_statements(neo4j_session, statement_rows, aws_update_tag)
 
 
 @timeit
