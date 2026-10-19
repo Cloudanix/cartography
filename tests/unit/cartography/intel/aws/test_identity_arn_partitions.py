@@ -87,8 +87,8 @@ def test_route53_arns(region, partition, prefix):
     record_set = {'Name': 'www.example.com.', 'Type': 'A', 'ResourceRecords': [{'Value': '1.2.3.4'}]}
     with patch.object(route53, 'get_zone_record_sets', return_value=[record_set]):
         zones = route53.transform_zones(MagicMock(), [zone], **_kw(partition))
-    # Hosted zone Id from the API already carries "/hostedzone/"; only the partition is under test here.
-    assert zones[0][0]['arn'] == f'{prefix}route53:::hostedzone//hostedzone/Z1'
+    # The API Id carries "/hostedzone/"; the ARN must hold only the bare zone id.
+    assert zones[0][0]['arn'] == f'{prefix}route53:::hostedzone/Z1'
 
     with patch.object(route53, 'load_zone'), patch.object(route53, 'load_a_records') as load_a, \
             patch.object(route53, 'link_aws_resources'):

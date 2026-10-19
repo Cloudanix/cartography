@@ -508,7 +508,9 @@ def transform_zones(
 ) -> List[Tuple[Dict, List[Dict]]]:
     results: List[Tuple[Dict, List[Dict]]] = []
     for hosted_zone in zns:
-        hosted_zone['arn'] = f"arn:{partition}:route53:::hostedzone/{hosted_zone['Id']}"
+        # The API Id is "/hostedzone/Z123"; the ARN takes only the bare zone id.
+        zone_id = hosted_zone['Id'].split('/')[-1]
+        hosted_zone['arn'] = f"arn:{partition}:route53:::hostedzone/{zone_id}"
         hosted_zone['consolelink'] = aws_console_link.get_console_link(arn=hosted_zone['arn'])
         record_sets = get_zone_record_sets(client, hosted_zone['Id'])
         results.append((hosted_zone, record_sets))
