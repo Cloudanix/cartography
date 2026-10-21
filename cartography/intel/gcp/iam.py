@@ -665,11 +665,11 @@ def load_service_account_keys(
     ingest_service_accounts = """
     UNWIND $DictList AS sa
     MERGE (u:GCPServiceAccountKey{id: sa.id})
-    ON CREATE SET u.firstseen = timestamp()
+    ON CREATE SET u.firstseen = timestamp(),
+    u.create_date = $createDate
     SET u.name=sa.name, u.serviceaccountid= $serviceaccount,
     u.displayname = sa.displayname,
     u.region = $region,
-    u.create_date = $createDate,
     u.keytype = sa.keyType, u.origin = sa.keyOrigin,
     u.consolelink = sa.consolelink,
     u.lastauthenticatedtime=sa.lastAuthenticatedTime,
@@ -708,11 +708,11 @@ def load_project_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_
     ingest_roles = """
     UNWIND $DictList AS d
     MERGE (u:GCPRole{id: d.id})
-    ON CREATE SET u.firstseen = timestamp()
+    ON CREATE SET u.firstseen = timestamp(),
+    u.create_date = $createDate
     SET u.name = d.name,
     u.title = d.title,
     u.region = $region,
-    u.create_date = $createDate,
     u.is_sso = d.is_sso,
     u.description = d.description,
     u.deleted = d.deleted,
@@ -746,11 +746,11 @@ def load_sso_roles(neo4j_session: neo4j.Session, roles: List[Dict], org_id: str,
     ingest_roles = """
     UNWIND $DictList AS d
     MERGE (u:GCPRole{id: d.id})
-    ON CREATE SET u.firstseen = timestamp()
+    ON CREATE SET u.firstseen = timestamp(),
+    u.create_date = $createDate
     SET u.name = d.name,
     u.title = d.title,
     u.region = $region,
-    u.create_date = $createDate,
     u.description = d.description,
     u.is_sso = d.is_sso,
     u.deleted = d.deleted,
@@ -1025,11 +1025,11 @@ def attach_project_role_to_user(
     MERGE (user:GCPUser{id: $UserId})
     ON CREATE SET
     user:GCPPrincipal,
-    user.firstseen = timestamp()
+    user.firstseen = timestamp(),
+    user.create_date = $createDate
     SET
     user.email = $UserEmail,
     user.name = $UserName,
-    user.create_date = $createDate,
     user.lastupdated = $gcp_update_tag,
     user.isDeleted = $isDeleted,
     user.managed_type = 'custom',
@@ -1074,11 +1074,11 @@ def attach_sso_role_to_user(
     MERGE (user:GCPUser{id: $UserId})
     ON CREATE SET
     user:GCPPrincipal,
-    user.firstseen = timestamp()
+    user.firstseen = timestamp(),
+    user.create_date = $createDate
     SET
     user.email = $UserEmail,
     user.name = $UserName,
-    user.create_date = $createDate,
     user.lastupdated = $gcp_update_tag,
     user.isDeleted = $isDeleted,
     user.managed_type = 'custom',
@@ -1188,11 +1188,11 @@ def attach_project_role_to_group(
     MERGE (group:GCPGroup{id: $GroupId})
     ON CREATE SET
     group:GCPPrincipal,
-    group.firstseen = timestamp()
+    group.firstseen = timestamp(),
+    group.create_date = $createDate
     SET
     group.email = $GroupEmail,
     group.name = $GroupName,
-    group.create_date = $createDate,
     group.consolelink = $ConsoleLink,
     group.lastupdated = $gcp_update_tag,
     group.isDeleted = $isDeleted,
@@ -1237,11 +1237,11 @@ def attach_sso_role_to_group(
     MERGE (group:GCPGroup{id: $GroupId})
     ON CREATE SET
     group:GCPPrincipal,
-    group.firstseen = timestamp()
+    group.firstseen = timestamp(),
+    group.create_date = $createDate
     SET
     group.email = $GroupEmail,
     group.name = $GroupName,
-    group.create_date = $createDate,
     group.consolelink = $ConsoleLink,
     group.lastupdated = $gcp_update_tag,
     group.isDeleted = $isDeleted,
@@ -1289,11 +1289,11 @@ def attach_project_role_to_domain(
     MERGE (domain:GCPDomain{id: $DomainId})
     ON CREATE SET
     domain:GCPPrincipal,
-    domain.firstseen = timestamp()
+    domain.firstseen = timestamp(),
+    domain.create_date = $createDate
     SET
     domain.email = $DomainEmail,
     domain.name = $DomainName,
-    domain.create_date = $createDate,
     domain.consolelink = $ConsoleLink,
     domain.lastupdated = $gcp_update_tag,
     domain.isDeleted = $isDeleted,
@@ -1337,11 +1337,11 @@ def attach_sso_role_to_domain(
     MERGE (domain:GCPDomain{id: $DomainId})
     ON CREATE SET
     domain:GCPPrincipal,
-    domain.firstseen = timestamp()
+    domain.firstseen = timestamp(),
+    domain.create_date = $createDate
     SET
     domain.email = $DomainEmail,
     domain.name = $DomainName,
-    domain.create_date = $createDate,
     domain.consolelink = $ConsoleLink,
     domain.lastupdated = $gcp_update_tag,
     domain.isDeleted = $isDeleted,
