@@ -14,9 +14,15 @@ import oci.identity
 from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
+from cartography.util import batch
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
+
+# Number of rows to load into Neo4j per batch for OCI compute resources.
+# Mirrors the GCP compute pagination pattern (load in chunks instead of one large
+# UNWIND) to keep each write transaction bounded for large compartments.
+OCI_COMPUTE_LOAD_BATCH_SIZE = 500
 
 # Lifecycle states we treat as live compute worth ingesting.
 # Keep STOPPED (still configured, billable boot volume / security surface).
@@ -126,9 +132,10 @@ def load_instance_ip_addresses(
         }
         for instance_id, ips in instance_ips.items()
     ]
-    if rows:
+    logger.info(f"Loading OCI instance IP addresses {len(rows)}")
+    for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
-            neo4j_session, update_ips, rows,
+            neo4j_session, update_ips, paginated_rows,
             oci_update_tag=oci_update_tag,
         )
 
@@ -215,10 +222,12 @@ def load_instances(
             "consolelink": utils.get_console_link("compute_instance", region=region, ocid=instance.get("id")),
         })
 
-    load_graph_data(
-        neo4j_session, ingest_instance, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
-    )
+    logger.info(f"Loading OCI instances {len(rows)}")
+    for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
+        load_graph_data(
+            neo4j_session, ingest_instance, paginated_rows,
+            REGION=region, oci_update_tag=oci_update_tag,
+        )
 
 
 def get_vnic_attachment_list_data(
@@ -286,10 +295,12 @@ def load_vnic_attachments(
         }
         for attachment in vnic_attachments
     ]
-    load_graph_data(
-        neo4j_session, ingest_vnic_attachment, rows,
-        oci_update_tag=oci_update_tag,
-    )
+    logger.info(f"Loading OCI VNIC attachments {len(rows)}")
+    for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
+        load_graph_data(
+            neo4j_session, ingest_vnic_attachment, paginated_rows,
+            oci_update_tag=oci_update_tag,
+        )
 
 
 def get_image_list_data(
@@ -358,10 +369,12 @@ def load_images(
         }
         for image in images
     ]
-    load_graph_data(
-        neo4j_session, ingest_image, rows,
-        oci_update_tag=oci_update_tag,
-    )
+    logger.info(f"Loading OCI images {len(rows)}")
+    for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
+        load_graph_data(
+            neo4j_session, ingest_image, paginated_rows,
+            oci_update_tag=oci_update_tag,
+        )
 
 
 def get_boot_volume_attachment_list_data(
@@ -439,10 +452,12 @@ def load_boot_volume_attachments(
             "instance_id": instance_id,
             "time_created": str(attachment.get("time-created", "")),
         })
-    load_graph_data(
-        neo4j_session, ingest_boot_volume_attachment, rows,
-        oci_update_tag=oci_update_tag,
-    )
+    logger.info(f"Loading OCI boot volume attachments {len(rows)}")
+    for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
+        load_graph_data(
+            neo4j_session, ingest_boot_volume_attachment, paginated_rows,
+            oci_update_tag=oci_update_tag,
+        )
 
 
 def get_volume_attachment_list_data(
@@ -510,10 +525,12 @@ def load_volume_attachments(
         }
         for attachment in volume_attachments
     ]
-    load_graph_data(
-        neo4j_session, ingest_volume_attachment, rows,
-        oci_update_tag=oci_update_tag,
-    )
+    logger.info(f"Loading OCI volume attachments {len(rows)}")
+    for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
+        load_graph_data(
+            neo4j_session, ingest_volume_attachment, paginated_rows,
+            oci_update_tag=oci_update_tag,
+        )
 
 
 def get_availability_domains(
@@ -643,10 +660,12 @@ def load_boot_volumes(
         }
         for volume in boot_volumes
     ]
-    load_graph_data(
-        neo4j_session, ingest_boot_volume, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
-    )
+    logger.info(f"Loading OCI boot volumes {len(rows)}")
+    for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
+        load_graph_data(
+            neo4j_session, ingest_boot_volume, paginated_rows,
+            REGION=region, oci_update_tag=oci_update_tag,
+        )
 
 
 def get_block_volume_list_data(
@@ -731,10 +750,12 @@ def load_block_volumes(
         }
         for volume in block_volumes
     ]
-    load_graph_data(
-        neo4j_session, ingest_block_volume, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
-    )
+    logger.info(f"Loading OCI block volumes {len(rows)}")
+    for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
+        load_graph_data(
+            neo4j_session, ingest_block_volume, paginated_rows,
+            REGION=region, oci_update_tag=oci_update_tag,
+        )
 
 
 def sync_boot_volume_attachments(
