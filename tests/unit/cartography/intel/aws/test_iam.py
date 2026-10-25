@@ -43,12 +43,35 @@ def test_get_account_from_arn():
 def test_aws_role_managed_type():
     # Roles AWS reserves for itself are predefined.
     assert iam._aws_role_managed_type("/aws-service-role/access-analyzer.amazonaws.com/") == "predefined"
-    assert iam._aws_role_managed_type("/service-role/") == "predefined"
     assert iam._aws_role_managed_type("/aws-reserved/sso.amazonaws.com/") == "predefined"
+    # Console-created service roles are the customer's to edit, so they are custom.
+    assert iam._aws_role_managed_type("/service-role/") == "custom"
     # Ordinary customer roles live at "/" or a custom path.
     assert iam._aws_role_managed_type("/") == "custom"
     assert iam._aws_role_managed_type("") == "custom"
     assert iam._aws_role_managed_type(None) == "custom"
+
+
+def test_get_role_list_data_keeps_console_service_roles_custom():
+    # /service-role/ is a service role for JIT (isServiceRole) but custom for compliance rules;
+    # the service-linked path is both.
+    client = MagicMock()
+    client.get_paginator.return_value.paginate.return_value = [
+        {"Roles": [{"RoleName": "lambda-role"}, {"RoleName": "AWSServiceRoleForSupport"}]},
+    ]
+    client.get_role.side_effect = [
+        {"Role": {"Path": "/service-role/", "RoleLastUsed": {}}},
+        {"Role": {"Path": "/aws-service-role/support.amazonaws.com/", "RoleLastUsed": {}}},
+    ]
+    session = MagicMock()
+    session.client.return_value = client
+
+    roles = iam.get_role_list_data(session)["Roles"]
+
+    assert roles[0]["isServiceRole"] is True
+    assert roles[0]["type"] == "custom"
+    assert roles[1]["isServiceRole"] is True
+    assert roles[1]["type"] == "predefined"
 
 
 def test_aws_policy_managed_type():
