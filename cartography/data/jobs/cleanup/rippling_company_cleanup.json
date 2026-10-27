@@ -1,0 +1,10 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:RipplingCompany{id: $RIPPLING_COMPANY_ID})-[:RESOURCE]->(n) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE n RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    }
+  ],
+  "name": "cleanup Rippling company resources"
+}
