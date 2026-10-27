@@ -671,7 +671,7 @@ class CLI:
             )
             config.gsuite_config = os.environ.get(config.gsuite_tokens_env_var)
         else:
-            config.gsuite_tokens_env_var = None
+            config.gsuite_config = None
 
         # Lastpass config
         if config.lastpass_cid_env_var:
