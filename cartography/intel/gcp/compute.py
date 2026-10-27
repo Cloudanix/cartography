@@ -21,6 +21,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import iam
+from . import images
 from . import instance_groups
 from . import label
 from cartography.client.core.tx import load_graph_data
@@ -61,6 +62,7 @@ def get_compute_disks(compute: Resource, project_id: str, zones: list, common_jo
 
                         os_feature_types = [feature["type"] for feature in disk.get("guestOsFeatures", [])]
                         disk["osFeatures"] = "WINDOWS" if "WINDOWS" in os_feature_types else "LINUX"
+                        disk["image_partial_uri"] = images._image_partial_uri(disk.get("sourceImage"), project_id)
 
                         disks.append(disk)
                 req = compute.disks().list_next(previous_request=req, previous_response=res)
@@ -119,7 +121,8 @@ def load_compute_disks_tx(
         disk.source_disk = record.sourceDisk,
         disk.source_disk_id = record.sourceDiskId,
         disk.consolelink = record.consolelink,
-        disk.source_image_id = record.sourceImageId
+        disk.source_image_id = record.sourceImageId,
+        disk.image_partial_uri = record.image_partial_uri
     WITH disk
     MATCH (owner:GCPProject{id: $ProjectId})
     MERGE (owner)-[r:RESOURCE]->(disk)
@@ -315,10 +318,7 @@ def attach_compute_disks_to_instances(
 def _get_error_reason(http_error: HttpError) -> str:
     """
     Helper function to get an error reason out of the googleapiclient's HttpError object
-    This function copies the structure of
-    https://github.com/googleapis/google-api-python-client/blob/1d2e240a74d2bc0074dffbc57cf7d62b8146cb82/
-                                  googleapiclient/http.py#L111
-    At the moment this is the best way we know of to extract the HTTP failure reason.
+    The body shape follows googleapiclient.http.HttpError.
     Additionally, see https://github.com/googleapis/google-api-python-client/issues/662.
     :param http_error: The googleapi HttpError object
     :return: The error reason as a string
@@ -607,6 +607,7 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
             if disk.get("boot"):
                 res["sourceImage"] = disk.get("initializeParams", {}).get("sourceImage")
                 break
+        res["image_partial_uri"] = images._image_partial_uri(res.get("sourceImage"), prefix_fields.project_id)
         res["source_image_consolelink"] = _image_consolelink(res.get("sourceImage"), prefix_fields.project_id)
         instance_list.append(res)
     return instance_list
@@ -1060,12 +1061,14 @@ def _load_gcp_instance_image_relations_tx(
     ingest_image = """
     UNWIND $instances AS instance
     WITH instance
-    WHERE instance.sourceImage IS NOT NULL
-    MERGE (img:GCPImage {id: instance.sourceImage})
-    ON CREATE SET img.firstseen = timestamp()
-    SET img.lastupdated = $gcp_update_tag,
+    WHERE instance.image_partial_uri IS NOT NULL
+    MERGE (img:GCPImage {id: instance.image_partial_uri})
+    ON CREATE SET
+        img.firstseen = timestamp(),
+        img.partial_uri = instance.image_partial_uri,
         img.self_link = instance.sourceImage,
         img.consolelink = instance.source_image_consolelink
+    SET img.lastupdated = $gcp_update_tag
     WITH img, instance
     MATCH (i:GCPInstance {id: instance.partial_uri})
     MERGE (i)-[:HAS]->(img)
@@ -1116,6 +1119,7 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     i.lastupdated = $gcp_update_tag,
     i.machine_type = instance.machineType,
     i.source_image = instance.sourceImage,
+    i.image_partial_uri = instance.image_partial_uri,
     i.disk_name = instance.diskName,
     i.os_features = instance.osFeatures,
     i.gke_cluster_name = instance.gke_cluster_name,
@@ -2103,6 +2107,13 @@ def sync(
             gcp_update_tag,
             common_job_parameters,
         )
+        image_ids = images.sync_compute_images(
+            neo4j_session,
+            compute,
+            project_id,
+            gcp_update_tag,
+            common_job_parameters,
+        )
         sync_gcp_instances(
             neo4j_session,
             compute,
@@ -2136,6 +2147,14 @@ def sync(
             gcp_update_tag,
             common_job_parameters,
         )
+        images.sync_referenced_compute_images(
+            neo4j_session,
+            compute,
+            project_id,
+            gcp_update_tag,
+            image_ids,
+        )
+        images.cleanup_gcp_images(neo4j_session, common_job_parameters)
         sync_gcp_https_proxies(
             neo4j_session,
             compute,
