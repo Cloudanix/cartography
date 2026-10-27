@@ -250,8 +250,11 @@ def get_user_list_data(boto3_session: boto3.session.Session) -> Dict:
 MANAGED_TYPE_PREDEFINED = "predefined"
 MANAGED_TYPE_CUSTOM = "custom"
 
-# Role paths that AWS reserves for service-linked / service / SSO-reserved roles it manages.
-_AWS_PREDEFINED_ROLE_PATHS = ["/aws-service-role/", "/service-role/", "/aws-reserved/"]
+# Role paths AWS reserves for roles it manages itself: service-linked roles and the roles IAM
+# Identity Center provisions from permission sets. "/service-role/" is NOT one of them: the console
+# creates service roles there for Lambda, Glue, CodeBuild, ..., but the customer owns them and can
+# edit their policies and trust, so they stay custom (isServiceRole still marks them for JIT).
+_AWS_PREDEFINED_ROLE_PATHS = ["/aws-service-role/", "/aws-reserved/"]
 # AWS-managed (vs customer-managed) policy ARNs in any partition (aws, aws-us-gov, aws-cn, ...).
 # Full-match form so the same pattern works with Python re.fullmatch and Cypher =~.
 _AWS_MANAGED_POLICY_ARN_PATTERN = r"arn:[^:]+:iam::aws:policy/.*"
@@ -341,17 +344,17 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
         try:
             role_data = client.get_role(RoleName=role.get("RoleName")).get("Role")
             role["RoleLastUsed"] = role_data.get("RoleLastUsed")
-            role["type"] = "custom"
+            # One source of truth for predefined vs custom (_AWS_PREDEFINED_ROLE_PATHS); the JIT
+            # flags below are wider on purpose (/service-role/ counts as a service role there).
+            role["type"] = _aws_role_managed_type(role_data.get("Path", ""))
 
             if any(service_role_type in role_data.get("Path", "") for service_role_type in service_role_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isServiceRole"] = True
-                role["type"] = "predefined"
 
             if any(sso_reserved_type in role_data.get("Path", "") for sso_reserved_type in sso_reserved_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isSSOReservedRole"] = True
-                role["type"] = "predefined"
 
         except Exception as e:
             logger.warning(f"Failed to get role info. {e}")
