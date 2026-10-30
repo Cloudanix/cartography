@@ -21,6 +21,41 @@ def test_image_partial_uri_normalizes_self_link_family_and_short_form():
     )
 
 
+def test_image_region_comes_from_a_region_or_the_disk_zone():
+    assert images._image_region({"storageLocations": ["us-east1"]}) == "us-east1"
+    assert images._image_region({"storageLocations": ["europe-west2"]}) == "europe-west2"
+    assert images._image_region({"storageLocations": ["us"]}) is None
+    assert images._region_for_image({"storageLocations": ["us"]}) == "us-central1"
+    assert images._region_for_image({"storageLocations": ["eu"]}) == "europe-west2"
+    assert images._region_for_image({"storageLocations": ["asia"]}) == "asia-south1"
+    assert images._region_for_image(
+        {"storageLocations": ["us"]},
+        ["https://www.googleapis.com/compute/v1/projects/p/zones/us-east1-b"],
+    ) == "us-east1"
+    assert images._image_region({
+        "storageLocations": ["us"],
+        "sourceDisk": "projects/my-project/zones/us-east1-b/disks/d1",
+    }) == "us-east1"
+    assert images._image_region({
+        "storageLocations": ["eu"],
+        "sourceDisk": "https://www.googleapis.com/compute/v1/projects/p/zones/europe-west2-a/disks/d1",
+    }) == "europe-west2"
+    assert images._image_region({
+        "storageLocations": ["asia"],
+        "sourceDisk": "projects/p/zones/asia-southeast1-b/disks/d1",
+    }) == "asia-southeast1"
+    assert images._image_region({"storageLocations": ["us", "us-west1"]}) == "us-west1"
+    assert images._image_region({
+        "storageLocations": [],
+        "sourceDisk": "projects/my-project/zones/europe-west2-a/disks/d1",
+    }) == "europe-west2"
+    assert images._region_from_disk_zones([
+        "https://www.googleapis.com/compute/v1/projects/p/zones/us-west1-a",
+        "https://www.googleapis.com/compute/v1/projects/p/zones/us-east1-b",
+    ]) == "us-east1"
+    assert images._image_region({}) is None
+
+
 def test_transform_gcp_image_flattens_api_fields_and_drops_key_material():
     image = {
         "id": "12345",
