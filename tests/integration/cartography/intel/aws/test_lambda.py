@@ -471,6 +471,33 @@ def test_lambda_alb_trigger_is_public_only_through_an_internet_facing_alb(neo4j_
     }
 
 
+def test_lambda_function_url_is_public_only_without_auth(neo4j_session):
+    # A function URL is reachable whether or not the function is in a VPC (VPC config is
+    # outbound only); with AWS_IAM auth every request must be SigV4-signed by an allowed principal.
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    neo4j_session.run(
+        """
+        UNWIND $lambdas AS l
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(lf:AWSLambda{id: l.arn})
+        SET lf.arn = l.arn, lf.vpc_id = l.vpc_id, lf.functionurl = l.url, lf.functionurl_auth_type = l.auth
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID, lambdas=[
+            {'arn': 'url-iam-no-vpc', 'vpc_id': '', 'url': 'https://a.lambda-url.aws', 'auth': 'AWS_IAM'},
+            {'arn': 'url-none-no-vpc', 'vpc_id': '', 'url': 'https://b.lambda-url.aws', 'auth': 'NONE'},
+            {'arn': 'url-none-in-vpc', 'vpc_id': 'vpc-1', 'url': 'https://c.lambda-url.aws', 'auth': 'NONE'},
+            {'arn': 'url-absent-no-vpc', 'vpc_id': ''},
+        ],
+    )
+
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    assert _exposed_lambdas(neo4j_session, 'url-') == {
+        'url-none-no-vpc': ['function_url_public', 'vpc_none'],
+        'url-none-in-vpc': ['function_url_public'],
+    }
+
+
 def test_lambda_iot_and_cognito_triggers_are_not_internet_exposure(neo4j_session):
     _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
     _seed_lambdas(
