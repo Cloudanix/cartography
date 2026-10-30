@@ -80,7 +80,10 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
     image_ids = []
     try:
         paginator = client.get_paginator("describe_instances")
-        for page in paginator.paginate():
+        # Since 2026-04-22 AWS hides service-managed instances (EKS Auto Mode, ECS/Lambda Managed
+        # Instances, ...) from DescribeInstances by default; ask for them so inventory sees them.
+        # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-managed-instances.html
+        for page in paginator.paginate(IncludeManagedResources=True):
             reservations.extend(page["Reservations"])
             for reservation in page["Reservations"]:
                 for instance in reservation["Instances"]:
