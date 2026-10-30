@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -94,17 +95,104 @@ def _string_list(values: Optional[List]) -> List[str]:
     return [str(value) for value in values if value is not None]
 
 
-def _image_region(storage_locations: Optional[List]) -> str:
+# Multi-region storageLocations are not Compute Engine regions. These are used only
+# when the image has no disk zone. europe-west2 is the region id for London.
+_MULTIREGION_FALLBACK = {
+    "us": "us-central1",
+    "eu": "europe-west2",
+    "asia": "asia-south1",
+}
+
+_COMPUTE_REGION = re.compile(r"[a-z]+(?:-[a-z]+)+\d+")
+_COMPUTE_ZONE = re.compile(r"[a-z]+(?:-[a-z]+)+\d+-[a-z]")
+
+
+def _is_compute_region(value: str) -> bool:
+    return _COMPUTE_REGION.fullmatch(value) is not None
+
+
+def _region_from_zone(value: str) -> Optional[str]:
+    if _COMPUTE_ZONE.fullmatch(value) is None:
+        return None
+    return value.rsplit("-", 1)[0]
+
+
+def _region_from_compute_uri(uri: Optional[str]) -> Optional[str]:
+    """Pull a region out of a zonal disk or regional snapshot URI."""
+    if not uri:
+        return None
+    parts = uri.split("/")
+    if "zones" in parts:
+        zone = parts[parts.index("zones") + 1].lower()
+        return _region_from_zone(zone)
+    if "regions" in parts:
+        region = parts[parts.index("regions") + 1].lower()
+        if _is_compute_region(region):
+            return region
+    return None
+
+
+def _region_from_disk_zone(zone: Optional[str]) -> Optional[str]:
+    """Region of a disk zone, either a full Compute URI or a zone name like us-east1-b."""
+    if not zone:
+        return None
+    from_uri = _region_from_compute_uri(zone)
+    if from_uri:
+        return from_uri
+    return _region_from_zone(zone.strip().lower())
+
+
+def _region_from_disk_zones(zones: List[str]) -> Optional[str]:
+    """One region from the disk zones. The first zone name is used when several exist."""
+    for zone in sorted(zone for zone in zones if zone):
+        region = _region_from_disk_zone(zone)
+        if region:
+            return region
+    return None
+
+
+def _fallback_region(storage_locations: Optional[List]) -> Optional[str]:
+    """Concrete region for a multi-region storage location, when no disk zone exists."""
+    for location in _string_list(storage_locations):
+        mapped = _MULTIREGION_FALLBACK.get(location.strip().lower())
+        if mapped:
+            return mapped
+    return None
+
+
+def _image_region(image: Dict) -> Optional[str]:
     """
-    An image is a global resource. Its storageLocations entry is the region or
-    multi-region where the image is stored. With no location, the scope is global.
+    Region from the image itself, before disks created from it are considered.
+
+    A storage location that is already a region, such as us-east1, is kept.
+    A multi-region such as us uses the source disk zone. The multi-region
+    fallback is not applied here, so a disk created from the image can still
+    supply the zone. storage_locations still keeps the raw API value.
     """
-    locations = _string_list(storage_locations)
-    if len(locations) == 1:
-        return locations[0]
-    if locations:
-        return ",".join(locations)
-    return "global"
+    locations = [loc.strip().lower() for loc in _string_list(image.get("storageLocations"))]
+    for location in locations:
+        if location in _MULTIREGION_FALLBACK:
+            continue
+        if _is_compute_region(location):
+            return location
+        from_zone = _region_from_zone(location)
+        if from_zone:
+            return from_zone
+    return _region_from_disk_zone(image.get("sourceDisk"))
+
+
+def _region_for_image(image: Dict, disk_zones: Optional[List[str]] = None) -> Optional[str]:
+    """
+    Region stored on the image: a real storage region, then a disk zone, then
+    the multi-region fallback.
+    """
+    region = _image_region(image)
+    if region:
+        return region
+    from_disks = _region_from_disk_zones(disk_zones or [])
+    if from_disks:
+        return from_disks
+    return _fallback_region(image.get("storageLocations"))
 
 
 def transform_gcp_image(image: Dict, viewer_project_id: str) -> Optional[Dict]:
@@ -157,7 +245,7 @@ def transform_gcp_image(image: Dict, viewer_project_id: str) -> Optional[Dict]:
         "licenses": image.get("licenses") or [],
         "license_codes": _string_list(image.get("licenseCodes")),
         "storage_locations": image.get("storageLocations") or [],
-        "region": _image_region(image.get("storageLocations")),
+        "region": _image_region(image),
         "guest_os_features": guest_os,
         "os_features": "WINDOWS" if "WINDOWS" in guest_os else "LINUX",
         "source_disk": image.get("sourceDisk"),
@@ -451,12 +539,77 @@ WHERE stub.name IS NULL
 DELETE old
 """
 
+_IMAGE_DISK_ZONES_QUERY = """
+MATCH (:GCPProject {id: $ProjectId})-[:RESOURCE]->(disk:GCPComputeDisk)-[:CREATED_FROM]->(img:GCPImage)
+WHERE img.region IS NULL AND disk.zone IS NOT NULL
+RETURN img.id AS image_id, collect(DISTINCT disk.zone) AS zones
+"""
+
+_SET_IMAGE_REGION_QUERY = """
+UNWIND $DictList AS row
+MATCH (img:GCPImage {id: row.image_id})
+WHERE img.region IS NULL
+SET img.region = row.region
+"""
+
 _DELETE_FAMILY_STUBS_QUERY = """
 UNWIND $DictList AS row
 MATCH (stub:GCPImage {id: row.source_partial_uri})
 WHERE stub.name IS NULL AND NOT (stub)--()
 DETACH DELETE stub
 """
+
+
+def set_image_regions_from_disk_zones(neo4j_session: neo4j.Session, project_id: str) -> None:
+    """
+    Fill a missing image region from a disk created from that image.
+
+    Used when storageLocations is a multi-region such as us and the image has
+    no source disk of its own. The zone comes from GCPComputeDisk.zone.
+    """
+    rows = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
+        _IMAGE_DISK_ZONES_QUERY,
+        ProjectId=project_id,
+    )
+    records = []
+    for row in rows:
+        region = _region_from_disk_zones(row.get("zones") or [])
+        if region and row.get("image_id"):
+            records.append({"image_id": row["image_id"], "region": region})
+    if not records:
+        return
+    load_graph_data(neo4j_session, _SET_IMAGE_REGION_QUERY, records)
+
+
+_IMAGES_MISSING_REGION_QUERY = """
+MATCH (img:GCPImage)
+WHERE img.region IS NULL AND (
+    EXISTS { MATCH (:GCPProject {id: $ProjectId})-[:RESOURCE]->(img) }
+    OR EXISTS { MATCH (:GCPProject {id: $ProjectId})-[:RESOURCE]->(:GCPInstance)-[:HAS]->(img) }
+    OR EXISTS { MATCH (:GCPProject {id: $ProjectId})-[:RESOURCE]->(:GCPComputeDisk)-[:CREATED_FROM]->(img) }
+)
+RETURN img.id AS image_id, img.storage_locations AS storage_locations
+"""
+
+
+def set_image_region_fallbacks(neo4j_session: neo4j.Session, project_id: str) -> None:
+    """
+    Set a concrete region when the image still has none after disk zones are checked.
+    """
+    rows = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
+        _IMAGES_MISSING_REGION_QUERY,
+        ProjectId=project_id,
+    )
+    records = []
+    for row in rows:
+        region = _fallback_region(row.get("storage_locations"))
+        if region and row.get("image_id"):
+            records.append({"image_id": row["image_id"], "region": region})
+    if not records:
+        return
+    load_graph_data(neo4j_session, _SET_IMAGE_REGION_QUERY, records)
 
 
 @timeit
@@ -491,29 +644,30 @@ def link_project_resources_to_images(
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
-    if not family_resolutions:
-        return
-    load_graph_data(
-        neo4j_session,
-        _LINK_FAMILY_DISKS_QUERY,
-        family_resolutions,
-        ProjectId=project_id,
-        gcp_update_tag=gcp_update_tag,
-    )
-    load_graph_data(
-        neo4j_session,
-        _LINK_FAMILY_INSTANCES_QUERY,
-        family_resolutions,
-        ProjectId=project_id,
-        gcp_update_tag=gcp_update_tag,
-    )
-    load_graph_data(
-        neo4j_session,
-        _DELETE_FAMILY_STUBS_QUERY,
-        family_resolutions,
-        ProjectId=project_id,
-        gcp_update_tag=gcp_update_tag,
-    )
+    if family_resolutions:
+        load_graph_data(
+            neo4j_session,
+            _LINK_FAMILY_DISKS_QUERY,
+            family_resolutions,
+            ProjectId=project_id,
+            gcp_update_tag=gcp_update_tag,
+        )
+        load_graph_data(
+            neo4j_session,
+            _LINK_FAMILY_INSTANCES_QUERY,
+            family_resolutions,
+            ProjectId=project_id,
+            gcp_update_tag=gcp_update_tag,
+        )
+        load_graph_data(
+            neo4j_session,
+            _DELETE_FAMILY_STUBS_QUERY,
+            family_resolutions,
+            ProjectId=project_id,
+            gcp_update_tag=gcp_update_tag,
+        )
+    set_image_regions_from_disk_zones(neo4j_session, project_id)
+    set_image_region_fallbacks(neo4j_session, project_id)
 
 
 @timeit
