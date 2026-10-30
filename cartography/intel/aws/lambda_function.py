@@ -181,6 +181,14 @@ def _extract_apigateway_source_api_ids(policy_document: Dict) -> List[str]:
     return sorted({arn if arn == ANY_SOURCE else arn.split(":", 5)[-1].split("/")[0] for arn in arns})
 
 
+def _extract_alb_source_target_group_arns(policy_document: Dict) -> List[str]:
+    """
+    Target group ARNs allowed to invoke the function; the exposure job resolves each to the load
+    balancer routing to it. A wildcarded ARN never matches one, so the Lambda stays public.
+    """
+    return _extract_trigger_source_arns(policy_document, "elasticloadbalancing", "elasticloadbalancing")
+
+
 @timeit
 @aws_handle_regions
 def get_lambda_policies(boto3_session: boto3.session.Session, region: str, lambda_functions: List[Dict]) -> List[Dict]:
@@ -198,6 +206,9 @@ def get_lambda_policies(boto3_session: boto3.session.Session, region: str, lambd
                 lambda_function["anonymous_actions"] = list(parsed_policy.internet_accessible_actions())
                 lambda_function["public_trigger_sources"] = _extract_public_trigger_sources(policy_document)
                 lambda_function["apigateway_source_api_ids"] = _extract_apigateway_source_api_ids(
+                    policy_document,
+                )
+                lambda_function["alb_source_target_group_arns"] = _extract_alb_source_target_group_arns(
                     policy_document,
                 )
             else:
@@ -262,6 +273,7 @@ def load_lambda_functions(
     lambda.functionurl_auth_type = lf.FunctionUrlAuthType,
     lambda.public_trigger_sources = lf.public_trigger_sources,
     lambda.apigateway_source_api_ids = lf.apigateway_source_api_ids,
+    lambda.alb_source_target_group_arns = lf.alb_source_target_group_arns,
     lambda.lastupdated = $aws_update_tag,
     lambda.vpc_id = CASE WHEN lf.VpcConfig.VpcId is not null then lf.VpcConfig.VpcId ELSE lambda.vpc_id END
     WITH lambda, lf

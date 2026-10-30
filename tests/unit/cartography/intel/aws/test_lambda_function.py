@@ -60,6 +60,24 @@ class TestApiGatewaySourceApiIds:
         assert lambda_function._extract_apigateway_source_api_ids(policy) == ["solo"]
 
 
+class TestAlbSourceTargetGroupArns:
+    def test_target_group_arns_from_source_arns(self):
+        tg_a, tg_b = TG_ARN.format("translate-ease-lambda-tg"), TG_ARN.format("b")
+        policy = _policy(_statement(ELB, tg_a), _statement(ELB, tg_b))
+
+        assert lambda_function._extract_alb_source_target_group_arns(policy) == [tg_b, tg_a]
+
+    def test_grant_without_source_arn_is_any_source(self):
+        policy = _policy(_statement(ELB))
+
+        assert lambda_function._extract_alb_source_target_group_arns(policy) == [lambda_function.ANY_SOURCE]
+
+    def test_other_services_are_ignored(self):
+        policy = _policy(_statement(APIGATEWAY, API_ARN.format("api1")), _statement(APIGATEWAY))
+
+        assert lambda_function._extract_alb_source_target_group_arns(policy) == []
+
+
 class TestPublicTriggerSources:
     def test_principal_and_source_arn_both_name_the_trigger(self):
         iot_rule = {
@@ -78,15 +96,17 @@ class TestPublicTriggerSources:
 
 def test_get_lambda_policies_stores_source_refs():
     client = MagicMock()
-    client.get_policy.return_value = {"Policy": json.dumps(_policy(_statement(APIGATEWAY, API_ARN.format("api1"))))}
+    policy = _policy(_statement(APIGATEWAY, API_ARN.format("api1")), _statement(ELB, TG_ARN.format("tg")))
+    client.get_policy.return_value = {"Policy": json.dumps(policy)}
     session = MagicMock()
     session.client.return_value = client
     functions = [{"FunctionArn": "arn:aws:lambda:us-east-1:111111111111:function:f"}]
 
     lambda_function.get_lambda_policies(session, "us-east-1", functions)
 
-    assert functions[0]["public_trigger_sources"] == ["apigateway"]
+    assert functions[0]["public_trigger_sources"] == ["alb", "apigateway"]
     assert functions[0]["apigateway_source_api_ids"] == ["api1"]
+    assert functions[0]["alb_source_target_group_arns"] == [TG_ARN.format("tg")]
 
 
 def test_load_writes_source_refs():
@@ -96,6 +116,7 @@ def test_load_writes_source_refs():
 
     query = session.execute_write.call_args.args[1]
     assert "lambda.apigateway_source_api_ids = lf.apigateway_source_api_ids" in query
+    assert "lambda.alb_source_target_group_arns = lf.alb_source_target_group_arns" in query
 
 
 def test_lambda_exposure_runs_after_the_jobs_it_reads(mocker, monkeypatch):

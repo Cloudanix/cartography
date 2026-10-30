@@ -342,19 +342,33 @@ def _seed_lambdas(neo4j_session, lambdas):
         MERGE (aa)-[:RESOURCE]->(lf:AWSLambda{id: l.arn})
         SET lf.arn = l.arn, lf.name = l.arn, lf.vpc_id = l.vpc_id,
             lf.public_trigger_sources = l.public_trigger_sources,
-            lf.apigateway_source_api_ids = l.apigateway_source_api_ids
+            lf.apigateway_source_api_ids = l.apigateway_source_api_ids,
+            lf.alb_source_target_group_arns = l.alb_source_target_group_arns
         """,
         account_id=EXPOSURE_ACCOUNT_ID, lambdas=lambdas,
     )
 
 
-def _exposed_lambdas(neo4j_session):
+def _seed_load_balancers(neo4j_session, account_id, load_balancers):
+    neo4j_session.run(
+        """
+        UNWIND $lbs AS l
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(:LoadBalancerV2{id: l.id, scheme: l.scheme, target_group_arns: l.tgs})
+        """,
+        account_id=account_id, lbs=load_balancers,
+    )
+
+
+def _exposed_lambdas(neo4j_session, id_prefix):
+    # Tests share the module's graph; each owns the Lambdas named with its prefix.
     nodes = neo4j_session.run(
         """
         MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(lf:AWSLambda{exposed_internet: true})
+        WHERE lf.id STARTS WITH $id_prefix
         RETURN lf.id AS id, lf.exposed_internet_type AS types
         """,
-        account_id=EXPOSURE_ACCOUNT_ID,
+        account_id=EXPOSURE_ACCOUNT_ID, id_prefix=id_prefix,
     )
     return {n['id']: sorted(n['types']) for n in nodes}
 
@@ -401,7 +415,7 @@ def test_lambda_api_gateway_trigger_is_public_only_through_a_public_api(neo4j_se
     run_analysis_job('aws_apigateway_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
     run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
 
-    assert _exposed_lambdas(neo4j_session) == {
+    assert _exposed_lambdas(neo4j_session, 'lf-') == {
         'lf-public-api': ['apigateway_trigger'],
         'lf-edge-api': ['apigateway_trigger'],
         'lf-private-and-public': ['apigateway_trigger'],
@@ -410,4 +424,48 @@ def test_lambda_api_gateway_trigger_is_public_only_through_a_public_api(neo4j_se
         'lf-unknown-api': ['apigateway_trigger'],
         'lf-other-workspace-api': ['apigateway_trigger'],
         'lf-no-ids': ['apigateway_trigger'],
+    }
+
+
+def test_lambda_alb_trigger_is_public_only_through_an_internet_facing_alb(neo4j_session):
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    _seed_exposure_account(neo4j_session, OTHER_WORKSPACE_ID, 'o-other', '222222222222')
+    _seed_load_balancers(
+        neo4j_session, EXPOSURE_ACCOUNT_ID, [
+            {'id': 'internal-alb', 'scheme': 'internal', 'tgs': ['tg-internal', 'tg-shared']},
+            {'id': 'public-alb', 'scheme': 'internet-facing', 'tgs': ['tg-public', 'tg-shared']},
+        ],
+    )
+    # An internal ALB in another tenant's workspace must not resolve for this workspace's Lambdas.
+    _seed_load_balancers(
+        neo4j_session, '222222222222', [{'id': 'other-alb', 'scheme': 'internal', 'tgs': ['tg-other']}],
+    )
+    alb = ['alb']
+    _seed_lambdas(
+        neo4j_session, [
+            {'arn': 'alb-internal', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['tg-internal']},
+            {'arn': 'alb-public', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['tg-public']},
+            # One target group behind both an internal and an internet-facing ALB.
+            {'arn': 'alb-shared', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['tg-shared']},
+            {'arn': 'alb-any', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['*']},
+            # Target group attached to no load balancer we know of (cross-account, unsynced region).
+            {
+                'arn': 'alb-internal-and-unknown', 'public_trigger_sources': alb,
+                'alb_source_target_group_arns': ['tg-internal', 'tg-unknown'],
+            },
+            {'arn': 'alb-other-workspace', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['tg-other']},
+            {'arn': 'alb-no-arns', 'public_trigger_sources': alb},
+        ],
+    )
+
+    run_analysis_job('aws_ec2_elb_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    assert _exposed_lambdas(neo4j_session, 'alb-') == {
+        'alb-public': ['alb_trigger'],
+        'alb-shared': ['alb_trigger'],
+        'alb-any': ['alb_trigger'],
+        'alb-internal-and-unknown': ['alb_trigger'],
+        'alb-other-workspace': ['alb_trigger'],
+        'alb-no-arns': ['alb_trigger'],
     }

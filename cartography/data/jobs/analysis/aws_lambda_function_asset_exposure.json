@@ -27,7 +27,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.public_trigger_sources IS NOT NULL AND size(lf.public_trigger_sources) > 0 AND 'alb' IN lf.public_trigger_sources SET lf.exposed_internet = true, (CASE WHEN NOT 'alb_trigger' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'alb_trigger';",
+      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(ws:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE 'alb' IN coalesce(lf.public_trigger_sources, []) WITH lf, ws, coalesce(lf.alb_source_target_group_arns, []) AS tg_arns OPTIONAL MATCH (ws)-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)-[:RESOURCE]->(lb:LoadBalancerV2) WHERE any(tg IN tg_arns WHERE tg IN coalesce(lb.target_group_arns, [])) WITH lf, tg_arns, collect(DISTINCT lb) AS lbs WHERE size(tg_arns) = 0 OR any(lb IN lbs WHERE lb.exposed_internet = true) OR any(tg IN tg_arns WHERE none(lb IN lbs WHERE tg IN coalesce(lb.target_group_arns, []))) SET lf.exposed_internet = true, (CASE WHEN NOT 'alb_trigger' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'alb_trigger';",
       "iterative": false
     },
     {
