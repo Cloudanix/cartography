@@ -6,6 +6,8 @@ https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-managed-instances
 from unittest.mock import MagicMock
 
 from cartography.intel.aws.ec2.volumes import get_volumes
+from cartography.intel.aws.ec2.volumes import transform_volumes
+from cartography.models.aws.ec2.volumes import EBSVolumeNodeProperties
 
 
 def _session_with_pages(pages):
@@ -32,3 +34,31 @@ class TestGetVolumesIncludesManaged:
         volumes = get_volumes(session, "us-east-1")
 
         assert [v["VolumeId"] for v in volumes] == ["vol-1", "vol-2"]
+
+
+def _transform_one(volume_overrides):
+    """Run transform_volumes over one minimal unattached volume and return its transformed dict."""
+    volume = {"VolumeId": "vol-test01", "AvailabilityZone": "us-east-1a", "State": "available", "Attachments": []}
+    volume.update(volume_overrides)
+    return transform_volumes([volume], "us-east-1", "123456789012")[0]
+
+
+class TestVolumeOperatorTransform:
+    def test_managed_volume_carries_operator(self):
+        volume = _transform_one({"Operator": {"Managed": True, "Principal": "eks.amazonaws.com"}})
+
+        assert volume["OperatorManaged"] is True
+        assert volume["OperatorPrincipal"] == "eks.amazonaws.com"
+
+    def test_unmanaged_volume_has_no_operator_values(self):
+        """Absent Operator means not managed; values stay None so the graph property is never set."""
+        volume = _transform_one({})
+
+        assert volume["OperatorManaged"] is None
+        assert volume["OperatorPrincipal"] is None
+
+    def test_operator_fields_in_model(self):
+        props = EBSVolumeNodeProperties()
+
+        assert props.operatormanaged.name == "OperatorManaged"
+        assert props.operatorprincipal.name == "OperatorPrincipal"

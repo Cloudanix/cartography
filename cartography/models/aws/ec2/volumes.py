@@ -31,6 +31,9 @@ class EBSVolumeNodeProperties(CartographyNodeProperties):
     type: PropertyRef = PropertyRef('VolumeType')
     kmskeyid: PropertyRef = PropertyRef('KmsKeyId')
     consolelink: PropertyRef = PropertyRef('consolelink')
+    # Volume.Operator: set only for volumes of EC2 managed instances (EKS Auto Mode, ...)
+    operatormanaged: PropertyRef = PropertyRef('OperatorManaged')
+    operatorprincipal: PropertyRef = PropertyRef('OperatorPrincipal')
 
 
 @dataclass(frozen=True)
