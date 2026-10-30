@@ -32,7 +32,9 @@ def get_volumes(boto3_session: boto3.session.Session, region: str) -> List[Dict]
     try:
         paginator = client.get_paginator('describe_volumes')
         volumes: List[Dict] = []
-        for page in paginator.paginate():
+        # AWS hides volumes of EC2 managed instances by default; opt in so inventory sees them.
+        # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-managed-instances.html
+        for page in paginator.paginate(IncludeManagedResources=True):
             volumes.extend(page['Volumes'])
 
     except ClientError as e:
