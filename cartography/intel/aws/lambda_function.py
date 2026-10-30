@@ -106,48 +106,79 @@ def _extract_public_trigger_sources(policy_document: Dict) -> List[str]:
     """
     trigger_sources = set()
 
+    for statement in _allow_statements(policy_document):
+        # Principal (a service like elasticloadbalancing.amazonaws.com) and
+        # Condition -> ArnLike -> AWS:SourceArn both name the invoking service.
+        for value in _service_principals(statement) + _source_arns(statement):
+            value_lower = value.lower()
+            for key, trigger_type in PUBLIC_FACING_TRIGGER_SERVICES.items():
+                if key in value_lower:
+                    trigger_sources.add(trigger_type)
+
+    return sorted(trigger_sources)
+
+
+def _allow_statements(policy_document: Dict) -> List[Dict]:
     statements = policy_document.get("Statement", [])
     if isinstance(statements, dict):
         statements = [statements]
+    return [statement for statement in statements if statement.get("Effect") == "Allow"]
 
-    for statement in statements:
-        if statement.get("Effect") != "Allow":
-            continue
 
-        # Check the Principal - if it's a service like elasticloadbalancing.amazonaws.com
-        principal = statement.get("Principal", {})
-        if isinstance(principal, str):
-            principal = {"AWS": principal}
+def _service_principals(statement: Dict) -> List[str]:
+    principal = statement.get("Principal", {})
+    if isinstance(principal, str):
+        principal = {"AWS": principal}
+    service_principal = principal.get("Service", "")
+    if isinstance(service_principal, list):
+        return service_principal
+    return [service_principal] if service_principal else []
 
-        service_principal = principal.get("Service", "")
-        if isinstance(service_principal, list):
-            service_principals = service_principal
-        else:
-            service_principals = [service_principal] if service_principal else []
 
-        for svc in service_principals:
-            svc_lower = svc.lower()
-            for key, trigger_type in PUBLIC_FACING_TRIGGER_SERVICES.items():
-                if key in svc_lower:
-                    trigger_sources.add(trigger_type)
+def _source_arns(statement: Dict) -> List[str]:
+    condition = statement.get("Condition", {})
+    source_arns: List[str] = []
+    for condition_operator in ("ArnLike", "ArnEquals", "StringLike", "StringEquals"):
+        condition_block = condition.get(condition_operator, {})
+        source_arn = condition_block.get("AWS:SourceArn") or condition_block.get("aws:SourceArn") or ""
+        if isinstance(source_arn, list):
+            source_arns.extend(source_arn)
+        elif source_arn:
+            source_arns.append(source_arn)
+    return source_arns
 
-        # Check Condition -> ArnLike -> AWS:SourceArn
-        condition = statement.get("Condition", {})
-        for condition_operator in ("ArnLike", "ArnEquals", "StringLike", "StringEquals"):
-            condition_block = condition.get(condition_operator, {})
-            source_arn = condition_block.get("AWS:SourceArn") or condition_block.get("aws:SourceArn") or ""
-            if isinstance(source_arn, list):
-                source_arns = source_arn
-            else:
-                source_arns = [source_arn] if source_arn else []
 
-            for arn in source_arns:
-                arn_lower = arn.lower()
-                for key, trigger_type in PUBLIC_FACING_TRIGGER_SERVICES.items():
-                    if key in arn_lower:
-                        trigger_sources.add(trigger_type)
+# Marks a grant that names a service but no SourceArn: any resource of that service, in any
+# account, may invoke the function. It never matches a real resource, so the exposure job keeps
+# such a Lambda public.
+ANY_SOURCE = "*"
 
-    return sorted(trigger_sources)
+
+def _extract_trigger_source_arns(policy_document: Dict, principal_key: str, arn_service: str) -> List[str]:
+    """
+    Return the SourceArns through which `principal_key` (e.g. "apigateway") may invoke the
+    function, restricted to ARNs of `arn_service` (e.g. "execute-api"). A statement granting the
+    service without such a SourceArn contributes ANY_SOURCE. The exposure analysis job resolves
+    these against the graph, so a trigger only counts as public when its source is.
+    """
+    refs = set()
+    for statement in _allow_statements(policy_document):
+        arns = [arn for arn in _source_arns(statement) if f":{arn_service}:" in arn.lower()]
+        if arns:
+            refs.update(arns)
+        elif any(principal_key in svc.lower() for svc in _service_principals(statement)):
+            refs.add(ANY_SOURCE)
+    return sorted(refs)
+
+
+def _extract_apigateway_source_api_ids(policy_document: Dict) -> List[str]:
+    """
+    REST API ids allowed to invoke the function, e.g. "abc123" from
+    arn:aws:execute-api:us-east-1:111111111111:abc123/prod/GET/path. A wildcard id ("*") is kept
+    as-is and, like ANY_SOURCE, never resolves to an API, so the Lambda stays public.
+    """
+    arns = _extract_trigger_source_arns(policy_document, "apigateway", "execute-api")
+    return sorted({arn if arn == ANY_SOURCE else arn.split(":", 5)[-1].split("/")[0] for arn in arns})
 
 
 @timeit
@@ -166,13 +197,17 @@ def get_lambda_policies(boto3_session: boto3.session.Session, region: str, lambd
                 lambda_function["anonymous_access"] = parsed_policy.is_internet_accessible()
                 lambda_function["anonymous_actions"] = list(parsed_policy.internet_accessible_actions())
                 lambda_function["public_trigger_sources"] = _extract_public_trigger_sources(policy_document)
+                lambda_function["apigateway_source_api_ids"] = _extract_apigateway_source_api_ids(
+                    policy_document,
+                )
             else:
                 lambda_function["public_trigger_sources"] = []
 
         except ClientError as e:
             if e.response["Error"]["Code"] in ("ResourceNotFoundException"):
                 logger.debug(
-                    f"unable to fetch function policy - ResourceNotFoundException: {region} - {lambda_function['FunctionArn']} - {e}",
+                    "unable to fetch function policy - ResourceNotFoundException: "
+                    f"{region} - {lambda_function['FunctionArn']} - {e}",
                 )
                 continue
 
@@ -226,6 +261,7 @@ def load_lambda_functions(
     lambda.functionurl = lf.FunctionUrl,
     lambda.functionurl_auth_type = lf.FunctionUrlAuthType,
     lambda.public_trigger_sources = lf.public_trigger_sources,
+    lambda.apigateway_source_api_ids = lf.apigateway_source_api_ids,
     lambda.lastupdated = $aws_update_tag,
     lambda.vpc_id = CASE WHEN lf.VpcConfig.VpcId is not null then lf.VpcConfig.VpcId ELSE lambda.vpc_id END
     WITH lambda, lf

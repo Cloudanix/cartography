@@ -23,7 +23,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE lf.public_trigger_sources IS NOT NULL AND size(lf.public_trigger_sources) > 0 AND 'apigateway' IN lf.public_trigger_sources SET lf.exposed_internet = true, (CASE WHEN NOT 'apigateway_trigger' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'apigateway_trigger';",
+      "query": "MATCH (lf:AWSLambda)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(ws:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE 'apigateway' IN coalesce(lf.public_trigger_sources, []) WITH lf, ws, coalesce(lf.apigateway_source_api_ids, []) AS api_ids OPTIONAL MATCH (api:APIGatewayRestAPI) WHERE api.id IN api_ids AND EXISTS { (api)<-[:RESOURCE]-(:AWSAccount)<-[:OWNER]-(:AWSOrganization)<-[:OWNER]-(ws) } WITH lf, api_ids, collect(DISTINCT api) AS apis WHERE size(api_ids) = 0 OR size(apis) < size(api_ids) OR any(api IN apis WHERE api.exposed_internet = true) SET lf.exposed_internet = true, (CASE WHEN NOT 'apigateway_trigger' IN coalesce(lf.exposed_internet_type , []) THEN lf END).exposed_internet_type = coalesce(lf.exposed_internet_type , []) + 'apigateway_trigger';",
       "iterative": false
     },
     {
