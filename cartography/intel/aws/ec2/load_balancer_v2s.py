@@ -20,7 +20,9 @@ aws_console_link = AWSLinker()
 
 @timeit
 @aws_handle_regions
-def get_load_balancer_v2_listeners(client: botocore.client.BaseClient, load_balancer_arn: str, region: str) -> List[Dict]:
+def get_load_balancer_v2_listeners(
+    client: botocore.client.BaseClient, load_balancer_arn: str, region: str,
+) -> List[Dict]:
     paginator = client.get_paginator('describe_listeners')
     listeners: List[Dict] = []
     try:
@@ -81,7 +83,8 @@ def load_load_balancer_v2s(
     elbv2.type = item.type,
     elbv2.scheme = item.scheme, elbv2.region = item.region,
     elbv2.arn = item.arn,
-    elbv2.consolelink = item.consolelink
+    elbv2.consolelink = item.consolelink,
+    elbv2.target_group_arns = item.target_group_arns
     WITH elbv2
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(elbv2)
@@ -89,7 +92,11 @@ def load_load_balancer_v2s(
     SET r.lastupdated = $update_tag
     """
 
-    lb_rows, subnet_rows, sg_rows, listener_rows, instance_rows = [], [], [], [], []
+    lb_rows: List[Dict] = []
+    subnet_rows: List[Dict] = []
+    sg_rows: List[Dict] = []
+    listener_rows: List[Dict] = []
+    instance_rows: List[Dict] = []
     for lb in data:
         region = lb.get('region', '')
         load_balancer_arn = lb["LoadBalancerArn"]
@@ -105,6 +112,9 @@ def load_load_balancer_v2s(
             "region": region,
             "arn": load_balancer_arn,
             "consolelink": aws_console_link.get_console_link(arn=load_balancer_arn),
+            # Every target type (instance, ip, lambda, alb): the Lambda exposure job resolves a
+            # Lambda's ALB trigger (a target group ARN) to the load balancer that routes to it.
+            "target_group_arns": [tg['TargetGroupArn'] for tg in lb.get('TargetGroups') or []],
         })
         subnet_rows.extend(
             {"load_balancer_id": load_balancer_id, "subnet_id": az['SubnetId'], "region": region}
