@@ -469,3 +469,22 @@ def test_lambda_alb_trigger_is_public_only_through_an_internet_facing_alb(neo4j_
         'alb-other-workspace': ['alb_trigger'],
         'alb-no-arns': ['alb_trigger'],
     }
+
+
+def test_lambda_iot_and_cognito_triggers_are_not_internet_exposure(neo4j_session):
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    _seed_lambdas(
+        neo4j_session, [
+            {'arn': 'trig-iot', 'public_trigger_sources': ['iot'], 'vpc_id': 'vpc-1'},
+            {'arn': 'trig-cognito', 'public_trigger_sources': ['cognito'], 'vpc_id': 'vpc-1'},
+            # Still public through its other trigger.
+            {
+                'arn': 'trig-iot-and-any-api', 'public_trigger_sources': ['apigateway', 'iot'],
+                'apigateway_source_api_ids': ['*'], 'vpc_id': 'vpc-1',
+            },
+        ],
+    )
+
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    assert _exposed_lambdas(neo4j_session, 'trig-') == {'trig-iot-and-any-api': ['apigateway_trigger']}

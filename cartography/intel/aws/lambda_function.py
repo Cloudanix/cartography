@@ -79,7 +79,10 @@ def get_lambda_function_url_config(boto3_session: boto3.session.Session, functio
         return None
 
 
-# Services in resource-based policy SourceArn that indicate a public-facing trigger
+# Services in resource-based policy SourceArn that indicate a public-facing trigger. Recorded as
+# public_trigger_sources for context; the exposure job decides which make the Lambda public.
+# IoT rules and Cognito triggers never do: they run on messages from authenticated IoT clients /
+# user-pool events, so no caller on the internet invokes the function through them.
 PUBLIC_FACING_TRIGGER_SERVICES = {
     "elasticloadbalancing": "alb",
     "execute-api": "apigateway",
@@ -95,7 +98,8 @@ def _extract_public_trigger_sources(policy_document: Dict) -> List[str]:
     Parse a Lambda resource-based policy and identify public-facing trigger sources.
 
     Examines each policy statement's Condition.ArnLike.AWS:SourceArn (or SourceArn in Principal)
-    to detect services that can invoke the Lambda from the public internet, such as:
+    to detect services that may front the Lambda (whether they make it public is decided by the
+    exposure analysis job), such as:
     - API Gateway (execute-api)
     - Application Load Balancer (elasticloadbalancing)
     - CloudFront
