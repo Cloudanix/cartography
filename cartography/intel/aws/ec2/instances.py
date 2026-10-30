@@ -230,6 +230,8 @@ def transform_ec2_instances(
             vm_os_version = os_details.get("Name", "Unknown")
 
             is_spot_instance = str(instance.get("InstanceLifecycle", "")).lower() == "spot"
+            # Operator is only returned for service-managed instances; absent -> None -> property not set.
+            operator = instance.get("Operator") or {}
 
             instance_list.append(
                 {
@@ -269,6 +271,8 @@ def transform_ec2_instances(
                     # "UserData": user_data,
                     "EksClusterName": eks_cluster_name,
                     "EksNodeGroupName": eks_nodegroup_name,
+                    "OperatorManaged": operator.get("Managed"),
+                    "OperatorPrincipal": operator.get("Principal"),
                 },
             )
 
