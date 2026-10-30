@@ -32,7 +32,9 @@ def get_volumes(boto3_session: boto3.session.Session, region: str) -> List[Dict]
     try:
         paginator = client.get_paginator('describe_volumes')
         volumes: List[Dict] = []
-        for page in paginator.paginate():
+        # AWS hides volumes of EC2 managed instances by default; opt in so inventory sees them.
+        # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-managed-instances.html
+        for page in paginator.paginate(IncludeManagedResources=True):
             volumes.extend(page['Volumes'])
 
     except ClientError as e:
@@ -57,6 +59,8 @@ def transform_volumes(
         volume_id = volume['VolumeId']
         volume_arn = build_arn('ec2', current_aws_account_id, 'volume', volume_id, region, partition)
         consolelink = aws_console_link.get_console_link(arn=volume_arn)
+        # Operator is only returned for service-managed volumes; absent -> None -> property not set.
+        operator = volume.get('Operator') or {}
         raw_vol = ({
             'Arn': volume_arn,
             'AvailabilityZone': volume.get('AvailabilityZone'),
@@ -74,6 +78,8 @@ def transform_volumes(
             'KmsKeyId': volume.get('KmsKeyId'),
             'consolelink': consolelink,
             'region': region,
+            'OperatorManaged': operator.get('Managed'),
+            'OperatorPrincipal': operator.get('Principal'),
         })
 
         if not active_attachments:
@@ -112,6 +118,8 @@ def load_volumes(
             vol.multiattachenabled = volume.MultiAttachEnabled,
             vol.type = volume.VolumeType,
             vol.kmskeyid = volume.KmsKeyId,
+            vol.operatormanaged = volume.OperatorManaged,
+            vol.operatorprincipal = volume.OperatorPrincipal,
             vol.region=volume.region
         WITH vol
         MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
