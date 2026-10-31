@@ -53,7 +53,7 @@ def test_transform_services_keeps_every_service(mocker):
     result = {s['metadata']['name']: s for s in cloudrun.transform_services(services, 'p1')}
 
     assert set(result) == {'public', 'lb-only', 'bare'}
-    assert result['public']['id'] == 'projects/p1/services/public'
+    assert result['public']['id'] == 'projects/p1/locations/us-central1/services/public'
     assert result['public']['region'] == 'us-central1'
     assert result['public']['ingress'] == 'all'
     assert result['public']['invoker_iam_disabled'] is False

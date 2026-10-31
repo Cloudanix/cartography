@@ -333,7 +333,8 @@ def transform_services(services: List[Dict], project_id: str) -> List[Dict]:
             project_id=project_id,
             cloud_run_service_name=metadata.get('name'), region=item['region'], resource_name='cloud_run_service',
         )
-        item['id'] = f"projects/{project_id}/services/{metadata.get('name')}"
+        # The service's resource name: names are unique per region only, so the region is part of the id.
+        item['id'] = f"projects/{project_id}/locations/{item['region']}/services/{metadata.get('name')}"
         item['url'] = item.get('status', {}).get('url')
         # all | internal | internal-and-cloud-load-balancing; absent means all.
         item['ingress'] = annotations.get(INGRESS_ANNOTATION)

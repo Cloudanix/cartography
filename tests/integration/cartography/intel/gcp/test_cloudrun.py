@@ -429,14 +429,24 @@ def test_sync_writes_services_and_removes_stale_ones(neo4j_session, mocker):
         """,
         ws=SYNC_PARAMS['WORKSPACE_ID'], org=SYNC_PARAMS['GCP_ORGANIZATION_ID'], project=SYNC_PROJECT,
     )
-    services = [{
-        'metadata': {
-            'name': 'web', 'namespace': '123456', 'uid': 'uid-web',
-            'labels': {'cloud.googleapis.com/location': 'us-central1'},
-            'annotations': {'run.googleapis.com/ingress': 'all'},
+    services = [
+        {
+            'metadata': {
+                'name': 'web', 'namespace': '123456', 'uid': 'uid-web',
+                'labels': {'cloud.googleapis.com/location': 'us-central1'},
+                'annotations': {'run.googleapis.com/ingress': 'all'},
+            },
+            'status': {'url': 'https://web-abc-uc.a.run.app', 'latestReadyRevisionName': 'web-00001'},
+        }, {
+            # Service names are unique per region only: same name in another region is another service.
+            'metadata': {
+                'name': 'web', 'namespace': '123456', 'uid': 'uid-web-eu',
+                'labels': {'cloud.googleapis.com/location': 'europe-west1'},
+                'annotations': {'run.googleapis.com/ingress': 'internal'},
+            },
+            'status': {'url': 'https://web-abc-ew.a.run.app', 'latestReadyRevisionName': 'web-00007'},
         },
-        'status': {'url': 'https://web-abc-uc.a.run.app', 'latestReadyRevisionName': 'web-00001'},
-    }]
+    ]
 
     cartography.intel.gcp.cloudrun.sync(
         neo4j_session, _run_client(services), SYNC_PROJECT, SYNC_PARAMS['UPDATE_TAG'],
@@ -452,8 +462,15 @@ def test_sync_writes_services_and_removes_stale_ones(neo4j_session, mocker):
         """,
         project=SYNC_PROJECT,
     ).data()
-    assert rows == [{
-        'id': 'projects/proj-run-sync/services/web', 'name': 'web', 'namespace': '123456', 'region': 'us-central1',
-        'url': 'https://web-abc-uc.a.run.app', 'ingress': 'all', 'revision': 'web-00001',
-        'invokers': ['allUsers'], 'iam': 'resolved',
-    }]
+    assert sorted(rows, key=lambda r: r['id']) == [
+        {
+            'id': 'projects/proj-run-sync/locations/europe-west1/services/web', 'name': 'web', 'namespace': '123456',
+            'region': 'europe-west1', 'url': 'https://web-abc-ew.a.run.app', 'ingress': 'internal',
+            'revision': 'web-00007', 'invokers': [], 'iam': 'not_needed',
+        },
+        {
+            'id': 'projects/proj-run-sync/locations/us-central1/services/web', 'name': 'web', 'namespace': '123456',
+            'region': 'us-central1', 'url': 'https://web-abc-uc.a.run.app', 'ingress': 'all', 'revision': 'web-00001',
+            'invokers': ['allUsers'], 'iam': 'resolved',
+        },
+    ]

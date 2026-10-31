@@ -14,9 +14,9 @@ OTHER_WORKSPACE_PROJECT = 'proj-run-exp-other'
 
 def _service(name, ingress='all', invokers=(), status='resolved', iam_disabled=False, region='us-central1'):
     return {
-        'id': f'projects/{PROJECT}/services/{name}', 'region': region, 'url': f'https://{name}.a.run.app',
-        'metadata': {'name': name}, 'ingress': ingress, 'invoker_iam_disabled': iam_disabled,
-        'public_invokers': list(invokers), 'iam_policy_status': status,
+        'id': f'projects/{PROJECT}/locations/{region}/services/{name}', 'region': region,
+        'url': f'https://{name}.a.run.app', 'metadata': {'name': name}, 'ingress': ingress,
+        'invoker_iam_disabled': iam_disabled, 'public_invokers': list(invokers), 'iam_policy_status': status,
     }
 
 
@@ -58,7 +58,7 @@ def _seed(neo4j_session):
     )
     cartography.intel.gcp.cloudrun.load_cloudrun_services(neo4j_session, SERVICES, PROJECT, TAG)
     other = _service('all-users', invokers=['allUsers'])
-    other['id'] = f'projects/{OTHER_WORKSPACE_PROJECT}/services/all-users'
+    other['id'] = f'projects/{OTHER_WORKSPACE_PROJECT}/locations/us-central1/services/all-users'
     cartography.intel.gcp.cloudrun.load_cloudrun_services(neo4j_session, [other], OTHER_WORKSPACE_PROJECT, TAG)
     # Stale flags from an earlier run must be cleared when the service is no longer public.
     neo4j_session.run(
@@ -66,7 +66,7 @@ def _seed(neo4j_session):
         MATCH (s:GCPCloudRunService{id: $id})
         SET s.exposed_internet = true, s.exposed_internet_type = ['allUsers'], s.publicContext = '[]'
         """,
-        id=f'projects/{PROJECT}/services/private-iam',
+        id=f'projects/{PROJECT}/locations/us-central1/services/private-iam',
     )
     # Serverless NEGs as gcp_load_balancer_exposure.json (with PR #506) leaves them: the NEG holds the Cloud Run
     # target as properties and is flagged when an external load balancer reaches it.
@@ -144,7 +144,7 @@ def test_cloudrun_service_exposure(neo4j_session):
     assert all(r['types'] is None and r['ctx'] is None for r in not_public.values())
 
     context = json.loads(exposure['lb-ingress-public']['ctx'])
-    assert context[0]['resource'] == f'projects/{PROJECT}/services/lb-ingress-public'
+    assert context[0]['resource'] == f'projects/{PROJECT}/locations/us-central1/services/lb-ingress-public'
     assert context[0]['resourceType'] == 'gcp-compute-cloudrun-service'
     assert context[0]['context'][0]['ingress'] == 'internal-and-cloud-load-balancing'
     assert context[0]['context'][0]['url'] == 'https://lb-ingress-public.a.run.app'
@@ -153,7 +153,7 @@ def test_cloudrun_service_exposure(neo4j_session):
     # Scoped to the workspace's project: the other workspace's public service is left alone.
     other = neo4j_session.run(
         "MATCH (s:GCPCloudRunService{id: $id}) RETURN s.exposed_internet AS exposed",
-        id=f'projects/{OTHER_WORKSPACE_PROJECT}/services/all-users',
+        id=f'projects/{OTHER_WORKSPACE_PROJECT}/locations/us-central1/services/all-users',
     ).single()
     assert other['exposed'] is None
 
