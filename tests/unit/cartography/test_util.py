@@ -1,6 +1,8 @@
 import importlib
 import logging
 import threading
+from datetime import datetime
+from datetime import timezone
 from unittest import mock
 from unittest.mock import Mock
 from unittest.mock import patch
@@ -289,3 +291,10 @@ def test_run_analysis_and_ensure_deps_no_requirements(mock_run_analysis_job: moc
         neo4j_session,
         common_job_parameters,
     )
+
+
+def test_dict_value_to_iso():
+    when = datetime(2026, 10, 30, 5, 0, 0, 123456, tzinfo=timezone.utc)
+    assert util.dict_value_to_iso({'t': when}, 't') == '2026-10-30T05:00:00+00:00'
+    assert util.dict_value_to_iso({'t': '2026-10-30'}, 't') == '2026-10-30'
+    assert util.dict_value_to_iso({}, 't') is None
