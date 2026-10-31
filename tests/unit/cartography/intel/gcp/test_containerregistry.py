@@ -1,5 +1,9 @@
+import json
 from unittest.mock import MagicMock
 from unittest.mock import patch
+
+import pytest
+from googleapiclient.errors import HttpError
 
 import cartography.intel.gcp
 from cartography.intel.gcp import _GATEABLE_SERVICE_APIS
@@ -57,3 +61,36 @@ def test_sync_uses_the_client_it_is_given(mock_cleanup):
         containerregistry.sync(MagicMock(), client, PROJECT_ID, UPDATE_TAG, _common_job_parameters(), ['us-central1'])
 
     client.projects().locations().list.assert_called_with(name=f'projects/{PROJECT_ID}')
+
+
+def _http_error(status, error):
+    return HttpError(resp=MagicMock(status=status), content=json.dumps({'error': error}).encode())
+
+
+PERMISSION_DENIED = {
+    'code': 403, 'status': 'PERMISSION_DENIED',
+    'message': "Permission 'artifactregistry.locations.list' denied on resource",
+}
+SERVICE_DISABLED = {
+    'code': 403, 'status': 'PERMISSION_DENIED',
+    'message': 'Artifact Registry API has not been used in project 123 before or it is disabled.',
+    'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'SERVICE_DISABLED'}],
+}
+
+
+def test_permission_denied_is_one_warning_and_an_empty_result(caplog):
+    client = MagicMock()
+    client.projects().locations().list().execute.side_effect = _http_error(403, PERMISSION_DENIED)
+
+    assert containerregistry.get_artifact_registry_locations(client, PROJECT_ID) == []
+    assert [r.levelname for r in caplog.records if 'permissions' in r.getMessage()] == ['WARNING']
+
+
+def test_disabled_api_raises_for_the_dispatcher_to_skip_quietly():
+    # SERVICE_DISABLED also carries status PERMISSION_DENIED; it must not be swallowed as a permission warning.
+    client = MagicMock()
+    client.projects().locations().list().execute.side_effect = _http_error(403, SERVICE_DISABLED)
+
+    with pytest.raises(HttpError) as raised:
+        containerregistry.get_artifact_registry_locations(client, PROJECT_ID)
+    assert cartography.intel.gcp._is_service_not_enabled_error(raised.value) is True

@@ -31,6 +31,7 @@ from cartography.intel.gcp import crm
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
 from cartography.intel.gcp.util.errors import is_permission_error
+from cartography.intel.gcp.util.errors import is_service_not_enabled_error as _is_service_not_enabled_error
 from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -789,44 +790,6 @@ def _sync_single_project(
             "slowest_service": max(_service_timings, key=_service_timings.get) if _service_timings else None,
             "failed_services": _failed_services,
         }),
-    )
-
-
-def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpError) -> bool:
-    """
-    Return True when the HttpError is GCP reporting that the API is not enabled / has never been used on the project.
-
-    GCP signals this inconsistently across services, so all known shapes are matched centrally:
-      - 403 with reason `accessNotConfigured` in the legacy `errors[]` array (e.g. Compute).
-      - 403 PERMISSION_DENIED with reason `SERVICE_DISABLED` in the newer `details[]` (ErrorInfo) array.
-      - 400 reason `invalid` with a "...has not enabled <API>" message (e.g. BigQuery).
-      - any message saying the API "has not been used in project ... or it is disabled".
-
-    Any other error returns False so it is re-raised / logged as an error and not silently swallowed.
-    """
-    try:
-        error = json.loads(http_error.content.decode("utf-8")).get("error", {})
-    except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
-        return False
-
-    # Reason codes live in `errors[]` (legacy) and/or `details[]` (ErrorInfo) depending on the API.
-    reason_entries = (error.get("errors") or []) + (error.get("details") or [])
-    reasons = {entry.get("reason") for entry in reason_entries if isinstance(entry, dict)}
-    if reasons & {"accessNotConfigured", "SERVICE_DISABLED"}:
-        return True
-
-    # Fall back to message text for APIs that don't set a recognizable reason code.
-    message = error.get("message", "")
-    if not message:
-        return False
-    return any(
-        needle in message
-        for needle in (
-            "has not been used in project",
-            "is disabled",
-            "has not enabled",
-            "has not been enabled",
-        )
     )
 
 
