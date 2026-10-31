@@ -96,6 +96,11 @@ def get_aks_managed_clusters_list(
         for aks in aks_managed_clusters_list:
             aks["resource_group"] = get_azure_resource_group_name(aks.get("id"))
             aks["publicNetworkAccess"] = aks.get("public_network_access", "Disabled")
+            # The API server is the cluster's front door: public unless the cluster is
+            # private or its authorized IP ranges shut out the internet.
+            api_access = aks.get("api_server_access_profile") or {}
+            aks["enablePrivateCluster"] = api_access.get("enable_private_cluster")
+            aks["authorizedIPRanges"] = api_access.get("authorized_ip_ranges") or []
             aks["consolelink"] = safe_console_link(aks["id"], common_job_parameters)
             if regions is None:
                 aks_managed_clusters_data.append(aks)
@@ -119,10 +124,12 @@ def _load_aks_managed_clusters_tx(
     a.type = aks.type,
     a.location = aks.location,
     a.region = aks.location,
-    a.publicNetworkAccess = aks.publicNetworkAccess,
     a.resourcegroup = aks.resource_group
     SET a.consolelink = coalesce(aks.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = aks.name,
+    a.publicNetworkAccess = aks.publicNetworkAccess,
+    a.enablePrivateCluster = aks.enablePrivateCluster,
+    a.authorizedIPRanges = aks.authorizedIPRanges,
     a.node_resource_group = toLower(aks.node_resource_group)
     WITH a
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
