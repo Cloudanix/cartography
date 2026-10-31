@@ -333,6 +333,7 @@ Representation of an [OCI Security List](https://docs.oracle.com/en-us/iaas/api/
 | lifecycle_state | The security list's current state |
 | ingress_security_rules | JSON string of ingress rules |
 | egress_security_rules | JSON string of egress rules |
+| allows_internet_ingress | Whether any ingress rule admits non-ICMP traffic from 0.0.0.0/0 or ::/0 (read by the instance and security list exposure jobs) |
 | region | The region the security list resides in |
 | createdate | ISO 8601 date-time when the security list was created |
 
@@ -398,6 +399,7 @@ Representation of an OCI NSG Security Rule.
 | tcp_src_port_max | Maximum TCP source port |
 | udp_dest_port_min | Minimum UDP destination port |
 | udp_dest_port_max | Maximum UDP destination port |
+| is_internet_ingress | Whether this is an ingress rule admitting non-ICMP traffic from 0.0.0.0/0 or ::/0 |
 | icmp_type | ICMP type |
 | icmp_code | ICMP code |
 
@@ -474,6 +476,7 @@ Representation of an [OCI Route Table](https://docs.oracle.com/en-us/iaas/api/#/
 | vcn_id | The OCID of the VCN the route table belongs to |
 | lifecycle_state | The route table's current state |
 | route_rules | JSON string of route rules |
+| default_route_igw_ids | Internet gateway OCIDs the 0.0.0.0/0 or ::/0 route rules point at |
 | region | The region the route table resides in |
 | createdate | ISO 8601 date-time when the route table was created |
 
@@ -511,6 +514,7 @@ Representation of an [OCI VNIC](https://docs.oracle.com/en-us/iaas/api/#/en/iaas
 | mac_address | The MAC address of the VNIC |
 | skip_source_dest_check | Whether source/destination check is skipped |
 | subnet_id | The OCID of the subnet the VNIC is in |
+| nsg_ids | OCIDs of the network security groups attached to the VNIC |
 | region | The region the VNIC resides in |
 | createdate | ISO 8601 date-time when the VNIC was created |
 
