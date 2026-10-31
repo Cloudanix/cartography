@@ -44,6 +44,7 @@ _MISSING_DEPS = [
     "azure.mgmt.rdbms.mysql_flexibleservers",
     "azure.mgmt.rdbms.postgresql",
     "azure.mgmt.rdbms.postgresql_flexibleservers",
+    "azure.mgmt.redis",
     "azure.mgmt.sql.models",
     "msrestazure.azure_exceptions",
     "netaddr",

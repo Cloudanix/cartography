@@ -39,6 +39,7 @@ azure-mgmt-keyvault>=14.0.0
 azure-graphrbac>=0.61.1
 azure-mgmt-authorization==1.0.0
 azure-mgmt-rdbms>=10.1.0,<11.0.0
+azure-mgmt-redis~=14.5.0
 azure-mgmt-monitor~=7.0.0
 azure-mgmt-security~=7.0.0
 azure-mgmt-network>=32.0.0

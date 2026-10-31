@@ -418,6 +418,8 @@ CREATE INDEX IF NOT EXISTS FOR (n:AzureNetworkInterfaceIPConfiguration) ON (n.id
 CREATE INDEX IF NOT EXISTS FOR (n:AzureFirewallRule) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AzureServerPrivateEndpointConnection) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AzureManagedIdentity) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:AzureRedisCache) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:AzureRedisFirewallRule) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPPrincipal) ON (n.email);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPAcl) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPLoggingMetric) ON (n.id);
