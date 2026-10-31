@@ -684,3 +684,132 @@ def test_instance_cleanup_removes_stale_network_tags(neo4j_session):
         "MATCH (:GCPInstance{id: 'cleanup-vm'})-[:TAGGED]->(t:GCPNetworkTag) RETURN t.value AS value",
     )
     assert {t['value'] for t in tags} == {'db'}
+
+
+VM_PROJECT_ID = 'proj-vm-exposure'
+VM_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG,
+    'WORKSPACE_ID': 'ws-vm-exposure',
+    'GCP_ORGANIZATION_ID': 'org-vm-exposure',
+    'GCP_PROJECT_ID': VM_PROJECT_ID,
+}
+
+
+def _seed_vm_firewalls(neo4j_session, firewalls):
+    # Shapes as load_gcp_ingress_firewalls writes them: (range)-[:MEMBER_OF_IP_RULE]->(rule)-[:ALLOWED_BY]->(fw).
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(o:GCPOrganization{id: $org_id})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project_id})
+        WITH p
+        UNWIND $firewalls AS f
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: f.vpc})
+        MERGE (vpc)-[:RESOURCE]->(fw:GCPFirewall{id: f.id})
+        SET fw.direction = 'INGRESS', fw.disabled = coalesce(f.disabled, false),
+            fw.has_target_service_accounts = coalesce(f.target_sa, false)
+        MERGE (rule:GCPIpRule:IpRule:IpPermissionInbound{id: f.id + '/rule'})
+        SET rule.protocol = f.protocol, rule.fromport = f.fromport, rule.toport = f.toport
+        MERGE (rule)-[:ALLOWED_BY]->(fw)
+        MERGE (rng:IpRange{id: f.source})
+        MERGE (rng)-[:MEMBER_OF_IP_RULE]->(rule)
+        FOREACH (tag IN coalesce(f.tags, []) | MERGE (fw)-[:TARGET_TAG]->(:GCPNetworkTag{id: f.vpc + '/' + tag}))
+        """,
+        workspace_id=VM_JOB_PARAMETERS['WORKSPACE_ID'], org_id=VM_JOB_PARAMETERS['GCP_ORGANIZATION_ID'],
+        project_id=VM_PROJECT_ID, firewalls=firewalls,
+    )
+
+
+def _seed_vms(neo4j_session, vms):
+    # Shapes as load_gcp_instances writes them (natIP, status, MEMBER_OF_GCP_VPC, TAGGED).
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project_id})
+        UNWIND $vms AS v
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.natIP = v.nat_ip, i.status = coalesce(v.status, 'RUNNING'), i.exposed_internet = v.exposed_before,
+            i.exposed_internet_type = CASE WHEN v.exposed_before THEN ['nat_ip'] END
+        MERGE (vpc:GCPVpc{id: coalesce(v.vpc, 'vpc-none')})
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        FOREACH (tag IN coalesce(v.tags, []) | MERGE (t:GCPNetworkTag{id: v.vpc + '/' + tag}) MERGE (i)-[:TAGGED]->(t))
+        """,
+        project_id=VM_PROJECT_ID, vms=vms,
+    )
+
+
+def test_instance_exposure_firewall_paths(neo4j_session):
+    anywhere = '0.0.0.0/0'
+    _seed_vm_firewalls(
+        neo4j_session, [
+            # No target tags or service accounts: applies to every instance in the network.
+            {
+                'id': 'fw-default-ssh', 'vpc': 'vpc-a', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': anywhere,
+            },
+            {
+                'id': 'fw-sa-target', 'vpc': 'vpc-c', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': anywhere, 'target_sa': True,
+            },
+            {
+                'id': 'fw-disabled', 'vpc': 'vpc-d', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': anywhere, 'disabled': True,
+            },
+            {
+                'id': 'fw-internal', 'vpc': 'vpc-e', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': '10.0.0.0/8',
+            },
+            # Target-tagged firewalls; port ranges that contain a sensitive port, protocol all, and none.
+            {
+                'id': 'fw-web-range', 'vpc': 'vpc-f', 'protocol': 'tcp', 'fromport': 1, 'toport': 1000,
+                'source': anywhere, 'tags': ['web'],
+            },
+            {'id': 'fw-all', 'vpc': 'vpc-f', 'protocol': 'all', 'source': anywhere, 'tags': ['any']},
+            {
+                'id': 'fw-high', 'vpc': 'vpc-f', 'protocol': 'tcp', 'fromport': 8080, 'toport': 8090,
+                'source': anywhere, 'tags': ['app'],
+            },
+            {
+                'id': 'fw-ssh-tag', 'vpc': 'vpc-f', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': anywhere, 'tags': ['ssh'],
+            },
+        ],
+    )
+    ext = '34.1.1.1'
+    _seed_vms(
+        neo4j_session, [
+            {'id': 'vm-default-ssh', 'nat_ip': ext, 'vpc': 'vpc-a'},
+            {'id': 'vm-no-ext-ip', 'vpc': 'vpc-a'},
+            {'id': 'vm-stopped', 'nat_ip': ext, 'vpc': 'vpc-a', 'status': 'TERMINATED'},
+            # An external IP alone is not reachable: GCP denies ingress unless a firewall allows it.
+            {'id': 'vm-no-firewall', 'nat_ip': ext, 'vpc': 'vpc-b'},
+            {'id': 'vm-sa-target', 'nat_ip': ext, 'vpc': 'vpc-c'},
+            {'id': 'vm-disabled-fw', 'nat_ip': ext, 'vpc': 'vpc-d'},
+            {'id': 'vm-internal-src', 'nat_ip': ext, 'vpc': 'vpc-e'},
+            {'id': 'vm-tag-range', 'nat_ip': ext, 'vpc': 'vpc-f', 'tags': ['web']},
+            {'id': 'vm-tag-all', 'nat_ip': ext, 'vpc': 'vpc-f', 'tags': ['any']},
+            {'id': 'vm-tag-high', 'nat_ip': ext, 'vpc': 'vpc-f', 'tags': ['app']},
+            {'id': 'vm-tag-ssh', 'nat_ip': ext, 'vpc': 'vpc-f', 'tags': ['ssh']},
+            {'id': 'vm-untagged', 'nat_ip': ext, 'vpc': 'vpc-f'},
+        ],
+    )
+    # Flagged by an earlier run, nothing exposes them now. One sits at each end of a project with more
+    # instances than one reset batch (1000), so it falls outside the first batch whichever way it is scanned.
+    _seed_vms(neo4j_session, [{'id': 'reset-first', 'exposed_before': True}])
+    _seed_vms(neo4j_session, [{'id': f'reset-clean-{n}'} for n in range(1200)])
+    _seed_vms(neo4j_session, [{'id': 'reset-last', 'exposed_before': True}])
+
+    run_analysis_job('gcp_compute_instance_analysis.json', neo4j_session, VM_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $project_id})-[:RESOURCE]->(i:GCPInstance)
+        WHERE i.exposed_internet IS NOT NULL OR i.exposed_internet_type IS NOT NULL
+        RETURN i.id AS id, i.exposed_internet_type AS types
+        """,
+        project_id=VM_PROJECT_ID,
+    )
+    assert {n['id']: n['types'] for n in nodes} == {
+        'vm-default-ssh': ['unrestricted_access_from_firewall'],
+        'vm-tag-range': ['unrestricted_access_from_firewall'],
+        'vm-tag-all': ['unrestricted_access_from_firewall'],
+        'vm-tag-ssh': ['unrestricted_access_from_firewall'],
+    }
