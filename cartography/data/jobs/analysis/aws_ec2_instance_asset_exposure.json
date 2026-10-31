@@ -31,7 +31,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (cidr:Ipv6Range{range:'::/0'})-[:MEMBER_OF_IP_RULE]->(perm:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(instance:EC2Instance{state: 'running'})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET instance.exposed_internet = true,(CASE WHEN NOT 'direct_inbound_ipv6' IN coalesce(instance.exposed_internet_type , []) THEN instance END).exposed_internet_type = coalesce(instance.exposed_internet_type , []) + 'direct_inbound_ipv6'",
+      "query": "MATCH (cidr:Ipv6Range{range:'::/0'})-[:MEMBER_OF_IP_RULE]->(perm:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(instance:EC2Instance{state: 'running'})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE (instance.ipv6address IS NOT NULL AND instance.ipv6address <> '') OR EXISTS { MATCH (instance)-[:NETWORK_INTERFACE]->(eni:NetworkInterface) WHERE size(coalesce(eni.ipv6_addresses, [])) > 0 } WITH DISTINCT instance SET instance.exposed_internet = true,(CASE WHEN NOT 'direct_inbound_ipv6' IN coalesce(instance.exposed_internet_type , []) THEN instance END).exposed_internet_type = coalesce(instance.exposed_internet_type , []) + 'direct_inbound_ipv6'",
       "iterative": false
     },
     {
