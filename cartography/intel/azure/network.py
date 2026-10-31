@@ -10,6 +10,7 @@ from azure.mgmt.network import NetworkManagementClient
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -175,7 +176,7 @@ def get_network_client(credentials: Credentials, subscription_id: str) -> Networ
 @timeit
 def get_networks_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
-        networks_list = list(map(lambda x: x.as_dict(), client.virtual_networks.list_all()))
+        networks_list = list(map(as_legacy_dict, client.virtual_networks.list_all()))
         network_data = []
         for network in networks_list:
             network['resource_group'] = get_azure_resource_group_name(network.get('id'))
@@ -273,7 +274,7 @@ def get_networks_subnets_list(networks_list: List[Dict], client: NetworkManageme
         for network in networks_list:
             subnets_list = list(
                 map(
-                    lambda x: x.as_dict(), client.subnets.list(
+                    as_legacy_dict, client.subnets.list(
                         resource_group_name=network['resource_group'], virtual_network_name=network["name"],
                     ),
                 ),
@@ -376,7 +377,7 @@ def sync_networks_subnets(
 
 def get_network_routetables_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
-        network_routetables_list = list(map(lambda x: x.as_dict(), client.route_tables.list_all()))
+        network_routetables_list = list(map(as_legacy_dict, client.route_tables.list_all()))
         tables_data = []
         for routetable in network_routetables_list:
             routetable['resource_group'] = get_azure_resource_group_name(routetable.get('id'))
@@ -533,7 +534,7 @@ def sync_network_routetables(
 
 def get_network_bastion_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict):
     try:
-        network_bastion_host_list = list(map(lambda x: x.as_dict(), client.bastion_hosts.list()))
+        network_bastion_host_list = list(map(as_legacy_dict, client.bastion_hosts.list()))
         data = []
         for bastion_host in network_bastion_host_list:
             bastion_host['public_ip_address'] = []
@@ -578,7 +579,7 @@ def get_network_routes_list(network_routetables_list: List[Dict], client: Networ
         for routetable in network_routetables_list:
             routes_list = list(
                 map(
-                    lambda x: x.as_dict(), client.routes.list(
+                    as_legacy_dict, client.routes.list(
                         resource_group_name=routetable['resource_group'], route_table_name=routetable['name'],
                     ),
                 ),
@@ -664,7 +665,7 @@ def sync_network_routes(
 
 def get_network_security_groups_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
-        network_security_groups_list = list(map(lambda x: x.as_dict(), client.network_security_groups.list_all()))
+        network_security_groups_list = list(map(as_legacy_dict, client.network_security_groups.list_all()))
         group_list = []
         for network in network_security_groups_list:
             network['resource_group'] = get_azure_resource_group_name(network.get('id'))
@@ -762,7 +763,7 @@ def sync_nat_gateway(
 @timeit
 def get_network_nat_gateway(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
-        nat_gateways_list = list(map(lambda x: x.as_dict(), client.nat_gateways.list_all()))
+        nat_gateways_list = list(map(as_legacy_dict, client.nat_gateways.list_all()))
         group_list = []
         for network in nat_gateways_list:
             network['resource_group'] = get_azure_resource_group_name(network.get('id'))
@@ -892,9 +893,7 @@ def get_network_security_rules_list(
                 rule['source_address_prefix'] = rule.get('source_address_prefix', None)
                 rule['protocol'] = rule.get('protocol', None)
                 rule['direction'] = rule.get('direction', None)
-                rule['destination_port_ranges'] = rule.get(
-                    'properties', {},
-                ).get('destination_port_ranges', None)
+                rule['destination_port_ranges'] = rule.get('destination_port_ranges', None)
                 rule['destination_address_prefix'] = rule.get('destination_address_prefix', None)
                 rule['consolelink'] = safe_console_link(rule['id'], common_job_parameters)
             network_security_rules_list.extend(security_rules_list)
@@ -1086,7 +1085,7 @@ def sync_network_security_rules(
 
 def get_public_ip_addresses_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
-        public_ip_addresses_list = list(map(lambda x: x.as_dict(), client.public_ip_addresses.list_all()))
+        public_ip_addresses_list = list(map(as_legacy_dict, client.public_ip_addresses.list_all()))
         publicip_list = []
         for ip in public_ip_addresses_list:
             ip['consolelink'] = safe_console_link(ip['id'], common_job_parameters)
@@ -1157,7 +1156,7 @@ def sync_public_ip_addresses(
 
 def get_network_interfaces_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
-        network_interfaces_list = list(map(lambda x: x.as_dict(), client.network_interfaces.list_all()))
+        network_interfaces_list = list(map(as_legacy_dict, client.network_interfaces.list_all()))
         interfaces_list = []
         for interface in network_interfaces_list:
             interface['resource_group'] = get_azure_resource_group_name(interface.get('id'))
@@ -1187,7 +1186,7 @@ def get_network_interfaces_list(client: NetworkManagementClient, regions: list, 
 
 def get_load_balancers_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
-        network_load_balancer_list = list(map(lambda x: x.as_dict(), client.load_balancers.list_all()))
+        network_load_balancer_list = list(map(as_legacy_dict, client.load_balancers.list_all()))
         load_balancer_list = []
         for load_balancer in network_load_balancer_list:
             load_balancer['resource_group'] = get_azure_resource_group_name(load_balancer.get('id'))
@@ -1539,7 +1538,7 @@ def get_usages_list(network: Dict, client: NetworkManagementClient) -> List[Dict
     try:
         usages = list(
             map(
-                lambda x: x.as_dict(), client.virtual_networks.list_usage(
+                as_legacy_dict, client.virtual_networks.list_usage(
                     resource_group_name=network['resource_group'], virtual_network_name=network['name'],
                 ),
             ),
