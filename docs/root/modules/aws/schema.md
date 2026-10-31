@@ -2097,6 +2097,7 @@ Representation of an AWS Relational Database Service [DBSnapshot](https://docs.a
 | snapshot\_target | Specifies where manual snapshots are stored: AWS Outposts or the AWS Region. |
 | storage\_throughput |  |
 | region | The AWS region of the snapshot |
+| restore\_attribute\_values | Values of the snapshot's `restore` attribute: the AWS account ids it is shared with, or `all` when it is public. |
 
 
 
@@ -2119,6 +2120,24 @@ Representation of an AWS Relational Database Service [DBSnapshot](https://docs.a
         ```
         (RDSSnapshot)-[TAGGED]->(AWSTag)
         ```
+
+- RDS Snapshots have their own attributes.
+
+    ```
+    (RDSSnapshot)-[:HAS_ATTRIBUTE]->(RDSSnapshotAttribute)
+    ```
+
+### RDSSnapshotAttribute
+
+An attribute of one RDS snapshot, from [DescribeDBSnapshotAttributes](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBSnapshotAttributes.html).
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | `<snapshot arn>/<attribute name>` |
+| name | The attribute name, e.g. `restore` |
+| values | The attribute values; for `restore`, the AWS account ids the snapshot is shared with, or `all` |
 
 ### S3Acl
 

@@ -718,15 +718,19 @@ def load_rds_snapshots(
 def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict], aws_update_tag: int) -> None:
     """
     Ingest the RDS snapshot attributes to neo4j and link them to RDS snapshot.
+
+    Each snapshot gets its own attribute nodes, keyed by '<snapshot arn>/<attribute name>': the snapshot
+    identifier is only unique within an account and region, and the values differ per snapshot.
     """
     ingest_rds_snapshot_attributes = """
     UNWIND $DictList as result
-        MATCH (rdsSnapshot:RDSSnapshot{db_snapshot_identifier: result.DBSnapshotIdentifier})
+        MATCH (rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})
         WITH result, rdsSnapshot
         UNWIND result.DBSnapshotAttributes as attribute
-            MERGE (attrib:RDSSnapshotAttribute{name: attribute.AttributeName})
+            MERGE (attrib:RDSSnapshotAttribute{id: result.DBSnapshotArn + '/' + attribute.AttributeName})
             ON CREATE SET attrib.firstseen = timestamp()
             SET
+                attrib.name = attribute.AttributeName,
                 attrib.values = attribute.AttributeValues,
                 attrib.lastupdated = $aws_update_tag
             WITH attrib, result, rdsSnapshot
@@ -734,9 +738,7 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict],
             ON CREATE SET r.firstseen = timestamp()
             SET r.lastupdated = $aws_update_tag
     """
-    # RDSSnapshotAttribute nodes are merged by name alone, so one 'restore' node is shared by every snapshot
-    # in the graph and holds whichever snapshot was written last. Keep each snapshot's own restore values
-    # (account ids, or 'all' when public) on the snapshot; aws_rds_asset_exposure.json reads them.
+    # The snapshot's own restore values (account ids, or 'all' when public); aws_rds_asset_exposure.json reads them.
     ingest_restore_values = """
     UNWIND $DictList as result
         MATCH (rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})

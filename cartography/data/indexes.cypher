@@ -258,6 +258,7 @@ CREATE INDEX IF NOT EXISTS FOR (n:RDSSnapshot) ON (n.db_snapshot_identifier);
 CREATE INDEX IF NOT EXISTS FOR (n:RDSSnapshot) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:RDSSnapshot) ON (n.arn);
 CREATE INDEX IF NOT EXISTS FOR (n:RDSSnapshot) ON (n.lastupdated);
+CREATE INDEX IF NOT EXISTS FOR (n:RDSSnapshotAttribute) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ReplyUri) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:Risk) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:S3Acl) ON (n.id);
