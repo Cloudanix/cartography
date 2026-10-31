@@ -300,7 +300,18 @@ cartography/intel/<cloud>/exposure_layers/
 ```
 
 Each cloud's `run()` is called at the end of that cloud's account / subscription / project sync,
-after the legacy exposure jobs, inside try/except: a bug here logs a warning and never fails a sync.
+after the legacy exposure jobs, through `exposure/step.py`: it runs only when the requested syncs
+name `exposure_layers` or ask for every resource (CLI default). cloudanix-web splits a scheduled run
+into parallel service-group subruns; computing in each would recompute N times from a half-written
+graph and race on the same nodes, so the intended trigger is one final subrun with services
+`["exposure_layers"]` (`docs/console-exploitability-changes.md` 3.1). A failure is logged and
+reported in the sync response's `failed_analysis_jobs` as `exposure_layers`, never raised.
+
+Context for the console (layers.py contract): `exposure_paths` (per entry point: entry, ports,
+hops), `exposure_blocked_by` (why a public node is unreachable), `network_reachable_data_stores`
+(+ `_count`) on compute, `network_reachable_from_count` / `_internet_exposed_count` on data stores,
+`exposure_evaluated_at`. Hops carry ids, plus the deciding rule only where the walker already knows
+it (no per-port rule attribution).
 
 ```
  sync (API -> graph) --> legacy *_asset_exposure jobs --> exposure_layers.run()
@@ -352,6 +363,16 @@ Rollout (follow-up): one new call, `elasticloadbalancing:DescribeRules` (under
 `elasticloadbalancing:Describe*`). Cross-VPC edges need sync keys `ec2:vpc_peering`, `ec2:tgw`,
 `ec2:route_table` (already in the customer list) and appear after the next route table sync.
 
+Context (AWS): `exposure_paths` per via; entries `public_ip`, `ipv6_address`, `dns_name`, `elbv2`
+(arn + `listener_ports`), `function_url`, `apigateway`, `cloudfront`, `aws_service_endpoint`. Hops:
+`route` (`0.0.0.0/0 -> igw-x`), `nacl`, `security_group` (SGs whose world rules overlap the reachable
+ports; for LB targets, SGs covering the target port), `listener` (`HTTPS 443`), `target_group`,
+`service`; a path through an ELBv2 starts with the LB's own hops. Blockers: `no_internet_route`
+(route), `denied` / `return_path_denied` (nacl), `not_allowed` (security_group, EKS public CIDRs on
+service), `no_listener`. L5 summaries on every EC2Instance (`admitted_by` = store SG), reverse counts
+on RDSInstance / RedshiftCluster / ElasticacheCluster. A blocker is recorded only when a stage stops
+every port that reached it.
+
 Known ceilings (each marked `ponytail:` in code): multi-ENI instances are unioned; LB target
 admission accepts any source, not only the LB; LB auth requires every listener to authenticate,
 even unreachable ones; Redis RBAC and classic-ELB targets are not evaluated; Redshift / EMR subnets
@@ -385,6 +406,16 @@ already fetched, no new call or policy verb) is evaluated per family: `::/0` rou
 IGW, `::/0` security list / NSG rule on the port, stateless rules needing `::/0` return egress.
 Families never mix. `prohibit_public_ip_on_vnic` (set from `prohibitInternetIngress`) blocks IPv6
 too. Reported as `public_ipv6` / via `direct_ipv6`.
+
+Context (OCI): entries `public_ip` / `public_ipv6`, `load_balancer` (+ `listener_ports`),
+`public_endpoint` (OKE, API Gateway, ADB), `oci_service_endpoint`. Direct hops: `internet_gateway`,
+`route` (`0.0.0.0/0 -> <igw>` / `::/0 -> <igw>`), one `security_list` per subnet list and one `nsg`
+per attachment NSG; behind an LB, `listener` and `backend` (`address:port`) first. Blockers per
+subnet and family (`detail` `ipv4` / `ipv6`): `public_ip_prohibited` (subnet), `no_internet_route`
+(route), `not_allowed` / `return_path_denied` (security_list; id = pooled ids joined by commas), ADB
+access list `not_allowed` (firewall). L5 summaries on every OCIInstance (`admitted_by` = admitting
+list / NSG), reverse counts on OCIDbSystem and private-endpoint ADBs, recounted for stores reached
+from later compartments.
 
 Ceilings: LB, NLB, OKE and API Gateway endpoints IPv4 only (their IPv6 addresses not ingested); a
 global-looking prefix declared private (`Vcn.ipv6_private_cidr_blocks`) counts as global; unresolved
@@ -424,6 +455,16 @@ Rollout: `compute.networks.getEffectiveFirewalls` (in `roles/viewer`, `roles/com
 `roles/compute.networkViewer`; not in `roles/iam.securityReviewer`). A refused or failed call leaves
 the network on VPC rules only, never "unreachable". Not yet tested with a project-only credential
 against a real org (docs imply inherited policies are returned).
+
+Context (GCP): entries `external_ip`, `forwarding_rule` (+ `listener_ports`), `url` (Functions,
+Cloud Run), `api_endpoint` (GCS, BigQuery). Direct hops: `network`, `route` (`0.0.0.0/0 ->
+default-internet-gateway`), then the world-sourced allows overlapping the opened ports as `firewall`
+(VPC rule name) or `firewall_policy` (policy id); LB paths add `listener`, `backend`,
+`target_group`; managed services one `service` hop with the deciding setting. Blockers:
+`no_internet_route` (route), `denied` (firewall_policy with detail = policy type, or firewall =
+VPC rule), `not_allowed` (firewall = implied deny; service = narrow authorized networks / internal
+ingress). L5 summaries on every GCPInstance (`admitted_by` = identity allow rule), reverse counts on
+GCPSQLInstance and GCPInstance. Admitting-rule hops are candidates (a shadowed allow is listed too).
 
 Ceilings: regional network firewall policies (need a per-region, per-network call); secure tag
 bindings not ingested (tag-targeted allow / goto_next applies, deny does not); domain, geolocation,
@@ -477,6 +518,18 @@ Rollout (follow-up), read-only and covered by Reader: `application_gateways.list
 `config/authsettingsV2`, `Microsoft.Web/sites/config/Read`; the `/list` variant needs
 `config/list/Action`, returns secrets, and is never called). Until the next network sync no
 front-door paths appear.
+
+Context (Azure): hops in traffic order. Direct: `public_ip`, `route` (table whose `0.0.0.0/0`
+goes to Internet), `nsg` (subnet, then NIC). LB: `public_ip` (frontend), `listener` (LB / NAT rule,
+`tcp 443 -> 8080`), backend NSGs. App Gateway: `listener` (routing rule, `https 443 -> http 8080`).
+Firewall: `firewall`, `dnat_rule` (`Any -> <dest>:<port> => <ip>:<port>`). PaaS: `service`. Entries
+`public_ip` {id, address}, `public_ip_per_instance` (VMSS), `load_balancer`, `application_gateway`,
+`azure_firewall`, `public_endpoint`. Blockers: `denied` / `not_allowed` on `nsg` (detail
+`subnet_nsg` / `nic_nsg`; default rules >= 65000 never count as a deny), Standard SKU without NSG
+(`not_allowed`, id null), `unknown_next_hop` on route (UDR to an appliance), `no_listener`,
+`backend` (no backend admits), `service` (PaaS firewall admits nobody). L5 summaries on every VM
+(`admitted_by` = SQL firewall rule name, Cosmos CIDR or `azure_services_rule`), reverse counts on
+AzureSQLServer / AzureCosmosDBAccount. NSG and route table hop ids are lowercased.
 
 Ceilings: NSG rules aimed at a single destination address are not matched per NIC (upper bound);
 `::/0` treated as IPv4 world; WAF policy mode, v2 TCP/TLS listeners, FQDN backends, IP-group DNAT
