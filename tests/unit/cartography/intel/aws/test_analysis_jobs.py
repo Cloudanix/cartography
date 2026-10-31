@@ -40,6 +40,12 @@ def test_account_sync_runs_the_appsync_exposure_job(mocker, monkeypatch):
     assert "aws_appsync_asset_exposure.json" in jobs
 
 
+def test_account_sync_runs_the_dms_exposure_job(mocker, monkeypatch):
+    jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
+
+    assert "aws_dms_asset_exposure.json" in jobs
+
+
 def test_every_analysis_job_run_by_account_sync_exists(mocker, monkeypatch):
     jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
 

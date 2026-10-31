@@ -2688,6 +2688,9 @@ Representation of an AWS [DMS replication instance](https://docs.aws.amazon.com/
 | subnet\_group\_identifier | The replication subnet group |
 | vpc\_id | The VPC of the replication subnet group |
 | subnet\_ids | The subnets of the replication subnet group |
+| exposed\_internet | Set by `aws_dms_asset_exposure.json` when a publicly accessible instance is reachable from the internet |
+| exposed\_internet\_type | `publicly_accessible_open_sg` (a security group admits 0.0.0.0/0 or ::/0) or `publicly_accessible_sg_unresolved` (its security groups are not all in the graph, or it lists none) |
+| publicContext | JSON: public IPs, status, open security group rules or unresolved security group ids |
 
 #### Relationships
 
