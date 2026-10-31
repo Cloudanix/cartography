@@ -542,6 +542,53 @@ Representation of GCP [Forwarding Rules](https://cloud.google.com/compute/docs/r
     (GCPSubnet)-[RESOURCE]->(GCPForwardingRule)
     ```
 
+### GCPNetworkEndpointGroup
+
+Representation of GCP [network endpoint groups](https://cloud.google.com/load-balancing/docs/negs): zonal (aggregated list), regional and global.
+
+| Field                 | Description                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------- |
+| firstseen             | Timestamp of when a sync job first discovered this node                                        |
+| lastupdated           | Timestamp of the last time the node was updated                                                |
+| id                    | Partial resource URI, e.g. `projects/p/zones/us-east1-b/networkEndpointGroups/neg`             |
+| name                  | Name of the NEG                                                                                |
+| network_endpoint_type | GCE_VM_IP_PORT, GCE_VM_IP, SERVERLESS, INTERNET_FQDN_PORT, INTERNET_IP_PORT, ...               |
+| zone                  | Zone name (zonal NEGs only)                                                                    |
+| region                | Region name; the zone's region for zonal NEGs, `global` for global NEGs                        |
+| network, subnetwork   | Partial resource URIs of the network / subnetwork, when set                                    |
+| size, default_port    | Number of endpoints; default endpoint port                                                     |
+| cloud_run_service, cloud_run_tag, cloud_function, app_engine_service, app_engine_version, url_mask | Serverless target of a SERVERLESS NEG |
+| psc_target_service    | Target service of a PRIVATE_SERVICE_CONNECT NEG                                                |
+| exposed_internet, exposed_internet_type | Set by gcp_load_balancer_exposure.json when an external backend service uses the NEG |
+
+#### Relationships
+
+- GCPNetworkEndpointGroups are resources of a GCPProject.
+
+    ```
+    (GCPProject)-[RESOURCE]->(GCPNetworkEndpointGroup)
+    ```
+
+- A GCPBackendService uses the NEG as a backend.
+
+    ```
+    (GCPBackendService)-[HAS_BACKEND]->(GCPNetworkEndpointGroup)
+    ```
+
+- A serverless NEG sends traffic to a GCPFunction of the same project and region.
+
+    ```
+    (GCPNetworkEndpointGroup)-[SERVERLESS_TARGET]->(GCPFunction)
+    ```
+
+- A GCPInstance is an endpoint of a zonal VM NEG behind an external backend service (`ip_addresses`, `ports` on the
+  relationship), or a member of a zonal instance group behind one.
+
+    ```
+    (GCPInstance)-[MEMBER_OF_NETWORK_ENDPOINT_GROUP]->(GCPNetworkEndpointGroup)
+    (GCPInstance)-[MEMBER_OF_INSTANCE_GROUP]->(GCPInstanceGroup)
+    ```
+
 ## GKECluster
 
 Representation of a GCP [GKE Cluster](https://cloud.google.com/kubernetes-engine/docs/reference/rest/v1/).
