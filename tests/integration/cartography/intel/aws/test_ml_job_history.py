@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+import cartography.intel.aws.bedrock
 import cartography.intel.aws.sagemaker
 from tests.integration.cartography.intel.aws.common import create_test_org_account
 from tests.integration.cartography.intel.aws.common import exposure_job_parameters
@@ -55,3 +56,26 @@ def test_sagemaker_sync_removes_training_jobs_that_fell_out_of_the_window(neo4j_
     )
 
     assert _names(neo4j_session, 'AWSSagemakerTrainingJob') == {'mlh-yesterday'}
+
+
+def test_bedrock_sync_removes_customisation_jobs_that_fell_out_of_the_window(neo4j_session):
+    create_test_org_account(neo4j_session, 'ws-mlh', 'o-mlh', ACCOUNT_ID)
+    arn = f'arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:model-customization-job/'
+    cartography.intel.aws.bedrock.load_model_customisation_jobs(
+        neo4j_session, [
+            {'jobArn': arn + 'mlh-two-years-ago', 'jobName': 'mlh-two-years-ago', 'region': REGION},
+            {'jobArn': arn + 'mlh-last-month', 'jobName': 'mlh-last-month', 'region': REGION},
+        ], ACCOUNT_ID, OLD_UPDATE_TAG,
+    )
+    session = _boto3_session({
+        'list_model_customization_jobs': [{
+            'modelCustomizationJobSummaries': [{'jobArn': arn + 'mlh-last-month', 'jobName': 'mlh-last-month'}],
+        }],
+    })
+
+    cartography.intel.aws.bedrock.sync(
+        neo4j_session, session, [REGION], ACCOUNT_ID, UPDATE_TAG,
+        exposure_job_parameters('ws-mlh', 'o-mlh', ACCOUNT_ID, UPDATE_TAG),
+    )
+
+    assert _names(neo4j_session, 'AWSBedrockCustomisationJob') == {'mlh-last-month'}
