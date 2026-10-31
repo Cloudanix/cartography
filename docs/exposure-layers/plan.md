@@ -1,6 +1,6 @@
 # Exposure layers: public, reachable, accessible, exploitable, blast radius
 
-Status: plan. Covers AWS, GCP, Azure, OCI.
+Status: implemented on branch `feat/exposure-layers` (see section 10). Covers AWS, GCP, Azure, OCI.
 Constraint: no new cloud-provider services (no Inspector, Security Hub, Defender, SCC) and no
 customer-facing probing. Everything is computed from the read-only API access the customer already
 granted, plus public vulnerability intelligence.
@@ -87,10 +87,10 @@ OCI    internet -> IGW -> route table -> security list + NSG (stateful/stateless
               -> [LB listener -> backend set]
 ```
 
-Implementation shape: one analysis job per cloud that writes `internet_reachable*` on the network
-attachment (ENI / NIC / network interface / VNIC) and on LB frontends, then per-resource jobs that
-copy from the attachment. This mirrors how existing jobs already copy `exposed_internet_type`
-through `coalesce(...)`.
+Implementation shape (as built): a Python package per cloud, not JSON jobs. Cypher reads the facts
+(subnets, routes, filters, attachments) for one account; pure Python evaluates port sets, so NACL /
+NSG rule ordering and stateless return paths are unit-testable; one UNWIND write per label. Port-range
+algebra in Cypher would be unreadable at 3am.
 
 Known permanent blind spots (document in the UI, do not pretend): host firewalls (iptables, Windows
 Firewall), services not actually listening on an opened port, NVA / third-party firewall appliances.
@@ -109,7 +109,7 @@ Legend: Y = ingested, P = partially, N = not ingested.
 | Security groups (in + out, ports) | L2 | Y | `ec2/security_groups.py` |
 | Internet gateways | L2 | Y | `ec2/internet_gateways.py` |
 | Route tables (+ NAT, TGW, peering targets) | L2 | Y | `ec2/route_tables.py`; used by subnet / ELB / ASG / RDS jobs, not by the instance job |
-| **Network ACLs** | L2 | **N** | no `describe_network_acls` anywhere |
+| Network ACLs | L2 | **Y (new)** | `ec2/network_acls.py`, sync key `ec2:network_acl` |
 | **VPC endpoints** (S3 / service policies `aws:SourceVpce`) | L2/L3 | **N** | only referenced in `redshift.py` |
 | Egress-only IGW, VPN gateway | L2 | N | needed for IPv6 and on-prem sources |
 | ELBv2 listeners, target groups, target health | L2 | Y | `ec2/load_balancer_v2s.py` |
@@ -118,16 +118,17 @@ Legend: Y = ingested, P = partially, N = not ingested.
 | WAF web ACLs | L4 (mitigation) | Y | `waf.py`, `cloudfront.py` |
 | EKS endpoint public + `publicAccessCidrs` | L2 | Y | `eks.py` |
 | Lambda function URL `AuthType` | L3 | Y | `lambda_function.py` |
-| **API Gateway method `authorizationType`, API key, authorizers** | L3 | **N** | only REST API, stage and resource policy ingested |
+| API Gateway method `authorizationType`, API key | L3 | **Y (new)** | `get_resources(embed=methods)`, same call; authorizer details still N |
 | S3 policy / ACL public | L3 | Y | existing `aws_s3_asset_exposure` |
 | Public snapshots / AMIs / RDS snapshots | L3 | Y | `ec2/snapshots.py`, `rds.py` (`describe_db_snapshot_attributes`) |
 | OpenSearch domain policy + FGAC | L3 | P | version + policy present; advanced security options not seen |
-| **ElastiCache engine version, AUTH token, transit encryption** | L3/L4 | **N** | load only sets id, arn, topic |
+| ElastiCache engine, version, port, AUTH token, transit encryption | L3/L4 | **Y (new)** | `ShowCacheNodeInfo=True` on the same call; Redis RBAC user groups still N |
 | RDS engine + version, port | L4 | Y | `rds.py` |
-| Redshift version, port | L4 | Y | `redshift.py` |
+| Redshift port | L4 | Y | `redshift.py`; cluster version not ingested (revision number only) |
 | OpenSearch / Elasticsearch version | L4 | Y | `elasticsearch.py` |
 | Lambda runtime | L4 | Y | `lambda_function.py` |
-| EKS Kubernetes version | L4 | verify | not found by grep in `intel/aws/eks.py`; check `models/aws/eks` |
+| EKS Kubernetes version | L4 | Y | `models/aws/eks/clusters.py` `version` |
+| ENI IPv6 addresses | L1/L2 | **Y (new)** | `ipv6_addresses` on `NetworkInterface` |
 | EMR release label | L4 | N | |
 | AMI name / location / description (OS + age heuristic) | L4 | Y | `ec2/images.py` |
 | **ECS task definition `portMappings`** | L4 (port alignment) | **N** | task defs ingested, port mappings not |
@@ -262,3 +263,71 @@ Each must have an integration test per cloud where the construct exists.
 6. **Passive outside-in data** (Shodan, Censys, certificate transparency) could close the
    "opened vs listening" gap without touching customers, but sends customer IPs to a third party.
    Needs a DPA review; not planned here.
+
+## 10. Implementation
+
+### 10.1 Layout
+
+```
+cartography/intel/exposure/          cloud-agnostic core (no cloud imports)
+    ports.py      PortSet: per-protocol interval algebra (tcp/udp only), "tcp:443-443" strings
+    rules.py      allow_only_open (SG, OCI lists), first_match_open (NACL, NSG, GCP firewall),
+                  with_stateless_return (NACL / OCI stateless reply ports), is_world
+    layers.py     property names, auth states, Reach accumulator, UNWIND writers
+    software.py   identity("postgres", "15.4") -> "postgres@15.4", os_from_image_name()
+cartography/intel/<cloud>/exposure_layers/
+    __init__.py   run(session, common_job_parameters): reads graph, computes, writes; no API calls
+    network.py    facts (subnets/routes/filters) + pure path evaluation       L1/L2
+    reach.py      per-resource attachments -> Reach                            L1/L2
+    access.py     per-label auth verdict functions                             L3
+    software.py   per-label identity extraction                                L4
+    blast_radius.py  CAN_NETWORK_REACH edges + stale cleanup                   L5
+```
+
+Each cloud's `run()` is called at the end of that cloud's account / subscription / project sync,
+after the legacy exposure jobs, inside try/except: a bug here logs a warning and never fails a sync.
+
+```
+ sync (API -> graph) --> legacy *_asset_exposure jobs --> exposure_layers.run()
+                                                            |  read facts (Cypher, scoped to workspace)
+                                                            |  evaluate (pure Python, unit tested)
+                                                            v
+                                         SET public_reasons, internet_reachable*, access_auth*,
+                                             software_identity*;  MERGE CAN_NETWORK_REACH
+```
+
+Every node of a covered label in the account is rewritten each run (false / [] when nothing
+holds), so values never go stale. `exposed_internet*` and `publicContext` are untouched.
+
+### 10.2 AWS (done)
+
+| Layer | Labels |
+|---|---|
+| L1/L2 | NetworkInterface, EC2Instance, LoadBalancerV2, LoadBalancer, RDSInstance, RDSCluster, RedshiftCluster, EMRCluster, ElasticacheCluster, APIGatewayRestAPI, AWSLambda, EKSCluster, AWSCloudfrontDistribution, ESDomain, S3Bucket, SQSQueue, AWSSNSTopic |
+| L3 | the above plus EBSSnapshot, RDSSnapshot, RDSClusterSnapshot, EC2Image |
+| L4 | RDSInstance, RDSCluster, ElasticacheCluster, EKSCluster, ESDomain, AWSLambda (`managed_config`); EC2Instance (`image_name`) |
+| L5 | EC2Instance -[:CAN_NETWORK_REACH]-> RDSInstance / RedshiftCluster / ElasticacheCluster |
+
+`internet_reachable_via` values: `direct_ipv4`, `direct_ipv6`, `elbv2:<arn>`, `member:<rds arn>`,
+`function_url`, `apigateway_endpoint`, `apigateway_trigger`, `alb_trigger`, `cloudfront_trigger`,
+`cloudfront`, `public_endpoint`, `aws_service_endpoint`.
+
+Rollout:
+- New sync key `ec2:network_acl`; the backend's requested-sync list must include it. Without NACL
+  data a subnet is treated as the AWS default NACL (allow all), so results stay as permissive as before.
+- New permission: `ec2:DescribeNetworkAcls` (in ReadOnlyAccess and SecurityAudit).
+- `get_resources(embed=methods)` and `describe_cache_clusters(ShowCacheNodeInfo=True)` add data
+  to existing calls, no new requests.
+
+Known ceilings (each marked `ponytail:` in code): multi-ENI instances are unioned; LB target
+admission accepts any source, not only the LB; ALB auth actions, Redis RBAC, classic-ELB targets,
+peered-VPC and TGW reach are not evaluated; Redshift / EMR subnets are not ingested, so route and
+NACL checks are skipped for them (SG verdict kept).
+
+### 10.3 cloudanix-web contract
+
+Read per node: `internet_reachable`, `internet_reachable_ports`, `access_auth`,
+`software_identity`, `software_identity_source`; per edge: `CAN_NETWORK_REACH.ports`. L4 join:
+`software_identity` -> CVEs (product/version vocabulary is open question 1), keep CVSS `AV:N`,
+keep CVEs whose service port is in `internet_reachable_ports`, weight by KEV / EPSS, then by
+`access_auth = none` and by data stores reachable through `CAN_NETWORK_REACH` + IAM edges.
