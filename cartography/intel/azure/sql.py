@@ -27,6 +27,7 @@ from . import network
 from . import tag as azure_tag
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from .util.timing import get_timing_policy
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
@@ -180,7 +181,7 @@ def _get_sql_database_servers(credentials: Credentials, subscription_id: str) ->
     """
     try:
         client = get_client(credentials, subscription_id)
-        sql_servers = list(map(lambda x: x.as_dict(), client.servers.list()))
+        sql_servers = list(map(as_legacy_dict, client.servers.list()))
         logger.debug(f"Retrieved {len(sql_servers)} SQL Database servers")
         return sql_servers
     except ClientAuthenticationError as e:
@@ -197,8 +198,10 @@ def _get_postgresql_flexible_servers(credentials: Credentials, subscription_id: 
     Get Azure Database for PostgreSQL Flexible Servers.
     """
     try:
-        pg_flex_client = PostgreSQLFlexibleServersManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        pg_flex_servers = list(map(lambda x: x.as_dict(), pg_flex_client.servers.list()))
+        pg_flex_client = PostgreSQLFlexibleServersManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        pg_flex_servers = list(map(as_legacy_dict, pg_flex_client.servers.list()))
         logger.debug(f"Retrieved {len(pg_flex_servers)} PostgreSQL Flexible Servers")
         return pg_flex_servers
     except ClientAuthenticationError as e:
@@ -217,8 +220,10 @@ def _get_mysql_flexible_servers(credentials: Credentials, subscription_id: str) 
     Get Azure Database for MySQL Flexible Servers.
     """
     try:
-        mysql_flex_client = MySQLFlexibleServersManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        mysql_flex_servers = list(map(lambda x: x.as_dict(), mysql_flex_client.servers.list()))
+        mysql_flex_client = MySQLFlexibleServersManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        mysql_flex_servers = list(map(as_legacy_dict, mysql_flex_client.servers.list()))
         logger.debug(f"Retrieved {len(mysql_flex_servers)} MySQL Flexible Servers")
         return mysql_flex_servers
     except ClientAuthenticationError as e:
@@ -237,8 +242,10 @@ def _get_postgresql_rdbms_servers(credentials: Credentials, subscription_id: str
     Get Azure Database for PostgreSQL (Regular RDBMS) servers.
     """
     try:
-        pg_rdbms_client = PostgreSQLManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        pg_rdbms_servers = list(map(lambda x: x.as_dict(), pg_rdbms_client.servers.list()))
+        pg_rdbms_client = PostgreSQLManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        pg_rdbms_servers = list(map(as_legacy_dict, pg_rdbms_client.servers.list()))
         logger.debug(f"Retrieved {len(pg_rdbms_servers)} PostgreSQL RDBMS Servers")
         return pg_rdbms_servers
     except ClientAuthenticationError as e:
@@ -257,8 +264,10 @@ def _get_mysql_rdbms_servers(credentials: Credentials, subscription_id: str) -> 
     Get Azure Database for MySQL (Regular RDBMS) servers.
     """
     try:
-        mysql_rdbms_client = MySQLManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        mysql_rdbms_servers = list(map(lambda x: x.as_dict(), mysql_rdbms_client.servers.list()))
+        mysql_rdbms_client = MySQLManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        mysql_rdbms_servers = list(map(as_legacy_dict, mysql_rdbms_client.servers.list()))
         logger.debug(f"Retrieved {len(mysql_rdbms_servers)} MySQL RDBMS Servers")
         return mysql_rdbms_servers
     except ClientAuthenticationError as e:
@@ -282,7 +291,11 @@ def _enrich_server_data(
     Enrich server data with additional metadata.
     """
     server['resourceGroup'] = get_azure_resource_group_name(server.get('id'))
-    server['publicNetworkAccess'] = server.get('properties', {}).get('public_network_access', 'Disabled')
+    # Flexible servers nest it under network. None (unknown) is not 'Disabled', so the
+    # exposure job keeps an unknown server public.
+    server['publicNetworkAccess'] = (
+        server.get('public_network_access') or (server.get('network') or {}).get('public_network_access')
+    )
     server['consolelink'] = safe_console_link(server['id'], common_job_parameters)
     for private_endpoint_connection in server.get('private_endpoint_connections') or []:
         private_endpoint_connection['consolelink'] = safe_console_link(
@@ -464,7 +477,7 @@ def get_dns_aliases(credentials: Credentials, subscription_id: str, server: Dict
         client = get_client(credentials, subscription_id)
         dns_aliases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.server_dns_aliases.list_by_server(server['resourceGroup'], server['name']),
             ),
         )
@@ -492,7 +505,7 @@ def get_ad_admins(credentials: Credentials, subscription_id: str, server: Dict) 
         client = get_client(credentials, subscription_id)
         ad_admins = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.server_azure_ad_administrators.list_by_server(
                     server['resourceGroup'],
                     server['name'],
@@ -524,7 +537,7 @@ def get_recoverable_databases(credentials: Credentials, subscription_id: str, se
         client = get_client(credentials, subscription_id)
         recoverable_databases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.recoverable_databases.list_by_server(
                     server['resourceGroup'],
                     server['name'],
@@ -557,7 +570,7 @@ def get_restorable_dropped_databases(credentials: Credentials, subscription_id: 
         client = get_client(credentials, subscription_id)
         restorable_dropped_databases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.restorable_dropped_databases.list_by_server(
                     server['resourceGroup'], server['name'],
                 ),
@@ -585,7 +598,7 @@ def get_failover_groups(credentials: Credentials, subscription_id: str, server: 
     try:
         client = get_client(credentials, subscription_id)
         failover_groups = list(
-            map(lambda x: x.as_dict(), client.failover_groups.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.failover_groups.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -609,7 +622,7 @@ def get_elastic_pools(credentials: Credentials, subscription_id: str, server: Di
     try:
         client = get_client(credentials, subscription_id)
         elastic_pools = list(
-            map(lambda x: x.as_dict(), client.elastic_pools.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.elastic_pools.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -633,7 +646,7 @@ def get_databases(credentials: Credentials, subscription_id: str, server: Dict) 
     try:
         client = get_client(credentials, subscription_id)
         databases = list(
-            map(lambda x: x.as_dict(), client.databases.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.databases.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -1295,7 +1308,7 @@ def get_replication_links(credentials: Credentials, subscription_id: str, databa
         client = get_client(credentials, subscription_id)
         replication_links = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.replication_links.list_by_database(
                     database['resource_group_name'],
                     database['server_name'],
@@ -1352,7 +1365,7 @@ def get_restore_points(credentials: Credentials, subscription_id: str, database:
         client = get_client(credentials, subscription_id)
         restore_points_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.restore_points.list_by_database(
                     database['resource_group_name'],
                     database['server_name'],
@@ -1406,7 +1419,7 @@ def get_firewall_rules(credentials: Credentials, subscription_id: str, server: D
         client = get_client(credentials, subscription_id)
         firewall_rules = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.firewall_rules.list_by_server(server['resourceGroup'], server['name']),
             ),
         )
