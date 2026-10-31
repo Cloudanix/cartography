@@ -19,40 +19,80 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
-# EMR API is subject to aggressive throttling, so we need to sleep a second between each call.
-LIST_SLEEP = 1
-DESCRIBE_SLEEP = 1
+# ListClusters keeps terminated clusters for about two months, so accounts running transient clusters (a cluster per
+# job) list 100k+ of them; describing each one (with a 1s sleep) never finished and the sync was disabled in 2025-06.
+# Live states only, the same list the compliance evaluator uses (emrLiveClusterStates): a terminated cluster has
+# nothing left to secure, and cleanup drops it from the graph.
+LIVE_CLUSTER_STATES = ['STARTING', 'BOOTSTRAPPING', 'RUNNING', 'WAITING', 'TERMINATING']
+# Hard bound per region on live clusters (one describe_cluster each). Throttling is left to botocore's standard
+# retry mode (get_botocore_config) instead of fixed sleeps.
+MAX_CLUSTERS_PER_REGION = 1000
 
 
 @timeit
 @aws_handle_regions
 def get_emr_clusters(boto3_session: boto3.session.Session, region: str) -> List[Dict[str, Any]]:
+    """Live cluster summaries in the region; reads at most MAX_CLUSTERS_PER_REGION + 1 so cap_clusters can tell."""
     client = boto3_session.client('emr', region_name=region, config=get_botocore_config())
     clusters: List[Dict] = []
     paginator = client.get_paginator('list_clusters')
-    for page in paginator.paginate():
-        cluster = page['Clusters']
-        clusters.extend(cluster)
+    pages = paginator.paginate(
+        ClusterStates=LIVE_CLUSTER_STATES, PaginationConfig={'MaxItems': MAX_CLUSTERS_PER_REGION + 1},
+    )
+    for page in pages:
+        clusters.extend(page['Clusters'])
 
     return clusters
 
 
+def cap_clusters(clusters: List[Dict[str, Any]], account_id: str, region: str) -> List[Dict[str, Any]]:
+    if len(clusters) <= MAX_CLUSTERS_PER_REGION:
+        return clusters
+    logger.warning(
+        f"EMR: more than {MAX_CLUSTERS_PER_REGION} live clusters in account {account_id} region {region}; "
+        f"syncing the first {MAX_CLUSTERS_PER_REGION} only.",
+    )
+    return clusters[:MAX_CLUSTERS_PER_REGION]
+
+
+def get_block_public_security_group_rules(client: Any, region: str) -> Any:
+    """The region's EMR block-public-access setting (one call per region; it is not per cluster)."""
+    try:
+        response = client.get_block_public_access_configuration()
+    except botocore.exceptions.ClientError as e:
+        logger.warning(f"Could not read EMR block public access in {region}: {e.response['Error']['Code']}.")
+        return None
+    return response.get('BlockPublicAccessConfiguration', {}).get('BlockPublicSecurityGroupRules', True)
+
+
 @timeit
-def get_emr_describe_cluster(boto3_session: boto3.session.Session, region: str, cluster_id: str) -> Dict:
-    client = boto3_session.client('emr', region_name=region, config=get_botocore_config())
+def get_emr_describe_cluster(client: Any, cluster_id: str) -> Dict:
     cluster_details: Dict[str, Any] = {}
     try:
-        response = client.describe_cluster(ClusterId=cluster_id)
-        cluster_details = response['Cluster']
-        public_access_configuration = client.get_block_public_access_configuration()
-        cluster_details['public_access_configuration'] = public_access_configuration.get(
-            'BlockPublicAccessConfiguration', {},
-        ).get('BlockPublicSecurityGroupRules', True)
+        cluster_details = client.describe_cluster(ClusterId=cluster_id)['Cluster']
     except botocore.exceptions.ClientError as e:
         code = e.response['Error']['Code']
         msg = e.response['Error']['Message']
         logger.warning(f"Could not run EMR describe_cluster due to boto3 error {code}: {msg}. Skipping.")
     return cluster_details
+
+
+@timeit
+def get_cluster_details(
+    boto3_session: boto3.session.Session, region: str, clusters: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """describe_cluster per live cluster plus the region's block-public-access setting: len(clusters) + 1 calls."""
+    if not clusters:
+        return []
+    client = boto3_session.client('emr', region_name=region, config=get_botocore_config())
+    block_public = get_block_public_security_group_rules(client, region)
+    details: List[Dict[str, Any]] = []
+    for cluster in clusters:
+        cluster_details = get_emr_describe_cluster(client, cluster['Id'])
+        if cluster_details:
+            cluster_details['public_access_configuration'] = block_public
+            details.append(cluster_details)
+    return details
 
 
 def get_master_security_group_ids(cluster: Dict[str, Any]) -> List[str]:
@@ -103,22 +143,13 @@ def sync(
 ) -> None:
     tic = time.perf_counter()
 
-    # for region in regions:
-    #     logger.info(f"Syncing EMR for region '{region}' in account '{current_aws_account_id}'.")
+    for region in regions:
+        logger.info(f"Syncing EMR for region '{region}' in account '{current_aws_account_id}'.")
+        clusters = cap_clusters(get_emr_clusters(boto3_session, region), current_aws_account_id, region)
+        cluster_data = get_cluster_details(boto3_session, region, clusters)
+        load_emr_clusters(neo4j_session, cluster_data, region, current_aws_account_id, update_tag)
 
-    #     clusters = get_emr_clusters(boto3_session, region)
-
-    #     cluster_data: List[Dict[str, Any]] = []
-    #     for cluster in clusters:
-    #         cluster_id = cluster['Id']
-    #         cluster_details = get_emr_describe_cluster(boto3_session, region, cluster_id)
-    #         if cluster_details:
-    #             cluster_data.append(cluster_details)
-    #         time.sleep(DESCRIBE_SLEEP)
-
-    #     load_emr_clusters(neo4j_session, cluster_data, region, current_aws_account_id, update_tag)
-
-    # cleanup(neo4j_session, common_job_parameters)
+    cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process EMR: {toc - tic:0.4f} seconds")
