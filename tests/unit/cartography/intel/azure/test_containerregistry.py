@@ -105,7 +105,7 @@ def test_sync_registry_contents_loads_repositories_and_images(get_client, load_r
     sync_registry_contents(Mock(), Mock(), REGISTRY, 7)
 
     assert get_client.call_args.args[1] == 'myregistry.azurecr.io'
-    assert [r['name'] for r in load_repos.call_args.args[2]] == REPOSITORY_NAMES
+    assert [r['name'] for r in load_repos.call_args.args[1]] == REPOSITORY_NAMES
     assert load_images.call_count == 2
     assert load_status.call_args.args[2] == {
         'repositories_fetched': True, 'repositories_fetch_error': None, 'image_fetch_failures': 0,
@@ -192,3 +192,16 @@ def test_sync(get_registries, load_registries, sync_contents, cleanup_registries
     cleanup_registries.assert_called_once_with(session, params)
     cleanup_repos.assert_called_once_with(session, params)
     cleanup_images.assert_called_once_with(session, params)
+
+
+@patch(f'{MODULE}.run_cleanup_job')
+@patch(f'{MODULE}.get_registry_list', return_value=[])
+@patch(f'{MODULE}.load_registries')
+def test_sync_cleans_children_before_parents(load_registries, get_registries, run_cleanup_job):
+    sync(Mock(), Mock(), 'sub-123', 7, {})
+
+    assert [c.args[0] for c in run_cleanup_job.call_args_list] == [
+        'azure_container_images_cleanup.json',
+        'azure_container_repositories_cleanup.json',
+        'azure_container_registries_cleanup.json',
+    ]

@@ -228,51 +228,45 @@ def _load_registries_tx(tx: neo4j.Transaction, subscription_id: str, data_list: 
     )
 
 
-def _load_repositories_tx(tx: neo4j.Transaction, registry_id: str, data_list: List[Dict], update_tag: int) -> None:
+def _load_repositories_tx(tx: neo4j.Transaction, data_list: List[Dict], update_tag: int) -> None:
     ingest_query = """
     UNWIND $repositories as repo
-    MERGE (r:AzureContainerRepository{name: repo.name, registry_name: repo.registry_name})
+    MERGE (r:AzureContainerRepository{id: repo.id})
     ON CREATE SET r.firstseen = timestamp()
     SET
         r.lastupdated = $update_tag,
-        r.created_time = repo.created_time,
-        r.last_update_time = repo.last_update_time,
-        r.manifest_count = repo.manifest_count,
-        r.tag_count = repo.tag_count,
-        r.size = repo.size,
+        r.name = repo.name,
+        r.registry_name = repo.registry_name,
+        r.uri = repo.uri,
+        r.location = repo.location,
+        r.region = repo.location,
+        r.resourcegroup = repo.resource_group,
         r.subscription_id = repo.subscription_id,
-        r.resource_group = repo.resource_group
+        r.type = 'Microsoft.ContainerRegistry/registries/repositories',
+        r.consolelink = coalesce(repo.console_link, r.consolelink)
 
-    WITH r
-    MATCH (reg:AzureContainerRegistry{id: $registry_id})
-    MERGE (reg)-[rel:CONTAINS]->(r)
+    WITH r, repo
+    MATCH (reg:AzureContainerRegistry{id: repo.registry_id})
+    MERGE (reg)-[rel:CONTAIN]->(r)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag
     """
 
-    tx.run(
-        ingest_query,
-        repositories=data_list,
-        registry_id=registry_id,
-        update_tag=update_tag,
-    )
+    tx.run(ingest_query, repositories=data_list, update_tag=update_tag)
 
 
-def _load_images_tx(
-    tx: neo4j.Transaction,
-    repository_name: str,
-    registry_name: str,
-    data_list: List[Dict],
-    update_tag: int,
-) -> None:
+def _load_images_tx(tx: neo4j.Transaction, data_list: List[Dict], update_tag: int) -> None:
     ingest_query = """
     UNWIND $images as image
-    MERGE (i:AzureContainerImage{
-        digest: image.digest, repository_name: image.repository_name, registry_name: image.registry_name
-    })
+    MERGE (i:AzureContainerImage{id: image.id})
     ON CREATE SET i.firstseen = timestamp()
     SET
         i.lastupdated = $update_tag,
+        i.name = image.name,
+        i.digest = image.digest,
+        i.uri = image.uri,
+        i.repository_name = image.repository_name,
+        i.registry_name = image.registry_name,
         i.created_time = image.created_time,
         i.last_update_time = image.last_update_time,
         i.architecture = image.architecture,
@@ -280,27 +274,21 @@ def _load_images_tx(
         i.size = image.size,
         i.size_bytes = image.size_bytes,
         i.tags = image.tags,
-        i.media_type = image.media_type,
-        i.config_media_type = image.config_media_type,
-        i.quarantine_state = image.quarantine_state,
-        i.quarantine_details = image.quarantine_details,
+        i.location = image.location,
+        i.region = image.location,
+        i.resourcegroup = image.resource_group,
         i.subscription_id = image.subscription_id,
-        i.resource_group = image.resource_group
+        i.type = 'Microsoft.ContainerRegistry/registries/repositories/manifests',
+        i.consolelink = coalesce(image.console_link, i.consolelink)
 
-    WITH i
-    MATCH (repo:AzureContainerRepository{name: $repository_name, registry_name: $registry_name})
-    MERGE (repo)-[rel:CONTAINS]->(i)
+    WITH i, image
+    MATCH (repo:AzureContainerRepository{id: image.repository_id})
+    MERGE (repo)-[rel:CONTAIN]->(i)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag
     """
 
-    tx.run(
-        ingest_query,
-        images=data_list,
-        repository_name=repository_name,
-        registry_name=registry_name,
-        update_tag=update_tag,
-    )
+    tx.run(ingest_query, images=data_list, update_tag=update_tag)
 
 
 def _load_registry_fetch_status_tx(tx: neo4j.Transaction, registry_id: str, status: Dict) -> None:
@@ -315,18 +303,12 @@ def load_registries(session: neo4j.Session, subscription_id: str, data_list: Lis
     session.execute_write(_load_registries_tx, subscription_id, data_list, update_tag)
 
 
-def load_repositories(session: neo4j.Session, registry_id: str, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_repositories_tx, registry_id, data_list, update_tag)
+def load_repositories(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
+    session.execute_write(_load_repositories_tx, data_list, update_tag)
 
 
-def load_images(
-    session: neo4j.Session,
-    repository_name: str,
-    registry_name: str,
-    data_list: List[Dict],
-    update_tag: int,
-) -> None:
-    session.execute_write(_load_images_tx, repository_name, registry_name, data_list, update_tag)
+def load_images(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
+    session.execute_write(_load_images_tx, data_list, update_tag)
 
 
 def load_registry_fetch_status(session: neo4j.Session, registry_id: str, status: Dict) -> None:
@@ -355,7 +337,7 @@ def _sync_repositories(session: neo4j.Session, client: Any, registry: Dict, upda
             "registry: %s.", registry["id"], reason, type(e).__name__, DATA_PLANE_ROLE_HINT,
         )
         return _fetch_status(False, reason)
-    load_repositories(session, registry["id"], repositories, update_tag)
+    load_repositories(session, repositories, update_tag)
 
     failures: Dict[str, str] = {}
     for repository in repositories:
@@ -364,7 +346,7 @@ def _sync_repositories(session: neo4j.Session, client: Any, registry: Dict, upda
         except AzureError as e:
             failures[repository["name"]] = _data_plane_error_reason(e)
             continue
-        load_images(session, repository["name"], registry["name"], images, update_tag)
+        load_images(session, images, update_tag)
     if failures:
         logger.warning(
             "Could not list images of %d of %d repositories in container registry %s, e.g. %s",
@@ -424,9 +406,11 @@ def sync(
         logger.info(f"Syncing repositories for registry '{registry['name']}'")
         sync_registry_contents(session, credentials, registry, update_tag)
 
-    cleanup_container_registries(session, common_job_parameters)
-    cleanup_container_repositories(session, common_job_parameters)
+    # Children first: deleting a registry or repository detaches its children, and the
+    # path-scoped statements could no longer reach them.
     cleanup_container_images(session, common_job_parameters)
+    cleanup_container_repositories(session, common_job_parameters)
+    cleanup_container_registries(session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process container registries: {toc - tic:0.4f} seconds")
