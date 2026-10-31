@@ -1,8 +1,10 @@
+import functools
 import json
 
 import cartography.intel.aws.mq
 from cartography.util import run_analysis_job
 from tests.integration.cartography.intel.aws.common import create_test_org_account
+from tests.integration.cartography.intel.aws.common import create_test_security_group_rule
 from tests.integration.cartography.intel.aws.common import exposure_job_parameters
 
 TEST_UPDATE_TAG = 123456789
@@ -29,28 +31,15 @@ def _load(neo4j_session, account_id, brokers):
     )
 
 
-def _seed_group(neo4j_session, group_id, cidr, protocol, from_port, to_port):
-    # A synced security group (it has a name) with one inbound rule.
-    label = 'Ipv6Range' if ':' in cidr else 'IpRange'
-    neo4j_session.run(
-        f"""
-        MERGE (sg:EC2SecurityGroup{{id: $group_id}}) SET sg.name = $group_id
-        MERGE (sg)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(rule:IpPermissionInbound:IpRule{{ruleid: $group_id + '-rule'}})
-        SET rule.protocol = $protocol, rule.fromport = $from_port, rule.toport = $to_port
-        MERGE (rule)<-[:MEMBER_OF_IP_RULE]-(:{label}{{id: $group_id + '-range', range: $cidr}})
-        """,
-        group_id=group_id, cidr=cidr, protocol=protocol, from_port=from_port, to_port=to_port,
-    )
-
-
 def test_mq_broker_exposure(neo4j_session):
     create_test_org_account(neo4j_session, 'ws-mqx', 'o-mqx', ACCOUNT_ID)
     create_test_org_account(neo4j_session, 'ws-mqx-other', 'o-mqx-other', OTHER_ACCOUNT_ID)
-    _seed_group(neo4j_session, 'mqx-sg-open-61617', '0.0.0.0/0', 'tcp', 61617, 61617)
-    _seed_group(neo4j_session, 'mqx-sg-open-v6-console', '::/0', 'tcp', 8162, 8162)
-    _seed_group(neo4j_session, 'mqx-sg-open-ssh', '0.0.0.0/0', 'tcp', 22, 22)
-    _seed_group(neo4j_session, 'mqx-sg-vpc-only', '10.0.0.0/8', '-1', None, None)
-    _seed_group(neo4j_session, 'mqx-sg-all-traffic', '0.0.0.0/0', '-1', -1, -1)
+    _group = functools.partial(create_test_security_group_rule, neo4j_session)
+    _group('mqx-sg-open-61617', '0.0.0.0/0', 'tcp', 61617, 61617)
+    _group('mqx-sg-open-v6-console', '::/0', 'tcp', 8162, 8162)
+    _group('mqx-sg-open-ssh', '0.0.0.0/0', 'tcp', 22, 22)
+    _group('mqx-sg-vpc-only', '10.0.0.0/8', '-1', None, None)
+    _group('mqx-sg-all-traffic', '0.0.0.0/0', '-1', -1, -1)
     _load(
         neo4j_session, ACCOUNT_ID, {
             'mqx-rabbit-public': ('RABBITMQ', True, []),

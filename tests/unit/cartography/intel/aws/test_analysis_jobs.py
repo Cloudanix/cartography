@@ -40,6 +40,12 @@ def test_account_sync_runs_the_mq_exposure_job(mocker, monkeypatch):
     assert "aws_mq_broker_asset_exposure.json" in jobs
 
 
+def test_account_sync_runs_the_msk_exposure_job(mocker, monkeypatch):
+    jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
+
+    assert "aws_msk_cluster_asset_exposure.json" in jobs
+
+
 def test_every_analysis_job_run_by_account_sync_exists(mocker, monkeypatch):
     jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
 
