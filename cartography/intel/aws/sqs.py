@@ -12,6 +12,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.common import is_resource_policy_internet_accessible
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -95,6 +96,7 @@ def load_sqs_queues(
             queue.content_based_deduplication = sqs_queue.ContentBasedDeduplication,
             queue.deduplication_scope = sqs_queue.DeduplicationScope,
             queue.fifo_throughput_limit = sqs_queue.FifoThroughputLimit,
+            queue.policy_internet_accessible = sqs_queue.policy_internet_accessible,
             queue.lastupdated = $aws_update_tag
         WITH queue
         MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -111,6 +113,7 @@ def load_sqs_queues(
         queue['CreatedTimestamp'] = int(queue['CreatedTimestamp'])
         queue['LastModifiedTimestamp'] = int(queue['LastModifiedTimestamp'])
         queue['consolelink'] = aws_console_link.get_console_link(arn=queue['QueueArn'])
+        queue['policy_internet_accessible'] = is_resource_policy_internet_accessible(queue.get('Policy'))
         redrive_policy = queue.get('RedrivePolicy')
         if redrive_policy:
             try:
