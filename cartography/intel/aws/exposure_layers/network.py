@@ -44,6 +44,8 @@ HTTPS = PortSet.of(TCP, 443, 443)
 HTTP_HTTPS = PortSet.of(TCP, 80, 80) | HTTPS
 V4, V6 = "v4", "v6"
 WORLD_CIDR = {V4: "0.0.0.0/0", V6: "::/0"}
+# internet_reachable_via prefix for a path through an ELBv2: "elbv2:<lb id>".
+ELBV2_VIA = "elbv2:"
 
 # ELB listener protocol -> transport. GENEVE (gateway LB) carries no service port.
 _LISTENER_PROTOCOLS = {

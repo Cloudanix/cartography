@@ -144,7 +144,9 @@ def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int)
         rt.destination_ipv6_cidr_block = route.DestinationIpv6CidrBlock,
         rt.gateway_id = route.GatewayId,
         rt.state = route.State,
-        rt.nat_gateway_id = route.NatGatewayId
+        rt.nat_gateway_id = route.NatGatewayId,
+        rt.vpc_peering_connection_id = route.VpcPeeringConnectionId,
+        rt.transit_gateway_id = route.TransitGatewayId
     WITH route, rt
     MATCH (rtab:EC2RouteTable{id: route.RouteTableId})
     MERGE (rtab)-[r:MEMBER_OF_ROUTE_TABLE]->(rt)

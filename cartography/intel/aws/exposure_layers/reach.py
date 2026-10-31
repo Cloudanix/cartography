@@ -9,6 +9,7 @@ import neo4j
 
 from cartography.intel.aws.exposure_layers.network import ACCOUNT
 from cartography.intel.aws.exposure_layers.network import direct_ports
+from cartography.intel.aws.exposure_layers.network import ELBV2_VIA
 from cartography.intel.aws.exposure_layers.network import HTTP_HTTPS
 from cartography.intel.aws.exposure_layers.network import HTTPS
 from cartography.intel.aws.exposure_layers.network import listener_ports
@@ -141,7 +142,7 @@ def add_lb_targets(
         proto = "udp" if str(row.get("protocol") or "").upper() == "UDP" else "tcp"
         target = port_set(row.get("port")) if proto == "tcp" else PortSet.of("udp", row["port"], row["port"])
         allowed = union_all(sgs[s].any_source for s in row["sgs"] if s in sgs)
-        instance_reach[row["instance"]].add_path((target or PortSet.everything()) & allowed, f"elbv2:{row['lb']}")
+        instance_reach[row["instance"]].add_path((target or PortSet.everything()) & allowed, ELBV2_VIA + row["lb"])
 
 
 _RDS_QUERY = f"""
@@ -306,7 +307,7 @@ def _add_alb_trigger(reach: Reach, tgs: List[str], tg_to_lb: Dict[str, str], lbs
     for tg in tgs:
         lb_id = tg_to_lb.get(tg)
         if lb_id and lb_id in lbs:
-            reach.add_path(lbs[lb_id].ports, f"elbv2:{lb_id}")
+            reach.add_path(lbs[lb_id].ports, ELBV2_VIA + lb_id)
 
 
 def compute(session: neo4j.Session, params: Dict) -> Results:

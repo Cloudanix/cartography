@@ -3,8 +3,16 @@ End-to-end check of the AWS exposure layers on a graph shaped like the loaders w
 Scenarios follow docs/exposure-layers/plan.md section 8.
 """
 from cartography.intel.aws import exposure_layers
+from cartography.intel.aws.ec2.load_balancer_v2s import load_load_balancer_v2_listeners
+from cartography.intel.aws.ec2.load_balancer_v2s import transform_listeners
 from cartography.intel.aws.ec2.network_acls import load_network_acls
 from cartography.intel.aws.ec2.network_acls import transform_network_acls
+from cartography.intel.aws.ec2.route_tables import load_route_tables
+from cartography.intel.aws.ec2.tgw import load_tgw_attachments
+from cartography.intel.aws.ec2.tgw import load_transit_gateways
+from cartography.intel.aws.ec2.vpc_peerings import load_accepter_cidrs
+from cartography.intel.aws.ec2.vpc_peerings import load_requester_cidrs
+from cartography.intel.aws.ec2.vpc_peerings import load_vpc_peerings
 from tests.integration.cartography.intel.aws.common import create_test_org_account
 from tests.integration.cartography.intel.aws.common import exposure_job_parameters
 
@@ -52,7 +60,7 @@ def _nacl(session, acl_id, subnet_id, entries):
     load_network_acls(session, *rows, ACCOUNT, TAG)
 
 
-def _sg(session, sg_id, rules, account=ACCOUNT):
+def _sg(session, sg_id, rules, account=ACCOUNT, vpc=VPC):
     """rules: (protocol, from, to, cidrs, source_sg_ids), stored like security_groups.py."""
     _run(
         session,
@@ -75,7 +83,7 @@ def _sg(session, sg_id, rules, account=ACCOUNT):
                 MERGE (s:EC2SecurityGroup{id: src})
                 MERGE (rule)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(s))
         """,
-        account=account, vpc=VPC, sg_id=sg_id,
+        account=account, vpc=vpc, sg_id=sg_id,
         rules=[
             {'key': f'{p}{f}{t}{i}', 'protocol': p, 'from': f, 'to': t, 'cidrs': c, 'sources': s}
             for i, (p, f, t, c, s) in enumerate(rules)
@@ -123,7 +131,7 @@ def _lb(session, lb_id, subnet, sgs, listeners, targets):
         UNWIND $sgs AS sg_id MATCH (sg:EC2SecurityGroup{id: sg_id}) MERGE (lb)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
         WITH DISTINCT lb
         UNWIND $listeners AS port
-            MERGE (l:ELBV2Listener{id: $lb_id + '/' + toString(port)}) SET l.port = port, l.protocol = 'HTTPS'
+            MERGE (l:Endpoint:ELBV2Listener{id: $lb_id + '/' + toString(port)}) SET l.port = port, l.protocol = 'HTTPS'
             MERGE (lb)-[:ELBV2_LISTENER]->(l)
         WITH DISTINCT lb
         UNWIND $targets AS t
@@ -166,6 +174,136 @@ def _managed(session):
         SET c.engine = 'redis', c.engine_version = '7.1.0', c.auth_token_enabled = true, c.port = 6379
         MERGE (a)-[:RESOURCE]->(b:S3Bucket{id: 'bucket-public'}) SET b.anonymous_access = true
         MERGE (a)-[:RESOURCE]->(:S3Bucket{id: 'bucket-private'})
+        """,
+        account=ACCOUNT,
+    )
+
+
+def _alb_listener(lb_id, port, protocol, default, rules):
+    """API shape of describe_listeners + describe_rules; rules None = describe_rules denied."""
+    def actions(*types):
+        return [{'Type': t, 'Order': i + 1} for i, t in enumerate(types)]
+    return {
+        'ListenerArn': f'{lb_id}/{port}', 'Port': port, 'Protocol': protocol, 'DefaultActions': actions(*default),
+        'Rules': None if rules is None else [{'IsDefault': True, 'Actions': actions(*default)}] + [
+            {'IsDefault': False, 'Actions': actions(*r)} for r in rules
+        ],
+    }
+
+
+def _build_alb_auth(session):
+    """lb-auth: every path authenticates; lb-mixed: one rule forwards directly; lb-denied: rules unread."""
+    oidc = ('authenticate-oidc', 'forward')
+    cases = {
+        'lb-auth': [
+            _alb_listener('lb-auth', 443, 'HTTPS', oidc, [oidc, ('fixed-response',)]),
+            _alb_listener('lb-auth', 80, 'HTTP', ('redirect',), []),
+        ],
+        'lb-mixed': [_alb_listener('lb-mixed', 443, 'HTTPS', ('authenticate-cognito', 'forward'), [('forward',)])],
+        'lb-denied': [_alb_listener('lb-denied', 443, 'HTTPS', oidc, None)],
+    }
+    for n, (lb_id, listeners) in enumerate(cases.items()):
+        instance = f'i-behind-{lb_id}'
+        _instance(session, instance, 'subnet-private', ['sg-app'], private_ip=f'10.0.2.{n}')
+        _lb(session, lb_id, 'subnet-public', ['sg-lb'], [443], [{'instance': instance, 'port': 8080}])
+        load_load_balancer_v2_listeners(session, lb_id, transform_listeners(listeners), TAG)
+
+
+def _vpc(session, vpc_id, cidr):
+    """An account-owned VPC with one subnet holding the first /24 of `cidr`."""
+    _run(
+        session,
+        """
+        MATCH (a:AWSAccount{id: $account})
+        MERGE (a)-[:RESOURCE]->(v:AWSVpc{id: $vpc})
+        MERGE (v)-[:BLOCK_ASSOCIATION]->(:AWSCidrBlock:AWSIpv4CidrBlock{id: $vpc + '|' + $cidr, cidr_block: $cidr})
+        MERGE (a)-[:RESOURCE]->(s:EC2Subnet{subnetid: 'subnet-' + $vpc})
+        SET s.id = s.subnetid, s.cidr_block = $subnet_cidr
+        MERGE (s)-[:MEMBER_OF_AWS_VPC]->(v)
+        """,
+        account=ACCOUNT, vpc=vpc_id, cidr=cidr, subnet_cidr=cidr.replace('.0.0/16', '.1.0/24'),
+    )
+
+
+def _route_table(vpc_id, routes):
+    """describe_route_tables shape; routes: (destination, pcx-* or tgw-*)."""
+    key = {'pcx': 'VpcPeeringConnectionId', 'tgw': 'TransitGatewayId'}
+    return {
+        'RouteTableId': f'rtb-{vpc_id}', 'VpcId': vpc_id, 'OwnerId': ACCOUNT, 'region': 'us-east-1',
+        'Associations': [{
+            'RouteTableAssociationId': f'rtbassoc-{vpc_id}', 'RouteTableId': f'rtb-{vpc_id}',
+            'SubnetId': f'subnet-{vpc_id}', 'Main': False,
+        }],
+        'Routes': [
+            {'DestinationCidrBlock': dst, key[target.split('-')[0]]: target, 'State': 'active'}
+            for dst, target in routes
+        ],
+    }
+
+
+def _peering(pcx_id, requester, accepter):
+    def side(vpc_id):
+        return {'VpcId': vpc_id, 'OwnerId': ACCOUNT, 'Region': 'us-east-1', 'PeeringOptions': {}, 'CidrBlockSet': []}
+    return {
+        'VpcPeeringConnectionId': pcx_id, 'RequesterVpcInfo': side(requester), 'AccepterVpcInfo': side(accepter),
+        'Status': {'Code': 'active', 'Message': 'Active'},
+    }
+
+
+def _build_cross_vpc(session):
+    """
+    vpc-src (10.1/16, i-src) peers with vpc-peer and vpc-noroute, and shares tgw-xl with vpc-tgw.
+    vpc-noroute routes back but vpc-src has no route to it.
+    """
+    for vpc_id, cidr in [
+        ('vpc-src', '10.1.0.0/16'), ('vpc-peer', '10.2.0.0/16'), ('vpc-tgw', '10.3.0.0/16'),
+        ('vpc-noroute', '10.4.0.0/16'),
+    ]:
+        _vpc(session, vpc_id, cidr)
+    peerings = [_peering('pcx-ok', 'vpc-src', 'vpc-peer'), _peering('pcx-noroute', 'vpc-src', 'vpc-noroute')]
+    for loader in (load_vpc_peerings, load_accepter_cidrs, load_requester_cidrs):
+        loader(session, peerings, 'us-east-1', ACCOUNT, TAG)
+    tgw = {
+        'TransitGatewayId': 'tgw-xl', 'TransitGatewayArn': 'arn:aws:ec2:us-east-1:1:transit-gateway/tgw-xl',
+        'OwnerId': ACCOUNT, 'State': 'available', 'Description': '',
+    }
+    load_transit_gateways(session, [tgw], 'us-east-1', ACCOUNT, TAG)
+    load_tgw_attachments(
+        session, [
+            {
+                'TransitGatewayAttachmentId': f'tgw-attach-{v}', 'TransitGatewayId': 'tgw-xl', 'ResourceType': 'vpc',
+                'State': 'available', 'VpcId': v, 'SubnetIds': [f'subnet-{v}'],
+            } for v in ('vpc-src', 'vpc-tgw')
+        ], 'us-east-1', ACCOUNT, TAG,
+    )
+    load_route_tables(
+        session, [
+            _route_table('vpc-src', [('10.2.0.0/16', 'pcx-ok'), ('10.3.0.0/16', 'tgw-xl')]),
+            _route_table('vpc-peer', [('10.1.0.0/16', 'pcx-ok')]),
+            _route_table('vpc-tgw', [('10.0.0.0/8', 'tgw-xl')]),
+            _route_table('vpc-noroute', [('10.1.0.0/16', 'pcx-noroute')]),
+        ], ACCOUNT, TAG,
+    )
+
+    pg = ('tcp', 5432, 5432)
+    _sg(session, 'sg-src', [], vpc='vpc-src')
+    _sg(session, 'sg-db-peer', [(*pg, [], ['sg-src'])], vpc='vpc-peer')
+    _sg(session, 'sg-cache-peer', [('tcp', 6379, 6379, ['10.1.0.0/16'], [])], vpc='vpc-peer')
+    _sg(session, 'sg-db-tgw', [(*pg, ['10.1.1.0/24'], [])], vpc='vpc-tgw')
+    _sg(session, 'sg-db-tgw-ref', [(*pg, [], ['sg-src'])], vpc='vpc-tgw')
+    _sg(session, 'sg-db-noroute', [(*pg, ['10.0.0.0/8'], [])], vpc='vpc-noroute')
+    _instance(session, 'i-src', 'subnet-vpc-src', ['sg-src'], private_ip='10.1.1.10')
+    _rds(session, 'db-peer', False, 'subnet-vpc-peer', ['sg-db-peer'])
+    _rds(session, 'db-tgw', False, 'subnet-vpc-tgw', ['sg-db-tgw'])
+    _rds(session, 'db-tgw-ref', False, 'subnet-vpc-tgw', ['sg-db-tgw-ref'])
+    _rds(session, 'db-noroute', False, 'subnet-vpc-noroute', ['sg-db-noroute'])
+    # ElastiCache has no subnets in the graph: the whole VPC's routes and CIDRs stand in.
+    _run(
+        session,
+        """
+        MATCH (a:AWSAccount{id: $account}), (sg:EC2SecurityGroup{id: 'sg-cache-peer'})
+        MERGE (a)-[:RESOURCE]->(c:ElasticacheCluster{id: 'cache-peer'}) SET c.port = 6379
+        MERGE (c)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
         """,
         account=ACCOUNT,
     )
@@ -224,6 +362,8 @@ def _build(session):
     _rds(session, 'db-public', True, 'subnet-public', ['sg-db-open'])
     _rds(session, 'db-app', False, 'subnet-private', ['sg-db', 'sg-db-cidr'])
     _managed(session)
+    _build_alb_auth(session)
+    _build_cross_vpc(session)
     # Stale edge from a previous run must disappear.
     _run(
         session,
@@ -280,6 +420,18 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
     assert auth('S3Bucket', 'bucket-public')[0] == 'none'
     assert auth('S3Bucket', 'bucket-private')[0] == 'required'
     assert auth('EC2Instance', 'i-open')[0] == 'unknown'
+    # ALB authenticate actions: every listener path authenticates (redirect / fixed-response answer
+    # at the LB), so the LB and the instance reached only through it require credentials.
+    assert auth('LoadBalancerV2', 'lb-auth') == ('required', ['alb_authenticate_oidc'])
+    assert auth('EC2Instance', 'i-behind-lb-auth') == ('required', ['alb_authenticate_oidc'])
+    assert auth('LoadBalancerV2', 'lb-mixed') == ('unknown', ['backend_decides'])
+    assert auth('EC2Instance', 'i-behind-lb-mixed') == ('unknown', ['self_managed_service'])
+    assert auth('LoadBalancerV2', 'lb-denied') == ('unknown', ['backend_decides'])
+    assert auth('LoadBalancerV2', 'lb-1') == ('unknown', ['backend_decides'])
+    assert auth('EC2Instance', 'i-app') == ('unknown', ['self_managed_service'])
+    listener = _props(neo4j_session, 'ELBV2Listener', 'lb-auth/443')
+    assert (listener['all_paths_authenticated'], listener['auth_action_types']) == (True, ['authenticate-oidc'])
+    assert 'all_paths_authenticated' not in _props(neo4j_session, 'ELBV2Listener', 'lb-denied/443')
 
     # L4
     def software(label, node_id):
@@ -307,6 +459,15 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
     assert ('i-elsewhere', 'db-app') not in edges
     # sg-db-open admits 0.0.0.0/0, which holds every private IP in the VPC.
     assert edges[('i-office', 'db-public')] == ('cidr', ['tcp:5432-5432'])
+    # Cross-VPC: same-region peering honours SG references; TGW admits by CIDR only.
+    assert edges[('i-src', 'db-peer')] == ('peering:pcx-ok', ['tcp:5432-5432'])
+    assert edges[('i-src', 'cache-peer')] == ('peering:pcx-ok', ['tcp:6379-6379'])
+    assert edges[('i-src', 'db-tgw')] == ('tgw:tgw-xl', ['tcp:5432-5432'])
+    assert ('i-src', 'db-tgw-ref') not in edges
+    # Peered and admitted by CIDR, but vpc-src has no route to vpc-noroute.
+    assert ('i-src', 'db-noroute') not in edges
+    # sg-db-open admits 0.0.0.0/0, but no gateway joins vpc-src and vpc-xl.
+    assert ('i-src', 'db-public') not in edges
 
     # Other workspace untouched.
     assert 'internet_reachable' not in _props(neo4j_session, 'EC2Instance', 'i-other')

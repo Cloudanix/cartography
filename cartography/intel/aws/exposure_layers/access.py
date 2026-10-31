@@ -2,23 +2,31 @@
 AWS L3: does the resource answer without credentials?
 
 none      anonymous callers get in (public policy, auth type NONE, no Redis AUTH)
-required  credentials are always needed (IAM, DB password, Kubernetes auth)
+required  credentials are always needed (IAM, DB password, Kubernetes auth, ALB authenticate action)
 unknown   config cannot tell: self-managed software on instances, LB backends, CDN origins
 """
 from typing import Callable
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import neo4j
 
 from cartography.intel.aws.exposure_layers.network import ACCOUNT
+from cartography.intel.aws.exposure_layers.network import ELBV2_VIA
 from cartography.intel.exposure.layers import AUTH_NONE
 from cartography.intel.exposure.layers import auth_props
 from cartography.intel.exposure.layers import AUTH_REQUIRED
 from cartography.intel.exposure.layers import AUTH_UNKNOWN
 
 Verdict = Tuple[str, List[str]]
+
+# Listener facts from load_balancer_v2s.listener_auth_facts. A null map (no listener) is dropped by
+# collect; a null flag (rules unread) reads as not authenticated, never as authenticated.
+_LISTENER = "l{authenticated: coalesce(l.all_paths_authenticated, false), types: l.auth_action_types}"
+# "authenticate-oidc" -> "alb_authenticate_oidc"
+_ALB_REASON_PREFIX = "alb_"
 
 
 def lambda_auth(row: Dict) -> Verdict:
@@ -50,6 +58,36 @@ def elasticache_auth(row: Dict) -> Verdict:
         return AUTH_NONE, ["memcached_no_auth"]
     # ponytail: Redis RBAC user groups live on the replication group, not ingested yet.
     return AUTH_UNKNOWN, ["no_auth_token_rbac_not_ingested"]
+
+
+def alb_auth(listeners: List[Dict]) -> Optional[Verdict]:
+    """
+    Required when every listener authenticates every path to a target (listener_auth_facts in
+    load_balancer_v2s.py); None otherwise, so callers keep their usual verdict.
+    """
+    if not listeners or not all(listener["authenticated"] for listener in listeners):
+        return None
+    types = {t for listener in listeners for t in listener["types"] or []}
+    if not types:
+        return None
+    return AUTH_REQUIRED, sorted(_ALB_REASON_PREFIX + t.replace("-", "_") for t in types)
+
+
+def load_balancer_v2_auth(row: Dict) -> Verdict:
+    return alb_auth(row["listeners"]) or (AUTH_UNKNOWN, ["backend_decides"])
+
+
+def instance_auth(row: Dict) -> Verdict:
+    """
+    Required when every internet path (internet_reachable_via, written by reach.py earlier in the
+    same run) goes through an authenticating ALB; otherwise the software on the box decides.
+    """
+    lbs = {lb["id"]: alb_auth(lb["listeners"]) for lb in row["lbs"]}
+    via = row["via"] or []
+    verdicts = [lbs.get(v[len(ELBV2_VIA):]) if v.startswith(ELBV2_VIA) else None for v in via]
+    if not verdicts or not all(verdicts):
+        return AUTH_UNKNOWN, ["self_managed_service"]
+    return AUTH_REQUIRED, sorted({reason for v in verdicts if v for reason in v[1]})
 
 
 def rds_auth(row: Dict) -> Verdict:
@@ -127,12 +165,27 @@ RULES: Dict[str, Tuple[str, Callable[[Dict], Verdict]]] = {
         _q("EC2Image", ", coalesce(n.ispublic, false) AS open"),
         flag_auth("public_image", "iam"),
     ),
-    "EC2Instance": (_q("EC2Instance"), fixed(AUTH_UNKNOWN, "self_managed_service")),
+    "EC2Instance": (
+        f"""MATCH {ACCOUNT}-[:RESOURCE]->(n:EC2Instance)
+        OPTIONAL MATCH (lb:LoadBalancerV2)-[:EXPOSE]->(n)
+        OPTIONAL MATCH (lb)-[:ELBV2_LISTENER]->(l:ELBV2Listener)
+        WITH n, lb, collect({_LISTENER}) AS listeners
+        RETURN n.id AS id, n.internet_reachable_via AS via,
+            collect(CASE WHEN lb IS NULL THEN null ELSE {{id: lb.id, listeners: listeners}} END) AS lbs""",
+        instance_auth,
+    ),
     "NetworkInterface": (_q("NetworkInterface"), fixed(AUTH_UNKNOWN, "self_managed_service")),
     "EMRCluster": (_q("EMRCluster"), fixed(AUTH_UNKNOWN, "self_managed_service")),
     "LoadBalancer": (_q("LoadBalancer"), fixed(AUTH_UNKNOWN, "backend_decides")),
-    # ponytail: ALB authenticate-oidc/cognito listener rules not ingested; would turn some into required.
-    "LoadBalancerV2": (_q("LoadBalancerV2"), fixed(AUTH_UNKNOWN, "backend_decides")),
+    # ponytail: an LB is "required" only when all its listeners authenticate, even listeners the
+    # internet cannot reach; per-listener reachability would need reach.py to keep listener ports.
+    "LoadBalancerV2": (
+        _q(
+            "LoadBalancerV2", f", collect({_LISTENER}) AS listeners",
+            "OPTIONAL MATCH (n)-[:ELBV2_LISTENER]->(l:ELBV2Listener)",
+        ),
+        load_balancer_v2_auth,
+    ),
     "AWSCloudfrontDistribution": (_q("AWSCloudfrontDistribution"), fixed(AUTH_UNKNOWN, "origin_decides")),
 }
 
