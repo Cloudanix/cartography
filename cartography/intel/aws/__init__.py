@@ -23,6 +23,7 @@ from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
 from cartography.graph.session import Session
+from cartography.intel.aws.dms import link_replication_instance_networks
 from cartography.intel.aws.ec2.instances import sync_eks_node_links
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.util.arns import get_partition
@@ -291,6 +292,13 @@ def _sync_one_account(
             sync_eks_node_links(neo4j_session, common_job_parameters)
         except Exception as e:
             logger.warning(f"error to link EKS nodes for account {current_aws_account_id} - {e}")
+
+    # DMS instances link to security groups and subnets, which other syncs load in parallel.
+    if "dms" in aws_requested_syncs:
+        try:
+            link_replication_instance_networks(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link DMS replication instances for account {current_aws_account_id} - {e}")
 
     # MAP IAM permissions
     if "permission_relationships" in aws_requested_syncs:

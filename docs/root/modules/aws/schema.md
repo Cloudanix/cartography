@@ -2661,6 +2661,80 @@ Representation of an AWS [Secrets Manager Secret](https://docs.aws.amazon.com/se
         (AWSAccount)-[RESOURCE]->(SecretsManagerSecret)
         ```
 
+### DMSReplicationInstance
+
+Representation of an AWS [DMS replication instance](https://docs.aws.amazon.com/dms/latest/APIReference/API_ReplicationInstance.html), from `DescribeReplicationInstances`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the replication instance |
+| arn | The ARN of the replication instance |
+| name, replication\_instance\_identifier | The replication instance identifier |
+| region | The region of the replication instance |
+| replication\_instance\_class | The compute class, e.g. `dms.t3.medium` |
+| status | The replication instance status |
+| engine\_version | The DMS engine version |
+| publicly\_accessible | Whether the instance has a public IP address |
+| auto\_minor\_version\_upgrade | Whether minor engine upgrades are applied automatically |
+| multi\_az | Whether the instance is Multi-AZ |
+| kms\_key\_id | The KMS key that encrypts the instance storage |
+| network\_type | `IPV4` or `DUAL` |
+| availability\_zone | The Availability Zone of the instance |
+| public\_ip\_addresses | The public IP addresses of the instance |
+| private\_ip\_addresses | The private IP addresses of the instance |
+| security\_group\_ids | The VPC security group ids of the instance |
+| subnet\_group\_identifier | The replication subnet group |
+| vpc\_id | The VPC of the replication subnet group |
+| subnet\_ids | The subnets of the replication subnet group |
+
+#### Relationships
+
+- DMS replication instances are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(DMSReplicationInstance)
+        ```
+
+- DMS replication instances are members of their VPC security groups and subnets. These edges are created after
+  every service has synced (`link_replication_instance_networks`), only to nodes of the same account.
+
+        ```
+        (DMSReplicationInstance)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+        (DMSReplicationInstance)-[PART_OF_SUBNET]->(EC2Subnet)
+        ```
+
+### DMSEndpoint
+
+Representation of an AWS [DMS endpoint](https://docs.aws.amazon.com/dms/latest/APIReference/API_Endpoint.html), from `DescribeEndpoints`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the endpoint |
+| arn | The ARN of the endpoint |
+| name, endpoint\_identifier | The endpoint identifier |
+| region | The region of the endpoint |
+| endpoint\_type | `SOURCE` or `TARGET` |
+| engine\_name | The database engine, e.g. `postgres`, `s3` |
+| server\_name | The database server name |
+| port | The database port |
+| database\_name | The database name |
+| status | The endpoint status |
+| ssl\_mode | `none`, `require`, `verify-ca` or `verify-full`; `none` when the API omits it |
+| certificate\_arn | The ARN of the TLS certificate |
+| kms\_key\_id | The KMS key that encrypts the connection parameters |
+
+#### Relationships
+
+- DMS endpoints are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(DMSEndpoint)
+        ```
+
 ### EBSVolume
 
 Representation of an AWS [EBS Volume](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-volumes.html).
