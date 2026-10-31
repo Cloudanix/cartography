@@ -8,6 +8,7 @@ from cartography.intel.gcp import loadbalancer
 
 API = 'https://www.googleapis.com/compute/v1'
 ZONE_P1 = 'projects/p1/zones/us-east1-b'
+REGION_P1 = 'projects/p1/regions/us-east1'
 PARAMS = {'UPDATE_TAG': 42, 'GCP_PROJECT_ID': 'p1', 'WORKSPACE_ID': 'ws', 'GCP_ORGANIZATION_ID': 'org'}
 
 
@@ -242,3 +243,33 @@ def test_endpoints_are_listed_only_for_external_zonal_vm_negs():
     list_endpoints.assert_called_once_with(client, 'p1', 'us-east1-b', 'k8s1-neg')
     assert load.call_args.args[1] == [{'instance': 'i'}]
     link.assert_called_once()
+
+
+def test_ssl_policies_include_regional_ones_from_the_aggregated_list():
+    client = MagicMock()
+    _pages(
+        client.sslPolicies.return_value, 'aggregatedList', [
+            {
+                'items': {
+                    'global': {'sslPolicies': [{'name': 'modern', 'minTlsVersion': 'TLS_1_2'}]},
+                    'regions/us-east1': {
+                        'sslPolicies': [
+                            {'name': 'regional', 'minTlsVersion': 'TLS_1_0', 'region': f'{API}/{REGION_P1}'},
+                        ],
+                    },
+                },
+            },
+            {'items': {'regions/europe-west1': {'warning': {'code': 'NO_RESULTS_ON_PAGE'}}}},
+        ],
+    )
+    # The global-only list call (before regional policies) returns a single empty page.
+    client.sslPolicies.return_value.list.return_value.execute.return_value = {}
+    client.sslPolicies.return_value.list_next.return_value = None
+
+    policies = loadbalancer.transform_ssl_policies(loadbalancer.get_ssl_policies(client, 'p1', PARAMS), 'p1')
+
+    client.sslPolicies.return_value.aggregatedList.assert_called_once_with(project='p1', returnPartialSuccess=True)
+    assert sorted((p['id'], p['region']) for p in policies) == [
+        ('projects/p1/global/sslPolicies/modern', 'global'),
+        ('projects/p1/regions/us-east1/sslPolicies/regional', 'us-east1'),
+    ]

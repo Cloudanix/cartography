@@ -556,3 +556,40 @@ def test_vm_behind_external_protocol_forwarding_is_exposed(neo4j_session):
     _run_exposure_jobs(neo4j_session, project)
 
     assert _exposed_in(neo4j_session, project) == {('GCPForwardingRule', 'pf-fr'): LB, ('GCPInstance', 'vm-ti'): LB}
+
+
+def test_regional_ssl_policy_of_an_external_regional_https_proxy_is_exposed(neo4j_session):
+    project = 'proj-lb-rssl'
+    region = f'projects/{project}/regions/us-east1'
+    _seed_project(neo4j_session, project)
+    response = {
+        'id': f'{region}/forwardingRules', 'items': [{
+            'name': 'rhttps-fr', 'loadBalancingScheme': 'EXTERNAL_MANAGED', 'region': f'{API}/{region}',
+            'selfLink': f'{API}/{region}/forwardingRules/rhttps-fr', 'target': f'{API}/{region}/targetHttpsProxies/rp',
+        }],
+    }
+    client = MagicMock()
+    client.regionTargetHttpsProxies.return_value.get.return_value.execute.return_value = {
+        'sslPolicy': f'{API}/{region}/sslPolicies/regional',
+    }
+    rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
+    cartography.intel.gcp.compute.resolve_external_lb_backends(client, rules)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, TAG)
+    loadbalancer = cartography.intel.gcp.loadbalancer
+    loadbalancer.load_ssl_policies(
+        neo4j_session,
+        loadbalancer.transform_ssl_policies(
+            [
+                {'name': 'regional', 'region': f'{API}/{region}'},
+                {'name': 'regional-unused', 'region': f'{API}/{region}'},
+            ],
+            project,
+        ),
+        project, TAG,
+    )
+
+    _run_exposure_jobs(neo4j_session, project)
+
+    assert _exposed_in(neo4j_session, project) == {
+        ('GCPForwardingRule', 'rhttps-fr'): LB, ('GCPSSLPolicy', 'regional'): LB,
+    }

@@ -544,15 +544,16 @@ def sync_regional_url_maps(
 
 
 @timeit
-def get_ssl_policies(compute: Resource, project_id: str, common_job_parameters) -> List[Dict]:
+def get_ssl_policies(compute: Resource, project_id: str, common_job_parameters: Dict) -> List[Dict]:
+    """Global and regional SSL policies: one aggregatedList (regional HTTPS proxies use regional policies)."""
     ssl_policies = []
     try:
-        req = compute.sslPolicies().list(project=project_id)
+        req = compute.sslPolicies().aggregatedList(project=project_id, returnPartialSuccess=True)
         while req is not None:
             res = req.execute()
-            if 'items' in res:
-                ssl_policies.extend(res['items'])
-            req = compute.sslPolicies().list_next(previous_request=req, previous_response=res)
+            for scoped in res.get('items', {}).values():
+                ssl_policies.extend(scoped.get('sslPolicies', []))
+            req = compute.sslPolicies().aggregatedList_next(previous_request=req, previous_response=res)
 
         return ssl_policies
     except HttpError as e:
@@ -569,12 +570,15 @@ def get_ssl_policies(compute: Resource, project_id: str, common_job_parameters) 
 
 
 @timeit
-def transform_ssl_policies(ssl_policies: List, project_id: str):
+def transform_ssl_policies(ssl_policies: List, project_id: str) -> List[Dict]:
     list_ssl_policies = []
 
     for policy in ssl_policies:
-        policy['id'] = f"projects/{project_id}/global/sslPolicies/{policy['name']}"
-        policy['region'] = 'global'
+        region = policy['region'].split('/')[-1] if policy.get('region') else None
+        location = f'regions/{region}' if region else 'global'
+        # Same as the selfLink's partial URI, which target proxies reference.
+        policy['id'] = f"projects/{project_id}/{location}/sslPolicies/{policy['name']}"
+        policy['region'] = region or 'global'
         policy['consolelink'] = gcp_console_link.get_console_link(
             project_id=project_id,
             ssl_policy_name=policy['name'], resource_name='ssl_policy',
