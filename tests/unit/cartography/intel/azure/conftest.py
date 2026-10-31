@@ -55,6 +55,16 @@ _MISSING_DEPS = [
     "msgraph.generated.groups.groups_request_builder",
 ]
 
+
+def _installed(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+# Real SDKs when installed, so tests can build actual SDK models (their as_dict
+# shape changed in the TypeSpec-generated releases and the fetchers depend on it).
 for _mod in _MISSING_DEPS:
-    if _mod not in sys.modules:
+    if _mod not in sys.modules and not _installed(_mod):
         sys.modules[_mod] = MagicMock()
