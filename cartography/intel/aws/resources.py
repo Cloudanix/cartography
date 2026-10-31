@@ -3,6 +3,7 @@ from typing import List
 
 from . import apigateway
 from . import appsync
+from . import backup
 from . import bedrock
 from . import cloudformation
 from . import cloudfront
@@ -13,11 +14,13 @@ from . import dms
 from . import dynamodb
 from . import ecr
 from . import ecs
+from . import efs
 from . import eks
 from . import elasticache
 from . import elasticbeanstalk
 from . import elasticsearch
 from . import emr
+from . import fsx
 from . import iam
 from . import identitystore
 from . import inspector
@@ -115,6 +118,9 @@ RESOURCE_FUNCTIONS: Dict = {
     'inspector': inspector.sync,
     'config': config.sync,
     'securityhub': securityhub.sync,
+    'backup': backup.sync,
+    'efs': efs.sync,
+    'fsx': fsx.sync,
     'permission_relationships': permission_relationships.sync,
     'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
 }
