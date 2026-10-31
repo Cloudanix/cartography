@@ -407,3 +407,64 @@ def test_apigateway_exposure_honours_resource_policy(neo4j_session):
         'gw-private-open': (None, False, []),
         'gw-policy-removed': (True, False, []),
     }
+
+
+DOMAIN_ACCOUNT_ID = '444455557777'
+DOMAIN_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': DOMAIN_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-apigw-domain',
+    'WORKSPACE_ID': 'ws-apigw-domain',
+    'LIMIT_SIZE': 100,
+}
+
+
+def test_apigateway_exposure_honours_disabled_execute_api_endpoint(neo4j_session):
+    create_exposure_test_account(
+        neo4j_session, DOMAIN_JOB_PARAMETERS['WORKSPACE_ID'], DOMAIN_JOB_PARAMETERS['ORGANIZATION_ID'],
+        DOMAIN_ACCOUNT_ID,
+    )
+    apis = {
+        # id: (disableExecuteApiEndpoint, public_custom_domains as set by add_public_custom_domains, policy)
+        'gw-dom-enabled': (False, None, None),
+        'gw-dom-enabled-default': (None, None, None),
+        # Default endpoint off and no public custom domain maps to it: nothing on the internet reaches it.
+        'gw-dom-disabled-no-domain': (True, [], None),
+        'gw-dom-disabled-public-domain': (True, ['api.example.com'], None),
+        # Custom domains could not be read: stays public (fail-safe).
+        'gw-dom-disabled-unknown': (True, None, None),
+        # Reachable through a custom domain, but the resource policy only admits a VPC endpoint.
+        'gw-dom-disabled-public-domain-vpce': (True, ['api.example.com'], VPCE_POLICY),
+    }
+    rest_apis = []
+    for api_id, (disabled, domains, _) in apis.items():
+        api = {
+            'id': api_id, 'name': f'name-of-{api_id}', 'region': TEST_REGION,
+            'endpointConfiguration': {'types': ['REGIONAL']}, 'disableExecuteApiEndpoint': disabled,
+        }
+        if domains is not None:
+            api['public_custom_domains'] = domains
+        rest_apis.append(api)
+    cartography.intel.aws.apigateway.load_apigateway_rest_apis(
+        neo4j_session, rest_apis, DOMAIN_ACCOUNT_ID, TEST_UPDATE_TAG,
+    )
+    cartography.intel.aws.apigateway.load_rest_api_details(
+        neo4j_session,
+        [(api_id, [], [], [], policy, TEST_REGION) for api_id, (_, _, policy) in apis.items()],
+        DOMAIN_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
+        DOMAIN_JOB_PARAMETERS,
+    )
+
+    run_analysis_job('aws_apigateway_asset_exposure.json', neo4j_session, DOMAIN_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(api:APIGatewayRestAPI{exposed_internet: true})
+        RETURN api.id AS id
+        """,
+        account_id=DOMAIN_ACCOUNT_ID,
+    )
+    assert {n['id'] for n in nodes} == {
+        'gw-dom-enabled', 'gw-dom-enabled-default', 'gw-dom-disabled-public-domain', 'gw-dom-disabled-unknown',
+    }

@@ -21,7 +21,7 @@
       "iterationsize": 100
     },
     {
-      "query": "MATCH (rest_api:APIGatewayRestAPI)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE ('REGIONAL' in rest_api.endpoint_conf_types OR 'EDGE' in rest_api.endpoint_conf_types) AND coalesce(rest_api.policy_internet_accessible, true) SET rest_api.exposed_internet = true, (CASE WHEN NOT 'endpoint_type' IN coalesce(rest_api.exposed_internet_type , []) THEN rest_api END).exposed_internet_type = coalesce(rest_api.exposed_internet_type , []) + 'endpoint_type';",
+      "query": "MATCH (rest_api:APIGatewayRestAPI)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE ('REGIONAL' in rest_api.endpoint_conf_types OR 'EDGE' in rest_api.endpoint_conf_types) AND coalesce(rest_api.policy_internet_accessible, true) AND (NOT coalesce(rest_api.disableexecuteapiendpoint, false) OR rest_api.public_custom_domains IS NULL OR size(rest_api.public_custom_domains) > 0) SET rest_api.exposed_internet = true, (CASE WHEN NOT 'endpoint_type' IN coalesce(rest_api.exposed_internet_type , []) THEN rest_api END).exposed_internet_type = coalesce(rest_api.exposed_internet_type , []) + 'endpoint_type';",
       "iterative": false
     },
     {
@@ -37,7 +37,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (rest_api:APIGatewayRestAPI)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE rest_api.exposed_internet = true WITH rest_api SET rest_api.publicContext = apoc.convert.toJson([{resource: rest_api.id, resourceType: 'aws-apigateway-restapi', context: [{apiId: rest_api.id, apiName: rest_api.name, endpointTypes: rest_api.endpoint_conf_types, exposureTypes: rest_api.exposed_internet_type, anonymousAccess: coalesce(rest_api.anonymous_access, false), anonymousAccessType: coalesce(rest_api.anonymous_access_type, [])}]}])",
+      "query": "MATCH (rest_api:APIGatewayRestAPI)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE rest_api.exposed_internet = true WITH rest_api SET rest_api.publicContext = apoc.convert.toJson([{resource: rest_api.id, resourceType: 'aws-apigateway-restapi', context: [{apiId: rest_api.id, apiName: rest_api.name, endpointTypes: rest_api.endpoint_conf_types, executeApiEndpointDisabled: coalesce(rest_api.disableexecuteapiendpoint, false), publicCustomDomains: rest_api.public_custom_domains, exposureTypes: rest_api.exposed_internet_type, anonymousAccess: coalesce(rest_api.anonymous_access, false), anonymousAccessType: coalesce(rest_api.anonymous_access_type, [])}]}])",
       "iterative": false
     },
     {

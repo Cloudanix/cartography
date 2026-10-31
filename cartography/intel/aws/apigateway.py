@@ -12,6 +12,7 @@ import boto3
 import botocore
 import neo4j
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
@@ -150,6 +151,46 @@ def get_apigateway_rest_apis(boto3_session: boto3.session.Session, region: str) 
 
 
 @timeit
+def get_public_custom_domains(boto3_session: boto3.session.Session, region: str) -> Optional[Dict[str, List[str]]]:
+    """
+    Maps each REST API id in the region to the non-PRIVATE custom domain names whose base path mappings point at it.
+    Returns None when the custom domains cannot be read (unknown).
+    """
+    try:
+        client = boto3_session.client('apigateway', region_name=region, config=get_botocore_config())
+        domains: List[Dict] = []
+        for page in client.get_paginator('get_domain_names').paginate():
+            domains.extend(page['items'])
+        public_domains: Dict[str, List[str]] = {}
+        for domain in domains:
+            # A private custom domain is reachable only through VPC endpoints.
+            if 'PRIVATE' in domain.get('endpointConfiguration', {}).get('types', []):
+                continue
+            for page in client.get_paginator('get_base_path_mappings').paginate(domainName=domain['domainName']):
+                for mapping in page.get('items', []):
+                    public_domains.setdefault(mapping['restApiId'], []).append(domain['domainName'])
+        return public_domains
+    except (ClientError, BotoCoreError) as e:
+        logger.warning(f"Failed to retrieve API Gateway custom domains in {region} - {e}")
+        return None
+
+
+@timeit
+def add_public_custom_domains(boto3_session: boto3.session.Session, apis: List[Dict]) -> None:
+    """
+    Sets public_custom_domains on each API whose default execute-api endpoint is disabled: the list of public
+    custom domains that map to it, or None when they cannot be read. Only regions with such APIs are queried.
+    """
+    disabled = [api for api in apis if api.get('disableExecuteApiEndpoint')]
+    for region in {api['region'] for api in disabled}:
+        public_domains = get_public_custom_domains(boto3_session, region)
+        for api in disabled:
+            if api['region'] != region:
+                continue
+            api['public_custom_domains'] = None if public_domains is None else public_domains.get(api['id'], [])
+
+
+@timeit
 def transform_apigateway_rest_apis(apis):
     # neo4j does not accept datetime objects and values. This loop is used to convert
     # these values to string.
@@ -274,6 +315,7 @@ def load_apigateway_rest_apis(
     rest_api.minimumcompressionsize = r.minimumCompressionSize,
     rest_api.name = r.name,
     rest_api.disableexecuteapiendpoint = r.disableExecuteApiEndpoint,
+    rest_api.public_custom_domains = r.public_custom_domains,
     rest_api.endpoint_conf_types = r.endpointConfiguration.types,
     rest_api.lastupdated = $aws_update_tag,
     rest_api.region = r.region,
@@ -548,6 +590,7 @@ def sync_apigateway_rest_apis(
 
     logger.info(f"Total API Gateway APIs: {len(data)}")
 
+    add_public_custom_domains(boto3_session, data)
     partition = get_partition_from_params(common_job_parameters)
     load_apigateway_rest_apis(neo4j_session, data, current_aws_account_id, aws_update_tag, partition)
 
