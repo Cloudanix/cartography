@@ -136,10 +136,8 @@ def sync(session: neo4j.Session, params: Dict, net: Network, vnic_rows: List[Dic
     """
     Write CAN_NETWORK_REACH from this compartment's instances and drop stale ones, then the
     summaries: reachable data stores on every instance, reverse counts on this compartment's
-    data stores. Run after the instances' internet_reachable is written.
-    ponytail: counts see only edges written so far in this sync, so sources in compartments
-    analysed after the store's own are missed; move the counts to a tenancy-level final step
-    if cross-compartment reach matters.
+    data stores and on every store this compartment's instances reach (a store in a compartment
+    analysed earlier is recounted, so its count ends complete after the last compartment).
     """
     tag = params["UPDATE_TAG"]
     computes = instances(vnic_rows, net)
@@ -150,7 +148,7 @@ def sync(session: neo4j.Session, params: Dict, net: Network, vnic_rows: List[Dic
         rows = reach_rows(computes, stores, net, label)
         merge_reach_edges(session, INSTANCE_LABEL, label, rows, tag)
         edges.extend(rows)
-        in_scope[label] = [s["id"] for s in stores if s["in_scope"]]
+        in_scope[label] = sorted({s["id"] for s in stores if s["in_scope"]} | {r["dst"] for r in rows})
     session.run(_CLEANUP, **params).consume()
     set_node_properties(session, INSTANCE_LABEL, reach_summaries([c["id"] for c in computes], edges), evaluated_at=tag)
     for label, ids in in_scope.items():
