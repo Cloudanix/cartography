@@ -19,7 +19,9 @@ Representation of an AWS Account.
 - Many node types belong to an `AWSAccount`.
 
         ```
-        (AWSAccount)-[RESOURCE]->(AWSDNSZone,
+        (AWSAccount)-[RESOURCE]->(AWSBackupJob,
+                              AWSBackupProtectedResource,
+                              AWSDNSZone,
                               AWSGroup,
                               AWSInspectorFinding,
                               AWSInspectorPackage,
@@ -37,8 +39,10 @@ Representation of an AWS Account.
                               EC2Reservation,
                               EC2ReservedInstance,
                               EC2SecurityGroup,
+                              EFSFileSystem,
                               ElasticIPAddress,
                               ESDomain,
+                              FSxFileSystem,
                               LaunchConfiguration,
                               LaunchTemplate,
                               LaunchTemplateVersion,
@@ -3376,4 +3380,125 @@ Representation of an AWS SSM [PatchComplianceData](https://docs.aws.amazon.com/s
 
         ```
         (EC2Instance)-[HAS_INFORMATION]->(SSMInstancePatch)
+        ```
+
+### AWSBackupJob
+
+Representation of an AWS Backup [backup job](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_BackupJob.html). Only jobs created in the last 30 days are synced (the window ListBackupJobs returns), capped per region.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The backup job ID |
+| backup\_job\_id | The backup job ID |
+| resource\_arn | The ARN of the resource the job backed up |
+| resource\_type | The type of the resource, such as EFS or EC2 |
+| recovery\_point\_arn | The ARN of the recovery point the job produced; empty until the job completes |
+| recovery\_point\_delete\_after\_days | Days after creation that the recovery point is deleted; empty when it is kept until deleted by hand |
+| creation\_date | When the job was created (ISO-8601) |
+| completion\_date | When the job finished (ISO-8601) |
+| state | The job state, such as COMPLETED or FAILED |
+| backup\_vault\_name | The name of the vault that holds the recovery point |
+| backup\_vault\_arn | The ARN of that vault |
+| region | The region of the job |
+
+#### Relationships
+
+- AWSBackupJob is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AWSBackupJob)
+        ```
+
+### AWSBackupProtectedResource
+
+Representation of a resource AWS Backup has [successfully backed up](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_ProtectedResource.html).
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the protected resource |
+| resource\_arn | The ARN of the protected resource |
+| resource\_type | The type of the resource, such as EFS or EC2 |
+| resource\_name | The name of the resource |
+| last\_backup\_time | When the resource was last backed up (ISO-8601) |
+| last\_recovery\_point\_arn | The ARN of the latest recovery point |
+| region | The region of the protected resource |
+
+#### Relationships
+
+- AWSBackupProtectedResource is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AWSBackupProtectedResource)
+        ```
+
+### EFSFileSystem
+
+Representation of an [Amazon EFS file system](https://docs.aws.amazon.com/efs/latest/ug/API_FileSystemDescription.html). EFS is reachable only through mount targets inside a VPC, so it carries no internet exposure.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the file system |
+| arn | The ARN of the file system |
+| file\_system\_id | The file system ID |
+| name | The value of the Name tag |
+| creation\_time | When the file system was created (ISO-8601) |
+| encrypted | Whether the file system is encrypted at rest |
+| kms\_key\_id | The ARN of the KMS key that encrypts it |
+| life\_cycle\_state | The lifecycle state, such as available |
+| number\_of\_mount\_targets | The number of mount targets |
+| performance\_mode | generalPurpose or maxIO |
+| throughput\_mode | bursting, provisioned or elastic |
+| consolelink | Link to the file system in the AWS console |
+| region | The region of the file system |
+
+#### Relationships
+
+- EFSFileSystem is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(EFSFileSystem)
+        ```
+
+### FSxFileSystem
+
+Representation of an [Amazon FSx file system](https://docs.aws.amazon.com/fsx/latest/APIReference/API_FileSystem.html) (Windows File Server, Lustre, NetApp ONTAP or OpenZFS). FSx is reachable only through network interfaces inside its VPC, so it carries no internet exposure.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the file system |
+| arn | The ARN of the file system |
+| file\_system\_id | The file system ID |
+| file\_system\_type | WINDOWS, LUSTRE, ONTAP or OPENZFS |
+| creation\_time | When the file system was created (ISO-8601) |
+| lifecycle | The lifecycle state, such as AVAILABLE |
+| kms\_key\_id | The ARN of the KMS key that encrypts it |
+| storage\_capacity | Storage capacity in GiB |
+| storage\_type | SSD, HDD or INTELLIGENT\_TIERING |
+| dns\_name | The DNS name clients mount |
+| vpc\_id | The VPC of the file system |
+| subnet\_ids | The subnets of its network interfaces |
+| automatic\_backup\_retention\_days | Days FSx keeps its own daily automatic backups; 0 means they are off |
+| consolelink | Link to the file system in the AWS console |
+| region | The region of the file system |
+
+#### Relationships
+
+- FSxFileSystem is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(FSxFileSystem)
+        ```
+
+- FSxFileSystem is a member of a VPC.
+
+        ```
+        (FSxFileSystem)-[MEMBER_OF_AWS_VPC]->(AWSVpc)
         ```
