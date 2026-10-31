@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 from googleapiclient.errors import HttpError
@@ -218,9 +219,13 @@ def test_identity_sourced_instance_edges():
     other = Instance(id="other", running=True, vpcs=("vpc",))
     fw = _fw(
         True, ["tcp:5432-5432"], source_sas=frozenset({"app@p.iam"}), target_tags=frozenset({"db"}),
+        name="db-from-app",
     )
     rows = instance_rows([db, app, other], {"vpc": VpcFacts(visible=True, firewalls=[fw])})
-    assert rows == [{"src": "app", "dst": "db", "ports": ["tcp:5432-5432"], "via": "firewall_source_tag_or_sa"}]
+    assert rows == [{
+        "src": "app", "dst": "db", "ports": ["tcp:5432-5432"], "via": "firewall_source_tag_or_sa",
+        "admitted_by": "db-from-app",
+    }]
 
 
 VPC_URI = "projects/p/global/networks/main"
@@ -374,3 +379,105 @@ def test_transform_routes():
     )
     assert routes[0]["vpc_partial_uri"] == "projects/p/global/networks/default"
     assert routes[0]["next_hop_gateway"] == "projects/p/global/gateways/default-internet-gateway"
+
+
+# ---------------------------------------------------------------- exposure_paths / exposure_blocked_by
+
+IGW_ROUTE = {
+    "name": "default-igw", "dest_range": "0.0.0.0/0", "priority": 1000, "tags": [],
+    "next_hop_gateway": "projects/p/global/gateways/default-internet-gateway",
+}
+SUBNET_ROUTE = {"name": "subnet", "dest_range": "10.0.0.0/24", "priority": 0, "tags": [], "next_hop_gateway": None}
+WEB_443 = _fw(True, ["tcp:443-443"], source_ranges=("0.0.0.0/0",), name="web-443")
+
+
+def _direct(vpc):
+    inst = Instance(id="i", running=True, public_v4=True, vpcs=("vpc",), external_ipv4="34.1.2.3")
+    props = reach.instance_direct(inst, {"vpc": vpc}).props()
+    return json.loads(props["exposure_paths"]), json.loads(props["exposure_blocked_by"])
+
+
+def test_direct_path_names_route_and_admitting_rule():
+    paths, blocked = _direct(VpcFacts(visible=True, firewalls=[WEB_443], routes=[SUBNET_ROUTE, IGW_ROUTE]))
+    assert blocked == []
+    assert paths == [{
+        "via": "direct_ipv4", "entry": {"type": "external_ip", "id": "34.1.2.3"}, "ports": ["tcp:443-443"],
+        "hops": [
+            {"hop": "network", "id": "vpc"},
+            {"hop": "route", "id": "default-igw", "rule": "0.0.0.0/0 -> default-internet-gateway"},
+            {"hop": "firewall", "id": "web-443"},
+        ],
+    }]
+    # Firewalls not visible: every port, and only the network is known.
+    paths, _ = _direct(VpcFacts(visible=False))
+    assert paths[0]["via"] == "direct_ipv4_unresolved_firewall"
+    assert paths[0]["hops"] == [{"hop": "network", "id": "vpc"}]
+
+
+def test_blockers_route_vpc_rules_and_policy():
+    no_route = VpcFacts(visible=True, firewalls=[WEB_443], routes=[SUBNET_ROUTE])
+    assert _direct(no_route) == (
+        [], [{
+            "hop": "route", "id": None, "reason": "no_internet_route",
+            "detail": "no 0.0.0.0/0 route to default-internet-gateway in vpc",
+        }],
+    )
+    nva = {"name": "to-nva", "dest_range": "0.0.0.0/0", "priority": 900, "tags": [], "next_hop_gateway": None}
+    assert _direct(VpcFacts(visible=True, firewalls=[WEB_443], routes=[IGW_ROUTE, nva]))[1][0]["id"] == "to-nva"
+    # Implied deny: no rule admits the world.
+    internal = _fw(True, ["tcp:22-22"], source_ranges=("10.0.0.0/8",), name="ssh")
+    assert _direct(VpcFacts(visible=True, firewalls=[internal]))[1] == [
+        {"hop": "firewall", "id": "vpc", "reason": "not_allowed"},
+    ]
+    deny_all = _fw(False, ["tcp:0-65535"], priority=900, source_ranges=("0.0.0.0/0",), name="deny-all")
+    assert _direct(VpcFacts(visible=True, firewalls=[WEB_443, deny_all]))[1] == [
+        {"hop": "firewall", "id": "deny-all", "reason": "denied"},
+    ]
+    # Scenario 8: the org policy's deny decides before the VPC allow.
+    org = _row("HIERARCHY", 0, 100, "deny", ["tcp:443"], policy_name="9001")
+    assert _direct(_vpc([org], [WEB_443])) == (
+        [], [
+            {"hop": "firewall_policy", "id": "9001", "reason": "denied", "detail": "HIERARCHY"},
+        ],
+    )
+
+
+def test_lb_path_lists_listener_backend_group_and_firewall():
+    backend = Instance(id="be", running=True, vpcs=("vpc",), tags=frozenset({"lb"}))
+    gfe = _fw(True, ["tcp:8080-8080"], source_ranges=network.GFE_RANGES, target_tags=frozenset({"lb"}), name="gfe")
+    row = {
+        "id": "fr", "scheme": "EXTERNAL_MANAGED", "protocol": "TCP", "port_range": "443-443", "url_map": "um",
+        "target": "projects/p/global/targetHttpsProxies/web", "ip_address": "34.9.9.9",
+    }
+    lb = reach.LbFacts(
+        url_maps={"um": ["bs"]}, backends={"bs": {"groups": ["ig"], "port_name": "http"}},
+        named_ports={"ig": ["http:8080"]}, members={"ig": ["be"]},
+    )
+    rules, backends, inst = reach.forwarding_rules([row]), {"bs": reach.Reach()}, {"be": reach.Reach()}
+    vpcs = {"vpc": VpcFacts(visible=True, firewalls=[gfe])}
+    reach.add_lb_paths([row], rules, lb, {"be": backend}, vpcs, backends, inst)
+    listener = {"hop": "listener", "id": "fr", "rule": "443-443"}
+    assert json.loads(inst["be"].props()["exposure_paths"]) == [{
+        "via": "forwarding_rule:fr", "ports": ["tcp:8080-8080"],
+        "entry": {"type": "forwarding_rule", "id": "fr", "listener_ports": ["tcp:443-443"]},
+        "hops": [
+            listener, {"hop": "backend", "id": "bs"}, {"hop": "target_group", "id": "ig"},
+            {"hop": "network", "id": "vpc"}, {"hop": "firewall", "id": "gfe"},
+        ],
+    }]
+    fr_path = json.loads(rules["fr"].props()["exposure_paths"])[0]
+    assert fr_path["entry"] == {"type": "external_ip", "id": "34.9.9.9"} and fr_path["hops"] == [listener]
+    assert json.loads(backends["bs"].props()["exposure_paths"])[0]["hops"] == [listener]
+
+
+def test_managed_service_path_and_blocker():
+    sql = reach.sql_instances([
+        {"id": "open", "ipv4": True, "public_ip": "1.2.3.4", "networks": ["0.0.0.0/0"], "port": 5432},
+        {"id": "narrow", "ipv4": True, "public_ip": "1.2.3.4", "networks": ["203.0.113.0/24"], "port": 5432},
+    ])
+    path = json.loads(sql["open"].props()["exposure_paths"])[0]
+    assert path["entry"] == {"type": "external_ip", "id": "1.2.3.4"}
+    assert path["hops"] == [{"hop": "service", "id": "open", "rule": "authorized_networks 0.0.0.0/0"}]
+    assert json.loads(sql["narrow"].props()["exposure_blocked_by"]) == [
+        {"hop": "service", "id": "narrow", "reason": "not_allowed", "detail": "authorized_networks"},
+    ]

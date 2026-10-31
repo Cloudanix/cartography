@@ -33,6 +33,14 @@ from typing import Tuple
 
 import neo4j
 
+from cartography.intel.exposure.layers import BLOCK_DENIED
+from cartography.intel.exposure.layers import BLOCK_NO_INTERNET_ROUTE
+from cartography.intel.exposure.layers import BLOCK_NOT_ALLOWED
+from cartography.intel.exposure.layers import hop
+from cartography.intel.exposure.layers import HOP_FIREWALL
+from cartography.intel.exposure.layers import HOP_FIREWALL_POLICY
+from cartography.intel.exposure.layers import HOP_NETWORK
+from cartography.intel.exposure.layers import HOP_ROUTE
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
 from cartography.intel.exposure.ports import union_all
@@ -87,6 +95,9 @@ class Firewall:
     network_context: Optional[str] = None
     other_sources: bool = False
     secure_tag_target: bool = False
+    # Shown in exposure paths / blockers: VPC rule name, or the policy id for a policy rule.
+    name: Optional[str] = None
+    policy_type: Optional[str] = None
 
     @property
     def has_source(self) -> bool:
@@ -149,6 +160,7 @@ def firewall_from_row(row: Dict) -> Optional[Firewall]:
         source_sas=frozenset(row.get("source_service_accounts") or ()),
         target_tags=frozenset(row.get("target_tags") or ()),
         target_sas=frozenset(row.get("target_service_accounts") or ()),
+        name=row.get("name"),
     )
 
 
@@ -169,6 +181,8 @@ def policy_rule_from_row(row: Dict) -> Optional[Firewall]:
         network_context=None if context == UNSPECIFIED else context,
         other_sources=bool(row.get("other_sources")),
         secure_tag_target=bool(row.get("target_secure_tags")),
+        name=row.get("policy_name"),
+        policy_type=row.get("policy_type"),
     )
 
 
@@ -260,27 +274,36 @@ def open_ports(
     return levels_open([firewalls], tags, sas, source)
 
 
-def internet_route(routes: List[Dict], tags: FrozenSet[str], family: str) -> Optional[bool]:
-    """
-    Does the instance's default route lead to the internet gateway? None when routes were not
-    ingested for this network (do not block on what we cannot see).
+def _to_gateway(route: Dict) -> bool:
+    return str(route.get("next_hop_gateway") or "").endswith(INTERNET_GATEWAY)
 
-    ponytail: only /0 routes are compared (lowest priority number wins, ties count if any is the
-    gateway); a more specific route sending part of the internet to an appliance is not modelled.
+
+def default_route(routes: List[Dict], tags: FrozenSet[str], family: str) -> Optional[Dict]:
     """
-    if not routes:
-        return None
+    The /0 route the instance uses, None when it has none. Lowest priority number wins; on a tie
+    the gateway route is taken (any gateway route among the best counts).
+
+    ponytail: only /0 routes are compared; a more specific route sending part of the internet to an
+    appliance is not modelled.
+    """
     defaults = [
         r for r in routes
         if r.get("dest_range") == WORLD_CIDR[family] and (not r.get("tags") or set(r["tags"]) & tags)
     ]
     if not defaults:
-        return False
-    best = min(int(r.get("priority") or 0) for r in defaults)
-    return any(
-        str(r.get("next_hop_gateway") or "").endswith(INTERNET_GATEWAY)
-        for r in defaults if int(r.get("priority") or 0) == best
-    )
+        return None
+    return min(defaults, key=lambda r: (int(r.get("priority") or 0), not _to_gateway(r)))
+
+
+def internet_route(routes: List[Dict], tags: FrozenSet[str], family: str) -> Optional[bool]:
+    """
+    Does the instance's default route lead to the internet gateway? None when routes were not
+    ingested for this network (do not block on what we cannot see).
+    """
+    if not routes:
+        return None
+    best = default_route(routes, tags, family)
+    return best is not None and _to_gateway(best)
 
 
 def forwarding_ports(protocol: Optional[str], port_range: Optional[str], ports: Optional[List[str]]) -> PortSet:
@@ -312,7 +335,7 @@ WITH vpc, count(owner) > 0 AS visible
 OPTIONAL MATCH (vpc)-[:RESOURCE]->(fw:GCPFirewall)
 WITH vpc, visible, collect(fw {{.*}}) AS firewalls
 OPTIONAL MATCH (vpc)-[:RESOURCE]->(rt:GCPRoute)
-WITH vpc, visible, firewalls, collect(rt {{.dest_range, .priority, .tags, .next_hop_gateway}}) AS routes
+WITH vpc, visible, firewalls, collect(rt {{.name, .dest_range, .priority, .tags, .next_hop_gateway}}) AS routes
 OPTIONAL MATCH (vpc)-[:RESOURCE]->(pr:GCPFirewallPolicyRule)
 RETURN vpc.id AS id, visible, firewalls, routes, collect(pr {{.*}}) AS policy_rules,
     vpc.network_firewall_policy_enforcement_order AS enforcement_order
@@ -328,6 +351,26 @@ class Instance:
     vpcs: Tuple[str, ...] = ()
     tags: FrozenSet[str] = frozenset()
     sas: FrozenSet[str] = frozenset()
+    # Path entry points; with several access configs, the lowest address.
+    external_ipv4: Optional[str] = None
+    external_ipv6: Optional[str] = None
+
+
+def vpc_open(inst: Instance, vpc: Optional[VpcFacts], sources: List[str], family: Optional[str] = None) -> PortSet:
+    """
+    Ports one of the instance's networks opens to any of `sources`; every port when its firewalls
+    are not visible. With `family`, a network whose default route avoids the internet gateway opens nothing.
+    """
+    if family and vpc is not None and internet_route(vpc.routes, inst.tags, family) is False:
+        return PortSet.empty()
+    if vpc is None or not vpc.visible:
+        return PortSet.everything()
+    return union_all(levels_open(vpc.levels, inst.tags, inst.sas, from_cidr(s)) for s in sources)
+
+
+def unresolved(inst: Instance, vpcs: Dict[str, VpcFacts]) -> bool:
+    """Some network of the instance has firewalls this workspace cannot see."""
+    return any(v not in vpcs or not vpcs[v].visible for v in inst.vpcs)
 
 
 def instance_open(
@@ -336,22 +379,83 @@ def instance_open(
     """
     Ports the instance's networks open to any of `sources`, and whether some network's firewalls
     were not visible (then every port counts: fail-safe, as the legacy exposure job does).
-    With `family`, a network whose default route avoids the internet gateway opens nothing.
 
     ponytail: union over NICs; a multi-NIC instance gets every network's rules for every address.
     """
     sources = list(sources)
-    ports, unresolved = PortSet.empty(), False
-    for vpc_id in inst.vpcs:
-        vpc = vpcs.get(vpc_id)
-        if vpc is None or not vpc.visible:
-            unresolved, opened = True, PortSet.everything()
-        else:
-            opened = union_all(levels_open(vpc.levels, inst.tags, inst.sas, from_cidr(s)) for s in sources)
-        if family and vpc is not None and internet_route(vpc.routes, inst.tags, family) is False:
-            opened = PortSet.empty()
-        ports = ports | opened
-    return ports, unresolved
+    ports = union_all(vpc_open(inst, vpcs.get(v), sources, family) for v in inst.vpcs)
+    return ports, unresolved(inst, vpcs)
+
+
+# ---------------------------------------------------------------- path context (exposure_paths / _blocked_by)
+
+
+def admitting_rules(
+    levels: Iterable[Iterable[Firewall]], inst: Instance, sources: List[Callable[[Firewall], bool]], opened: PortSet,
+) -> List[Firewall]:
+    """
+    Allow rules for `sources` on this instance whose ports overlap `opened`, in evaluation order.
+
+    ponytail: candidates, not per-port attribution: an allow shadowed by an earlier allow for the same
+    port is listed too. Upgrade: have rules.tiered_open record the deciding rule per port.
+    """
+    return [
+        fw for level in levels for fw in sorted(level, key=lambda r: r.priority)
+        if fw.allow and not fw.goto_next and applies_to(fw, inst.tags, inst.sas) and
+        any(s(fw) for s in sources) and not (fw.ports & opened).is_empty()
+    ]
+
+
+def _rule_hop(fw: Firewall) -> Dict:
+    return hop(HOP_FIREWALL_POLICY if fw.in_policy else HOP_FIREWALL, fw.name)
+
+
+def nic_hops(
+    inst: Instance, vpc_id: str, vpc: Optional[VpcFacts], sources: List[str], opened: PortSet,
+    family: Optional[str] = None,
+) -> List[Dict]:
+    """Hops of a path through one network: the network, its internet route (direct paths), the admitting rules."""
+    hops = [hop(HOP_NETWORK, vpc_id)]
+    if vpc is None:
+        return hops
+    route = default_route(vpc.routes, inst.tags, family) if family else None
+    if family and route is not None:
+        hops.append(hop(HOP_ROUTE, route.get("name"), rule=f"{WORLD_CIDR[family]} -> {INTERNET_GATEWAY}"))
+    if vpc.visible:
+        matchers = [from_cidr(s) for s in sources]
+        hops.extend(_rule_hop(fw) for fw in admitting_rules(vpc.levels, inst, matchers, opened))
+    return hops
+
+
+def _first_deny(vpc: VpcFacts, inst: Instance, source: Callable[[Firewall], bool]) -> Optional[Firewall]:
+    """
+    Deny of the first level holding an allow or deny for `source` on this instance (the level that
+    decides), None when that level only allows or no level decides (implied deny).
+
+    ponytail: a level denying one port and silent on the others still reads as the denier; no
+    per-port attribution. Upgrade: record the deciding rule per port in rules.tiered_open.
+    """
+    for level in vpc.levels:
+        rules = [fw for fw in level if not fw.goto_next and applies_to(fw, inst.tags, inst.sas) and source(fw)]
+        if rules:
+            denies = [fw for fw in rules if not fw.allow]
+            return min(denies, key=lambda fw: fw.priority) if denies else None
+    return None
+
+
+def nic_blocker(inst: Instance, vpc_id: str, vpc: VpcFacts, family: str) -> Dict:
+    """Reach.block() arguments explaining why one visible network admits nothing from the internet."""
+    if internet_route(vpc.routes, inst.tags, family) is False:
+        route = default_route(vpc.routes, inst.tags, family)
+        return {
+            "kind": HOP_ROUTE, "hop_id": route.get("name") if route else None, "reason": BLOCK_NO_INTERNET_ROUTE,
+            "detail": f"no {WORLD_CIDR[family]} route to {INTERNET_GATEWAY} in {vpc_id}",
+        }
+    deny = _first_deny(vpc, inst, from_cidr(WORLD_CIDR[family]))
+    if deny is None:
+        return {"kind": HOP_FIREWALL, "hop_id": vpc_id, "reason": BLOCK_NOT_ALLOWED}
+    kind = HOP_FIREWALL_POLICY if deny.in_policy else HOP_FIREWALL
+    return {"kind": kind, "hop_id": deny.name, "reason": BLOCK_DENIED, "detail": deny.policy_type}
 
 
 _INSTANCE_QUERY = f"""
@@ -379,6 +483,8 @@ def instance_from_row(row: Dict) -> Instance:
         vpcs=tuple(sorted(row.get("vpcs") or ())),
         tags=frozenset(row.get("tags") or ()),
         sas=frozenset(row.get("sas") or ()),
+        external_ipv4=min(row.get("public_ips") or [None]),
+        external_ipv6=row.get("ipv6"),
     )
 
 

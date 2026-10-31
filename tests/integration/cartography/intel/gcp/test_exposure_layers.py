@@ -2,6 +2,7 @@
 End-to-end check of the GCP exposure layers on a graph built by the GCP loaders.
 Scenarios follow docs/exposure-layers/plan.md section 8 where the construct exists in GCP.
 """
+import json
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -331,6 +332,69 @@ def test_gcp_exposure_layers_end_to_end(neo4j_session):
 
     other = _props(s, 'other-open')
     assert 'internet_reachable' not in other and 'access_auth' not in other
+    assert 'exposure_evaluated_at' not in other
+
+
+def _json(props, key):
+    return json.loads(props[key])
+
+
+def test_gcp_exposure_context_paths_blockers_and_summaries(neo4j_session):
+    _build(neo4j_session)
+    exposure_layers.run(neo4j_session, PARAMS)
+    s = neo4j_session
+
+    open_vm = _props(s, 'open')
+    assert open_vm['exposure_evaluated_at'] == TAG
+    assert _json(open_vm, 'exposure_blocked_by') == []
+    assert _json(open_vm, 'exposure_paths') == [{
+        'via': 'direct_ipv4', 'entry': {'type': 'external_ip', 'id': '34.0.0.1'}, 'ports': ['tcp:443-443'],
+        'hops': [
+            {'hop': 'network', 'id': MAIN_URI},
+            {'hop': 'route', 'id': 'main-default', 'rule': '0.0.0.0/0 -> default-internet-gateway'},
+            {'hop': 'firewall', 'id': 'web-443'},
+        ],
+    }]
+
+    blockers = {name: _json(_props(s, name), 'exposure_blocked_by') for name in ('noroute', 'rfc1918', 'locked', 'tie')}
+    noroute_uri = f'projects/{PROJECT}/global/networks/{NOROUTE}'
+    assert blockers['noroute'] == [{
+        'hop': 'route', 'id': None, 'reason': 'no_internet_route',
+        'detail': f'no 0.0.0.0/0 route to default-internet-gateway in {noroute_uri}',
+    }]
+    assert blockers['rfc1918'] == [{'hop': 'firewall', 'id': MAIN_URI, 'reason': 'not_allowed'}]
+    assert blockers['locked'] == [{'hop': 'firewall', 'id': 'locked-deny', 'reason': 'denied'}]
+    assert blockers['tie'] == [{'hop': 'firewall', 'id': 'tie-deny', 'reason': 'denied'}]
+
+    backend_paths = _json(_props(s, 'lb-backend'), 'exposure_paths')
+    listener = {'hop': 'listener', 'id': FR_ID, 'rule': '443-443'}
+    assert backend_paths == [{
+        'via': f'forwarding_rule:{FR_ID}', 'ports': ['tcp:8080-8080'],
+        'entry': {'type': 'forwarding_rule', 'id': FR_ID, 'listener_ports': ['tcp:443-443']},
+        'hops': [
+            listener, {'hop': 'backend', 'id': f'projects/{PROJECT}/global/backendServices/web'},
+            {'hop': 'target_group', 'id': f'{ZONE}/instanceGroups/web-mig'},
+            {'hop': 'network', 'id': MAIN_URI}, {'hop': 'firewall', 'id': 'gfe-8080'},
+        ],
+    }]
+    assert _json(_props(s, FR_ID, 'GCPForwardingRule', 'id'), 'exposure_paths')[0]['hops'] == [listener]
+
+    app = _props(s, 'app')
+    assert app['network_reachable_data_store_count'] == 2
+    assert _json(app, 'network_reachable_data_stores') == [
+        {
+            'id': f'{ZONE}/instances/db', 'type': 'GCPInstance', 'ports': ['tcp:5432-5432'],
+            'via': 'firewall_source_tag_or_sa', 'admitted_by': 'db-from-app',
+        },
+        {'id': 'sql-pg', 'type': 'GCPSQLInstance', 'ports': ['tcp:5432-5432'], 'via': 'private_service_access'},
+    ]
+    assert _props(s, 'noroute')['network_reachable_data_store_count'] == 0
+    sql = _props(s, 'sql-pg', 'GCPSQLInstance', 'id')
+    # open (direct) and lb-backend (via the LB) are internet-reachable among the 7 main-network VMs.
+    assert (sql['network_reachable_from_count'], sql['network_reachable_from_internet_exposed_count']) == (7, 2)
+    assert sql['exposure_evaluated_at'] == TAG
+    db = _props(s, 'db')
+    assert (db['network_reachable_from_count'], db['network_reachable_from_internet_exposed_count']) == (1, 0)
 
 
 BLOCKED_SA, OPENED_SA, NETPOL_SA, LOCKED_DB_SA = (
@@ -425,6 +489,9 @@ def test_gcp_firewall_policies_end_to_end(neo4j_session):
     # Scenario 8: the VPC rule web-443 admits it, the org policy's deny wins.
     blocked = _props(s, 'org-blocked')
     assert blocked['public_reasons'] == ['external_ip'] and blocked['internet_reachable'] is False
+    assert json.loads(blocked['exposure_blocked_by']) == [
+        {'hop': 'firewall_policy', 'id': '9001', 'reason': 'denied', 'detail': 'HIERARCHY'},
+    ]
     # No VPC rule opens 8443; the org allow does, before the implied deny.
     assert _props(s, 'org-opened')['internet_reachable_ports'] == ['tcp:8443-8443']
     # Default enforcement order: the VPC allow decides before the network policy's deny is reached.

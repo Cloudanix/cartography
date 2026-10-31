@@ -19,13 +19,18 @@ other projects are not walked. O(instances^2) per network that has identity-sour
 from typing import Callable
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 
 from cartography.intel.exposure.layers import CAN_NETWORK_REACH
 from cartography.intel.exposure.layers import merge_reach_edges
+from cartography.intel.exposure.layers import reach_summaries
+from cartography.intel.exposure.layers import set_node_properties
+from cartography.intel.exposure.layers import write_reach_counts
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
+from cartography.intel.gcp.exposure_layers.network import admitting_rules
 from cartography.intel.gcp.exposure_layers.network import Firewall
 from cartography.intel.gcp.exposure_layers.network import from_cidr
 from cartography.intel.gcp.exposure_layers.network import Instance
@@ -38,6 +43,7 @@ from cartography.intel.gcp.exposure_layers.network import V4
 from cartography.intel.gcp.exposure_layers.network import VpcFacts
 from cartography.intel.gcp.exposure_layers.network import WORLD_CIDR
 
+COMPUTE, SQL = "GCPInstance", "GCPSQLInstance"
 VIA_PRIVATE_SERVICE_ACCESS = "private_service_access"
 VIA_FIREWALL_IDENTITY = "firewall_source_tag_or_sa"
 # Instance-to-instance traffic in one network, as a firewall policy source: any address, internal contexts.
@@ -48,6 +54,7 @@ MATCH {PROJECT}-[:RESOURCE]->(n:GCPSQLInstance)
 WHERE n.private_ip IS NOT NULL AND n.vpcNetworkID IS NOT NULL
 RETURN n.id AS id, n.vpcNetworkID AS vpc, n.port AS port
 """
+_SQL_IDS_QUERY = f"MATCH {PROJECT}-[:RESOURCE]->(n:GCPSQLInstance) RETURN n.id AS id"
 
 _CLEANUP = f"""
 MATCH {PROJECT}-[:RESOURCE]->(:GCPInstance)-[r:{CAN_NETWORK_REACH}]->()
@@ -96,6 +103,12 @@ def pair_ports(vpc: VpcFacts, src: Instance, dst: Instance) -> PortSet:
     return ports & levels_open(vpc.levels, dst.tags, dst.sas, source)
 
 
+def admitted_by(vpc: VpcFacts, src: Instance, dst: Instance, ports: PortSet) -> Optional[str]:
+    """First VPC identity allow rule admitting src to dst on these ports (a candidate, see admitting_rules)."""
+    rules = admitting_rules([vpc.firewalls], dst, [from_identity(src)], ports)
+    return rules[0].name if rules else None
+
+
 def instance_rows(instances: List[Instance], vpcs: Dict[str, VpcFacts]) -> List[Dict]:
     rows = []
     for vpc_id, vpc in vpcs.items():
@@ -107,7 +120,10 @@ def instance_rows(instances: List[Instance], vpcs: Dict[str, VpcFacts]) -> List[
                 ports = pair_ports(vpc, src, dst) if src.id != dst.id else PortSet.empty()
                 if ports.is_empty():
                     continue
-                rows.append({"src": src.id, "dst": dst.id, "ports": ports.to_strings(), "via": VIA_FIREWALL_IDENTITY})
+                rows.append({
+                    "src": src.id, "dst": dst.id, "ports": ports.to_strings(), "via": VIA_FIREWALL_IDENTITY,
+                    "admitted_by": admitted_by(vpc, src, dst, ports),
+                })
     return rows
 
 
@@ -125,10 +141,24 @@ def _merge_duplicates(rows: List[Dict]) -> List[Dict]:
 
 
 def sync(session: neo4j.Session, params: Dict, vpcs: Dict[str, VpcFacts], instances: Dict[str, Instance]) -> None:
-    """Write this project's CAN_NETWORK_REACH edges and delete the ones not refreshed."""
+    """
+    Write this project's CAN_NETWORK_REACH edges, delete the ones not refreshed, then the summaries:
+    network_reachable_data_stores on every instance, reverse counts on every Cloud SQL instance and
+    instance. Run after the instances' internet_reachable is written (the counts read it).
+    """
     computes = sorted(instances.values(), key=lambda i: i.id)
     stores = [dict(r) for r in session.run(_SQL_QUERY, **params)]
     tag = params["UPDATE_TAG"]
-    merge_reach_edges(session, "GCPInstance", "GCPSQLInstance", _merge_duplicates(sql_rows(computes, stores)), tag)
-    merge_reach_edges(session, "GCPInstance", "GCPInstance", _merge_duplicates(instance_rows(computes, vpcs)), tag)
+    edges = {
+        SQL: _merge_duplicates(sql_rows(computes, stores)),
+        COMPUTE: _merge_duplicates(instance_rows(computes, vpcs)),
+    }
+    for dst_label, rows in edges.items():
+        merge_reach_edges(session, COMPUTE, dst_label, rows, tag)
     session.run(_CLEANUP, **params).consume()
+
+    compute_ids = [c.id for c in computes]
+    typed = [{**row, "dst_type": label} for label, rows in edges.items() for row in rows]
+    set_node_properties(session, COMPUTE, reach_summaries(compute_ids, typed), evaluated_at=tag)
+    write_reach_counts(session, SQL, [r["id"] for r in session.run(_SQL_IDS_QUERY, **params)], tag)
+    write_reach_counts(session, COMPUTE, compute_ids, tag)

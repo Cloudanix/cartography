@@ -47,6 +47,7 @@ EXPOSURE_EVALUATED_AT = "exposure_evaluated_at"
 # Hop kinds: one vocabulary across clouds so the console renders paths without per-cloud code.
 HOP_INTERNET_GATEWAY = "internet_gateway"
 HOP_ROUTE = "route"
+HOP_NETWORK = "network"  # VPC / virtual network a path enters
 HOP_SUBNET = "subnet"
 HOP_NACL = "nacl"
 HOP_SECURITY_GROUP = "security_group"

@@ -4,7 +4,7 @@ GCP exposure layers (docs/exposure-layers/plan.md):
     L1 public / L2 internet reachable  reach.py (network.py: firewall + route evaluation)
     L3 accessible without credentials  access.py
     L4 software identity (CVE input)   software.py
-    L5 network blast radius            blast_radius.py
+    L5 network blast radius            blast_radius.py (edges, then per-node summaries / counts)
 
 Runs after the analysis jobs of the synced project; reads the graph only, calls no GCP API.
 Leaves the legacy exposed_internet / exposed_internet_type / publicContext properties untouched.
@@ -29,9 +29,10 @@ logger = logging.getLogger(__name__)
 _PARAM_KEYS = ("WORKSPACE_ID", "GCP_ORGANIZATION_ID", "GCP_PROJECT_ID", "UPDATE_TAG")
 
 
-def _write(session: neo4j.Session, by_label: Dict[str, Dict[str, Dict]]) -> None:
+def _write(session: neo4j.Session, by_label: Dict[str, Dict[str, Dict]], update_tag: int) -> None:
     for label, by_id in by_label.items():
-        set_node_properties(session, label, [{"id": i, "props": p} for i, p in by_id.items()])
+        rows = [{"id": i, "props": p} for i, p in by_id.items()]
+        set_node_properties(session, label, rows, evaluated_at=update_tag)
 
 
 @timeit
@@ -50,9 +51,13 @@ def run(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     instances = read_instances(neo4j_session, params)
     access_results = access.compute(neo4j_session, params)
     reach_results = reach.compute(neo4j_session, params, vpcs, instances, access_results)
-    _write(neo4j_session, {label: {i: r.props() for i, r in by_id.items()} for label, by_id in reach_results.items()})
-    _write(neo4j_session, access_results)
-    _write(neo4j_session, software.compute(neo4j_session, params))
+    tag = params["UPDATE_TAG"]
+    _write(
+        neo4j_session, {label: {i: r.props() for i, r in by_id.items()} for label, by_id in reach_results.items()}, tag,
+    )
+    _write(neo4j_session, access_results, tag)
+    _write(neo4j_session, software.compute(neo4j_session, params), tag)
+    # After the L1/L2 writes: the reverse counts read the sources' internet_reachable.
     blast_radius.sync(neo4j_session, params, vpcs, instances)
 
     logger.info(

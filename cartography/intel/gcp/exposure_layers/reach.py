@@ -22,6 +22,12 @@ import neo4j
 
 from cartography.intel.exposure.layers import ACCESS_AUTH
 from cartography.intel.exposure.layers import AUTH_NONE
+from cartography.intel.exposure.layers import BLOCK_NOT_ALLOWED
+from cartography.intel.exposure.layers import hop
+from cartography.intel.exposure.layers import HOP_BACKEND
+from cartography.intel.exposure.layers import HOP_LISTENER
+from cartography.intel.exposure.layers import HOP_SERVICE
+from cartography.intel.exposure.layers import HOP_TARGET_GROUP
 from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
@@ -30,11 +36,14 @@ from cartography.intel.gcp.exposure_layers.network import forwarding_ports
 from cartography.intel.gcp.exposure_layers.network import GFE_RANGES
 from cartography.intel.gcp.exposure_layers.network import HTTPS
 from cartography.intel.gcp.exposure_layers.network import Instance
-from cartography.intel.gcp.exposure_layers.network import instance_open
 from cartography.intel.gcp.exposure_layers.network import is_proxy
+from cartography.intel.gcp.exposure_layers.network import nic_blocker
+from cartography.intel.gcp.exposure_layers.network import nic_hops
 from cartography.intel.gcp.exposure_layers.network import PROJECT
+from cartography.intel.gcp.exposure_layers.network import unresolved
 from cartography.intel.gcp.exposure_layers.network import V4
 from cartography.intel.gcp.exposure_layers.network import V6
+from cartography.intel.gcp.exposure_layers.network import vpc_open
 from cartography.intel.gcp.exposure_layers.network import VpcFacts
 from cartography.intel.gcp.exposure_layers.network import WORLD_CIDR
 
@@ -44,6 +53,16 @@ EXTERNAL_SCHEMES = ("EXTERNAL", "EXTERNAL_MANAGED")
 FUNCTION_INGRESS_ALL = "ALLOW_ALL"
 FUNCTION_GEN_2 = "GEN_2"
 RUN_INGRESS_ALL = "all"
+# exposure_paths[].entry.type: what the internet connects to first.
+ENTRY_EXTERNAL_IP = "external_ip"
+ENTRY_FORWARDING_RULE = "forwarding_rule"
+ENTRY_URL = "url"
+ENTRY_API_ENDPOINT = "api_endpoint"
+GCS_HOST, BIGQUERY_HOST = "storage.googleapis.com", "bigquery.googleapis.com"
+
+
+def entry(kind: str, entry_id: Optional[str], **extra: object) -> Dict:
+    return {"type": kind, "id": entry_id, **extra}
 
 
 def port_set(port: Optional[int]) -> Optional[PortSet]:
@@ -68,11 +87,24 @@ def instance_direct(inst: Instance, vpcs: Dict[str, VpcFacts]) -> Reach:
         if not has:
             continue
         reach.public_reasons.add(reason)
-        if not inst.running:
-            continue
-        ports, unresolved = instance_open(inst, vpcs, [WORLD_CIDR[family]], family)
-        reach.add_path(ports, f"direct_ip{family}" + ("_unresolved_firewall" if unresolved else ""))
+        if inst.running:
+            _add_direct_paths(reach, inst, vpcs, family)
     return reach
+
+
+def _add_direct_paths(reach: Reach, inst: Instance, vpcs: Dict[str, VpcFacts], family: str) -> None:
+    """One path per network that admits the world; a blocker for each visible network that does not."""
+    world = [WORLD_CIDR[family]]
+    via = f"direct_ip{family}" + ("_unresolved_firewall" if unresolved(inst, vpcs) else "")
+    ip = inst.external_ipv4 if family == V4 else inst.external_ipv6
+    for vpc_id in inst.vpcs:
+        vpc = vpcs.get(vpc_id)
+        ports = vpc_open(inst, vpc, world, family)
+        if not ports.is_empty():
+            hops = nic_hops(inst, vpc_id, vpc, world, ports, family)
+            reach.add_path(ports, via, hops=hops, entry=entry(ENTRY_EXTERNAL_IP, ip))
+        elif vpc is not None:
+            reach.block(**nic_blocker(inst, vpc_id, vpc, family))
 
 
 # ---------------------------------------------------------------- load balancers
@@ -86,6 +118,11 @@ class LbFacts:
     members: Dict[str, List[str]]    # instance group uri -> instance ids (managed groups)
 
 
+def listener_hop(row: Dict) -> Dict:
+    """The forwarding rule as a hop; rule is its configured front-end port range (none: every port)."""
+    return hop(HOP_LISTENER, row["id"], rule=row.get("port_range") or ",".join(row.get("ports") or []))
+
+
 def forwarding_rules(rows: List[Dict]) -> Dict[str, Reach]:
     out = {}
     for row in rows:
@@ -93,25 +130,36 @@ def forwarding_rules(rows: List[Dict]) -> Dict[str, Reach]:
         if row.get("scheme") in EXTERNAL_SCHEMES:
             reach.public_reasons.add("external_forwarding_rule")
             front = forwarding_ports(row.get("protocol"), row.get("port_range"), row.get("ports"))
-            reach.add_path(front, "external_ip")
+            reach.add_path(
+                front, "external_ip", hops=[listener_hop(row)], entry=entry(ENTRY_EXTERNAL_IP, row.get("ip_address")),
+            )
         out[row["id"]] = reach
     return out
 
 
-def backend_path(inst: Optional[Instance], vpcs: Dict[str, VpcFacts], proxy: bool, ports: PortSet) -> PortSet:
+def backend_path(
+    inst: Optional[Instance], vpcs: Dict[str, VpcFacts], proxy: bool, ports: PortSet,
+) -> Tuple[PortSet, List[Dict]]:
     """
-    Ports of one backend instance an external rule reaches. Proxy LBs connect from the Google
-    front ends, so the firewall must admit GFE_RANGES; passthrough LBs keep the client address,
-    so it must admit the world. `ports` is the backend port (proxy) or the front-end port.
+    Ports of one backend instance an external rule reaches, and the network hops admitting them.
+    Proxy LBs connect from the Google front ends, so the firewall must admit GFE_RANGES; passthrough
+    LBs keep the client address, so it must admit the world. `ports` is the backend port (proxy) or
+    the front-end port.
 
     ponytail: regional external Application LBs connect from the proxy-only subnet, not the GFE
     ranges; those backends read as unreachable until proxy-only subnets are ingested.
     """
+    opened = PortSet.empty()
+    hops: List[Dict] = []
     if inst is None or not inst.running:
-        return PortSet.empty()
-    sources = GFE_RANGES if proxy else (WORLD_CIDR[V4],)
-    opened, _ = instance_open(inst, vpcs, sources)
-    return opened & ports
+        return opened, hops
+    sources = list(GFE_RANGES if proxy else (WORLD_CIDR[V4],))
+    for vpc_id in inst.vpcs:
+        nic = vpc_open(inst, vpcs.get(vpc_id), sources) & ports
+        if not nic.is_empty():
+            opened = opened | nic
+            hops.extend(nic_hops(inst, vpc_id, vpcs.get(vpc_id), sources, nic))
+    return opened, hops
 
 
 def _rule_backends(row: Dict, lb: LbFacts) -> List[str]:
@@ -120,17 +168,32 @@ def _rule_backends(row: Dict, lb: LbFacts) -> List[str]:
     return [bs_id for bs_id in dict.fromkeys(refs) if bs_id in lb.backends]
 
 
-def _group_targets(backend: Dict, lb: LbFacts, proxy: bool, front: PortSet) -> List[Tuple[str, PortSet]]:
+def _group_targets(backend: Dict, lb: LbFacts, proxy: bool, front: PortSet) -> List[Tuple[str, PortSet, str]]:
     """
-    (instance id, port) behind one backend service. ponytail: unmanaged instance group members
-    are not ingested (needs instanceGroups.listInstances per group); only managed groups resolve.
+    (instance id, port, instance group) behind one backend service. ponytail: unmanaged instance
+    group members are not ingested (needs instanceGroups.listInstances per group); only managed groups resolve.
     """
-    out: List[Tuple[str, PortSet]] = []
+    out: List[Tuple[str, PortSet, str]] = []
     for group in backend["groups"]:
         backend_port = named_port(lb.named_ports.get(group, []), backend["port_name"])
         ports = (backend_port or PortSet.everything()) if proxy else front
-        out.extend((inst_id, ports) for inst_id in lb.members.get(group, []))
+        out.extend((inst_id, ports, group) for inst_id in lb.members.get(group, []))
     return out
+
+
+Target = Tuple[str, PortSet, bool, List[Dict]]  # instance id, port, via proxy, LB hops before the instance
+
+
+def _lb_targets(row: Dict, lb: LbFacts, front: PortSet) -> List[Target]:
+    """Backend instances of one external rule: target pool members, then backend service group members."""
+    proxy = is_proxy(row.get("target"))
+    # Target pools are passthrough: client address and front-end port reach the instance.
+    pool = [hop(HOP_TARGET_GROUP, row.get("target"))]
+    targets: List[Target] = [(i, front, False, pool) for i in row.get("target_instances") or []]
+    for bs_id in _rule_backends(row, lb):
+        for inst_id, ports, group in _group_targets(lb.backends[bs_id], lb, proxy, front):
+            targets.append((inst_id, ports, proxy, [hop(HOP_BACKEND, bs_id), hop(HOP_TARGET_GROUP, group)]))
+    return targets
 
 
 def add_lb_paths(
@@ -142,15 +205,15 @@ def add_lb_paths(
         front = rules[row["id"]].ports
         if front.is_empty():
             continue
-        via, proxy = f"forwarding_rule:{row['id']}", is_proxy(row.get("target"))
-        # Target pools are passthrough: client address and front-end port reach the instance.
-        targets = [(i, front, False) for i in row.get("target_instances") or []]
+        via, listener = f"forwarding_rule:{row['id']}", listener_hop(row)
+        lb_entry = entry(ENTRY_FORWARDING_RULE, row["id"], listener_ports=front.to_strings())
         for bs_id in _rule_backends(row, lb):
-            backends[bs_id].add_path(front, via)
-            targets.extend((i, p, proxy) for i, p in _group_targets(lb.backends[bs_id], lb, proxy, front))
-        for inst_id, ports, via_proxy in targets:
-            if inst_id in inst_reach:
-                inst_reach[inst_id].add_path(backend_path(instances.get(inst_id), vpcs, via_proxy, ports), via)
+            backends[bs_id].add_path(front, via, hops=[listener], entry=lb_entry)
+        for inst_id, ports, via_proxy, lb_hops in _lb_targets(row, lb, front):
+            if inst_id not in inst_reach:
+                continue
+            opened, nic = backend_path(instances.get(inst_id), vpcs, via_proxy, ports)
+            inst_reach[inst_id].add_path(opened, via, hops=[listener, *lb_hops, *nic], entry=lb_entry)
 
 
 # ---------------------------------------------------------------- managed services
@@ -162,10 +225,29 @@ def gke_clusters(rows: List[Dict]) -> Dict[str, Reach]:
         reach = Reach()
         if not row.get("private_endpoint") and row.get("endpoint"):
             reach.public_reasons.add("public_endpoint")
-            if not row.get("authorized_networks") or any(is_world(c) for c in row.get("cidrs") or []):
-                reach.add_path(HTTPS, "public_endpoint")
+            _add_service_path(
+                reach, row["id"], HTTPS, "public_endpoint", entry(ENTRY_EXTERNAL_IP, row["endpoint"]),
+                _gke_admits(row), "master_authorized_networks",
+            )
         out[row["id"]] = reach
     return out
+
+
+def _gke_admits(row: Dict) -> Optional[str]:
+    if not row.get("authorized_networks"):
+        return "master_authorized_networks disabled"
+    world = [c for c in row.get("cidrs") or [] if is_world(c)]
+    return f"master_authorized_networks {world[0]}" if world else None
+
+
+def _add_service_path(
+    reach: Reach, node_id: str, ports: PortSet, via: str, path_entry: Dict, admits: Optional[str], setting: str,
+) -> None:
+    """Managed service: one path when its own setting (`admits` says how) lets the world in, else a blocker."""
+    if admits:
+        reach.add_path(ports, via, hops=[hop(HOP_SERVICE, node_id, rule=admits)], entry=path_entry)
+    else:
+        reach.block(HOP_SERVICE, node_id, BLOCK_NOT_ALLOWED, detail=setting)
 
 
 def sql_instances(rows: List[Dict]) -> Dict[str, Reach]:
@@ -174,8 +256,12 @@ def sql_instances(rows: List[Dict]) -> Dict[str, Reach]:
         reach = Reach()
         if row.get("ipv4") and row.get("public_ip"):
             reach.public_reasons.add("public_ip")
-            if any(is_world(n) for n in row.get("networks") or []):
-                reach.add_path(port_set(row.get("port")) or PortSet.of(TCP), "authorized_networks")
+            world = [n for n in row.get("networks") or [] if is_world(n)]
+            _add_service_path(
+                reach, row["id"], port_set(row.get("port")) or PortSet.of(TCP), "authorized_networks",
+                entry(ENTRY_EXTERNAL_IP, row["public_ip"]), f"authorized_networks {world[0]}" if world else None,
+                "authorized_networks",
+            )
         out[row["id"]] = reach
     return out
 
@@ -188,8 +274,10 @@ def functions(rows: List[Dict]) -> Dict[str, Reach]:
         http = row.get("url") or row.get("environment") == FUNCTION_GEN_2 or not row.get("event_trigger")
         if http:
             reach.public_reasons.add("https_trigger")
-            if (row.get("ingress") or FUNCTION_INGRESS_ALL) == FUNCTION_INGRESS_ALL:
-                reach.add_path(HTTPS, "function_url")
+            ingress = row.get("ingress") or FUNCTION_INGRESS_ALL
+            admits = f"ingress {ingress}" if ingress == FUNCTION_INGRESS_ALL else None
+            url = entry(ENTRY_URL, row.get("url"))
+            _add_service_path(reach, row["id"], HTTPS, "function_url", url, admits, "ingress")
         out[row["id"]] = reach
     return out
 
@@ -200,20 +288,21 @@ def cloud_run_services(rows: List[Dict]) -> Dict[str, Reach]:
         reach = Reach()
         if row.get("url"):
             reach.public_reasons.add("run_url")
-            if (row.get("ingress") or RUN_INGRESS_ALL) == RUN_INGRESS_ALL:
-                reach.add_path(HTTPS, "run_url")
+            ingress = row.get("ingress") or RUN_INGRESS_ALL
+            admits = f"ingress {ingress}" if ingress == RUN_INGRESS_ALL else None
+            _add_service_path(reach, row["id"], HTTPS, "run_url", entry(ENTRY_URL, row["url"]), admits, "ingress")
         out[row["id"]] = reach
     return out
 
 
-def google_api(ids: List[str], access: Dict[str, Dict], via: str, reason: str) -> Dict[str, Reach]:
+def google_api(ids: List[str], access: Dict[str, Dict], via: str, reason: str, host: str) -> Dict[str, Reach]:
     """Storage-style services: the API endpoint always answers; public when L3 says anonymous."""
     out = {}
     for node_id in ids:
         reach = Reach()
         if access.get(node_id, {}).get(ACCESS_AUTH) == AUTH_NONE:
             reach.public_reasons.add(reason)
-        reach.add_path(HTTPS, via)
+        reach.add_path(HTTPS, via, entry=entry(ENTRY_API_ENDPOINT, host))
         out[node_id] = reach
     return out
 
@@ -229,7 +318,7 @@ _FR_QUERY = _q(
     "GCPForwardingRule",
     "n.load_balancing_scheme AS scheme, n.ip_protocol AS protocol, n.port_range AS port_range, n.ports AS ports, "
     "n.target AS target, n.url_map AS url_map, n.backend_services AS backend_services, "
-    "n.target_instances AS target_instances",
+    "n.target_instances AS target_instances, n.ip_address AS ip_address",
 )
 _URL_MAP_QUERY = f"""
 MATCH {PROJECT}-[:RESOURCE]->(n:GCPUrlMap) WHERE n.partial_uri IS NOT NULL
@@ -298,9 +387,10 @@ def compute(
         "GCPCloudRunService": cloud_run_services(q(_RUN_QUERY)),
         "GCPBucket": google_api(
             [r["id"] for r in q(_BUCKET_QUERY)], access.get("GCPBucket", {}), "gcs_endpoint", "public_iam_or_acl",
+            GCS_HOST,
         ),
         "GCPBigqueryDataset": google_api(
             [r["id"] for r in q(_DATASET_QUERY)], access.get("GCPBigqueryDataset", {}), "bigquery_endpoint",
-            "public_dataset_acl",
+            "public_dataset_acl", BIGQUERY_HOST,
         ),
     }
