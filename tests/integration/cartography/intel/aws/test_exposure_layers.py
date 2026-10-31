@@ -2,6 +2,8 @@
 End-to-end check of the AWS exposure layers on a graph shaped like the loaders write it.
 Scenarios follow docs/exposure-layers/plan.md section 8.
 """
+import json
+
 from cartography.intel.aws import exposure_layers
 from cartography.intel.aws.ec2.load_balancer_v2s import load_load_balancer_v2_listeners
 from cartography.intel.aws.ec2.load_balancer_v2s import transform_listeners
@@ -125,7 +127,8 @@ def _lb(session, lb_id, subnet, sgs, listeners, targets):
         """
         MATCH (a:AWSAccount{id: $account}), (s:EC2Subnet{subnetid: $subnet})
         MERGE (a)-[:RESOURCE]->(lb:LoadBalancerV2{id: $lb_id})
-        SET lb.scheme = 'internet-facing', lb.type = 'application', lb.target_group_arns = ['tg-xl']
+        SET lb.scheme = 'internet-facing', lb.type = 'application', lb.target_group_arns = ['tg-xl'],
+            lb.arn = 'arn:' + $lb_id
         MERGE (lb)-[:SUBNET]->(s)
         WITH lb
         UNWIND $sgs AS sg_id MATCH (sg:EC2SecurityGroup{id: sg_id}) MERGE (lb)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
@@ -136,7 +139,7 @@ def _lb(session, lb_id, subnet, sgs, listeners, targets):
         WITH DISTINCT lb
         UNWIND $targets AS t
             MATCH (i:EC2Instance{id: t.instance})
-            MERGE (lb)-[e:EXPOSE]->(i) SET e.port = t.port, e.protocol = 'HTTP'
+            MERGE (lb)-[e:EXPOSE]->(i) SET e.port = t.port, e.protocol = 'HTTP', e.target_group_arn = 'tg-xl'
         """,
         account=ACCOUNT, lb_id=lb_id, subnet=subnet, sgs=sgs, listeners=listeners, targets=targets,
     )
@@ -339,6 +342,7 @@ def _build(session):
     _sg(session, 'sg-open', [('tcp', 22, 22, ['0.0.0.0/0'], []), ('tcp', 443, 443, ['0.0.0.0/0'], [])])
     _sg(session, 'sg-open6', [('tcp', 80, 80, ['::/0'], [])])
     _sg(session, 'sg-office', [('tcp', 22, 22, ['203.0.113.0/24'], [])])
+    _sg(session, 'sg-ssh', [('tcp', 22, 22, ['0.0.0.0/0'], [])])
     _sg(session, 'sg-lb', [('tcp', 443, 443, ['0.0.0.0/0'], [])])
     _sg(session, 'sg-app', [('tcp', 8080, 8080, [], ['sg-lb'])])
     _sg(session, 'sg-db', [('tcp', 5432, 5432, [], ['sg-app'])])
@@ -354,6 +358,8 @@ def _build(session):
     _instance(session, 'i-noroute', 'subnet-private', ['sg-open'], public_ip='54.0.0.3')
     _instance(session, 'i-nacl', 'subnet-nacl-deny22', ['sg-open'], public_ip='54.0.0.4')
     _instance(session, 'i-noreturn', 'subnet-nacl-noreturn', ['sg-open'], public_ip='54.0.0.5')
+    # Only port 22 is open, and acl-deny22 denies it: no port left.
+    _instance(session, 'i-nacl-ssh', 'subnet-nacl-deny22', ['sg-ssh'], public_ip='54.0.0.6')
     _instance(session, 'i-ipv6', 'subnet-public', ['sg-open6'], ipv6=['2600:1f18::1'])
     _instance(session, 'i-app', 'subnet-private', ['sg-app'], private_ip='10.0.1.5')
     _instance(session, 'i-elsewhere', 'subnet-private', ['sg-office'], private_ip='192.168.1.1')
@@ -407,6 +413,50 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
     assert reach('APIGatewayRestAPI', 'api-open')[0] is True
     assert reach('ElasticacheCluster', 'cache-1')[0] is False
     assert reach('S3Bucket', 'bucket-public')[3] == ['public_resource_policy']
+
+    # L1 + L2 context: per-entry paths with their hops, blockers of public unreachable nodes.
+    def context(label, node_id):
+        p = _props(neo4j_session, label, node_id)
+        assert p['exposure_evaluated_at'] == TAG
+        return json.loads(p['exposure_paths']), json.loads(p['exposure_blocked_by'])
+
+    route_public = {'hop': 'route', 'id': 'rtb-subnet-public', 'rule': '0.0.0.0/0 -> igw-xl'}
+    assert context('EC2Instance', 'i-open') == (
+        [{
+            'via': 'direct_ipv4', 'entry': {'type': 'public_ip', 'id': '54.0.0.1'},
+            'ports': ['tcp:22-22', 'tcp:443-443'], 'hops': [route_public, {'hop': 'security_group', 'id': 'sg-open'}],
+        }], [],
+    )
+    assert context('EC2Instance', 'i-app') == (
+        [{
+            'via': 'elbv2:lb-1', 'entry': {'type': 'elbv2', 'id': 'arn:lb-1', 'listener_ports': ['tcp:443-443']},
+            'ports': ['tcp:8080-8080'], 'hops': [
+                route_public, {'hop': 'security_group', 'id': 'sg-lb'},
+                {'hop': 'listener', 'id': 'lb-1/443', 'rule': 'HTTPS 443'},
+                {'hop': 'target_group', 'id': 'tg-xl', 'rule': 'HTTP 8080'},
+                {'hop': 'security_group', 'id': 'sg-app'},
+            ],
+        }], [],
+    )
+    nacl_hops = context('EC2Instance', 'i-nacl')[0][0]['hops']
+    assert {'hop': 'nacl', 'id': 'acl-deny22'} in nacl_hops
+    no_route = {
+        'hop': 'route', 'id': 'rtb-subnet-private', 'reason': 'no_internet_route',
+        'detail': 'no 0.0.0.0/0 route to an internet gateway',
+    }
+    assert context('RDSInstance', 'db-private-subnet') == ([], [no_route])  # scenario 3
+    assert context('EC2Instance', 'i-noroute') == ([], [no_route])  # scenario 2
+    assert context('EC2Instance', 'i-office')[1] == [
+        {'hop': 'security_group', 'id': 'sg-office', 'reason': 'not_allowed'},
+    ]  # scenario 1
+    assert context('EC2Instance', 'i-nacl-ssh')[1] == [
+        {'hop': 'nacl', 'id': 'acl-deny22', 'reason': 'denied', 'ports': ['tcp:22-22']},
+    ]  # scenario 5
+    assert context('EC2Instance', 'i-noreturn')[1] == [{
+        'hop': 'nacl', 'id': 'acl-noreturn', 'reason': 'return_path_denied', 'ports': ['tcp:22-22', 'tcp:443-443'],
+    }]  # scenario 6
+    # Not public: nothing to explain.
+    assert context('ElasticacheCluster', 'cache-1') == ([], [])
 
     # L3
     def auth(label, node_id):
@@ -468,6 +518,43 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
     assert ('i-src', 'db-noroute') not in edges
     # sg-db-open admits 0.0.0.0/0, but no gateway joins vpc-src and vpc-xl.
     assert ('i-src', 'db-public') not in edges
+
+    # L5 summaries: the console cannot read edge properties.
+    def stores(node_id):
+        p = _props(neo4j_session, 'EC2Instance', node_id)
+        assert p['exposure_evaluated_at'] == TAG
+        out = json.loads(p['network_reachable_data_stores'])
+        assert p['network_reachable_data_store_count'] == len(out)
+        return out
+
+    assert stores('i-src') == [
+        {
+            'id': 'cache-peer', 'type': 'ElasticacheCluster', 'ports': ['tcp:6379-6379'], 'via': 'peering:pcx-ok',
+            'admitted_by': 'sg-cache-peer',
+        },
+        {
+            'id': 'db-peer', 'type': 'RDSInstance', 'ports': ['tcp:5432-5432'], 'via': 'peering:pcx-ok',
+            'admitted_by': 'sg-db-peer',
+        },
+        {
+            'id': 'db-tgw', 'type': 'RDSInstance', 'ports': ['tcp:5432-5432'], 'via': 'tgw:tgw-xl',
+            'admitted_by': 'sg-db-tgw',
+        },
+    ]
+    assert {
+        'id': 'db-app', 'type': 'RDSInstance', 'ports': ['tcp:5432-5432'], 'via': 'security_group',
+        'admitted_by': 'sg-db',
+    } in stores('i-app')
+
+    def reached_from(label, node_id):
+        p = _props(neo4j_session, label, node_id)
+        return p['network_reachable_from_count'], p['network_reachable_from_internet_exposed_count']
+
+    assert reached_from('RDSInstance', 'db-peer') == (1, 0)
+    # Reached by every 10.0/16 instance (sg-db-cidr) plus i-app (sg-db): 11, of which i-open, i-nacl,
+    # i-ipv6, i-app and the three i-behind-* instances are internet reachable.
+    assert reached_from('RDSInstance', 'db-app') == (11, 7)
+    assert reached_from('ElasticacheCluster', 'cache-1') == (0, 0)
 
     # Other workspace untouched.
     assert 'internet_reachable' not in _props(neo4j_session, 'EC2Instance', 'i-other')

@@ -8,6 +8,10 @@ instance, either by referencing one of the instance's SGs or by a CIDR holding o
 private IPs. The identity half of the blast radius (instance profile -> role -> permissions)
 already exists in the graph and is not duplicated here.
 
+Summaries for the console: network_reachable_data_stores (JSON, with the admitting store SG)
+and _count on every instance; network_reachable_from_count and
+network_reachable_from_internet_exposed_count on every store.
+
     same VPC       via = security_group | cidr
     other VPC      via = peering:<pcx-id> | tgw:<tgw-id>, when the gateway joins both VPCs and
                    both sides route through it:
@@ -43,12 +47,18 @@ from cartography.intel.aws.exposure_layers.network import port_set
 from cartography.intel.aws.exposure_layers.network import SgFacts
 from cartography.intel.exposure.layers import CAN_NETWORK_REACH
 from cartography.intel.exposure.layers import merge_reach_edges
+from cartography.intel.exposure.layers import reach_summaries
+from cartography.intel.exposure.layers import set_node_properties
+from cartography.intel.exposure.layers import write_reach_counts
 from cartography.intel.exposure.ports import PortSet
 
 SG_VIA = "security_group"
 CIDR_VIA = "cidr"
 PEERING_VIA = "peering:"
 TGW_VIA = "tgw:"
+
+# (via, id of the store SG whose rule admits the instance)
+Admission = Tuple[str, str]
 
 # (destination CIDR, pcx-* or tgw-* target)
 Route = Tuple[str, str]
@@ -113,23 +123,26 @@ def _vpcs(sg_ids: Iterable[str], sgs: Dict[str, SgFacts]) -> Set[str]:
     return {v for s in sg_ids if s in sgs for v in [sgs[s].vpc_id] if v}
 
 
-def sg_admits(compute: Dict, store: Dict, sgs: Dict[str, SgFacts], sg_refs: bool = True) -> Optional[str]:
+def sg_admits(
+    compute: Dict, store: Dict, sgs: Dict[str, SgFacts], sg_refs: bool = True,
+) -> Optional[Admission]:
     """
-    How `compute` gets through `store`'s security groups on its port: SG_VIA, CIDR_VIA or None.
-    An SG reference wins over a CIDR match so the answer does not depend on rule order.
+    How `compute` gets through `store`'s security groups on its port: (SG_VIA or CIDR_VIA, the
+    store SG whose rule admits it), or None. An SG reference wins over a CIDR match so the
+    answer does not depend on rule order.
     """
     service = port_set(store.get("port")) or PortSet.everything()
     compute_sgs = set(compute["sgs"]) if sg_refs else set()
-    via = None
+    by_cidr = None
     for sg_id in store["sgs"]:
         for ports, sources, cidrs in sgs[sg_id].rules if sg_id in sgs else []:
             if (ports & service).is_empty():
                 continue
             if sources & compute_sgs:
-                return SG_VIA
-            if any(_overlaps(c, compute["ips"]) for c in cidrs):
-                via = CIDR_VIA
-    return via
+                return SG_VIA, sg_id
+            if by_cidr is None and any(_overlaps(c, compute["ips"]) for c in cidrs):
+                by_cidr = (CIDR_VIA, sg_id)
+    return by_cidr
 
 
 def _side(subnet_ids: Iterable[str], vpc_id: str, routes: RouteFacts) -> Side:
@@ -162,8 +175,11 @@ def cross_vpc_path(
 
 def match_via(
     compute: Dict, store: Dict, sgs: Dict[str, SgFacts], routes: Optional[RouteFacts] = None,
-) -> Optional[str]:
-    """Edge `via` for compute -> store, or None. Unknown VPCs are treated as the same VPC."""
+) -> Optional[Admission]:
+    """
+    (edge `via`, admitting store SG) for compute -> store, or None. Unknown VPCs are treated as
+    the same VPC.
+    """
     a, b = _vpcs(compute["sgs"], sgs), _vpcs(store["sgs"], sgs)
     if not (a and b and not a & b):
         return sg_admits(compute, store, sgs)
@@ -171,8 +187,9 @@ def match_via(
         return None
     for src_vpc, dst_vpc in product(sorted(a), sorted(b)):
         path = cross_vpc_path(compute, src_vpc, store, dst_vpc, routes)
-        if path and sg_admits(compute, store, sgs, sg_refs=path[1]):
-            return path[0]
+        admitted = sg_admits(compute, store, sgs, sg_refs=path[1]) if path else None
+        if path and admitted:
+            return path[0], admitted[1]
     return None
 
 
@@ -183,9 +200,11 @@ def reach_rows(
     for store in stores:
         ports = (port_set(store.get("port")) or PortSet.everything()).to_strings()
         for compute in computes:
-            via = match_via(compute, store, sgs, routes)
-            if via:
-                rows.append({"src": compute["id"], "dst": store["id"], "ports": ports, "via": via})
+            match = match_via(compute, store, sgs, routes)
+            if match:
+                rows.append({
+                    "src": compute["id"], "dst": store["id"], "ports": ports, "via": match[0], "admitted_by": match[1],
+                })
     return rows
 
 
@@ -253,11 +272,24 @@ DELETE r
 
 
 def sync(session: neo4j.Session, params: Dict, sgs: Dict[str, SgFacts]) -> None:
+    """
+    Edges, then the summaries the console reads (edge properties do not survive the export):
+    the stores each instance reaches, and per store how many (internet-reachable) instances
+    reach it. Run after L1/L2 are written: the counts read internet_reachable.
+    """
+    tag = params["UPDATE_TAG"]
     computes = [dict(r) for r in session.run(_COMPUTE_QUERY, **params)]
     routes = read_routes(session, params)
+    edges: List[Dict] = []
+    store_ids: Dict[str, List[str]] = {}
     for label, port_prop in STORES.items():
         stores = [dict(r) for r in session.run(_store_query(label, port_prop), **params)]
-        merge_reach_edges(
-            session, "EC2Instance", label, reach_rows(computes, stores, sgs, routes), params["UPDATE_TAG"],
-        )
+        rows = [{**r, "dst_type": label} for r in reach_rows(computes, stores, sgs, routes)]
+        merge_reach_edges(session, "EC2Instance", label, rows, tag)
+        edges += rows
+        store_ids[label] = [s["id"] for s in stores]
     session.run(_CLEANUP, **params).consume()
+    summaries = reach_summaries([c["id"] for c in computes], edges)
+    set_node_properties(session, "EC2Instance", summaries, evaluated_at=tag)
+    for label, ids in store_ids.items():
+        write_reach_counts(session, label, ids, tag)

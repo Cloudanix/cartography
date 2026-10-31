@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 from botocore.exceptions import ClientError
@@ -14,15 +15,21 @@ from cartography.intel.aws.exposure_layers.access import lambda_auth
 from cartography.intel.aws.exposure_layers.access import load_balancer_v2_auth
 from cartography.intel.aws.exposure_layers.blast_radius import Gateway
 from cartography.intel.aws.exposure_layers.blast_radius import match_via
+from cartography.intel.aws.exposure_layers.blast_radius import reach_rows
 from cartography.intel.aws.exposure_layers.blast_radius import RouteFacts
 from cartography.intel.aws.exposure_layers.blast_radius import sg_admits
+from cartography.intel.aws.exposure_layers.network import add_direct_path
 from cartography.intel.aws.exposure_layers.network import listener_ports
 from cartography.intel.aws.exposure_layers.network import nacl_ports
+from cartography.intel.aws.exposure_layers.network import sg_facts
 from cartography.intel.aws.exposure_layers.network import SgFacts
+from cartography.intel.aws.exposure_layers.network import subnet_facts
 from cartography.intel.aws.exposure_layers.network import V4
 from cartography.intel.aws.exposure_layers.network import V6
+from cartography.intel.aws.exposure_layers.reach import load_balancers
 from cartography.intel.aws.exposure_layers.software import lambda_runtime
 from cartography.intel.aws.exposure_layers.software import search_engine
+from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
 
 
@@ -221,7 +228,7 @@ def _routes(gateways, a_routes, b_routes):
 
 def test_cross_vpc_peering_with_sg_reference():
     routes = _routes(PEERING, [("10.2.0.0/16", "pcx-1")], [("10.1.0.0/16", "pcx-1")])
-    assert match_via(COMPUTE, _store("sg-db-ref"), SGS, routes) == "peering:pcx-1"
+    assert match_via(COMPUTE, _store("sg-db-ref"), SGS, routes) == ("peering:pcx-1", "sg-db-ref")
     # Without route facts other VPCs stay unreachable, as before.
     assert match_via(COMPUTE, _store("sg-db-ref"), SGS) is None
 
@@ -235,23 +242,100 @@ def test_cross_vpc_needs_routes_both_ways():
 
 def test_cross_vpc_tgw_admits_by_cidr_only():
     routes = _routes(TGW, [("10.0.0.0/8", "tgw-1")], [("10.1.0.0/16", "tgw-1")])
-    assert match_via(COMPUTE, _store("sg-db-cidr"), SGS, routes) == "tgw:tgw-1"
+    assert match_via(COMPUTE, _store("sg-db-cidr"), SGS, routes) == ("tgw:tgw-1", "sg-db-cidr")
     assert match_via(COMPUTE, _store("sg-db-ref"), SGS, routes) is None
 
 
 def test_cross_vpc_store_without_subnets_uses_vpc_routes():
     routes = _routes(PEERING, [("10.2.0.0/16", "pcx-1")], [("10.1.0.0/16", "pcx-1")])
-    assert match_via(COMPUTE, _store("sg-db-cidr", subnets=()), SGS, routes) == "peering:pcx-1"
+    assert match_via(COMPUTE, _store("sg-db-cidr", subnets=()), SGS, routes) == ("peering:pcx-1", "sg-db-cidr")
 
 
 def test_cross_region_peering_drops_sg_references():
     cross_region = {"peering:pcx-1": Gateway("pcx-1", frozenset({"vpc-a", "vpc-b"}), False)}
     routes = _routes(cross_region, [("10.2.0.0/16", "pcx-1")], [("10.1.0.0/16", "pcx-1")])
     assert match_via(COMPUTE, _store("sg-db-ref"), SGS, routes) is None
-    assert match_via(COMPUTE, _store("sg-db-cidr"), SGS, routes) == "peering:pcx-1"
+    assert match_via(COMPUTE, _store("sg-db-cidr"), SGS, routes) == ("peering:pcx-1", "sg-db-cidr")
 
 
 def test_same_vpc_unchanged():
     same = {**SGS, "sg-db-ref": _sg_facts("vpc-a", [(PG, {"sg-src"}, [])])}
-    assert sg_admits(COMPUTE, _store("sg-db-ref"), same) == "security_group"
-    assert match_via(COMPUTE, _store("sg-db-ref"), same) == "security_group"
+    assert sg_admits(COMPUTE, _store("sg-db-ref"), same) == ("security_group", "sg-db-ref")
+    assert match_via(COMPUTE, _store("sg-db-ref"), same) == ("security_group", "sg-db-ref")
+    assert reach_rows([COMPUTE], [_store("sg-db-ref")], same) == [{
+        "src": "i-1", "dst": "db", "ports": ["tcp:5432-5432"], "via": "security_group", "admitted_by": "sg-db-ref",
+    }]
+
+
+# ---------------------------------------------------------------- L1/L2 context: paths and blockers
+
+WALK_SGS = {
+    "sg-web": sg_facts([{"protocol": "tcp", "fromport": 443, "toport": 443, "cidrs": ["0.0.0.0/0"]}]),
+    "sg-office": sg_facts([{"protocol": "tcp", "fromport": 22, "toport": 22, "cidrs": ["203.0.113.0/24"]}]),
+}
+ENTRY = {"type": "public_ip", "id": "54.1.2.3"}
+
+
+def _subnet(igw="igw-1", nacl=()):
+    return subnet_facts({
+        "igw_v4": igw, "igw_v6": None, "route_table": "rtb-1", "nacl_id": "acl-1" if nacl else None, "nacl": list(nacl),
+    })
+
+
+def _walk(subnet, sgs=("sg-web", "sg-office"), service=None):
+    reach = Reach(public_reasons={"public_ip"})
+    row = {"subnets": ["subnet-1"], "sgs": list(sgs)}
+    add_direct_path(reach, V4, ENTRY, row, {"subnet-1": subnet}, WALK_SGS, service=service)
+    props = reach.props()
+    return json.loads(props["exposure_paths"]), json.loads(props["exposure_blocked_by"])
+
+
+def test_direct_path_hops_and_entry():
+    nacl = [_rule(100, "allow"), _rule(100, "allow", egress=True)]
+    paths, blocked = _walk(_subnet(nacl=nacl))
+    assert paths == [{
+        "via": "direct_ipv4", "entry": ENTRY, "ports": ["tcp:443-443"], "hops": [
+            {"hop": "route", "id": "rtb-1", "rule": "0.0.0.0/0 -> igw-1"},
+            {"hop": "nacl", "id": "acl-1"},
+            # sg-office admits only the office CIDR: not a hop of the internet path.
+            {"hop": "security_group", "id": "sg-web"},
+        ],
+    }]
+    assert blocked == []
+
+
+def test_direct_path_blockers():
+    _, blocked = _walk(_subnet(igw=None))
+    assert blocked == [{
+        "hop": "route", "id": "rtb-1", "reason": "no_internet_route",
+        "detail": "no 0.0.0.0/0 route to an internet gateway",
+    }]
+    _, blocked = _walk(_subnet(), sgs=["sg-office"])
+    assert blocked == [{"hop": "security_group", "id": "sg-office", "reason": "not_allowed"}]
+    _, blocked = _walk(_subnet(), service=PortSet.of("tcp", 5432, 5432))
+    assert [(b["id"], b["ports"]) for b in blocked] == [("sg-web", ["tcp:5432-5432"]), ("sg-office", ["tcp:5432-5432"])]
+
+    _, blocked = _walk(_subnet(nacl=[_rule(100, "deny"), _rule(100, "allow", egress=True)]))
+    assert blocked == [{"hop": "nacl", "id": "acl-1", "reason": "denied", "ports": ["tcp:443-443"]}]
+    replies_dropped = [_rule(100, "allow"), _rule(100, "allow", egress=True, protocol="6", ports=(443, 443))]
+    _, blocked = _walk(_subnet(nacl=replies_dropped))
+    assert blocked == [{"hop": "nacl", "id": "acl-1", "reason": "return_path_denied", "ports": ["tcp:443-443"]}]
+
+
+def test_load_balancer_listener_hops_and_no_listener():
+    row = {
+        "id": "lb", "dns": "lb.example", "scheme": "internet-facing", "type": "application", "subnets": [],
+        "sgs": ["sg-web"], "listeners": [
+            {"id": "l-443", "port": 443, "protocol": "HTTPS"}, {"id": "l-80", "port": 80, "protocol": "HTTP"},
+        ],
+    }
+    path = load_balancers([row], {}, WALK_SGS)["lb"].paths["direct_ipv4"]
+    assert path["entry"] == {"type": "dns_name", "id": "lb.example"}
+    # Port 80 has a listener but no SG rule: only the 443 listener is on the path.
+    assert path["hops"] == [
+        {"hop": "security_group", "id": "sg-web"}, {"hop": "listener", "id": "l-443", "rule": "HTTPS 443"},
+    ]
+    silent = load_balancers([{**row, "listeners": []}], {}, WALK_SGS)["lb"]
+    assert json.loads(silent.props()["exposure_blocked_by"]) == [
+        {"hop": "listener", "id": None, "reason": "no_listener"},
+    ]
