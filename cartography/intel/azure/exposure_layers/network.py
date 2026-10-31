@@ -15,6 +15,11 @@ None) routes replies through that hop, which decides what survives. That is a bl
 the path is reported as `unknown:udr_default_route_<hop>` in internet_reachable_via and
 never as reachable.
 
+A Gate also keeps the route tables and NSGs it crossed: an open path lists them as hops
+(exposure_paths), a closed one blames them (exposure_blocked_by). The blame is cheap: an NSG
+that closes the requested ports is `denied` when it holds any custom deny for internet
+sources, else `not_allowed`; which rule decided each port is not tracked.
+
 Behind an Application Gateway or an Azure Firewall DNAT rule the backend leg starts inside
 the VNet (the gateway proxies, the firewall SNATs), so backend NSGs are evaluated with that
 front door's subnet as the source and with the default AllowVnetInBound rule (nsg_open_from).
@@ -22,15 +27,24 @@ front door's subnet as the source and with the default AllowVnetInBound rule (ns
 import ipaddress
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import replace
+from typing import AbstractSet
 from typing import Callable
 from typing import Dict
 from typing import Iterable
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import Tuple
 
 import neo4j
 
+from cartography.intel.exposure.layers import BLOCK_DENIED
+from cartography.intel.exposure.layers import BLOCK_NOT_ALLOWED
+from cartography.intel.exposure.layers import BLOCK_UNKNOWN_NEXT_HOP
+from cartography.intel.exposure.layers import hop
+from cartography.intel.exposure.layers import HOP_NSG
+from cartography.intel.exposure.layers import HOP_ROUTE
 from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import MAX_PORT
 from cartography.intel.exposure.ports import MIN_PORT
@@ -57,23 +71,47 @@ VNET_TAG = "virtualnetwork"
 INTERNET_TAG = "internet"
 # Destinations that cover every NIC behind the NSG.
 _ANY_DESTINATIONS = frozenset({"", "*", "any", VNET_TAG, "0.0.0.0/0", "::/0"})
+# Default rules start at 65000 (AllowVnetInBound); custom rules use 100-4096.
+DEFAULT_RULE_PRIORITY = 65000
 # Default rule AllowVnetInBound (65000) is not ingested; it admits every source inside the VNet.
-ALLOW_VNET_INBOUND = FirewallRule(PortSet.everything(), world=True, allow=True, priority=65000)
+ALLOW_VNET_INBOUND = FirewallRule(PortSet.everything(), world=True, allow=True, priority=DEFAULT_RULE_PRIORITY)
+INTERNET_ROUTE_RULE = f"{DEFAULT_ROUTE} -> Internet"
+LEVEL_SUBNET = "subnet_nsg"
+LEVEL_NIC = "nic_nsg"
+DETAIL_STANDARD_SKU = "standard_sku_closed_without_nsg"
+
+
+@dataclass
+class SubnetFacts:
+    nsg_ids: List[str]
+    blind: List[str]
+    route_table: Optional[str] = None  # the table holding the subnet's 0.0.0.0/0 route
+
+
+@dataclass
+class NsgCheck:
+    """One NSG on a path: what it opens to the caller's source, and whether it has a deny for it."""
+    level: str
+    nsg_id: str
+    ports: PortSet
+    denies: bool
 
 
 @dataclass
 class Gate:
-    """What survives subnet NSG + NIC NSG, and why the verdict may be unknown."""
+    """What survives subnet NSG + NIC NSG, why the verdict may be unknown, and what was crossed."""
     ports: PortSet
     blind: List[str] = field(default_factory=list)
     has_nsg: bool = False
+    subnets: List[SubnetFacts] = field(default_factory=list)
+    checks: List[NsgCheck] = field(default_factory=list)
 
 
 def for_sku(through: Gate, skus: Iterable[Optional[str]]) -> Gate:
     """A Standard SKU front door admits nothing unless some NSG on the path allows it."""
     if through.has_nsg or not any(str(s or "").lower() == STANDARD_SKU for s in skus):
         return through
-    return Gate(PortSet.empty(), through.blind, has_nsg=False)
+    return replace(through, ports=PortSet.empty())
 
 
 # ---------------------------------------------------------------- pure evaluation
@@ -197,15 +235,25 @@ def nsg_gate(nsg_ids: Iterable[str], nsgs: Dict[str, PortSet]) -> PortSet:
     return ports
 
 
-@dataclass
-class SubnetFacts:
-    nsg_ids: List[str]
-    blind: List[str]
+def world_denies(nsg_rules: Dict[str, List[Dict]]) -> Set[str]:
+    """NSGs holding a custom inbound deny for internet sources: `denied` rather than `not_allowed`."""
+    def deny(rule: Dict) -> bool:
+        return (
+            str(rule.get("direction") or "").lower() == INBOUND and
+            str(rule.get("access") or "").lower() != ALLOW and
+            int(rule.get("priority") or 0) < DEFAULT_RULE_PRIORITY and
+            rule_is_world(rule)
+        )
+    return {nsg_id for nsg_id, rules in nsg_rules.items() if any(deny(r) for r in rules)}
+
+
+def _checks(level: str, nsg_ids: Iterable[str], nsgs: Dict[str, PortSet], denies: AbstractSet[str]) -> List[NsgCheck]:
+    return [NsgCheck(level, i, nsgs[i], i in denies) for i in nsg_ids if i in nsgs]
 
 
 def gate(
     subnet_ids: Iterable[str], nic_nsg_ids: Iterable[str],
-    subnets: Dict[str, SubnetFacts], nsgs: Dict[str, PortSet],
+    subnets: Dict[str, SubnetFacts], nsgs: Dict[str, PortSet], denies: AbstractSet[str] = frozenset(),
 ) -> Gate:
     """
     Subnet NSG AND NIC NSG. Unknown subnets do not block (we cannot see their NSG).
@@ -216,22 +264,59 @@ def gate(
     blind = sorted({b for s in known for b in s.blind})
     nic_nsg_ids = list(nic_nsg_ids)
     has_nsg = bool(nic_nsg_ids) or any(s.nsg_ids for s in known)
-    return Gate(subnet_ports & nsg_gate(nic_nsg_ids, nsgs), blind, has_nsg)
+    checks = _checks(LEVEL_SUBNET, [i for s in known for i in s.nsg_ids], nsgs, denies)
+    checks += _checks(LEVEL_NIC, nic_nsg_ids, nsgs, denies)
+    return Gate(subnet_ports & nsg_gate(nic_nsg_ids, nsgs), blind, has_nsg, known, checks)
 
 
-def add_gated_path(reach: Reach, ports: PortSet, through: Gate, via: str) -> bool:
+def path_hops(through: Gate) -> List[Dict]:
+    """Route tables sending 0.0.0.0/0 to Internet, then subnet and NIC NSGs, in traffic order."""
+    routes = [
+        hop(HOP_ROUTE, s.route_table, INTERNET_ROUTE_RULE) for s in through.subnets if s.route_table and not s.blind
+    ]
+    return routes + [hop(HOP_NSG, c.nsg_id) for c in through.checks]
+
+
+def blame_closed(reach: Reach, ports: PortSet, through: Gate) -> None:
+    """
+    Record the NSGs that close `ports`: each one closing them alone, else (disjoint NSGs that
+    close only together) every NSG that does not open them all. No NSG at all = Standard SKU.
+    """
+    if ports.is_empty():
+        return
+    if not through.has_nsg:
+        reach.block(HOP_NSG, None, BLOCK_NOT_ALLOWED, ports, DETAIL_STANDARD_SKU)
+        return
+    closing = [c for c in through.checks if (ports & c.ports).is_empty()]
+    closing = closing or [c for c in through.checks if (ports & c.ports) != ports]
+    for c in closing:
+        reach.block(HOP_NSG, c.nsg_id, BLOCK_DENIED if c.denies else BLOCK_NOT_ALLOWED, ports, c.level)
+
+
+def blame_blind(reach: Reach, through: Gate) -> None:
+    for s in through.subnets:
+        for marker in s.blind:
+            reach.block(HOP_ROUTE, s.route_table, BLOCK_UNKNOWN_NEXT_HOP, detail=marker)
+
+
+def add_gated_path(
+    reach: Reach, ports: PortSet, through: Gate, via: str, hops: Iterable[Dict] = (), entry: Optional[Dict] = None,
+) -> bool:
     """
     Add `ports` that pass `through` to `reach`. A path the NSGs close stays closed even
     behind an NVA; an open one behind an NVA becomes an unknown marker, not a port.
+    `hops` are the hops before the gate (public IP, LB rule, listener); the gate adds its own.
     :return: True when ports were added (the path is definitely open).
     """
     passed = ports & through.ports
     if passed.is_empty():
+        blame_closed(reach, ports, through)
         return False
     if through.blind:
         reach.via.update(through.blind)
+        blame_blind(reach, through)
         return False
-    reach.add_path(passed, via)
+    reach.add_path(passed, via, [*hops, *path_hops(through)], entry)
     return True
 
 
@@ -249,9 +334,10 @@ RETURN toLower(g.id) AS id, collect(r {{
 _SUBNET_QUERY = f"""
 MATCH {SUBSCRIPTION}-[:RESOURCE]->(:AzureNetwork)-[:CONTAIN]->(s:AzureNetworkSubnet)
 OPTIONAL MATCH (s)-[:MEMBER_NETWORK_SECURITY_GROUP]->(g:AzureNetworkSecurityGroup)
-OPTIONAL MATCH (s)-[:CONTAIN]->(:AzureRouteTable)-[:CONTAIN]->(rt:AzureNetworkRoute)
+OPTIONAL MATCH (s)-[:CONTAIN]->(t:AzureRouteTable)-[:CONTAIN]->(rt:AzureNetworkRoute)
 WHERE rt.address_prefix = '{DEFAULT_ROUTE}'
-RETURN toLower(s.id) AS id, collect(DISTINCT toLower(g.id)) AS nsgs, collect(DISTINCT rt.next_hop_type) AS hops
+RETURN toLower(s.id) AS id, collect(DISTINCT toLower(g.id)) AS nsgs, collect(DISTINCT rt.next_hop_type) AS hops,
+    head(collect(DISTINCT toLower(t.id))) AS route_table
 """
 
 
@@ -263,6 +349,6 @@ def read_nsg_rules(session: neo4j.Session, params: Dict) -> Dict[str, List[Dict]
 def read_subnets(session: neo4j.Session, params: Dict) -> Dict[str, SubnetFacts]:
     """Lowercased subnet id -> its NSGs and default-route blind spots."""
     return {
-        row["id"]: SubnetFacts(nsg_ids=row["nsgs"], blind=blind_hops(row["hops"]))
+        row["id"]: SubnetFacts(nsg_ids=row["nsgs"], blind=blind_hops(row["hops"]), route_table=row["route_table"])
         for row in session.run(_SUBNET_QUERY, **params)
     }

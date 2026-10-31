@@ -2,6 +2,8 @@
 Azure exposure layers through front doors (App Gateway, Azure Firewall DNAT) and the L3
 verdicts for Easy Auth and WAF. Pure functions only; the graph run is in the integration test.
 """
+import json
+
 from cartography.intel.azure.compute import _vmss_front_doors
 from cartography.intel.azure.exposure_layers.access import app_gateway
 from cartography.intel.azure.exposure_layers.access import easy_auth
@@ -93,9 +95,14 @@ def _gateway(rules):
     return {'id': 'agw', 'public': True, 'subnets': ['vnet/subnets/agw'], 'prefixes': AGW_SUBNET, 'rules': rules}
 
 
+def _paths(reach):
+    return json.loads(reach.props()['exposure_paths'])
+
+
 def _route(public=True, ipconfigs=('ipc-web',), ips=()):
     return {
-        'frontend_public': public, 'listener_protocol': 'Https', 'listener_port': 443, 'backend_protocol': 'Http',
+        'id': 'route-1', 'frontend_public': public, 'listener_protocol': 'Https', 'listener_port': 443,
+        'backend_protocol': 'Http',
         'backend_port': 8080, 'backend_pool_id': 'pool', 'backend_ip_configuration_ids': list(ipconfigs),
         'backend_ip_addresses': list(ips),
     }
@@ -124,6 +131,13 @@ def test_app_gateway_listener_and_backend_port():
     assert (results[NIC]['web'].ports.to_strings(), results[NIC]['web'].via) == (['tcp:8080-8080'], {'appgw:agw'})
     assert results[NIC]['by-ip'].ports.to_strings() == ['tcp:8080-8080']
     assert results[NIC]['denied'].ports.is_empty()
+    entry = {'type': 'application_gateway', 'id': 'agw', 'listener_ports': ['tcp:443-443']}
+    listener = {'hop': 'listener', 'id': 'route-1', 'rule': 'https 443 -> http 8080'}
+    assert _paths(results[NIC]['web']) == [{
+        'via': 'appgw:agw', 'ports': ['tcp:8080-8080'], 'entry': entry,
+        'hops': [listener, {'hop': 'nsg', 'id': 'nsg-web'}],
+    }]
+    assert _paths(gw) == [{'via': 'public_listener', 'ports': ['tcp:443-443'], 'entry': entry, 'hops': [listener]}]
 
 
 def test_app_gateway_subnet_nsg_closes_listener_and_backends():
@@ -137,11 +151,16 @@ def test_app_gateway_subnet_nsg_closes_listener_and_backends():
 
     assert gw.ports.is_empty()
     assert results[NIC]['web'].ports.is_empty()
+    blocked = json.loads(gw.props()['exposure_blocked_by'])
+    assert [(b['hop'], b['id'], b['reason'], b['detail']) for b in blocked] == [
+        ('nsg', 'nsg-agw', 'not_allowed', 'subnet_nsg'),
+    ]
 
 
 def _dnat(sources=('*',), translated='10.0.3.30', port='2222', translated_port='22'):
     return {
-        'source_addresses': list(sources), 'destination_addresses': ['20.8.8.8'], 'destination_ports': [port],
+        'id': f'fw/rules/{port}', 'source_addresses': list(sources), 'destination_addresses': ['20.8.8.8'],
+        'destination_ports': [port],
         'protocols': ['TCP'], 'translated_address': translated, 'translated_port': translated_port,
     }
 
@@ -170,6 +189,13 @@ def test_firewall_dnat_world_vs_restricted_source():
         ['tcp:22-22'], {'azure_firewall_dnat:fw'},
     )
     assert results[NIC]['rdp'].ports.is_empty()
+    entry = {'type': 'azure_firewall', 'id': 'fw'}
+    dnat = {'hop': 'dnat_rule', 'id': 'fw/rules/2222', 'rule': 'Any -> 20.8.8.8:2222 => 10.0.3.30:22'}
+    assert _paths(results[NIC]['ssh']) == [{
+        'via': 'azure_firewall_dnat:fw', 'ports': ['tcp:22-22'], 'entry': entry,
+        'hops': [{'hop': 'firewall', 'id': 'fw'}, dnat],
+    }]
+    assert _paths(fw) == [{'via': 'dnat_rule', 'ports': ['tcp:2222-2222'], 'entry': entry, 'hops': [dnat]}]
 
 
 def test_dnat_from_world_needs_this_firewalls_address():

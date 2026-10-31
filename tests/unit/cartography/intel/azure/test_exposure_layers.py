@@ -1,7 +1,10 @@
+import json
+
 from cartography.intel.azure.compute import _vmss_front_doors
 from cartography.intel.azure.exposure_layers.access import flag_auth
 from cartography.intel.azure.exposure_layers.access import required_by
 from cartography.intel.azure.exposure_layers.blast_radius import cosmos_via
+from cartography.intel.azure.exposure_layers.blast_radius import reach_rows
 from cartography.intel.azure.exposure_layers.blast_radius import sql_via
 from cartography.intel.azure.exposure_layers.network import blind_hops
 from cartography.intel.azure.exposure_layers.network import for_sku
@@ -10,14 +13,22 @@ from cartography.intel.azure.exposure_layers.network import nsg_open
 from cartography.intel.azure.exposure_layers.network import parse_port_range
 from cartography.intel.azure.exposure_layers.network import rule_ports
 from cartography.intel.azure.exposure_layers.network import SubnetFacts
+from cartography.intel.azure.exposure_layers.network import world_denies
+from cartography.intel.azure.exposure_layers.reach import attachments
 from cartography.intel.azure.exposure_layers.reach import backend_ports
+from cartography.intel.azure.exposure_layers.reach import BackendIndex
 from cartography.intel.azure.exposure_layers.reach import cosmos_accounts
 from cartography.intel.azure.exposure_layers.reach import frontend_ports
+from cartography.intel.azure.exposure_layers.reach import lb_rule_text
+from cartography.intel.azure.exposure_layers.reach import load_balancers
+from cartography.intel.azure.exposure_layers.reach import merge
+from cartography.intel.azure.exposure_layers.reach import network_acl_endpoints
 from cartography.intel.azure.exposure_layers.reach import sql_servers
 from cartography.intel.azure.exposure_layers.software import function_runtime
 from cartography.intel.azure.exposure_layers.software import sql_engine
 from cartography.intel.azure.network import _load_balancer_rules
 from cartography.intel.azure.sql import _azure_ad_only
+from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.software import os_from_image_name
 
@@ -189,11 +200,151 @@ def test_versions():
 
 
 def test_store_via_precedence():
-    sql = {'ranges': [['0.0.0.0', '0.0.0.0'], ['20.1.1.0', '20.1.1.255']]}
-    assert sql_via(['20.1.1.7'], sql, public=True) == 'firewall_ip_rule'
-    assert sql_via(['30.0.0.1'], sql, public=False) == 'azure_services_rule'
-    assert sql_via([], {'ranges': []}, public=True) == 'public_endpoint'
+    sql = {'ranges': [['0.0.0.0', '0.0.0.0', 'AllowAllWindowsAzureIps'], ['20.1.1.0', '20.1.1.255', 'office']]}
+    assert sql_via(['20.1.1.7'], sql, public=True) == ('firewall_ip_rule', 'office')
+    assert sql_via(['30.0.0.1'], sql, public=False) == ('azure_services_rule', 'azure_services_rule')
+    assert sql_via([], {'ranges': []}, public=True) == ('public_endpoint', None)
     assert sql_via([], {'ranges': []}, public=False) is None
     cosmos = {'cidrs': ['40.0.0.0/24'], 'azure_services': False}
-    assert cosmos_via(['40.0.0.9'], cosmos, public=False) == 'firewall_ip_rule'
+    assert cosmos_via(['40.0.0.9'], cosmos, public=False) == ('firewall_ip_rule', '40.0.0.0/24')
     assert cosmos_via(['41.0.0.9'], cosmos, public=False) is None
+
+
+def test_reach_rows_carry_type_and_admitting_rule():
+    vms = [{'id': 'vm-1', 'ips': ['20.1.1.7']}, {'id': 'vm-2', 'ips': []}]
+    store = {'id': 'sql', 'port': 1433, 'ranges': [['20.1.1.0', '20.1.1.255', 'office']]}
+    rows = reach_rows(vms, [store], sql_via, {}, lambda s: PortSet.of('tcp', 1433, 1433), 'AzureSQLServer')
+    assert rows == [{
+        'src': 'vm-1', 'dst': 'sql', 'dst_type': 'AzureSQLServer', 'ports': ['tcp:1433-1433'],
+        'via': 'firewall_ip_rule', 'admitted_by': 'office',
+    }]
+
+
+def _nic_row(public=True, nsgs=(), subnets=('s',), skus=(None,)):
+    pips = [{'id': 'pip-1', 'address': '20.1.2.3'}] if public else []
+    return {
+        'id': 'nic', 'public': public, 'pips': pips, 'skus': list(skus), 'subnets': list(subnets), 'nsgs': list(nsgs),
+    }
+
+
+def _attach(row, subnets, nsg_rules):
+    nsgs = {i: nsg_open(r) for i, r in nsg_rules.items()}
+    return attachments([row], 'NIC', 'public_ip', subnets, nsgs, world_denies(nsg_rules))[0]['nic']
+
+
+def test_direct_path_hops_and_entry():
+    subnets = {'s': SubnetFacts(['subnet-nsg'], [], route_table='rt')}
+    rules = {'subnet-nsg': [_rule(100, ports='443')], 'nic-nsg': [_rule(100, ports='*')]}
+    reach = _attach(_nic_row(nsgs=['nic-nsg']), subnets, rules)
+    assert json.loads(reach.props()['exposure_paths']) == [{
+        'via': 'direct_ipv4', 'ports': ['tcp:443-443'],
+        'entry': {'type': 'public_ip', 'id': 'pip-1', 'address': '20.1.2.3'},
+        'hops': [
+            {'hop': 'public_ip', 'id': 'pip-1'}, {'hop': 'route', 'id': 'rt', 'rule': '0.0.0.0/0 -> Internet'},
+            {'hop': 'nsg', 'id': 'subnet-nsg'}, {'hop': 'nsg', 'id': 'nic-nsg'},
+        ],
+    }]
+    assert reach.props()['exposure_blocked_by'] == '[]'
+
+
+def _blocked(reach):
+    return json.loads(reach.props()['exposure_blocked_by'])
+
+
+def test_blocked_by_nsg_deny_vs_not_allowed():
+    subnets = {'s': SubnetFacts(['subnet-nsg'], [])}
+    rules = {
+        'subnet-nsg': [_rule(100, access='Deny', ports='*'), _rule(200, ports='*')],
+        'nic-nsg': [_rule(100, source='10.0.0.0/8')],
+        # Ingested default DenyAllInBound does not make a deny: not_allowed.
+        'nic-default': [_rule(65500, access='Deny', source='*', protocol='*')],
+    }
+    denied = _blocked(_attach(_nic_row(nsgs=['nic-nsg']), subnets, rules))
+    assert [(b['id'], b['reason'], b['detail']) for b in denied] == [
+        ('subnet-nsg', 'denied', 'subnet_nsg'), ('nic-nsg', 'not_allowed', 'nic_nsg'),
+    ]
+    only_nic = _blocked(_attach(_nic_row(nsgs=['nic-default'], subnets=['other']), subnets, rules))
+    assert [(b['hop'], b['id'], b['reason'], b['detail']) for b in only_nic] == [
+        ('nsg', 'nic-default', 'not_allowed', 'nic_nsg'),
+    ]
+
+
+def test_blocked_by_disjoint_nsgs_blames_both():
+    subnets = {'s': SubnetFacts(['subnet-nsg'], [])}
+    rules = {'subnet-nsg': [_rule(100, ports='22')], 'nic-nsg': [_rule(100, ports='443')]}
+    blocked = _blocked(_attach(_nic_row(nsgs=['nic-nsg']), subnets, rules))
+    assert [b['id'] for b in blocked] == ['subnet-nsg', 'nic-nsg']
+
+
+def test_blocked_by_standard_sku_and_udr():
+    subnets = {'s': SubnetFacts([], []), 'nva': SubnetFacts([], ['unknown:udr_default_route_virtualappliance'], 'rt')}
+    std = _blocked(_attach(_nic_row(skus=['Standard']), subnets, {}))
+    assert std == [{
+        'hop': 'nsg', 'id': None, 'reason': 'not_allowed', 'detail': 'standard_sku_closed_without_nsg',
+        'ports': ['tcp:0-65535', 'udp:0-65535'],
+    }]
+    nva = _attach(_nic_row(subnets=['nva']), subnets, {})
+    assert nva.via == {'unknown:udr_default_route_virtualappliance'}
+    assert _blocked(nva) == [{
+        'hop': 'route', 'id': 'rt', 'reason': 'unknown_next_hop',
+        'detail': 'unknown:udr_default_route_virtualappliance',
+    }]
+    # Not public: nothing to explain.
+    assert _blocked(_attach(_nic_row(public=False, skus=['Standard']), subnets, {})) == []
+
+
+def _lb(rules, frontends=({'id': 'fe', 'pip': 'lb-pip'},)):
+    return {'id': 'lb', 'sku': None, 'public_frontends': list(frontends), 'rules': rules}
+
+
+def test_lb_paths_and_no_listener():
+    lb_rule = {
+        'id': 'lb/rules/https', 'kind': 'load_balancing', 'protocol': 'Tcp', 'frontend_port_start': 443,
+        'frontend_port_end': 443, 'backend_port': 8443, 'frontend_ip_configuration_id': 'fe',
+        'backend_pool_ids': ['pool'],
+    }
+    index = BackendIndex({'pool': [('NIC', 'nic')]}, {}, {})
+    results = {'NIC': {'nic': Reach()}}
+    gates = {('NIC', 'nic'): gate([], [], {}, {})}
+    lb = load_balancers([_lb([lb_rule]), {**_lb([]), 'id': 'idle'}], index, gates, results)
+    hops = [
+        {'hop': 'public_ip', 'id': 'lb-pip'}, {'hop': 'listener', 'id': 'lb/rules/https', 'rule': 'tcp 443 -> 8443'},
+    ]
+    backend = json.loads(results['NIC']['nic'].props()['exposure_paths'])
+    assert backend == [{
+        'via': 'lb:lb', 'ports': ['tcp:8443-8443'], 'entry': {'type': 'load_balancer', 'id': 'lb'}, 'hops': hops,
+    }]
+    assert json.loads(lb['lb'].props()['exposure_paths'])[0]['ports'] == ['tcp:443-443']
+    assert _blocked(lb['idle']) == [
+        {'hop': 'listener', 'id': 'idle', 'reason': 'no_listener', 'detail': 'no_rule_on_public_frontend'},
+    ]
+
+
+def test_lb_rule_text():
+    nat_pool = {'protocol': 'Tcp', 'frontend_port_start': 50000, 'frontend_port_end': 50099, 'backend_port': 22}
+    assert lb_rule_text(nat_pool) == 'tcp 50000-50099 -> 22'
+    assert lb_rule_text({'protocol': 'All', 'frontend_port_start': 0, 'backend_port': 0}) == 'all * -> *'
+
+
+def test_vm_union_keeps_paths_and_blocks():
+    nic = Reach(public_reasons={'public_ip'})
+    nic.add_path(PortSet.of('tcp', 22, 22), 'direct_ipv4', [{'hop': 'public_ip', 'id': 'p'}], {'type': 'public_ip'})
+    closed = Reach(public_reasons={'public_ip'})
+    closed.block('nsg', 'g', 'denied')
+    vm = Reach()
+    merge(vm, nic)
+    merge(vm, closed)
+    assert json.loads(vm.props()['exposure_paths'])[0]['hops'] == [{'hop': 'public_ip', 'id': 'p'}]
+    assert vm.blocked == [{'hop': 'nsg', 'id': 'g', 'reason': 'denied'}]
+
+
+def test_paas_endpoint_path_and_blocker():
+    base = {'pna': 'Enabled', 'http': False}
+    out = network_acl_endpoints([
+        {**base, 'id': 'open', 'default_action': 'Allow'}, {**base, 'id': 'shut', 'default_action': 'Deny'},
+    ])
+    assert json.loads(out['open'].props()['exposure_paths']) == [{
+        'via': 'public_endpoint', 'ports': ['tcp:443-443'], 'entry': {'type': 'public_endpoint', 'id': 'open'},
+        'hops': [{'hop': 'service', 'id': 'open'}],
+    }]
+    assert _blocked(out['shut']) == [{'hop': 'service', 'id': 'shut', 'reason': 'not_allowed'}]

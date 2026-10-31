@@ -18,6 +18,7 @@ from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import Tuple
 
 import neo4j
@@ -34,6 +35,15 @@ from cartography.intel.azure.exposure_layers.network import Results
 from cartography.intel.azure.exposure_layers.network import SubnetFacts
 from cartography.intel.azure.exposure_layers.network import SUBSCRIPTION
 from cartography.intel.azure.exposure_layers.network import Target
+from cartography.intel.azure.exposure_layers.network import world_denies
+from cartography.intel.exposure.layers import BLOCK_NO_LISTENER
+from cartography.intel.exposure.layers import BLOCK_NOT_ALLOWED
+from cartography.intel.exposure.layers import BLOCK_UNKNOWN_NEXT_HOP
+from cartography.intel.exposure.layers import hop
+from cartography.intel.exposure.layers import HOP_BACKEND
+from cartography.intel.exposure.layers import HOP_LISTENER
+from cartography.intel.exposure.layers import HOP_PUBLIC_IP
+from cartography.intel.exposure.layers import HOP_SERVICE
 from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
@@ -76,6 +86,14 @@ REASON_PER_INSTANCE_IP = "public_ip_per_instance"
 REASON_FRONTEND = "public_frontend"
 REASON_ENDPOINT = "public_endpoint"
 REASON_API_SERVER = "public_api_server"
+# exposure_paths[].entry types: where internet traffic first lands.
+ENTRY_PUBLIC_IP = "public_ip"
+ENTRY_INSTANCE_PUBLIC_IP = "public_ip_per_instance"
+ENTRY_LOAD_BALANCER = "load_balancer"
+ENTRY_ENDPOINT = "public_endpoint"
+DETAIL_NO_RULE = "no_rule_on_public_frontend"
+DETAIL_BACKENDS_CLOSED = "no_backend_admits_backend_port"
+ANY_PORT = "*"
 
 
 def _enabled(public_network_access: Optional[str]) -> bool:
@@ -88,24 +106,47 @@ def _allows(default_action: Optional[str]) -> bool:
 
 
 def merge(into: Reach, other: Reach) -> None:
+    """
+    ponytail: paths merge by via, so two NICs of a VM with their own public IPs share one
+    direct_ipv4 path (first NIC's entry, both NICs' hops). Key paths by entry if that misleads.
+    """
     into.public_reasons |= other.public_reasons
     into.ports = into.ports | other.ports
     into.via |= other.via
+    for via, path in other.paths.items():
+        into.add_path(path["ports"], via, path["hops"], path["entry"])
+    into.blocked.extend(b for b in other.blocked if b not in into.blocked)
 
 
 # ---------------------------------------------------------------- compute + load balancers
 
 
-def attachments(rows: List[Dict], label: str, reason: str, subnets: Dict, nsgs: Dict) -> Tuple[Dict, Dict]:
+def direct_entry(row: Dict) -> Tuple[List[Dict], Dict]:
+    """
+    Hops and entry of a NIC / VMSS reached on its own public IP.
+    ponytail: a NIC with several public IPs names the first as entry; per-instance VMSS IPs are
+    not ingested, so the scale set itself is the entry.
+    """
+    pips = sorted(row["pips"], key=lambda p: p["id"])
+    if not pips:
+        return [], {"type": ENTRY_INSTANCE_PUBLIC_IP, "id": row["id"]}
+    entry = {"type": ENTRY_PUBLIC_IP, "id": pips[0]["id"], "address": pips[0]["address"]}
+    return [hop(HOP_PUBLIC_IP, p["id"]) for p in pips], entry
+
+
+def attachments(
+    rows: List[Dict], label: str, reason: str, subnets: Dict, nsgs: Dict, denies: Set[str],
+) -> Tuple[Dict, Dict]:
     """NICs and VMSS: direct path through their own public IP. Returns (reaches, gates)."""
     reaches: Dict[str, Reach] = {}
     gates: Dict[Target, Gate] = {}
     for row in rows:
-        through = gate(row["subnets"], row["nsgs"], subnets, nsgs)
+        through = gate(row["subnets"], row["nsgs"], subnets, nsgs, denies)
         reach = Reach()
         if row["public"]:
             reach.public_reasons.add(reason)
-            add_gated_path(reach, PortSet.everything(), for_sku(through, row["skus"]), VIA_DIRECT)
+            hops, entry = direct_entry(row)
+            add_gated_path(reach, PortSet.everything(), for_sku(through, row["skus"]), VIA_DIRECT, hops, entry)
         reaches[row["id"]] = reach
         gates[(label, row["id"])] = through
     return reaches, gates
@@ -155,6 +196,13 @@ def frontend_ports(rule: Dict) -> PortSet:
     return PortSet.of(rule.get("protocol"), lo, rule.get("frontend_port_end") or lo)
 
 
+def lb_rule_text(rule: Dict) -> str:
+    """'tcp 443 -> 8080'; HA-ports rules (port 0) show '*'."""
+    lo, hi = rule.get("frontend_port_start"), rule.get("frontend_port_end")
+    front = f"{lo}-{hi}" if lo and hi and hi != lo else str(lo or ANY_PORT)
+    return f"{str(rule.get('protocol') or ANY_PORT).lower()} {front} -> {rule.get('backend_port') or ANY_PORT}"
+
+
 def _forward(
     lb_row: Dict, rule: Dict, index: BackendIndex, gates: Dict[Target, Gate], results: Results, lb: Reach,
 ) -> None:
@@ -166,26 +214,35 @@ def _forward(
     targets = [t for t in index.targets(lb_row["id"], rule) if t in gates]
     via = f"{VIA_LB}{lb_row['id']}"
     ports = backend_ports(rule)
+    pip = next(f["pip"] for f in lb_row["public_frontends"] if f["id"] == rule["frontend_ip_configuration_id"])
+    hops = [hop(HOP_PUBLIC_IP, pip), hop(HOP_LISTENER, rule.get("id"), lb_rule_text(rule))]
+    entry = {"type": ENTRY_LOAD_BALANCER, "id": lb_row["id"]}
     opened = [
-        add_gated_path(results[label][tid], ports, for_sku(gates[(label, tid)], [lb_row["sku"]]), via)
+        add_gated_path(results[label][tid], ports, for_sku(gates[(label, tid)], [lb_row["sku"]]), via, hops, entry)
         for label, tid in targets
     ]
     if not targets or any(opened):
-        lb.add_path(frontend_ports(rule), VIA_FRONTEND)
+        lb.add_path(frontend_ports(rule), VIA_FRONTEND, hops, entry)
         return
-    lb.via.update(b for t in targets for b in gates[t].blind)
+    blind = sorted({b for t in targets for b in gates[t].blind})
+    lb.via.update(blind)
+    reason = BLOCK_UNKNOWN_NEXT_HOP if blind else BLOCK_NOT_ALLOWED
+    lb.block(HOP_BACKEND, rule.get("id"), reason, ports, DETAIL_BACKENDS_CLOSED)
 
 
 def load_balancers(rows: List[Dict], index: BackendIndex, gates: Dict[Target, Gate], results: Results) -> Dict:
+    """public_frontends: [{id: lowercased frontend id, pip: its public IP id}]."""
     out = {}
     for row in rows:
         reach = Reach()
-        public = set(row["public_frontends"])
+        public = {f["id"] for f in row["public_frontends"]}
+        routed = [r for r in row["rules"] if r.get("frontend_ip_configuration_id") in public]
         if public:
             reach.public_reasons.add(REASON_FRONTEND)
-        for rule in row["rules"]:
-            if rule.get("frontend_ip_configuration_id") in public:
-                _forward(row, rule, index, gates, results, reach)
+        if public and not routed:
+            reach.block(HOP_LISTENER, row["id"], BLOCK_NO_LISTENER, detail=DETAIL_NO_RULE)
+        for rule in routed:
+            _forward(row, rule, index, gates, results, reach)
         out[row["id"]] = reach
     return out
 
@@ -216,19 +273,25 @@ def copied(rows: List[Dict], parents: Dict[str, Reach]) -> Dict[str, Reach]:
 # ---------------------------------------------------------------- PaaS
 
 
-def _endpoint(public: bool, opened: bool, ports: PortSet, reason: str = REASON_ENDPOINT) -> Reach:
+def _endpoint(node_id: str, public: bool, opened: bool, ports: PortSet, reason: str = REASON_ENDPOINT) -> Reach:
+    """The service's own firewall is the only hop; when it admits nobody that is the blocker."""
     reach = Reach()
-    if public:
-        reach.public_reasons.add(reason)
-        if opened:
-            reach.add_path(ports, VIA_ENDPOINT)
+    if not public:
+        return reach
+    reach.public_reasons.add(reason)
+    if opened:
+        reach.add_path(ports, VIA_ENDPOINT, [hop(HOP_SERVICE, node_id)], {"type": ENTRY_ENDPOINT, "id": node_id})
+    else:
+        reach.block(HOP_SERVICE, node_id, BLOCK_NOT_ALLOWED)
     return reach
 
 
 def network_acl_endpoints(rows: List[Dict]) -> Dict[str, Reach]:
     """Storage, Key Vault, ACR: open when public access is on and the default action allows."""
     return {
-        r["id"]: _endpoint(_enabled(r["pna"]), _allows(r["default_action"]), HTTP_HTTPS if r["http"] else HTTPS)
+        r["id"]: _endpoint(
+            r["id"], _enabled(r["pna"]), _allows(r["default_action"]), HTTP_HTTPS if r["http"] else HTTPS,
+        )
         for r in rows
     }
 
@@ -247,7 +310,7 @@ def cosmos_accounts(rows: List[Dict]) -> Dict[str, Reach]:
     out = {}
     for r in rows:
         opened = not r["vnet_filter"] and (r["rule_count"] == 0 or any(is_world(ip) for ip in r["ipranges"]))
-        out[r["id"]] = _endpoint(_enabled(r["pna"]), opened, cosmos_ports(r))
+        out[r["id"]] = _endpoint(r["id"], _enabled(r["pna"]), opened, cosmos_ports(r))
     return out
 
 
@@ -264,7 +327,7 @@ def sql_servers(rows: List[Dict]) -> Dict[str, Reach]:
         unread = r["engine"] != SQL_SERVER_ENGINE and not r["fetched"]
         opened = unread or any(sql_world_rule(rule) for rule in r["rules"])
         port = r.get("port")
-        out[r["id"]] = _endpoint(public, opened, PortSet.of(TCP, port, port) if port else PortSet.of(TCP))
+        out[r["id"]] = _endpoint(r["id"], public, opened, PortSet.of(TCP, port, port) if port else PortSet.of(TCP))
     return out
 
 
@@ -273,14 +336,15 @@ def function_apps(rows: List[Dict]) -> Dict[str, Reach]:
     for r in rows:
         public = not r["host_names_disabled"] and _enabled(r["pna"])
         restricted = str(r["default_action"] or "").lower() == DENY and r["open_restriction"] is False
-        out[r["id"]] = _endpoint(public, not restricted, HTTP_HTTPS)
+        out[r["id"]] = _endpoint(r["id"], public, not restricted, HTTP_HTTPS)
     return out
 
 
 def aks_clusters(rows: List[Dict]) -> Dict[str, Reach]:
     return {
         r["id"]: _endpoint(
-            not r["private"], not r["ranges"] or any(is_world(c) for c in r["ranges"]), HTTPS, REASON_API_SERVER,
+            r["id"], not r["private"], not r["ranges"] or any(is_world(c) for c in r["ranges"]), HTTPS,
+            REASON_API_SERVER,
         )
         for r in rows
     }
@@ -296,6 +360,7 @@ OPTIONAL MATCH (nic)-[:MEMBER_PUBLIC_IP_ADDRESS]->(pip:AzurePublicIPAddress)
 OPTIONAL MATCH (nic)-[:CONTAINS]->(ipc:AzureNetworkInterfaceIPConfiguration)
 RETURN nic.id AS id, collect(DISTINCT toLower(s.id)) AS subnets, collect(DISTINCT toLower(g.id)) AS nsgs,
     count(DISTINCT pip) > 0 AS public, collect(DISTINCT pip.sku) AS skus,
+    collect(DISTINCT pip {{.id, address: pip.ipAddress}}) AS pips,
     collect(DISTINCT toLower(ipc.id)) AS ipconfigs, collect(DISTINCT ipc.private_ip_address) AS private_ips
 """
 
@@ -303,7 +368,7 @@ RETURN nic.id AS id, collect(DISTINCT toLower(s.id)) AS subnets, collect(DISTINC
 # LB and App Gateway pool ids never collide, so one pool index serves both front doors.
 _VMSS_QUERY = f"""
 MATCH {SUBSCRIPTION}-[:RESOURCE]->(v:AzureVirtualMachineScaleSet)
-RETURN v.id AS id, coalesce(v.public_ip_per_instance, false) AS public, [] AS skus,
+RETURN v.id AS id, coalesce(v.public_ip_per_instance, false) AS public, [] AS skus, [] AS pips,
     coalesce(v.lb_backend_pool_ids, []) + coalesce(v.appgw_backend_pool_ids, []) AS pools,
     coalesce(v.lb_inbound_nat_lb_ids, []) AS nat_lbs,
     coalesce(v.subnet_ids, []) AS subnets, coalesce(v.nsg_ids, []) AS nsgs
@@ -318,11 +383,11 @@ RETURN toLower(p.id) AS pool, collect(DISTINCT nic.id) AS nics
 _LB_QUERY = f"""
 MATCH {SUBSCRIPTION}-[:RESOURCE]->(lb:AzureNetworkLoadBalancer)
 OPTIONAL MATCH (lb)-[:HAS]->(fe:AzureLoadBalancerFrontendIPConfiguration)
-    -[:MEMBER_PUBLIC_IP_ADDRESS]->(:AzurePublicIPAddress)
-WITH lb, collect(DISTINCT toLower(fe.id)) AS public_frontends
+    -[:MEMBER_PUBLIC_IP_ADDRESS]->(pip:AzurePublicIPAddress)
+WITH lb, [f IN collect(DISTINCT {{id: toLower(fe.id), pip: pip.id}}) WHERE f.id IS NOT NULL] AS public_frontends
 OPTIONAL MATCH (lb)-[:HAS]->(r:AzureLoadBalancerRule)
 RETURN lb.id AS id, lb.sku AS sku, public_frontends, collect(r {{
-    .kind, .protocol, .frontend_port_start, .frontend_port_end, .backend_port,
+    .id, .kind, .protocol, .frontend_port_start, .frontend_port_end, .backend_port,
     .frontend_ip_configuration_id, .backend_pool_ids, .backend_ip_configuration_id
 }}) AS rules
 """
@@ -395,15 +460,16 @@ def front_door_backends(
     members.update({(VMSS, r["id"]): (r["subnets"], r["nsgs"]) for r in vmss_rows})
     return gateways.Backends(
         index.by_ipconfig, index.by_pool, gateways.nics_by_ip(nic_rows, NIC), members,
-        subnets, nsg_rules, nsgs, results,
+        subnets, nsg_rules, nsgs, results, world_denies(nsg_rules),
     )
 
 
 def _compute_paths(q: Callable[[str], List[Dict]], subnets: Dict, nsg_rules: Dict[str, List[Dict]]) -> Results:
     nsgs = {nsg_id: nsg_open(rules) for nsg_id, rules in nsg_rules.items()}
+    denies = world_denies(nsg_rules)
     nic_rows, vmss_rows = q(_NIC_QUERY), q(_VMSS_QUERY)
-    nics, nic_gates = attachments(nic_rows, NIC, REASON_PUBLIC_IP, subnets, nsgs)
-    vmss, vmss_gates = attachments(vmss_rows, VMSS, REASON_PER_INSTANCE_IP, subnets, nsgs)
+    nics, nic_gates = attachments(nic_rows, NIC, REASON_PUBLIC_IP, subnets, nsgs, denies)
+    vmss, vmss_gates = attachments(vmss_rows, VMSS, REASON_PER_INSTANCE_IP, subnets, nsgs, denies)
     results: Results = {NIC: nics, VMSS: vmss}
     index = backend_index(nic_rows, vmss_rows, q(_POOL_QUERY))
     results[LB] = load_balancers(q(_LB_QUERY), index, {**nic_gates, **vmss_gates}, results)

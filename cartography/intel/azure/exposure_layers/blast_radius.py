@@ -20,18 +20,22 @@ from typing import Dict
 from typing import Iterable
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 import neo4j
 
+from cartography.intel.azure.exposure_layers.network import Results
 from cartography.intel.azure.exposure_layers.network import SUBSCRIPTION
 from cartography.intel.azure.exposure_layers.reach import COSMOS
 from cartography.intel.azure.exposure_layers.reach import cosmos_ports
-from cartography.intel.azure.exposure_layers.reach import Results
 from cartography.intel.azure.exposure_layers.reach import SQL_SERVER
 from cartography.intel.azure.exposure_layers.reach import VM
 from cartography.intel.exposure.layers import CAN_NETWORK_REACH
 from cartography.intel.exposure.layers import merge_reach_edges
 from cartography.intel.exposure.layers import Reach
+from cartography.intel.exposure.layers import reach_summaries
+from cartography.intel.exposure.layers import set_node_properties
+from cartography.intel.exposure.layers import write_reach_counts
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
 
@@ -53,7 +57,8 @@ MATCH {SUBSCRIPTION}-[:RESOURCE]->(n:AzureSQLServer)
 WHERE toLower(coalesce(n.publicNetworkAccess, '')) <> '{DISABLED}' AND NOT coalesce(n.vnetIntegrated, false)
 OPTIONAL MATCH (n)-[:HAS]->(fw:AzureFirewallRule)
 RETURN n.id AS id, n.port AS port,
-    collect(CASE WHEN fw IS NULL THEN null ELSE [fw.start_ip_address, fw.end_ip_address] END) AS ranges
+    collect(CASE WHEN fw IS NULL THEN null ELSE [fw.start_ip_address, fw.end_ip_address, coalesce(fw.name, fw.id)] END)
+        AS ranges
 """
 
 _COSMOS_QUERY = f"""
@@ -85,42 +90,50 @@ def _in_cidr(ip: str, cidr: str) -> bool:
         return False
 
 
-def sql_via(vm_ips: Iterable[str], store: Dict, public: bool) -> Optional[str]:
-    """How a VM gets through a SQL server firewall, or None. ranges: [[start, end], ...]."""
+Admission = Tuple[str, Optional[str]]  # (via, admitted_by: the rule that let the VM in, when known)
+
+
+def sql_via(vm_ips: Iterable[str], store: Dict, public: bool) -> Optional[Admission]:
+    """How a VM gets through a SQL server firewall, or None. ranges: [[start, end, rule name], ...]."""
     ips = list(vm_ips)
     azure_services = [AZURE_SERVICES_IP, AZURE_SERVICES_IP]
-    ranges = [r for r in store["ranges"] if list(r) != azure_services]
-    if any(_in_range(ip, lo, hi) for ip in ips for lo, hi in ranges):
-        return VIA_IP_RULE
+    ranges = [r for r in store["ranges"] if list(r[:2]) != azure_services]
+    for lo, hi, name in ranges:
+        if any(_in_range(ip, lo, hi) for ip in ips):
+            return VIA_IP_RULE, name
     if len(ranges) < len(store["ranges"]):
-        return VIA_AZURE_SERVICES
-    return VIA_PUBLIC if public else None
+        return VIA_AZURE_SERVICES, VIA_AZURE_SERVICES
+    return (VIA_PUBLIC, None) if public else None
 
 
-def cosmos_via(vm_ips: Iterable[str], store: Dict, public: bool) -> Optional[str]:
-    """How a VM gets through a Cosmos DB IP filter, or None."""
-    if any(_in_cidr(ip, cidr) for ip in vm_ips for cidr in store["cidrs"]):
-        return VIA_IP_RULE
+def cosmos_via(vm_ips: Iterable[str], store: Dict, public: bool) -> Optional[Admission]:
+    """How a VM gets through a Cosmos DB IP filter, or None. IP rules have no name: the CIDR is the rule."""
+    ips = list(vm_ips)
+    for cidr in store["cidrs"]:
+        if any(_in_cidr(ip, cidr) for ip in ips):
+            return VIA_IP_RULE, cidr
     if store["azure_services"]:
-        return VIA_AZURE_SERVICES
-    return VIA_PUBLIC if public else None
+        return VIA_AZURE_SERVICES, VIA_AZURE_SERVICES
+    return (VIA_PUBLIC, None) if public else None
 
 
-ViaFn = Callable[[Iterable[str], Dict, bool], Optional[str]]
+ViaFn = Callable[[Iterable[str], Dict, bool], Optional[Admission]]
 
 
 def reach_rows(
     vms: List[Dict], stores: List[Dict], via_fn: ViaFn, reach: Dict[str, Reach], ports_fn: Callable[[Dict], PortSet],
+    label: str,
 ) -> List[Dict]:
-    """Edge rows {src, dst, ports, via} for every VM a store's firewall admits."""
+    """Edge rows {src, dst, dst_type, ports, via, admitted_by} for every VM a store's firewall admits."""
     rows = []
     for store in stores:
         public = store["id"] in reach and not reach[store["id"]].ports.is_empty()
         ports = ports_fn(store).to_strings()
         for vm in vms:
-            via = via_fn(vm["ips"], store, public)
-            if via:
-                rows.append({"src": vm["id"], "dst": store["id"], "ports": ports, "via": via})
+            admitted = via_fn(vm["ips"], store, public)
+            if admitted:
+                row = {"src": vm["id"], "dst": store["id"], "dst_type": label, "ports": ports}
+                rows.append({**row, "via": admitted[0], "admitted_by": admitted[1]})
     return rows
 
 
@@ -129,14 +142,30 @@ def _sql_ports(store: Dict) -> PortSet:
     return PortSet.of(TCP, port, port) if port else PortSet.of(TCP)
 
 
+# (data store label, its firewall query, how a VM gets through, its service ports)
+_STORES = (
+    (SQL_SERVER, _SQL_QUERY, sql_via, _sql_ports),
+    (COSMOS, _COSMOS_QUERY, cosmos_via, cosmos_ports),
+)
+
+
 def sync(session: neo4j.Session, params: Dict, reach: Results) -> None:
-    """Write VM -> data store edges for one subscription and drop edges not seen this run."""
+    """
+    Write VM -> data store edges for one subscription, drop edges not seen this run, then the
+    summaries: reachable stores on every VM, reverse counts on every store. Run after L2 is
+    written (the counts read internet_reachable on the VMs).
+    """
     def q(query: str) -> List[Dict]:
         return [dict(r) for r in session.run(query, **params)]
 
+    tag = params["UPDATE_TAG"]
     vms = q(_VM_QUERY)
-    sql_rows = reach_rows(vms, q(_SQL_QUERY), sql_via, reach.get(SQL_SERVER, {}), _sql_ports)
-    cosmos_rows = reach_rows(vms, q(_COSMOS_QUERY), cosmos_via, reach.get(COSMOS, {}), cosmos_ports)
-    merge_reach_edges(session, VM, SQL_SERVER, sql_rows, params["UPDATE_TAG"])
-    merge_reach_edges(session, VM, COSMOS, cosmos_rows, params["UPDATE_TAG"])
+    edges: List[Dict] = []
+    for label, query, via_fn, ports_fn in _STORES:
+        rows = reach_rows(vms, q(query), via_fn, reach.get(label, {}), ports_fn, label)
+        merge_reach_edges(session, VM, label, rows, tag)
+        edges += rows
     session.run(_CLEANUP, **params).consume()
+    set_node_properties(session, VM, reach_summaries([vm["id"] for vm in vms], edges), evaluated_at=tag)
+    for label, *_ in _STORES:
+        write_reach_counts(session, label, sorted(reach.get(label, {})), tag)

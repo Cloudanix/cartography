@@ -3,6 +3,8 @@ End-to-end check of the Azure exposure layers on a graph written by the Azure lo
 (network) or shaped like them (compute, PaaS). Scenarios follow docs/exposure-layers/plan.md
 section 8.
 """
+import json
+
 from cartography.intel.azure import exposure_layers
 from cartography.intel.azure import function_app
 from cartography.intel.azure import network
@@ -298,6 +300,83 @@ def test_azure_exposure_layers_end_to_end(neo4j_session):
     assert 'internet_reachable' not in _props(neo4j_session, 'AzureNetworkInterface', 'nic-other')
 
 
+def _json(session, label, node_id, key):
+    return json.loads(_props(session, label, node_id)[key])
+
+
+def _nsg_hop(name):
+    return {'hop': 'nsg', 'id': arm('networkSecurityGroups', name).lower()}
+
+
+def test_azure_exposure_context(neo4j_session):
+    """exposure_paths / exposure_blocked_by / exposure_evaluated_at and the L5 summaries (same graph)."""
+    _build(neo4j_session)
+    exposure_layers.run(neo4j_session, PARAMS)
+    vm, lb_id = 'AzureVirtualMachine', arm('loadBalancers', 'lb1')
+
+    def paths(node_id):
+        return _json(neo4j_session, vm, node_id, 'exposure_paths')
+
+    def blocked(label, node_id):
+        return _json(neo4j_session, label, node_id, 'exposure_blocked_by')
+
+    pip = arm('publicIPAddresses', 'open-pip')
+    assert paths('vm-open') == [{
+        'via': 'direct_ipv4', 'ports': ['tcp:22-22', 'tcp:443-443'],
+        'entry': {'type': 'public_ip', 'id': pip, 'address': '20.1.1.7'},
+        'hops': [{'hop': 'public_ip', 'id': pip}, _nsg_hop('nsg-open')],
+    }]
+    assert paths('vm-app') == [{
+        'via': f'lb:{lb_id}', 'ports': ['tcp:8080-8080'], 'entry': {'type': 'load_balancer', 'id': lb_id},
+        'hops': [
+            {'hop': 'public_ip', 'id': arm('publicIPAddresses', 'lb1-pip')},
+            {'hop': 'listener', 'id': f'{lb_id}/loadBalancingRules/https', 'rule': 'tcp 443 -> 8080'},
+            _nsg_hop('nsg-app'),
+        ],
+    }]
+
+    every_port = ['tcp:0-65535', 'udp:0-65535']
+    assert blocked(vm, 'vm-open') == []
+    assert blocked(vm, 'vm-app') == []  # not public: its closed NAT rule needs no explanation
+    assert blocked(vm, 'vm-rfc1918') == [
+        {**_nsg_hop('nsg-rfc1918'), 'reason': 'not_allowed', 'detail': 'nic_nsg', 'ports': every_port},
+    ]
+    assert blocked(vm, 'vm-nic-allow-subnet-deny') == [
+        {**_nsg_hop('nsg-closed'), 'reason': 'denied', 'detail': 'subnet_nsg', 'ports': every_port},
+    ]
+    assert blocked(vm, 'vm-std-no-nsg') == [{
+        'hop': 'nsg', 'id': None, 'reason': 'not_allowed', 'detail': 'standard_sku_closed_without_nsg',
+        'ports': every_port,
+    }]
+    assert blocked(vm, 'vm-nva') == [{
+        'hop': 'route', 'id': arm('routeTables', 'rt-nva').lower(), 'reason': 'unknown_next_hop',
+        'detail': 'unknown:udr_default_route_virtualappliance',
+    }]
+    assert blocked('AzureStorageAccount', 'st-firewalled') == [
+        {'hop': 'service', 'id': 'st-firewalled', 'reason': 'not_allowed'},
+    ]
+
+    # Every written node carries the sync's tag.
+    for label, node_id in [(vm, 'vm-open'), ('AzureSQLServer', 'sql-office'), ('AzureCluster', 'aks-private')]:
+        assert _props(neo4j_session, label, node_id)['exposure_evaluated_at'] == TAG
+
+    # L5 summaries: every VM gets a list (empty when none), every data store the reverse counts.
+    stores = _json(neo4j_session, vm, 'vm-open', 'network_reachable_data_stores')
+    assert {
+        'id': 'sql-office', 'type': 'AzureSQLServer', 'ports': ['tcp:1433-1433'], 'via': 'firewall_ip_rule',
+        'admitted_by': 'sql-office/vm',
+    } in stores
+    assert _props(neo4j_session, vm, 'vm-open')['network_reachable_data_store_count'] == len(stores)
+
+    def counts(label, node_id):
+        p = _props(neo4j_session, label, node_id)
+        return p['network_reachable_from_count'], p['network_reachable_from_internet_exposed_count']
+
+    assert counts('AzureSQLServer', 'sql-office') == (1, 1)
+    assert counts('AzureSQLServer', 'sql-world') == (8, 4)  # every VM; open, basic, deny22, app reachable
+    assert counts('AzureCosmosDBAccount', 'cosmos-filtered') == (0, 0)  # stale edge not counted
+
+
 def test_load_balancer_rule_cleanup(neo4j_session):
     _scope(neo4j_session, 'ws-lbr', 'tenant-lbr', 'sub-lbr')
     lb_id = '/subscriptions/sub-lbr/resourceGroups/rg/providers/Microsoft.Network/loadBalancers/lb'
@@ -437,6 +516,25 @@ def test_front_doors_and_easy_auth(neo4j_session):
     assert reach(vm, 'vm-dnat-ssh') == (True, ['tcp:22-22'], [f'azure_firewall_dnat:{FW_ID}'], [])
     assert reach(vm, 'vm-dnat-rdp') == (False, [], [], [])
     assert auth('AzureFirewall', FW_ID)[0] == 'unknown'
+
+    # Paths name the front door and the rule that forwarded; the backend NSG admitted the gateway subnet.
+    assert _json(neo4j_session, vm, 'vm-web', 'exposure_paths') == [{
+        'via': f'appgw:{AGW_ID}', 'ports': ['tcp:8080-8080'],
+        'entry': {'type': 'application_gateway', 'id': AGW_ID, 'listener_ports': ['tcp:443-443']},
+        'hops': [
+            {'hop': 'listener', 'id': f'{AGW_ID}/rule', 'rule': 'https 443 -> http 8080'}, _nsg_hop('nsg-no-internet'),
+        ],
+    }]
+    dnat = {
+        'hop': 'dnat_rule', 'id': f'{FW_ID}/natRuleCollections/in/rules/ssh',
+        'rule': 'Any -> 20.8.8.8:2222 => 10.0.3.30:22',
+    }
+    assert _json(neo4j_session, vm, 'vm-dnat-ssh', 'exposure_paths') == [{
+        'via': f'azure_firewall_dnat:{FW_ID}', 'ports': ['tcp:22-22'], 'entry': {'type': 'azure_firewall', 'id': FW_ID},
+        'hops': [{'hop': 'firewall', 'id': FW_ID}, dnat],
+    }]
+    # Public IP shut by its NSG, but reachable through the gateway: nothing to explain.
+    assert _json(neo4j_session, vm, 'vm-web', 'exposure_blocked_by') == []
 
     # Easy Auth: on and rejecting = required; AllowAnonymous or unreadable = unknown, never required.
     assert auth('AzureFunctionApp', 'fn-easy-auth') == ('required', ['easy_auth'])

@@ -13,6 +13,7 @@ A WAF in Prevention mode filters requests but closes no port: it is an L3 reason
 """
 from collections import defaultdict
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Callable
 from typing import Dict
 from typing import Iterable
@@ -26,12 +27,18 @@ from cartography.intel.azure.exposure_layers.network import Gate
 from cartography.intel.azure.exposure_layers.network import gate
 from cartography.intel.azure.exposure_layers.network import nsg_open_from
 from cartography.intel.azure.exposure_layers.network import parse_port_range
+from cartography.intel.azure.exposure_layers.network import path_hops
 from cartography.intel.azure.exposure_layers.network import Results
 from cartography.intel.azure.exposure_layers.network import SubnetFacts
 from cartography.intel.azure.exposure_layers.network import SUBSCRIPTION
 from cartography.intel.azure.exposure_layers.network import Target
+from cartography.intel.exposure.layers import hop
+from cartography.intel.exposure.layers import HOP_DNAT_RULE
+from cartography.intel.exposure.layers import HOP_FIREWALL
+from cartography.intel.exposure.layers import HOP_LISTENER
 from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
+from cartography.intel.exposure.ports import union_all
 from cartography.intel.exposure.rules import is_world
 
 APP_GATEWAY = "AzureApplicationGateway"
@@ -43,6 +50,10 @@ VIA_DNAT_RULE = "dnat_rule"
 REASON_FRONTEND = "public_frontend"
 REASON_PUBLIC_IP = "public_ip"
 SUBNETS_SEGMENT = "/subnets/"
+ENTRY_APP_GATEWAY = "application_gateway"
+ENTRY_FIREWALL = "azure_firewall"
+# Only world-sourced DNAT rules are walked (dnat_from_world), so the source always reads Any.
+DNAT_SOURCE_ANY = "Any"
 
 
 @dataclass
@@ -56,6 +67,7 @@ class Backends:
     nsg_rules: Dict[str, List[Dict]]
     world_nsgs: Dict[str, PortSet]
     results: Results
+    world_denies: Set[str] = field(default_factory=set)  # NSGs with a deny for internet sources
 
 
 def vnets_of(subnet_ids: Iterable[str]) -> Set[str]:
@@ -92,18 +104,22 @@ def door_nsgs(backends: Backends, prefixes: List[str]) -> Dict[str, PortSet]:
 
 def open_backends(
     backends: Backends, nsgs_from: Dict[str, PortSet], targets: List[Target], ports: PortSet, via: str,
+    hops: List[Dict], entry: Dict,
 ) -> bool:
     """
     Open `ports` on every target whose NSGs admit the front door's subnet. Replies stay in the
     VNet, so a backend subnet's 0.0.0.0/0 UDR (gate blind spot) does not matter on this leg.
+    ponytail: a backend the NSGs close records no exposure_blocked_by entry (only direct and LB
+    legs do); blame the gate here too if consoles need it.
     :return: True when a target opened, or when none is resolved (the front door still forwards).
     """
     opened = False
     for label, target_id in targets:
         subnet_ids, nsg_ids = backends.members[(label, target_id)]
-        passed = ports & gate(subnet_ids, nsg_ids, backends.subnets, nsgs_from).ports
+        through = gate(subnet_ids, nsg_ids, backends.subnets, nsgs_from)
+        passed = ports & through.ports
         if not passed.is_empty():
-            backends.results[label][target_id].add_path(passed, via)
+            backends.results[label][target_id].add_path(passed, via, [*hops, *path_hops(through)], entry)
             opened = True
     return opened or not targets
 
@@ -133,16 +149,28 @@ def appgw_targets(rule: Dict, backends: Backends, near_vnets: Set[str]) -> List[
     return sorted({t for t in found if t in backends.members})
 
 
+def _listener(rule: Dict) -> PortSet:
+    return ports_of([rule.get("listener_protocol")], [rule.get("listener_port")])
+
+
+def _route_text(rule: Dict) -> str:
+    """'https 443 -> http 8080': listener to backend settings."""
+    listener = f"{str(rule.get('listener_protocol') or '').lower()} {rule.get('listener_port')}"
+    backend = f"{str(rule.get('backend_protocol') or '').lower()} {rule.get('backend_port')}"
+    return f"{listener} -> {backend}"
+
+
 def _route(
     gw: Dict, rule: Dict, through: Gate, nsgs_from: Dict[str, PortSet], backends: Backends, reach: Reach,
+    entry: Dict,
 ) -> None:
     """One public listener -> backend route. Backends open only when the listener itself is open."""
-    listener = ports_of([rule.get("listener_protocol")], [rule.get("listener_port")])
-    if not add_gated_path(reach, listener, through, VIA_LISTENER):
+    hops = [hop(HOP_LISTENER, rule.get("id"), _route_text(rule))]
+    if not add_gated_path(reach, _listener(rule), through, VIA_LISTENER, hops, entry):
         return
     targets = appgw_targets(rule, backends, vnets_of(gw["subnets"]))
     backend = ports_of([rule.get("backend_protocol")], [rule.get("backend_port")])
-    open_backends(backends, nsgs_from, targets, backend, f"{VIA_APPGW}{gw['id']}")
+    open_backends(backends, nsgs_from, targets, backend, f"{VIA_APPGW}{gw['id']}", hops, entry)
 
 
 def app_gateways(rows: List[Dict], backends: Backends) -> Dict[str, Reach]:
@@ -156,11 +184,14 @@ def app_gateways(rows: List[Dict], backends: Backends) -> Dict[str, Reach]:
         if row["public"]:
             reach.public_reasons.add(REASON_FRONTEND)
         # The gateway subnet's own NSG (and UDR blind spot) decides what reaches the listener.
-        through = gate(row["subnets"], [], backends.subnets, backends.world_nsgs)
+        through = gate(row["subnets"], [], backends.subnets, backends.world_nsgs, backends.world_denies)
         nsgs_from = door_nsgs(backends, row["prefixes"])
-        for rule in row["rules"]:
-            if rule.get("frontend_public"):
-                _route(row, rule, through, nsgs_from, backends, reach)
+        routes = [r for r in row["rules"] if r.get("frontend_public")]
+        # Configured public listener ports, before the gateway subnet NSG: what the gateway listens on.
+        listening = union_all(_listener(r) for r in routes).to_strings()
+        entry = {"type": ENTRY_APP_GATEWAY, "id": row["id"], "listener_ports": listening}
+        for rule in routes:
+            _route(row, rule, through, nsgs_from, backends, reach, entry)
         out[row["id"]] = reach
     return out
 
@@ -178,6 +209,14 @@ def dnat_from_world(rule: Dict, public_ips: Set[str]) -> bool:
     return world and to_me
 
 
+def dnat_text(rule: Dict) -> str:
+    """'Any -> 20.1.2.3:2222 => 10.1.2.4:22'."""
+    addresses = ",".join(rule.get("destination_addresses") or [])
+    ports = ",".join(rule.get("destination_ports") or [])
+    translated = f"{rule.get('translated_address')}:{rule.get('translated_port')}"
+    return f"{DNAT_SOURCE_ANY} -> {addresses}:{ports} => {translated}"
+
+
 def _dnat(fw: Dict, rule: Dict, nsgs_from: Dict[str, PortSet], backends: Backends, reach: Reach) -> None:
     """
     ponytail: a translated address that is an internal load balancer frontend is not followed to
@@ -185,8 +224,13 @@ def _dnat(fw: Dict, rule: Dict, nsgs_from: Dict[str, PortSet], backends: Backend
     """
     target = resolve_ip(rule.get("translated_address"), backends, vnets_of(fw["subnets"]))
     backend = ports_of(rule.get("protocols"), [rule.get("translated_port")])
-    if open_backends(backends, nsgs_from, [target] if target else [], backend, f"{VIA_DNAT}{fw['id']}"):
-        reach.add_path(ports_of(rule.get("protocols"), rule.get("destination_ports") or []), VIA_DNAT_RULE)
+    rule_hop = hop(HOP_DNAT_RULE, rule.get("id"), dnat_text(rule))
+    entry = {"type": ENTRY_FIREWALL, "id": fw["id"]}
+    targets = [target] if target else []
+    hops = [hop(HOP_FIREWALL, fw["id"]), rule_hop]
+    if open_backends(backends, nsgs_from, targets, backend, f"{VIA_DNAT}{fw['id']}", hops, entry):
+        listening = ports_of(rule.get("protocols"), rule.get("destination_ports") or [])
+        reach.add_path(listening, VIA_DNAT_RULE, [rule_hop], entry)
 
 
 def firewalls(rows: List[Dict], backends: Backends) -> Dict[str, Reach]:
@@ -220,7 +264,7 @@ MATCH {SUBSCRIPTION}-[:RESOURCE]->(n:{APP_GATEWAY})
 {_DOOR_HEAD}
 OPTIONAL MATCH (n)-[:HAS]->(r:AzureApplicationGatewayRule)
 RETURN n.id AS id, subnets, prefixes, public, collect(r {{
-    .frontend_public, .listener_protocol, .listener_port, .backend_protocol, .backend_port,
+    .id, .frontend_public, .listener_protocol, .listener_port, .backend_protocol, .backend_port,
     .backend_pool_id, .backend_ip_configuration_ids, .backend_ip_addresses
 }}) AS rules
 """
@@ -230,7 +274,7 @@ MATCH {SUBSCRIPTION}-[:RESOURCE]->(n:{FIREWALL})
 {_DOOR_HEAD}
 OPTIONAL MATCH (n)-[:HAS]->(r:AzureFirewallNatRule)
 RETURN n.id AS id, subnets, prefixes, public, public_ips, collect(r {{
-    .source_addresses, .destination_addresses, .destination_ports, .protocols,
+    .id, .source_addresses, .destination_addresses, .destination_ports, .protocols,
     .translated_address, .translated_port
 }}) AS rules
 """
