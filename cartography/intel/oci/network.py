@@ -1021,6 +1021,7 @@ def load_vnics(
         v.lifecycle_state = vnic.lifecycle_state,
         v.private_ip = vnic.private_ip,
         v.public_ip = vnic.public_ip,
+        v.ipv6_addresses = vnic.ipv6_addresses,
         v.is_primary = vnic.is_primary,
         v.hostname_label = vnic.hostname_label,
         v.mac_address = vnic.mac_address,
@@ -1055,6 +1056,8 @@ def load_vnics(
             "lifecycle_state": vnic.get("lifecycle-state"),
             "private_ip": vnic.get("private-ip", ""),
             "public_ip": vnic.get("public-ip", ""),
+            # Already in the GetVnic response; the exposure walker's IPv6 path reads it.
+            "ipv6_addresses": vnic.get("ipv6-addresses") or [],
             "is_primary": vnic.get("is-primary", False),
             "hostname_label": vnic.get("hostname-label", ""),
             "mac_address": vnic.get("mac-address", ""),

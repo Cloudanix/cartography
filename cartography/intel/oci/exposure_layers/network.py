@@ -1,17 +1,18 @@
 """
 OCI network facts for the exposure walker (docs/exposure-layers/plan.md section 4).
 
-Path model:
-    internet -> subnet route table (0.0.0.0/0 -> enabled internet gateway)
+Path model, evaluated once per address family:
+    internet -> subnet route table (0.0.0.0/0 or ::/0 -> enabled internet gateway)
              -> security lists of the subnet UNION NSGs of the VNIC / LB / endpoint -> port
 
 OCI admits a packet when ANY security list or NSG rule on the attachment allows it, so the
 rules of every list and group are pooled before evaluation. Stateful ingress rules track
 replies; stateless ingress rules also need an egress rule that lets the reply leave towards
-the client's ephemeral port.
+the client's ephemeral port. Only rules and routes of the packet's own family count: a
+0.0.0.0/0 rule never admits an IPv6 client and ::/0 never admits an IPv4 one.
 
-ponytail: IPv4 only. VNIC IPv6 addresses are not ingested, so ::/0 rules and routes are
-ignored; split per family (as the AWS walker does) once IPv6 addresses are ingested.
+ponytail: IPv6 is evaluated for VNICs only. LB, NLB, OKE and API Gateway IPv6 addresses are
+not ingested, so those stay IPv4; pass family=V6 to direct_paths once they are.
 """
 import json
 from dataclasses import dataclass
@@ -37,7 +38,11 @@ COMPARTMENT = TENANCY + "(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]-
 # Network objects are read tenancy-wide: a VNIC may sit in a subnet of another compartment.
 _VCN = TENANCY + "(:OCICompartment)-[:RESOURCE]->(:OCIVcn)"
 
-WORLD = "0.0.0.0/0"
+V4, V6 = "v4", "v6"
+WORLD_CIDR = {V4: "0.0.0.0/0", V6: "::/0"}
+# IPv4 vias name the gateway; IPv6 uses the cross-cloud via (AWS, GCP) so consumers can tell
+# the families apart. OCI allows one internet gateway per VCN, so its id adds nothing there.
+DIRECT_IPV6 = "direct_ipv6"
 INTERNET_GATEWAY_PREFIX = "ocid1.internetgateway."
 ROUTE_UNRESOLVED = "route_table_unresolved"
 # Security list rules carry destination ports under tcp-options (protocol 6) or udp-options (17).
@@ -61,8 +66,8 @@ class SubnetFacts:
     vcn_id: Optional[str]
     security_list_ids: List[str]
     prohibit_public_ip: bool
-    # Default-route targets; None when the route table is not in the graph.
-    igw_ids: Optional[List[str]]
+    # Default-route targets per family (V4 / V6); None when the route table is not in the graph.
+    igw_ids: Optional[Dict[str, List[str]]]
 
 
 # ---------------------------------------------------------------- pure evaluation
@@ -116,20 +121,20 @@ def nsg_rule(row: Dict) -> Rule:
     )
 
 
-def _world_open(rules: Iterable[Rule]) -> PortSet:
-    return allow_only_open(FirewallRule(r.ports, world=r.peer == WORLD) for r in rules)
+def _world_open(rules: Iterable[Rule], family: str) -> PortSet:
+    return allow_only_open(FirewallRule(r.ports, world=r.peer == WORLD_CIDR[family]) for r in rules)
 
 
-def internet_open(rules: List[Rule]) -> PortSet:
+def internet_open(rules: List[Rule], family: str = V4) -> PortSet:
     """
-    Ports the pooled security lists + NSGs of one attachment open to the whole internet.
-    Replies of stateless ingress may leave through any egress rule towards the internet:
-    stateful or stateless, either one admits the outbound packet.
+    Ports the pooled security lists + NSGs of one attachment open to the whole internet of
+    one address family. Replies of stateless ingress may leave through any egress rule
+    towards the internet of that family: stateful or stateless, either admits the packet.
     """
     inbound = [r for r in rules if r.ingress]
-    stateful = _world_open(r for r in inbound if not r.stateless)
-    stateless = _world_open(r for r in inbound if r.stateless)
-    replies = _world_open(r for r in rules if not r.ingress)
+    stateful = _world_open((r for r in inbound if not r.stateless), family)
+    stateless = _world_open((r for r in inbound if r.stateless), family)
+    replies = _world_open((r for r in rules if not r.ingress), family)
     return stateful | with_stateless_return(stateless, replies)
 
 
@@ -138,11 +143,11 @@ def any_source_open(rules: List[Rule]) -> PortSet:
     return union_all(r.ports for r in rules if r.ingress)
 
 
-def default_route_igws(route_rules: Any) -> List[str]:
-    """Internet gateways the IPv4 default route points at (deprecated cidr-block read too)."""
+def default_route_igws(route_rules: Any, family: str = V4) -> List[str]:
+    """Internet gateways the default route of one family points at (deprecated cidr-block read too)."""
     return [
         r["network-entity-id"] for r in _json_list(route_rules)
-        if (r.get("destination") or r.get("cidr-block")) == WORLD and
+        if (r.get("destination") or r.get("cidr-block")) == WORLD_CIDR[family] and
         str(r.get("network-entity-id") or "").startswith(INTERNET_GATEWAY_PREFIX)
     ]
 
@@ -162,28 +167,35 @@ class Network:
         sl_ids = subnet.security_list_ids if subnet else []
         return self.rules_of(list(sl_ids) + list(nsg_ids or []))
 
-    def internet_vias(self, subnet_id: Optional[str]) -> List[str]:
+    def internet_vias(self, subnet_id: Optional[str], family: str = V4) -> List[str]:
         """
-        Entry points from the internet into a subnet; empty when it has no usable IGW route.
-        An unresolved subnet or route table does not block (we cannot see the route), the
-        same choice the AWS walker and oci_subnet_asset_exposure make.
+        Entry points from the internet of one family into a subnet; empty when it has no usable
+        IGW route. An unresolved subnet or route table does not block (we cannot see the route),
+        the same choice the AWS walker and oci_subnet_asset_exposure make.
         """
         subnet = self.subnets.get(subnet_id or "")
         if subnet is None or subnet.igw_ids is None:
             return [ROUTE_UNRESOLVED]
+        # prohibitPublicIpOnVnic is set from prohibitInternetIngress (CreateSubnetDetails), which
+        # also bars internet ingress to the subnet's IPv6 addresses.
         if subnet.prohibit_public_ip:
             return []
         # Gateways missing from the graph count as enabled, like oci_subnet_asset_exposure.
-        return [f"igw:{g}" for g in subnet.igw_ids if self.igw_enabled.get(g, True)]
+        igws = [g for g in subnet.igw_ids[family] if self.igw_enabled.get(g, True)]
+        if family == V6:
+            return [DIRECT_IPV6] if igws else []
+        return [f"igw:{g}" for g in igws]
 
-    def direct_paths(self, subnet_ids: Iterable[Optional[str]], nsg_ids: Iterable[str]) -> Dict[str, PortSet]:
+    def direct_paths(
+        self, subnet_ids: Iterable[Optional[str]], nsg_ids: Iterable[str], family: str = V4,
+    ) -> Dict[str, PortSet]:
         """via -> internet-open ports, for each subnet of the attachment that routes to an IGW."""
         paths: Dict[str, PortSet] = {}
         for subnet_id in subnet_ids:
-            vias = self.internet_vias(subnet_id)
+            vias = self.internet_vias(subnet_id, family)
             if not vias:
                 continue
-            ports = internet_open(self.attachment_rules(subnet_id, nsg_ids))
+            ports = internet_open(self.attachment_rules(subnet_id, nsg_ids), family)
             for via in vias:
                 paths[via] = paths.get(via, PortSet.empty()) | ports
         return paths
@@ -222,7 +234,7 @@ _INSTANCE_VNIC_QUERY = f"""
 MATCH {COMPARTMENT}(i:OCIInstance)
 OPTIONAL MATCH (i)-[:OCI_VNIC_ATTACHMENT]->(:OCIVnicAttachment)-[:OCI_VNIC]->(v:OCIVnic)
 RETURN i.id AS owner, v.id AS id, v.public_ip AS public_ip, v.private_ip AS private_ip,
-    v.subnet_id AS subnet_id, coalesce(v.nsg_ids, []) AS nsg_ids
+    coalesce(v.ipv6_addresses, []) AS ipv6_addresses, v.subnet_id AS subnet_id, coalesce(v.nsg_ids, []) AS nsg_ids
 """
 
 
@@ -237,7 +249,7 @@ def read_network(session: neo4j.Session, params: Dict) -> Network:
             vcn_id=r["vcn_id"],
             security_list_ids=list(r["security_list_ids"]),
             prohibit_public_ip=bool(r["prohibit_public_ip"]),
-            igw_ids=default_route_igws(r["route_rules"]) if r["route_known"] else None,
+            igw_ids={f: default_route_igws(r["route_rules"], f) for f in WORLD_CIDR} if r["route_known"] else None,
         )
         for r in _rows(session, _SUBNET_QUERY, params)
     }

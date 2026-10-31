@@ -21,6 +21,7 @@ VCN = 'xl-vcn'
 IGW = 'ocid1.internetgateway.oc1.phx.xl'
 NAT = 'ocid1.natgateway.oc1.phx.xl'
 WORLD = '0.0.0.0/0'
+V6_WORLD = '::/0'
 VCN_CIDR = '10.0.0.0/16'
 UNTOUCHED = 'untouched'
 
@@ -38,9 +39,11 @@ SECURITY_LISTS = {
     'xl-sl-stateless': [_tcp(WORLD, 443, **{'is-stateless': True})],
     'xl-sl-closed': [],
     'xl-sl-backend': [_tcp(VCN_CIDR, 8080)],
+    'xl-sl-v6': [_tcp(V6_WORLD, 443)],
 }
 NSGS = {
     'xl-nsg-https': [_tcp(WORLD, 443)],
+    'xl-nsg-v6': [_tcp(V6_WORLD, 443)],
     'xl-nsg-app': [],
     'xl-nsg-db': [_tcp('xl-nsg-app', 1521, **{'source-type': 'NETWORK_SECURITY_GROUP'})],
 }
@@ -53,7 +56,12 @@ SUBNETS = {
     'xl-pub-closed': ('xl-sl-closed', IGW, False),
     'xl-private': ('xl-sl-backend', NAT, True),
     'xl-lb': ('xl-sl-open', IGW, False),
+    'xl-pub-v6': ('xl-sl-v6', IGW, False),
+    'xl-pub-v6-v4rules': ('xl-sl-open', IGW, False),
 }
+# Subnets whose route table also sends ::/0 to the IGW.
+V6_ROUTED = {'xl-pub-v6', 'xl-pub-v6-v4rules'}
+GUA = '2603:c020:1:2::5'
 
 
 def _run(session, query, **kw):
@@ -82,11 +90,12 @@ def _network(session):
             session, [{'id': f'{nsg_id}.r{i}', 'direction': 'INGRESS', **r} for i, r in enumerate(rules)], nsg_id, TAG,
         )
     for subnet_id, (sl_id, target, prohibit) in SUBNETS.items():
+        worlds = [WORLD, V6_WORLD] if subnet_id in V6_ROUTED else [WORLD]
         network.load_route_tables(
             session,
             [{
                 'id': f'rt-{subnet_id}', 'vcn-id': VCN,
-                'route-rules': [{'destination': WORLD, 'network-entity-id': target}],
+                'route-rules': [{'destination': w, 'network-entity-id': target} for w in worlds],
             }],
             *args,
         )
@@ -100,7 +109,9 @@ def _network(session):
         )
 
 
-def _instance(session, instance_id, subnet_id, public_ip=None, private_ip=None, nsgs=(), compartment=COMPARTMENT):
+def _instance(
+    session, instance_id, subnet_id, public_ip=None, private_ip=None, nsgs=(), compartment=COMPARTMENT, ipv6=(),
+):
     vnic_id = f'{instance_id}.vnic'
     _run(
         session,
@@ -115,7 +126,7 @@ def _instance(session, instance_id, subnet_id, public_ip=None, private_ip=None, 
         session,
         [{
             'id': vnic_id, 'subnet-id': subnet_id, 'public-ip': public_ip, 'private-ip': private_ip,
-            'nsg-ids': list(nsgs),
+            'nsg-ids': list(nsgs), 'ipv6-addresses': list(ipv6),
         }],
         REGION, TAG,
     )
@@ -128,6 +139,11 @@ def _instances(session):
     _instance(session, 'xl-i-stateless', 'xl-pub-stateless', public_ip='203.0.113.4')
     _instance(session, 'xl-i-nsg', 'xl-pub-closed', public_ip='203.0.113.5', nsgs=['xl-nsg-https'])
     _instance(session, 'xl-i-private', 'xl-private', private_ip='10.0.5.5', nsgs=['xl-nsg-app'])
+    # Plan section 8 scenario 12, OCI shape: IPv6 needs its own route and its own world rule.
+    _instance(session, 'xl-i-v6', 'xl-pub-v6', ipv6=[GUA])
+    _instance(session, 'xl-i-v6-v4rules', 'xl-pub-v6-v4rules', ipv6=[GUA])
+    _instance(session, 'xl-i-v6-noroute', 'xl-pub-open', ipv6=[GUA], nsgs=['xl-nsg-v6'])
+    _instance(session, 'xl-i-v6-ula', 'xl-pub-v6', ipv6=['fd00:1::5'])
     _run(
         session,
         "MATCH (i:OCIInstance{id: 'xl-i-open'}) SET i.image_id = 'xl-img', i.exposed_internet = $u "
@@ -246,6 +262,19 @@ def test_public_ip_but_closed_path_is_public_not_reachable(graph):
     # RFC1918-only rules (and a stale true rewritten), no IGW route, stateless ingress without egress.
     for instance in ('xl-i-rfc1918', 'xl-i-noroute', 'xl-i-stateless'):
         assert _reach(graph, 'OCIInstance', instance) == (False, [], ['public_ip']), instance
+
+
+def test_ipv6_path_uses_ipv6_route_and_rules_only(graph):
+    p = _props(graph, 'OCIInstance', 'xl-i-v6')
+    assert (p['internet_reachable'], p['internet_reachable_ports'], p['internet_reachable_via']) == (
+        True, ['tcp:443-443'], ['direct_ipv6'],
+    )
+    assert p['public_reasons'] == ['public_ipv6']
+    assert _props(graph, 'OCIVnic', 'xl-i-v6.vnic')['ipv6_addresses'] == [GUA]
+    # 0.0.0.0/0 rules do not admit IPv6 clients; no ::/0 route blocks a ::/0 NSG rule.
+    for instance in ('xl-i-v6-v4rules', 'xl-i-v6-noroute'):
+        assert _reach(graph, 'OCIInstance', instance) == (False, [], ['public_ipv6']), instance
+    assert _reach(graph, 'OCIInstance', 'xl-i-v6-ula') == (False, [], [])
 
 
 def test_nsg_allows_while_security_list_does_not(graph):

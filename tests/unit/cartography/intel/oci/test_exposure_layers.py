@@ -13,8 +13,12 @@ from cartography.intel.oci.exposure_layers.network import nsg_rule
 from cartography.intel.oci.exposure_layers.network import ROUTE_UNRESOLVED
 from cartography.intel.oci.exposure_layers.network import security_list_rules
 from cartography.intel.oci.exposure_layers.network import SubnetFacts
+from cartography.intel.oci.exposure_layers.network import V4
+from cartography.intel.oci.exposure_layers.network import V6
 
 WORLD = '0.0.0.0/0'
+V6_WORLD = '::/0'
+GUA = '2603:c020:1:2::5'
 IGW = 'ocid1.internetgateway.oc1.phx.a'
 
 
@@ -83,21 +87,80 @@ def test_default_route_igws_reads_ipv4_default_route_only():
     assert default_route_igws(rules) == [IGW, IGW + 'legacy']
 
 
-def _net(**subnet):
-    facts = dict(vcn_id='vcn', security_list_ids=[], prohibit_public_ip=False, igw_ids=[IGW])
+def _net(rules=(), **subnet):
+    facts = dict(vcn_id='vcn', security_list_ids=['sl'], prohibit_public_ip=False, igw_ids={V4: [IGW], V6: []})
     facts.update(subnet)
-    return Network(subnets={'s': SubnetFacts(**facts)}, igw_enabled={IGW: True}, rules={})
+    return Network(subnets={'s': SubnetFacts(**facts)}, igw_enabled={IGW: True}, rules={'sl': list(rules)})
 
 
 def test_internet_vias():
     assert _net().internet_vias('s') == [f'igw:{IGW}']
-    assert _net(igw_ids=[]).internet_vias('s') == []
+    assert _net(igw_ids={V4: [], V6: []}).internet_vias('s') == []
     assert _net(prohibit_public_ip=True).internet_vias('s') == []
     assert _net(igw_ids=None).internet_vias('s') == [ROUTE_UNRESOLVED]
     assert _net().internet_vias('unknown') == [ROUTE_UNRESOLVED]
     disabled = _net()
     disabled.igw_enabled[IGW] = False
     assert disabled.internet_vias('s') == []
+
+
+def test_default_route_igws_per_family():
+    v4_route = {'destination': WORLD, 'network-entity-id': IGW}
+    v6_route = {'destination': V6_WORLD, 'network-entity-id': IGW + 'v6'}
+    assert default_route_igws(json.dumps([v4_route, v6_route]), V6) == [IGW + 'v6']
+    assert default_route_igws(json.dumps([v4_route]), V6) == []
+
+
+def test_rules_of_one_family_do_not_open_the_other():
+    rules = _sl([_tcp(WORLD, 22), _tcp(V6_WORLD, 443)])
+    assert internet_open(rules).to_strings() == ['tcp:22-22']
+    assert internet_open(rules, V6).to_strings() == ['tcp:443-443']
+
+
+DUAL_ROUTES = {V4: [IGW], V6: [IGW]}
+
+
+def _vnic(**row):
+    return {'subnet_id': 's', 'nsg_ids': [], 'public_ip': None, 'ipv6_addresses': [GUA], **row}
+
+
+def test_ipv6_address_route_and_rule_is_reachable():
+    reach_ = reach.vnic_reach(_vnic(), _net(_sl([_tcp(V6_WORLD, 443)]), igw_ids=DUAL_ROUTES))
+    assert reach_.props() == {
+        'public_reasons': ['public_ipv6'], 'internet_reachable': True,
+        'internet_reachable_ports': ['tcp:443-443'], 'internet_reachable_via': ['direct_ipv6'],
+    }
+
+
+def test_ipv6_address_with_only_ipv4_world_rule_is_not_reachable():
+    reach_ = reach.vnic_reach(_vnic(), _net(_sl([_tcp(WORLD, 443)]), igw_ids=DUAL_ROUTES))
+    assert (reach_.props()['public_reasons'], reach_.props()['internet_reachable']) == (['public_ipv6'], False)
+
+
+def test_ipv6_without_default_v6_route_is_not_reachable():
+    # Only the IPv4 default route reaches the IGW.
+    reach_ = reach.vnic_reach(_vnic(), _net(_sl([_tcp(V6_WORLD, 443)])))
+    assert reach_.props()['internet_reachable'] is False
+
+
+def test_stateless_ipv6_needs_ipv6_return_egress():
+    ingress = [_tcp(V6_WORLD, 443, stateless=True)]
+    v4_reply = {'protocol': '6', 'destination': WORLD, 'is-stateless': True}
+    v6_reply = {'protocol': '6', 'destination': V6_WORLD, 'is-stateless': True}
+    assert reach.vnic_reach(_vnic(), _net(_sl(ingress, [v4_reply]), igw_ids=DUAL_ROUTES)).ports.is_empty()
+    reachable = reach.vnic_reach(_vnic(), _net(_sl(ingress, [v6_reply]), igw_ids=DUAL_ROUTES))
+    assert reachable.ports.to_strings() == ['tcp:443-443']
+
+
+def test_only_global_ipv6_addresses_are_public():
+    net = _net(_sl([_tcp(V6_WORLD, 443)]), igw_ids=DUAL_ROUTES)
+    assert reach.vnic_reach(_vnic(ipv6_addresses=['fd00::5', 'fe80::1', 'bogus']), net).props()['public_reasons'] == []
+    # A dual-stack VNIC reports both families; the IPv4 path keeps naming the gateway.
+    dual_net = _net(_sl([_tcp(WORLD, 22), _tcp(V6_WORLD, 443)]), igw_ids=DUAL_ROUTES)
+    dual = reach.vnic_reach(_vnic(public_ip='203.0.113.1'), dual_net).props()
+    assert dual['internet_reachable_ports'] == ['tcp:22-22', 'tcp:443-443']
+    assert dual['internet_reachable_via'] == ['direct_ipv6', f'igw:{IGW}']
+    assert dual['public_reasons'] == ['public_ip', 'public_ipv6']
 
 
 def test_listener_ports_and_backend_endpoints():

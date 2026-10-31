@@ -3,7 +3,8 @@ OCI L1 (public) + L2 (internet reachable) per resource type. Each reader returns
 {node_id: Reach} for EVERY node of its label in the compartment, so a node that stopped
 being reachable is rewritten with false.
 
-    OCIVnic / OCIInstance            VNIC public IP, subnet IGW route, security lists + VNIC NSGs
+    OCIVnic / OCIInstance            VNIC public IP / global IPv6, subnet IGW route of that family,
+                                     security lists + VNIC NSGs
     OCIDbNode / OCIDbSystem          same, through the DB node VNICs
     OCILoadBalancer / OCINetwork...  not is_private, LB subnets + NSGs, listener ports
     instance behind a LB             reachable LB, backend port admitted by the instance rules
@@ -15,8 +16,10 @@ being reachable is rewritten with false.
 Blind spots (reported as reachable, never hidden): host firewalls, ports opened but not
 listening, network firewalls / appliances in the route path (not ingested).
 """
+import ipaddress
 from collections import defaultdict
 from typing import Dict
+from typing import Iterable
 from typing import List
 from typing import Optional
 from typing import Tuple
@@ -32,6 +35,7 @@ from cartography.intel.oci.exposure_layers.network import any_source_open
 from cartography.intel.oci.exposure_layers.network import COMPARTMENT
 from cartography.intel.oci.exposure_layers.network import Network
 from cartography.intel.oci.exposure_layers.network import TENANCY
+from cartography.intel.oci.exposure_layers.network import V6
 from cartography.intel.oci.load_balancer import LOAD_BALANCER_LABEL
 from cartography.intel.oci.load_balancer import NETWORK_LOAD_BALANCER_LABEL
 
@@ -44,6 +48,8 @@ AUTONOMOUS_DB_PORTS = PortSet.of(TCP, 1521, 1522) | HTTPS
 PUBLIC_BUCKET_ACCESS_TYPES = ("ObjectRead", "ObjectReadWithoutList")
 SERVICE_ENDPOINT = "oci_service_endpoint"
 PUBLIC_ENDPOINT = "public_endpoint"
+PUBLIC_IP = "public_ip"
+PUBLIC_IPV6 = "public_ipv6"
 
 
 def _merge(into: Reach, other: Reach) -> None:
@@ -60,12 +66,34 @@ def _add_paths(reach: Reach, paths: Dict[str, PortSet], service: Optional[PortSe
 # ---------------------------------------------------------------- VNIC owners
 
 
+def _is_global(address: str) -> bool:
+    try:
+        return ipaddress.ip_address(address).is_global
+    except ValueError:
+        return False
+
+
+def has_global_ipv6(addresses: Optional[Iterable[str]]) -> bool:
+    """
+    ULA (fc00::/7) and link-local addresses never route from the internet; global ones may.
+    The address alone suffices: OCI assigns it from one of the subnet's IPv6 prefixes, so a
+    VNIC address implies an IPv6-enabled subnet.
+    ponytail: a GUA-shaped prefix the customer declared private (Vcn.ipv6_private_cidr_blocks)
+    counts as global; ingest that list and exclude its prefixes if such VCNs show up.
+    """
+    return any(_is_global(a) for a in addresses or [])
+
+
 def vnic_reach(row: Dict, net: Network) -> Reach:
+    """IPv4 needs a public IP; IPv6 needs a global address. Each family walks its own route and rules."""
     reach = Reach()
-    if not row.get("public_ip"):
-        return reach
-    reach.public_reasons.add("public_ip")
-    _add_paths(reach, net.direct_paths([row.get("subnet_id")], row.get("nsg_ids") or []))
+    subnets, nsgs = [row.get("subnet_id")], row.get("nsg_ids") or []
+    if row.get("public_ip"):
+        reach.public_reasons.add(PUBLIC_IP)
+        _add_paths(reach, net.direct_paths(subnets, nsgs))
+    if has_global_ipv6(row.get("ipv6_addresses")):
+        reach.public_reasons.add(PUBLIC_IPV6)
+        _add_paths(reach, net.direct_paths(subnets, nsgs, V6))
     return reach
 
 
@@ -86,7 +114,7 @@ _DB_NODE_VNIC_QUERY = f"""
 MATCH {COMPARTMENT}(:OCIDbSystem)-[:HAS_DB_NODE]->(dn:OCIDbNode)
 OPTIONAL MATCH (dn)-[:OCI_VNIC]->(v:OCIVnic)
 RETURN dn.id AS owner, v.id AS id, v.public_ip AS public_ip, v.private_ip AS private_ip,
-    v.subnet_id AS subnet_id, coalesce(v.nsg_ids, []) AS nsg_ids
+    coalesce(v.ipv6_addresses, []) AS ipv6_addresses, v.subnet_id AS subnet_id, coalesce(v.nsg_ids, []) AS nsg_ids
 """
 
 _DB_SYSTEM_QUERY = f"""
