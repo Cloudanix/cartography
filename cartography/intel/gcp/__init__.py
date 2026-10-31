@@ -38,15 +38,18 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 Resources = namedtuple(
     "Resources",
-    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun  \
-        iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer",
+    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
+    "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts serviceusage policyanalyzer",
 )
 
 # Mapping of service short names to their full names as in docs. See https://developers.google.com/apis-explorer,
 # and https://cloud.google.com/service-usage/docs/reference/rest/v1/services#ServiceConfig
 Services = namedtuple(
     "Services",
-    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer",
+    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
+    "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts serviceusage policyanalyzer",
 )
 service_names = Services(
     compute="compute.googleapis.com",
@@ -76,6 +79,7 @@ service_names = Services(
     spanner="spanner.googleapis.com",
     pubsublite="pubsublite.googleapis.com",
     cloudtasks="cloudtasks.googleapis.com",
+    artifacts="artifactregistry.googleapis.com",
     serviceusage="serviceusage.googleapis.com",
     policyanalyzer="policyanalyzer.googleapis.com",
 )
@@ -406,6 +410,17 @@ def _get_cloudtasks_resource(credentials: GoogleCredentials) -> Resource:
     return googleapiclient.discovery.build("cloudtasks", "v2", credentials=credentials, cache_discovery=False)
 
 
+def _get_artifactregistry_resource(credentials: GoogleCredentials) -> Resource:
+    """
+    Instantiates an Artifact Registry resource object. Also serves gcr.io: Container Registry is shut down and its
+    hosts are now Artifact Registry repositories.
+    See: https://cloud.google.com/artifact-registry/docs/reference/rest
+    :param credentials: The GoogleCredentials object
+    :return: An artifactregistry resource object
+    """
+    return googleapiclient.discovery.build("artifactregistry", "v1", credentials=credentials, cache_discovery=False)
+
+
 def _get_spanner_resource(credentials: GoogleCredentials) -> Resource:
     """
     Instantiates a spanner resource object.
@@ -459,6 +474,7 @@ def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Res
         bigquery=_get_bigquery_resource(credentials),
         dataflow=_get_dataflow_resource(credentials),
         cloudtasks=_get_cloudtasks_resource(credentials),
+        artifacts=_get_artifactregistry_resource(credentials),
         spanner=_get_spanner_resource(credentials),
         pubsublite=_get_pubsublite_resource(credentials),
         policyanalyzer=_get_policyanalyzer_resource(credentials),
@@ -823,7 +839,6 @@ def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpErro
 #   - "admin" (workspace): Admin SDK is org/directory-scoped, not a per-project ServiceUsage API.
 #   - "iam": needs several APIs (iam + cloudresourcemanager + policyanalyzer + apikeys); a single-key gate could
 #     wrongly skip it. It is core and almost always enabled.
-#   - "artifacts" (containerregistry): ambiguous API name and no matching Resources field; not confident enough.
 _GATEABLE_SERVICE_APIS: Dict[str, str] = {
     "compute": "compute.googleapis.com",
     "cloudcdn": "compute.googleapis.com",
@@ -847,6 +862,7 @@ _GATEABLE_SERVICE_APIS: Dict[str, str] = {
     "dataflow": "dataflow.googleapis.com",
     "pubsublite": "pubsublite.googleapis.com",
     "cloudtasks": "cloudtasks.googleapis.com",
+    "artifacts": "artifactregistry.googleapis.com",
 }
 
 
@@ -858,7 +874,7 @@ def _gated_out_services(requested_syncs: List[str], enabled_services: Set[str]) 
       - `enabled_services` is non-empty. An empty set means the ServiceUsage lookup returned nothing or failed
         (it swallows HttpError and returns set()); treating that as "skip everything" would silently drop an entire
         project, so an empty set disables the gate entirely.
-      - the func is in `_GATEABLE_SERVICE_APIS`. Unmapped funcs (iam, workspace, artifacts) are never gated.
+      - the func is in `_GATEABLE_SERVICE_APIS`. Unmapped funcs (iam, workspace) are never gated.
       - its mapped API is absent from `enabled_services`.
 
     Anything not skipped here still runs and is protected by the reactive `_is_service_not_enabled_error` catch, so a

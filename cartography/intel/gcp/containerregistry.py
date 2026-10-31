@@ -16,18 +16,6 @@ logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
 
-def get_artifact_registry_client(credentials, project_id: str) -> Resource:
-    from googleapiclient.discovery import build
-
-    return build("artifactregistry", "v1", credentials=credentials)
-
-
-def get_container_registry_client(credentials, project_id: str) -> Resource:
-    from googleapiclient.discovery import build
-
-    return build("containerregistry", "v1alpha1", credentials=credentials)
-
-
 def get_artifact_registry_repositories(
     client: Resource,
     project_id: str,
@@ -90,84 +78,6 @@ def get_artifact_registry_repositories(
 
     except HttpError as e:
         logger.warning(f"Failed to retrieve Artifact Registry repositories for project {project_id}: {e}")
-        return []
-
-
-def get_container_registry_repositories(
-    client: Resource,
-    project_id: str,
-    locations: Optional[List[str]],
-    common_job_parameters: Dict,
-) -> List[Dict]:
-    try:
-        repositories = []
-
-        # Container Registry uses specific regional hostnames
-        if not locations:
-            gcr_locations = ["us", "eu", "asia"]
-        else:
-            gcr_locations = locations
-
-        consolelink = gcp_console_link.get_console_link(project_id=project_id, resource_name="container_registry")
-        for location in gcr_locations:
-            try:
-                # Get repositories from Container Registry
-                hostname = f"{location}.gcr.io" if location != "us" else "gcr.io"
-                req = (
-                    client.projects()
-                    .locations()
-                    .repositories()
-                    .list(
-                        parent=f"projects/{project_id}/locations/{location}",
-                    )
-                )
-
-                try:
-                    result = req.execute()
-                    for repo in result.get("repositories", []):
-                        repo_dict = {
-                            "name": repo["name"],
-                            "display_name": repo.get("displayName", f"Container Registry - {location}"),
-                            "description": repo.get("description", f"Google Container Registry in {location}"),
-                            "format": "DOCKER",
-                            "location": location,
-                            "project_id": project_id,
-                            "create_time": repo.get("createTime", ""),
-                            "update_time": repo.get("updateTime", ""),
-                            "kms_key_name": "",
-                            "size_bytes": 0,
-                            "labels": {},
-                            "consolelink": consolelink,
-                            "console_link": consolelink,
-                        }
-                        repositories.append(repo_dict)
-                except HttpError as e:
-                    if e.resp.status == 404:
-                        # No repositories in this location, create a placeholder
-                        repo_dict = {
-                            "name": f"projects/{project_id}/locations/{location}/repositories/gcr.io",
-                            "display_name": f"Container Registry - {location}",
-                            "description": f"Google Container Registry in {location}",
-                            "format": "DOCKER",
-                            "location": location,
-                            "project_id": project_id,
-                            "create_time": "",
-                            "update_time": "",
-                            "kms_key_name": "",
-                            "size_bytes": 0,
-                            "labels": {},
-                            "consolelink": consolelink,
-                            "console_link": consolelink,
-                        }
-                        repositories.append(repo_dict)
-
-            except Exception as e:
-                logger.warning(f"Failed to process Container Registry in {location}: {e}")
-
-        return repositories
-
-    except Exception as e:
-        logger.warning(f"Failed to retrieve Container Registry repositories for project {project_id}: {e}")
         return []
 
 
@@ -257,83 +167,6 @@ def get_artifact_registry_versions(
         return []
 
 
-def get_container_registry_images(
-    client: Resource,
-    project_id: str,
-    location: str,
-    repository_name: str,
-    common_job_parameters: Dict,
-) -> List[Dict]:
-    try:
-        images = []
-        parent = f"projects/{project_id}/locations/{location}/repositories/{repository_name.split('/')[-1]}"
-
-        req = client.projects().locations().repositories().packages().list(parent=parent)
-
-        while req:
-            result = req.execute()
-
-            if result.get("packages"):
-                for package in result["packages"]:
-                    package_name = package["name"].split("/")[-1]
-
-                    # Get versions (images) for this package
-                    versions_req = (
-                        client.projects()
-                        .locations()
-                        .repositories()
-                        .packages()
-                        .versions()
-                        .list(
-                            parent=package["name"],
-                        )
-                    )
-
-                    while versions_req:
-                        versions_result = versions_req.execute()
-
-                        if versions_result.get("versions"):
-                            for version in versions_result["versions"]:
-                                image_dict = {
-                                    "name": version["name"],
-                                    "package_name": package_name,
-                                    "repository_name": repository_name,
-                                    "create_time": version.get("createTime", ""),
-                                    "update_time": version.get("updateTime", ""),
-                                    "related_tags": version.get("relatedTags", []),
-                                    "metadata": version.get("metadata", {}),
-                                    "size_bytes": version.get("sizeBytes", 0),
-                                    "digest": version.get("name", "").split("/")[-1]
-                                    if "@sha256:" in version.get("name", "")
-                                    else "",
-                                    "architecture": version.get("metadata", {}).get("architecture", ""),
-                                    "os": version.get("metadata", {}).get("os", ""),
-                                    "project_id": project_id,
-                                    "location": location,
-                                }
-                                images.append(image_dict)
-
-                        versions_req = (
-                            client.projects()
-                            .locations()
-                            .repositories()
-                            .packages()
-                            .versions()
-                            .list_next(
-                                versions_req,
-                                versions_result,
-                            )
-                        )
-
-            req = client.projects().locations().repositories().packages().list_next(req, result)
-
-        return images
-
-    except HttpError as e:
-        logger.warning(f"Failed to retrieve images for repository {repository_name}: {e}")
-        return []
-
-
 def _load_artifact_registry_repositories_tx(
     tx: neo4j.Transaction,
     project_id: str,
@@ -343,46 +176,6 @@ def _load_artifact_registry_repositories_tx(
     ingest_query = """
     UNWIND $repositories as repo
     MERGE (r:GCPArtifactRegistryRepository{name: repo.name})
-    ON CREATE SET r.firstseen = timestamp()
-    SET
-        r.lastupdated = $update_tag,
-        r.display_name = repo.display_name,
-        r.description = repo.description,
-        r.format = repo.format,
-        r.location = repo.location,
-        r.project_id = repo.project_id,
-        r.create_time = repo.create_time,
-        r.update_time = repo.update_time,
-        r.kms_key_name = repo.kms_key_name,
-        r.size_bytes = repo.size_bytes,
-        r.labels = repo.labels,
-        r.consolelink = repo.consolelink,
-        r.console_link = repo.console_link
-
-    WITH r
-    MATCH (p:GCPProject{id: $project_id})
-    MERGE (p)-[rel:RESOURCE]->(r)
-    ON CREATE SET rel.firstseen = timestamp()
-    SET rel.lastupdated = $update_tag
-    """
-
-    tx.run(
-        ingest_query,
-        repositories=data_list,
-        project_id=project_id,
-        update_tag=update_tag,
-    )
-
-
-def _load_container_registry_repositories_tx(
-    tx: neo4j.Transaction,
-    project_id: str,
-    data_list: List[Dict],
-    update_tag: int,
-) -> None:
-    ingest_query = """
-    UNWIND $repositories as repo
-    MERGE (r:GCPContainerRegistryRepository{name: repo.name})
     ON CREATE SET r.firstseen = timestamp()
     SET
         r.lastupdated = $update_tag,
@@ -489,46 +282,6 @@ def _load_artifact_registry_versions_tx(
     )
 
 
-def _load_container_registry_images_tx(
-    tx: neo4j.Transaction,
-    repository_name: str,
-    data_list: List[Dict],
-    update_tag: int,
-) -> None:
-    ingest_query = """
-    UNWIND $images as img
-    MERGE (i:GCPContainerRegistryImage{name: img.name})
-    ON CREATE SET i.firstseen = timestamp()
-    SET
-        i.lastupdated = $update_tag,
-        i.package_name = img.package_name,
-        i.repository_name = img.repository_name,
-        i.create_time = img.create_time,
-        i.update_time = img.update_time,
-        i.related_tags = img.related_tags,
-        i.metadata = img.metadata,
-        i.size_bytes = img.size_bytes,
-        i.digest = img.digest,
-        i.architecture = img.architecture,
-        i.os = img.os,
-        i.project_id = img.project_id,
-        i.location = img.location
-
-    WITH i
-    MATCH (r:GCPContainerRegistryRepository{name: $repository_name})
-    MERGE (r)-[rel:CONTAINS]->(i)
-    ON CREATE SET rel.firstseen = timestamp()
-    SET rel.lastupdated = $update_tag
-    """
-
-    tx.run(
-        ingest_query,
-        images=data_list,
-        repository_name=repository_name,
-        update_tag=update_tag,
-    )
-
-
 def load_artifact_registry_repositories(
     session: neo4j.Session,
     project_id: str,
@@ -536,15 +289,6 @@ def load_artifact_registry_repositories(
     update_tag: int,
 ) -> None:
     session.execute_write(_load_artifact_registry_repositories_tx, project_id, data_list, update_tag)
-
-
-def load_container_registry_repositories(
-    session: neo4j.Session,
-    project_id: str,
-    data_list: List[Dict],
-    update_tag: int,
-) -> None:
-    session.execute_write(_load_container_registry_repositories_tx, project_id, data_list, update_tag)
 
 
 def load_artifact_registry_packages(
@@ -565,21 +309,8 @@ def load_artifact_registry_versions(
     session.execute_write(_load_artifact_registry_versions_tx, package_name, data_list, update_tag)
 
 
-def load_container_registry_images(
-    session: neo4j.Session,
-    repository_name: str,
-    data_list: List[Dict],
-    update_tag: int,
-) -> None:
-    session.execute_write(_load_container_registry_images_tx, repository_name, data_list, update_tag)
-
-
 def cleanup_artifact_registry_repositories(session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job("gcp_artifact_registry_repositories_cleanup.json", session, common_job_parameters)
-
-
-def cleanup_container_registry_repositories(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("gcp_container_registry_repositories_cleanup.json", session, common_job_parameters)
 
 
 def cleanup_artifact_registry_packages(session: neo4j.Session, common_job_parameters: Dict) -> None:
@@ -590,32 +321,32 @@ def cleanup_artifact_registry_versions(session: neo4j.Session, common_job_parame
     run_cleanup_job("gcp_artifact_registry_versions_cleanup.json", session, common_job_parameters)
 
 
-def cleanup_container_registry_images(session: neo4j.Session, common_job_parameters: Dict) -> None:
-    run_cleanup_job("gcp_container_registry_images_cleanup.json", session, common_job_parameters)
-
-
 @timeit
 def sync(
-    session: neo4j.Session,
-    credentials,
+    neo4j_session: neo4j.Session,
+    artifacts: Resource,
     project_id: str,
-    update_tag: int,
+    gcp_update_tag: int,
     common_job_parameters: Dict,
-    locations: Optional[List[str]] = None,
+    regions: list,
 ) -> None:
-    logger.info("Syncing GCP Container Registries for project '%s'", project_id)
+    """
+    Sync Artifact Registry repositories of a project. gcr.io hosts are Artifact Registry repositories now
+    (Container Registry is shut down), so there is no separate Container Registry API to call.
+    `regions` (compute regions) is not used: repositories also live in multi-regions (us, europe, asia), so the
+    locations come from the Artifact Registry API itself, like cloudtasks.
+    """
+    logger.info("Syncing GCP Artifact Registry for project '%s'", project_id)
     tic = time.perf_counter()
 
-    # Get Artifact Registry repositories
-    artifact_registry_client = get_artifact_registry_client(credentials, project_id)
     artifact_repositories = get_artifact_registry_repositories(
-        artifact_registry_client,
+        artifacts,
         project_id,
-        locations,
+        None,
         common_job_parameters,
     )
 
-    load_artifact_registry_repositories(session, project_id, artifact_repositories, update_tag)
+    load_artifact_registry_repositories(neo4j_session, project_id, artifact_repositories, gcp_update_tag)
 
     # Sync packages and versions for Artifact Registry repositories only
     for repository in artifact_repositories:
@@ -623,60 +354,31 @@ def sync(
         logger.info(f"Syncing packages for repository '{repo_name}'")
 
         packages = get_artifact_registry_packages(
-            artifact_registry_client,
+            artifacts,
             project_id,
             repository["location"],
             repo_name,
             common_job_parameters,
         )
-        load_artifact_registry_packages(session, repository["name"], packages, update_tag)
+        load_artifact_registry_packages(neo4j_session, repository["name"], packages, gcp_update_tag)
 
         for package in packages:
             pkg_name = package["name"].split("/")[-1]
             logger.info(f"Syncing versions for package '{pkg_name}'")
 
             versions = get_artifact_registry_versions(
-                artifact_registry_client,
+                artifacts,
                 project_id,
                 repository["location"],
                 repo_name,
                 pkg_name,
                 common_job_parameters,
             )
-            load_artifact_registry_versions(session, package["name"], versions, update_tag)
+            load_artifact_registry_versions(neo4j_session, package["name"], versions, gcp_update_tag)
 
-    cleanup_artifact_registry_repositories(session, common_job_parameters)
-    cleanup_artifact_registry_packages(session, common_job_parameters)
-    cleanup_artifact_registry_versions(session, common_job_parameters)
-
-    # Get Container Registry repositories (legacy GCR)
-    container_registry_client = get_container_registry_client(credentials, project_id)
-    container_repositories = get_container_registry_repositories(
-        container_registry_client,
-        project_id,
-        locations,
-        common_job_parameters,
-    )
-
-    # Load repositories separately
-    load_container_registry_repositories(session, project_id, container_repositories, update_tag)
-
-    # Sync images for Container Registry repositories
-    for repository in container_repositories:
-        repo_name = repository["name"].split("/")[-1]
-        logger.info(f"Syncing images for Container Registry repository '{repo_name}'")
-
-        images = get_container_registry_images(
-            container_registry_client,
-            project_id,
-            repository["location"],
-            repository["name"],
-            common_job_parameters,
-        )
-        load_container_registry_images(session, repository["name"], images, update_tag)
-
-    cleanup_container_registry_repositories(session, common_job_parameters)
-    cleanup_container_registry_images(session, common_job_parameters)
+    cleanup_artifact_registry_repositories(neo4j_session, common_job_parameters)
+    cleanup_artifact_registry_packages(neo4j_session, common_job_parameters)
+    cleanup_artifact_registry_versions(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
-    logger.info(f"Time to process GCP Container Registries: {toc - tic:0.4f} seconds")
+    logger.info(f"Time to process GCP Artifact Registry: {toc - tic:0.4f} seconds")

@@ -28,9 +28,15 @@ def test_disabled_api_is_gated_enabled_is_not():
 
 
 def test_unmapped_services_are_never_gated():
-    # iam (multi-API), admin (workspace, org-scoped), artifacts (ambiguous) are intentionally absent from the map.
+    # iam (multi-API) and admin (workspace, org-scoped) are intentionally absent from the map.
     out = _gated_out_services(REQUESTED, {"compute.googleapis.com"})
-    assert {"iam", "admin", "artifacts"}.isdisjoint(out)
+    assert {"iam", "admin"}.isdisjoint(out)
+
+
+def test_artifacts_gated_when_artifact_registry_disabled():
+    out = _gated_out_services(REQUESTED, {"compute.googleapis.com"})
+    assert "artifacts" in out
+    assert "artifacts" not in _gated_out_services(REQUESTED, {"artifactregistry.googleapis.com"})
 
 
 def test_compute_family_gated_together_when_compute_disabled():
