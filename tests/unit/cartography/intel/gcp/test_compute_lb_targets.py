@@ -126,3 +126,33 @@ def test_managed_instance_group_keeps_the_instance_group_it_manages():
     }
     migs = instance_groups._get_zonal_managed_instance_groups(client, 'p1', [{'name': 'us-east1-b'}])
     assert migs[0]['instance_group'] == 'projects/p1/zones/us-east1-b/instanceGroups/web'
+
+
+def test_external_protocol_forwarding_resolves_its_target_instance():
+    response = {
+        'id': 'projects/p1/regions/us-east1/forwardingRules',
+        'items': [
+            _fwd('pf-fr', 'EXTERNAL', target='zones/us-east1-b/targetInstances/ti', region='us-east1'),
+            _fwd('pf-denied', 'EXTERNAL', target='zones/us-east1-b/targetInstances/denied', region='us-east1'),
+        ],
+    }
+    client = MagicMock()
+
+    def get(project, zone, targetInstance):
+        request = MagicMock()
+        if targetInstance == 'denied':
+            request.execute.side_effect = HttpError(MagicMock(status=403), b'{"error": {"code": 403}}')
+        else:
+            request.execute.return_value = {'instance': f'{API}/zones/{zone}/instances/vm-ti'}
+        return request
+    client.targetInstances.return_value.get.side_effect = get
+
+    rules = compute.transform_gcp_forwarding_rules(response)
+    compute.resolve_external_lb_backends(client, rules)
+
+    by_name = {r['name']: r for r in rules}
+    assert by_name['pf-fr']['target_instances'] == ['projects/p1/zones/us-east1-b/instances/vm-ti']
+    assert by_name['pf-denied']['target_instances'] == []
+    assert client.targetInstances.return_value.get.call_args_list[0].kwargs == {
+        'project': 'p1', 'zone': 'us-east1-b', 'targetInstance': 'ti',
+    }

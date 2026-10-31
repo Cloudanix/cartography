@@ -531,3 +531,28 @@ def test_backend_services_referenced_from_another_project_of_this_workspace_are_
         ('GCPInstance', 'shared-vm'): LB,
     }
     assert _exposed_in(neo4j_session, front) == {('GCPForwardingRule', 'xp-fr'): LB, ('GCPUrlMap', 'xp'): LB}
+
+
+def test_vm_behind_external_protocol_forwarding_is_exposed(neo4j_session):
+    project = 'proj-lb-ti'
+    zone = f'projects/{project}/zones/us-east1-b'
+    _seed_project(neo4j_session, project)
+    response = {
+        'id': f'projects/{project}/regions/us-east1/forwardingRules', 'items': [{
+            'name': 'pf-fr', 'loadBalancingScheme': 'EXTERNAL', 'region': f'{API}/projects/{project}/regions/us-east1',
+            'selfLink': f'{API}/projects/{project}/regions/us-east1/forwardingRules/pf-fr',
+            'target': f'{API}/{zone}/targetInstances/ti',
+        }],
+    }
+    client = MagicMock()
+    client.targetInstances.return_value.get.return_value.execute.return_value = {
+        'instance': f'{API}/{zone}/instances/vm-ti',
+    }
+    rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
+    cartography.intel.gcp.compute.resolve_external_lb_backends(client, rules)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, TAG)
+    _instances(neo4j_session, project, zone, ['vm-ti', 'vm-other'])
+
+    _run_exposure_jobs(neo4j_session, project)
+
+    assert _exposed_in(neo4j_session, project) == {('GCPForwardingRule', 'pf-fr'): LB, ('GCPInstance', 'vm-ti'): LB}
