@@ -38,6 +38,11 @@ def _parse_mig_zone_region(self_link: str, fallback_zone: Optional[str], fallbac
     }
 
 
+def _partial_uri(self_link: Optional[str]) -> Optional[str]:
+    """projects/... part of a compute self-link (same form as compute._parse_compute_full_uri_to_partial_uri)."""
+    return self_link.split("compute/v1/")[-1] if self_link else None
+
+
 def _get_zonal_managed_instance_groups(
     compute: Resource,
     project_id: str,
@@ -61,6 +66,8 @@ def _get_zonal_managed_instance_groups(
                             "region": zone_region["region"],
                             # Used later in listManagedInstances() calls.
                             "instanceGroupManager_name": igm["name"],
+                            # The instance group this manager runs; backend services reference it by this URI.
+                            "instance_group": _partial_uri(igm.get("instanceGroup")),
                             "consolelink": gcp_console_link.get_console_link(
                                 resource_name='global_instance_group',
                                 project_id=project_id,
@@ -98,6 +105,8 @@ def _get_regional_managed_instance_groups(compute: Resource, project_id: str, re
                             "region": zone_region["region"],
                             # Used later in listManagedInstances() calls.
                             "instanceGroupManager_name": igm["name"],
+                            # The instance group this manager runs; backend services reference it by this URI.
+                            "instance_group": _partial_uri(igm.get("instanceGroup")),
                             "consolelink": gcp_console_link.get_console_link(
                                 resource_name='regional_instance_group',
                                 project_id=project_id,
@@ -141,6 +150,7 @@ def _load_managed_instance_groups_tx(
         ig.project_id = mig.project_id,
         ig.zone = mig.zone,
         ig.region = mig.region,
+        ig.instance_group = mig.instance_group,
         ig.consolelink = mig.consolelink
     WITH ig
     MATCH (owner:GCPProject{id: $ProjectId})

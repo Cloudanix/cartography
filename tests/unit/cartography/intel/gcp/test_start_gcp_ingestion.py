@@ -25,3 +25,4 @@ def test_each_analysis_job_runs_once_per_sync():
     assert {job: n for job, n in runs.items() if n > 1} == {}
     assert 'gcp_compute_instance_analysis.json' in runs
     assert 'gcp_gke_asset_exposure.json' in runs
+    assert 'gcp_load_balancer_exposure.json' in runs

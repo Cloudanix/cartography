@@ -1078,6 +1078,12 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
     )
 
     run_analysis_job(
+        "gcp_load_balancer_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
+    run_analysis_job(
         "gcp_sql_instance_analysis.json",
         neo4j_session,
         common_job_parameters,

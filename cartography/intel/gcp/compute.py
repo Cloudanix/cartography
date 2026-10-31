@@ -13,6 +13,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
 
 import neo4j
 from botocore.exceptions import ClientError
@@ -832,8 +833,93 @@ def transform_gcp_forwarding_rules(fwd_response: Resource) -> List[Dict]:
             forwarding_rule["subnetwork"] = subnetwork
             forwarding_rule["subnetwork_partial_uri"] = _parse_compute_full_uri_to_partial_uri(subnetwork)
 
+        # Backend-service based passthrough network load balancers have no target, only a backend service.
+        backend_service = fwd.get("backendService", None)
+        forwarding_rule["backend_service"] = (
+            _parse_compute_full_uri_to_partial_uri(backend_service) if backend_service else None
+        )
+
         fwd_list.append(forwarding_rule)
     return fwd_list
+
+
+# Forwarding rules with these schemes take traffic from the internet.
+EXTERNAL_LB_SCHEMES = ("EXTERNAL", "EXTERNAL_MANAGED")
+
+# Target kind (as it appears in a forwarding rule's target URI) -> (global API, regional API, get() parameter).
+# targetInstances (zonal protocol forwarding) and targetGrpcProxies (internal only) are not resolved.
+_LB_TARGET_APIS: Dict[str, Tuple[Optional[str], Optional[str], str]] = {
+    "targetHttpProxies": ("targetHttpProxies", "regionTargetHttpProxies", "targetHttpProxy"),
+    "targetHttpsProxies": ("targetHttpsProxies", "regionTargetHttpsProxies", "targetHttpsProxy"),
+    "targetSslProxies": ("targetSslProxies", None, "targetSslProxy"),
+    "targetTcpProxies": ("targetTcpProxies", "regionTargetTcpProxies", "targetTcpProxy"),
+    "targetPools": (None, "targetPools", "targetPool"),
+}
+
+
+def _partial_uris(uris: List[Optional[str]]) -> List[str]:
+    """Partial URIs of the non-empty self-links, first occurrence order, no duplicates."""
+    return list(dict.fromkeys(_parse_compute_full_uri_to_partial_uri(u) for u in uris if u))
+
+
+def url_map_backend_refs(url_map: Dict) -> List[str]:
+    """Partial URIs of every backend service / backend bucket a URL map routes to (default, path and route rules)."""
+    refs = [url_map.get("defaultService")]
+    for matcher in url_map.get("pathMatchers", []):
+        refs.append(matcher.get("defaultService"))
+        refs.extend(rule.get("service") for rule in matcher.get("pathRules", []))
+        refs.extend(rule.get("service") for rule in matcher.get("routeRules", []))
+    return _partial_uris(refs)
+
+
+def backend_group_refs(backend_service: Dict) -> List[str]:
+    """Partial URIs of a backend service's backends (instance groups or network endpoint groups)."""
+    return _partial_uris([backend.get("group") for backend in backend_service.get("backends", [])])
+
+
+def _get_lb_target(compute: Resource, target_partial_uri: str) -> Dict:
+    """
+    Read the target proxy or target pool an external forwarding rule points at.
+    Returns {} for a target kind we don't resolve, or when the read fails (e.g. missing compute.<kind>.get).
+    """
+    parts = target_partial_uri.split("/")
+    if len(parts) == 5 and parts[2] == "global":
+        project, region, kind, name = parts[1], None, parts[3], parts[4]
+    elif len(parts) == 6 and parts[2] == "regions":
+        project, region, kind, name = parts[1], parts[3], parts[4], parts[5]
+    else:
+        return {}
+    global_api, regional_api, param = _LB_TARGET_APIS.get(kind, (None, None, ""))
+    api = regional_api if region else global_api
+    if not api:
+        return {}
+    kwargs = {"project": project, param: name}
+    if region:
+        kwargs["region"] = region
+    try:
+        return getattr(compute, api)().get(**kwargs).execute()
+    except HttpError as e:
+        logger.warning(f"Could not read load balancer target {target_partial_uri}; backends stay unresolved - {e}")
+        return {}
+
+
+def resolve_external_lb_backends(compute: Resource, fwd_list: List[Dict]) -> None:
+    """
+    For each external forwarding rule, record what it sends internet traffic to, so the analysis jobs can mark
+    those resources public: url_map (HTTP(S) proxies), backend_services (SSL/TCP proxies and backend-service
+    network LBs), target_instances (target pools) and ssl_policy. One get() per external rule with a target.
+    Internal rules are left untouched. A rule whose target can't be read keeps empty references.
+    """
+    for fwd in fwd_list:
+        if fwd.get("load_balancing_scheme") not in EXTERNAL_LB_SCHEMES:
+            continue
+        target = _get_lb_target(compute, fwd["target"]) if fwd.get("target") else {}
+        url_map, ssl_policy = target.get("urlMap"), target.get("sslPolicy")
+        fwd["url_map"] = _parse_compute_full_uri_to_partial_uri(url_map) if url_map else None
+        fwd["ssl_policy"] = _parse_compute_full_uri_to_partial_uri(ssl_policy) if ssl_policy else None
+        # backend_service is already a partial URI; parsing a partial URI returns it unchanged.
+        fwd["backend_services"] = _partial_uris([fwd.get("backend_service"), target.get("service")])
+        fwd["target_instances"] = _partial_uris(target.get("instances", []))
 
 
 @timeit
@@ -1281,8 +1367,19 @@ def load_gcp_forwarding_rules(neo4j_session: neo4j.Session, fwd_rules: List[Dict
         fwd.self_link = item.self_link,
         fwd.subnetwork = item.subnetwork_partial_uri,
         fwd.target = item.target,
+        fwd.backend_service = item.backend_service,
+        fwd.url_map = item.url_map,
+        fwd.ssl_policy = item.ssl_policy,
+        fwd.backend_services = item.backend_services,
+        fwd.target_instances = item.target_instances,
         fwd.consolelink = item.consolelink,
         fwd.lastupdated = $gcp_update_tag
+        // Global external rules have no network, so without this edge they hung off nothing.
+        WITH fwd, item
+        MATCH (p:GCPProject{id: item.project_id})
+        MERGE (p)-[r:RESOURCE]->(fwd)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $gcp_update_tag
     """
     load_graph_data(neo4j_session, query, fwd_rules, gcp_update_tag=gcp_update_tag)
 
@@ -2012,6 +2109,7 @@ def sync_gcp_forwarding_rules(
     logger.info("Syncing Compute forwarding rule for project %s.", project_id)
     global_fwd_response = get_gcp_global_forwarding_rules(project_id, compute)
     forwarding_rules = transform_gcp_forwarding_rules(global_fwd_response)
+    resolve_external_lb_backends(compute, forwarding_rules)
 
     load_gcp_forwarding_rules(neo4j_session, forwarding_rules, gcp_update_tag)
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
@@ -2021,6 +2119,7 @@ def sync_gcp_forwarding_rules(
         logger.info("Forwarding Rule Region %s.", r)
         fwd_response = get_gcp_regional_forwarding_rules(project_id, r, compute)
         forwarding_rules = transform_gcp_forwarding_rules(fwd_response)
+        resolve_external_lb_backends(compute, forwarding_rules)
         load_gcp_forwarding_rules(neo4j_session, forwarding_rules, gcp_update_tag)
         # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
         cleanup_gcp_forwarding_rules(neo4j_session, common_job_parameters)
