@@ -334,6 +334,7 @@ Representation of an [OCI Security List](https://docs.oracle.com/en-us/iaas/api/
 | ingress_security_rules | JSON string of ingress rules |
 | egress_security_rules | JSON string of egress rules |
 | allows_internet_ingress | Whether any ingress rule admits non-ICMP traffic from 0.0.0.0/0 or ::/0 (read by the instance and security list exposure jobs) |
+| internet_ingress_port_ranges | One `<protocol>:<min>-<max>` entry (e.g. `6:443-443`, `all:1-65535`) per ingress rule admitting non-ICMP traffic from 0.0.0.0/0 or ::/0; read by the load balancer, API gateway and OKE exposure jobs |
 | region | The region the security list resides in |
 | createdate | ISO 8601 date-time when the security list was created |
 
@@ -400,6 +401,7 @@ Representation of an OCI NSG Security Rule.
 | udp_dest_port_min | Minimum UDP destination port |
 | udp_dest_port_max | Maximum UDP destination port |
 | is_internet_ingress | Whether this is an ingress rule admitting non-ICMP traffic from 0.0.0.0/0 or ::/0 |
+| internet_ingress_port_range | For such a rule, `<protocol>:<min>-<max>` of the destination ports it opens; null otherwise |
 | icmp_type | ICMP type |
 | icmp_code | ICMP code |
 
@@ -567,6 +569,67 @@ Representation of an [OCI VCN Flow Log](https://docs.oracle.com/en-us/iaas/Conte
 	(OCIVcn)-[OCI_FLOW_LOG]->(OCIFlowLog)
 	```
 
+## OCILoadBalancer
+
+Representation of an [OCI Load Balancer](https://docs.oracle.com/en-us/iaas/api/#/en/loadbalancer/latest/LoadBalancer/). `OCINetworkLoadBalancer` ([OCI Network Load Balancer](https://docs.oracle.com/en-us/iaas/api/#/en/networkloadbalancer/latest/NetworkLoadBalancer/)) has the same fields.
+
+| Field | Description |
+|-------|-------------|
+| firstseen | Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **ocid** | OCI-unique identifier for this load balancer |
+| display_name | The user-friendly name of the load balancer |
+| compartment_id | The OCID of the compartment containing the load balancer |
+| lifecycle_state | The load balancer's current state (only ACTIVE ones are ingested) |
+| shape | The load balancer shape (null for network load balancers) |
+| is_private | Whether the load balancer only has a private IP |
+| ip_addresses | All IP addresses of the load balancer |
+| public_ip_addresses | Its public IP addresses |
+| subnet_ids | The OCIDs of the subnets it sits in |
+| nsg_ids | The OCIDs of its network security groups |
+| listener_ports | Ports its listeners serve (0 = every port, network load balancers only) |
+| listener_targets | `<protocol>:<port>` per listener protocol (`6` TCP, `17` UDP, `any`), read by the exposure job |
+| backend_ips | IP addresses of its backends |
+| backend_target_ids | Instance OCIDs of its backends (network load balancers only) |
+| region | The region the load balancer resides in |
+| createdate | ISO 8601 date-time when the load balancer was created |
+
+### Relationships
+
+- OCI Compartments contain Load Balancers and Network Load Balancers.
+
+	```
+	(OCICompartment)-[RESOURCE]->(OCILoadBalancer)
+	(OCICompartment)-[RESOURCE]->(OCINetworkLoadBalancer)
+	```
+
+## OCIApiGateway
+
+Representation of an [OCI API Gateway](https://docs.oracle.com/en-us/iaas/api/#/en/api-gateway/latest/Gateway/).
+
+| Field | Description |
+|-------|-------------|
+| firstseen | Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **ocid** | OCI-unique identifier for this gateway |
+| display_name | The user-friendly name of the gateway |
+| compartment_id | The OCID of the compartment containing the gateway |
+| lifecycle_state | The gateway's current state (only ACTIVE ones are ingested) |
+| endpoint_type | PUBLIC or PRIVATE |
+| hostname | The gateway's hostname |
+| subnet_id | The OCID of the subnet the gateway sits in |
+| nsg_ids | The OCIDs of its network security groups |
+| region | The region the gateway resides in |
+| createdate | ISO 8601 date-time when the gateway was created |
+
+### Relationships
+
+- OCI Compartments contain API Gateways.
+
+	```
+	(OCICompartment)-[RESOURCE]->(OCIApiGateway)
+	```
+
 ## OCIInstance
 
 Representation of an [OCI Compute Instance](https://docs.oracle.com/en-us/iaas/api/#/en/iaas/latest/Instance/).
@@ -588,6 +651,7 @@ Representation of an [OCI Compute Instance](https://docs.oracle.com/en-us/iaas/a
 | is_secure_boot_enabled | Whether Secure Boot is enabled (shielded instance) |
 | is_pv_encryption_in_transit_enabled | Whether paravirtualized in-transit encryption is enabled |
 | is_monitoring_disabled | Whether the monitoring plugin (agent) is disabled |
+| public_load_balancer_ids | Set by the exposure job: exposed load balancers that have this instance as a backend |
 | createdate | ISO 8601 date-time when the instance was created |
 
 ### Relationships
@@ -711,6 +775,8 @@ Representation of an [OCI Object Storage Bucket](https://docs.oracle.com/en-us/i
 | namespace | The Object Storage namespace the bucket belongs to |
 | compartment_id | The OCID of the compartment containing the bucket |
 | public_access_type | The type of public access (NoPublicAccess, ObjectRead, ObjectReadWithoutList) |
+| read_par_expires_at | Latest expiry (epoch ms) of the bucket's pre-authenticated requests that grant read; 0 when there are none. Kept from the previous sync when listing them fails |
+| read_par_access_types | Access types of those pre-authenticated requests (ObjectRead, AnyObjectRead, ...) |
 | storage_tier | The default storage tier (Standard, Archive, InfrequentAccess) |
 | versioning | The versioning status (Enabled, Suspended, Disabled) |
 | kms_key_id | The OCID of the KMS key used to encrypt the bucket (empty if Oracle-managed) |
