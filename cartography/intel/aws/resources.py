@@ -2,6 +2,7 @@ from typing import Dict
 from typing import List
 
 from . import apigateway
+from . import appsync
 from . import backup
 from . import bedrock
 from . import cloudformation
@@ -9,12 +10,14 @@ from . import cloudfront
 from . import cloudtrail
 from . import cloudwatch
 from . import config
+from . import dms
 from . import dynamodb
 from . import ecr
 from . import ecs
 from . import efs
 from . import eks
 from . import elasticache
+from . import elasticbeanstalk
 from . import elasticsearch
 from . import emr
 from . import fsx
@@ -73,6 +76,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'kms': kms.sync,
     'kinesis': kinesis.sync,
     'apigateway': apigateway.sync,
+    'appsync': appsync.sync,
     'secretsmanager': secretsmanager.sync,
     'sqs': sqs.sync,
     'sns': sns.sync,
@@ -105,8 +109,10 @@ RESOURCE_FUNCTIONS: Dict = {
     'ec2:network_interface': sync_network_interfaces,
     'waf': waf.sync,
     'rds': rds.sync,
+    'dms': dms.sync,
     'redshift': redshift.sync,
     'elasticache': elasticache.sync,
+    'elasticbeanstalk': elasticbeanstalk.sync,
     'elasticsearch': elasticsearch.sync,
     'mq': mq.sync,
     'msk': msk.sync,
