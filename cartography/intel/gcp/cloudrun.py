@@ -4,6 +4,7 @@ import time
 from typing import Dict
 from typing import List
 
+import googleapiclient.discovery
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
 from googleapiclient.discovery import HttpError
@@ -20,6 +21,14 @@ gcp_console_link = GCPLinker()
 # https://cloud.google.com/run/docs/securing/managing-access
 INGRESS_ANNOTATION = 'run.googleapis.com/ingress'
 INVOKER_IAM_DISABLED_ANNOTATION = 'run.googleapis.com/invoker-iam-disabled'
+
+PUBLIC_MEMBERS = ('allUsers', 'allAuthenticatedUsers')
+# Predefined roles holding run.routes.invoke whose name does not say 'invoke' (run.invoker / run.servicesInvoker do).
+# Same rule as gcp_cloud_function_analysis.json: custom roles are not resolved, so they count as able to invoke.
+INVOKING_ROLES = {
+    'roles/run.admin', 'roles/run.developer', 'roles/run.editor', 'roles/run.sourceDeveloper',
+    'roles/editor', 'roles/owner',
+}
 
 
 @timeit
@@ -332,6 +341,52 @@ def transform_services(services: List[Dict], project_id: str) -> List[Dict]:
         result.append(item)
 
     return result
+
+
+def _get_run_v2_client(cloudrun: Resource) -> Resource:
+    # The v1 global endpoint only serves the cross-region list (v1 needs regional endpoints for everything else);
+    # the v2 global endpoint serves getIamPolicy for every region. Reuses the v1 client's authorized http.
+    return googleapiclient.discovery.build('run', 'v2', http=cloudrun._http, cache_discovery=False)
+
+
+def _can_invoke(role: str) -> bool:
+    return role in INVOKING_ROLES or 'invoke' in role.lower() or not role.startswith('roles/')
+
+
+def _public_invokers(policy: Dict) -> List[str]:
+    return sorted({
+        member for binding in policy.get('bindings', []) if _can_invoke(binding.get('role', ''))
+        for member in binding.get('members', []) if member in PUBLIC_MEMBERS
+    })
+
+
+@timeit
+def resolve_service_invokers(run_v2: Resource, services: List[Dict], project_id: str) -> None:
+    """
+    Set public_invokers (allUsers / allAuthenticatedUsers members of a role that can invoke) and iam_policy_status
+    (resolved | unresolved | not_needed) on each transformed service: one getIamPolicy (run.services.getIamPolicy)
+    per service, skipped when the policy cannot change exposure (ingress internal, or the invoker check is off).
+    A failed read is 'unresolved', which the exposure job treats as public; after a 403 the rest of the project
+    is not called, since the caller lacks the permission.
+    """
+    permission_denied = False
+    for svc in services:
+        svc['public_invokers'] = []
+        if svc.get('ingress') == 'internal' or svc.get('invoker_iam_disabled'):
+            svc['iam_policy_status'] = 'not_needed'
+            continue
+        svc['iam_policy_status'] = 'unresolved'
+        if permission_denied:
+            continue
+        name = f"projects/{project_id}/locations/{svc.get('region')}/services/{svc['metadata'].get('name')}"
+        try:
+            policy = run_v2.projects().locations().services().getIamPolicy(resource=name).execute()
+        except HttpError as e:
+            logger.warning(f"Could not get IAM policy of Cloud Run service {name}, treating it as public - {e}")
+            permission_denied = e.resp.status == 403
+            continue
+        svc['public_invokers'] = _public_invokers(policy)
+        svc['iam_policy_status'] = 'resolved'
 
 
 @timeit
@@ -669,6 +724,8 @@ def _load_cloudrun_services_tx(
         service.url = svc.url,
         service.ingress = svc.ingress,
         service.invoker_iam_disabled = svc.invoker_iam_disabled,
+        service.public_invokers = svc.public_invokers,
+        service.iam_policy_status = svc.iam_policy_status,
         service.lastupdated = $gcp_update_tag
     WITH service
     MATCH (owner:GCPProject{id: $ProjectId})
@@ -781,6 +838,8 @@ def sync(
     # CLOUDRUN SERVICES
     svcs = get_cloudrun_services(cloudrun, project_id, common_job_parameters)
     services = transform_services(svcs, project_id)
+    if services:
+        resolve_service_invokers(_get_run_v2_client(cloudrun), services, project_id)
     load_cloudrun_services(neo4j_session, services, project_id, gcp_update_tag)
     cleanup_gcp_cloudrun(neo4j_session, common_job_parameters)
     label.sync_labels(

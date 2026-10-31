@@ -417,6 +417,10 @@ def _run_client(services):
 
 def test_sync_writes_services_and_removes_stale_ones(neo4j_session, mocker):
     mocker.patch.object(cartography.intel.gcp.cloudrun.gcp_console_link, 'get_console_link', return_value='link')
+    run_v2 = MagicMock()
+    run_v2.projects.return_value.locations.return_value.services.return_value.getIamPolicy.return_value \
+        .execute.return_value = {'bindings': [{'role': 'roles/run.invoker', 'members': ['allUsers']}]}
+    mocker.patch.object(cartography.intel.gcp.cloudrun, '_get_run_v2_client', return_value=run_v2)
     neo4j_session.run(
         """
         MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
@@ -443,11 +447,13 @@ def test_sync_writes_services_and_removes_stale_ones(neo4j_session, mocker):
         """
         MATCH (:GCPProject{id: $project})-[:RESOURCE]->(s:GCPCloudRunService)
         RETURN s.id AS id, s.name AS name, s.namespace AS namespace, s.region AS region, s.url AS url,
-               s.ingress AS ingress, s.latestReadyRevisionName AS revision
+               s.ingress AS ingress, s.latestReadyRevisionName AS revision, s.public_invokers AS invokers,
+               s.iam_policy_status AS iam
         """,
         project=SYNC_PROJECT,
     ).data()
     assert rows == [{
         'id': 'projects/proj-run-sync/services/web', 'name': 'web', 'namespace': '123456', 'region': 'us-central1',
         'url': 'https://web-abc-uc.a.run.app', 'ingress': 'all', 'revision': 'web-00001',
+        'invokers': ['allUsers'], 'iam': 'resolved',
     }]
