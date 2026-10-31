@@ -288,3 +288,38 @@ def test_autonomous_database_exposed_only_with_public_endpoint_and_open_acl(neo4
         "MATCH (a:OCIAutonomousDatabase{id: 'adb-public-open-acl'}) RETURN a.publicContext AS c",
     ).single()['c']
     assert '0.0.0.0/0' in context and 'oci-database-autonomous-database' in context
+
+
+def test_security_list_exposed_when_attached_to_public_subnet_and_open(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    igw = 'ocid1.internetgateway.oc1.phx.sl-igw'
+    _load_vcn(
+        neo4j_session, 'sl-vcn',
+        security_lists=[
+            ('sl-open-on-public', DEFAULT_SECURITY_LIST_RULES),
+            ('sl-closed-on-public', [HTTPS_FROM_VCN, PATH_MTU_FROM_ANYWHERE]),
+            ('sl-open-on-private', [OPEN_SSH]),
+            ('sl-open-unattached', [OPEN_SSH]),
+        ],
+    )
+    _load_internet_gateway(neo4j_session, igw, 'sl-vcn')
+    _load_route_table(neo4j_session, 'sl-rt-igw', 'sl-vcn', '0.0.0.0/0', igw)
+    _load_subnet(
+        neo4j_session, 'sl-subnet-public', 'sl-vcn', ['sl-open-on-public', 'sl-closed-on-public'],
+        route_table_id='sl-rt-igw',
+    )
+    _load_subnet(
+        neo4j_session, 'sl-subnet-private', 'sl-vcn', ['sl-open-on-private'],
+        route_table_id='sl-rt-igw', prohibit_public_ip=True,
+    )
+
+    run_analysis_job('oci_subnet_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+    run_analysis_job('oci_security_list_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCISecurityList', 'sl-') == {
+        'sl-open-on-public': ['public_subnet_internet_ingress'],
+    }
+    context = neo4j_session.run(
+        "MATCH (s:OCISecurityList{id: 'sl-open-on-public'}) RETURN s.publicContext AS c",
+    ).single()['c']
+    assert 'sl-subnet-public' in context and 'sl-subnet-private' not in context

@@ -37,6 +37,8 @@ Resources = namedtuple('Resources', 'compute iam network storage oke monitoring 
 # Analysis jobs run per compartment after all resource syncs, in this order.
 OCI_ANALYSIS_JOBS = [
     'oci_subnet_asset_exposure.json',
+    # Reads the subnet job's exposed_internet.
+    'oci_security_list_asset_exposure.json',
     'oci_instance_asset_exposure.json',
     'oci_iam_user_analysis.json',
     'oci_iam_policy_analysis.json',
