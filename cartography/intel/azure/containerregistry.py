@@ -1,12 +1,17 @@
 import json
 import logging
 import time
+from datetime import datetime
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
 
 import neo4j
+from azure.core.exceptions import AzureError
 from azure.core.exceptions import HttpResponseError
+from azure.core.exceptions import ServiceRequestError
+from azure.core.exceptions import ServiceResponseError
 from azure.mgmt.containerregistry import ContainerRegistryManagementClient
 
 from .util.console_link import safe_console_link
@@ -17,11 +22,39 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+# AAD audience of the ACR data plane (the SDK default). Tokens for it are exchanged at
+# https://<loginServer>/oauth2/exchange, so it works even when a registry disabled ARM-audience tokens.
+ACR_DATA_PLANE_AUDIENCE = "https://containerregistry.azure.net"
+# ACR serves 100 repository names per catalog page by default.
+CATALOG_PAGE_SIZE = 100
+# Data-plane roles a registry must grant us before its repositories can be listed.
+DATA_PLANE_ROLE_HINT = (
+    "registries in 'RBAC Registry Permissions' mode need Reader (or AcrPull); ABAC-enabled registries need "
+    "Container Registry Repository Reader + Container Registry Repository Catalog Lister"
+)
+
 
 def get_client(credentials: Credentials, subscription_id: str) -> ContainerRegistryManagementClient:
     from .util.timing import get_timing_policy
     client = ContainerRegistryManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
     return client
+
+
+def get_registry_client(credentials: Credentials, login_server: str) -> Any:
+    """
+    Data-plane client for one registry. Repositories and manifests are not on the management API.
+
+    Imported here so a missing azure-containerregistry package fails only the "images" service.
+    """
+    from azure.containerregistry import ContainerRegistryClient
+
+    from .util.timing import get_timing_policy
+    return ContainerRegistryClient(
+        f"https://{login_server}",
+        credentials,
+        audience=ACR_DATA_PLANE_AUDIENCE,
+        per_call_policies=[get_timing_policy()],
+    )
 
 
 def get_registry_list(
@@ -73,89 +106,85 @@ def get_registry_list(
         return []
 
 
-def get_repository_list(
-    credentials: Credentials,
-    subscription_id: str,
-    registry_name: str,
-    resource_group: str,
-    common_job_parameters: Dict,
-) -> List[Dict]:
-    try:
-        client = get_client(credentials, subscription_id)
-        repositories = []
-
-        for repo in client.repositories.list(resource_group, registry_name):
-            repo_dict = {
-                "name": repo.name,
-                "registry_name": registry_name,
-                "created_time": repo.created_time.isoformat() if repo.created_time else None,
-                "last_update_time": repo.last_update_time.isoformat() if repo.last_update_time else None,
-                "manifest_count": repo.manifest_count,
-                "tag_count": repo.tag_count,
-                "size": repo.size,
-                "subscription_id": subscription_id,
-                "resource_group": resource_group,
-            }
-            repositories.append(repo_dict)
-
-        return repositories
-    except AttributeError as e:
-        logger.warning(
-            f"Repositories API not available on management client for registry {registry_name} "
-            f"(data-plane operation): {e}",
-        )
-        return []
-    except HttpResponseError as e:
-        logger.warning(f"Failed to retrieve repositories for registry {registry_name}: {e}")
-        return []
+def _iso(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() if value else None
 
 
-def get_image_list(
-    credentials: Credentials,
-    subscription_id: str,
-    registry_name: str,
-    resource_group: str,
-    repository_name: str,
-    common_job_parameters: Dict,
-) -> List[Dict]:
-    try:
-        client = get_client(credentials, subscription_id)
-        images = []
+def _enum_value(value: Any) -> Optional[str]:
+    # The SDK returns architecture/os as str enums; store the plain value.
+    return getattr(value, "value", value)
 
-        for manifest in client.manifests.list(resource_group, registry_name, repository_name):
-            quarantine_details = getattr(manifest, "quarantine_details", "")
-            if isinstance(quarantine_details, dict):
-                quarantine_details = json.dumps(quarantine_details)
-            image_dict = {
-                "digest": manifest.digest,
-                "repository_name": repository_name,
-                "registry_name": registry_name,
-                "created_time": manifest.created_time.isoformat() if manifest.created_time else None,
-                "last_update_time": manifest.last_update_time.isoformat() if manifest.last_update_time else None,
-                "architecture": manifest.architecture,
-                "os": manifest.os,
-                "size": manifest.size,
-                "size_bytes": manifest.size,
-                "tags": manifest.tags or [],
-                "media_type": getattr(manifest, "media_type", ""),
-                "config_media_type": getattr(manifest, "config_media_type", ""),
-                "quarantine_state": getattr(manifest, "quarantine_state", ""),
-                "quarantine_details": quarantine_details,
-                "subscription_id": subscription_id,
-                "resource_group": resource_group,
-            }
-            images.append(image_dict)
 
-        return images
-    except AttributeError as e:
-        logger.warning(
-            f"Manifests API not available on management client for repository {repository_name} "
-            f"(data-plane operation): {e}",
-        )
-        return []
-    except HttpResponseError as e:
-        logger.warning(f"Failed to retrieve images for repository {repository_name}: {e}")
-        return []
+def get_repository_list(client: Any, registry: Dict) -> List[Dict]:
+    """
+    List the registry's repositories from its catalog (GET /acr/v1/_catalog).
+
+    :raises AzureError: on 401/403 (missing data-plane role, network rules) or when the registry is unreachable
+    """
+    repositories = []
+    for name in client.list_repository_names(results_per_page=CATALOG_PAGE_SIZE):
+        repositories.append({
+            "id": f"{registry['id']}/repositories/{name}",
+            "name": name,
+            "registry_id": registry["id"],
+            "registry_name": registry["name"],
+            "uri": f"{registry['login_server']}/{name}",
+            "location": registry["location"],
+            "resource_group": registry["resource_group"],
+            "subscription_id": registry["subscription_id"],
+            "console_link": registry.get("console_link"),
+        })
+    return repositories
+
+
+def get_image_list(client: Any, repository: Dict) -> List[Dict]:
+    """
+    List the repository's manifests, most recently updated first (GET /acr/v1/<repo>/_manifests?orderby=timedesc).
+
+    :raises AzureError: on 401/403 or when the repository vanished between the catalog and this call
+    """
+    images = []
+    manifests = client.list_manifest_properties(repository["name"], order_by="timedesc")
+    for manifest in manifests:
+        images.append({
+            "id": f"{repository['id']}@{manifest.digest}",
+            "digest": manifest.digest,
+            "name": f"{repository['name']}@{manifest.digest}",
+            "uri": f"{repository['uri']}@{manifest.digest}",
+            "repository_id": repository["id"],
+            "repository_name": repository["name"],
+            "registry_name": repository["registry_name"],
+            "created_time": _iso(manifest.created_on),
+            "last_update_time": _iso(manifest.last_updated_on),
+            "architecture": _enum_value(manifest.architecture),
+            "os": _enum_value(manifest.operating_system),
+            "size": manifest.size_in_bytes,
+            "size_bytes": manifest.size_in_bytes,
+            "tags": list(manifest.tags or []),
+            "location": repository["location"],
+            "resource_group": repository["resource_group"],
+            "subscription_id": repository["subscription_id"],
+            "console_link": repository["console_link"],
+        })
+    return images
+
+
+def _data_plane_error_reason(error: AzureError) -> str:
+    status_code = getattr(error, "status_code", None)
+    if status_code:
+        return f"http_{status_code}"
+    if isinstance(error, (ServiceRequestError, ServiceResponseError)):
+        return "unreachable"
+    return type(error).__name__
+
+
+def _registry_skip_reason(registry: Dict) -> Optional[str]:
+    if not registry.get("login_server"):
+        return "no_login_server"
+    # Only reachable through the customer's private endpoints, never from our scanner.
+    if registry.get("public_network_access") == "Disabled":
+        return "public_network_access_disabled"
+    return None
 
 
 def _load_registries_tx(tx: neo4j.Transaction, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
@@ -238,7 +267,9 @@ def _load_images_tx(
 ) -> None:
     ingest_query = """
     UNWIND $images as image
-    MERGE (i:AzureContainerImage{digest: image.digest, repository_name: image.repository_name, registry_name: image.registry_name})
+    MERGE (i:AzureContainerImage{
+        digest: image.digest, repository_name: image.repository_name, registry_name: image.registry_name
+    })
     ON CREATE SET i.firstseen = timestamp()
     SET
         i.lastupdated = $update_tag,
@@ -272,6 +303,14 @@ def _load_images_tx(
     )
 
 
+def _load_registry_fetch_status_tx(tx: neo4j.Transaction, registry_id: str, status: Dict) -> None:
+    tx.run(
+        "MATCH (r:AzureContainerRegistry{id: $registry_id}) SET r += $status",
+        registry_id=registry_id,
+        status=status,
+    )
+
+
 def load_registries(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.execute_write(_load_registries_tx, subscription_id, data_list, update_tag)
 
@@ -288,6 +327,70 @@ def load_images(
     update_tag: int,
 ) -> None:
     session.execute_write(_load_images_tx, repository_name, registry_name, data_list, update_tag)
+
+
+def load_registry_fetch_status(session: neo4j.Session, registry_id: str, status: Dict) -> None:
+    """
+    Record on the registry whether its repositories could be read this sync, so a registry
+    without repositories can be told apart from one we were not allowed to read.
+    """
+    session.execute_write(_load_registry_fetch_status_tx, registry_id, status)
+
+
+def _fetch_status(fetched: bool, error: Optional[str] = None, image_fetch_failures: int = 0) -> Dict:
+    return {
+        "repositories_fetched": fetched,
+        "repositories_fetch_error": error,
+        "image_fetch_failures": image_fetch_failures,
+    }
+
+
+def _sync_repositories(session: neo4j.Session, client: Any, registry: Dict, update_tag: int) -> Dict:
+    try:
+        repositories = get_repository_list(client, registry)
+    except AzureError as e:
+        reason = _data_plane_error_reason(e)
+        logger.warning(
+            "Skipping repositories of container registry %s (%s): %s. Data-plane read needs a role on the "
+            "registry: %s.", registry["id"], reason, type(e).__name__, DATA_PLANE_ROLE_HINT,
+        )
+        return _fetch_status(False, reason)
+    load_repositories(session, registry["id"], repositories, update_tag)
+
+    failures: Dict[str, str] = {}
+    for repository in repositories:
+        try:
+            images = get_image_list(client, repository)
+        except AzureError as e:
+            failures[repository["name"]] = _data_plane_error_reason(e)
+            continue
+        load_images(session, repository["name"], registry["name"], images, update_tag)
+    if failures:
+        logger.warning(
+            "Could not list images of %d of %d repositories in container registry %s, e.g. %s",
+            len(failures), len(repositories), registry["id"], next(iter(failures.items())),
+        )
+    return _fetch_status(True, image_fetch_failures=len(failures))
+
+
+def sync_registry_contents(
+    session: neo4j.Session, credentials: Credentials, registry: Dict, update_tag: int,
+) -> None:
+    """
+    Ingest the registry's repositories and images from its data plane. A registry we cannot read
+    (no data-plane role, network rules, private-only) is skipped with one WARNING, never an error.
+    """
+    reason = _registry_skip_reason(registry)
+    if reason:
+        logger.info("Skipping repositories of container registry %s: %s", registry["id"], reason)
+        load_registry_fetch_status(session, registry["id"], _fetch_status(False, reason))
+        return
+    client = get_registry_client(credentials, registry["login_server"])
+    try:
+        status = _sync_repositories(session, client, registry, update_tag)
+    finally:
+        client.close()
+    load_registry_fetch_status(session, registry["id"], status)
 
 
 def cleanup_container_registries(session: neo4j.Session, common_job_parameters: Dict) -> None:
@@ -319,30 +422,11 @@ def sync(
 
     for registry in registries:
         logger.info(f"Syncing repositories for registry '{registry['name']}'")
-        repositories = get_repository_list(
-            credentials,
-            subscription_id,
-            registry["name"],
-            registry["resource_group"],
-            common_job_parameters,
-        )
-        load_repositories(session, registry["id"], repositories, update_tag)
-
-        for repository in repositories:
-            logger.info(f"Syncing images for repository '{repository['name']}'")
-            images = get_image_list(
-                credentials,
-                subscription_id,
-                registry["name"],
-                registry["resource_group"],
-                repository["name"],
-                common_job_parameters,
-            )
-            load_images(session, repository["name"], registry["name"], images, update_tag)
+        sync_registry_contents(session, credentials, registry, update_tag)
 
     cleanup_container_registries(session, common_job_parameters)
     cleanup_container_repositories(session, common_job_parameters)
     cleanup_container_images(session, common_job_parameters)
 
     toc = time.perf_counter()
-    logger.info(f"Time to process IAM: {toc - tic:0.4f} seconds")
+    logger.info(f"Time to process container registries: {toc - tic:0.4f} seconds")
