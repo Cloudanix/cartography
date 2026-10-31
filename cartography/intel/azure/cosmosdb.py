@@ -16,6 +16,7 @@ from azure.mgmt.cosmosdb import CosmosDBManagementClient
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
@@ -36,13 +37,15 @@ def get_client(credentials: Credentials, subscription_id: str) -> CosmosDBManage
 
 
 @timeit
-def get_database_account_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
+def get_database_account_list(
+    credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict,
+) -> List[Dict]:
     """
     Get a list of all database accounts.
     """
     try:
         client = get_client(credentials, subscription_id)
-        database_account_list = list(map(lambda x: x.as_dict(), client.database_accounts.list()))
+        database_account_list = list(map(as_legacy_dict, client.database_accounts.list()))
 
     # ClientAuthenticationError and ResourceNotFoundError are subclasses under HttpResponseError
     except ClientAuthenticationError:
@@ -57,9 +60,7 @@ def get_database_account_list(credentials: Credentials, subscription_id: str, re
     account_list = []
     for database_account in database_account_list:
         database_account['resourceGroup'] = get_azure_resource_group_name(database_account.get('id'))
-        database_account['publicNetworkAccess'] = database_account.get(
-            'properties', {},
-        ).get('public_network_access', 'Disabled')
+        database_account['publicNetworkAccess'] = database_account.get('public_network_access', 'Disabled')
         database_account['consolelink'] = safe_console_link(database_account['id'], common_job_parameters)
         database_account['location'] = database_account.get('location', '').replace(" ", "").lower()
         if regions is None:
@@ -577,7 +578,7 @@ def get_sql_databases(credentials: Credentials, subscription_id: str, database_a
         client = get_client(credentials, subscription_id)
         sql_database_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.sql_resources.list_sql_databases(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -607,7 +608,7 @@ def get_cassandra_keyspaces(credentials: Credentials, subscription_id: str, data
         client = get_client(credentials, subscription_id)
         cassandra_keyspace_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.cassandra_resources.list_cassandra_keyspaces(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -637,7 +638,7 @@ def get_mongodb_databases(credentials: Credentials, subscription_id: str, databa
         client = get_client(credentials, subscription_id)
         mongodb_database_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.mongo_db_resources.list_mongo_db_databases(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -667,7 +668,7 @@ def get_table_resources(credentials: Credentials, subscription_id: str, database
         client = get_client(credentials, subscription_id)
         table_resources_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.table_resources.list_tables(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -934,7 +935,7 @@ def get_sql_containers(credentials: Credentials, subscription_id: str, database:
         client = get_client(credentials, subscription_id)
         containers = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.sql_resources.list_sql_containers(
                     database['resource_group_name'],
                     database['database_account_name'],
@@ -1062,7 +1063,7 @@ def get_cassandra_tables(credentials: Credentials, subscription_id: str, keyspac
         client = get_client(credentials, subscription_id)
         cassandra_tables = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.cassandra_resources.list_cassandra_tables(
                     keyspace['resource_group_name'],
                     keyspace['database_account_name'],
@@ -1189,7 +1190,7 @@ def get_mongodb_collections(credentials: Credentials, subscription_id: str, data
         client = get_client(credentials, subscription_id)
         collections = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.mongo_db_resources.list_mongo_db_collections(
                     database['resource_group_name'],
                     database['database_account_name'],
