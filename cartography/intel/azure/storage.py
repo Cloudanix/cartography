@@ -15,6 +15,7 @@ from azure.mgmt.storage import StorageManagementClient
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from .util.timing import get_timing_policy
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
@@ -35,13 +36,15 @@ def get_client(credentials: Credentials, subscription_id: str) -> StorageManagem
 
 
 @timeit
-def get_storage_account_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
+def get_storage_account_list(
+    credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict,
+) -> List[Dict]:
     """
     Getting the list of storage accounts
     """
     try:
         client = get_client(credentials, subscription_id)
-        storage_account_list = list(map(lambda x: x.as_dict(), client.storage_accounts.list()))
+        storage_account_list = list(map(as_legacy_dict, client.storage_accounts.list()))
 
     # ClientAuthenticationError and ResourceNotFoundError are subclasses under HttpResponseError
     except ClientAuthenticationError as e:
@@ -56,9 +59,7 @@ def get_storage_account_list(credentials: Credentials, subscription_id: str, reg
     account_list = []
     for storage_account in storage_account_list:
         storage_account['resourceGroup'] = get_azure_resource_group_name(storage_account.get('id'))
-        storage_account['allowBlobPublicAccess'] = storage_account.get(
-            'properties', {},
-        ).get('allow_blob_public_access', False)
+        storage_account['allowBlobPublicAccess'] = storage_account.get('allow_blob_public_access', False)
         storage_account['consolelink'] = safe_console_link(storage_account['id'], common_job_parameters)
         storage_account['location'] = storage_account.get('location', '').replace(" ", "").lower()
         if regions is None:
@@ -170,9 +171,9 @@ def get_queue_services(credentials: Credentials, subscription_id: str, storage_a
     """
     try:
         client = get_client(credentials, subscription_id)
-        queue_service_list = client.queue_services.list(
-            storage_account['resourceGroup'], storage_account['name'],
-        ).as_dict()['value']
+        queue_service_list = as_legacy_dict(
+            client.queue_services.list(storage_account['resourceGroup'], storage_account['name']),
+        )['value']
 
     except ClientAuthenticationError as e:
         logger.warning(f"Client Authentication Error while retrieving queue services - {e}")
@@ -194,9 +195,9 @@ def get_table_services(credentials: Credentials, subscription_id: str, storage_a
     """
     try:
         client = get_client(credentials, subscription_id)
-        table_service_list = client.table_services.list(
-            storage_account['resourceGroup'], storage_account['name'],
-        ).as_dict()['value']
+        table_service_list = as_legacy_dict(
+            client.table_services.list(storage_account['resourceGroup'], storage_account['name']),
+        )['value']
 
     except ClientAuthenticationError as e:
         logger.warning(f"Client Authentication Error while retrieving table services - {e}")
@@ -218,9 +219,9 @@ def get_file_services(credentials: Credentials, subscription_id: str, storage_ac
     """
     try:
         client = get_client(credentials, subscription_id)
-        file_service_list = client.file_services.list(
-            storage_account['resourceGroup'], storage_account['name'],
-        ).as_dict()['value']
+        file_service_list = as_legacy_dict(
+            client.file_services.list(storage_account['resourceGroup'], storage_account['name']),
+        )['value']
 
     except ClientAuthenticationError as e:
         logger.warning(f"Client Authentication Error while retrieving file services - {e}")
@@ -244,7 +245,7 @@ def get_blob_services(credentials: Credentials, subscription_id: str, storage_ac
         client = get_client(credentials, subscription_id)
         blob_service_list = list(
             map(
-                lambda x: x.as_dict(), client.blob_services.list(
+                as_legacy_dict, client.blob_services.list(
                     storage_account['resourceGroup'],
                     storage_account['name'],
                 ),
@@ -560,7 +561,7 @@ def get_queues(credentials: Credentials, subscription_id: str, queue_service: Di
         client = get_client(credentials, subscription_id)
         queues = list(
             map(
-                lambda x: x.as_dict(), client.queue.list(
+                as_legacy_dict, client.queue.list(
                     queue_service['resource_group_name'],
                     queue_service['storage_account_name'],
                 ),
@@ -680,7 +681,7 @@ def get_tables(credentials: Credentials, subscription_id: str, table_service: Di
         client = get_client(credentials, subscription_id)
         tables = list(
             map(
-                lambda x: x.as_dict(), client.table.list(
+                as_legacy_dict, client.table.list(
                     table_service['resource_group_name'],
                     table_service['storage_account_name'],
                 ),
@@ -804,7 +805,7 @@ def get_shares(credentials: Credentials, subscription_id: str, file_service: Dic
         client = get_client(credentials, subscription_id)
         shares = list(
             map(
-                lambda x: x.as_dict(), client.file_shares.list(
+                as_legacy_dict, client.file_shares.list(
                     file_service['resource_group_name'],
                     file_service['storage_account_name'],
                 ),
@@ -934,7 +935,7 @@ def get_blob_containers(credentials: Credentials, subscription_id: str, blob_ser
         client = get_client(credentials, subscription_id)
         blob_containers = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.blob_containers.list(
                     blob_service['resource_group_name'],
                     blob_service['storage_account_name'],
