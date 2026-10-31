@@ -1083,6 +1083,13 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
         common_job_parameters,
     )
 
+    # After the load balancer job: a service behind an external load balancer is read off the flagged NEG.
+    run_analysis_job(
+        "gcp_cloudrun_service_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
     run_analysis_job(
         "gcp_sql_instance_analysis.json",
         neo4j_session,
