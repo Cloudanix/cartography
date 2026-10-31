@@ -1066,3 +1066,102 @@ def test_shared_vpc_firewalls_apply_only_within_the_workspace_and_org(neo4j_sess
         "RETURN i.id AS id",
     ).value()
     assert sorted(edges) == ['xproj-vm-host', 'xproj-vm-host-tagged']
+
+
+DENY_PARAMS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-deny', 'GCP_ORGANIZATION_ID': 'org-deny',
+    'GCP_PROJECT_ID': 'proj-deny',
+}
+
+
+def _seed_firewall_rules(neo4j_session, params, rules):
+    """Allow and deny firewalls as compute ingestion writes them, each on its own VPC owned by the project."""
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        WITH p
+        UNWIND $rules AS f
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: f.vpc})
+        MERGE (vpc)-[:RESOURCE]->(fw:GCPFirewall{id: f.vpc + '/' + f.id})
+        SET fw.direction = 'INGRESS', fw.disabled = coalesce(f.disabled, false), fw.priority = f.priority,
+            fw.has_target_service_accounts = coalesce(f.target_sa, false)
+        MERGE (rule:GCPIpRule:IpRule:IpPermissionInbound{id: fw.id + '/rule'})
+        SET rule.protocol = f.protocol, rule.fromport = f.fromport, rule.toport = f.toport
+        FOREACH (_ IN CASE WHEN f.action = 'deny' THEN [1] ELSE [] END | MERGE (rule)-[:DENIED_BY]->(fw))
+        FOREACH (_ IN CASE WHEN f.action = 'allow' THEN [1] ELSE [] END | MERGE (rule)-[:ALLOWED_BY]->(fw))
+        FOREACH (src IN [s IN f.sources WHERE s CONTAINS '.'] |
+            MERGE (rng:IpRange{id: src}) MERGE (rng)-[:MEMBER_OF_IP_RULE]->(rule))
+        FOREACH (src IN [s IN f.sources WHERE s CONTAINS ':'] |
+            MERGE (rng:Ipv6Range{id: src}) MERGE (rng)-[:MEMBER_OF_IP_RULE]->(rule))
+        FOREACH (tag IN coalesce(f.tags, []) | MERGE (fw)-[:TARGET_TAG]->(:GCPNetworkTag{id: f.vpc + '/tags/' + tag}))
+        """,
+        ws=params['WORKSPACE_ID'], org=params['GCP_ORGANIZATION_ID'], project=params['GCP_PROJECT_ID'], rules=rules,
+    )
+
+
+def _seed_running_vms(neo4j_session, params, vms):
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project})
+        UNWIND $vms AS v
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.natIP = v.nat_ip, i.ipv6_nat_ip = v.ipv6, i.status = 'RUNNING'
+        WITH i, v
+        MATCH (vpc:GCPVpc{id: v.vpc})
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        FOREACH (tag IN coalesce(v.tags, []) |
+            MERGE (t:GCPNetworkTag{id: v.vpc + '/tags/' + tag}) MERGE (i)-[:TAGGED]->(t))
+        """,
+        project=params['GCP_PROJECT_ID'], vms=vms,
+    )
+
+
+def _exposed_types(neo4j_session, project_id):
+    rows = neo4j_session.run(
+        "MATCH (:GCPProject{id: $project})-[:RESOURCE]->(i:GCPInstance) WHERE i.exposed_internet "
+        "RETURN i.id AS id, i.exposed_internet_type AS types",
+        project=project_id,
+    )
+    return {r['id']: r['types'] for r in rows}
+
+
+def test_higher_priority_deny_cancels_an_open_allow_only_when_it_fully_covers_it(neo4j_session):
+    anywhere = ['0.0.0.0/0']
+    ssh_allow = {
+        'id': 'allow-ssh', 'action': 'allow', 'priority': 1000, 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+        'sources': anywhere,
+    }
+    range_allow = dict(ssh_allow, id='allow-range', fromport=1, toport=1000)
+    all_allow = dict(ssh_allow, id='allow-all', protocol='all', fromport=None, toport=None)
+    ssh_deny = dict(ssh_allow, id='deny-ssh', action='deny', priority=900)
+    cases = {
+        # vm id: (rules in its VPC, VM tags)
+        'deny-covers': ([ssh_allow, ssh_deny], []),
+        'deny-all-protocols': ([range_allow, dict(ssh_deny, protocol='all', fromport=None, toport=None)], []),
+        'deny-wider-range': ([ssh_allow, dict(ssh_deny, fromport=0, toport=65535)], []),
+        'deny-on-vm-tag': ([ssh_allow, dict(ssh_deny, tags=['locked'])], ['locked']),
+        # GCP: on equal priority a deny overrides an allow.
+        'deny-same-priority': ([ssh_allow, dict(ssh_deny, priority=1000)], []),
+        'deny-lower-priority': ([ssh_allow, dict(ssh_deny, priority=1100)], []),
+        'deny-partial-ports': ([range_allow, ssh_deny], []),
+        'deny-tcp-vs-allow-all': ([all_allow, dict(ssh_deny, fromport=0, toport=65535)], []),
+        'deny-udp': ([ssh_allow, dict(ssh_deny, protocol='udp')], []),
+        'deny-office-source': ([ssh_allow, dict(ssh_deny, sources=['203.0.113.0/24'])], []),
+        'deny-other-tag': ([ssh_allow, dict(ssh_deny, tags=['locked'])], []),
+        'deny-service-account': ([ssh_allow, dict(ssh_deny, target_sa=True)], []),
+        'deny-disabled': ([ssh_allow, dict(ssh_deny, disabled=True)], []),
+    }
+    rules, vms = [], []
+    for vm, (vm_rules, tags) in cases.items():
+        rules.extend(dict(r, vpc=f'vpc-{vm}') for r in vm_rules)
+        vms.append({'id': vm, 'vpc': f'vpc-{vm}', 'nat_ip': '34.7.7.7', 'tags': tags})
+    _seed_firewall_rules(neo4j_session, DENY_PARAMS, rules)
+    _seed_running_vms(neo4j_session, DENY_PARAMS, vms)
+
+    run_analysis_job('gcp_compute_instance_analysis.json', neo4j_session, DENY_PARAMS)
+
+    assert set(_exposed_types(neo4j_session, DENY_PARAMS['GCP_PROJECT_ID'])) == {
+        'deny-lower-priority', 'deny-partial-ports', 'deny-tcp-vs-allow-all', 'deny-udp',
+        'deny-office-source', 'deny-other-tag', 'deny-service-account', 'deny-disabled',
+    }
