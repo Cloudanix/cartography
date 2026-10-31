@@ -15,6 +15,68 @@ def test_is_internet_ingress_rule():
     assert not network.is_internet_ingress_rule({'protocol': '6', 'source': '0.0.0.0/0', 'direction': 'EGRESS'})
 
 
+def test_internet_ingress_port_range():
+    def tcp(lo, hi):
+        return {'destination-port-range': {'min': lo, 'max': hi}}
+
+    assert network.internet_ingress_port_range({'protocol': '6', 'source': '0.0.0.0/0', 'tcp-options': tcp(443, 443)}) \
+        == '6:443-443'
+    assert network.internet_ingress_port_range(
+        {'protocol': '17', 'source': '::/0', 'udp-options': {'destination-port-range': {'min': 53, 'max': 54}}},
+    ) == '17:53-54'
+    # No destination range: every port of that protocol.
+    assert network.internet_ingress_port_range({'protocol': '6', 'source': '0.0.0.0/0', 'tcp-options': None}) \
+        == '6:1-65535'
+    assert network.internet_ingress_port_range({'protocol': 'all', 'source': '0.0.0.0/0'}) == 'all:1-65535'
+    # Only a source-port range: still every destination port.
+    assert network.internet_ingress_port_range(
+        {'protocol': '6', 'source': '0.0.0.0/0', 'tcp-options': {'source-port-range': {'min': 1024, 'max': 1024}}},
+    ) == '6:1-65535'
+    assert network.internet_ingress_port_range({'protocol': '6', 'source': '10.0.0.0/8', 'tcp-options': tcp(1, 9)}) \
+        is None
+    assert network.internet_ingress_port_range({'protocol': '1', 'source': '0.0.0.0/0'}) is None
+
+
+def test_load_security_lists_records_internet_ingress_port_ranges():
+    session = _RecordingSession()
+    network.load_security_lists(
+        session,
+        [
+            {
+                'id': 'open', 'ingress-security-rules': [
+                    {
+                        'protocol': '6', 'source': '0.0.0.0/0',
+                        'tcp-options': {'destination-port-range': {'min': 22, 'max': 22}},
+                    },
+                    {'protocol': '6', 'source': '10.0.0.0/16'},
+                    {'protocol': '1', 'source': '0.0.0.0/0'},
+                ],
+            },
+            {'id': 'empty'},
+        ],
+        'tenancy', 'compartment', 'us-phoenix-1', 1,
+    )
+    assert {r['ocid']: r['internet_ingress_port_ranges'] for r in session.rows} == {'open': ['6:22-22'], 'empty': []}
+
+
+def test_load_nsg_security_rules_records_internet_ingress_port_range():
+    session = _RecordingSession()
+    network.load_nsg_security_rules(
+        session,
+        [
+            {
+                'id': 'in-https', 'direction': 'INGRESS', 'protocol': '6', 'source': '0.0.0.0/0',
+                'tcp-options': {'destination-port-range': {'min': 443, 'max': 443}},
+            },
+            {'id': 'in-vcn', 'direction': 'INGRESS', 'protocol': '6', 'source': '10.0.0.0/16'},
+        ],
+        'nsg', 1,
+    )
+    assert {r['ocid']: r['internet_ingress_port_range'] for r in session.rows} == {
+        'in-https': '6:443-443', 'in-vcn': None,
+    }
+
+
 def test_load_security_lists_flags_internet_ingress():
     session = _RecordingSession()
     network.load_security_lists(
