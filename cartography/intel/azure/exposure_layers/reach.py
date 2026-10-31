@@ -6,6 +6,7 @@ being reachable is rewritten with false.
     AzureNetworkInterface        own public IP, subnet NSG + NIC NSG
     AzureNetworkLoadBalancer     public frontend + rule, answers when a backend is open
     NIC / VMSS behind an LB      backend port of a public LB rule / NAT rule / NAT pool
+    App Gateway / Azure Firewall listener / DNAT port; backends via gateways.py
     AzureVirtualMachine          union of its NICs
     AzureVirtualMachineScaleSet  per-instance public IP or LB, NSGs from its NIC config
     PaaS                         public network access + firewall semantics of the
@@ -21,20 +22,22 @@ from typing import Tuple
 
 import neo4j
 
+from cartography.intel.azure.exposure_layers import gateways
 from cartography.intel.azure.exposure_layers.network import add_gated_path
 from cartography.intel.azure.exposure_layers.network import for_sku
 from cartography.intel.azure.exposure_layers.network import Gate
 from cartography.intel.azure.exposure_layers.network import gate
-from cartography.intel.azure.exposure_layers.network import read_nsgs
+from cartography.intel.azure.exposure_layers.network import nsg_open
+from cartography.intel.azure.exposure_layers.network import read_nsg_rules
 from cartography.intel.azure.exposure_layers.network import read_subnets
+from cartography.intel.azure.exposure_layers.network import Results
+from cartography.intel.azure.exposure_layers.network import SubnetFacts
 from cartography.intel.azure.exposure_layers.network import SUBSCRIPTION
+from cartography.intel.azure.exposure_layers.network import Target
 from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
 from cartography.intel.exposure.rules import is_world
-
-Results = Dict[str, Dict[str, Reach]]  # label -> node id -> Reach
-Target = Tuple[str, str]  # (label, node id) an LB rule forwards to
 
 NIC = "AzureNetworkInterface"
 VM = "AzureVirtualMachine"
@@ -293,14 +296,16 @@ OPTIONAL MATCH (nic)-[:MEMBER_PUBLIC_IP_ADDRESS]->(pip:AzurePublicIPAddress)
 OPTIONAL MATCH (nic)-[:CONTAINS]->(ipc:AzureNetworkInterfaceIPConfiguration)
 RETURN nic.id AS id, collect(DISTINCT toLower(s.id)) AS subnets, collect(DISTINCT toLower(g.id)) AS nsgs,
     count(DISTINCT pip) > 0 AS public, collect(DISTINCT pip.sku) AS skus,
-    collect(DISTINCT toLower(ipc.id)) AS ipconfigs
+    collect(DISTINCT toLower(ipc.id)) AS ipconfigs, collect(DISTINCT ipc.private_ip_address) AS private_ips
 """
 
 # ponytail: the per-instance public IP SKU of a scale set is not ingested, so it counts as Basic (open).
+# LB and App Gateway pool ids never collide, so one pool index serves both front doors.
 _VMSS_QUERY = f"""
 MATCH {SUBSCRIPTION}-[:RESOURCE]->(v:AzureVirtualMachineScaleSet)
 RETURN v.id AS id, coalesce(v.public_ip_per_instance, false) AS public, [] AS skus,
-    coalesce(v.lb_backend_pool_ids, []) AS pools, coalesce(v.lb_inbound_nat_lb_ids, []) AS nat_lbs,
+    coalesce(v.lb_backend_pool_ids, []) + coalesce(v.appgw_backend_pool_ids, []) AS pools,
+    coalesce(v.lb_inbound_nat_lb_ids, []) AS nat_lbs,
     coalesce(v.subnet_ids, []) AS subnets, coalesce(v.nsg_ids, []) AS nsgs
 """
 
@@ -382,13 +387,28 @@ RETURN n.id AS id, coalesce(n.enablePrivateCluster, false) AS private, coalesce(
 """
 
 
-def _compute_paths(q: Callable[[str], List[Dict]], subnets: Dict, nsgs: Dict) -> Results:
+def front_door_backends(
+    nic_rows: List[Dict], vmss_rows: List[Dict], index: BackendIndex,
+    subnets: Dict[str, SubnetFacts], nsg_rules: Dict[str, List[Dict]], nsgs: Dict[str, PortSet], results: Results,
+) -> gateways.Backends:
+    members = {(NIC, r["id"]): (r["subnets"], r["nsgs"]) for r in nic_rows}
+    members.update({(VMSS, r["id"]): (r["subnets"], r["nsgs"]) for r in vmss_rows})
+    return gateways.Backends(
+        index.by_ipconfig, index.by_pool, gateways.nics_by_ip(nic_rows, NIC), members,
+        subnets, nsg_rules, nsgs, results,
+    )
+
+
+def _compute_paths(q: Callable[[str], List[Dict]], subnets: Dict, nsg_rules: Dict[str, List[Dict]]) -> Results:
+    nsgs = {nsg_id: nsg_open(rules) for nsg_id, rules in nsg_rules.items()}
     nic_rows, vmss_rows = q(_NIC_QUERY), q(_VMSS_QUERY)
     nics, nic_gates = attachments(nic_rows, NIC, REASON_PUBLIC_IP, subnets, nsgs)
     vmss, vmss_gates = attachments(vmss_rows, VMSS, REASON_PER_INSTANCE_IP, subnets, nsgs)
     results: Results = {NIC: nics, VMSS: vmss}
     index = backend_index(nic_rows, vmss_rows, q(_POOL_QUERY))
     results[LB] = load_balancers(q(_LB_QUERY), index, {**nic_gates, **vmss_gates}, results)
+    backends = front_door_backends(nic_rows, vmss_rows, index, subnets, nsg_rules, nsgs, results)
+    results.update(gateways.compute(q, backends))
     results[VM] = union_of(q(_VM_QUERY), "nics", nics)
     return results
 
@@ -398,7 +418,7 @@ def compute(session: neo4j.Session, params: Dict) -> Results:
     def q(query: str) -> List[Dict]:
         return [dict(r) for r in session.run(query, **params)]
 
-    results = _compute_paths(q, read_subnets(session, params), read_nsgs(session, params))
+    results = _compute_paths(q, read_subnets(session, params), read_nsg_rules(session, params))
     storage = network_acl_endpoints(q(_STORAGE_QUERY))
     sql = sql_servers(q(_SQL_QUERY))
     results.update({

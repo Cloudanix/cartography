@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 OPEN_ACCESS_RESTRICTION_SOURCES = {'any', '0.0.0.0/0', '::/0', 'internet', 'azurefrontdoor.backend'}
 # Parallel per-site config reads; same order as the SQL server fetch pool.
 SITE_CONFIG_WORKERS = 5
+ALLOW_ANONYMOUS = 'AllowAnonymous'
 
 
 def load_function_apps(
@@ -140,12 +141,54 @@ def get_function_apps_list(client: WebSiteManagementClient, regions: list, commo
         logger.warning(f"Error while retrieving function apps - {e}")
         return []
 
-    # The site list leaves siteConfig empty, so access restrictions need one read per site.
+    # The site list leaves siteConfig empty, so access restrictions need one read per site,
+    # and authentication (Easy Auth) another.
     with ThreadPoolExecutor(max_workers=SITE_CONFIG_WORKERS) as pool:
         configs = list(pool.map(lambda site: _get_site_config(client, site), function_list))
-    for site, config in zip(function_list, configs):
+        auths = list(pool.map(lambda site: _get_auth_settings(client, site), function_list))
+    for site, config, auth in zip(function_list, configs, auths):
         _set_access_restrictions(site, config)
+        site.update(easy_auth_fields(auth))
     return function_list
+
+
+def _get_auth_settings(client: WebSiteManagementClient, site: Dict) -> Optional[Dict]:
+    """
+    Read a site's App Service authentication settings (V2 shape).
+
+    Uses the "without secrets" GET (.../config/authsettingsV2, Microsoft.Web/sites/config/Read,
+    in Reader). get_auth_settings_v2 is GET .../config/authsettingsV2/list, which needs
+    Microsoft.Web/sites/config/list/Action and returns provider secrets: never call it.
+    :return: the settings as a legacy dict, or None if they could not be read.
+    """
+    try:
+        settings = client.web_apps.get_auth_settings_v2_without_secrets(site['resource_group'], site['name'])
+        return as_legacy_dict(settings)
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving authentication settings for {site.get('id')} - {e}")
+        return None
+
+
+def easy_auth_fields(settings: Optional[Dict]) -> Dict:
+    """
+    auth_enabled and the effective unauthenticated_client_action. Unread settings stay None, so
+    the exposure layers keep the site's auth unknown, never required.
+
+    requireAuthentication off lets every caller through, and excluded paths let callers through on
+    those paths, so both are stored as AllowAnonymous.
+    ponytail: one excluded health-check path downgrades the whole site to AllowAnonymous (unknown);
+    store the paths if per-path verdicts are ever needed.
+    """
+    if settings is None:
+        return {'auth_enabled': None, 'unauthenticated_client_action': None}
+    validation = settings.get('global_validation') or {}
+    action = validation.get('unauthenticated_client_action')
+    if not validation.get('require_authentication') or validation.get('excluded_paths'):
+        action = ALLOW_ANONYMOUS
+    return {
+        'auth_enabled': bool((settings.get('platform') or {}).get('enabled')),
+        'unauthenticated_client_action': action,
+    }
 
 
 def _get_site_config(client: WebSiteManagementClient, site: Dict) -> Optional[Dict]:
@@ -199,6 +242,8 @@ def _load_function_apps_tx(
     f.publicNetworkAccess = function_app.publicNetworkAccess,
     f.ipSecurityRestrictionsDefaultAction = function_app.ipSecurityRestrictionsDefaultAction,
     f.openAccessRestriction = function_app.openAccessRestriction,
+    f.auth_enabled = function_app.auth_enabled,
+    f.unauthenticated_client_action = function_app.unauthenticated_client_action,
     f.container_size = function_app.container_size,
     f.default_host_name=function_app.default_host_name,
     f.last_modified_time_utc=function_app.last_modified_time_utc,

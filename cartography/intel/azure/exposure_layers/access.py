@@ -12,6 +12,8 @@ from typing import Tuple
 
 import neo4j
 
+from cartography.intel.azure.exposure_layers.gateways import APP_GATEWAY
+from cartography.intel.azure.exposure_layers.gateways import FIREWALL
 from cartography.intel.azure.exposure_layers.network import SUBSCRIPTION
 from cartography.intel.azure.exposure_layers.reach import ACR
 from cartography.intel.azure.exposure_layers.reach import AKS
@@ -34,6 +36,23 @@ from cartography.intel.exposure.layers import AUTH_UNKNOWN
 Verdict = Tuple[str, List[str]]
 # Container access levels (Cypher list) that serve blobs anonymously; "none" / null do not.
 _ANONYMOUS = "['container', 'blob']"
+# Easy Auth unauthenticated actions that turn a caller without credentials away.
+# AllowAnonymous (or unread settings, None) lets the app decide.
+EASY_AUTH_REJECTS = frozenset({"redirecttologinpage", "return401", "return403"})
+WAF_PREVENTION = "prevention"
+
+
+def easy_auth(row: Dict) -> Verdict:
+    """App Service authentication on and rejecting anonymous callers = required; anything else unknown."""
+    if row["auth_enabled"] and str(row["action"] or "").lower() in EASY_AUTH_REJECTS:
+        return AUTH_REQUIRED, ["easy_auth"]
+    return AUTH_UNKNOWN, ["app_decides"]
+
+
+def app_gateway(row: Dict) -> Verdict:
+    """A WAF in Prevention mode blocks known attack patterns, not anonymous callers: a reason only."""
+    waf = ["waf_prevention"] if row["waf_enabled"] and str(row["waf_mode"] or "").lower() == WAF_PREVENTION else []
+    return AUTH_UNKNOWN, ["backend_decides"] + waf
 
 
 def flag_auth(none_reason: str, required_reason: str) -> Callable[[Dict], Verdict]:
@@ -96,13 +115,15 @@ RULES: Dict[str, Tuple[str, Callable[[Dict], Verdict]]] = {
         _q(ACR, ", coalesce(n.anonymous_pull_enabled, false) AS open"),
         flag_auth("anonymous_pull", "registry_credentials"),
     ),
-    # ponytail: App Service authentication (Easy Auth) is a per-site API call, not ingested;
-    # ingesting web_apps.get_auth_settings_v2 would turn some of these into required.
-    FUNCTION_APP: (_q(FUNCTION_APP), fixed(AUTH_UNKNOWN, "app_decides")),
+    FUNCTION_APP: (
+        _q(FUNCTION_APP, ", n.auth_enabled AS auth_enabled, n.unauthenticated_client_action AS action"), easy_auth,
+    ),
     VM: (_q(VM), fixed(AUTH_UNKNOWN, "self_managed_service")),
     VMSS: (_q(VMSS), fixed(AUTH_UNKNOWN, "self_managed_service")),
     NIC: (_q(NIC), fixed(AUTH_UNKNOWN, "self_managed_service")),
     LB: (_q(LB), fixed(AUTH_UNKNOWN, "backend_decides")),
+    APP_GATEWAY: (_q(APP_GATEWAY, ", n.waf_enabled AS waf_enabled, n.waf_mode AS waf_mode"), app_gateway),
+    FIREWALL: (_q(FIREWALL), fixed(AUTH_UNKNOWN, "backend_decides")),
 }
 
 

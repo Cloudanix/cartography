@@ -4,7 +4,9 @@ End-to-end check of the Azure exposure layers on a graph written by the Azure lo
 section 8.
 """
 from cartography.intel.azure import exposure_layers
+from cartography.intel.azure import function_app
 from cartography.intel.azure import network
+from cartography.intel.azure import network_gateways
 from cartography.util import run_cleanup_job
 
 TAG = 1700000000
@@ -52,12 +54,13 @@ def _nsg(session, name, rules):
     network.load_network_security_rules(session, network.get_network_security_rules_list([nsg], None, {}), TAG)
 
 
-def _subnet(session, name, nsg=None, udr_hop=None):
+def _subnet(session, name, nsg=None, udr_hop=None, prefixes=()):
     subnet_id = arm('virtualNetworks', f'{VNET}/subnets/{name}')
     network.load_networks_subnets(
         session, [{
             'id': subnet_id, 'name': name, 'network_id': arm('virtualNetworks', VNET),
             'network_security_group_id': arm('networkSecurityGroups', nsg) if nsg else None,
+            'address_prefixes': list(prefixes),
         }], SUB, TAG,
     )
     if udr_hop:
@@ -73,12 +76,12 @@ def _subnet(session, name, nsg=None, udr_hop=None):
     return subnet_id
 
 
-def _nic(session, name, subnet_id, nsg=None, public_ip=None, sku=None):
+def _nic(session, name, subnet_id, nsg=None, public_ip=None, sku=None, private_ip='10.0.0.4'):
     nic_id = arm('networkInterfaces', name)
     nic = {
         'id': nic_id, 'name': name, 'location': 'eastus',
         'network_security_group': {'id': arm('networkSecurityGroups', nsg)} if nsg else None,
-        'ip_configurations': [{'id': f'{nic_id}/ipConfigurations/ipconfig1', 'private_ip_address': '10.0.0.4'}],
+        'ip_configurations': [{'id': f'{nic_id}/ipConfigurations/ipconfig1', 'private_ip_address': private_ip}],
         'subnet': [{'subnet_id': subnet_id}],
     }
     network.load_network_interfaces(session, SUB, [nic], TAG)
@@ -309,3 +312,158 @@ def test_load_balancer_rule_cleanup(neo4j_session):
     run_cleanup_job('azure_import_network_load_balancer_rules_cleanup.json', neo4j_session, params)
     count = "MATCH (r:AzureLoadBalancerRule) WHERE r.id STARTS WITH $lb RETURN count(r) AS c"
     assert neo4j_session.run(count, lb=lb_id).single()['c'] == 0
+
+
+# ---------------------------------------------------------------- front doors + Easy Auth
+
+AGW_ID = arm('applicationGateways', 'agw1')
+FW_ID = arm('azureFirewalls', 'fw1')
+
+
+def _public_ip(session, name, address):
+    pip_id = arm('publicIPAddresses', name)
+    network.load_public_ip_addresses(session, SUB, [{'id': pip_id, 'name': name, 'ip_address': address}], TAG)
+    return pip_id
+
+
+def _app_gateway(session, subnet_id, backend_nic_ids):
+    """Public HTTPS listener 443 -> pool of the given NICs -> backend settings port 8080, WAF Prevention."""
+    def ref(path):
+        return {'id': f'{AGW_ID}/{path}'}
+    pip_id = _public_ip(session, 'agw-pip', '20.5.0.1')
+    gateway = {
+        'id': AGW_ID, 'name': 'agw1', 'location': 'eastus', 'sku': {'name': 'WAF_v2', 'tier': 'WAF_v2'},
+        'web_application_firewall_configuration': {'enabled': True, 'firewall_mode': 'Prevention'},
+        'gateway_ip_configurations': [{'id': f'{AGW_ID}/gic', 'subnet': {'id': subnet_id}}],
+        'frontend_ip_configurations': [{'id': f'{AGW_ID}/fe', 'public_ip_address': {'id': pip_id}}],
+        'frontend_ports': [{'id': f'{AGW_ID}/fp', 'port': 443}],
+        'http_listeners': [{
+            'id': f'{AGW_ID}/l', 'frontend_ip_configuration': ref('fe'), 'frontend_port': ref('fp'),
+            'protocol': 'Https',
+        }],
+        'backend_address_pools': [{
+            'id': f'{AGW_ID}/pool',
+            'backend_ip_configurations': [{'id': f'{nic}/ipConfigurations/ipconfig1'} for nic in backend_nic_ids],
+        }],
+        'backend_http_settings_collection': [{'id': f'{AGW_ID}/s8080', 'port': 8080, 'protocol': 'Http'}],
+        'request_routing_rules': [{
+            'id': f'{AGW_ID}/rule', 'name': 'rule', 'http_listener': ref('l'),
+            'backend_address_pool': ref('pool'), 'backend_http_settings': ref('s8080'),
+        }],
+    }
+    rows = [network_gateways.transform_application_gateway(gateway, {})]
+    network_gateways.load_application_gateways(session, SUB, rows, TAG)
+
+
+def _firewall(session, subnet_id):
+    """DNAT 2222 -> 10.0.3.30:22 from anywhere; 3389 -> 10.0.3.31:3389 from one /24 only."""
+    def nat(name, sources, port, translated, translated_port):
+        return {
+            'name': name, 'source_addresses': sources, 'destination_addresses': ['20.8.8.8'],
+            'destination_ports': [port], 'protocols': ['TCP'], 'translated_address': translated,
+            'translated_port': translated_port,
+        }
+    firewall = {
+        'id': FW_ID, 'name': 'fw1', 'location': 'eastus', 'sku': {'name': 'AZFW_VNet', 'tier': 'Standard'},
+        'ip_configurations': [{
+            'id': f'{FW_ID}/ipc', 'private_ip_address': '10.0.60.4', 'subnet': {'id': subnet_id},
+            'public_ip_address': {'id': _public_ip(session, 'fw-pip', '20.8.8.8')},
+        }],
+        'nat_rule_collections': [{
+            'id': f'{FW_ID}/natRuleCollections/in', 'action': {'type': 'Dnat'}, 'rules': [
+                nat('ssh', ['*'], '2222', '10.0.3.30', '22'),
+                nat('rdp', ['203.0.113.0/24'], '3389', '10.0.3.31', '3389'),
+            ],
+        }],
+    }
+    network_gateways.load_firewalls(session, SUB, [network_gateways.transform_firewall(firewall, {})], TAG)
+
+
+def _function_apps(session):
+    apps = [
+        ('fn-easy-auth', True, 'Return401'), ('fn-anonymous', True, 'AllowAnonymous'), ('fn-unreadable', None, None),
+    ]
+    rows = [
+        {'id': name, 'name': name, 'auth_enabled': enabled, 'unauthenticated_client_action': action}
+        for name, enabled, action in apps
+    ]
+    function_app.load_function_apps(session, SUB, rows, TAG)
+
+
+def _build_front_doors(session):
+    _build(session)
+    _nsg(session, 'nsg-no-internet', [(100, 'Deny', 'Internet', '*', '*')])
+    _nsg(session, 'nsg-deny-agw', [(100, 'Deny', '10.0.50.0/24', '8080', 'Tcp')])
+    agw_subnet = _subnet(session, 'agw', prefixes=['10.0.50.0/24'])
+    fw_subnet = _subnet(session, 'AzureFirewallSubnet', prefixes=['10.0.60.0/26'])
+    app = _subnet(session, 'app', prefixes=['10.0.1.0/24'])
+    # Public IP, but its NSG shuts the internet out: reachable only through the gateway.
+    web = _nic(session, 'web', app, 'nsg-no-internet', '20.10.10.10', private_ip='10.0.1.4')
+    web_denied = _nic(session, 'web-denied', app, 'nsg-deny-agw', private_ip='10.0.1.5')
+    _vm(session, 'web', web)
+    _vm(session, 'web-denied', web_denied)
+    _vm(session, 'dnat-ssh', _nic(session, 'dnat-ssh', app, private_ip='10.0.3.30'))
+    _vm(session, 'dnat-rdp', _nic(session, 'dnat-rdp', app, private_ip='10.0.3.31'))
+    _app_gateway(session, agw_subnet, [web, web_denied])
+    _firewall(session, fw_subnet)
+    _function_apps(session)
+
+
+def test_front_doors_and_easy_auth(neo4j_session):
+    _build_front_doors(neo4j_session)
+    exposure_layers.run(neo4j_session, PARAMS)
+
+    def reach(label, node_id):
+        p = _props(neo4j_session, label, node_id)
+        return p['internet_reachable'], p['internet_reachable_ports'], p['internet_reachable_via'], p['public_reasons']
+
+    def auth(label, node_id):
+        p = _props(neo4j_session, label, node_id)
+        return p['access_auth'], p['access_auth_reasons']
+
+    vm = 'AzureVirtualMachine'
+    # App Gateway: listener on the gateway, backend settings port on the backend, NIC NSG still applies.
+    assert reach('AzureApplicationGateway', AGW_ID) == (True, ['tcp:443-443'], ['public_listener'], ['public_frontend'])
+    assert reach(vm, 'vm-web') == (True, ['tcp:8080-8080'], [f'appgw:{AGW_ID}'], ['public_ip'])
+    assert reach(vm, 'vm-web-denied') == (False, [], [], [])
+    assert auth('AzureApplicationGateway', AGW_ID) == ('unknown', ['backend_decides', 'waf_prevention'])
+    connected = (
+        "MATCH (:AzureNetworkInterface)-[:CONNECTED_TO]->(:AzureApplicationGateway{id: $id}) RETURN count(*) AS c"
+    )
+    assert neo4j_session.run(connected, id=AGW_ID).single()['c'] == 2
+
+    # Azure Firewall DNAT: world source reaches the translated port; a restricted source does not.
+    assert reach('AzureFirewall', FW_ID) == (True, ['tcp:2222-2222'], ['dnat_rule'], ['public_ip'])
+    assert reach(vm, 'vm-dnat-ssh') == (True, ['tcp:22-22'], [f'azure_firewall_dnat:{FW_ID}'], [])
+    assert reach(vm, 'vm-dnat-rdp') == (False, [], [], [])
+    assert auth('AzureFirewall', FW_ID)[0] == 'unknown'
+
+    # Easy Auth: on and rejecting = required; AllowAnonymous or unreadable = unknown, never required.
+    assert auth('AzureFunctionApp', 'fn-easy-auth') == ('required', ['easy_auth'])
+    assert auth('AzureFunctionApp', 'fn-anonymous') == ('unknown', ['app_decides'])
+    assert auth('AzureFunctionApp', 'fn-unreadable') == ('unknown', ['app_decides'])
+
+
+def test_front_door_cleanup(neo4j_session):
+    scope = {'ws': 'ws-fd', 'tenant': 'tenant-fd', 'sub': 'sub-fd'}
+    _scope(neo4j_session, **scope)
+    gateway = {'id': 'agw-old', 'request_routing_rules': []}
+    firewall = {
+        'id': 'fw-old', 'nat_rule_collections': [
+            {'id': 'fw-old/natRuleCollections/c', 'action': {'type': 'Dnat'}, 'rules': [{'name': 'r'}]},
+        ],
+    }
+    network_gateways.load_application_gateways(
+        neo4j_session, 'sub-fd', [network_gateways.transform_application_gateway(gateway, {})], 1,
+    )
+    network_gateways.load_firewalls(neo4j_session, 'sub-fd', [network_gateways.transform_firewall(firewall, {})], 1)
+    params = {
+        'UPDATE_TAG': 2, 'WORKSPACE_ID': 'ws-fd', 'AZURE_TENANT_ID': 'tenant-fd', 'AZURE_SUBSCRIPTION_ID': 'sub-fd',
+        'LIMIT_SIZE': 100,
+    }
+    run_cleanup_job('azure_import_application_gateways_cleanup.json', neo4j_session, params)
+    run_cleanup_job('azure_import_azure_firewalls_cleanup.json', neo4j_session, params)
+    count = (
+        "MATCH (n) WHERE n.id IN ['agw-old', 'fw-old', 'fw-old/natRuleCollections/c/rules/r'] RETURN count(n) AS c"
+    )
+    assert neo4j_session.run(count).single()['c'] == 0

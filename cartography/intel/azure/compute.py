@@ -512,8 +512,9 @@ def sync_virtual_machine_available_sizes(
 def _vmss_front_doors(scale_set: Dict) -> Dict:
     """
     What can reach a scale set's instances from outside, read from its network profile:
-    a per-instance public IP, load balancer backend pools and inbound NAT pools. Uniform
-    scale set instances are not listed as VMs, so this is the only exposure input for them.
+    a per-instance public IP, load balancer backend pools, inbound NAT pools and Application
+    Gateway backend pools. Uniform scale set instances are not listed as VMs, so this is the
+    only exposure input for them.
     Ids are lowercased to match AzureNetworkLoadBalancer.inbound_backend_pool_ids.
     Subnet and NSG ids feed the exposure layers' NSG walk for instances the graph has no NIC for.
     """
@@ -536,9 +537,16 @@ def _vmss_front_doors(scale_set: Dict) -> Dict:
         for pool in ip_configuration.get('load_balancer_inbound_nat_pools') or []
         if pool.get('id')
     }
+    appgw_pool_ids = {
+        pool['id'].lower()
+        for ip_configuration in ip_configurations
+        for pool in ip_configuration.get('application_gateway_backend_address_pools') or []
+        if pool.get('id')
+    }
     return {
         'public_ip_per_instance': any(c.get('public_ip_address_configuration') for c in ip_configurations),
         'lb_backend_pool_ids': sorted(pool_ids),
+        'appgw_backend_pool_ids': sorted(appgw_pool_ids),
         'lb_inbound_nat_lb_ids': sorted(nat_lb_ids),
         'subnet_ids': sorted({
             c['subnet']['id'].lower() for c in ip_configurations if (c.get('subnet') or {}).get('id')
@@ -597,6 +605,7 @@ def _load_vm_scale_sets_tx(
     a.public_ip_per_instance = set.public_ip_per_instance,
     a.lb_backend_pool_ids = set.lb_backend_pool_ids,
     a.lb_inbound_nat_lb_ids = set.lb_inbound_nat_lb_ids,
+    a.appgw_backend_pool_ids = set.appgw_backend_pool_ids,
     a.subnet_ids = set.subnet_ids,
     a.nsg_ids = set.nsg_ids,
     a.subscription_id = $SUBSCRIPTION_ID,

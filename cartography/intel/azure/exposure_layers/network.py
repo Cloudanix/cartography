@@ -14,9 +14,15 @@ A subnet whose 0.0.0.0/0 user-defined route points anywhere but Internet (NVA, V
 None) routes replies through that hop, which decides what survives. That is a blind spot:
 the path is reported as `unknown:udr_default_route_<hop>` in internet_reachable_via and
 never as reachable.
+
+Behind an Application Gateway or an Azure Firewall DNAT rule the backend leg starts inside
+the VNet (the gateway proxies, the firewall SNATs), so backend NSGs are evaluated with that
+front door's subnet as the source and with the default AllowVnetInBound rule (nsg_open_from).
 """
+import ipaddress
 from dataclasses import dataclass
 from dataclasses import field
+from typing import Callable
 from typing import Dict
 from typing import Iterable
 from typing import List
@@ -38,6 +44,8 @@ SUBSCRIPTION = (
     "(:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AzureTenant{id: $AZURE_TENANT_ID})"
     "-[:RESOURCE]->(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})"
 )
+Results = Dict[str, Dict[str, Reach]]  # label -> node id -> Reach
+Target = Tuple[str, str]  # (label, node id) a front door forwards to
 ANY_PORT = "*"
 INBOUND = "inbound"
 ALLOW = "allow"
@@ -45,8 +53,12 @@ INTERNET_HOP = "internet"
 DEFAULT_ROUTE = "0.0.0.0/0"
 UNKNOWN_UDR_VIA = "unknown:udr_default_route_"
 STANDARD_SKU = "standard"
+VNET_TAG = "virtualnetwork"
+INTERNET_TAG = "internet"
 # Destinations that cover every NIC behind the NSG.
-_ANY_DESTINATIONS = frozenset({"", "*", "any", "virtualnetwork", "0.0.0.0/0", "::/0"})
+_ANY_DESTINATIONS = frozenset({"", "*", "any", VNET_TAG, "0.0.0.0/0", "::/0"})
+# Default rule AllowVnetInBound (65000) is not ingested; it admits every source inside the VNet.
+ALLOW_VNET_INBOUND = FirewallRule(PortSet.everything(), world=True, allow=True, priority=65000)
 
 
 @dataclass
@@ -96,9 +108,38 @@ def rule_ports(rule: Dict) -> PortSet:
     return ports
 
 
+def _sources(rule: Dict) -> List[Optional[str]]:
+    return [rule.get("source_address_prefix")] + list(rule.get("source_address_prefixes") or [])
+
+
 def rule_is_world(rule: Dict) -> bool:
-    sources = [rule.get("source_address_prefix")] + list(rule.get("source_address_prefixes") or [])
-    return any(is_world(s) for s in sources)
+    return any(is_world(s) for s in _sources(rule))
+
+
+def _within(prefix: str, network: ipaddress._BaseNetwork) -> bool:
+    try:
+        return ipaddress.ip_network(prefix, strict=False).subnet_of(network)  # type: ignore[arg-type]
+    except (TypeError, ValueError):  # unparseable, or IPv4 against IPv6
+        return False
+
+
+def source_covers(source: Optional[str], prefixes: List[str]) -> bool:
+    """
+    Does an NSG source match traffic from every address in `prefixes` (a front door's subnet)?
+
+    ponytail: a source CIDR that only partly overlaps the subnet does not match, so an allow
+    for half the gateway subnet is ignored (lower bound) and so is such a deny (upper bound).
+    """
+    text = str(source or "").strip().lower()
+    if text == INTERNET_TAG:  # the service tag means addresses outside the VNet
+        return False
+    if is_world(text) or text == VNET_TAG:
+        return True
+    try:
+        network = ipaddress.ip_network(text, strict=False)
+    except ValueError:  # service tags other than VirtualNetwork
+        return False
+    return bool(prefixes) and all(_within(p, network) for p in prefixes)
 
 
 def nsg_open(rules: Iterable[Dict]) -> PortSet:
@@ -109,7 +150,21 @@ def nsg_open(rules: Iterable[Dict]) -> PortSet:
     destination is skipped and an allow scoped to one opens every NIC behind the NSG, so
     the result is an upper bound. Match destination CIDRs per NIC if this over-reports.
     """
-    evaluated = []
+    return _first_match(rules, rule_is_world)
+
+
+def nsg_open_from(rules: Iterable[Dict], prefixes: List[str]) -> PortSet:
+    """Ports one NSG opens to traffic sourced in `prefixes`, a subnet of the same (or a peered) VNet."""
+    def matches(rule: Dict) -> bool:
+        return any(source_covers(s, prefixes) for s in _sources(rule))
+    return _first_match(rules, matches, [ALLOW_VNET_INBOUND])
+
+
+def _first_match(
+    rules: Iterable[Dict], matches: Callable[[Dict], bool], implied: Iterable[FirewallRule] = (),
+) -> PortSet:
+    """First-match NSG evaluation; `matches` says whether a rule's source covers the caller."""
+    evaluated = list(implied)
     for rule in rules:
         if str(rule.get("direction") or "").lower() != INBOUND:
             continue
@@ -119,7 +174,7 @@ def nsg_open(rules: Iterable[Dict]) -> PortSet:
             continue
         evaluated.append(
             FirewallRule(
-                rule_ports(rule), world=rule_is_world(rule), allow=allow, priority=int(rule.get("priority") or 0),
+                rule_ports(rule), world=matches(rule), allow=allow, priority=int(rule.get("priority") or 0),
             ),
         )
     return first_match_open(evaluated)
@@ -200,9 +255,9 @@ RETURN toLower(s.id) AS id, collect(DISTINCT toLower(g.id)) AS nsgs, collect(DIS
 """
 
 
-def read_nsgs(session: neo4j.Session, params: Dict) -> Dict[str, PortSet]:
-    """Lowercased NSG id -> ports it opens to the internet."""
-    return {row["id"]: nsg_open(row["rules"]) for row in session.run(_NSG_QUERY, **params)}
+def read_nsg_rules(session: neo4j.Session, params: Dict) -> Dict[str, List[Dict]]:
+    """Lowercased NSG id -> its rules; nsg_open / nsg_open_from evaluate them per source."""
+    return {row["id"]: row["rules"] for row in session.run(_NSG_QUERY, **params)}
 
 
 def read_subnets(session: neo4j.Session, params: Dict) -> Dict[str, SubnetFacts]:

@@ -1,7 +1,8 @@
 """
 Azure exposure layers (docs/exposure-layers/plan.md):
 
-    L1 public / L2 internet reachable  reach.py (NSG walk in network.py)
+    L1 public / L2 internet reachable  reach.py (NSG walk in network.py, App Gateway /
+                                       Azure Firewall DNAT in gateways.py)
     L3 accessible without credentials  access.py
     L4 software identity (CVE input)   software.py
     L5 network blast radius            blast_radius.py

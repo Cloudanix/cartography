@@ -10,6 +10,7 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.network import NetworkManagementClient
 
+from . import network_gateways
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.sdk_models import as_legacy_dict
@@ -296,6 +297,10 @@ def get_networks_subnets_list(networks_list: List[Dict], client: NetworkManageme
                 subnet['type'] = "Microsoft.Network/Subnets"
                 subnet['location'] = network.get('location', 'global')
                 subnet['network_security_group_id'] = subnet.get('network_security_group', {}).get('id', None)
+                # Exposure layers match NSG source CIDRs against a front door's subnet.
+                subnet['address_prefixes'] = sorted(
+                    ({subnet.get('address_prefix')} | set(subnet.get('address_prefixes') or [])) - {None},
+                )
                 subnet['consolelink'] = safe_console_link(subnet['id'], common_job_parameters)
                 subnet['isDefault'] = False  # subnets in Azure are created by user and not by default
             networks_subnets_list.extend(subnets_list)
@@ -325,6 +330,7 @@ def _load_networks_subnets_tx(
     n.private_endpoint_network_policies=subnet.private_endpoint_network_policies,
     n.private_link_service_network_policies=subnet.private_link_service_network_policies,
     n.etag=subnet.etag,
+    n.address_prefixes=subnet.address_prefixes,
     n.is_default=subnet.isDefault
     WITH n, subnet
     MATCH (s:AzureNetwork{id: subnet.network_id})
@@ -1511,11 +1517,11 @@ def _load_ip_configurations_tx(
     WITH n, interface
     UNWIND interface.ip_configurations AS ip_conf
     MERGE (ipc:AzureNetworkInterfaceIPConfiguration{id: ip_conf.id})
-    ON CREATE SET ipc.firstseen = timestamp(),
+    ON CREATE SET ipc.firstseen = timestamp()
+    SET ipc.lastupdated = $update_tag,
     ipc.private_ip_address = ip_conf.private_ip_address,
     ipc.private_ip_allocation_method = ip_conf.private_ip_allocation_method,
-    ipc.private_ip_address_version = ip_conf.private_ip_address_version
-    SET ipc.lastupdated = $update_tag,
+    ipc.private_ip_address_version = ip_conf.private_ip_address_version,
     ipc.consolelink = coalesce(ip_conf.consolelink, ipc.consolelink),
     ipc.name = ip_conf.name
     WITH ipc, n
@@ -1757,6 +1763,10 @@ def sync(
     t0 = time.perf_counter()
     sync_load_balancer(neo4j_session, client, subscription_id, update_tag, common_job_parameters, regions)
     logger.info(f"network sub={subscription_id}: load balancer sync done in {time.perf_counter() - t0:.2f}s")
+
+    t0 = time.perf_counter()
+    network_gateways.sync(neo4j_session, client, subscription_id, update_tag, common_job_parameters, regions)
+    logger.info(f"network sub={subscription_id}: app gateway / firewall sync done in {time.perf_counter() - t0:.2f}s")
 
     t0 = time.perf_counter()
     sync_nat_gateway(neo4j_session, client, subscription_id, update_tag, common_job_parameters, regions)
