@@ -57,39 +57,37 @@ def load_vpc_peerings(
     pcx.arn = vpc_peering.arn,
     pcx.consolelink = vpc_peering.consolelink
 
-
+    // A VPC with an arn was loaded by the VPC sync of the account that owns it, which may be
+    // another account or tenant: leave its stamp alone. Only stubs for peer VPCs get ours.
     MERGE (avpc:AWSVpc{id: vpc_peering.AccepterVpcInfo.VpcId})
-    ON CREATE SET avpc.firstseen = timestamp()
-    SET avpc.lastupdated = $update_tag, avpc.vpcid = vpc_peering.AccepterVpcInfo.VpcId
+    ON CREATE SET avpc.firstseen = timestamp(), avpc.vpcid = vpc_peering.AccepterVpcInfo.VpcId
+    SET avpc.lastupdated = CASE WHEN avpc.arn IS NULL THEN $update_tag ELSE avpc.lastupdated END
 
     MERGE (rvpc:AWSVpc{id: vpc_peering.RequesterVpcInfo.VpcId})
-    ON CREATE SET rvpc.firstseen = timestamp()
-    SET rvpc.lastupdated = $update_tag, rvpc.vpcid = vpc_peering.RequesterVpcInfo.VpcId
-
-    MERGE (aaccount:AWSAccount{id: $aws_account_id})
-    ON CREATE SET aaccount.firstseen = timestamp(), aaccount.foreign = true
-    SET aaccount.lastupdated = $update_tag
-
-    MERGE (raccount:AWSAccount{id: $aws_account_id})
-    ON CREATE SET raccount.firstseen = timestamp(), raccount.foreign = true
-    SET raccount.lastupdated = $update_tag
+    ON CREATE SET rvpc.firstseen = timestamp(), rvpc.vpcid = vpc_peering.RequesterVpcInfo.VpcId
+    SET rvpc.lastupdated = CASE WHEN rvpc.arn IS NULL THEN $update_tag ELSE rvpc.lastupdated END
 
     MERGE (pcx)-[rav:ACCEPTER_VPC]->(avpc)
     ON CREATE SET rav.firstseen = timestamp()
     SET rav.lastupdated = $update_tag
 
-    MERGE (aaccount)-[ra:RESOURCE]->(avpc)
-    ON CREATE SET ra.firstseen = timestamp()
-    SET ra.lastupdated = $update_tag
-
     MERGE (pcx)-[rrv:REQUESTER_VPC]->(rvpc)
     ON CREATE SET rrv.firstseen = timestamp()
     SET rrv.lastupdated = $update_tag
 
-    MERGE (raccount)-[rr:RESOURCE]->(rvpc)
-    ON CREATE SET rr.firstseen = timestamp()
-    SET rr.lastupdated = $update_tag
-
+    // Only the side this account owns is its resource; the peer VPC belongs to OwnerId.
+    WITH vpc_peering, avpc, rvpc
+    MATCH (account:AWSAccount{id: $aws_account_id})
+    FOREACH (_ IN CASE WHEN vpc_peering.AccepterVpcInfo.OwnerId = $aws_account_id THEN [1] ELSE [] END |
+        MERGE (account)-[ra:RESOURCE]->(avpc)
+        ON CREATE SET ra.firstseen = timestamp()
+        SET ra.lastupdated = $update_tag
+    )
+    FOREACH (_ IN CASE WHEN vpc_peering.RequesterVpcInfo.OwnerId = $aws_account_id THEN [1] ELSE [] END |
+        MERGE (account)-[rr:RESOURCE]->(rvpc)
+        ON CREATE SET rr.firstseen = timestamp()
+        SET rr.lastupdated = $update_tag
+    )
     """
 
     for item in data:
