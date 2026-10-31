@@ -84,6 +84,42 @@ def run_analysis_job(
     )
 
 
+# Identifiers worth putting in a failed-analysis-job log line; whichever the provider sets are logged.
+ANALYSIS_SCOPE_KEYS = (
+    "WORKSPACE_ID",
+    "AWS_ID",
+    "GCP_PROJECT_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_SUBSCRIPTION_ID",
+    "OCI_TENANCY_ID",
+)
+
+
+def run_analysis_job_logged(
+    filename: str,
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict,
+    package: str = "cartography.data.jobs.analysis",
+) -> None:
+    """
+    Same as run_analysis_job, but a failure is logged at error level (job name, account/project ids, traceback)
+    instead of raised. Provider syncs run their analysis jobs in sequence, so a raise from one job would skip every
+    later job for that account and leave their exposure values stale. Statements inside the failing job still stop at
+    the first error (later statements can depend on earlier ones, e.g. reset then set).
+    Integration tests call run_analysis_job directly, so they still see failures.
+    """
+    try:
+        run_analysis_job(filename, neo4j_session, common_job_parameters, package)
+    except Exception:
+        scope = {key: common_job_parameters[key] for key in ANALYSIS_SCOPE_KEYS if key in common_job_parameters}
+        logger.error(
+            "Analysis job '%s' failed for %s; continuing with the remaining analysis jobs.",
+            filename,
+            scope,
+            exc_info=True,
+        )
+
+
 def run_analysis_and_ensure_deps(
     analysis_job_name: str,
     resource_dependencies: Set[str],
