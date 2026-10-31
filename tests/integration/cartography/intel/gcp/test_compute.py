@@ -994,3 +994,75 @@ def test_instances_join_the_vpc_of_their_nic_network(neo4j_session):
         host=SHARED_HOST_PROJECT, vpc=SHARED_VPC_ID,
     ).single()['n']
     assert owned == 1
+
+
+def _seed_network_with_open_ssh(neo4j_session, workspace_id, org_id, project_id, vpc_id, target_tag=None):
+    """A project's VPC with an enabled 0.0.0.0/0 tcp:22 allow rule, as compute ingestion writes it."""
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: $vpc})
+        MERGE (vpc)-[:RESOURCE]->(fw:GCPFirewall{id: $vpc + '/fw-ssh'})
+        SET fw.direction = 'INGRESS', fw.disabled = false, fw.has_target_service_accounts = false, fw.priority = 1000
+        MERGE (rule:GCPIpRule:IpRule:IpPermissionInbound{id: $vpc + '/fw-ssh/allow/22tcp'})
+        SET rule.protocol = 'tcp', rule.fromport = 22, rule.toport = 22
+        MERGE (rule)-[:ALLOWED_BY]->(fw)
+        MERGE (rng:IpRange{id: '0.0.0.0/0'})
+        MERGE (rng)-[:MEMBER_OF_IP_RULE]->(rule)
+        FOREACH (tag IN CASE WHEN $tag IS NULL THEN [] ELSE [$tag] END |
+            MERGE (fw)-[:TARGET_TAG]->(:GCPNetworkTag{id: $vpc + '/tags/' + tag}))
+        """,
+        ws=workspace_id, org=org_id, project=project_id, vpc=vpc_id, tag=target_tag,
+    )
+
+
+def test_shared_vpc_firewalls_apply_only_within_the_workspace_and_org(neo4j_session):
+    ws, org, svc = 'ws-xproj', 'org-xproj', 'proj-xproj-svc'
+    host_vpc = 'projects/proj-xproj-host/global/networks/shared'
+    foreign_vpc = 'projects/proj-other-tenant/global/networks/shared'
+    # Host project of this org (Shared VPC): untargeted and tagged open rules apply to service-project VMs.
+    _seed_network_with_open_ssh(neo4j_session, ws, org, 'proj-xproj-host', host_vpc)
+    _seed_network_with_open_ssh(neo4j_session, ws, org, 'proj-xproj-host', host_vpc + '-tagged', target_tag='web')
+    # Same network shapes, but only another workspace synced the project that owns them.
+    _seed_network_with_open_ssh(neo4j_session, 'ws-other', 'org-other', 'proj-other-tenant', foreign_vpc)
+    _seed_network_with_open_ssh(
+        neo4j_session, 'ws-other', 'org-other', 'proj-other-tenant', foreign_vpc + '-tagged', target_tag='web',
+    )
+    neo4j_session.run(
+        """
+        MATCH (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $svc})
+        WITH p
+        UNWIND $vms AS v
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.natIP = '34.8.8.8', i.status = 'RUNNING'
+        WITH i, v
+        MATCH (vpc:GCPVpc{id: v.vpc})
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        FOREACH (_ IN CASE WHEN v.tagged THEN [1] ELSE [] END |
+            MERGE (t:GCPNetworkTag{id: v.vpc + '/tags/web'}) MERGE (i)-[:TAGGED]->(t))
+        """,
+        ws=ws, org=org, svc=svc, vms=[
+            {'id': 'xproj-vm-host', 'vpc': host_vpc},
+            {'id': 'xproj-vm-host-tagged', 'vpc': host_vpc + '-tagged', 'tagged': True},
+            {'id': 'xproj-vm-foreign', 'vpc': foreign_vpc},
+            {'id': 'xproj-vm-foreign-tagged', 'vpc': foreign_vpc + '-tagged', 'tagged': True},
+        ],
+    )
+
+    run_analysis_job(
+        'gcp_compute_instance_analysis.json', neo4j_session,
+        {'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': ws, 'GCP_ORGANIZATION_ID': org, 'GCP_PROJECT_ID': svc},
+    )
+
+    flagged = neo4j_session.run(
+        "MATCH (:GCPProject{id: $svc})-[:RESOURCE]->(i:GCPInstance) WHERE i.exposed_internet RETURN i.id AS id",
+        svc=svc,
+    ).value()
+    assert sorted(flagged) == ['xproj-vm-host', 'xproj-vm-host-tagged']
+    edges = neo4j_session.run(
+        "MATCH (fw:GCPFirewall)-[:FIREWALL_INGRESS]->(i:GCPInstance) WHERE i.id STARTS WITH 'xproj-' "
+        "RETURN i.id AS id",
+    ).value()
+    assert sorted(edges) == ['xproj-vm-host', 'xproj-vm-host-tagged']

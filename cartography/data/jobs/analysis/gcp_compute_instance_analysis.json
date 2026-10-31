@@ -7,18 +7,13 @@
             "iterationsize": 1000
         },
         {
-            "__comment": "Connect GCP ingress firewall rules to the instances they apply to via target tags. Context only (publicContext.firewallRules); exposure is decided below.",
-            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(vpc:GCPVpc)<-[mem:MEMBER_OF_GCP_VPC]-(inst:GCPInstance)-[t:TAGGED]->(tag:GCPNetworkTag)-[tt:TARGET_TAG]-(fw:GCPFirewall{direction: 'INGRESS'})<-[res:RESOURCE]-(vpc)\nMERGE (fw)-[a:FIREWALL_INGRESS]->(inst)\nON CREATE SET a.firstseen = timestamp()\nSET a.lastupdated = $UPDATE_TAG\nRETURN count(*) as TotalCompleted",
+            "__comment": "Connect each INGRESS firewall to the instances it applies to: by target tag, or every instance in the network when it has no target tags and no target service accounts. The network may belong to another project (Shared VPC host); it must be owned by a project of this organization and workspace. Context only (publicContext.firewallRules); exposure is decided below.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(org:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(inst:GCPInstance)-[:MEMBER_OF_GCP_VPC]->(vpc:GCPVpc)-[:RESOURCE]->(fw:GCPFirewall{direction: 'INGRESS'})\nWHERE (org)-[:OWNER]->(:GCPProject)-[:RESOURCE]->(vpc)\nAND ((fw)-[:TARGET_TAG]->(:GCPNetworkTag)<-[:TAGGED]-(inst) OR (fw.has_target_service_accounts = false AND NOT (fw)-[:TARGET_TAG]->(:GCPNetworkTag)))\nMERGE (fw)-[a:FIREWALL_INGRESS]->(inst)\nON CREATE SET a.firstseen = timestamp()\nSET a.lastupdated = $UPDATE_TAG\nRETURN count(*) as TotalCompleted",
             "iterative": false
         },
         {
-            "__comment": "Connect GCP ingress firewall rules with no target tags and no target service accounts to every instance in their VPC.",
-            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(vpc:GCPVpc)-[:RESOURCE]->(fw:GCPFirewall{direction: 'INGRESS', has_target_service_accounts: False})\nWHERE NOT (fw)-[:TARGET_TAG]->(:GCPNetworkTag)\nMATCH (inst:GCPInstance)-[mem:MEMBER_OF_GCP_VPC]->(vpc)\nMERGE (fw)-[a:FIREWALL_INGRESS]->(inst)\nON CREATE SET a.firstseen = timestamp()\nSET a.lastupdated = $UPDATE_TAG\nRETURN count(*) as TotalCompleted",
-            "iterative": false
-        },
-        {
-            "__comment": "Delete firewall ingress relationships not refreshed by this run",
-            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(fw:GCPFirewall)-[a:FIREWALL_INGRESS]->(inst:GCPInstance)\nWHERE a.lastupdated <> $UPDATE_TAG\nDELETE (a)\nRETURN count(*) as TotalCompleted",
+            "__comment": "Delete firewall ingress relationships not refreshed by this run. Anchored on the instance so edges from a host project's firewalls are cleaned too.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(inst:GCPInstance)<-[a:FIREWALL_INGRESS]-(:GCPFirewall)\nWHERE a.lastupdated <> $UPDATE_TAG\nDELETE (a)\nRETURN count(*) as TotalCompleted",
             "iterative": false
         },
         {
@@ -26,13 +21,8 @@
             "iterative": false
         },
         {
-            "__comment": "Running instance with an external IPv4 address, targeted by network tag by an enabled INGRESS allow rule from 0.0.0.0/0 for protocol all, or tcp/udp with a port range containing a sensitive port.",
-            "query": "MATCH (rng:IpRange)-[m:MEMBER_OF_IP_RULE]->(rule:IpRule:IpPermissionInbound:GCPIpRule)-[:ALLOWED_BY]->(fw:GCPFirewall)-[:TARGET_TAG]->(nt:GCPNetworkTag)<-[r:TAGGED]-(i:Instance:GCPInstance)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE i.natIP IS NOT NULL AND i.status = 'RUNNING' AND fw.direction='INGRESS' AND fw.disabled=FALSE AND rng.id='0.0.0.0/0' AND (rule.protocol = 'all' OR (rule.protocol IN ['tcp','udp'] AND any(port IN [80,443,23,3389,25,465,587,3306,5432,1521,1433,135,137,138,139,445,53,20,21,22] WHERE rule.fromport <= port AND port <= rule.toport))) \nSET i.exposed_internet = true, (CASE WHEN NOT 'unrestricted_access_from_firewall' IN  coalesce(i.exposed_internet_type , []) THEN i END).exposed_internet_type = coalesce(i.exposed_internet_type, []) + ('unrestricted_access_from_firewall') ",
-            "iterative": false
-        },
-        {
-            "__comment": "Same rule on a firewall with no target tags and no target service accounts: GCP applies it to every instance in the network (e.g. default-allow-ssh).",
-            "query": "MATCH (rng:IpRange)-[m:MEMBER_OF_IP_RULE]->(rule:IpRule:IpPermissionInbound:GCPIpRule)-[:ALLOWED_BY]->(fw:GCPFirewall)<-[:RESOURCE]-(:GCPVpc)<-[:MEMBER_OF_GCP_VPC]-(i:Instance:GCPInstance)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE i.natIP IS NOT NULL AND i.status = 'RUNNING' AND fw.direction='INGRESS' AND fw.disabled=FALSE AND fw.has_target_service_accounts = FALSE AND NOT (fw)-[:TARGET_TAG]->(:GCPNetworkTag) AND rng.id='0.0.0.0/0' AND (rule.protocol = 'all' OR (rule.protocol IN ['tcp','udp'] AND any(port IN [80,443,23,3389,25,465,587,3306,5432,1521,1433,135,137,138,139,445,53,20,21,22] WHERE rule.fromport <= port AND port <= rule.toport))) \nSET i.exposed_internet = true, (CASE WHEN NOT 'unrestricted_access_from_firewall' IN  coalesce(i.exposed_internet_type , []) THEN i END).exposed_internet_type = coalesce(i.exposed_internet_type, []) + ('unrestricted_access_from_firewall') ",
+            "__comment": "Running instance with an external IPv4 address, in a network owned by a project of this organization and workspace, where an enabled INGRESS allow rule from 0.0.0.0/0 applies to it (target tag it carries, or no target tags and no target service accounts: e.g. default-allow-ssh) for protocol all, or tcp/udp with a port range containing a sensitive port.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(org:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(i:Instance:GCPInstance)-[:MEMBER_OF_GCP_VPC]->(vpc:GCPVpc)-[:RESOURCE]->(fw:GCPFirewall)<-[:ALLOWED_BY]-(rule:IpRule:IpPermissionInbound:GCPIpRule)<-[:MEMBER_OF_IP_RULE]-(:IpRange{id: '0.0.0.0/0'}) \nWHERE i.natIP IS NOT NULL AND i.status = 'RUNNING' AND fw.direction='INGRESS' AND fw.disabled=FALSE \nAND (org)-[:OWNER]->(:GCPProject)-[:RESOURCE]->(vpc) \nAND ((fw)-[:TARGET_TAG]->(:GCPNetworkTag)<-[:TAGGED]-(i) OR (fw.has_target_service_accounts = FALSE AND NOT (fw)-[:TARGET_TAG]->(:GCPNetworkTag))) \nAND (rule.protocol = 'all' OR (rule.protocol IN ['tcp','udp'] AND any(port IN [80,443,23,3389,25,465,587,3306,5432,1521,1433,135,137,138,139,445,53,20,21,22] WHERE rule.fromport <= port AND port <= rule.toport))) \nSET i.exposed_internet = true, (CASE WHEN NOT 'unrestricted_access_from_firewall' IN  coalesce(i.exposed_internet_type , []) THEN i END).exposed_internet_type = coalesce(i.exposed_internet_type, []) + ('unrestricted_access_from_firewall') ",
             "iterative": false
         },
         {
