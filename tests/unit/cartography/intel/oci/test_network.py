@@ -146,6 +146,7 @@ def test_sync_runs_load_balancer_and_api_gateway_syncs_per_region(monkeypatch):
         (network.oci.load_balancer, 'LoadBalancerClient'),
         (network.oci.network_load_balancer, 'NetworkLoadBalancerClient'),
         (network.oci.apigateway, 'GatewayClient'),
+        (network.oci.apigateway, 'DeploymentClient'),
     ):
         monkeypatch.setattr(module, client, MagicMock())
     # A load balancer failure must not stop the API gateway sync.

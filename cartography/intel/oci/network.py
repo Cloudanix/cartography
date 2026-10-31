@@ -1301,6 +1301,11 @@ def sync(
         config=network.base_client.config,
         signer=getattr(network.base_client, "signer", None),
     )
+    # Deployment specifications carry the route authentication the exposure layers read.
+    deployment_client = oci.apigateway.DeploymentClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
 
     for region in regions:
         logger.info("Syncing OCI Network in region '%s' for compartment '%s'.", region, compartment_ocid)
@@ -1309,6 +1314,7 @@ def sync(
         lb_client.base_client.set_region(region)
         nlb_client.base_client.set_region(region)
         gateway_client.base_client.set_region(region)
+        deployment_client.base_client.set_region(region)
 
         # Sync VCNs first (parent of all other network resources)
         sync_vcns(neo4j_session, network, compartments, tenancy_id, region, oci_update_tag, common_job_parameters)
@@ -1373,6 +1379,7 @@ def sync(
         try:
             api_gateway.sync_gateways(
                 neo4j_session, gateway_client, compartment_ocid, region, oci_update_tag, common_job_parameters,
+                deployment_client,
             )
         except Exception as e:
             logger.error("Error syncing OCI API gateways in region '%s': %s", region, e, exc_info=True)
