@@ -58,9 +58,9 @@ def transform_es_domains(
         )
         domain['consolelink'] = aws_console_link.get_console_link(arn=domain['arn'])
         domain['region'] = region
-        domain['isPublicFacing'] = False
-        if not domain.get('VPCOptions', {}).get('VpcId'):
-            domain['isPublicFacing'] = True
+        # AWS returns VPCOptions.VPCId (botocore VPCDerivedInfo); VpcId is kept for older fixtures.
+        vpc_options = domain.get('VPCOptions') or {}
+        domain['isPublicFacing'] = not (vpc_options.get('VPCId') or vpc_options.get('VpcId'))
         domains.append(domain)
 
     return domains
