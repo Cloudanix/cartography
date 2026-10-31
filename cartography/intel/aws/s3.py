@@ -12,6 +12,7 @@ from typing import Tuple
 import boto3
 import botocore
 import neo4j
+from botocore.exceptions import BotoCoreError
 from botocore.exceptions import ClientError
 from botocore.exceptions import EndpointConnectionError
 from cloudconsolelink.clouds.aws import AWSLinker
@@ -217,6 +218,58 @@ def get_public_access_block(bucket: Dict, client: botocore.client.BaseClient) ->
 
 
 @timeit
+def get_account_public_access_block(
+    boto3_session: boto3.session.Session, account_id: str, region: Optional[str],
+) -> Optional[Dict]:
+    """
+    Gets the account-level S3 Block Public Access configuration, which applies to every bucket in the account.
+    Returns {} when the account has none set, and None when it cannot be read (unknown).
+    """
+    try:
+        client = boto3_session.client("s3control", region_name=region, config=get_botocore_config())
+        return client.get_public_access_block(AccountId=account_id)
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") == "NoSuchPublicAccessBlockConfiguration":
+            return {}
+        logger.warning(f"Failed to retrieve S3 account public access block for {account_id} - {e}")
+    except BotoCoreError as e:
+        logger.warning(f"Failed to retrieve S3 account public access block for {account_id} - {e}")
+    return None
+
+
+def parse_account_public_access_block(public_access_block: Optional[Dict]) -> Dict:
+    """
+    Maps the account-level configuration to AWSAccount properties: a setting that is not set is False,
+    and an unreadable configuration is None for every setting, which the exposure checks treat as not blocking.
+    """
+    settings = {
+        "s3_block_public_acls": "BlockPublicAcls",
+        "s3_ignore_public_acls": "IgnorePublicAcls",
+        "s3_block_public_policy": "BlockPublicPolicy",
+        "s3_restrict_public_buckets": "RestrictPublicBuckets",
+    }
+    if public_access_block is None:
+        return dict.fromkeys(settings)
+    pab = public_access_block.get("PublicAccessBlockConfiguration", {})
+    return {prop: bool(pab.get(key, False)) for prop, key in settings.items()}
+
+
+@timeit
+def load_account_public_access_block(
+    neo4j_session: neo4j.Session, account_id: str, public_access_block: Dict,
+) -> None:
+    # Plain SET, so an unreadable configuration clears the previous sync's values.
+    ingest_account_block = """
+    MATCH (a:AWSAccount{id: $AWS_ID})
+    SET a.s3_block_public_acls = $s3_block_public_acls,
+        a.s3_ignore_public_acls = $s3_ignore_public_acls,
+        a.s3_block_public_policy = $s3_block_public_policy,
+        a.s3_restrict_public_buckets = $s3_restrict_public_buckets
+    """
+    run_write_query(neo4j_session, ingest_account_block, AWS_ID=account_id, **public_access_block)
+
+
+@timeit
 def _is_common_exception(e: Exception, bucket: Dict) -> bool:
     error_msg = "Failed to retrieve S3 bucket detail"
     if "AccessDenied" in e.args[0]:
@@ -296,12 +349,19 @@ def _load_s3_policies(
 
     policies = add_bucket_policy_documents(policies, boto3_session)
 
-    # NOTE we use the coalesce function so appending works when the value is null initially
+    # Plain SET of this sync's evaluation: an OR with the old value kept a bucket public forever.
+    # RestrictPublicBuckets on the bucket or its account (both loaded before this) limits a public
+    # policy to AWS principals and the owner.
     ingest_policies = """
     UNWIND $DictList AS policy
     MATCH (s:S3Bucket) where s.name = policy.bucket
-    SET s.anonymous_access = (coalesce(s.anonymous_access, false) OR policy.internet_accessible),
-    s.anonymous_actions = coalesce(s.anonymous_actions, []) + policy.accessible_actions,
+    OPTIONAL MATCH (a:AWSAccount)-[:RESOURCE]->(s)
+    WITH s, policy, (
+        policy.internet_accessible AND NOT coalesce(s.restrict_public_buckets, false)
+        AND NOT coalesce(a.s3_restrict_public_buckets, false)
+    ) AS public
+    SET s.anonymous_access = public,
+    s.anonymous_actions = CASE WHEN public THEN policy.accessible_actions ELSE [] END,
     s.lastupdated = $UpdateTag,
     s.policy_document = policy.policyDocument
     """
@@ -448,7 +508,7 @@ def _load_s3_public_access_block(
     MATCH (s:S3Bucket) where s.name = public_access_block.bucket
     SET s.block_public_acls = public_access_block.block_public_acls,
         s.ignore_public_acls = public_access_block.ignore_public_acls,
-        s.block_public_acls = public_access_block.block_public_acls,
+        s.block_public_policy = public_access_block.block_public_policy,
         s.restrict_public_buckets = public_access_block.restrict_public_buckets,
         s.lastupdated = $UpdateTag
     """
@@ -521,9 +581,7 @@ def load_s3_details(
         parsed_versioning = parse_versioning(bucket, versioning)
         if parsed_versioning is not None:
             versioning_configs.append(parsed_versioning)
-        parsed_public_access_block = parse_public_access_block(bucket, public_access_block)
-        if parsed_public_access_block is not None:
-            public_access_block_configs.append(parsed_public_access_block)
+        public_access_block_configs.append(parse_public_access_block(bucket, public_access_block))
 
     # cleanup existing policy properties set on S3 Buckets
     run_cleanup_job(
@@ -533,12 +591,13 @@ def load_s3_details(
     )
 
     _load_s3_acls(neo4j_session, acls, aws_account_id, update_tag, common_job_parameters)
+    # Before the policies: their anonymous_access reads this sync's restrict_public_buckets.
+    _load_s3_public_access_block(neo4j_session, public_access_block_configs, update_tag)
     _load_s3_policies(neo4j_session, policies, update_tag, boto3_session)
     _load_s3_policy_statuses(neo4j_session, policy_statuses, update_tag)
     _load_s3_policy_statements(neo4j_session, statements, update_tag)
     _load_s3_encryption(neo4j_session, encryption_configs, update_tag)
     _load_s3_versioning(neo4j_session, versioning_configs, update_tag)
-    _load_s3_public_access_block(neo4j_session, public_access_block_configs, update_tag)
     _set_default_values(neo4j_session, aws_account_id)
 
 
@@ -776,7 +835,7 @@ def parse_versioning(bucket: str, versioning: Optional[Dict]) -> Optional[Dict]:
 
 
 @timeit
-def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) -> Optional[Dict]:
+def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) -> Dict:
     """Parses the S3 public access block object and returns a dict of the relevant data"""
     # Versioning object JSON looks like:
     # {
@@ -787,9 +846,9 @@ def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) 
     #         'RestrictPublicBuckets': True|False
     #     }
     # }
-    if public_access_block is None:
-        return None
-    pab = public_access_block["PublicAccessBlockConfiguration"]
+    # No configuration (deleted, or unreadable) still yields a row: loading its nulls clears flags
+    # from an earlier sync, which would otherwise keep hiding a now-public bucket.
+    pab = (public_access_block or {}).get("PublicAccessBlockConfiguration", {})
     return {
         "bucket": bucket,
         "block_public_acls": pab.get("BlockPublicAcls"),
@@ -865,12 +924,23 @@ def sync(
     tic = time.perf_counter()
     logger.info("Syncing S3 for account '%s'.", current_aws_account_id)
     bucket_data = get_s3_bucket_list(boto3_session)
-    logger.info(f"s3 account={current_aws_account_id}: bucket list fetch done — {len(bucket_data)} buckets in {time.perf_counter() - tic:0.4f}s")
+    logger.info(
+        f"s3 account={current_aws_account_id}: bucket list fetch done — {len(bucket_data)} buckets"
+        f" in {time.perf_counter() - tic:0.4f}s",
+    )
 
     t1 = time.perf_counter()
     partition = get_partition_from_params(common_job_parameters)
     load_s3_buckets(neo4j_session, bucket_data, current_aws_account_id, update_tag, partition)
     logger.info(f"s3 account={current_aws_account_id}: bucket load done in {time.perf_counter() - t1:0.4f}s")
+
+    # Before the bucket details: their policy step reads the account's RestrictPublicBuckets.
+    account_block = get_account_public_access_block(
+        boto3_session, current_aws_account_id, regions[0] if regions else None,
+    )
+    load_account_public_access_block(
+        neo4j_session, current_aws_account_id, parse_account_public_access_block(account_block),
+    )
 
     t1 = time.perf_counter()
     acl_and_policy_data_iter = get_s3_bucket_details(boto3_session, bucket_data)

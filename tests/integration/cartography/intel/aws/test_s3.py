@@ -1,6 +1,9 @@
+from unittest.mock import MagicMock
+
 import cartography.intel.aws.s3
 import tests.data.aws.s3
 from cartography.util import run_analysis_job
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 
 TEST_ACCOUNT_ID = '000000000000'
@@ -209,3 +212,196 @@ def test_load_s3_policy_statuses(neo4j_session, *args):
         ('bucket-2',), ('bucket-1',),
     }
     assert actual_nodes == expected_nodes
+
+
+BPA_ACCOUNT_ID = '333344445555'
+BPA_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': BPA_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-s3-bpa',
+    'WORKSPACE_ID': 'ws-s3-bpa',
+    'LIMIT_SIZE': 100,
+}
+ALL_USERS = 'http://acs.amazonaws.com/groups/global/AllUsers'
+# iterationsize of the job's reset; GraphStatement uses it as LIMIT_SIZE whatever the parameters say.
+RESET_BATCH = 100
+
+
+def _seed_bpa_buckets(neo4j_session, buckets, params=BPA_JOB_PARAMETERS):
+    create_test_org_account(neo4j_session, params['WORKSPACE_ID'], params['ORGANIZATION_ID'], params['AWS_ID'])
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        UNWIND $buckets AS b
+        MERGE (aa)-[:RESOURCE]->(s:S3Bucket{id: b.name})
+        SET s.name = b.name, s.is_public = b.is_public, s.restrict_public_buckets = b.restrict,
+            s.ignore_public_acls = b.ignore_acls, s.anonymous_access = b.stale,
+            s.anonymous_access_type = CASE WHEN b.stale THEN ['policy'] END
+        FOREACH (_ IN CASE WHEN b.acl IS NULL THEN [] ELSE [1] END |
+            MERGE (:S3Acl{id: b.name + '-acl', uri: $all_users, permission: b.acl})-[:APPLIES_TO]->(s))
+        """,
+        account_id=params['AWS_ID'], buckets=buckets, all_users=ALL_USERS,
+    )
+
+
+def _public_bpa_buckets(neo4j_session, account_id=BPA_ACCOUNT_ID):
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(s:S3Bucket{anonymous_access: true})
+        RETURN s.name AS name, s.anonymous_access_type AS types
+        """,
+        account_id=account_id,
+    )
+    return {n['name']: sorted(n['types'] or []) for n in nodes}
+
+
+def test_s3_exposure_honours_bucket_public_access_block(neo4j_session):
+    # Buckets with nothing to reset sit on both sides of the stale one (in creation order), so
+    # a reset that stops at the first batch (of RESET_BATCH) with no updates never reaches it,
+    # whichever end the planner starts from.
+    _seed_bpa_buckets(
+        neo4j_session, [{'name': f'bpa-clean-{i}'} for i in range(RESET_BATCH + 1)] + [
+            # Flagged by an earlier sync, now private.
+            {'name': 'bpa-stale', 'stale': True},
+        ] + [{'name': f'bpa-clean-after-{i}'} for i in range(RESET_BATCH + 1)] + [
+            {'name': 'bpa-policy-public', 'is_public': True},
+            # RestrictPublicBuckets: only AWS principals and the owner account reach the bucket.
+            {'name': 'bpa-policy-restricted', 'is_public': True, 'restrict': True},
+            {'name': 'bpa-acl-public', 'acl': 'READ'},
+            # IgnorePublicAcls: S3 ignores the AllUsers grant.
+            {'name': 'bpa-acl-ignored', 'acl': 'FULL_CONTROL', 'ignore_acls': True},
+            {'name': 'bpa-acl-ignored-policy-public', 'acl': 'READ', 'ignore_acls': True, 'is_public': True},
+            {'name': 'bpa-acl-public-policy-restricted', 'acl': 'READ', 'is_public': True, 'restrict': True},
+        ],
+    )
+
+    run_analysis_job('aws_s3_asset_exposure.json', neo4j_session, BPA_JOB_PARAMETERS)
+
+    assert _public_bpa_buckets(neo4j_session) == {
+        'bpa-policy-public': ['policy'],
+        'bpa-acl-public': ['acl'],
+        'bpa-acl-ignored-policy-public': ['policy'],
+        'bpa-acl-public-policy-restricted': ['acl'],
+    }
+
+
+def test_s3_ingest_policy_access_honours_restrict_public_buckets(neo4j_session):
+    public_policy = {
+        'Policy': '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": "*", '
+                  '"Action": "s3:GetObject", "Resource": "arn:aws:s3:::b/*"}]}',
+    }
+    restricted = {
+        'PublicAccessBlockConfiguration': {
+            'BlockPublicAcls': False, 'IgnorePublicAcls': False,
+            'BlockPublicPolicy': False, 'RestrictPublicBuckets': True,
+        },
+    }
+    _seed_bpa_buckets(
+        neo4j_session, [
+            {'name': 'ingest-public'}, {'name': 'ingest-restricted'},
+            # Restricted on an earlier sync, block configuration since deleted.
+            {'name': 'ingest-pab-removed', 'restrict': True},
+        ],
+    )
+    boto3_session = MagicMock()
+    boto3_session.client.return_value.get_bucket_policy.return_value = public_policy
+    details = [
+        ('ingest-public', None, public_policy, None, None, None, None),
+        ('ingest-restricted', None, public_policy, None, None, None, restricted),
+        ('ingest-pab-removed', None, public_policy, None, None, None, None),
+    ]
+
+    cartography.intel.aws.s3.load_s3_details(
+        neo4j_session, iter(details), BPA_ACCOUNT_ID, TEST_UPDATE_TAG, BPA_JOB_PARAMETERS, boto3_session,
+    )
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (s:S3Bucket) WHERE s.name STARTS WITH 'ingest-'
+        RETURN s.name AS name, s.anonymous_access AS access, s.anonymous_actions AS actions
+        """,
+    )
+    assert {n['name']: (n['access'], n['actions']) for n in nodes} == {
+        'ingest-public': (True, ['s3:GetObject']),
+        'ingest-restricted': (False, []),
+        'ingest-pab-removed': (True, ['s3:GetObject']),
+    }
+
+
+def _account_bpa_params(name, account_id):
+    return {**BPA_JOB_PARAMETERS, 'AWS_ID': account_id, 'ORGANIZATION_ID': f'o-{name}', 'WORKSPACE_ID': f'ws-{name}'}
+
+
+# Account-level Block Public Access applies to every bucket in the account, on top of each bucket's own.
+ACCOUNT_BPA_CASES = {
+    # name: (account id, account-level settings as returned by s3control, or None when unreadable)
+    'acct-restrict': ('444455556661', {'RestrictPublicBuckets': True}),
+    'acct-ignore-acls': ('444455556662', {'IgnorePublicAcls': True}),
+    'acct-unset': ('444455556663', {}),
+    'acct-unknown': ('444455556664', None),
+}
+
+
+def _load_account_bpa(neo4j_session, name):
+    account_id, settings = ACCOUNT_BPA_CASES[name]
+    block = None if settings is None else {'PublicAccessBlockConfiguration': settings}
+    cartography.intel.aws.s3.load_account_public_access_block(
+        neo4j_session, account_id, cartography.intel.aws.s3.parse_account_public_access_block(block),
+    )
+
+
+def test_s3_exposure_honours_account_public_access_block(neo4j_session):
+    for name, (account_id, _) in ACCOUNT_BPA_CASES.items():
+        _seed_bpa_buckets(
+            neo4j_session, [
+                {'name': f'{name}-policy-public', 'is_public': True},
+                {'name': f'{name}-acl-public', 'acl': 'READ'},
+            ], _account_bpa_params(name, account_id),
+        )
+        _load_account_bpa(neo4j_session, name)
+
+    public = {}
+    for name, (account_id, _) in ACCOUNT_BPA_CASES.items():
+        run_analysis_job('aws_s3_asset_exposure.json', neo4j_session, _account_bpa_params(name, account_id))
+        public.update(_public_bpa_buckets(neo4j_session, account_id))
+
+    assert public == {
+        # RestrictPublicBuckets on the account: the public policy only admits AWS principals and the owner.
+        'acct-restrict-acl-public': ['acl'],
+        # IgnorePublicAcls on the account: S3 ignores the AllUsers grant.
+        'acct-ignore-acls-policy-public': ['policy'],
+        'acct-unset-policy-public': ['policy'],
+        'acct-unset-acl-public': ['acl'],
+        # Unreadable account settings do not restrict (fail-safe).
+        'acct-unknown-policy-public': ['policy'],
+        'acct-unknown-acl-public': ['acl'],
+    }
+
+
+def test_s3_ingest_policy_access_honours_account_restrict_public_buckets(neo4j_session):
+    public_policy = {
+        'Policy': '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": "*", '
+                  '"Action": "s3:GetObject", "Resource": "arn:aws:s3:::b/*"}]}',
+    }
+    boto3_session = MagicMock()
+    boto3_session.client.return_value.get_bucket_policy.return_value = public_policy
+    for name in ('acct-restrict', 'acct-unknown'):
+        account_id, _ = ACCOUNT_BPA_CASES[name]
+        params = _account_bpa_params(name, account_id)
+        _seed_bpa_buckets(neo4j_session, [{'name': f'ingest-{name}'}], params)
+        _load_account_bpa(neo4j_session, name)
+        cartography.intel.aws.s3.load_s3_details(
+            neo4j_session, iter([(f'ingest-{name}', None, public_policy, None, None, None, None)]),
+            account_id, TEST_UPDATE_TAG, params, boto3_session,
+        )
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (s:S3Bucket) WHERE s.name IN ['ingest-acct-restrict', 'ingest-acct-unknown']
+        RETURN s.name AS name, s.anonymous_access AS access
+        """,
+    )
+    assert {n['name']: n['access'] for n in nodes} == {
+        'ingest-acct-restrict': False,
+        'ingest-acct-unknown': True,
+    }

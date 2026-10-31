@@ -1,6 +1,7 @@
 import cartography.intel.aws.apigateway
 import tests.data.aws.apigateway
 from cartography.util import run_analysis_job
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'eu-west-1'
@@ -312,3 +313,158 @@ def test_apigateway_analysis(neo4j_session):
     }
 
     assert actual == expected
+
+
+POLICY_ACCOUNT_ID = '444455556666'
+POLICY_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': POLICY_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-apigw-policy',
+    'WORKSPACE_ID': 'ws-apigw-policy',
+    'LIMIT_SIZE': 100,
+}
+# iterationsize of the job's resets; GraphStatement uses it as LIMIT_SIZE whatever the parameters say.
+RESET_BATCH = 100
+OPEN_POLICY = (
+    '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": "*", '
+    '"Action": "execute-api:Invoke", "Resource": "execute-api:/*"}]}'
+)
+VPCE_POLICY = (
+    '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": "*", '
+    '"Action": "execute-api:Invoke", "Resource": "execute-api:/*", '
+    '"Condition": {"StringEquals": {"aws:SourceVpce": "vpce-1"}}}]}'
+)
+
+
+def test_apigateway_exposure_honours_resource_policy(neo4j_session):
+    create_test_org_account(
+        neo4j_session, POLICY_JOB_PARAMETERS['WORKSPACE_ID'], POLICY_JOB_PARAMETERS['ORGANIZATION_ID'],
+        POLICY_ACCOUNT_ID,
+    )
+    apis = {
+        'gw-regional-open': (['REGIONAL'], OPEN_POLICY),
+        # Principal * but only through one VPC endpoint: nothing on the internet can invoke it.
+        'gw-regional-vpce': (['REGIONAL'], VPCE_POLICY),
+        # No policy, or one we cannot parse: stays public (fail-safe).
+        'gw-regional-none': (['REGIONAL'], None),
+        'gw-edge-unparseable': (['EDGE'], '{not json'),
+        # A PRIVATE API is reachable only through VPC endpoints, whatever its policy says.
+        'gw-private-open': (['PRIVATE'], OPEN_POLICY),
+        # Restricted on an earlier sync, policy since deleted.
+        'gw-policy-removed': (['REGIONAL'], None),
+    }
+    cartography.intel.aws.apigateway.load_apigateway_rest_apis(
+        neo4j_session,
+        [
+            {
+                'id': api_id, 'name': f'name-of-{api_id}', 'region': TEST_REGION,
+                'endpointConfiguration': {'types': types},
+            }
+            for api_id, (types, _) in apis.items()
+        ],
+        POLICY_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
+    )
+    neo4j_session.run(
+        """
+        MATCH (api:APIGatewayRestAPI{id: 'gw-policy-removed'}) SET api.policy_internet_accessible = false
+        WITH api
+        MATCH (open:APIGatewayRestAPI{id: 'gw-regional-open'})
+        UNWIND $resources AS res
+        MERGE (open)-[:RESOURCE]->(r:APIGatewayResource{id: res})
+        SET r.anonymous_access = CASE WHEN res = 'gw-res-stale' THEN true END
+        """,
+        # The stale resource sits between more than a batch of clean ones on each side, so a reset
+        # that stops at the first batch with no updates never reaches it.
+        resources=[f'gw-res-clean-{i}' for i in range(RESET_BATCH + 1)] + ['gw-res-stale'] +
+        [f'gw-res-clean-after-{i}' for i in range(RESET_BATCH + 1)],
+    )
+
+    cartography.intel.aws.apigateway.load_rest_api_details(
+        neo4j_session,
+        [(api_id, [], [], [], policy, TEST_REGION) for api_id, (_, policy) in apis.items()],
+        POLICY_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
+        POLICY_JOB_PARAMETERS,
+    )
+    run_analysis_job('aws_apigateway_asset_exposure.json', neo4j_session, POLICY_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(api:APIGatewayRestAPI)
+        OPTIONAL MATCH (api)-[:RESOURCE]->(res:APIGatewayResource)
+        WITH api, collect(res) AS resources
+        RETURN api.id AS id, api.exposed_internet AS exposed, api.anonymous_access AS anonymous,
+               [r IN resources WHERE r.anonymous_access OR r.exposed_internet | r.id] AS public_resources
+        """,
+        account_id=POLICY_ACCOUNT_ID,
+    )
+    assert {n['id']: (n['exposed'], n['anonymous'], n['public_resources']) for n in nodes} == {
+        'gw-regional-open': (True, False, []),
+        'gw-regional-vpce': (None, False, []),
+        'gw-regional-none': (True, False, []),
+        'gw-edge-unparseable': (True, False, []),
+        'gw-private-open': (None, False, []),
+        'gw-policy-removed': (True, False, []),
+    }
+
+
+DOMAIN_ACCOUNT_ID = '444455557777'
+DOMAIN_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': DOMAIN_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-apigw-domain',
+    'WORKSPACE_ID': 'ws-apigw-domain',
+    'LIMIT_SIZE': 100,
+}
+
+
+def test_apigateway_exposure_honours_disabled_execute_api_endpoint(neo4j_session):
+    create_test_org_account(
+        neo4j_session, DOMAIN_JOB_PARAMETERS['WORKSPACE_ID'], DOMAIN_JOB_PARAMETERS['ORGANIZATION_ID'],
+        DOMAIN_ACCOUNT_ID,
+    )
+    apis = {
+        # id: (disableExecuteApiEndpoint, public_custom_domains as set by add_public_custom_domains, policy)
+        'gw-dom-enabled': (False, None, None),
+        'gw-dom-enabled-default': (None, None, None),
+        # Default endpoint off and no public custom domain maps to it: nothing on the internet reaches it.
+        'gw-dom-disabled-no-domain': (True, [], None),
+        'gw-dom-disabled-public-domain': (True, ['api.example.com'], None),
+        # Custom domains could not be read: stays public (fail-safe).
+        'gw-dom-disabled-unknown': (True, None, None),
+        # Reachable through a custom domain, but the resource policy only admits a VPC endpoint.
+        'gw-dom-disabled-public-domain-vpce': (True, ['api.example.com'], VPCE_POLICY),
+    }
+    rest_apis = []
+    for api_id, (disabled, domains, _) in apis.items():
+        api = {
+            'id': api_id, 'name': f'name-of-{api_id}', 'region': TEST_REGION,
+            'endpointConfiguration': {'types': ['REGIONAL']}, 'disableExecuteApiEndpoint': disabled,
+        }
+        if domains is not None:
+            api['public_custom_domains'] = domains
+        rest_apis.append(api)
+    cartography.intel.aws.apigateway.load_apigateway_rest_apis(
+        neo4j_session, rest_apis, DOMAIN_ACCOUNT_ID, TEST_UPDATE_TAG,
+    )
+    cartography.intel.aws.apigateway.load_rest_api_details(
+        neo4j_session,
+        [(api_id, [], [], [], policy, TEST_REGION) for api_id, (_, _, policy) in apis.items()],
+        DOMAIN_ACCOUNT_ID,
+        TEST_UPDATE_TAG,
+        DOMAIN_JOB_PARAMETERS,
+    )
+
+    run_analysis_job('aws_apigateway_asset_exposure.json', neo4j_session, DOMAIN_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(api:APIGatewayRestAPI{exposed_internet: true})
+        RETURN api.id AS id
+        """,
+        account_id=DOMAIN_ACCOUNT_ID,
+    )
+    assert {n['id'] for n in nodes} == {
+        'gw-dom-enabled', 'gw-dom-enabled-default', 'gw-dom-disabled-public-domain', 'gw-dom-disabled-unknown',
+    }

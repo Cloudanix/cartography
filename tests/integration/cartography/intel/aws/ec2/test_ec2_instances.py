@@ -10,6 +10,7 @@ import tests.data.aws.ec2.subnets
 import tests.data.aws.iam
 from cartography.util import run_analysis_job
 from tests.data.aws.ec2.instances import DESCRIBE_INSTANCES
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
@@ -415,3 +416,155 @@ def test_ec2_asset_exposure(neo4j_session):
     }
 
     assert actual_nodes == expected_nodes
+
+
+EXPOSURE_ACCOUNT_ID = '111111111111'
+EXPOSURE_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': EXPOSURE_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-ec2-exposure',
+    'WORKSPACE_ID': 'ws-ec2-exposure',
+    'LIMIT_SIZE': 100,
+}
+
+
+def test_ec2_instance_direct_exposure_requires_a_public_ip(neo4j_session):
+    create_test_org_account(
+        neo4j_session, EXPOSURE_JOB_PARAMETERS['WORKSPACE_ID'], EXPOSURE_JOB_PARAMETERS['ORGANIZATION_ID'],
+        EXPOSURE_ACCOUNT_ID,
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (open4:EC2SecurityGroup{id: 'sg-exp-open4'})
+        MERGE (:IpRange{id: '0.0.0.0/0', range: '0.0.0.0/0'})-[:MEMBER_OF_IP_RULE]->
+              (:IpPermissionInbound{ruleid: 'sg-exp-open4/tcp/22'})-[:MEMBER_OF_EC2_SECURITY_GROUP]->(open4)
+        MERGE (open6:EC2SecurityGroup{id: 'sg-exp-open6'})
+        MERGE (:Ipv6Range{id: '::/0', range: '::/0'})-[:MEMBER_OF_IP_RULE]->
+              (:IpPermissionInbound{ruleid: 'sg-exp-open6/tcp/22'})-[:MEMBER_OF_EC2_SECURITY_GROUP]->(open6)
+        MERGE (:EC2SecurityGroup{id: 'sg-exp-closed'})
+        WITH aa
+        UNWIND $instances AS i
+        MERGE (aa)-[:RESOURCE]->(n:EC2Instance{id: i.id})
+        SET n.state = 'running', n.publicipaddress = i.public_ip, n.exposed_internet = i.stale
+        WITH n, i
+        MATCH (sg:EC2SecurityGroup{id: i.sg})
+        MERGE (n)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
+        FOREACH (_ IN CASE WHEN i.eni_ip IS NULL THEN [] ELSE [1] END |
+            MERGE (n)-[:NETWORK_INTERFACE]->(:NetworkInterface{id: i.id + '-eni', public_ip: i.eni_ip}))
+        FOREACH (_ IN CASE WHEN i.secondary_ip IS NULL THEN [] ELSE [1] END |
+            MERGE (n)-[:NETWORK_INTERFACE]->(eni:NetworkInterface{id: i.id + '-eni2'})
+            MERGE (eni)-[:PRIVATE_IP_ADDRESS]->(:EC2PrivateIp{id: i.id + '-ip2', public_ip: i.secondary_ip}))
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID, instances=[
+            # Open SG but no public address: nothing on the internet can route to it.
+            {'id': 'exp-no-ip', 'sg': 'sg-exp-open4', 'stale': True},
+            {'id': 'exp-public-ip', 'sg': 'sg-exp-open4', 'public_ip': '54.0.0.1'},
+            # Public IP only on an attached ENI or on a secondary private IP (Elastic IP).
+            {'id': 'exp-eni-ip', 'sg': 'sg-exp-open4', 'eni_ip': '54.0.0.2'},
+            {'id': 'exp-secondary-ip', 'sg': 'sg-exp-open4', 'secondary_ip': '54.0.0.3'},
+            {'id': 'exp-public-ip-closed-sg', 'sg': 'sg-exp-closed', 'public_ip': '54.0.0.4'},
+            # Behind an internet-facing load balancer whose SG is open: public through the LB.
+            {'id': 'exp-behind-lb', 'sg': 'sg-exp-closed'},
+            # IPv6 addresses on ENIs are not ingested, so the ::/0 path is unchanged.
+            {'id': 'exp-ipv6-open', 'sg': 'sg-exp-open6'},
+        ],
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id}), (n:EC2Instance{id: 'exp-behind-lb'})
+        MATCH (sg:EC2SecurityGroup{id: 'sg-exp-open4'})
+        MERGE (aa)-[:RESOURCE]->(lb:LoadBalancerV2{id: 'exp-lb', scheme: 'internet-facing'})-[:EXPOSE]->(n)
+        MERGE (lb)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID,
+    )
+
+    run_analysis_job('aws_ec2_instance_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(n:EC2Instance{exposed_internet: true})
+        WHERE n.id STARTS WITH 'exp-'
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID,
+    )
+    assert {n['id']: sorted(n['types']) for n in nodes} == {
+        'exp-public-ip': ['direct_inbound_ipv4'],
+        'exp-eni-ip': ['direct_inbound_ipv4'],
+        'exp-secondary-ip': ['direct_inbound_ipv4'],
+        'exp-behind-lb': ['unrestricted_inbound_traffic_ipv4'],
+        'exp-ipv6-open': ['direct_inbound_ipv6'],
+    }
+
+
+NLB_ACCOUNT_ID = '111111112222'
+NLB_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': NLB_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-ec2-nlb',
+    'WORKSPACE_ID': 'ws-ec2-nlb',
+    'LIMIT_SIZE': 100,
+}
+
+
+def test_ec2_instance_exposed_through_internet_facing_nlb_without_security_group(neo4j_session):
+    # NLBs created before August 2023 have no security group: the LB forwards every listener port from
+    # anywhere, so the SG-based LB statements never match the instances behind it.
+    create_test_org_account(
+        neo4j_session, NLB_JOB_PARAMETERS['WORKSPACE_ID'], NLB_JOB_PARAMETERS['ORGANIZATION_ID'], NLB_ACCOUNT_ID,
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (:EC2SecurityGroup{id: 'sg-nlb-closed'})
+        WITH aa
+        UNWIND $lbs AS l
+        MERGE (aa)-[:RESOURCE]->(lb:LoadBalancerV2{id: l.id})
+        SET lb.scheme = l.scheme, lb.type = l.type
+        MERGE (aa)-[:RESOURCE]->(n:EC2Instance{id: l.instance})
+        // No public address: the LB path does not need one.
+        SET n.state = l.state
+        MERGE (lb)-[:EXPOSE]->(n)
+        WITH lb, n, l
+        MATCH (closed:EC2SecurityGroup{id: 'sg-nlb-closed'})
+        MERGE (n)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(closed)
+        FOREACH (_ IN CASE WHEN l.sg THEN [1] ELSE [] END | MERGE (lb)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(closed))
+        """,
+        account_id=NLB_ACCOUNT_ID, lbs=[
+            {
+                'id': 'nlb-public', 'scheme': 'internet-facing', 'type': 'network', 'instance': 'nlb-i-public',
+                'state': 'running',
+            },
+            {
+                'id': 'nlb-internal', 'scheme': 'internal', 'type': 'network', 'instance': 'nlb-i-internal',
+                'state': 'running',
+            },
+            {
+                'id': 'nlb-public-stopped', 'scheme': 'internet-facing', 'type': 'network',
+                'instance': 'nlb-i-stopped', 'state': 'stopped',
+            },
+            # An NLB with a security group goes through the SG statements: this one allows nothing.
+            {
+                'id': 'nlb-public-closed-sg', 'scheme': 'internet-facing', 'type': 'network',
+                'instance': 'nlb-i-closed-sg', 'state': 'running', 'sg': True,
+            },
+            # An ALB always has a security group; one that looks SG-less is missing data, not open.
+            {
+                'id': 'alb-public-no-sg', 'scheme': 'internet-facing', 'type': 'application',
+                'instance': 'nlb-i-alb', 'state': 'running',
+            },
+        ],
+    )
+
+    run_analysis_job('aws_ec2_instance_asset_exposure.json', neo4j_session, NLB_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(n:EC2Instance{exposed_internet: true})
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        account_id=NLB_ACCOUNT_ID,
+    )
+    assert {n['id']: sorted(n['types']) for n in nodes} == {'nlb-i-public': ['internet_facing_nlb']}
