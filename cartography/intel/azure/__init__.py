@@ -23,7 +23,7 @@ from .util.timing import ServiceTimingContext
 from cartography.config import Config
 from cartography.graph.session import Session
 from cartography.intel.azure.util.common import parse_and_validate_azure_requested_syncs
-from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)

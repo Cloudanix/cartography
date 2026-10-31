@@ -5,6 +5,9 @@ import json
 import logging
 import os
 import sys
+from typing import Any
+from typing import Dict
+from typing import List
 from typing import Optional
 
 import cartography.config
@@ -735,8 +738,9 @@ class CLI:
 
         # Run cartography
         try:
-            output = cartography.sync.run_with_config(self.sync, config)
-            return _sync_response(output)
+            with cartography.util.collect_failed_analysis_jobs() as failed_analysis_jobs:
+                output = cartography.sync.run_with_config(self.sync, config)
+            return _sync_response(output, failed_analysis_jobs)
 
         except KeyboardInterrupt:
             # return 130
@@ -751,12 +755,18 @@ class CLI:
             }
 
 
-def _sync_response(output: dict) -> dict:
+def _sync_response(output: dict, failed_analysis_jobs: Optional[List[Dict[str, Any]]] = None) -> dict:
     """Turn a sync return value into the payload published to inventory.
 
     authFailed means the sync did not complete and produced nothing. That must
     not be published, including as a failure. Rails errors the run after it
     gets no response.
+
+    failed_analysis_jobs lists the analysis jobs that failed during a sync that
+    otherwise completed ({"job": <file>, "scope": {...ids}}, see
+    cartography.util.collect_failed_analysis_jobs). A failed analysis job does
+    not fail the sync: the rest of the graph is fresh, only that job's derived
+    values (e.g. exposure) may be stale, so it is reported next to "success".
     """
     if isinstance(output, dict) and output.get("authFailed"):
         return {
@@ -772,6 +782,7 @@ def _sync_response(output: dict) -> dict:
         "message": f"output - {output}",
         "updateTag": output.get("UPDATE_TAG", None),
         "pagination": output.get("pagination", None),
+        "failed_analysis_jobs": failed_analysis_jobs or [],
     }
 
 
