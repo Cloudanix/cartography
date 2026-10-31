@@ -95,6 +95,7 @@ ANALYSIS_SCOPE_KEYS = (
     "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID",
     "OCI_TENANCY_ID",
+    "OCI_COMPARTMENT_ID",
 )
 
 # Analysis jobs that failed in the current sync, for the sync response. A ContextVar, not a module global, because one

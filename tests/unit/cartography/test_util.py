@@ -72,6 +72,18 @@ def test_collect_failed_analysis_jobs_records_failures_with_scope(mocker):
     assert failed == [{'job': 'bad_job.json', 'scope': {'WORKSPACE_ID': 'ws-1', 'AWS_ID': '123456789012'}}]
 
 
+def test_failed_oci_analysis_job_scope_names_the_compartment(mocker):
+    # OCI runs its analysis jobs once per compartment; the tenancy id alone does not say which run failed.
+    mocker.patch('cartography.util.GraphJob.run_from_json', side_effect=RuntimeError('boom'))
+    mocker.patch('cartography.util.read_text')
+    params = {'WORKSPACE_ID': 'ws-1', 'OCI_TENANCY_ID': 'ocid1.tenancy', 'OCI_COMPARTMENT_ID': 'ocid1.compartment'}
+
+    with util.collect_failed_analysis_jobs() as failed:
+        util.run_analysis_job_logged('oci_job.json', mocker.Mock(), params)
+
+    assert failed[0]['scope'] == params
+
+
 def test_collect_failed_analysis_jobs_stops_after_the_block(mocker):
     mocker.patch('cartography.util.GraphJob.run_from_json', side_effect=RuntimeError('boom'))
     mocker.patch('cartography.util.read_text')
@@ -110,7 +122,7 @@ def test_collect_failed_analysis_jobs_isolated_between_concurrent_syncs(mocker):
     }
 
 
-@pytest.mark.parametrize('provider', ['aws', 'gcp', 'azure'])
+@pytest.mark.parametrize('provider', ['aws', 'gcp', 'azure', 'oci'])
 def test_provider_syncs_use_logged_analysis_runner(provider):
     # Provider syncs call run_analysis_job by name; the import alias is what makes them continue past a failing job.
     module = importlib.import_module(f'cartography.intel.{provider}')
