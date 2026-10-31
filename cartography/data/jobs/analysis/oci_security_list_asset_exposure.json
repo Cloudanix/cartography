@@ -1,0 +1,21 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OCI security lists in scope",
+      "query": "MATCH (n:OCISecurityList)<-[:OCI_SECURITY_LIST]-(:OCIVcn)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Mark security lists as exposed if a subnet the subnet exposure job marked exposed lists them (subnet.security_list_ids) and they admit non-ICMP ingress from 0.0.0.0/0 or ::/0 (allows_internet_ingress, set at ingest; raw rule text for lists synced before it existed). Must run after oci_subnet_asset_exposure.json.",
+      "query": "MATCH (subnet:OCISubnet{exposed_internet: true})<-[:OCI_SUBNET]-(vcn:OCIVcn)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (vcn)-[:OCI_SECURITY_LIST]->(sl:OCISecurityList) WHERE sl.id IN coalesce(subnet.security_list_ids, []) AND coalesce(sl.allows_internet_ingress, sl.ingress_security_rules CONTAINS '0.0.0.0/0' OR sl.ingress_security_rules CONTAINS '::/0') WITH DISTINCT sl SET sl.exposed_internet = true, (CASE WHEN NOT 'public_subnet_internet_ingress' IN coalesce(sl.exposed_internet_type, []) THEN sl END).exposed_internet_type = coalesce(sl.exposed_internet_type, []) + 'public_subnet_internet_ingress'",
+      "iterative": false
+    },
+    {
+      "__comment": "Build publicContext JSON for exposed security lists with the exposed subnets they are attached to",
+      "query": "MATCH (sl:OCISecurityList{exposed_internet: true})<-[:OCI_SECURITY_LIST]-(vcn:OCIVcn)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (vcn)-[:OCI_SUBNET]->(subnet:OCISubnet{exposed_internet: true}) WHERE sl.id IN coalesce(subnet.security_list_ids, []) WITH sl, vcn, collect(DISTINCT {subnetId: subnet.id, subnetName: subnet.display_name, cidrBlock: subnet.cidr_block, subnetExposureTypes: subnet.exposed_internet_type}) AS publicSubnets SET sl.publicContext = apoc.convert.toJson([{resource: sl.id, resourceType: 'oci-networking-vcn-securitylist', context: [{securityListId: sl.id, securityListName: sl.display_name, vcnId: vcn.id, exposureTypes: sl.exposed_internet_type, publicSubnets: publicSubnets, region: sl.region}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "OCI security list asset internet exposure"
+}

@@ -6,17 +6,71 @@ import logging
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
+import oci.apigateway
+import oci.load_balancer
 import oci.logging
+import oci.network_load_balancer
 
+from . import api_gateway
+from . import load_balancer
 from . import tags
 from . import utils
-from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
+
+INTERNET_CIDRS = ('0.0.0.0/0', '::/0')
+# ICMP / ICMPv6 protocol numbers. Every Default Security List admits ICMP type 3
+# (path MTU discovery) from 0.0.0.0/0; that reaches no service, so it is not exposure.
+ICMP_PROTOCOLS = ('1', '58')
+INTERNET_GATEWAY_OCID_PREFIX = 'ocid1.internetgateway.'
+# Rules carry destination ports under tcp-options (protocol 6) or udp-options (17).
+PORT_OPTIONS_BY_PROTOCOL = {'6': 'tcp-options', '17': 'udp-options'}
+MIN_PORT = 1
+MAX_PORT = 65535
+
+
+def is_internet_ingress_rule(rule: Dict[str, Any]) -> bool:
+    """
+    True when a security list ingress rule or NSG security rule admits non-ICMP
+    traffic from any internet address. Ports are not considered: any open port counts.
+    """
+    if rule.get("direction", "INGRESS") != "INGRESS":
+        return False
+    return rule.get("source") in INTERNET_CIDRS and rule.get("protocol") not in ICMP_PROTOCOLS
+
+
+def internet_ingress_port_range(rule: Dict[str, Any]) -> Optional[str]:
+    """
+    For a rule that admits internet ingress (see is_internet_ingress_rule), the protocol and
+    destination ports it opens as '<protocol>:<min>-<max>', e.g. '6:443-443', 'all:1-65535'.
+    None for any other rule. The exposure jobs match listener ports against these strings.
+    """
+    if not is_internet_ingress_rule(rule):
+        return None
+    # OCI rules always name a protocol; a missing one errs open.
+    protocol = rule.get("protocol") or "all"
+    options = rule.get(PORT_OPTIONS_BY_PROTOCOL.get(protocol, "")) or {}
+    port_range = options.get("destination-port-range") or {}
+    return f"{protocol}:{port_range.get('min') or MIN_PORT}-{port_range.get('max') or MAX_PORT}"
+
+
+def default_route_internet_gateway_ids(route_rules: List[Dict[str, Any]]) -> List[str]:
+    """
+    Internet gateways a route table's default route (0.0.0.0/0 or ::/0) points at.
+    Route rules still carrying the deprecated cidr-block field are read too.
+    """
+    return [
+        rule["network-entity-id"]
+        for rule in route_rules
+        if (rule.get("destination") or rule.get("cidr-block")) in INTERNET_CIDRS and
+        (rule.get("network-entity-id") or "").startswith(INTERNET_GATEWAY_OCID_PREFIX)
+    ]
 
 
 # ============================================================
@@ -271,6 +325,8 @@ def load_security_lists(
         s.lifecycle_state = sl.lifecycle_state,
         s.ingress_security_rules = sl.ingress_rules,
         s.egress_security_rules = sl.egress_rules,
+        s.allows_internet_ingress = sl.allows_internet_ingress,
+        s.internet_ingress_port_ranges = sl.internet_ingress_port_ranges,
         s.region = $REGION,
         s.consolelink = sl.consolelink,
         s.lastupdated = $oci_update_tag
@@ -293,6 +349,11 @@ def load_security_lists(
             "lifecycle_state": sl.get("lifecycle-state"),
             "ingress_rules": json.dumps(ingress_rules) if ingress_rules else "[]",
             "egress_rules": json.dumps(egress_rules) if egress_rules else "[]",
+            # Structured flag for the exposure jobs, which cannot parse the JSON rules.
+            "allows_internet_ingress": any(is_internet_ingress_rule(rule) for rule in ingress_rules or []),
+            "internet_ingress_port_ranges": [
+                port_range for port_range in map(internet_ingress_port_range, ingress_rules or []) if port_range
+            ],
             "time_created": str(sl.get("time-created", "")),
             "consolelink": utils.get_console_link("security_list", region=region, ocid=sl.get("id")),
         })
@@ -477,6 +538,8 @@ def load_nsg_security_rules(
         rl.udp_dest_port_max = rule.udp_dest_port_max,
         rl.icmp_type = rule.icmp_type,
         rl.icmp_code = rule.icmp_code,
+        rl.is_internet_ingress = rule.is_internet_ingress,
+        rl.internet_ingress_port_range = rule.internet_ingress_port_range,
         rl.lastupdated = $oci_update_tag
         WITH rl
         MATCH (nsg:OCINetworkSecurityGroup{id: $NSG_ID})
@@ -518,6 +581,8 @@ def load_nsg_security_rules(
             "udp_dest_port_max": udp_dest_range.get("max"),
             "icmp_type": icmp_options.get("type"),
             "icmp_code": icmp_options.get("code"),
+            "is_internet_ingress": is_internet_ingress_rule(rule),
+            "internet_ingress_port_range": internet_ingress_port_range(rule),
         })
 
     load_graph_data(
@@ -800,6 +865,7 @@ def load_route_tables(
         t.vcn_id = rt.vcn_id,
         t.lifecycle_state = rt.lifecycle_state,
         t.route_rules = rt.route_rules,
+        t.default_route_igw_ids = rt.default_route_igw_ids,
         t.region = $REGION,
         t.consolelink = rt.consolelink,
         t.lastupdated = $oci_update_tag
@@ -820,6 +886,8 @@ def load_route_tables(
             "vcn_id": rt.get("vcn-id", ""),
             "lifecycle_state": rt.get("lifecycle-state"),
             "route_rules": json.dumps(route_rules) if route_rules else "[]",
+            # Structured field for the subnet exposure job, which cannot parse the JSON rules.
+            "default_route_igw_ids": default_route_internet_gateway_ids(route_rules or []),
             "time_created": str(rt.get("time-created", "")),
             "consolelink": utils.get_console_link("route_table", region=region, ocid=rt.get("id")),
         })
@@ -958,6 +1026,7 @@ def load_vnics(
         v.mac_address = vnic.mac_address,
         v.skip_source_dest_check = vnic.skip_source_dest_check,
         v.subnet_id = vnic.subnet_id,
+        v.nsg_ids = vnic.nsg_ids,
         v.region = $REGION,
         v.consolelink = vnic.consolelink,
         v.lastupdated = $oci_update_tag
@@ -991,6 +1060,8 @@ def load_vnics(
             "mac_address": vnic.get("mac-address", ""),
             "skip_source_dest_check": vnic.get("skip-source-dest-check", False),
             "subnet_id": vnic.get("subnet-id", ""),
+            # NSGs attached to this VNIC; the instance exposure job reads their rules.
+            "nsg_ids": vnic.get("nsg-ids") or [],
             "time_created": str(vnic.get("time-created", "")),
             "consolelink": utils.get_console_link(
                 "vnic", region=region, ocid=vnic.get("id"), instance_id=vnic.get("_instance_id", ""),
@@ -1195,7 +1266,7 @@ def sync(
     tenancy_id: str,
     oci_update_tag: int,
     common_job_parameters: Dict[str, Any],
-    regions: List[str] = None,
+    regions: Optional[List[str]] = None,
 ) -> None:
     """
     Sync OCI Network resources for the compartment specified in common_job_parameters.
@@ -1216,11 +1287,28 @@ def sync(
         config=network.base_client.config,
         signer=getattr(network.base_client, "signer", None),
     )
+    # Load balancers sit in VCN subnets and are judged by the same security lists and NSGs.
+    lb_client = oci.load_balancer.LoadBalancerClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
+    nlb_client = oci.network_load_balancer.NetworkLoadBalancerClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
+    # API gateways also sit in a VCN subnet behind its security lists and NSGs.
+    gateway_client = oci.apigateway.GatewayClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
 
     for region in regions:
         logger.info("Syncing OCI Network in region '%s' for compartment '%s'.", region, compartment_ocid)
         network.base_client.set_region(region)
         logging_client.base_client.set_region(region)
+        lb_client.base_client.set_region(region)
+        nlb_client.base_client.set_region(region)
+        gateway_client.base_client.set_region(region)
 
         # Sync VCNs first (parent of all other network resources)
         sync_vcns(neo4j_session, network, compartments, tenancy_id, region, oci_update_tag, common_job_parameters)
@@ -1273,6 +1361,21 @@ def sync(
         sync_flow_logs(
             neo4j_session, logging_client, compartments, tenancy_id, region, oci_update_tag, common_job_parameters,
         )
+
+        # A failure here must not cost the rest of the network sync.
+        try:
+            load_balancer.sync_load_balancers(
+                neo4j_session, lb_client, nlb_client, compartment_ocid, region, oci_update_tag, common_job_parameters,
+            )
+        except Exception as e:
+            logger.error("Error syncing OCI load balancers in region '%s': %s", region, e, exc_info=True)
+
+        try:
+            api_gateway.sync_gateways(
+                neo4j_session, gateway_client, compartment_ocid, region, oci_update_tag, common_job_parameters,
+            )
+        except Exception as e:
+            logger.error("Error syncing OCI API gateways in region '%s': %s", region, e, exc_info=True)
 
     # Cleanup stale network nodes
     run_cleanup_job('oci_import_network_cleanup.json', neo4j_session, common_job_parameters)

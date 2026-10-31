@@ -10,6 +10,7 @@ from typing import Optional
 import neo4j
 import oci
 
+from . import network
 from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
@@ -174,8 +175,8 @@ def transform_autonomous_databases(
             "kms_key_lifecycle_details": adb.get("kms-key-lifecycle-details"),
             "is_encrypted_with_cmk": bool(adb.get("kms-key-id")),
             # Connection endpoints (security-relevant: ORDS / APEX surfaces)
-            "service_console_url": connection_urls.get("sql-dev-web-url")
-            or connection_urls.get("apex-url"),
+            "service_console_url": connection_urls.get("sql-dev-web-url") or
+            connection_urls.get("apex-url"),
             "apex_url": connection_urls.get("apex-url"),
             "graph_studio_url": connection_urls.get("graph-studio-url"),
             "machine_learning_user_management_url": connection_urls.get(
@@ -719,6 +720,55 @@ def load_db_nodes(
     )
 
 
+def get_db_node_vnics(
+    network_client: oci.core.VirtualNetworkClient,
+    db_nodes: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    GetVnic for each DB node's client VNIC and backup VNIC. The backup VNIC is a
+    second interface on the same host, so a public IP on it is a way in too.
+    Unreadable VNICs are skipped, so the exposure job treats their DB node as unresolved.
+    """
+    vnic_ids = sorted({
+        vnic_id for n in db_nodes for vnic_id in (n.get("vnic_id"), n.get("backup_vnic_id")) if vnic_id
+    })
+    vnics = [network.get_vnic_data(network_client, vnic_id) for vnic_id in vnic_ids]
+    return [vnic for vnic in vnics if vnic]
+
+
+def load_db_node_vnics(
+    neo4j_session: neo4j.Session,
+    vnics: List[Dict[str, Any]],
+    region: str,
+    oci_update_tag: int,
+) -> None:
+    """
+    Load DB node VNICs with the network loader (public IP, NSG ids, subnet edge)
+    and link each OCIDbNode to its client and backup VNICs via OCI_VNIC.
+    """
+    network.load_vnics(neo4j_session, vnics, region, oci_update_tag)
+    link_db_node_vnic = """
+    UNWIND $DictList AS vnic
+        MATCH (dn:OCIDbNode) WHERE dn.vnic_id = vnic.id OR dn.backup_vnic_id = vnic.id
+        MATCH (v:OCIVnic{id: vnic.id})
+        MERGE (dn)-[r:OCI_VNIC]->(v)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
+    """
+    load_graph_data(neo4j_session, link_db_node_vnic, vnics, oci_update_tag=oci_update_tag)
+
+
+def _network_client_for(database_client: oci.database.DatabaseClient, region: str) -> oci.core.VirtualNetworkClient:
+    # GetVnic lives on the Virtual Network API; reuse the database client's auth.
+    network_client = oci.core.VirtualNetworkClient(
+        config=database_client.base_client.config,
+        signer=getattr(database_client.base_client, "signer", None),
+    )
+    if region:
+        network_client.base_client.set_region(region)
+    return network_client
+
+
 # ---------------------------------------------------------------------------
 # Edge helpers (subnet / NSG / KMS) — MATCH-only, safe no-op
 # ---------------------------------------------------------------------------
@@ -806,7 +856,7 @@ def sync_db_systems(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
-    common_job_parameters: Dict[str, Any] = None,
+    common_job_parameters: Optional[Dict[str, Any]] = None,
 ) -> None:
     logger.debug(
         "Syncing OCI DB Systems for compartment '%s', region '%s'.",
@@ -843,6 +893,9 @@ def sync_db_systems(
             tags.sync_tags(neo4j_session, all_homes_raw, 'OCIDbHome', oci_update_tag, common_job_parameters)
     if all_nodes:
         load_db_nodes(neo4j_session, all_nodes, oci_update_tag)
+        db_node_vnics = get_db_node_vnics(_network_client_for(database_client, region), all_nodes)
+        if db_node_vnics:
+            load_db_node_vnics(neo4j_session, db_node_vnics, region, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------

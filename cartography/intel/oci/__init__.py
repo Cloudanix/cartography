@@ -34,6 +34,29 @@ from cartography.util import run_analysis_job_logged as run_analysis_job
 logger = logging.getLogger(__name__)
 Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging containerregistry database')
 
+# Analysis jobs run per compartment after all resource syncs, in this order.
+OCI_ANALYSIS_JOBS = [
+    'oci_subnet_asset_exposure.json',
+    # Reads the subnet job's exposed_internet.
+    'oci_security_list_asset_exposure.json',
+    'oci_load_balancer_asset_exposure.json',
+    'oci_instance_asset_exposure.json',
+    # Reads the instance job's exposed_internet.
+    'oci_boot_volume_asset_exposure.json',
+    'oci_db_system_asset_exposure.json',
+    'oci_iam_user_analysis.json',
+    'oci_iam_policy_analysis.json',
+    'oci_encryption_analysis.json',
+    'oci_monitoring_analysis.json',
+    'oci_containerregistry_asset_exposure.json',
+    'oci_object_storage_asset_exposure.json',
+    'oci_file_storage_asset_exposure.json',
+    'oci_autonomous_database_asset_exposure.json',
+    'oci_oke_cluster_asset_exposure.json',
+    'oci_api_gateway_asset_exposure.json',
+    'oci_logging_analysis.json',
+]
+
 
 def _sync_one_compartment(
     neo4j_session: neo4j.Session,
@@ -136,19 +159,7 @@ def _sync_one_compartment(
             )
 
     # Run analysis jobs after all resource syncs complete
-    _oci_analysis_jobs = [
-        'oci_subnet_asset_exposure.json',
-        'oci_instance_asset_exposure.json',
-        'oci_iam_user_analysis.json',
-        'oci_iam_policy_analysis.json',
-        'oci_encryption_analysis.json',
-        'oci_monitoring_analysis.json',
-        'oci_containerregistry_asset_exposure.json',
-        'oci_object_storage_asset_exposure.json',
-        'oci_file_storage_asset_exposure.json',
-        'oci_logging_analysis.json',
-    ]
-    for job_file in _oci_analysis_jobs:
+    for job_file in OCI_ANALYSIS_JOBS:
         run_analysis_job(job_file, neo4j_session, common_job_parameters)
 
     logger.info(
