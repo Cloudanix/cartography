@@ -2489,6 +2489,9 @@ Representation of an AWS [AppSync GraphQL API](https://docs.aws.amazon.com/appsy
 | xray\_enabled | Whether X-Ray tracing is enabled |
 | log\_field\_log\_level | The field-level log level (`NONE`, `ERROR`, `ALL`, ...), when logging is configured |
 | graphql\_uri | The GraphQL endpoint URI |
+| exposed\_internet | Set by `aws_appsync_asset_exposure.json` when the API has a `GLOBAL` (public) endpoint |
+| exposed\_internet\_type | `global_endpoint`, plus `api_key_auth` when `API_KEY` is the primary or an additional auth mode |
+| publicContext | JSON: auth modes, WAF web ACL, endpoint and exposure types of an exposed API |
 
 #### Relationships
 
