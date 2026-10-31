@@ -10,6 +10,7 @@ from azure.mgmt.compute import ComputeManagementClient
 from . import vmss
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
@@ -93,7 +94,7 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
         vm_data_raw = []
         for x in client.virtual_machines.list_all():
             try:
-                vm_data_raw.append(x.as_dict())
+                vm_data_raw.append(as_legacy_dict(x))
             except (KeyError, AttributeError) as e:
                 logger.warning("Skipping VM due to serialization error: %s", e)
         vm_data = []
@@ -426,7 +427,7 @@ def get_vm_available_sizes_list(vm_list: List[Dict], client: ComputeManagementCl
         for vm in vm_list:
             vm_available_size_list = list(
                 map(
-                    lambda x: x.as_dict(), client.virtual_machines.list_available_sizes(
+                    as_legacy_dict, client.virtual_machines.list_available_sizes(
                         resource_group_name=vm['resource_group'], vm_name=vm['name'],
                     ),
                 ),
@@ -511,7 +512,7 @@ def sync_virtual_machine_available_sizes(
 def get_vm_scale_sets_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
-        vm_scale_sets_list = list(map(lambda x: x.as_dict(), client.virtual_machine_scale_sets.list_all()))
+        vm_scale_sets_list = list(map(as_legacy_dict, client.virtual_machine_scale_sets.list_all()))
         sets_list = []
         for set in vm_scale_sets_list:
             x = set['id'].split('/')
@@ -622,7 +623,7 @@ def get_vm_scale_sets_extensions_list(vm_scale_sets_list: List[Dict], client: Co
         for set in vm_scale_sets_list:
             extensions_list = list(
                 map(
-                    lambda x: x.as_dict(), client.virtual_machine_scale_set_extensions.list(
+                    as_legacy_dict, client.virtual_machine_scale_set_extensions.list(
                         resource_group_name=set['resource_group'], vm_scale_set_name=set['name'],
                     ),
                 ),
@@ -809,7 +810,7 @@ def cleanup_virtual_machine(neo4j_session: neo4j.Session, common_job_parameters:
 def get_disks(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         client = get_client(credentials, subscription_id)
-        disk_list = list(map(lambda x: x.as_dict(), client.disks.list()))
+        disk_list = list(map(as_legacy_dict, client.disks.list()))
         disk_data = []
         for disk in disk_list:
             x = disk['id'].split('/')
@@ -884,7 +885,7 @@ def cleanup_disks(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 def get_snapshots_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
-        snapshots = list(map(lambda x: x.as_dict(), client.snapshots.list()))
+        snapshots = list(map(as_legacy_dict, client.snapshots.list()))
         snapshot_list = []
         for snapshot in snapshots:
             x = snapshot['id'].split('/')
