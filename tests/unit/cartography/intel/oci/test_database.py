@@ -11,19 +11,22 @@ def _vnic_response(vnic_id, public_ip):
     return MagicMock(data=data)
 
 
-def test_get_db_node_vnics_fetches_each_primary_vnic_once():
+def test_get_db_node_vnics_fetches_each_primary_and_backup_vnic_once():
+    # A backup VNIC is a second interface on the DB host; with a public IP it is a way in too.
     network_client = MagicMock()
     network_client.get_vnic.side_effect = lambda vnic_id: _vnic_response(vnic_id, '203.0.113.10')
     db_nodes = [
         {'id': 'node-1', 'vnic_id': 'vnic-1', 'backup_vnic_id': 'backup-vnic-1'},
         {'id': 'node-2', 'vnic_id': 'vnic-1'},
-        {'id': 'node-3', 'vnic_id': None},
+        {'id': 'node-3', 'vnic_id': None, 'backup_vnic_id': None},
     ]
 
     vnics = database.get_db_node_vnics(network_client, db_nodes)
 
-    network_client.get_vnic.assert_called_once_with('vnic-1')
-    assert [(v['id'], v['public-ip'], v['nsg-ids']) for v in vnics] == [('vnic-1', '203.0.113.10', ['nsg-1'])]
+    assert sorted(c.args[0] for c in network_client.get_vnic.call_args_list) == ['backup-vnic-1', 'vnic-1']
+    assert [(v['id'], v['public-ip'], v['nsg-ids']) for v in vnics] == [
+        ('backup-vnic-1', '203.0.113.10', ['nsg-1']), ('vnic-1', '203.0.113.10', ['nsg-1']),
+    ]
 
 
 def test_get_db_node_vnics_skips_vnics_it_cannot_read():

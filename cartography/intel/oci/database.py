@@ -725,11 +725,13 @@ def get_db_node_vnics(
     db_nodes: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    GetVnic for each DB node's primary VNIC (the client-facing one; the backup
-    VNIC only carries backup traffic). Unreadable VNICs are skipped, so the
-    exposure job treats their DB system as unresolved.
+    GetVnic for each DB node's client VNIC and backup VNIC. The backup VNIC is a
+    second interface on the same host, so a public IP on it is a way in too.
+    Unreadable VNICs are skipped, so the exposure job treats their DB node as unresolved.
     """
-    vnic_ids = sorted({n["vnic_id"] for n in db_nodes if n.get("vnic_id")})
+    vnic_ids = sorted({
+        vnic_id for n in db_nodes for vnic_id in (n.get("vnic_id"), n.get("backup_vnic_id")) if vnic_id
+    })
     vnics = [network.get_vnic_data(network_client, vnic_id) for vnic_id in vnic_ids]
     return [vnic for vnic in vnics if vnic]
 
@@ -742,12 +744,12 @@ def load_db_node_vnics(
 ) -> None:
     """
     Load DB node VNICs with the network loader (public IP, NSG ids, subnet edge)
-    and link each OCIDbNode to its VNIC via OCI_VNIC.
+    and link each OCIDbNode to its client and backup VNICs via OCI_VNIC.
     """
     network.load_vnics(neo4j_session, vnics, region, oci_update_tag)
     link_db_node_vnic = """
     UNWIND $DictList AS vnic
-        MATCH (dn:OCIDbNode{vnic_id: vnic.id})
+        MATCH (dn:OCIDbNode) WHERE dn.vnic_id = vnic.id OR dn.backup_vnic_id = vnic.id
         MATCH (v:OCIVnic{id: vnic.id})
         MERGE (dn)-[r:OCI_VNIC]->(v)
         ON CREATE SET r.firstseen = timestamp()

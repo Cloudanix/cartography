@@ -521,3 +521,56 @@ def test_db_system_exposure_needs_node_public_ip_and_own_open_rules(neo4j_sessio
     assert rows[0]['c'] is None
     assert 'oci-database-dbsystem-instance' in rows[1]['c'] and '203.0.113.30' in rows[1]['c']
     assert 'dbs-sl-default' in rows[1]['c'] and 'dbs-two-nodes' in rows[1]['c']
+
+
+def test_db_node_backup_vnic_counts_for_exposure(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _load_vcn(
+        neo4j_session, 'dbb-vcn',
+        security_lists=[('dbb-sl-default', DEFAULT_SECURITY_LIST_RULES), ('dbb-sl-closed', [HTTPS_FROM_VCN])],
+    )
+    _load_subnet(neo4j_session, 'dbb-subnet-closed', 'dbb-vcn', ['dbb-sl-closed'])
+    _load_subnet(neo4j_session, 'dbb-subnet-default', 'dbb-vcn', ['dbb-sl-default'])
+    _load_subnet(neo4j_session, 'dbb-subnet-private', 'dbb-vcn', ['dbb-sl-default'], prohibit_public_ip=True)
+    # (system, backup subnet, backup VNIC or None when GetVnic failed); every client VNIC is private.
+    systems = [
+        # Private client VNIC, but the backup VNIC has a public IP behind an open list.
+        ('dbb-public-backup', 'dbb-subnet-default', {'public-ip': '203.0.113.40'}),
+        ('dbb-private-backup', 'dbb-subnet-default', {'public-ip': None}),
+        # Backup VNIC unreadable: a public-IP-capable backup subnet stays public, a private one does not.
+        ('dbb-unknown-backup', 'dbb-subnet-default', None),
+        ('dbb-unknown-backup-private-subnet', 'dbb-subnet-private', None),
+    ]
+    for system_id, backup_subnet_id, backup_vnic in systems:
+        node_id = f'{system_id}.node'
+        neo4j_session.run(
+            """
+            MATCH (c:OCICompartment{id: $compartment_id})
+            MERGE (c)-[:RESOURCE]->(s:OCIDbSystem{id: $system_id})
+            SET s.subnet_id = 'dbb-subnet-closed', s.backup_subnet_id = $backup_subnet_id
+            """,
+            compartment_id=COMPARTMENT_ID, system_id=system_id, backup_subnet_id=backup_subnet_id,
+        )
+        database.load_db_nodes(
+            neo4j_session,
+            [{
+                'id': node_id, 'db_system_id': system_id,
+                'vnic_id': f'{node_id}.vnic', 'backup_vnic_id': f'{node_id}.backup-vnic',
+            }],
+            UPDATE_TAG,
+        )
+        vnics = [{'id': f'{node_id}.vnic', 'subnet-id': 'dbb-subnet-closed', 'public-ip': None}]
+        if backup_vnic is not None:
+            vnics.append({'id': f'{node_id}.backup-vnic', 'subnet-id': backup_subnet_id, **backup_vnic})
+        database.load_db_node_vnics(neo4j_session, vnics, REGION, UPDATE_TAG)
+
+    run_analysis_job('oci_db_system_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIDbNode', 'dbb-') == {
+        'dbb-public-backup.node': ['unrestricted_securitylist_ingress'],
+        'dbb-unknown-backup.node': ['db_node_vnic_unresolved'],
+    }
+    context = neo4j_session.run(
+        "MATCH (n:OCIDbNode{id: 'dbb-public-backup.node'}) RETURN n.publicContext AS c",
+    ).single()['c']
+    assert 'dbb-public-backup.node.backup-vnic' in context and '203.0.113.40' in context
