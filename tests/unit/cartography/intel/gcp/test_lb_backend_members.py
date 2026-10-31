@@ -1,7 +1,10 @@
+import json
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from googleapiclient import discovery
 from googleapiclient.errors import HttpError
+from googleapiclient.http import HttpMockSequence
 
 import cartography.intel.gcp
 from cartography.intel.gcp import loadbalancer
@@ -163,7 +166,7 @@ def test_network_endpoint_groups_come_from_every_scope_once():
     by_name = {n['name']: n for n in negs}
     assert sorted(by_name) == ['fn-neg', 'internet-neg', 'k8s1-neg', 'run-neg']
     client.networkEndpointGroups.return_value.aggregatedList.assert_called_once_with(
-        project='p1', returnPartialSuccess=True,
+        project='p1',
     )
     k8s = by_name['k8s1-neg']
     assert (k8s['id'], k8s['zone'], k8s['region'], k8s['network']) == (
@@ -268,8 +271,27 @@ def test_ssl_policies_include_regional_ones_from_the_aggregated_list():
 
     policies = loadbalancer.transform_ssl_policies(loadbalancer.get_ssl_policies(client, 'p1', PARAMS), 'p1')
 
-    client.sslPolicies.return_value.aggregatedList.assert_called_once_with(project='p1', returnPartialSuccess=True)
+    client.sslPolicies.return_value.aggregatedList.assert_called_once_with(project='p1')
     assert sorted((p['id'], p['region']) for p in policies) == [
         ('projects/p1/global/sslPolicies/modern', 'global'),
         ('projects/p1/regions/us-east1/sslPolicies/regional', 'us-east1'),
     ]
+
+
+def _discovery_compute(*bodies):
+    """A real compute client built from the discovery doc bundled with googleapiclient (what prod uses), so
+    unknown query parameters raise TypeError just like in prod; each request answers with the next body."""
+    responses = [({'status': '200'}, json.dumps(body)) for body in bodies]
+    return discovery.build('compute', 'v1', http=HttpMockSequence(responses), static_discovery=True)
+
+
+def test_aggregated_lists_only_use_parameters_of_the_bundled_discovery_doc():
+    neg = {'name': 'neg', 'selfLink': f'{API}/{ZONE_P1}/networkEndpointGroups/neg'}
+    client = _discovery_compute(
+        {'items': {'global': {'sslPolicies': [{'name': 'modern'}]}}},
+        {'items': {'zones/us-east1-b': {'networkEndpointGroups': [neg]}}},
+        {},
+    )
+
+    assert [p['name'] for p in loadbalancer.get_ssl_policies(client, 'p1', PARAMS)] == ['modern']
+    assert [n['name'] for n in loadbalancer.get_network_endpoint_groups(client, 'p1', [])] == ['neg']

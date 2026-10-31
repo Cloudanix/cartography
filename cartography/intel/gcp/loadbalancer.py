@@ -548,7 +548,9 @@ def get_ssl_policies(compute: Resource, project_id: str, common_job_parameters: 
     """Global and regional SSL policies: one aggregatedList (regional HTTPS proxies use regional policies)."""
     ssl_policies = []
     try:
-        req = compute.sslPolicies().aggregatedList(project=project_id, returnPartialSuccess=True)
+        # No returnPartialSuccess: the compute discovery doc bundled with google-api-python-client 2.201.0
+        # dropped it from every aggregatedList, and the client rejects unknown parameters with TypeError.
+        req = compute.sslPolicies().aggregatedList(project=project_id)
         while req is not None:
             res = req.execute()
             for scoped in res.get('items', {}).values():
@@ -670,7 +672,8 @@ def get_network_endpoint_groups(compute_client: Resource, project_id: str, regio
     global scopes. A scope that can't be read is skipped with a warning.
     """
     calls: List[Tuple[Resource, str, Dict[str, Any]]] = [
-        (compute_client.networkEndpointGroups(), 'aggregatedList', {'returnPartialSuccess': True}),
+        # No returnPartialSuccess: not in the bundled discovery doc (see get_ssl_policies).
+        (compute_client.networkEndpointGroups(), 'aggregatedList', {}),
     ]
     calls.append((compute_client.globalNetworkEndpointGroups(), 'list', {}))
     calls.extend((compute_client.regionNetworkEndpointGroups(), 'list', {'region': r}) for r in regions)
