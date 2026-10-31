@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Set
 
 import neo4j
@@ -111,6 +112,14 @@ def load_frontend_ip_configurations(
     update_tag: int,
 ) -> None:
     session.execute_write(_load_frontend_ip_configurations_tx, data_list, update_tag)
+
+
+def load_load_balancer_rules(
+    session: neo4j.Session,
+    data_list: List[Dict],
+    update_tag: int,
+) -> None:
+    session.execute_write(_load_load_balancer_rules_tx, data_list, update_tag)
 
 
 def create_relationship_between_network_interface_and_load_balancer(
@@ -1127,6 +1136,7 @@ def _load_public_ip_addresses_tx(
     n.ipAddress = address.ip_address,
     n.publicIpAllocationMethod = address.public_ip_allocation_method,
     n.isStaticIp = address.is_static_ip,
+    n.sku = address.sku.name,
     n.etag=address.etag,
     n.region = address.location
     WITH n
@@ -1200,6 +1210,50 @@ def _inbound_backend_pool_ids(load_balancer: Dict) -> List[str]:
     return sorted(pool_ids)
 
 
+# (rule kind, load balancer property holding rules of that kind)
+LB_RULE_KINDS = (
+    ('load_balancing', 'load_balancing_rules'),
+    ('inbound_nat', 'inbound_nat_rules'),
+    ('inbound_nat_pool', 'inbound_nat_pools'),
+)
+
+
+def _ref_id(ref: Optional[Dict]) -> Optional[str]:
+    return ref['id'].lower() if ref and ref.get('id') else None
+
+
+def _flatten_lb_rule(rule: Dict, kind: str) -> Dict:
+    pools = [rule.get('backend_address_pool')] + (rule.get('backend_address_pools') or [])
+    # NAT rule v2 and NAT pools carry a frontend port range instead of one port.
+    start = rule.get('frontend_port_range_start') or rule.get('frontend_port')
+    return {
+        'id': rule['id'],
+        'name': rule.get('name'),
+        'kind': kind,
+        'protocol': rule.get('protocol'),
+        'frontend_port_start': start,
+        'frontend_port_end': rule.get('frontend_port_range_end') or start,
+        'backend_port': rule.get('backend_port'),
+        'frontend_ip_configuration_id': _ref_id(rule.get('frontend_ip_configuration')),
+        'backend_pool_ids': sorted({p for p in map(_ref_id, pools) if p}),
+        'backend_ip_configuration_id': _ref_id(rule.get('backend_ip_configuration')),
+    }
+
+
+def _load_balancer_rules(load_balancer: Dict) -> List[Dict]:
+    """
+    Inbound forwarding rules (load-balancing rules, inbound NAT rules, VMSS NAT pools)
+    flattened for AzureLoadBalancerRule nodes. They arrive in the same list_all response,
+    so no extra API call. Referenced ids are lowercased like inbound_backend_pool_ids.
+    """
+    return [
+        _flatten_lb_rule(rule, kind)
+        for kind, key in LB_RULE_KINDS
+        for rule in load_balancer.get(key) or []
+        if rule.get('id')
+    ]
+
+
 def get_load_balancers_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         network_load_balancer_list = list(map(as_legacy_dict, client.load_balancers.list_all()))
@@ -1221,6 +1275,7 @@ def get_load_balancers_list(client: NetworkManagementClient, regions: list, comm
                     backend_address_pool.get('id'), common_job_parameters,
                 )
             load_balancer['inbound_backend_pool_ids'] = _inbound_backend_pool_ids(load_balancer)
+            load_balancer['rules'] = _load_balancer_rules(load_balancer)
             load_balancer['consolelink'] = safe_console_link(load_balancer['id'], common_job_parameters)
             if regions is None:
                 load_balancer_list.append(load_balancer)
@@ -1297,7 +1352,8 @@ def _load_load_balancers_tx(
     n.region = lb.location
     SET n.consolelink = coalesce(lb.consolelink, n.consolelink), n.lastupdated = $update_tag,
     n.name = lb.name,
-    n.inbound_backend_pool_ids = lb.inbound_backend_pool_ids
+    n.inbound_backend_pool_ids = lb.inbound_backend_pool_ids,
+    n.sku = lb.sku.name
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(n)
@@ -1397,6 +1453,37 @@ def _load_backend_address_pools_tx(
     )
 
 
+def _load_load_balancer_rules_tx(
+    tx: neo4j.Transaction, load_balancers_list: List[Dict], update_tag: int,
+) -> None:
+    ingest_rules = """
+    UNWIND $load_balancers_list AS lb
+        MATCH (n:AzureNetworkLoadBalancer{id: lb.id})
+        WITH n, lb
+        UNWIND lb.rules AS rule
+            MERGE (r:AzureLoadBalancerRule{id: rule.id})
+            ON CREATE SET r.firstseen = timestamp()
+            SET r.name = rule.name,
+            r.kind = rule.kind,
+            r.protocol = rule.protocol,
+            r.frontend_port_start = rule.frontend_port_start,
+            r.frontend_port_end = rule.frontend_port_end,
+            r.backend_port = rule.backend_port,
+            r.frontend_ip_configuration_id = rule.frontend_ip_configuration_id,
+            r.backend_pool_ids = rule.backend_pool_ids,
+            r.backend_ip_configuration_id = rule.backend_ip_configuration_id,
+            r.lastupdated = $update_tag
+            MERGE (n)-[rel:HAS]->(r)
+            ON CREATE SET rel.firstseen = timestamp()
+            SET rel.lastupdated = $update_tag
+    """
+    tx.run(
+        ingest_rules,
+        load_balancers_list=load_balancers_list,
+        update_tag=update_tag,
+    )
+
+
 def _create_relationship_between_network_interface_and_load_balancer_tx(
     tx: neo4j.Transaction, load_balancers_list: List[Dict], update_tag: int,
 ) -> None:
@@ -1483,6 +1570,10 @@ def cleanup_network_frontend_ip_configurations(neo4j_session: neo4j.Session, com
     run_cleanup_job('azure_import_network_frontend_ip_configurations_cleanup.json', neo4j_session, common_job_parameters)
 
 
+def cleanup_network_load_balancer_rules(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job('azure_import_network_load_balancer_rules_cleanup.json', neo4j_session, common_job_parameters)
+
+
 def sync_network_interfaces(
     neo4j_session: neo4j.Session, client: NetworkManagementClient, subscription_id: str, update_tag: int,
     common_job_parameters: Dict, regions: list,
@@ -1509,7 +1600,9 @@ def sync_load_balancer(
     load_load_balancers(neo4j_session, subscription_id, load_balancers_list, update_tag)
     load_backend_address_pools(neo4j_session, load_balancers_list, update_tag)
     load_frontend_ip_configurations(neo4j_session, load_balancers_list, update_tag)
+    load_load_balancer_rules(neo4j_session, load_balancers_list, update_tag)
     cleanup_network_backend_address_pools(neo4j_session, common_job_parameters)
+    cleanup_network_load_balancer_rules(neo4j_session, common_job_parameters)
     cleanup_network_frontend_ip_configurations(neo4j_session, common_job_parameters)
     cleanup_network_load_balancers(neo4j_session, common_job_parameters)
     create_relationship_between_network_interface_and_load_balancer(neo4j_session, load_balancers_list, update_tag)

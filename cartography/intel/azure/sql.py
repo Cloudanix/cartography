@@ -284,6 +284,17 @@ def _get_mysql_rdbms_servers(credentials: Credentials, subscription_id: str) -> 
     return []
 
 
+def _azure_ad_only(server: Dict) -> bool:
+    """
+    True when the server refuses SQL / password logins: Azure SQL "Microsoft Entra-only
+    authentication" or a PostgreSQL flexible server with password auth disabled.
+    Both come in the list response; MySQL flexible servers expose no such flag.
+    """
+    if (server.get('administrators') or {}).get('azure_ad_only_authentication'):
+        return True
+    return str((server.get('auth_config') or {}).get('password_auth') or '').lower() == 'disabled'
+
+
 def _enrich_server_data(
     server: Dict,
     credentials: Credentials,
@@ -301,6 +312,7 @@ def _enrich_server_data(
     )
     # A flexible server in private access mode lives in a delegated subnet and has no public endpoint.
     server['vnetIntegrated'] = bool((server.get('network') or {}).get('delegated_subnet_resource_id'))
+    server['azureADOnlyAuthentication'] = _azure_ad_only(server)
     server['consolelink'] = safe_console_link(server['id'], common_job_parameters)
     for private_endpoint_connection in server.get('private_endpoint_connections') or []:
         private_endpoint_connection['consolelink'] = safe_console_link(
@@ -349,6 +361,7 @@ def load_server_data(
     s.name = server.name,
     s.publicNetworkAccess = server.publicNetworkAccess,
     s.vnetIntegrated = server.vnetIntegrated,
+    s.azureADOnlyAuthentication = server.azureADOnlyAuthentication,
     s.consolelink = coalesce(server.consolelink, s.consolelink),
     s.kind = server.kind,
     s.state = server.state,

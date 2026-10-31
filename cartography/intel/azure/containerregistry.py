@@ -48,6 +48,9 @@ def get_registry_list(
                 "sku_tier": registry.sku.tier if registry.sku else None,
                 "admin_user_enabled": registry.admin_user_enabled,
                 "public_network_access": registry.public_network_access,
+                # Premium-only firewall; None (Basic / Standard) means every network is allowed.
+                "network_rule_default_action": getattr(registry.network_rule_set, "default_action", None),
+                "anonymous_pull_enabled": getattr(registry, "anonymous_pull_enabled", None),
                 "zone_redundancy": registry.zone_redundancy,
                 "encryption_status": registry.encryption.status if registry.encryption else None,
                 "trust_policy_status": registry.policies.trust_policy.status
@@ -173,6 +176,8 @@ def _load_registries_tx(tx: neo4j.Transaction, subscription_id: str, data_list: 
         r.sku_tier = registry.sku_tier,
         r.admin_user_enabled = registry.admin_user_enabled,
         r.public_network_access = registry.public_network_access,
+        r.network_rule_default_action = registry.network_rule_default_action,
+        r.anonymous_pull_enabled = registry.anonymous_pull_enabled,
         r.zone_redundancy = registry.zone_redundancy,
         r.encryption_status = registry.encryption_status,
         r.trust_policy_status = registry.trust_policy_status,
