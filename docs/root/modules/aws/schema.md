@@ -39,6 +39,7 @@ Representation of an AWS Account.
                               EC2Reservation,
                               EC2ReservedInstance,
                               EC2SecurityGroup,
+                              EFSFileSystem,
                               ElasticIPAddress,
                               ESDomain,
                               LaunchConfiguration,
@@ -3431,4 +3432,34 @@ Representation of a resource AWS Backup has [successfully backed up](https://doc
 
         ```
         (AWSAccount)-[RESOURCE]->(AWSBackupProtectedResource)
+        ```
+
+### EFSFileSystem
+
+Representation of an [Amazon EFS file system](https://docs.aws.amazon.com/efs/latest/ug/API_FileSystemDescription.html). EFS is reachable only through mount targets inside a VPC, so it carries no internet exposure.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the file system |
+| arn | The ARN of the file system |
+| file\_system\_id | The file system ID |
+| name | The value of the Name tag |
+| creation\_time | When the file system was created (ISO-8601) |
+| encrypted | Whether the file system is encrypted at rest |
+| kms\_key\_id | The ARN of the KMS key that encrypts it |
+| life\_cycle\_state | The lifecycle state, such as available |
+| number\_of\_mount\_targets | The number of mount targets |
+| performance\_mode | generalPurpose or maxIO |
+| throughput\_mode | bursting, provisioned or elastic |
+| consolelink | Link to the file system in the AWS console |
+| region | The region of the file system |
+
+#### Relationships
+
+- EFSFileSystem is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(EFSFileSystem)
         ```

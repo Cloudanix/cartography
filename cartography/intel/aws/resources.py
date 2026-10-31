@@ -12,6 +12,7 @@ from . import config
 from . import dynamodb
 from . import ecr
 from . import ecs
+from . import efs
 from . import eks
 from . import elasticache
 from . import elasticsearch
@@ -111,6 +112,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'config': config.sync,
     'securityhub': securityhub.sync,
     'backup': backup.sync,
+    'efs': efs.sync,
     'permission_relationships': permission_relationships.sync,
     'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
 }
