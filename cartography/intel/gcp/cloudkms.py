@@ -11,6 +11,7 @@ from googleapiclient.discovery import Resource
 
 from . import iam
 from . import label
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -196,6 +197,57 @@ def attach_keyring_to_bindings_tx(
         KeyringId=keyring_id,
         gcp_update_tag=gcp_update_tag,
     )
+
+
+@timeit
+def get_crypto_key_policy_bindings(kms: Resource, crypto_key: Dict, project_id: str) -> List[Dict]:
+    """
+    Bindings of a crypto key's own IAM policy (keys are usually shared on the key, not the key ring).
+    One cryptoKeys.getIamPolicy call per key; [] when the caller may not read it.
+    """
+    try:
+        iam_policy = kms.projects().locations().keyRings().cryptoKeys().getIamPolicy(
+            resource=crypto_key['name'],
+        ).execute()
+        return iam_policy.get('bindings', [])
+    except HttpError as e:
+        err = json.loads(e.content.decode('utf-8'))['error']
+        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            logger.warning(
+                "Could not retrieve iam policy of crypto key %s on project %s due to permissions issues. Code: %s",
+                crypto_key['name'], project_id, err.get('code'),
+            )
+            return []
+        raise
+
+
+def transform_crypto_key_policy_bindings(bindings: List[Dict], crypto_key_id: str, project_id: str) -> List[Dict]:
+    for binding in bindings:
+        binding['id'] = f"projects/{project_id}/cryptokey/{crypto_key_id}/role/{binding['role']}"
+    return bindings
+
+
+@timeit
+def attach_crypto_key_to_bindings(
+    session: neo4j.Session, crypto_key_id: str, bindings: List[Dict], gcp_update_tag: int,
+) -> None:
+    query = """
+    UNWIND $Records as record
+    MERGE (binding:GCPBinding{id: record.id})
+    ON CREATE SET
+        binding.firstseen = timestamp()
+    SET
+        binding.lastupdated = $gcp_update_tag,
+        binding.members = record.members,
+        binding.role = record.role
+    WITH binding
+    MATCH (crypto_key:GCPKMSCryptoKey{id: $CryptoKeyId})
+    MERGE (crypto_key)-[a:ATTACHED_BINDING]->(binding)
+    ON CREATE SET
+        a.firstseen = timestamp()
+    SET a.lastupdated = $gcp_update_tag
+    """
+    run_write_query(session, query, Records=bindings, CryptoKeyId=crypto_key_id, gcp_update_tag=gcp_update_tag)
 
 
 @timeit
@@ -501,6 +553,10 @@ def sync(
     label.sync_labels(neo4j_session, key_rings, gcp_update_tag, common_job_parameters, 'keyrings', 'GCPKMSKeyRing')
     crypto_keys = get_kms_crypto_keys(kms, key_rings, project_id)
     load_kms_crypto_keys(neo4j_session, crypto_keys, project_id, gcp_update_tag)
+    for crypto_key in crypto_keys:
+        key_bindings = get_crypto_key_policy_bindings(kms, crypto_key, project_id)
+        key_bindings = transform_crypto_key_policy_bindings(key_bindings, crypto_key["id"], project_id)
+        attach_crypto_key_to_bindings(neo4j_session, crypto_key["id"], key_bindings, gcp_update_tag)
     label.sync_labels(
         neo4j_session, crypto_keys, gcp_update_tag, common_job_parameters,
         'crypto_keys', 'GCPKMSCryptoKey',
