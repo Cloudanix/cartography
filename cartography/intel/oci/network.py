@@ -12,11 +12,26 @@ import oci.logging
 
 from . import tags
 from . import utils
-from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
+
+INTERNET_CIDRS = ('0.0.0.0/0', '::/0')
+# ICMP / ICMPv6 protocol numbers. Every Default Security List admits ICMP type 3
+# (path MTU discovery) from 0.0.0.0/0; that reaches no service, so it is not exposure.
+ICMP_PROTOCOLS = ('1', '58')
+
+
+def is_internet_ingress_rule(rule: Dict[str, Any]) -> bool:
+    """
+    True when a security list ingress rule or NSG security rule admits non-ICMP
+    traffic from any internet address. Ports are not considered: any open port counts.
+    """
+    if rule.get("direction", "INGRESS") != "INGRESS":
+        return False
+    return rule.get("source") in INTERNET_CIDRS and rule.get("protocol") not in ICMP_PROTOCOLS
 
 
 # ============================================================
@@ -271,6 +286,7 @@ def load_security_lists(
         s.lifecycle_state = sl.lifecycle_state,
         s.ingress_security_rules = sl.ingress_rules,
         s.egress_security_rules = sl.egress_rules,
+        s.allows_internet_ingress = sl.allows_internet_ingress,
         s.region = $REGION,
         s.consolelink = sl.consolelink,
         s.lastupdated = $oci_update_tag
@@ -293,6 +309,8 @@ def load_security_lists(
             "lifecycle_state": sl.get("lifecycle-state"),
             "ingress_rules": json.dumps(ingress_rules) if ingress_rules else "[]",
             "egress_rules": json.dumps(egress_rules) if egress_rules else "[]",
+            # Structured flag for the exposure jobs, which cannot parse the JSON rules.
+            "allows_internet_ingress": any(is_internet_ingress_rule(rule) for rule in ingress_rules or []),
             "time_created": str(sl.get("time-created", "")),
             "consolelink": utils.get_console_link("security_list", region=region, ocid=sl.get("id")),
         })
@@ -477,6 +495,7 @@ def load_nsg_security_rules(
         rl.udp_dest_port_max = rule.udp_dest_port_max,
         rl.icmp_type = rule.icmp_type,
         rl.icmp_code = rule.icmp_code,
+        rl.is_internet_ingress = rule.is_internet_ingress,
         rl.lastupdated = $oci_update_tag
         WITH rl
         MATCH (nsg:OCINetworkSecurityGroup{id: $NSG_ID})
@@ -518,6 +537,7 @@ def load_nsg_security_rules(
             "udp_dest_port_max": udp_dest_range.get("max"),
             "icmp_type": icmp_options.get("type"),
             "icmp_code": icmp_options.get("code"),
+            "is_internet_ingress": is_internet_ingress_rule(rule),
         })
 
     load_graph_data(

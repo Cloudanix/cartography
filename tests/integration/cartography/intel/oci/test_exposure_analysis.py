@@ -1,0 +1,166 @@
+# Copyright (c) 2020, Oracle and/or its affiliates.
+# Runs the real OCI exposure analysis jobs against network data loaded by the real loaders.
+from cartography.intel.oci import network
+from cartography.util import run_analysis_job
+
+WORKSPACE_ID = 'ws-oci-exposure'
+TENANCY_ID = 'ocid1.tenancy.oc1..exposure'
+COMPARTMENT_ID = 'ocid1.compartment.oc1..exposure'
+OTHER_WORKSPACE_ID = 'ws-oci-other'
+OTHER_TENANCY_ID = 'ocid1.tenancy.oc1..other'
+OTHER_COMPARTMENT_ID = 'ocid1.compartment.oc1..other'
+REGION = 'us-phoenix-1'
+UPDATE_TAG = 123456789
+JOB_PARAMETERS = {
+    'UPDATE_TAG': UPDATE_TAG,
+    'WORKSPACE_ID': WORKSPACE_ID,
+    'OCI_TENANCY_ID': TENANCY_ID,
+    'OCI_COMPARTMENT_ID': COMPARTMENT_ID,
+    'LIMIT_SIZE': 100,
+}
+
+# Rules of the security list OCI creates with every VCN (Default Security List).
+OPEN_SSH = {
+    'protocol': '6', 'source': '0.0.0.0/0', 'source-type': 'CIDR_BLOCK',
+    'tcp-options': {'destination-port-range': {'min': 22, 'max': 22}},
+}
+PATH_MTU_FROM_ANYWHERE = {
+    'protocol': '1', 'source': '0.0.0.0/0', 'source-type': 'CIDR_BLOCK', 'icmp-options': {'type': 3, 'code': 4},
+}
+ICMP_FROM_VCN = {'protocol': '1', 'source': '10.0.0.0/16', 'source-type': 'CIDR_BLOCK', 'icmp-options': {'type': 3}}
+DEFAULT_SECURITY_LIST_RULES = [OPEN_SSH, PATH_MTU_FROM_ANYWHERE, ICMP_FROM_VCN]
+HTTPS_FROM_VCN = {'protocol': '6', 'source': '10.0.0.0/16', 'source-type': 'CIDR_BLOCK'}
+ALL_FROM_ANYWHERE_V6 = {'protocol': 'all', 'source': '::/0', 'source-type': 'CIDR_BLOCK'}
+
+
+def _seed_tenancy(neo4j_session, workspace_id, tenancy_id, compartment_id):
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(t:OCITenancy{id: $tenancy_id})
+        MERGE (t)-[:OWNER]->(:OCICompartment{id: $compartment_id})
+        """,
+        workspace_id=workspace_id, tenancy_id=tenancy_id, compartment_id=compartment_id,
+    )
+
+
+def _load_vcn(neo4j_session, vcn_id, compartment_id=COMPARTMENT_ID, security_lists=(), nsgs=None):
+    """
+    Load a VCN with its security lists ({id: ingress rules}) and NSGs ({id: rules}) via the real loaders.
+    """
+    args = (TENANCY_ID, compartment_id, REGION, UPDATE_TAG)
+    network.load_vcns(neo4j_session, [{'id': vcn_id, 'compartment-id': compartment_id}], *args)
+    network.load_security_lists(
+        neo4j_session,
+        [{'id': sl_id, 'vcn-id': vcn_id, 'ingress-security-rules': rules} for sl_id, rules in security_lists],
+        *args,
+    )
+    for nsg_id, rules in (nsgs or {}).items():
+        network.load_network_security_groups(neo4j_session, [{'id': nsg_id, 'vcn-id': vcn_id}], *args)
+        network.load_nsg_security_rules(
+            neo4j_session,
+            [{'id': f'{nsg_id}.rule{i}', 'direction': 'INGRESS', **rule} for i, rule in enumerate(rules)],
+            nsg_id, UPDATE_TAG,
+        )
+
+
+def _load_subnet(neo4j_session, subnet_id, vcn_id, security_list_ids, compartment_id=COMPARTMENT_ID):
+    network.load_subnets(
+        neo4j_session,
+        [{
+            'id': subnet_id, 'vcn-id': vcn_id, 'security-list-ids': security_list_ids,
+            'prohibit-public-ip-on-vnic': False,
+        }],
+        TENANCY_ID, compartment_id, REGION, UPDATE_TAG,
+    )
+
+
+def _load_instance(neo4j_session, instance_id, subnet_id, public_ip, nsg_ids=(), compartment_id=COMPARTMENT_ID):
+    vnic_id = f'{instance_id}.vnic'
+    neo4j_session.run(
+        """
+        MATCH (c:OCICompartment{id: $compartment_id})
+        MERGE (c)-[:RESOURCE]->(i:OCIInstance{id: $instance_id})
+        SET i.ocid = $instance_id
+        MERGE (i)-[:OCI_VNIC_ATTACHMENT]->(:OCIVnicAttachment{id: $vnic_id + '.att', vnic_id: $vnic_id})
+        """,
+        compartment_id=compartment_id, instance_id=instance_id, vnic_id=vnic_id,
+    )
+    network.load_vnics(
+        neo4j_session,
+        [{'id': vnic_id, 'subnet-id': subnet_id, 'public-ip': public_ip, 'nsg-ids': list(nsg_ids)}],
+        REGION, UPDATE_TAG,
+    )
+
+
+def _exposed(neo4j_session, label, id_prefix):
+    # Tests share the module's graph; each owns the nodes whose id starts with its prefix.
+    rows = neo4j_session.run(
+        f"""
+        MATCH (n:{label}) WHERE n.id STARTS WITH $id_prefix AND n.exposed_internet = true
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        id_prefix=id_prefix,
+    )
+    return {r['id']: sorted(r['types']) for r in rows}
+
+
+def test_instance_exposure_needs_public_ip_and_own_open_rules(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _load_vcn(
+        neo4j_session, 'inst-vcn',
+        security_lists=[
+            ('inst-sl-default', DEFAULT_SECURITY_LIST_RULES),
+            ('inst-sl-closed', [HTTPS_FROM_VCN, PATH_MTU_FROM_ANYWHERE]),
+            ('inst-sl-v6', [ALL_FROM_ANYWHERE_V6]),
+        ],
+        nsgs={
+            'inst-nsg-open': [OPEN_SSH],
+            'inst-nsg-closed': [HTTPS_FROM_VCN, PATH_MTU_FROM_ANYWHERE],
+        },
+    )
+    _load_subnet(neo4j_session, 'inst-subnet-default', 'inst-vcn', ['inst-sl-default'])
+    _load_subnet(neo4j_session, 'inst-subnet-closed', 'inst-vcn', ['inst-sl-closed'])
+    _load_subnet(neo4j_session, 'inst-subnet-v6', 'inst-vcn', ['inst-sl-v6'])
+    # Lists a security list that is not in the graph (another compartment, not synced yet).
+    _load_subnet(neo4j_session, 'inst-subnet-unknown-sl', 'inst-vcn', ['inst-sl-not-synced'])
+
+    # Default Security List opens SSH to the world, but without a public IP nothing reaches the VM.
+    _load_instance(neo4j_session, 'inst-private-default-sl', 'inst-subnet-default', None)
+    _load_instance(neo4j_session, 'inst-public-default-sl', 'inst-subnet-default', '203.0.113.1')
+    # Public IP but the subnet's own list only admits the VCN (and path-MTU ICMP). The VCN's
+    # open Default Security List and open NSG are not attached to this VM.
+    _load_instance(neo4j_session, 'inst-public-closed-sl', 'inst-subnet-closed', '203.0.113.2')
+    _load_instance(
+        neo4j_session, 'inst-public-closed-nsg', 'inst-subnet-closed', '203.0.113.3', nsg_ids=['inst-nsg-closed'],
+    )
+    _load_instance(
+        neo4j_session, 'inst-public-open-nsg', 'inst-subnet-closed', '203.0.113.4', nsg_ids=['inst-nsg-open'],
+    )
+    _load_instance(neo4j_session, 'inst-public-v6', 'inst-subnet-v6', '203.0.113.5')
+    # Rules we cannot see stay public, as before this change.
+    _load_instance(neo4j_session, 'inst-public-unknown-sl', 'inst-subnet-unknown-sl', '203.0.113.6')
+    _load_instance(neo4j_session, 'inst-public-unknown-subnet', 'inst-subnet-not-synced', '203.0.113.7')
+    _load_instance(
+        neo4j_session, 'inst-public-unknown-nsg', 'inst-subnet-closed', '203.0.113.8', nsg_ids=['inst-nsg-not-synced'],
+    )
+    # Another workspace's open VM is out of this run's scope.
+    _seed_tenancy(neo4j_session, OTHER_WORKSPACE_ID, OTHER_TENANCY_ID, OTHER_COMPARTMENT_ID)
+    _load_instance(
+        neo4j_session, 'inst-other-workspace', 'inst-subnet-default', '203.0.113.9',
+        compartment_id=OTHER_COMPARTMENT_ID,
+    )
+
+    run_analysis_job('oci_instance_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIInstance', 'inst-') == {
+        'inst-public-default-sl': ['unrestricted_securitylist_ingress'],
+        'inst-public-open-nsg': ['unrestricted_nsg_ingress'],
+        'inst-public-v6': ['unrestricted_securitylist_ingress'],
+        'inst-public-unknown-sl': ['public_ip_unresolved_rules'],
+        'inst-public-unknown-subnet': ['public_ip_unresolved_rules'],
+        'inst-public-unknown-nsg': ['public_ip_unresolved_rules'],
+    }
+    context = neo4j_session.run(
+        "MATCH (i:OCIInstance{id: 'inst-public-open-nsg'}) RETURN i.publicContext AS c",
+    ).single()['c']
+    assert 'inst-nsg-open.rule0' in context and '203.0.113.4' in context
