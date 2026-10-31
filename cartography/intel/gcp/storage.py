@@ -17,9 +17,22 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
+# IAM members and ACL entities that mean "anyone on the internet" (with or without a Google account).
+PUBLIC_MEMBERS = ("allUsers", "allAuthenticatedUsers")
+
+
+def _list_buckets(storage: Resource, project_id: str, projection: str) -> List[Dict]:
+    buckets_list: List[Dict] = []
+    req = storage.buckets().list(project=project_id, projection=projection)
+    while req is not None:
+        res = req.execute()
+        buckets_list.extend(res.get('items', []))
+        req = storage.buckets().list_next(previous_request=req, previous_response=res)
+    return buckets_list
+
 
 @timeit
-def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -> Dict:
+def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters: Dict) -> List[Dict]:
     """
     Returns a list of storage objects within some given project
 
@@ -33,36 +46,42 @@ def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -
     :return: Storage response object
     """
     try:
-        buckets_list = []
-        req = storage.buckets().list(project=project_id)
-        while req is not None:
-            res = req.execute()
-            if res.get('items', []):
-                buckets_list.extend(res.get('items', []))
-            req = storage.buckets().list_next(previous_request=req, previous_response=res)
-
-        return buckets_list
+        # projection=full adds the legacy ACLs (acl, defaultObjectAcl), which the exposure job reads.
+        return _list_buckets(storage, project_id, 'full')
     except HttpError as e:
-        reason = compute._get_error_reason(e)
-        if reason == 'invalid':
-            logger.warning(
-                (
-                    "The project %s is invalid - returned a 400 invalid error."
-                    "Full details: %s"
-                ),
-                project_id,
-                e,
-            )
-            return buckets_list
-        elif reason == 'forbidden':
-            logger.warning(
-                (
-                    "You do not have storage.bucket.list access to the project %s. "
-                    "Full details: %s"
-                ), project_id, e, )
-            return buckets_list
-        else:
-            raise
+        if compute._get_error_reason(e) != 'forbidden':
+            return _handle_bucket_list_error(e, project_id)
+        logger.warning(
+            "Listing buckets with ACLs (projection=full) was denied on project %s; listing without ACLs. %s",
+            project_id, e,
+        )
+    try:
+        return _list_buckets(storage, project_id, 'noAcl')
+    except HttpError as e:
+        return _handle_bucket_list_error(e, project_id)
+
+
+def _handle_bucket_list_error(e: HttpError, project_id: str) -> List[Dict]:
+    reason = compute._get_error_reason(e)
+    if reason == 'invalid':
+        logger.warning(
+            (
+                "The project %s is invalid - returned a 400 invalid error."
+                "Full details: %s"
+            ),
+            project_id,
+            e,
+        )
+        return []
+    elif reason == 'forbidden':
+        logger.warning(
+            (
+                "You do not have storage.bucket.list access to the project %s. "
+                "Full details: %s"
+            ), project_id, e, )
+        return []
+    else:
+        raise e
 
 
 @timeit
@@ -107,6 +126,12 @@ def transform_gcp_buckets(bucket_res: List[Dict], project_id: str, regions: list
         bucket['uniform_bucket_level_access'] = b.get('iamConfiguration', {}).get(
             'uniformBucketLevelAccess', {},
         ).get('enabled', None)
+        bucket['public_access_prevention'] = b.get('iamConfiguration', {}).get('publicAccessPrevention')
+        # Legacy ACL grants to everyone (only present with projection=full, and only when uniform access is off).
+        bucket['public_acl_entities'] = sorted({
+            entry.get('entity') for entry in b.get('acl', []) + b.get('defaultObjectAcl', [])
+            if entry.get('entity') in PUBLIC_MEMBERS
+        })
         bucket['versioning_enabled'] = b.get('versioning', {}).get('enabled', None)
         bucket['default_event_based_hold'] = b.get('defaultEventBasedHold', None)
         bucket['retention_period'] = b.get('retentionPolicy', {}).get('retentionPeriod', None)
@@ -163,6 +188,8 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
     bucket.entity = $Entity,
     bucket.defaultentity = $DefaultEntity,
     bucket.uniform_bucket_level_access = $UniformBucketLevelAccess,
+    bucket.public_access_prevention = $PublicAccessPrevention,
+    bucket.public_acl_entities = $PublicAclEntities,
     bucket.retention_period = $RetentionPeriod,
     bucket.iam_config_bucket_policy_only = $IamConfigBucketPolicyOnly,
     bucket.owner_entity = $OwnerEntity,
@@ -196,6 +223,8 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
             Entity=bucket['entity'],
             DefaultEntity=bucket['defaultentity'],
             UniformBucketLevelAccess=bucket['uniform_bucket_level_access'],
+            PublicAccessPrevention=bucket['public_access_prevention'],
+            PublicAclEntities=bucket['public_acl_entities'],
             RetentionPeriod=bucket['retention_period'],
             IamConfigBucketPolicyOnly=bucket['iam_config_bucket_policy_only'],
             OwnerEntity=bucket['owner_entity'],
