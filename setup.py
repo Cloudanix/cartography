@@ -68,6 +68,7 @@ setup(
         "azure-mgmt-authorization==0.50.0",
         "azure-mgmt-resource>=10.2.0",
         "azure-mgmt-network>=2.7.0",
+        "azure-mgmt-redis~=14.5.0",
         "azure-mgmt-web>=0.35.0",
         "msgraph-sdk>=1.62.0,<2.0.0",
         "kubernetes>=36.0.0,<37.0.0",
