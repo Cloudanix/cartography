@@ -55,6 +55,7 @@ from .ec2.tgw import sync_transit_gateways
 from .ec2.volumes import sync_ebs_volumes
 from .ec2.vpc import sync_vpc
 from .ec2.vpc_peerings import sync_vpc_peerings
+from cartography.intel.exposure.step import EXPOSURE_LAYERS_SYNC
 
 RESOURCE_FUNCTIONS: Dict = {
     'identitystore': identitystore.sync,
@@ -121,7 +122,7 @@ def parse_and_validate_aws_requested_syncs(aws_requested_syncs: str) -> List[str
     for resource in aws_requested_syncs.split(","):
         resource = resource.strip()
 
-        if resource in RESOURCE_FUNCTIONS:
+        if resource in RESOURCE_FUNCTIONS or resource == EXPOSURE_LAYERS_SYNC:
             validated_resources.append(resource)
         else:
             valid_syncs: str = ", ".join(RESOURCE_FUNCTIONS.keys())

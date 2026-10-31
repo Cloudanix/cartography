@@ -28,6 +28,7 @@ from . import tags
 from . import utils
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
+from cartography.intel.exposure import step as exposure_step
 from cartography.intel.oci.util.common import parse_and_validate_oci_requested_syncs
 from cartography.util import run_analysis_job_logged as run_analysis_job
 # from cartography.util import run_cleanup_job
@@ -120,7 +121,7 @@ def _sync_one_compartment(
 
     # Run remaining resource syncs (skip IAM since it's already handled above)
     for func_name in requested_syncs:
-        if func_name == "iam":
+        if func_name in ("iam", exposure_step.EXPOSURE_LAYERS_SYNC):
             continue
         if func_name in RESOURCE_FUNCTIONS:
             logger.info("Syncing OCI %s for compartment '%s'.", func_name, compartment_id)
@@ -163,11 +164,10 @@ def _sync_one_compartment(
     for job_file in OCI_ANALYSIS_JOBS:
         run_analysis_job(job_file, neo4j_session, common_job_parameters)
 
-    # Reads what the syncs and jobs above wrote; a failure must not fail the compartment sync.
-    try:
-        exposure_layers.run(neo4j_session, common_job_parameters)
-    except Exception as e:
-        logger.warning("Exposure layers failed for compartment '%s': %s", compartment_id, e, exc_info=True)
+    # Reads what the syncs and jobs above wrote; runs only when requested (see exposure/step.py).
+    exposure_step.run_if_requested(
+        exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
+    )
 
     logger.info(
         json.dumps({

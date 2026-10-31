@@ -28,6 +28,7 @@ from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
 from cartography.graph.session import Session
+from cartography.intel.exposure import step as exposure_step
 from cartography.intel.gcp import crm
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
@@ -1096,13 +1097,10 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
         common_job_parameters,
     )
 
-    # Reads what the sync and the jobs above wrote; a failure must not fail the project sync.
-    try:
-        exposure_layers.run(neo4j_session, common_job_parameters)
-    except Exception as e:
-        logger.warning(
-            f"exposure layers failed for project {common_job_parameters.get('GCP_PROJECT_ID')} - {e}", exc_info=True,
-        )
+    # Reads what the sync and the jobs above wrote; runs only when requested (see exposure/step.py).
+    exposure_step.run_if_requested(
+        exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
+    )
 
     del common_job_parameters["service_labels"]
     return common_job_parameters

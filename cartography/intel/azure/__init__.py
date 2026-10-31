@@ -24,6 +24,7 @@ from .util.timing import ServiceTimingContext
 from cartography.config import Config
 from cartography.graph.session import Session
 from cartography.intel.azure.util.common import parse_and_validate_azure_requested_syncs
+from cartography.intel.exposure import step as exposure_step
 from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import timeit
 
@@ -321,11 +322,10 @@ def _sync_multiple_subscriptions(
             elapsed = round(time.time() - t0, 2)
             analysis_timings[job_file] = elapsed
 
-        # Reads what the jobs above and every sync wrote; a failure must not fail the subscription sync.
-        try:
-            exposure_layers.run(neo4j_session, common_job_parameters)
-        except Exception as e:
-            logger.warning(f"exposure layers failed for subscription {sub['subscriptionId']} - {e}", exc_info=True)
+        # Reads what the jobs above and every sync wrote; runs only when requested (see exposure/step.py).
+        exposure_step.run_if_requested(
+            exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
+        )
 
         logger.info(
             json.dumps({

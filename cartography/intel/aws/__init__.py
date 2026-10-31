@@ -28,6 +28,7 @@ from cartography.intel.aws.ec2.instances import sync_eks_node_links
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.util.arns import get_partition
 from cartography.intel.aws.util.arns import PARTITION_PARAM
+from cartography.intel.exposure import step as exposure_step
 from cartography.stats import get_stats_client
 from cartography.util import is_aws_access_denied
 from cartography.util import merge_module_sync_metadata
@@ -253,7 +254,8 @@ def _sync_one_account(
         ]
         try:
             with ThreadPoolExecutor(
-                max_workers=min(8, len(parallel_services)),
+                # max(1, ...): an exposure_layers-only subrun has no services, and 0 workers raises.
+                max_workers=max(1, min(8, len(parallel_services))),
             ) as executor:
                 futures: Dict = {}
 
@@ -450,11 +452,10 @@ def _sync_one_account(
         common_job_parameters,
     )
 
-    # Reads what the jobs above and every sync wrote; a failure must not fail the account sync.
-    try:
-        exposure_layers.run(neo4j_session, common_job_parameters)
-    except Exception as e:
-        logger.warning(f"exposure layers failed for account {current_aws_account_id} - {e}", exc_info=True)
+    # Reads what the jobs above and every sync wrote; runs only when requested (see exposure/step.py).
+    exposure_step.run_if_requested(
+        exposure_layers.run, neo4j_session, common_job_parameters, aws_requested_syncs, RESOURCE_FUNCTIONS.keys(),
+    )
 
     run_analysis_job(
         "aws_iam_user_analysis.json",

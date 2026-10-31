@@ -1,4 +1,8 @@
+import json
+
+from cartography.intel.exposure.layers import hop
 from cartography.intel.exposure.layers import Reach
+from cartography.intel.exposure.layers import reach_summaries
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import protocols_for
 from cartography.intel.exposure.rules import allow_only_open
@@ -8,6 +12,9 @@ from cartography.intel.exposure.rules import is_world
 from cartography.intel.exposure.rules import tiered_open
 from cartography.intel.exposure.rules import with_stateless_return
 from cartography.intel.exposure.software import os_from_image_name
+from cartography.intel.exposure.step import is_requested
+from cartography.intel.exposure.step import run_if_requested
+from cartography.util import collect_failed_analysis_jobs
 
 
 def ps(*values):
@@ -124,6 +131,72 @@ def test_reach_accumulates_paths():
     assert props["internet_reachable_ports"] == ["tcp:22-22", "tcp:443-443"]
     assert props["internet_reachable_via"] == ["direct", "elbv2:arn"]
     assert Reach().props()["internet_reachable"] is False
+
+
+def test_reach_keeps_ports_and_hops_per_path():
+    r = Reach(public_reasons={"public_ip"})
+    r.add_path(ps("tcp:22-22"), "direct_ipv4", [hop("security_group", "sg-1")], {"type": "public_ip", "id": "1.2.3.4"})
+    r.add_path(ps("tcp:8080-8080"), "elbv2:arn", [hop("listener", "l-1", "HTTPS 443")])
+    r.add_path(ps("tcp:23-23"), "direct_ipv4", [hop("security_group", "sg-1"), hop("nacl", "acl-1")])
+    r.block("route", "rtb-9", "no_internet_route")
+    props = r.props()
+    paths = json.loads(props["exposure_paths"])
+    assert [p["via"] for p in paths] == ["direct_ipv4", "elbv2:arn"]
+    assert paths[0]["ports"] == ["tcp:22-23"]
+    assert paths[0]["hops"] == [{"hop": "security_group", "id": "sg-1"}, {"hop": "nacl", "id": "acl-1"}]
+    assert paths[0]["entry"] == {"type": "public_ip", "id": "1.2.3.4"}
+    assert paths[1]["hops"] == [{"hop": "listener", "id": "l-1", "rule": "HTTPS 443"}]
+    # Reachable: blockers seen on other subnets are not reported.
+    assert json.loads(props["exposure_blocked_by"]) == []
+
+
+def test_reach_blocked_by_only_for_public_unreachable():
+    r = Reach(public_reasons={"publicly_accessible"})
+    r.block("route", "rtb-9", "no_internet_route", detail="no 0.0.0.0/0 route")
+    r.block("route", "rtb-9", "no_internet_route", detail="no 0.0.0.0/0 route")
+    r.block("nacl", "acl-1", "denied", ports=ps("tcp:0-65535"))
+    assert json.loads(r.props()["exposure_blocked_by"]) == [
+        {"hop": "route", "id": "rtb-9", "reason": "no_internet_route", "detail": "no 0.0.0.0/0 route"},
+        {"hop": "nacl", "id": "acl-1", "reason": "denied", "ports": ["tcp:0-65535"]},
+    ]
+    private = Reach()
+    private.block("route", "rtb-9", "no_internet_route")
+    assert json.loads(private.props()["exposure_blocked_by"]) == []
+    assert json.loads(Reach().props()["exposure_paths"]) == []
+
+
+def test_reach_summaries_rewrite_every_source():
+    edges = [
+        {"src": "i-1", "dst": "db-2", "dst_type": "RDSInstance", "ports": ["tcp:5432-5432"], "via": "cidr"},
+        {
+            "src": "i-1", "dst": "c-1", "dst_type": "ElasticacheCluster", "ports": ["tcp:6379-6379"],
+            "via": "tgw:tgw-1", "admitted_by": "sg-9",
+        },
+    ]
+    rows = {r["id"]: r["props"] for r in reach_summaries(["i-1", "i-2"], edges)}
+    assert rows["i-2"] == {"network_reachable_data_stores": "[]", "network_reachable_data_store_count": 0}
+    stores = json.loads(rows["i-1"]["network_reachable_data_stores"])
+    assert [s["type"] for s in stores] == ["ElasticacheCluster", "RDSInstance"]
+    assert stores[0]["admitted_by"] == "sg-9" and "admitted_by" not in stores[1]
+    assert rows["i-1"]["network_reachable_data_store_count"] == 2
+
+
+def test_exposure_step_runs_only_when_requested():
+    all_syncs = ["ec2:instance", "rds"]
+    assert is_requested(None, all_syncs) and is_requested([], all_syncs)
+    assert is_requested(["exposure_layers"], all_syncs)
+    assert is_requested(["rds", "ec2:instance"], all_syncs)
+    assert not is_requested(["rds"], all_syncs)
+
+
+def test_exposure_step_failure_is_reported_not_raised():
+    def boom(_session, _params):
+        raise RuntimeError("bug")
+
+    with collect_failed_analysis_jobs() as failed:
+        run_if_requested(boom, None, {"AWS_ID": "123", "UPDATE_TAG": 1}, ["exposure_layers"], ["rds"])
+        run_if_requested(boom, None, {"AWS_ID": "123"}, ["rds"], ["rds", "s3"])  # not requested: not run
+    assert failed == [{"job": "exposure_layers", "scope": {"AWS_ID": "123"}}]
 
 
 def test_os_from_image_name():
