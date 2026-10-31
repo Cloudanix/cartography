@@ -259,6 +259,12 @@ Each must have an integration test per cloud where the construct exists.
 
 ## 9. Open questions
 
+Answered for questions 1, 2, 3 and 5 in `docs/console-exploitability-changes.md` section 2: no
+product matcher exists (scanners report CVE ids; managed services need a new CPE map), transport is
+ELT through the inventory-sync-aws field allowlist (edge properties dropped today), the console
+scores on `d_assets.public_facing`, and storage is two-state. Remaining decisions: that doc,
+section 4.
+
 1. **Identity vocabulary for L4.** What does cloudanix-web's CVE matcher key on: CPE, purl, or its
    own product names? Cartography must emit exactly that. Needs a look at cloudanix-web.
 2. **Transport to cloudanix-web.** Does web read these properties from neo4j directly or from the
@@ -328,10 +334,31 @@ Rollout:
 - `get_resources(embed=methods)` and `describe_cache_clusters(ShowCacheNodeInfo=True)` add data
   to existing calls, no new requests.
 
+ALB authentication (L3): the ELBv2 sync calls `describe_rules` per HTTP(S) listener of an
+application LB and stores `all_paths_authenticated` / `auth_action_types` on `ELBV2Listener`. A path
+is authenticated when its first action (by `Order`) is `authenticate-oidc`, `authenticate-cognito`
+or `jwt-validation`; `redirect` / `fixed-response` paths never reach a target and do not count. An
+LB whose every listener is fully authenticated gets `access_auth=required` (`alb_authenticate_*`),
+and so does an EC2Instance whose only `internet_reachable_via` entries are such LBs. A failed
+`describe_rules` leaves the facts null (unknown, never authenticated).
+
+Cross-VPC reach (L5): `CAN_NETWORK_REACH` crosses VPCs via an active peering (`peering:<pcx>`) or a
+TGW with available attachments in both VPCs (`tgw:<id>`), when the instance subnet routes the store's
+subnet (or VPC) CIDR to that gateway and the store side routes the instance IP back. The store SG
+must admit the instance by CIDR, or by SG reference across same-region peering only. `EC2Route` now
+carries `vpc_peering_connection_id` / `transit_gateway_id` (same `describe_route_tables` call).
+
+Rollout (follow-up): one new call, `elasticloadbalancing:DescribeRules` (under
+`elasticloadbalancing:Describe*`). Cross-VPC edges need sync keys `ec2:vpc_peering`, `ec2:tgw`,
+`ec2:route_table` (already in the customer list) and appear after the next route table sync.
+
 Known ceilings (each marked `ponytail:` in code): multi-ENI instances are unioned; LB target
-admission accepts any source, not only the LB; ALB auth actions, Redis RBAC, classic-ELB targets,
-peered-VPC and TGW reach are not evaluated; Redshift / EMR subnets are not ingested, so route and
-NACL checks are skipped for them (SG verdict kept).
+admission accepts any source, not only the LB; LB auth requires every listener to authenticate,
+even unreachable ones; Redis RBAC and classic-ELB targets are not evaluated; Redshift / EMR subnets
+are not ingested, so route and NACL checks are skipped for them (SG verdict kept). L5: IPv4 only;
+NACLs between subnets and longest-prefix route match not evaluated; TGW route tables not ingested
+(default association / propagation assumed); TGW SG referencing not modeled; both ends in the same
+account; stores without ingested subnets use their whole VPC's routes and CIDRs (upper bound).
 
 ### 10.3 OCI (done)
 
@@ -353,7 +380,15 @@ Stateless ingress needs an egress rule covering ephemeral reply ports.
 Rollout: policy verb `read api-deployments` (or `inspect` + `read`) in the tenancy policy. If
 denied, gateway auth stays `unknown`, never "no deployments".
 
-Ceilings: IPv4 only; unresolved route table does not block (via `route_table_unresolved`);
+IPv6 (VNICs): a VNIC with a global IPv6 address (`OCIVnic.ipv6_addresses`, from the GetVnic response
+already fetched, no new call or policy verb) is evaluated per family: `::/0` route to an enabled
+IGW, `::/0` security list / NSG rule on the port, stateless rules needing `::/0` return egress.
+Families never mix. `prohibit_public_ip_on_vnic` (set from `prohibitInternetIngress`) blocks IPv6
+too. Reported as `public_ipv6` / via `direct_ipv6`.
+
+Ceilings: LB, NLB, OKE and API Gateway endpoints IPv4 only (their IPv6 addresses not ingested); a
+global-looking prefix declared private (`Vcn.ipv6_private_cidr_blocks`) counts as global; unresolved
+route table does not block (via `route_table_unresolved`);
 LB -> backend hop accepts any source and skips its stateless return check; API Gateway multi-auth
 treated as authenticated; L5 same VCN only; dynamic groups, WAF, Network Firewall not ingested.
 
@@ -372,12 +407,28 @@ Firewall: first match by priority, deny wins a tie, implied deny last; targets m
 Proxy LBs need the Google front-end ranges (130.211.0.0/22, 35.191.0.0/16) admitted on the backend's
 named port; passthrough LBs and target pools need world rules.
 
-Rollout: `compute.routes.list` (in `roles/viewer`). Until routes are ingested a missing route does
+Rollout: `compute.routes.list` (in `roles/viewer`, `roles/compute.viewer`,
+`roles/compute.networkViewer`; verified in Google's role reference). Until routes are ingested a missing route does
 not block. Instances whose network firewalls are not visible (Shared VPC host outside the
 workspace) are marked reachable on every port with via `direct_ipv4_unresolved_firewall`, matching
 the legacy job's fail-safe.
 
-Ceilings: hierarchical / network firewall policies (largest gap); only `/0` routes compared;
+Firewall policies: hierarchical (org, then folders) and global network firewall policies are ingested
+per VPC with one `networks.getEffectiveFirewalls` call per network (`GCPVpc -[:RESOURCE]->
+GCPFirewallPolicyRule`; `GCPVpc.network_firewall_policy_enforcement_order` from `networks.list`). L2
+and L5 follow Cloud NGFW order: org policy, folder policies, then VPC rules and the network policy in
+the network's enforcement order (default AFTER_CLASSIC_FIREWALL), then implied deny; allow / deny end
+evaluation, `goto_next` or no match falls to the next level (core `rules.tiered_open`). GFE /
+health-check traffic is non-internet context. Policies only narrow L5 edges, never add them.
+Rollout: `compute.networks.getEffectiveFirewalls` (in `roles/viewer`, `roles/compute.viewer`,
+`roles/compute.networkViewer`; not in `roles/iam.securityReviewer`). A refused or failed call leaves
+the network on VPC rules only, never "unreachable". Not yet tested with a project-only credential
+against a real org (docs imply inherited policies are returned).
+
+Ceilings: regional network firewall policies (need a per-region, per-network call); secure tag
+bindings not ingested (tag-targeted allow / goto_next applies, deny does not); domain, geolocation,
+threat-list and address-group sources never count as the whole internet; `apply_security_profile_group`
+counted as allow; hierarchy order taken from response order; only `/0` routes compared;
 unmanaged instance group members; regional external Application LBs (proxy-only subnet source) read
 as unreachable; multi-NIC unioned; L5 skips CIDR-sourced internal rules (`default-allow-internal`
 would link every pair).
@@ -389,7 +440,7 @@ Runs in `_sync_multiple_subscriptions` after the `azure_*_asset_exposure` jobs, 
 | Layer | Labels |
 |---|---|
 | L1/L2 | AzureNetworkInterface, AzureVirtualMachine, AzureVirtualMachineScaleSet, AzureNetworkLoadBalancer, AzureStorageAccount, AzureStorageBlobContainer, AzureSQLServer, AzureSQLDatabase, AzureCosmosDBAccount, AzureKeyVault, AzureFunctionApp, AzureCluster (AKS), AzureContainerRegistry |
-| L3 | anonymous blob container, ACR anonymous pull = none; storage, SQL (`entra_id_only` / credentials), Cosmos, Key Vault, AKS = required; Function App (Easy Auth not ingested), VM, VMSS, NIC, LB = unknown |
+| L3 | anonymous blob container, ACR anonymous pull = none; storage, SQL (`entra_id_only` / credentials), Cosmos, Key Vault, AKS = required; Function App with Easy Auth rejecting anonymous = required; other Function Apps, VM, VMSS, NIC, LB, App Gateway = unknown |
 | L4 | VM image offer / sku (`image_name`), AKS `kubernetes@`, PostgreSQL / MySQL, App Service runtime stack |
 | L5 | AzureVirtualMachine -[:CAN_NETWORK_REACH]-> AzureSQLServer / AzureCosmosDBAccount (via `firewall_ip_rule`, `azure_services_rule`, `public_endpoint`) |
 
@@ -402,9 +453,37 @@ firewall semantics follow the legacy exposure jobs (SQL rule wider than /8 = wor
 Rollout: no new API calls or permissions. LB rules and SKUs appear after the next network sync;
 until then VMs behind an LB get no LB path and every SKU counts as Basic (open).
 
+App Gateway, Azure Firewall DNAT, Easy Auth (follow-up): `network_gateways.py` (called from
+`network.sync`) ingests `AzureApplicationGateway` (SKU, WAF enabled / mode / policy) -[:HAS]->
+`AzureApplicationGatewayRule` (one per routing target: listener protocol / port, public frontend,
+backend settings port, backend NIC ipconfigs / IPs / FQDNs), and `AzureFirewall` -[:HAS]->
+`AzureFirewallNatRule` (classic Dnat collections plus the attached policy's NAT collections), linked
+to subnet and public IPs; backend NICs `CONNECTED_TO` the gateway. `exposure_layers/gateways.py`: a
+public-frontend gateway is reachable on its listener ports through its subnet NSG (via
+`public_listener`), backends get the backend settings port via `appgw:<id>`. A world-sourced DNAT
+rule to the firewall's public IP opens the translated port on the NIC holding the translated private
+IP via `azure_firewall_dnat:<id>`. Because the gateway proxies and the firewall SNATs, backend NSGs
+are evaluated with the front door's subnet as source plus implied AllowVnetInBound (`Internet` tag
+does not match). A private IP repeated across VNets resolves to the NIC in the front door's VNet or
+stays unresolved. WAF Prevention is an L3 reason (`waf_prevention`), not a block. Function Apps are
+`required` (`easy_auth`) when auth is on and the unauthenticated action rejects (RedirectToLoginPage,
+Return401, Return403); AllowAnonymous, `requireAuthentication` off, excluded paths or unreadable
+settings stay `unknown`. Subnets gain `address_prefixes`, VMSS `appgw_backend_pool_ids`; NIC ipconfig
+`private_ip_address` is refreshed every sync (was create-only).
+
+Rollout (follow-up), read-only and covered by Reader: `application_gateways.list_all` and
+`azure_firewalls.list_all` (once per subscription), `firewall_policy_rule_collection_groups.list`
+(per policy in use), `web_apps.get_auth_settings_v2_without_secrets` (per site; GET
+`config/authsettingsV2`, `Microsoft.Web/sites/config/Read`; the `/list` variant needs
+`config/list/Action`, returns secrets, and is never called). Until the next network sync no
+front-door paths appear.
+
 Ceilings: NSG rules aimed at a single destination address are not matched per NIC (upper bound);
-`::/0` treated as IPv4 world; App Gateway, Azure Firewall DNAT, IP-based backend pools, Easy Auth not
-ingested; VM power state ignored; L5 does not resolve SNAT / NAT gateway egress IPs, private
+`::/0` treated as IPv4 world; WAF policy mode, v2 TCP/TLS listeners, FQDN backends, IP-group DNAT
+sources, DNAT to an internal LB, cross-subscription or parent firewall policies, Virtual WAN hub
+firewalls not handled; VNet peerings not ingested; one excluded Easy Auth path makes the site
+`unknown`; UDR `0.0.0.0/0` to an Azure Firewall stays `unknown:udr_default_route_virtualappliance`;
+VM power state ignored; L5 does not resolve SNAT / NAT gateway egress IPs, private
 endpoints or service endpoints.
 
 ### 10.6 Validation
