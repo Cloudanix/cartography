@@ -53,6 +53,17 @@
       "__comment": "A cluster's endpoints resolve to its member instances, so it is exposed when any member is. Runs after the instance statements; the member must sit in the same account, because ingest links members by db_cluster_identifier alone.",
       "query": "MATCH (account:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (account)-[:RESOURCE]->(cluster:RDSCluster)<-[:IS_CLUSTER_MEMBER_OF]-(rds:RDSInstance{exposed_internet: true})<-[:RESOURCE]-(account) WITH cluster, collect(DISTINCT {instanceId: rds.id, exposureTypes: rds.exposed_internet_type}) AS members SET cluster.exposed_internet = true, cluster.exposed_internet_type = ['public_member_instance'], cluster.publicContext = apoc.convert.toJson([{resource: cluster.id, resourceType: 'aws-database-rds-cluster', context: [{clusterId: cluster.id, clusterIdentifier: cluster.db_cluster_identifier, endpoint: cluster.endpoint, port: cluster.port, engine: cluster.engine, exposedMembers: members}]}])",
       "iterative": false
+    },
+    {
+      "__comment": "Clears cluster snapshot flags left by an earlier sync; a snapshot unshared since must not stay public.",
+      "query": "MATCH (snapshot:RDSClusterSnapshot)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE snapshot.exposed_internet IS NOT NULL WITH snapshot LIMIT $LIMIT_SIZE REMOVE snapshot.exposed_internet, snapshot.exposed_internet_type, snapshot.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "A cluster snapshot whose restore attribute holds 'all' can be copied or restored by any AWS account, like a DB snapshot.",
+      "query": "MATCH (snapshot:RDSClusterSnapshot)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE 'all' IN snapshot.restore_attribute_values WITH snapshot OPTIONAL MATCH (cluster:RDSCluster)-[:IS_SNAPSHOT_SOURCE]->(snapshot) WITH snapshot, head(collect(cluster)) AS cluster SET snapshot.exposed_internet = true, snapshot.exposed_internet_type = ['restore_all_attrib'], snapshot.publicContext = apoc.convert.toJson([{resource: snapshot.id, resourceType: 'aws-database-rds-cluster-snapshot', context: [{snapshotId: snapshot.id, snapshotArn: snapshot.arn, sourceClusterId: cluster.id, sourceEngine: snapshot.engine, restoreAttribute: snapshot.restore_attribute_values, exposureTypes: ['restore_all_attrib'], encrypted: coalesce(snapshot.storage_encrypted, false)}]}])",
+      "iterative": false
     }
   ],
   "name": "aws rds asset internet exposure"

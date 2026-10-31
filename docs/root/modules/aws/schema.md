@@ -44,6 +44,7 @@ Representation of an AWS Account.
                               LaunchTemplateVersion,
                               LoadBalancer,
                               RDSCluster,
+                              RDSClusterSnapshot,
                               RDSInstance,
                               RDSSnapshot,
                               SecretsManagerSecret,
@@ -1981,6 +1982,52 @@ Representation of an AWS Relational Database Service [DBCluster](https://docs.aw
 
     ```
     (replica:RDSInstance)-[IS_CLUSTER_MEMBER_OF]->(source:RDSCluster)
+    ```
+
+### RDSClusterSnapshot
+
+Representation of an Aurora or Multi-AZ [DBClusterSnapshot](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DBClusterSnapshot.html) owned by the account, manual or automated, in `available` status.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | Same as ARN |
+| **arn** | The ARN of the DB cluster snapshot |
+| name | Last segment of the ARN |
+| **db\_cluster\_snapshot\_identifier** | The identifier of the DB cluster snapshot |
+| db\_cluster\_identifier | The identifier of the DB cluster this snapshot was created from |
+| snapshot\_create\_time | When the snapshot was taken (UTC) |
+| cluster\_create\_time | When the source cluster was created (UTC) |
+| engine, engine\_mode, engine\_version | Database engine of the snapshot |
+| allocated\_storage | Allocated storage in GiB |
+| status | Status of the snapshot |
+| port | Port the cluster was listening on when the snapshot was taken |
+| vpc\_id | VPC of the source cluster |
+| master\_username | Master username |
+| license\_model | License model |
+| snapshot\_type | `manual`, `automated` or `awsbackup` |
+| percent\_progress | Percentage of the estimated data transferred |
+| storage\_encrypted | Whether the snapshot is encrypted |
+| kms\_key\_id | KMS key of an encrypted snapshot |
+| source\_db\_cluster\_snapshot\_arn | Source snapshot ARN, for a copied snapshot |
+| iam\_database\_authentication\_enabled | Whether IAM database authentication is enabled |
+| storage\_type | Storage type |
+| restore\_attribute\_values | Values of the `restore` attribute of a manual snapshot: the AWS account ids it is shared with, or `all` when it is public. Null for automated snapshots and when the attributes cannot be read. |
+| region | The AWS region of the snapshot |
+
+#### Relationships
+
+- RDS cluster snapshots are part of AWS Accounts.
+
+    ```
+    (AWSAccount)-[RESOURCE]->(RDSClusterSnapshot)
+    ```
+
+- RDS cluster snapshots are linked to their source cluster in the same account and region.
+
+    ```
+    (RDSCluster)-[IS_SNAPSHOT_SOURCE]->(RDSClusterSnapshot)
     ```
 
 ### RDSInstance
