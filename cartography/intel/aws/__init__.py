@@ -442,6 +442,11 @@ def _sync_one_account(
         neo4j_session,
         common_job_parameters,
     )
+    run_analysis_job(
+        "aws_mq_broker_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
     run_analysis_job(
         "aws_internetgateway_asset_exposure.json",
