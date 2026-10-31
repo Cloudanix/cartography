@@ -9,6 +9,7 @@ from cloudconsolelink.clouds.gcp import GCPLinker
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
+from . import compute
 from . import label
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
@@ -461,6 +462,10 @@ def transform_regional_url_maps(maps: List, region: str, project_id: str):
 
 @timeit
 def load_url_maps(session: neo4j.Session, url_maps: List[Dict], project_id: str, update_tag: int) -> None:
+    for url_map in url_maps:
+        # The node id spells 'urlmaps'; forwarding rules reference the map by its self-link ('urlMaps').
+        url_map['partial_uri'] = compute._parse_compute_full_uri_to_partial_uri(url_map.get('selfLink', ''))
+        url_map['services'] = compute.url_map_backend_refs(url_map)
     session.execute_write(load_url_maps_tx, url_maps, project_id, update_tag)
 
 
@@ -482,7 +487,9 @@ def load_url_maps_tx(
         map.consolelink = mp.consolelink,
         map.uniqueId = mp.id,
         map.name = mp.name,
-        map.defaultService = mp.defaultService
+        map.defaultService = mp.defaultService,
+        map.partial_uri = mp.partial_uri,
+        map.services = mp.services
     WITH map
     MATCH (owner:GCPProject{id: $ProjectId})
     MERGE (owner)-[r:RESOURCE]->(map)

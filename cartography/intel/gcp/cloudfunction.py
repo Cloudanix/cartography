@@ -19,7 +19,7 @@ gcp_console_link = GCPLinker()
 
 
 @timeit
-def get_gcp_functions(function: Resource, project_id: str, regions: list, common_job_parameters) -> List[Dict]:
+def get_gcp_functions(function: Resource, project_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
     """
         Returns a list of functions for a given project.
 
@@ -75,8 +75,12 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
                     func['id'] = func['name']
                     func['function_name'] = func['name'].split('/')[-1]
                     func['region'] = region.get('locationId', 'global')
+                    # The exposure job needs the trigger kind: only an HTTP function has a URL to call.
+                    func['https_trigger_url'] = func.get('httpsTrigger', {}).get('url')
+                    func['event_trigger_type'] = func.get('eventTrigger', {}).get('eventType')
                     func['consolelink'] = gcp_console_link.get_console_link(
-                        resource_name='cloud_function', project_id=project_id, cloud_function_name=func['name'].split('/')[-1], region=func['region'],
+                        resource_name='cloud_function', project_id=project_id,
+                        cloud_function_name=func['function_name'], region=func['region'],
                     )
                     functions.append(func)
                 request = function.projects().locations().functions().list_next(
@@ -189,7 +193,9 @@ def _load_functions_tx(tx: neo4j.Transaction, functions: List[Resource], project
         function.maxInstances = func.maxInstances,
         function.vpcConnector = func.vpcConnector,
         function.vpcConnectorEgressSettings = func.vpcConnectorEgressSettings,
-        function.ingressSettings = func.ingressSettings,
+        function.https_trigger_url = func.https_trigger_url,
+        function.event_trigger_type = func.event_trigger_type,
+        function.environment = func.environment,
         function.buildWorkerPool = func.buildWorkerPool,
         function.buildId = func.buildId,
         function.sourceToken = func.sourceToken,

@@ -632,10 +632,6 @@ Representation of an IP range or subnet.
 | lastupdated | Timestamp of the last time the node was updated                          |
 | id          | CIDR notation for the IP range. E.g. "0.0.0.0/0" for the whole internet. |
 
-<<<<<<< HEAD
-
-=======
->>>>>>> upstream-master
 #### Relationships
 
 - GCP Firewall rules are defined on IpRange objects.
