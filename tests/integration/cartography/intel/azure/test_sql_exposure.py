@@ -132,3 +132,80 @@ def test_firewall_public_ip_never_rewrites_another_subscriptions_node(neo4j_sess
         {'rule': 'external', 'ip': f'/subscriptions/{SUB}/sqlFirewallExternalIp/20.0.0.5', 'type': 'External'},
         {'rule': 'internal', 'ip': own_pip, 'type': None},
     ]
+
+
+def _rdbms_server(name, provider, access='Enabled', vnet=False):
+    return {
+        'id': f'{PREFIX}{provider}/{name}', 'name': name, 'resourceGroup': 'rg', 'location': 'eastus',
+        'publicNetworkAccess': access, 'engine': 'mysql' if 'MySQL' in provider else 'postgres',
+        'vnetIntegrated': vnet,
+    }
+
+
+def test_postgres_mysql_exposure_from_fetched_firewall_rules(neo4j_session):
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:AzureTenant{id: $tenant})-[:RESOURCE]->"
+        "(:AzureSubscription{id: $sub})",
+        ws=WORKSPACE, tenant=TENANT, sub=SUB,
+    )
+    pg_flex = 'Microsoft.DBforPostgreSQL/flexibleServers'
+    mysql_single = 'Microsoft.DBforMySQL/servers'
+    servers = {
+        'pg-allow-all': _rdbms_server('pg-allow-all', pg_flex),
+        'pg-azure-services': _rdbms_server('pg-azure-services', pg_flex),
+        'pg-office': _rdbms_server('pg-office', pg_flex),
+        'pg-no-rules': _rdbms_server('pg-no-rules', pg_flex),
+        'pg-fetch-failed': _rdbms_server('pg-fetch-failed', pg_flex),
+        'pg-disabled-failed': _rdbms_server('pg-disabled-failed', pg_flex, access='Disabled'),
+        'pg-vnet': _rdbms_server('pg-vnet', pg_flex, access=None, vnet=True),
+        'mysql-allow-all': _rdbms_server('mysql-allow-all', mysql_single),
+        'mysql-no-rules': _rdbms_server('mysql-no-rules', mysql_single),
+    }
+    sql.load_server_data(neo4j_session, SUB, list(servers.values()), 2)
+
+    def rules(name, *ranges):
+        server = servers[name]
+        return [
+            {**_rule(server, f'r{i}', start, end), 'type': 'firewallRules'} for i, (start, end) in enumerate(ranges)
+        ]
+
+    fetched = {
+        'pg-allow-all': rules('pg-allow-all', ('0.0.0.0', '255.255.255.255')),
+        'pg-azure-services': rules('pg-azure-services', ('0.0.0.0', '0.0.0.0')),
+        'pg-office': rules('pg-office', ('52.1.2.3', '52.1.2.3')),
+        'pg-no-rules': [],
+        'pg-fetch-failed': None,
+        'pg-disabled-failed': None,
+        'pg-vnet': None,
+        'mysql-allow-all': rules('mysql-allow-all', ('0.0.0.0', '255.255.255.255')),
+        'mysql-no-rules': [],
+    }
+    details = [
+        (servers[name]['id'], name, 'rg', [], [], [], [], [], [], [], fw_rules) for name, fw_rules in fetched.items()
+    ]
+    with patch.object(sql.network, 'get_network_client'), \
+            patch.object(sql.network, 'get_public_ip_addresses_list', return_value=[]), \
+            patch.object(sql, 'sync_database_details'):
+        sql.load_server_details(neo4j_session, MagicMock(), SUB, details, 2, {})
+
+    run_analysis_job('azure_sql_asset_exposure.json', neo4j_session, PARAMS)
+
+    rows = neo4j_session.run(
+        "MATCH (s:AzureSQLServer) WHERE s.id IN $ids "
+        "RETURN s.name AS name, s.exposed_internet AS exposed, s.exposed_internet_type AS types",
+        ids=[server['id'] for server in servers.values()],
+    )
+    actual = {r['name']: (r['exposed'], sorted(r['types'] or [])) for r in rows}
+    assert actual == {
+        'pg-allow-all': (True, ['unrestricted_firewall']),
+        # Same decision as Azure SQL: Azure services only, not the internet.
+        'pg-azure-services': (None, ['azure_services_allowed']),
+        'pg-office': (None, []),
+        'pg-no-rules': (None, []),
+        # Rules could not be read: stays public (fail-safe).
+        'pg-fetch-failed': (True, ['firewall_not_evaluated']),
+        'pg-disabled-failed': (None, []),
+        'pg-vnet': (None, []),
+        'mysql-allow-all': (True, ['unrestricted_firewall']),
+        'mysql-no-rules': (None, []),
+    }

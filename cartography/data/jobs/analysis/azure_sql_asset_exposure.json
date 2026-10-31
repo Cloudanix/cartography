@@ -11,15 +11,15 @@
       "iterationsize": 100
     },
     {
-      "query": "MATCH (fw:AzureFirewallRule)<-[:HAS]-(sql:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sql.publicNetworkAccess, '') <> 'Disabled' AND coalesce(fw.address_count, 4294967296) > 16777216 SET sql.exposed_internet = true, (CASE WHEN NOT 'unrestricted_firewall' IN coalesce(sql.exposed_internet_type, []) THEN sql END).exposed_internet_type = coalesce(sql.exposed_internet_type, []) + 'unrestricted_firewall';",
+      "query": "MATCH (fw:AzureFirewallRule)<-[:HAS]-(sql:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sql.publicNetworkAccess, '') <> 'Disabled' AND coalesce(sql.vnetIntegrated, false) = false AND coalesce(fw.address_count, 4294967296) > 16777216 SET sql.exposed_internet = true, (CASE WHEN NOT 'unrestricted_firewall' IN coalesce(sql.exposed_internet_type, []) THEN sql END).exposed_internet_type = coalesce(sql.exposed_internet_type, []) + 'unrestricted_firewall';",
       "iterative": false
     },
     {
-      "query": "MATCH (sql:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sql.publicNetworkAccess, '') <> 'Disabled' AND coalesce(sql.engine, 'sqlserver') <> 'sqlserver' SET sql.exposed_internet = true, (CASE WHEN NOT 'firewall_not_evaluated' IN coalesce(sql.exposed_internet_type, []) THEN sql END).exposed_internet_type = coalesce(sql.exposed_internet_type, []) + 'firewall_not_evaluated';",
+      "query": "MATCH (sql:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sql.publicNetworkAccess, '') <> 'Disabled' AND coalesce(sql.engine, 'sqlserver') <> 'sqlserver' AND coalesce(sql.vnetIntegrated, false) = false AND coalesce(sql.firewall_rules_fetched, false) = false SET sql.exposed_internet = true, (CASE WHEN NOT 'firewall_not_evaluated' IN coalesce(sql.exposed_internet_type, []) THEN sql END).exposed_internet_type = coalesce(sql.exposed_internet_type, []) + 'firewall_not_evaluated';",
       "iterative": false
     },
     {
-      "query": "MATCH (fw:AzureFirewallRule)<-[:HAS]-(sql:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sql.publicNetworkAccess, '') <> 'Disabled' AND fw.start_ip_address = '0.0.0.0' AND fw.end_ip_address = '0.0.0.0' SET (CASE WHEN NOT 'azure_services_allowed' IN coalesce(sql.exposed_internet_type, []) THEN sql END).exposed_internet_type = coalesce(sql.exposed_internet_type, []) + 'azure_services_allowed';",
+      "query": "MATCH (fw:AzureFirewallRule)<-[:HAS]-(sql:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sql.publicNetworkAccess, '') <> 'Disabled' AND coalesce(sql.vnetIntegrated, false) = false AND fw.start_ip_address = '0.0.0.0' AND fw.end_ip_address = '0.0.0.0' SET (CASE WHEN NOT 'azure_services_allowed' IN coalesce(sql.exposed_internet_type, []) THEN sql END).exposed_internet_type = coalesce(sql.exposed_internet_type, []) + 'azure_services_allowed';",
       "iterative": false
     },
     {

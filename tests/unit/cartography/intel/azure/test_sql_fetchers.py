@@ -5,10 +5,13 @@ server, not the 'Disabled' default the wrong properties read always produced.
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
+from azure.core.exceptions import HttpResponseError
 from azure.mgmt.rdbms.postgresql_flexibleservers import models as pg_flex_models
 from azure.mgmt.sql import models as sql_models
 
 from cartography.intel.azure import sql
+from cartography.intel.azure.util.sdk_models import as_legacy_dict
 
 PARAMS = {'UPDATE_TAG': 1}
 SUB = '/subscriptions/00-00/resourceGroups/rg/providers'
@@ -81,3 +84,61 @@ def test_wide_firewall_range_links_only_subscription_ips():
         ('office', '20.0.0.5', 'External'),
         ('wide', '52.1.0.9', 'Internal'),
     ]
+
+
+def _server_dict(provider, name):
+    return {'id': f'{SUB}/{provider}/{name}', 'name': name, 'resourceGroup': 'rg'}
+
+
+@pytest.mark.parametrize(
+    'provider, client_class', [
+        ('Microsoft.DBforPostgreSQL/flexibleServers', 'PostgreSQLFlexibleServersManagementClient'),
+        ('Microsoft.DBforPostgreSQL/servers', 'PostgreSQLManagementClient'),
+        ('Microsoft.DBforMySQL/flexibleServers', 'MySQLFlexibleServersManagementClient'),
+        ('Microsoft.DBforMySQL/servers', 'MySQLManagementClient'),
+    ],
+)
+def test_postgres_and_mysql_firewall_rules_use_their_own_client(provider, client_class):
+    client = MagicMock()
+    client.firewall_rules.list_by_server.return_value = [
+        pg_flex_models.FirewallRule.deserialize({
+            'id': f'{SUB}/{provider}/db1/firewallRules/all', 'name': 'all',
+            'properties': {'startIpAddress': '0.0.0.0', 'endIpAddress': '255.255.255.255'},
+        }),
+    ]
+
+    with patch.object(sql, client_class, return_value=client), patch.object(sql, 'get_client') as sql_client:
+        [rule] = sql.get_firewall_rules(MagicMock(), '00-00', _server_dict(provider, 'db1'))
+
+    client.firewall_rules.list_by_server.assert_called_once_with('rg', 'db1')
+    sql_client.assert_not_called()
+    assert (rule['start_ip_address'], rule['end_ip_address']) == ('0.0.0.0', '255.255.255.255')
+
+
+def test_firewall_rules_fetch_error_is_none_not_empty():
+    client = MagicMock()
+    client.firewall_rules.list_by_server.side_effect = HttpResponseError('forbidden')
+
+    with patch.object(sql, 'PostgreSQLFlexibleServersManagementClient', return_value=client):
+        rules = sql.get_firewall_rules(
+            MagicMock(), '00-00', _server_dict('Microsoft.DBforPostgreSQL/flexibleServers', 'db1'),
+        )
+
+    # None means "not evaluated", which keeps the server public; [] would mean "no rules".
+    assert rules is None
+
+
+def test_vnet_integrated_flexible_server_is_flagged():
+    vnet = pg_flex_models.Server.deserialize({
+        'id': f'{SUB}/Microsoft.DBforPostgreSQL/flexibleServers/pg2', 'name': 'pg2', 'location': 'eastus',
+        'properties': {
+            'network': {'delegatedSubnetResourceId': f'{SUB}/Microsoft.Network/virtualNetworks/v/subnets/s'},
+        },
+    })
+    public = pg_flex_models.Server.deserialize({
+        'id': f'{SUB}/Microsoft.DBforPostgreSQL/flexibleServers/pg3', 'name': 'pg3', 'location': 'eastus',
+        'properties': {'network': {'publicNetworkAccess': 'Enabled'}},
+    })
+
+    assert _enrich(as_legacy_dict(vnet))['vnetIntegrated'] is True
+    assert _enrich(as_legacy_dict(public))['vnetIntegrated'] is False

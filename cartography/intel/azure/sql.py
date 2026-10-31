@@ -299,6 +299,8 @@ def _enrich_server_data(
     server['publicNetworkAccess'] = (
         server.get('public_network_access') or (server.get('network') or {}).get('public_network_access')
     )
+    # A flexible server in private access mode lives in a delegated subnet and has no public endpoint.
+    server['vnetIntegrated'] = bool((server.get('network') or {}).get('delegated_subnet_resource_id'))
     server['consolelink'] = safe_console_link(server['id'], common_job_parameters)
     for private_endpoint_connection in server.get('private_endpoint_connections') or []:
         private_endpoint_connection['consolelink'] = safe_console_link(
@@ -346,6 +348,7 @@ def load_server_data(
     SET s.lastupdated = $azure_update_tag,
     s.name = server.name,
     s.publicNetworkAccess = server.publicNetworkAccess,
+    s.vnetIntegrated = server.vnetIntegrated,
     s.consolelink = coalesce(server.consolelink, s.consolelink),
     s.kind = server.kind,
     s.state = server.state,
@@ -681,6 +684,7 @@ def load_server_details(
     elastic_pools = []
     databases = []
     fw_rules = []
+    fw_rules_fetched = []
 
     for server_id, name, rg, dns_alias, ad_admin, r_database, rd_database, fg, elastic_pool, database, firewall_rules in details:
         if len(dns_alias) > 0:
@@ -733,13 +737,13 @@ def load_server_details(
                 db['consolelink'] = safe_console_link(db['id'], common_job_parameters)
                 databases.append(db)
 
-        if len(firewall_rules) > 0:
-            for rules in firewall_rules:
-                rules['server_name'] = name
-                rules['server_id'] = server_id
-                rules['resource_group_name'] = rg
-                rules['consolelink'] = safe_console_link(rules['id'], common_job_parameters)
-                fw_rules.append(rules)
+        fw_rules_fetched.append({'id': server_id, 'fetched': firewall_rules is not None})
+        for rules in firewall_rules or []:
+            rules['server_name'] = name
+            rules['server_id'] = server_id
+            rules['resource_group_name'] = rg
+            rules['consolelink'] = safe_console_link(rules['id'], common_job_parameters)
+            fw_rules.append(rules)
 
     _load_server_dns_aliases(neo4j_session, dns_aliases, update_tag)
     _load_server_ad_admins(neo4j_session, ad_admins, update_tag)
@@ -750,6 +754,7 @@ def load_server_details(
     _load_databases(neo4j_session, databases, update_tag)
     _load_database_tags(neo4j_session, databases, update_tag, common_job_parameters)
     _load_firewall_rules(neo4j_session, fw_rules, update_tag)
+    _load_firewall_rules_fetched(neo4j_session, fw_rules_fetched)
 
     network_client = network.get_network_client(credentials, subscription_id)
     public_ips = [ip.get('ip_address') for ip in network.get_public_ip_addresses_list(network_client, None, common_job_parameters) if ip.get('ip_address')]
@@ -851,6 +856,19 @@ def _firewall_rule_address_count(fw_rule: Dict) -> Optional[int]:
     except ValueError:
         return None
     return int(end) - int(start) + 1
+
+
+def _load_firewall_rules_fetched(neo4j_session: neo4j.Session, servers: List[Dict]) -> None:
+    """
+    Record on each server whether its firewall rules were read this sync, so the exposure
+    job can tell "no rules" (not public) from "rules unknown" (kept public).
+    """
+    query = """
+    UNWIND $DictList as server
+    MATCH (s:AzureSQLServer{id: server.id})
+    SET s.firewall_rules_fetched = server.fetched
+    """
+    load_graph_data(neo4j_session, query, servers)
 
 
 def _ip_in_range(ip: str, start_ip: str, end_ip: str) -> bool:
@@ -1473,26 +1491,49 @@ def get_transparent_data_encryptions(credentials: Credentials, subscription_id: 
     return transparent_data_encryptions_list
 
 
+def _firewall_rules_client(credentials: Credentials, subscription_id: str, server_id: str) -> Optional[Any]:
+    """
+    The management client that owns this server type's firewall rules: SQL, or the
+    PostgreSQL/MySQL flexible or single server client. None for an unknown server type.
+    """
+    server_id = server_id.lower()
+    if '/providers/microsoft.sql/servers/' in server_id:
+        return get_client(credentials, subscription_id)
+    rdbms_clients = [
+        ('/providers/microsoft.dbforpostgresql/flexibleservers/', PostgreSQLFlexibleServersManagementClient),
+        ('/providers/microsoft.dbforpostgresql/servers/', PostgreSQLManagementClient),
+        ('/providers/microsoft.dbformysql/flexibleservers/', MySQLFlexibleServersManagementClient),
+        ('/providers/microsoft.dbformysql/servers/', MySQLManagementClient),
+    ]
+    for marker, client_class in rdbms_clients:
+        if marker in server_id:
+            return client_class(credentials, subscription_id, per_call_policies=[get_timing_policy()])
+    return None
+
+
 @timeit
-def get_firewall_rules(credentials: Credentials, subscription_id: str, server: Dict) -> List[Dict]:
+def get_firewall_rules(credentials: Credentials, subscription_id: str, server: Dict) -> Optional[List[Dict]]:
+    """
+    Firewall rules of an Azure SQL, PostgreSQL or MySQL server.
+
+    :return: the rules, or None if they could not be read. None is "not evaluated",
+        which keeps a PostgreSQL/MySQL server public; [] means the server has no rules.
+    """
+    client = _firewall_rules_client(credentials, subscription_id, server['id'])
+    if client is None:
+        logger.warning(f"No firewall rules client for server {server['id']}")
+        return None
     try:
-        client = get_client(credentials, subscription_id)
-        firewall_rules = list(
+        return list(
             map(
                 as_legacy_dict,
                 client.firewall_rules.list_by_server(server['resourceGroup'], server['name']),
             ),
         )
-    except ClientAuthenticationError as e:
-        logger.warning(f"Client Authentication Error while retrieving Firewall Rules - {e}")
-        return []
-    except ResourceNotFoundError as e:
-        logger.warning(f"Firewall Rules resource not found error - {e}")
-        return []
     except HttpResponseError as e:
-        logger.warning(f"Error while retrieving Azure Server Firewall Rules - {e}")
-        return []
-    return firewall_rules
+        # Also covers ClientAuthenticationError and ResourceNotFoundError.
+        logger.warning(f"Error while retrieving firewall rules for server {server['id']} - {e}")
+        return None
 
 
 @timeit
