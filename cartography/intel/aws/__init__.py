@@ -376,6 +376,12 @@ def _sync_one_account(
         neo4j_session,
         common_job_parameters,
     )
+    # Must run after the RDS job: a Neptune cluster is exposed through its RDSInstance members.
+    run_analysis_job(
+        "aws_neptune_cluster_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
     run_analysis_job(
         "aws_cloudtrail_asset_exposure.json",
@@ -439,6 +445,16 @@ def _sync_one_account(
 
     run_analysis_job(
         "aws_redshift_cluster_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_mq_broker_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_msk_cluster_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )

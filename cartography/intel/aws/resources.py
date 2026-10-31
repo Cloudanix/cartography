@@ -18,9 +18,11 @@ from . import emr
 from . import iam
 from . import identitystore
 from . import inspector
-from . import kms
 from . import kinesis
+from . import kms
 from . import lambda_function
+from . import mq
+from . import msk
 from . import permission_relationships
 from . import rds
 from . import redshift
@@ -103,6 +105,8 @@ RESOURCE_FUNCTIONS: Dict = {
     'redshift': redshift.sync,
     'elasticache': elasticache.sync,
     'elasticsearch': elasticsearch.sync,
+    'mq': mq.sync,
+    'msk': msk.sync,
     'elastic_ip_addresses': sync_elastic_ip_addresses,
     'ssm': ssm.sync,
     'route53': route53.sync,
