@@ -11,6 +11,7 @@ from azure.mgmt.containerservice import ContainerServiceClient
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -90,11 +91,11 @@ def get_aks_managed_clusters_list(
 ) -> List[Dict]:
     try:
         client = get_client(credentials, subscription_id)
-        aks_managed_clusters_list = list(map(lambda x: x.as_dict(), client.managed_clusters.list()))
+        aks_managed_clusters_list = list(map(as_legacy_dict, client.managed_clusters.list()))
         aks_managed_clusters_data = []
         for aks in aks_managed_clusters_list:
             aks["resource_group"] = get_azure_resource_group_name(aks.get("id"))
-            aks["publicNetworkAccess"] = aks.get("properties", {}).get("public_network_access", "Disabled")
+            aks["publicNetworkAccess"] = aks.get("public_network_access", "Disabled")
             aks["consolelink"] = safe_console_link(aks["id"], common_job_parameters)
             if regions is None:
                 aks_managed_clusters_data.append(aks)
@@ -170,7 +171,7 @@ def get_aks_managed_cluster_agentpools_list(
         client = get_client(credentials, subscription_id)
         agentpools_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.agent_pools.list(resource_group_name=resource_group_name, resource_name=cluster_name),
             ),
         )
@@ -258,7 +259,7 @@ def get_container_registries_list(
         container_registries_list = []
         for x in client.registries.list():
             try:
-                container_registries_list.append(x.as_dict())
+                container_registries_list.append(as_legacy_dict(x))
             except (KeyError, AttributeError) as e:
                 logger.warning("Skipping container registry due to serialization error: %s", e)
         registry_data = []
@@ -389,7 +390,7 @@ def get_container_registry_replications_list(
         for container_registry in container_registries_list:
             container_registry_replications_list = container_registry_replications_list + list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.replications.list(
                         registry_name=container_registry["name"],
                         resource_group_name=container_registry["resource_group"],
@@ -493,7 +494,7 @@ def get_container_registry_runs_list(
         for container_registry in container_registries_list:
             registry_runs_list = list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.runs.list(
                         registry_name=container_registry["name"],
                         resource_group_name=container_registry["resource_group"],
@@ -596,7 +597,7 @@ def get_container_registry_tasks_list(
         for container_registry in container_registries_list:
             container_registry_tasks_list = container_registry_tasks_list + list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.tasks.list(
                         registry_name=container_registry["name"],
                         resource_group_name=container_registry["resource_group"],
@@ -701,7 +702,7 @@ def get_container_registry_webhooks_list(
         for container_registry in container_registries_list:
             container_registry_webhooks_list = container_registry_webhooks_list + list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.webhooks.list(
                         registry_name=container_registry["name"],
                         resource_group_name=container_registry["resource_group"],
@@ -799,7 +800,7 @@ def get_container_groups_list(
     client: ContainerInstanceManagementClient, regions: list, common_job_parameters: Dict,
 ) -> List[Dict]:
     try:
-        container_groups_list = list(map(lambda x: x.as_dict(), client.container_groups.list()))
+        container_groups_list = list(map(as_legacy_dict, client.container_groups.list()))
         group_data = []
         for group in container_groups_list:
             group["resource_group"] = get_azure_resource_group_name(group.get("id"))
