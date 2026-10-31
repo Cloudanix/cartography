@@ -8,7 +8,7 @@ from tests.data.aws.rds import DESCRIBE_DBINSTANCES_RESPONSE
 from tests.data.aws.rds import DESCRIBE_DBSNAPSHOT_ATTRIBUTE_RESPONSE
 from tests.data.aws.rds import DESCRIBE_DBSNAPSHOTS_RESPONSE
 from tests.data.aws.rds import DESCRIBE_SECURITY_GROUPS_RESPONSE
-from tests.data.aws.rds import DESCRIBE_SNAPSHOTS_RESPONSE
+from tests.integration.cartography.intel.aws.common import create_exposure_test_account
 
 TEST_UPDATE_TAG = 123456789
 
@@ -346,3 +346,64 @@ def test_rds_exposure(neo4j_session):
     }
 
     assert actual_nodes == expected_nodes
+
+
+RESET_ACCOUNT_ID = '222233334444'
+RESET_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': RESET_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-rds-reset',
+    'WORKSPACE_ID': 'ws-rds-reset',
+    'LIMIT_SIZE': 100,
+}
+
+
+def test_rds_exposure_resets_stale_flags(neo4j_session):
+    create_exposure_test_account(
+        neo4j_session, RESET_JOB_PARAMETERS['WORKSPACE_ID'], RESET_JOB_PARAMETERS['ORGANIZATION_ID'],
+        RESET_ACCOUNT_ID,
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (sg:EC2SecurityGroup{id: 'sg-rds-reset-open'})
+        MERGE (:IpRange{id: '0.0.0.0/0', range: '0.0.0.0/0'})-[:MEMBER_OF_IP_RULE]->
+              (:IpPermissionInbound{ruleid: 'sg-rds-reset-open/tcp/5432'})-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
+        WITH aa, sg
+        UNWIND $dbs AS d
+        MERGE (aa)-[:RESOURCE]->(rds:RDSInstance{id: d.id})
+        SET rds.publicly_accessible = d.pa, rds.exposed_internet = d.stale,
+            rds.exposed_internet_type = CASE WHEN d.stale THEN ['direct_ipv4'] END
+        MERGE (rds)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
+        """,
+        account_id=RESET_ACCOUNT_ID, dbs=[
+            # Flagged by an earlier job version (SG rule alone); not publicly accessible, so no public address.
+            {'id': 'rds-reset-private-stale', 'pa': False, 'stale': True},
+            {'id': 'rds-reset-public', 'pa': True, 'stale': True},
+        ],
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(s:RDSSnapshot{id: 'rds-reset-snapshot-stale'})
+        SET s.exposed_internet = true, s.exposed_internet_type = ['restore_all_attrib']
+        MERGE (aa)-[:RESOURCE]->(other:EC2Instance{id: 'rds-reset-other-label'})
+        SET other.exposed_internet = true
+        """,
+        account_id=RESET_ACCOUNT_ID,
+    )
+
+    run_analysis_job('aws_rds_asset_exposure.json', neo4j_session, RESET_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(n{exposed_internet: true})
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        account_id=RESET_ACCOUNT_ID,
+    )
+    assert {n['id']: sorted(n['types'] or []) for n in nodes} == {
+        'rds-reset-public': ['direct', 'direct_ipv4'],
+        # The reset only touches RDS instances and snapshots.
+        'rds-reset-other-label': [],
+    }
