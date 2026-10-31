@@ -187,34 +187,36 @@ def sync_database_account_data_resources(
 def _load_database_account_associated_iprules(
     neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
 ) -> None:
-    """Relationship between Azure Cosmos DB And Public Ip Addresses in Cartography """
+    """
+    Relationship between Azure Cosmos DB and the public IPs its firewall allows.
+    Rule and IP nodes are keyed by the account id: keyed on the bare IP they were
+    shared across accounts and tenants and could attach to another subscription's
+    own AzurePublicIPAddress, which the cosmos cleanup could then delete.
+    """
     ingest_iprules = """
         UNWIND $DictList as ip_rule
-        MERGE (rule:AzureFirewallRule{id: ip_rule})
-        ON CREATE SET
-        rule.firstseen = timestamp(),
-        rule.name=ip_rule,
-        rule.id=ip_rule,
-        rule.ipAddress=ip_rule,
-        rule.source='Azure' ,
-        rule.type='External',
-        rule.resource=$resourceType
-        WITH rule
         MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MERGE (rule:AzureFirewallRule{id: $DatabaseAccountId + '/ipRules/' + ip_rule})
+        ON CREATE SET rule.firstseen = timestamp()
+        SET rule.name = ip_rule,
+        rule.ipAddress = ip_rule,
+        rule.source = 'Azure',
+        rule.type = 'External',
+        rule.resource = $resourceType,
+        rule.lastupdated = $azure_update_tag
         MERGE (d)-[r:FIREWALL_RULE]->(rule)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
-        with rule
-        MERGE (ip:AzurePublicIPAddress{ipAddress:rule.id})
-        ON CREATE SET
-        ip.firstseen = timestamp(),
-        ip.name=rule.name,
-        ip.id=rule.id,
-        ip.ipAddress=rule.ipAddress,
-        ip.type=rule.type,
-        ip.resource=rule.resource,
-        ip.source=rule.source
-        with ip,rule
+        WITH rule
+        MERGE (ip:AzurePublicIPAddress{id: rule.id + '/publicIp'})
+        ON CREATE SET ip.firstseen = timestamp()
+        SET ip.name = rule.name,
+        ip.ipAddress = rule.ipAddress,
+        ip.type = rule.type,
+        ip.resource = rule.resource,
+        ip.source = rule.source,
+        ip.lastupdated = $azure_update_tag
+        WITH ip, rule
         MERGE (rule)-[r1:MEMBER_OF_PUBLIC_IP]->(ip)
         ON CREATE SET r1.firstseen = timestamp()
         SET r1.lastupdated = $azure_update_tag
