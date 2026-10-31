@@ -61,6 +61,7 @@ setup(
         "azure-mgmt-sql<=1.0.0",
         "azure-identity>=1.5.0",
         "azure-mgmt-containerinstance>=1.5.0",
+        "azure-containerregistry~=1.2.0",
         "azure-mgmt-containerregistry>=2.8.0",
         "azure-mgmt-containerservice>=4.4.0",
         "azure-mgmt-keyvault>=1.1.0",
