@@ -470,3 +470,64 @@ def test_stale_network_endpoint_groups_and_links_are_cleaned_up(neo4j_session):
         project=project,
     ).data()
     assert rows == [{'id': f'{zone}/networkEndpointGroups/kept', 'links': 0}]
+
+
+def test_backend_services_referenced_from_another_project_of_this_workspace_are_exposed(neo4j_session):
+    # Front end (rule + URL map) in proj-xp-front; backend services and VMs in proj-xp-back. Both synced by
+    # ws-lb. proj-xp-foreign shares the org node but is synced only by another workspace.
+    front, back, foreign = 'proj-xp-front', 'proj-xp-back', 'proj-xp-foreign'
+    zone = f'projects/{back}/zones/us-east1-b'
+    _seed_project(neo4j_session, front)
+    _seed_project(neo4j_session, back)
+    _seed_project(neo4j_session, foreign, workspace='ws-lb-other')
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(
+        neo4j_session, [_external_rule(front, 'xp-fr', url_map=f'projects/{front}/global/urlMaps/xp')], TAG,
+    )
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(
+        neo4j_session,
+        [
+            _external_rule(
+                foreign, 'foreign-fr', backend_services=[f'projects/{back}/global/backendServices/via-foreign'],
+            ),
+        ],
+        TAG,
+    )
+    cartography.intel.gcp.loadbalancer.load_url_maps(
+        neo4j_session, [{
+            'id': f'projects/{front}/global/urlmaps/xp', 'name': 'xp',
+            'selfLink': f'{API}/projects/{front}/global/urlMaps/xp',
+            'defaultService': f'{API}/projects/{back}/global/backendServices/shared',
+        }], front, TAG,
+    )
+    cartography.intel.gcp.cloudcdn.load_backend_services(
+        neo4j_session, [
+            _backend_service(back, 'shared', 'EXTERNAL_MANAGED', [f'{zone}/instanceGroups/shared-ig']),
+            _backend_service(back, 'via-foreign', 'EXTERNAL_MANAGED', [f'{zone}/instanceGroups/foreign-ig']),
+        ], back, TAG,
+    )
+    cartography.intel.gcp.loadbalancer.load_instance_groups(
+        neo4j_session, [{'id': f'{zone}/instanceGroups/shared-ig'}, {'id': f'{zone}/instanceGroups/foreign-ig'}],
+        back, TAG,
+    )
+    _instances(neo4j_session, back, zone, ['shared-vm', 'foreign-vm'])
+    neo4j_session.run(
+        """
+        UNWIND [['shared-vm', 'shared-ig'], ['foreign-vm', 'foreign-ig']] AS m
+        MATCH (i:GCPInstance{id: $zone + '/instances/' + m[0]})
+        MATCH (ig:GCPInstanceGroup{id: $zone + '/instanceGroups/' + m[1]})
+        MERGE (i)-[r:MEMBER_OF_INSTANCE_GROUP]->(ig) SET r.lastupdated = $tag
+        """,
+        zone=zone, tag=TAG,
+    )
+
+    _run_exposure_jobs(neo4j_session, front)
+    # The front project's run never writes the other project's backends.
+    assert _exposed_in(neo4j_session, back) == {}
+    _run_exposure_jobs(neo4j_session, back)
+
+    assert _exposed_in(neo4j_session, back) == {
+        ('GCPBackendService', 'shared'): LB,
+        ('GCPInstanceGroup', 'shared-ig'): LB,
+        ('GCPInstance', 'shared-vm'): LB,
+    }
+    assert _exposed_in(neo4j_session, front) == {('GCPForwardingRule', 'xp-fr'): LB, ('GCPUrlMap', 'xp'): LB}
