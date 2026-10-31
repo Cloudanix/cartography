@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Tuple
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -11,6 +12,8 @@ from googleapiclient.discovery import Resource
 
 from . import compute
 from . import label
+from cartography.client.core.tx import read_list_of_values_tx
+from cartography.client.core.tx import run_write_query
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -635,6 +638,95 @@ def sync_ssl_policies(
     load_ssl_policies(neo4j_session, ssl_policies, project_id, gcp_update_tag)
     cleanup_ssl_policies(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, ssl_policies, gcp_update_tag, common_job_parameters, 'ssl_policy', 'GCPSSLPolicy')
+
+
+@timeit
+def get_external_backend_groups(neo4j_session: neo4j.Session, project_id: str) -> List[str]:
+    """
+    Partial URIs of the backend groups (instance groups, NEGs) of the project's EXTERNAL / EXTERNAL_MANAGED backend
+    services.
+    """
+    query = """
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(bs:GCPBackendService)
+    WHERE bs.loadBalancingScheme IN $Schemes
+    UNWIND coalesce(bs.backend_groups, []) AS group
+    RETURN DISTINCT group
+    """
+    return neo4j_session.execute_read(
+        read_list_of_values_tx, query, ProjectId=project_id, Schemes=list(compute.EXTERNAL_LB_SCHEMES),
+    )
+
+
+def _zonal_groups(groups: List[str], project_id: str, kind: str) -> List[Tuple[str, str]]:
+    """(zone, name) of each projects/{project_id}/zones/{zone}/{kind}/{name} reference; other scopes are skipped."""
+    zonal = []
+    for group in groups:
+        parts = group.split('/')
+        if len(parts) == 6 and parts[:3] == ['projects', project_id, 'zones'] and parts[4] == kind:
+            zonal.append((parts[3], parts[5]))
+    return zonal
+
+
+@timeit
+def get_instance_group_members(compute_client: Resource, project_id: str, zone: str, name: str) -> List[str]:
+    """
+    Partial URIs of every instance in a zonal instance group, managed or unmanaged, whatever its state (the analysis
+    job checks the instance status). [] when the group can't be read (e.g. missing compute.instanceGroups.get).
+    """
+    members: List[str] = []
+    try:
+        req = compute_client.instanceGroups().listInstances(
+            project=project_id, zone=zone, instanceGroup=name, body={'instanceState': 'ALL'},
+        )
+        while req is not None:
+            res = req.execute()
+            members.extend(
+                compute._parse_compute_full_uri_to_partial_uri(item['instance'])
+                for item in res.get('items', []) if item.get('instance')
+            )
+            req = compute_client.instanceGroups().listInstances_next(previous_request=req, previous_response=res)
+    except HttpError as e:
+        logger.warning(f"Could not list instances of instance group {name} in {zone}; members stay unresolved - {e}")
+        return []
+    return members
+
+
+@timeit
+def load_instance_group_members(
+    neo4j_session: neo4j.Session, members: List[Dict], project_id: str, update_tag: int,
+) -> None:
+    query = """
+    UNWIND $Members AS m
+    MATCH (p:GCPProject{id: $ProjectId})-[:RESOURCE]->(ig:GCPInstanceGroup{id: m.group})
+    MATCH (p)-[:RESOURCE]->(i:GCPInstance{id: m.instance})
+    MERGE (i)-[r:MEMBER_OF_INSTANCE_GROUP]->(ig)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+    run_write_query(neo4j_session, query, Members=members, ProjectId=project_id, UpdateTag=update_tag)
+
+
+@timeit
+def sync_external_backend_members(
+    neo4j_session: neo4j.Session, compute_client: Resource, project_id: str, common_job_parameters: Dict,
+) -> None:
+    """
+    Post-sync step: backend services (cloudcdn), instance groups (loadbalancer) and instances (compute) sync in
+    parallel, so the project orchestrator calls this after all of them.
+
+    Links each instance to the zonal instance groups it is a member of (MEMBER_OF_INSTANCE_GROUP), for the groups
+    behind this project's EXTERNAL / EXTERNAL_MANAGED backend services only: unmanaged groups (e.g. the k8s-ig--*
+    groups of GKE Ingress) have no other membership source. API calls: one instanceGroups.listInstances (paged by
+    500) per such group; groups behind internal backend services or no backend service cost nothing.
+    """
+    groups = get_external_backend_groups(neo4j_session, project_id)
+    members = [
+        {'group': f'projects/{project_id}/zones/{zone}/instanceGroups/{name}', 'instance': instance}
+        for zone, name in _zonal_groups(groups, project_id, 'instanceGroups')
+        for instance in get_instance_group_members(compute_client, project_id, zone, name)
+    ]
+    load_instance_group_members(neo4j_session, members, project_id, common_job_parameters['UPDATE_TAG'])
+    run_cleanup_job('gcp_lb_backend_members_cleanup.json', neo4j_session, common_job_parameters)
 
 
 def sync(

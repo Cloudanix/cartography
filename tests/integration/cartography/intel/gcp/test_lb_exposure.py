@@ -206,3 +206,125 @@ def test_global_forwarding_rules_hang_off_their_project_and_are_cleaned_up(neo4j
         project=PROJECT,
     ).value()
     assert sorted(names) == ['https-fr', 'internal-fr', 'pool-fr']
+
+
+LB = ['external_load_balancer']
+
+
+def _seed_project(neo4j_session, project, workspace='ws-lb'):
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        SET p.workspace_ids = [w IN coalesce(p.workspace_ids, []) WHERE w <> $ws] + $ws
+        """,
+        ws=workspace, org=PARAMS['GCP_ORGANIZATION_ID'], project=project,
+    )
+
+
+def _params(project):
+    return {**PARAMS, 'GCP_PROJECT_ID': project}
+
+
+def _external_rule(project, name, **refs):
+    """A forwarding rule as transform + resolve_external_lb_backends leave it."""
+    partial_uri = f'projects/{project}/global/forwardingRules/{name}'
+    return {
+        'partial_uri': partial_uri, 'name': name, 'project_id': project, 'load_balancing_scheme': 'EXTERNAL_MANAGED',
+        **refs,
+    }
+
+
+def _backend_service(project, name, scheme, groups):
+    return {
+        'id': f'projects/{project}/global/backendServices/{name}', 'name': name, 'loadBalancingScheme': scheme,
+        'backends': [{'group': f'{API}/{g}'} for g in groups],
+    }
+
+
+def _instances(neo4j_session, project, zone, names, status='RUNNING'):
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project})
+        UNWIND $names AS name
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:GCPComputeInstance:Instance{id: $zone + '/instances/' + name})
+        SET i.status = $status
+        """,
+        project=project, zone=zone, names=names, status=status,
+    )
+
+
+def _exposed_in(neo4j_session, project):
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $project})-[:RESOURCE]->(n) WHERE n.exposed_internet
+        RETURN [l IN labels(n) WHERE l STARTS WITH 'GCP' AND l <> 'GCPComputeInstance'][0] AS label,
+            split(n.id, '/')[-1] AS name, n.exposed_internet_type AS types
+        """,
+        project=project,
+    )
+    return {(r['label'], r['name']): r['types'] for r in rows}
+
+
+def _run_exposure_jobs(neo4j_session, project):
+    run_analysis_job('gcp_load_balancer_exposure.json', neo4j_session, _params(project))
+    run_analysis_job('gcp_compute_instance_analysis.json', neo4j_session, _params(project))
+
+
+def test_unmanaged_instance_group_members_behind_an_external_backend_service_are_exposed(neo4j_session):
+    project = 'proj-lb-members'
+    zone = f'projects/{project}/zones/us-east1-b'
+    _seed_project(neo4j_session, project)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(
+        neo4j_session,
+        [
+            _external_rule(
+                project, 'ingress-fr', backend_services=[f'projects/{project}/global/backendServices/ingress'],
+            ),
+        ],
+        TAG,
+    )
+    cartography.intel.gcp.cloudcdn.load_backend_services(
+        neo4j_session, [
+            # GKE Ingress: an unmanaged k8s-ig--* group per zone holding the cluster's nodes.
+            _backend_service(project, 'ingress', 'EXTERNAL_MANAGED', [f'{zone}/instanceGroups/k8s-ig--abc']),
+            _backend_service(project, 'internal', 'INTERNAL', [f'{zone}/instanceGroups/internal-ig']),
+        ], project, TAG,
+    )
+    cartography.intel.gcp.loadbalancer.load_instance_groups(
+        neo4j_session, [{'id': f'{zone}/instanceGroups/k8s-ig--abc'}, {'id': f'{zone}/instanceGroups/internal-ig'}],
+        project, TAG,
+    )
+    _instances(neo4j_session, project, zone, ['node-1', 'internal-vm', 'left-group'])
+    _instances(neo4j_session, project, zone, ['node-stopped'], status='TERMINATED')
+    # Membership seen by an earlier sync; the VM has since left the group.
+    neo4j_session.run(
+        "MATCH (i:GCPInstance{id: $vm}), (ig:GCPInstanceGroup{id: $ig}) "
+        "MERGE (i)-[r:MEMBER_OF_INSTANCE_GROUP]->(ig) SET r.lastupdated = 1",
+        vm=f'{zone}/instances/left-group', ig=f'{zone}/instanceGroups/k8s-ig--abc',
+    )
+    client = MagicMock()
+    client.instanceGroups.return_value.listInstances.return_value.execute.return_value = {
+        'items': [{'instance': f'{API}/{zone}/instances/node-1'}, {'instance': f'{API}/{zone}/instances/node-stopped'}],
+    }
+    client.instanceGroups.return_value.listInstances_next.return_value = None
+
+    cartography.intel.gcp.loadbalancer.sync_external_backend_members(neo4j_session, client, project, _params(project))
+    _run_exposure_jobs(neo4j_session, project)
+
+    # Only the group behind the external backend service is listed.
+    client.instanceGroups.return_value.listInstances.assert_called_once_with(
+        project=project, zone='us-east1-b', instanceGroup='k8s-ig--abc', body={'instanceState': 'ALL'},
+    )
+    members = neo4j_session.run(
+        "MATCH (i:GCPInstance)-[:MEMBER_OF_INSTANCE_GROUP]->(:GCPInstanceGroup) WHERE i.id STARTS WITH $zone "
+        "RETURN split(i.id, '/')[-1] AS name", zone=zone,
+    ).value()
+    assert sorted(members) == ['node-1', 'node-stopped']
+    assert _exposed_in(neo4j_session, project) == {
+        ('GCPForwardingRule', 'ingress-fr'): LB,
+        ('GCPBackendService', 'ingress'): LB,
+        ('GCPInstanceGroup', 'k8s-ig--abc'): LB,
+        # No external IP needed; the stopped member and the internal backend's VM are not reachable.
+        ('GCPInstance', 'node-1'): LB,
+    }

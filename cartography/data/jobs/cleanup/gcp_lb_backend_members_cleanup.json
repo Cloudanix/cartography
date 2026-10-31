@@ -1,0 +1,11 @@
+{
+	"statements": [
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPInstanceGroup)<-[r:MEMBER_OF_INSTANCE_GROUP]-(:GCPInstance) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove instance -> instance group memberships not seen this sync (instance left the group, or the group is no longer behind an external backend service)."
+		}
+	],
+	"name": "cleanup GCP load balancer backend members"
+}

@@ -23,6 +23,7 @@ from oauth2client.client import GoogleCredentials
 
 from . import compute
 from . import label
+from . import loadbalancer
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
@@ -756,6 +757,16 @@ def _sync_single_project(
             compute.sync_gke_node_links(neo4j_session, common_job_parameters)
         except Exception as e:
             logger.warning(f"error to link GKE nodes for project {project_id} - {e}")
+
+    # Load balancer backend members need backend services (cloudcdn), instance groups (loadbalancer) and instances
+    # (compute) loaded; those syncs run in parallel.
+    if "cloudcdn" in requested_syncs or "loadbalancer" in requested_syncs:
+        try:
+            loadbalancer.sync_external_backend_members(
+                neo4j_session, resources.compute, project_id, common_job_parameters,
+            )
+        except Exception as e:
+            logger.warning(f"error to resolve load balancer backend members for project {project_id} - {e}")
 
     for service_name in common_job_parameters["service_labels"]:
         common_job_parameters["service_label"] = service_name
