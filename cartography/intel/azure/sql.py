@@ -423,7 +423,7 @@ def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server
 def _attach_resource_group_server_private_endpoint_connections(neo4j_session: neo4j.Session, private_endpoint_connection_id: str, resource_group: str, azure_update_tag: int) -> None:
     ingest_attach_private_endpoint_connection = """
     MATCH (aspec:AzureServerPrivateEndpointConnection{id: $aspec_id})
-    WITH aspec,
+    WITH aspec
     MATCH (rg:AzureResourceGroup{name: $resource_group})
     MERGE (aspec)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()

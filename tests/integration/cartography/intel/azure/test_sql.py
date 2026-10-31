@@ -813,3 +813,25 @@ def test_sql_server_analysis_public_exposure(neo4j_session):
     actual_nodes = {(n['r.id'], ",".join(n['r.exposed_internet_type'])) for n in nodes}
 
     assert actual_nodes == expected_nodes
+
+
+def test_load_server_private_endpoint_connection(neo4j_session):
+    server_id = '/subscriptions/00-00/resourceGroups/pe-rg/providers/Microsoft.Sql/servers/pe-server'
+    pec_id = f'{server_id}/privateEndpointConnections/pec1'
+    neo4j_session.run("MERGE (:AzureResourceGroup{name: 'pe-rg'})")
+    sql.load_server_data(neo4j_session, TEST_SUBSCRIPTION_ID, [{'id': server_id, 'name': 'pe-server'}], TEST_UPDATE_TAG)
+    server = {
+        'id': server_id,
+        'private_endpoint_connections': [
+            {'id': pec_id, 'properties': {'provisioning_state': 'Ready', 'private_endpoint': {'id': 'pe1'}}},
+        ],
+    }
+
+    sql.load_server_private_endpoint_connection(neo4j_session, [server], TEST_UPDATE_TAG)
+
+    row = neo4j_session.run(
+        'MATCH (:AzureSQLServer{id: $server})-[:HAS]->(p:AzureServerPrivateEndpointConnection)'
+        '-[:RESOURCE_GROUP]->(rg:AzureResourceGroup) RETURN p.private_endpoint AS pe, rg.name AS rg',
+        server=server_id,
+    ).single()
+    assert (row['pe'], row['rg']) == ('pe1', 'pe-rg')
