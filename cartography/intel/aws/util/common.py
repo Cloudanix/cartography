@@ -1,6 +1,13 @@
+import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
+
+from policyuniverse.statement import Statement
 
 logger = logging.getLogger(__name__)
 
@@ -330,3 +337,46 @@ def _evaluate_condition_accounts(
     if has_trusted_account_key:
         return "restricted"
     return "cross_account" if has_untrusted else "restricted"
+
+
+# Condition keys policyuniverse does not know: they limit service-principal callers to one AWS Organization.
+SOURCE_ORG_CONDITION_KEYS = ('aws:sourceorgid', 'aws:sourceorgpaths')
+STRING_MATCH_OPERATOR = re.compile(r'^((ForAllValues|ForAnyValue):)?String(Equals|Like)(IgnoreCase)?(IfExists)?$', re.I)
+
+
+def _restricted_to_source_org(statement: Dict[str, Any]) -> bool:
+    for operator, conditions in (statement.get('Condition') or {}).items():
+        if not STRING_MATCH_OPERATOR.match(operator):
+            continue
+        for key, value in conditions.items():
+            values = value if isinstance(value, list) else [value]
+            # 'o-abc123' or 'o-abc123/r-ab12/ou-.../*' restrict; '*' or 'o-*' do not.
+            if key.lower() in SOURCE_ORG_CONDITION_KEYS and all('*' not in str(v).split('/')[0] for v in values):
+                return True
+    return False
+
+
+def is_resource_policy_internet_accessible(policy_document: Optional[str]) -> Optional[bool]:
+    """
+    Whether a resource policy (SNS topic, SQS queue, ...) lets anyone on the internet act on the resource: an
+    Allow statement for Principal "*" / {"AWS": "*"} whose conditions do not pin the caller (aws:SourceAccount,
+    aws:SourceArn, aws:SourceOwner, aws:SourceOrgID/Paths, aws:PrincipalOrgID, aws:SourceVpc(e), a non-/0
+    aws:SourceIp, ...).
+
+    False when there is no policy (only the owner has access); None when the document cannot be parsed.
+    Deny statements are not evaluated (policyuniverse), so "Allow * + Deny unless VPC endpoint" reads as
+    accessible: the fail-safe direction.
+    """
+    if not policy_document:
+        return False
+    try:
+        statements = json.loads(policy_document).get('Statement', [])
+        if isinstance(statements, dict):
+            statements = [statements]
+        return any(
+            Statement(statement).is_internet_accessible() and not _restricted_to_source_org(statement)
+            for statement in statements
+        )
+    except (ValueError, TypeError, AttributeError) as e:
+        logger.warning(f"Could not parse resource policy: {e}")
+        return None
