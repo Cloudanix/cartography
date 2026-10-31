@@ -191,12 +191,13 @@ Legend: Y = ingested, P = partially, N = not ingested.
 | Route tables, internet gateway, NAT gateway | L2 | Y | `network.py`; used by `oci_subnet_asset_exposure` |
 | **Service gateway, DRG, local peering** | L2 | **N** | needed for internal / on-prem sources (L5), not for internet |
 | VNIC public IP, `prohibit_public_ip_on_vnic` | L1/L2 | Y | `network.py`, `compute.py` |
-| LB listeners, backend sets | L2 | Y | `load_balancer.py` |
+| LB listeners, backend sets | L2 | Y | `load_balancer.py`; backend ports **Y (new)** as `backend_endpoints` from the same list call |
+| VNIC IPv6 addresses | L1/L2 | N | reason the OCI walker is IPv4 only |
 | **WAF policies, Network Firewall** | L2/L4 | **N** | |
 | ADB whitelisted IPs, private endpoint | L2 | Y | `database.py` |
 | OKE endpoint config, public IP enabled | L2 | Y | `oke.py` |
 | Object storage `public_access_type` | L3 | Y | `storage.py` |
-| **API Gateway route `authentication` / request policies** | L3 | **N** | |
+| API Gateway route `authentication` / request policies | L3 | **Y (new)** | `api_gateway.py`: ListDeployments + GetDeployment per active deployment; policy verb `read api-deployments` |
 | OKE Kubernetes version, DB versions | L4 | Y | `oke.py`, `database.py` |
 | Instance image / OS | L4 | Y | `compute.py` |
 | **Dynamic groups (instance principals)** | L5 | **N** | without them, compute has no IAM blast radius in OCI |
@@ -324,7 +325,31 @@ admission accepts any source, not only the LB; ALB auth actions, Redis RBAC, cla
 peered-VPC and TGW reach are not evaluated; Redshift / EMR subnets are not ingested, so route and
 NACL checks are skipped for them (SG verdict kept).
 
-### 10.3 cloudanix-web contract
+### 10.3 OCI (done)
+
+Runs per compartment after `OCI_ANALYSIS_JOBS`. Writes compartment resources; reads network
+objects (subnets, security lists, NSGs, gateways, LBs) tenancy-wide, since a VNIC or LB can sit in
+another compartment's network.
+
+| Layer | Labels |
+|---|---|
+| L1/L2 | OCIVnic, OCIInstance, OCIDbNode, OCIDbSystem, OCILoadBalancer, OCINetworkLoadBalancer, OCIOKECluster (6443), OCIApiGateway (443), OCIAutonomousDatabase (1521-1522, 443), OCIStorageBucket, OCIContainerRepository (service endpoint 443) |
+| L3 | buckets `ObjectRead*` / public repos / anonymous gateway deployment = none; ADB (credentials, mTLS wallet), DB systems, OKE = required; instances, LBs, gateways without readable deployments = unknown |
+| L4 | `kubernetes@` (OKE clusters, node pools), `oracle-database@` (ADB, DB system, DB home), instance OS (`image_name`) |
+| L5 | OCIInstance -[:CAN_NETWORK_REACH]-> OCIDbSystem, private-endpoint OCIAutonomousDatabase (same VCN) |
+
+Path: public IP, subnet allows public IPs, `0.0.0.0/0` route to an enabled IGW, then security lists
+of the subnet UNION NSGs of the attachment (OCI admits a packet when any of them allows it).
+Stateless ingress needs an egress rule covering ephemeral reply ports.
+
+Rollout: policy verb `read api-deployments` (or `inspect` + `read`) in the tenancy policy. If
+denied, gateway auth stays `unknown`, never "no deployments".
+
+Ceilings: IPv4 only; unresolved route table does not block (via `route_table_unresolved`);
+LB -> backend hop accepts any source and skips its stateless return check; API Gateway multi-auth
+treated as authenticated; L5 same VCN only; dynamic groups, WAF, Network Firewall not ingested.
+
+### 10.4 cloudanix-web contract
 
 Read per node: `internet_reachable`, `internet_reachable_ports`, `access_auth`,
 `software_identity`, `software_identity_source`; per edge: `CAN_NETWORK_REACH.ports`. L4 join:
