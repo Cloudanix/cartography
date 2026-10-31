@@ -33,6 +33,7 @@ azure-mgmt-storage>=25.0.0
 azure-mgmt-sql<=1.0.0
 azure-identity>=1.25.0
 azure-mgmt-containerinstance>=10.1.0
+azure-containerregistry~=1.2.0
 azure-mgmt-containerregistry>=15.0.0
 azure-mgmt-containerservice>=41.0.0
 azure-mgmt-keyvault>=14.0.0
