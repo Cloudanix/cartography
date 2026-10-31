@@ -515,3 +515,28 @@ def test_lambda_iot_and_cognito_triggers_are_not_internet_exposure(neo4j_session
     run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
 
     assert _exposed_lambdas(neo4j_session, 'trig-') == {'trig-iot-and-any-api': ['apigateway_trigger']}
+
+
+def test_lambda_anonymous_access_type_reset_covers_more_than_one_batch(neo4j_session):
+    # The reset is iterative (100 per batch) and the runner stops at the first batch that changes
+    # nothing, so an unfiltered reset re-matched the same cleared batch and left the rest stale.
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    neo4j_session.run(
+        """
+        UNWIND range(1, 250) AS i
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(lf:AWSLambda{id: 'reset-' + toString(i)})
+        SET lf.anonymous_access = false, lf.anonymous_access_type = ['policy']
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID,
+    )
+
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    stale = neo4j_session.run(
+        """
+        MATCH (lf:AWSLambda) WHERE lf.id STARTS WITH 'reset-' AND lf.anonymous_access_type IS NOT NULL
+        RETURN count(lf) AS n
+        """,
+    ).single()['n']
+    assert stale == 0
