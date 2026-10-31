@@ -47,6 +47,31 @@ def test_load_nsg_security_rules_flags_internet_ingress():
     }
 
 
+def test_load_route_tables_records_default_routes_to_internet_gateways():
+    igw = 'ocid1.internetgateway.oc1.phx.a'
+    session = _RecordingSession()
+    network.load_route_tables(
+        session,
+        [
+            {'id': 'igw-default', 'route-rules': [{'destination': '0.0.0.0/0', 'network-entity-id': igw}]},
+            {'id': 'igw-v6', 'route-rules': [{'destination': '::/0', 'network-entity-id': igw}]},
+            # Deprecated cidrBlock field instead of destination.
+            {'id': 'igw-legacy', 'route-rules': [{'cidr-block': '0.0.0.0/0', 'network-entity-id': igw}]},
+            {'id': 'igw-partial', 'route-rules': [{'destination': '198.51.100.0/24', 'network-entity-id': igw}]},
+            {
+                'id': 'nat-default',
+                'route-rules': [{'destination': '0.0.0.0/0', 'network-entity-id': 'ocid1.natgateway.oc1.phx.b'}],
+            },
+            {'id': 'empty'},
+        ],
+        'tenancy', 'compartment', 'us-phoenix-1', 1,
+    )
+    assert {r['ocid']: r['default_route_igw_ids'] for r in session.rows} == {
+        'igw-default': [igw], 'igw-v6': [igw], 'igw-legacy': [igw],
+        'igw-partial': [], 'nat-default': [], 'empty': [],
+    }
+
+
 class _RecordingSession:
     """Captures the rows load_graph_data writes instead of talking to Neo4j."""
 

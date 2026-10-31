@@ -63,14 +63,35 @@ def _load_vcn(neo4j_session, vcn_id, compartment_id=COMPARTMENT_ID, security_lis
         )
 
 
-def _load_subnet(neo4j_session, subnet_id, vcn_id, security_list_ids, compartment_id=COMPARTMENT_ID):
+def _load_subnet(
+    neo4j_session, subnet_id, vcn_id, security_list_ids=(), route_table_id='', prohibit_public_ip=False,
+    compartment_id=COMPARTMENT_ID,
+):
     network.load_subnets(
         neo4j_session,
         [{
-            'id': subnet_id, 'vcn-id': vcn_id, 'security-list-ids': security_list_ids,
-            'prohibit-public-ip-on-vnic': False,
+            'id': subnet_id, 'vcn-id': vcn_id, 'security-list-ids': list(security_list_ids),
+            'route-table-id': route_table_id, 'prohibit-public-ip-on-vnic': prohibit_public_ip,
         }],
         TENANCY_ID, compartment_id, REGION, UPDATE_TAG,
+    )
+
+
+def _load_route_table(neo4j_session, route_table_id, vcn_id, destination, target_id):
+    network.load_route_tables(
+        neo4j_session,
+        [{
+            'id': route_table_id, 'vcn-id': vcn_id,
+            'route-rules': [{'destination': destination, 'network-entity-id': target_id}],
+        }],
+        TENANCY_ID, COMPARTMENT_ID, REGION, UPDATE_TAG,
+    )
+
+
+def _load_internet_gateway(neo4j_session, igw_id, vcn_id, enabled=True):
+    network.load_internet_gateways(
+        neo4j_session, [{'id': igw_id, 'vcn-id': vcn_id, 'is-enabled': enabled}],
+        TENANCY_ID, COMPARTMENT_ID, REGION, UPDATE_TAG,
     )
 
 
@@ -164,3 +185,38 @@ def test_instance_exposure_needs_public_ip_and_own_open_rules(neo4j_session):
         "MATCH (i:OCIInstance{id: 'inst-public-open-nsg'}) RETURN i.publicContext AS c",
     ).single()['c']
     assert 'inst-nsg-open.rule0' in context and '203.0.113.4' in context
+
+
+def test_subnet_exposure_needs_public_ips_and_own_default_route_to_internet_gateway(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _load_vcn(neo4j_session, 'sub-vcn')
+    igw = 'ocid1.internetgateway.oc1.phx.sub-igw'
+    disabled_igw = 'ocid1.internetgateway.oc1.phx.sub-igw-off'
+    _load_internet_gateway(neo4j_session, igw, 'sub-vcn')
+    _load_internet_gateway(neo4j_session, disabled_igw, 'sub-vcn', enabled=False)
+    _load_route_table(neo4j_session, 'sub-rt-igw', 'sub-vcn', '0.0.0.0/0', igw)
+    _load_route_table(neo4j_session, 'sub-rt-igw-v6', 'sub-vcn', '::/0', igw)
+    _load_route_table(neo4j_session, 'sub-rt-igw-off', 'sub-vcn', '0.0.0.0/0', disabled_igw)
+    _load_route_table(neo4j_session, 'sub-rt-nat', 'sub-vcn', '0.0.0.0/0', 'ocid1.natgateway.oc1.phx.sub-nat')
+
+    _load_subnet(neo4j_session, 'sub-public-igw', 'sub-vcn', route_table_id='sub-rt-igw')
+    _load_subnet(neo4j_session, 'sub-public-igw-v6', 'sub-vcn', route_table_id='sub-rt-igw-v6')
+    # Private subnet: no VNIC in it can get a public IP, whatever the route table says.
+    _load_subnet(neo4j_session, 'sub-private-igw', 'sub-vcn', route_table_id='sub-rt-igw', prohibit_public_ip=True)
+    # Public IPs allowed, but its own route table sends 0.0.0.0/0 to a NAT gateway (the VCN still has an IGW).
+    _load_subnet(neo4j_session, 'sub-public-nat', 'sub-vcn', route_table_id='sub-rt-nat')
+    _load_subnet(neo4j_session, 'sub-public-igw-off', 'sub-vcn', route_table_id='sub-rt-igw-off')
+    # Route table not in the graph: cannot be proven private, stays public as before.
+    _load_subnet(neo4j_session, 'sub-public-unknown-rt', 'sub-vcn', route_table_id='sub-rt-not-synced')
+
+    run_analysis_job('oci_subnet_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCISubnet', 'sub-') == {
+        'sub-public-igw': ['internet_gateway_route'],
+        'sub-public-igw-v6': ['internet_gateway_route'],
+        'sub-public-unknown-rt': ['public_subnet_unresolved_route_table'],
+    }
+    context = neo4j_session.run(
+        "MATCH (s:OCISubnet{id: 'sub-public-igw'}) RETURN s.publicContext AS c",
+    ).single()['c']
+    assert igw in context and 'sub-rt-igw' in context

@@ -22,6 +22,7 @@ INTERNET_CIDRS = ('0.0.0.0/0', '::/0')
 # ICMP / ICMPv6 protocol numbers. Every Default Security List admits ICMP type 3
 # (path MTU discovery) from 0.0.0.0/0; that reaches no service, so it is not exposure.
 ICMP_PROTOCOLS = ('1', '58')
+INTERNET_GATEWAY_OCID_PREFIX = 'ocid1.internetgateway.'
 
 
 def is_internet_ingress_rule(rule: Dict[str, Any]) -> bool:
@@ -32,6 +33,19 @@ def is_internet_ingress_rule(rule: Dict[str, Any]) -> bool:
     if rule.get("direction", "INGRESS") != "INGRESS":
         return False
     return rule.get("source") in INTERNET_CIDRS and rule.get("protocol") not in ICMP_PROTOCOLS
+
+
+def default_route_internet_gateway_ids(route_rules: List[Dict[str, Any]]) -> List[str]:
+    """
+    Internet gateways a route table's default route (0.0.0.0/0 or ::/0) points at.
+    Route rules still carrying the deprecated cidr-block field are read too.
+    """
+    return [
+        rule["network-entity-id"]
+        for rule in route_rules
+        if (rule.get("destination") or rule.get("cidr-block")) in INTERNET_CIDRS and
+        (rule.get("network-entity-id") or "").startswith(INTERNET_GATEWAY_OCID_PREFIX)
+    ]
 
 
 # ============================================================
@@ -820,6 +834,7 @@ def load_route_tables(
         t.vcn_id = rt.vcn_id,
         t.lifecycle_state = rt.lifecycle_state,
         t.route_rules = rt.route_rules,
+        t.default_route_igw_ids = rt.default_route_igw_ids,
         t.region = $REGION,
         t.consolelink = rt.consolelink,
         t.lastupdated = $oci_update_tag
@@ -840,6 +855,8 @@ def load_route_tables(
             "vcn_id": rt.get("vcn-id", ""),
             "lifecycle_state": rt.get("lifecycle-state"),
             "route_rules": json.dumps(route_rules) if route_rules else "[]",
+            # Structured field for the subnet exposure job, which cannot parse the JSON rules.
+            "default_route_igw_ids": default_route_internet_gateway_ids(route_rules or []),
             "time_created": str(rt.get("time-created", "")),
             "consolelink": utils.get_console_link("route_table", region=region, ocid=rt.get("id")),
         })
