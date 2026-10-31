@@ -24,6 +24,20 @@ def create_test_org_account(neo4j_session, workspace_id, org_id, account_id):
     )
 
 
+def create_test_security_group_rule(neo4j_session, group_id, cidr, protocol, from_port, to_port):
+    # A security group as the EC2 sync leaves it (it has a name) with one inbound rule from cidr.
+    label = 'Ipv6Range' if ':' in cidr else 'IpRange'
+    neo4j_session.run(
+        f"""
+        MERGE (sg:EC2SecurityGroup{{id: $group_id}}) SET sg.name = $group_id
+        MERGE (sg)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(rule:IpPermissionInbound:IpRule{{ruleid: $group_id + '-rule'}})
+        SET rule.protocol = $protocol, rule.fromport = $from_port, rule.toport = $to_port
+        MERGE (rule)<-[:MEMBER_OF_IP_RULE]-(:{label}{{id: $group_id + '-range', range: $cidr}})
+        """,
+        group_id=group_id, cidr=cidr, protocol=protocol, from_port=from_port, to_port=to_port,
+    )
+
+
 def exposure_job_parameters(workspace_id, org_id, account_id, update_tag):
     return {
         'UPDATE_TAG': update_tag,

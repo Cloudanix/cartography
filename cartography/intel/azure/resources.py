@@ -9,6 +9,7 @@ from . import iam
 from . import key_vaults
 from . import monitor
 from . import network
+from . import redis
 from . import securitycenter
 from . import sql
 from . import storage
@@ -26,4 +27,5 @@ RESOURCE_FUNCTIONS: Dict = {
     "storage": storage.sync,
     "monitor": monitor.sync,
     "securitycenter": securitycenter.sync,
+    "redis": redis.sync,
 }

@@ -1,12 +1,13 @@
 {
   "statements": [
     {
-      "query": "MATCH (n:CidrBlock)<-[:BLOCK_ASSOCIATION]-(:AWSVpc)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+      "__comment": "CIDR blocks (vpc.py labels them AWSCidrBlock) of the VPCs statement 3 treats as this account's, so a VPC it deletes leaves no orphan blocks. Blocks of another account's VPC (arn names that account) and of peer stubs reached only through a peering (aws_import_vpc_peering_cleanup.json) are left alone.",
+      "query": "MATCH (n:AWSCidrBlock)<-[:BLOCK_ASSOCIATION]-(v:AWSVpc)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG AND coalesce(split(v.arn, ':')[4], $AWS_ID) = $AWS_ID WITH DISTINCT n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
       "iterative": true,
       "iterationsize": 100
     },
     {
-      "query": "MATCH (:CidrBlock)<-[r:BLOCK_ASSOCIATION]-(:AWSVpc)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+      "query": "MATCH (:AWSCidrBlock)<-[r:BLOCK_ASSOCIATION]-(v:AWSVpc)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG AND coalesce(split(v.arn, ':')[4], $AWS_ID) = $AWS_ID WITH DISTINCT r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
       "iterative": true,
       "iterationsize": 100
     },

@@ -23,6 +23,7 @@ from oauth2client.client import GoogleCredentials
 
 from . import compute
 from . import label
+from . import loadbalancer
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
@@ -31,6 +32,7 @@ from cartography.intel.gcp import crm
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
 from cartography.intel.gcp.util.errors import is_permission_error
+from cartography.intel.gcp.util.errors import is_service_not_enabled_error as _is_service_not_enabled_error
 from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -38,15 +40,18 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 Resources = namedtuple(
     "Resources",
-    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun  \
-        iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer",
+    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
+    "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts serviceusage policyanalyzer",
 )
 
 # Mapping of service short names to their full names as in docs. See https://developers.google.com/apis-explorer,
 # and https://cloud.google.com/service-usage/docs/reference/rest/v1/services#ServiceConfig
 Services = namedtuple(
     "Services",
-    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer",
+    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
+    "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts serviceusage policyanalyzer",
 )
 service_names = Services(
     compute="compute.googleapis.com",
@@ -76,6 +81,7 @@ service_names = Services(
     spanner="spanner.googleapis.com",
     pubsublite="pubsublite.googleapis.com",
     cloudtasks="cloudtasks.googleapis.com",
+    artifacts="artifactregistry.googleapis.com",
     serviceusage="serviceusage.googleapis.com",
     policyanalyzer="policyanalyzer.googleapis.com",
 )
@@ -406,6 +412,17 @@ def _get_cloudtasks_resource(credentials: GoogleCredentials) -> Resource:
     return googleapiclient.discovery.build("cloudtasks", "v2", credentials=credentials, cache_discovery=False)
 
 
+def _get_artifactregistry_resource(credentials: GoogleCredentials) -> Resource:
+    """
+    Instantiates an Artifact Registry resource object. Also serves gcr.io: Container Registry is shut down and its
+    hosts are now Artifact Registry repositories.
+    See: https://cloud.google.com/artifact-registry/docs/reference/rest
+    :param credentials: The GoogleCredentials object
+    :return: An artifactregistry resource object
+    """
+    return googleapiclient.discovery.build("artifactregistry", "v1", credentials=credentials, cache_discovery=False)
+
+
 def _get_spanner_resource(credentials: GoogleCredentials) -> Resource:
     """
     Instantiates a spanner resource object.
@@ -459,6 +476,7 @@ def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Res
         bigquery=_get_bigquery_resource(credentials),
         dataflow=_get_dataflow_resource(credentials),
         cloudtasks=_get_cloudtasks_resource(credentials),
+        artifacts=_get_artifactregistry_resource(credentials),
         spanner=_get_spanner_resource(credentials),
         pubsublite=_get_pubsublite_resource(credentials),
         policyanalyzer=_get_policyanalyzer_resource(credentials),
@@ -757,6 +775,16 @@ def _sync_single_project(
         except Exception as e:
             logger.warning(f"error to link GKE nodes for project {project_id} - {e}")
 
+    # Load balancer backend members need backend services (cloudcdn), instance groups and NEGs (loadbalancer),
+    # instances (compute) and functions (cloudfunction) loaded; those syncs run in parallel.
+    if "cloudcdn" in requested_syncs or "loadbalancer" in requested_syncs:
+        try:
+            loadbalancer.sync_external_backend_members(
+                neo4j_session, resources.compute, project_id, common_job_parameters,
+            )
+        except Exception as e:
+            logger.warning(f"error to resolve load balancer backend members for project {project_id} - {e}")
+
     for service_name in common_job_parameters["service_labels"]:
         common_job_parameters["service_label"] = service_name
 
@@ -776,44 +804,6 @@ def _sync_single_project(
     )
 
 
-def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpError) -> bool:
-    """
-    Return True when the HttpError is GCP reporting that the API is not enabled / has never been used on the project.
-
-    GCP signals this inconsistently across services, so all known shapes are matched centrally:
-      - 403 with reason `accessNotConfigured` in the legacy `errors[]` array (e.g. Compute).
-      - 403 PERMISSION_DENIED with reason `SERVICE_DISABLED` in the newer `details[]` (ErrorInfo) array.
-      - 400 reason `invalid` with a "...has not enabled <API>" message (e.g. BigQuery).
-      - any message saying the API "has not been used in project ... or it is disabled".
-
-    Any other error returns False so it is re-raised / logged as an error and not silently swallowed.
-    """
-    try:
-        error = json.loads(http_error.content.decode("utf-8")).get("error", {})
-    except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
-        return False
-
-    # Reason codes live in `errors[]` (legacy) and/or `details[]` (ErrorInfo) depending on the API.
-    reason_entries = (error.get("errors") or []) + (error.get("details") or [])
-    reasons = {entry.get("reason") for entry in reason_entries if isinstance(entry, dict)}
-    if reasons & {"accessNotConfigured", "SERVICE_DISABLED"}:
-        return True
-
-    # Fall back to message text for APIs that don't set a recognizable reason code.
-    message = error.get("message", "")
-    if not message:
-        return False
-    return any(
-        needle in message
-        for needle in (
-            "has not been used in project",
-            "is disabled",
-            "has not enabled",
-            "has not been enabled",
-        )
-    )
-
-
 # Map a sync func name (key in RESOURCE_FUNCTIONS) to the single ServiceUsage API it needs, so we can proactively
 # skip a service whose API is known-disabled instead of making a call we know will 403/400. Derived from the
 # googleapiclient.discovery.build(...) call each _get_<svc>_resource uses: build's first arg + ".googleapis.com" is
@@ -823,7 +813,6 @@ def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpErro
 #   - "admin" (workspace): Admin SDK is org/directory-scoped, not a per-project ServiceUsage API.
 #   - "iam": needs several APIs (iam + cloudresourcemanager + policyanalyzer + apikeys); a single-key gate could
 #     wrongly skip it. It is core and almost always enabled.
-#   - "artifacts" (containerregistry): ambiguous API name and no matching Resources field; not confident enough.
 _GATEABLE_SERVICE_APIS: Dict[str, str] = {
     "compute": "compute.googleapis.com",
     "cloudcdn": "compute.googleapis.com",
@@ -847,6 +836,7 @@ _GATEABLE_SERVICE_APIS: Dict[str, str] = {
     "dataflow": "dataflow.googleapis.com",
     "pubsublite": "pubsublite.googleapis.com",
     "cloudtasks": "cloudtasks.googleapis.com",
+    "artifacts": "artifactregistry.googleapis.com",
 }
 
 
@@ -858,7 +848,7 @@ def _gated_out_services(requested_syncs: List[str], enabled_services: Set[str]) 
       - `enabled_services` is non-empty. An empty set means the ServiceUsage lookup returned nothing or failed
         (it swallows HttpError and returns set()); treating that as "skip everything" would silently drop an entire
         project, so an empty set disables the gate entirely.
-      - the func is in `_GATEABLE_SERVICE_APIS`. Unmapped funcs (iam, workspace, artifacts) are never gated.
+      - the func is in `_GATEABLE_SERVICE_APIS`. Unmapped funcs (iam, workspace) are never gated.
       - its mapped API is absent from `enabled_services`.
 
     Anything not skipped here still runs and is protected by the reactive `_is_service_not_enabled_error` catch, so a
@@ -1079,6 +1069,13 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
 
     run_analysis_job(
         "gcp_load_balancer_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
+    # After the load balancer job: a service behind an external load balancer is read off the flagged NEG.
+    run_analysis_job(
+        "gcp_cloudrun_service_exposure.json",
         neo4j_session,
         common_job_parameters,
     )

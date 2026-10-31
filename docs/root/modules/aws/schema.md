@@ -19,7 +19,9 @@ Representation of an AWS Account.
 - Many node types belong to an `AWSAccount`.
 
         ```
-        (AWSAccount)-[RESOURCE]->(AWSDNSZone,
+        (AWSAccount)-[RESOURCE]->(AWSBackupJob,
+                              AWSBackupProtectedResource,
+                              AWSDNSZone,
                               AWSGroup,
                               AWSInspectorFinding,
                               AWSInspectorPackage,
@@ -37,8 +39,10 @@ Representation of an AWS Account.
                               EC2Reservation,
                               EC2ReservedInstance,
                               EC2SecurityGroup,
+                              EFSFileSystem,
                               ElasticIPAddress,
                               ESDomain,
+                              FSxFileSystem,
                               LaunchConfiguration,
                               LaunchTemplate,
                               LaunchTemplateVersion,
@@ -1497,6 +1501,82 @@ Representation of an AWS [ElasticSearch Domain](https://docs.aws.amazon.com/elas
         (DNSRecord)-[DNS_POINTS_TO]->(ESDomain)
         ```
 
+### AWSMQBroker
+
+Representation of an [Amazon MQ broker](https://docs.aws.amazon.com/amazon-mq/latest/api-reference/brokers-broker-id.html) (ActiveMQ or RabbitMQ), from ListBrokers plus one DescribeBroker per broker.
+
+| Field | Description |
+|-------|-------------|
+| firstseen | Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | Broker ARN |
+| **arn** | Broker ARN |
+| broker\_id, name | Broker id and name |
+| state | Broker state, e.g. `RUNNING` |
+| engine\_type, engine\_version | `ACTIVEMQ` or `RABBITMQ`, and its version |
+| deployment\_mode | `SINGLE_INSTANCE`, `ACTIVE_STANDBY_MULTI_AZ` or `CLUSTER_MULTI_AZ` |
+| host\_instance\_type | Broker instance type |
+| publicly\_accessible | Whether the broker has public endpoints. Null when DescribeBroker failed (unknown) |
+| security\_groups, subnet\_ids | Security group and subnet ids (a public RabbitMQ broker has no security groups) |
+| endpoints, console\_urls, ip\_addresses | Wire-protocol endpoints, web console URLs and IP addresses of the broker instances |
+| ports | Ports parsed from the endpoints and console URLs (443 for a console URL without a port) |
+| auto\_minor\_version\_upgrade, authentication\_strategy, storage\_type | Broker settings |
+| audit\_log\_enabled, general\_log\_enabled | CloudWatch log settings |
+| use\_aws\_owned\_key, kms\_key\_id | Encryption at rest |
+| created | Creation time |
+| region | AWS region |
+
+#### Relationships
+
+- Amazon MQ brokers belong to AWS Accounts.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AWSMQBroker)
+        ```
+
+- Amazon MQ brokers can be members of EC2 Security Groups and sit in EC2 Subnets.
+
+        ```
+        (AWSMQBroker)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+        (AWSMQBroker)-[PART_OF_SUBNET]->(EC2Subnet)
+        ```
+
+### MSKCluster
+
+Representation of an [Amazon MSK cluster](https://docs.aws.amazon.com/msk/1.0/apireference/v2-clusters.html), provisioned or serverless, from ListClustersV2.
+
+| Field | Description |
+|-------|-------------|
+| firstseen | Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | Cluster ARN |
+| **arn** | Cluster ARN |
+| name | Cluster name |
+| cluster\_type | `PROVISIONED` or `SERVERLESS` |
+| state, current\_version, creation\_time | Cluster state, version string and creation time |
+| kafka\_version, instance\_type, number\_of\_broker\_nodes | Provisioned broker settings |
+| public\_access\_type | `DISABLED` or `SERVICE_PROVIDED_EIPS` (provisioned only; null for serverless) |
+| security\_groups, subnet\_ids | Broker node group security groups and client subnets (serverless: from its VPC configs) |
+| iam\_auth\_enabled, scram\_auth\_enabled, tls\_auth\_enabled, unauthenticated\_access\_enabled | Client authentication methods |
+| client\_broker\_encryption, in\_cluster\_encryption, kms\_key\_id | Encryption in transit and at rest |
+| enhanced\_monitoring | Monitoring level |
+| region | AWS region |
+
+#### Relationships
+
+- MSK clusters belong to AWS Accounts.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(MSKCluster)
+        ```
+
+- MSK clusters can be members of EC2 Security Groups and sit in EC2 Subnets.
+
+        ```
+        (MSKCluster)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+        (MSKCluster)-[PART_OF_SUBNET]->(EC2Subnet)
+        ```
+
 ### Endpoint
 
 Representation of a generic network endpoint.
@@ -1925,9 +2005,56 @@ Representation of an AWS [RedshiftCluster](https://docs.aws.amazon.com/redshift/
     (RedshiftCluster)-[MEMBER_OF_AWS_VPC]->(AWSVpc)
     ```
 
+### NeptuneCluster
+
+Representation of an [Amazon Neptune DB cluster](https://docs.aws.amazon.com/neptune/latest/apiref/API_DBCluster.html).
+Neptune clusters come from the same rds:DescribeDBClusters call as RDS clusters (engine `neptune`) and are loaded as
+NeptuneCluster instead of RDSCluster nodes. Their instances stay RDSInstance nodes.
+
+| Field | Description |
+|-------|-------------|
+| firstseen | Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | Cluster ARN |
+| **arn** | Cluster ARN |
+| name, db\_cluster\_identifier, db\_cluster\_resource\_id | Cluster identifiers |
+| engine, engine\_version, status | `neptune`, its version, and the cluster status |
+| endpoint, reader\_endpoint, port, privateIp, publicIp | Writer and reader endpoints, port (8182 by default) and the IPs the writer endpoint resolves to |
+| multi\_az, availability\_zones | Placement |
+| storage\_encrypted, kms\_key\_id | Encryption at rest |
+| iam\_database\_authentication\_enabled | Whether IAM database authentication is on (required for public instances) |
+| deletion\_protection, backup\_retention\_period, preferred\_backup\_window, preferred\_maintenance\_window, copy\_tags\_to\_snapshot | Cluster settings |
+| enabled\_cloudwatch\_logs\_exports | Log types exported to CloudWatch |
+| db\_subnet\_group, db\_parameter\_group | Subnet group and cluster parameter group names |
+| security\_groups, members | VPC security group ids and member instance identifiers |
+| master\_username, hosted\_zone\_id, cluster\_create\_time | Other cluster attributes |
+| region | AWS region |
+
+#### Relationships
+
+- Neptune clusters belong to AWS Accounts.
+
+    ```
+    (AWSAccount)-[RESOURCE]->(NeptuneCluster)
+    ```
+
+- Neptune clusters are members of EC2 Security Groups and of a DB Subnet Group.
+
+    ```
+    (NeptuneCluster)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+    (NeptuneCluster)-[MEMBER_OF_DB_SUBNET_GROUP]->(DBSubnetGroup)
+    ```
+
+- Neptune instances are members of their cluster in the same account and region.
+
+    ```
+    (RDSInstance)-[IS_CLUSTER_MEMBER_OF]->(NeptuneCluster)
+    ```
+
 ### RDSCluster
 
-Representation of an AWS Relational Database Service [DBCluster](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DBCluster.html)
+Representation of an AWS Relational Database Service [DBCluster](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DBCluster.html).
+Neptune clusters, which DescribeDBClusters also returns, are NeptuneCluster nodes instead.
 
 | Field | Description |
 |-------|-------------|
@@ -2024,10 +2151,12 @@ Representation of an Aurora or Multi-AZ [DBClusterSnapshot](https://docs.aws.ama
     (AWSAccount)-[RESOURCE]->(RDSClusterSnapshot)
     ```
 
-- RDS cluster snapshots are linked to their source cluster in the same account and region.
+- RDS cluster snapshots are linked to their source cluster in the same account and region (a Neptune cluster
+  snapshot to its NeptuneCluster).
 
     ```
     (RDSCluster)-[IS_SNAPSHOT_SOURCE]->(RDSClusterSnapshot)
+    (NeptuneCluster)-[IS_SNAPSHOT_SOURCE]->(RDSClusterSnapshot)
     ```
 
 ### RDSInstance
@@ -2468,6 +2597,39 @@ Representation of an AWS [API Gateway Resource](https://docs.aws.amazon.com/apig
         (APIGatewayRestAPI)-[RESOURCE]->(APIGatewayResource)
         ```
 
+### AppSyncGraphqlApi
+
+Representation of an AWS [AppSync GraphQL API](https://docs.aws.amazon.com/appsync/latest/APIReference/API_GraphqlApi.html), from `ListGraphqlApis`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the API |
+| arn | The ARN of the API |
+| api\_id | The API ID |
+| name | The API name |
+| region | The region of the API |
+| authentication\_type | The primary authorization mode (`API_KEY`, `AWS_IAM`, `AMAZON_COGNITO_USER_POOLS`, `OPENID_CONNECT`, `AWS_LAMBDA`) |
+| additional\_authentication\_types | The authorization modes of the additional authentication providers |
+| waf\_web\_acl\_arn | The ARN of the WAF web ACL associated with the API, if any |
+| visibility | `GLOBAL` (public endpoint) or `PRIVATE` (reachable only through an interface VPC endpoint). Defaults to `GLOBAL` when absent |
+| api\_type | `GRAPHQL` or `MERGED` |
+| xray\_enabled | Whether X-Ray tracing is enabled |
+| log\_field\_log\_level | The field-level log level (`NONE`, `ERROR`, `ALL`, ...), when logging is configured |
+| graphql\_uri | The GraphQL endpoint URI |
+| exposed\_internet | Set by `aws_appsync_asset_exposure.json` when the API has a `GLOBAL` (public) endpoint |
+| exposed\_internet\_type | `global_endpoint`, plus `api_key_auth` when `API_KEY` is the primary or an additional auth mode |
+| publicContext | JSON: auth modes, WAF web ACL, endpoint and exposure types of an exposed API |
+
+#### Relationships
+
+- AppSync GraphQL APIs are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AppSyncGraphqlApi)
+        ```
+
 ### AutoScalingGroup
 
 Representation of an AWS [Auto Scaling Group Resource](https://docs.aws.amazon.com/autoscaling/ec2/userguide/AutoScalingGroup.html).
@@ -2626,6 +2788,83 @@ Representation of an AWS [Secrets Manager Secret](https://docs.aws.amazon.com/se
 
         ```
         (AWSAccount)-[RESOURCE]->(SecretsManagerSecret)
+        ```
+
+### DMSReplicationInstance
+
+Representation of an AWS [DMS replication instance](https://docs.aws.amazon.com/dms/latest/APIReference/API_ReplicationInstance.html), from `DescribeReplicationInstances`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the replication instance |
+| arn | The ARN of the replication instance |
+| name, replication\_instance\_identifier | The replication instance identifier |
+| region | The region of the replication instance |
+| replication\_instance\_class | The compute class, e.g. `dms.t3.medium` |
+| status | The replication instance status |
+| engine\_version | The DMS engine version |
+| publicly\_accessible | Whether the instance has a public IP address |
+| auto\_minor\_version\_upgrade | Whether minor engine upgrades are applied automatically |
+| multi\_az | Whether the instance is Multi-AZ |
+| kms\_key\_id | The KMS key that encrypts the instance storage |
+| network\_type | `IPV4` or `DUAL` |
+| availability\_zone | The Availability Zone of the instance |
+| public\_ip\_addresses | The public IP addresses of the instance |
+| private\_ip\_addresses | The private IP addresses of the instance |
+| security\_group\_ids | The VPC security group ids of the instance |
+| subnet\_group\_identifier | The replication subnet group |
+| vpc\_id | The VPC of the replication subnet group |
+| subnet\_ids | The subnets of the replication subnet group |
+| exposed\_internet | Set by `aws_dms_asset_exposure.json` when a publicly accessible instance is reachable from the internet |
+| exposed\_internet\_type | `publicly_accessible_open_sg` (a security group admits 0.0.0.0/0 or ::/0) or `publicly_accessible_sg_unresolved` (its security groups are not all in the graph, or it lists none) |
+| publicContext | JSON: public IPs, status, open security group rules or unresolved security group ids |
+
+#### Relationships
+
+- DMS replication instances are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(DMSReplicationInstance)
+        ```
+
+- DMS replication instances are members of their VPC security groups and subnets. These edges are created after
+  every service has synced (`link_replication_instance_networks`), only to nodes of the same account.
+
+        ```
+        (DMSReplicationInstance)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+        (DMSReplicationInstance)-[PART_OF_SUBNET]->(EC2Subnet)
+        ```
+
+### DMSEndpoint
+
+Representation of an AWS [DMS endpoint](https://docs.aws.amazon.com/dms/latest/APIReference/API_Endpoint.html), from `DescribeEndpoints`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the endpoint |
+| arn | The ARN of the endpoint |
+| name, endpoint\_identifier | The endpoint identifier |
+| region | The region of the endpoint |
+| endpoint\_type | `SOURCE` or `TARGET` |
+| engine\_name | The database engine, e.g. `postgres`, `s3` |
+| server\_name | The database server name |
+| port | The database port |
+| database\_name | The database name |
+| status | The endpoint status |
+| ssl\_mode | `none`, `require`, `verify-ca` or `verify-full`; `none` when the API omits it |
+| certificate\_arn | The ARN of the TLS certificate |
+| kms\_key\_id | The KMS key that encrypts the connection parameters |
+
+#### Relationships
+
+- DMS endpoints are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(DMSEndpoint)
         ```
 
 ### EBSVolume
@@ -2999,6 +3238,53 @@ Representation of an AWS EC2 [Elastic IP address](https://docs.aws.amazon.com/AW
 
         ```
         (NetworkInterface)-[ELASTIC_IP_ADDRESS]->(ElasticIPAddress)
+        ```
+
+### ElasticBeanstalkEnvironment
+
+Representation of an AWS [Elastic Beanstalk environment](https://docs.aws.amazon.com/elasticbeanstalk/latest/api/API_EnvironmentDescription.html), from `DescribeEnvironments` (terminated environments skipped), `DescribeEnvironmentResources` and `DescribeConfigurationSettings`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the environment |
+| arn | The ARN of the environment |
+| name | The environment name |
+| environment\_id | The environment ID (`e-...`) |
+| application\_name | The application the environment belongs to |
+| region | The region of the environment |
+| status | The environment status (`Ready`, `Updating`, ...) |
+| health, health\_status | The environment health color and enhanced health status |
+| tier\_name, tier\_type | `WebServer`/`Standard` or `Worker`/`SQS/HTTP` |
+| cname | The environment CNAME |
+| endpoint\_url | The load balancer DNS name, or the instance's Elastic IP for a single-instance environment |
+| platform\_arn, solution\_stack\_name, version\_label | Platform and deployed application version |
+| listener\_protocols | Protocols of the load balancer listeners from the configuration option settings |
+| environment\_type | `LoadBalanced` or `SingleInstance` (option `aws:elasticbeanstalk:environment` `EnvironmentType`) |
+| resources\_resolved | False when `DescribeEnvironmentResources` failed for the environment |
+| load\_balancer\_names | The environment's load balancers: names for Classic ELBs, ARNs for application / network load balancers |
+| instance\_ids | The environment's EC2 instance ids |
+| exposed\_internet | Set by `aws_elasticbeanstalk_asset_exposure.json` when a web server environment is reachable from the internet; worker environments are never flagged |
+| exposed\_internet\_type | `load_balancer` (one of its load balancers is exposed), `instance` (no load balancer and one of its instances is exposed) or `unresolved` (its resources could not be read, or a load balancer / instance is not in the graph) |
+| publicContext | JSON: CNAME, endpoint, tier and the exposed load balancers / instances or the unresolved ones |
+
+#### Relationships
+
+- Elastic Beanstalk environments are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(ElasticBeanstalkEnvironment)
+        ```
+
+- Elastic Beanstalk environments use load balancers and run on EC2 instances. These edges are created after every
+  service has synced (`link_environment_resources`), only to nodes of the same account (load balancers matched by
+  ARN, or by name in the environment's region).
+
+        ```
+        (ElasticBeanstalkEnvironment)-[USES_LOAD_BALANCER]->(LoadBalancerV2)
+        (ElasticBeanstalkEnvironment)-[USES_LOAD_BALANCER]->(LoadBalancer)
+        (ElasticBeanstalkEnvironment)-[HAS_INSTANCE]->(EC2Instance)
         ```
 
 ### ECSCluster
@@ -3376,4 +3662,125 @@ Representation of an AWS SSM [PatchComplianceData](https://docs.aws.amazon.com/s
 
         ```
         (EC2Instance)-[HAS_INFORMATION]->(SSMInstancePatch)
+        ```
+
+### AWSBackupJob
+
+Representation of an AWS Backup [backup job](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_BackupJob.html). Only jobs created in the last 30 days are synced (the window ListBackupJobs returns), capped per region.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The backup job ID |
+| backup\_job\_id | The backup job ID |
+| resource\_arn | The ARN of the resource the job backed up |
+| resource\_type | The type of the resource, such as EFS or EC2 |
+| recovery\_point\_arn | The ARN of the recovery point the job produced; empty until the job completes |
+| recovery\_point\_delete\_after\_days | Days after creation that the recovery point is deleted; empty when it is kept until deleted by hand |
+| creation\_date | When the job was created (ISO-8601) |
+| completion\_date | When the job finished (ISO-8601) |
+| state | The job state, such as COMPLETED or FAILED |
+| backup\_vault\_name | The name of the vault that holds the recovery point |
+| backup\_vault\_arn | The ARN of that vault |
+| region | The region of the job |
+
+#### Relationships
+
+- AWSBackupJob is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AWSBackupJob)
+        ```
+
+### AWSBackupProtectedResource
+
+Representation of a resource AWS Backup has [successfully backed up](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_ProtectedResource.html).
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the protected resource |
+| resource\_arn | The ARN of the protected resource |
+| resource\_type | The type of the resource, such as EFS or EC2 |
+| resource\_name | The name of the resource |
+| last\_backup\_time | When the resource was last backed up (ISO-8601) |
+| last\_recovery\_point\_arn | The ARN of the latest recovery point |
+| region | The region of the protected resource |
+
+#### Relationships
+
+- AWSBackupProtectedResource is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AWSBackupProtectedResource)
+        ```
+
+### EFSFileSystem
+
+Representation of an [Amazon EFS file system](https://docs.aws.amazon.com/efs/latest/ug/API_FileSystemDescription.html). EFS is reachable only through mount targets inside a VPC, so it carries no internet exposure.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the file system |
+| arn | The ARN of the file system |
+| file\_system\_id | The file system ID |
+| name | The value of the Name tag |
+| creation\_time | When the file system was created (ISO-8601) |
+| encrypted | Whether the file system is encrypted at rest |
+| kms\_key\_id | The ARN of the KMS key that encrypts it |
+| life\_cycle\_state | The lifecycle state, such as available |
+| number\_of\_mount\_targets | The number of mount targets |
+| performance\_mode | generalPurpose or maxIO |
+| throughput\_mode | bursting, provisioned or elastic |
+| consolelink | Link to the file system in the AWS console |
+| region | The region of the file system |
+
+#### Relationships
+
+- EFSFileSystem is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(EFSFileSystem)
+        ```
+
+### FSxFileSystem
+
+Representation of an [Amazon FSx file system](https://docs.aws.amazon.com/fsx/latest/APIReference/API_FileSystem.html) (Windows File Server, Lustre, NetApp ONTAP or OpenZFS). FSx is reachable only through network interfaces inside its VPC, so it carries no internet exposure.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the file system |
+| arn | The ARN of the file system |
+| file\_system\_id | The file system ID |
+| file\_system\_type | WINDOWS, LUSTRE, ONTAP or OPENZFS |
+| creation\_time | When the file system was created (ISO-8601) |
+| lifecycle | The lifecycle state, such as AVAILABLE |
+| kms\_key\_id | The ARN of the KMS key that encrypts it |
+| storage\_capacity | Storage capacity in GiB |
+| storage\_type | SSD, HDD or INTELLIGENT\_TIERING |
+| dns\_name | The DNS name clients mount |
+| vpc\_id | The VPC of the file system |
+| subnet\_ids | The subnets of its network interfaces |
+| automatic\_backup\_retention\_days | Days FSx keeps its own daily automatic backups; 0 means they are off |
+| consolelink | Link to the file system in the AWS console |
+| region | The region of the file system |
+
+#### Relationships
+
+- FSxFileSystem is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(FSxFileSystem)
+        ```
+
+- FSxFileSystem is a member of a VPC.
+
+        ```
+        (FSxFileSystem)-[MEMBER_OF_AWS_VPC]->(AWSVpc)
         ```

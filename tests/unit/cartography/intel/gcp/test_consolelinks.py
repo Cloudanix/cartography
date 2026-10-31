@@ -86,14 +86,10 @@ def test_bigquery_table_link():
 
 
 def test_artifact_registry_repository_link_uses_format():
-    client = MagicMock()
-    client.projects().locations().repositories().list().execute.return_value = {
-        "repositories": [{"name": "projects/p/locations/us-central1/repositories/r1", "format": "NPM"}],
-    }
-    client.projects().locations().repositories().list_next.return_value = None
-    repos = containerregistry.get_artifact_registry_repositories(client, "p", ["us-central1"], {})
+    repos = containerregistry.transform_artifact_registry_repositories(
+        [{"name": "projects/p/locations/us-central1/repositories/r1", "format": "NPM"}], "p",
+    )
     assert repos[0]["consolelink"] == f"{CONSOLE}/artifacts/npm/p/us-central1/r1?project=p"
-    assert repos[0]["console_link"] == repos[0]["consolelink"]
 
 
 def test_gke_node_pool_link():

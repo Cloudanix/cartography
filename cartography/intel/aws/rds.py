@@ -14,6 +14,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
+from cartography.intel.aws import neptune
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.util.arns import DEFAULT_PARTITION
 from cartography.intel.aws.util.arns import get_partition_from_params
@@ -31,7 +32,7 @@ stat_handler = get_stats_client(__name__)
 aws_console_link = AWSLinker()
 
 
-def resolve_dns(hostname: str) -> List[str]:
+def resolve_dns(hostname: Optional[str]) -> List[str]:
     """
     Resolve a hostname to all IP addresses (IPv4 + IPv6).
     """
@@ -41,7 +42,7 @@ def resolve_dns(hostname: str) -> List[str]:
         for result in results:
             ip = result[4][0]
             ip_addresses.add(ip)
-    except socket.gaierror as e:
+    except socket.gaierror:
         return []
 
     return list(ip_addresses)
@@ -60,7 +61,7 @@ def check_ip_type(ip: str) -> Dict[str, bool]:
     }
 
 
-def dns_lookup_with_ip_type(hostname: str) -> List[Dict[str, bool]]:
+def dns_lookup_with_ip_type(hostname: Optional[str]) -> List[Dict[str, bool]]:
     """
     Resolve DNS and classify each IP.
     """
@@ -437,7 +438,9 @@ def load_rds_cluster_snapshots(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
         WITH aa, snapshot, snp
-        MATCH (aa)-[:RESOURCE]->(cluster:RDSCluster{db_cluster_identifier: snp.DBClusterIdentifier, region: snp.region})
+        MATCH (aa)-[:RESOURCE]->(cluster:RDSCluster|NeptuneCluster{
+            db_cluster_identifier: snp.DBClusterIdentifier, region: snp.region
+        })
         MERGE (cluster)-[s:IS_SNAPSHOT_SOURCE]->(snapshot)
         ON CREATE SET s.firstseen = timestamp()
         SET s.lastupdated = $aws_update_tag
@@ -505,7 +508,7 @@ def transform_clusters(cls: List[Dict], region: str) -> List[Dict]:
 
 @timeit
 def load_rds_clusters(
-    neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
     """
@@ -665,7 +668,7 @@ def get_rds_instance_data(boto3_session: boto3.session.Session, region: str) -> 
 
 @timeit
 def load_rds_instances(
-    neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
     aws_update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
@@ -739,7 +742,10 @@ def load_rds_instances(
         if rds.get('DBSubnetGroup'):
             subnets.append(rds)
 
-        if rds.get("Engine") in ["aurora-mysql", "mysql", "mariadb", "aurora-postgres", "postgres", "aurora-postgresql", "postgresql", "sqlserver-ex"]:
+        if rds.get("Engine") in [
+            "aurora-mysql", "mysql", "mariadb", "aurora-postgres", "postgres", "aurora-postgresql", "postgresql",
+            "sqlserver-ex",
+        ]:
             arn = rds.get("DBInstanceArn", "")
             database_name = arn.split(":db:")[-1] if ":db:" in arn else ""
             rds['DatabaseName'] = rds.get("DBName", database_name)
@@ -771,6 +777,7 @@ def load_rds_instances(
     _attach_ec2_subnet_groups(neo4j_session, subnets, current_aws_account_id, aws_update_tag, partition)
     _attach_read_replicas(neo4j_session, read_replicas, aws_update_tag)
     _attach_clusters(neo4j_session, clusters, aws_update_tag)
+    neptune.attach_member_instances(neo4j_session, clusters, current_aws_account_id, aws_update_tag)
 
 
 @timeit
@@ -1127,10 +1134,18 @@ def sync_rds_clusters(
         cls = get_rds_cluster_data(boto3_session, region)
         data.extend(transform_clusters(cls, region))
 
-    logger.info(f"Total RDS Clusters: {len(data)}")
+    # DescribeDBClusters also returns Neptune clusters; they are NeptuneCluster nodes, not RDS clusters.
+    neptune_clusters = [cluster for cluster in data if neptune.is_neptune(cluster)]
+    data = [cluster for cluster in data if not neptune.is_neptune(cluster)]
+    logger.info(f"Total RDS Clusters: {len(data)}, Neptune Clusters: {len(neptune_clusters)}")
 
     load_rds_clusters(neo4j_session, data, current_aws_account_id, update_tag)
     cleanup_rds_clusters(neo4j_session, common_job_parameters)
+    neptune.load_neptune_clusters(
+        neo4j_session, neptune_clusters, current_aws_account_id, update_tag,
+        get_partition_from_params(common_job_parameters),
+    )
+    neptune.cleanup(neo4j_session, common_job_parameters)
 
 
 @timeit

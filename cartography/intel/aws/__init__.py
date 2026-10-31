@@ -23,8 +23,10 @@ from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
 from cartography.graph.session import Session
+from cartography.intel.aws.dms import link_replication_instance_networks
 from cartography.intel.aws.ec2.instances import sync_eks_node_links
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.elasticbeanstalk import link_environment_resources
 from cartography.intel.aws.util.arns import get_partition
 from cartography.intel.aws.util.arns import PARTITION_PARAM
 from cartography.stats import get_stats_client
@@ -292,6 +294,20 @@ def _sync_one_account(
         except Exception as e:
             logger.warning(f"error to link EKS nodes for account {current_aws_account_id} - {e}")
 
+    # DMS instances link to security groups and subnets, which other syncs load in parallel.
+    if "dms" in aws_requested_syncs:
+        try:
+            link_replication_instance_networks(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link DMS replication instances for account {current_aws_account_id} - {e}")
+
+    # Beanstalk environments link to load balancers and instances, which other syncs load in parallel.
+    if "elasticbeanstalk" in aws_requested_syncs:
+        try:
+            link_environment_resources(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link Beanstalk environments for account {current_aws_account_id} - {e}")
+
     # MAP IAM permissions
     if "permission_relationships" in aws_requested_syncs:
         RESOURCE_FUNCTIONS["permission_relationships"](**sync_args)
@@ -376,6 +392,12 @@ def _sync_one_account(
         neo4j_session,
         common_job_parameters,
     )
+    # Must run after the RDS job: a Neptune cluster is exposed through its RDSInstance members.
+    run_analysis_job(
+        "aws_neptune_cluster_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
     run_analysis_job(
         "aws_cloudtrail_asset_exposure.json",
@@ -436,9 +458,35 @@ def _sync_one_account(
         neo4j_session,
         common_job_parameters,
     )
+    run_analysis_job(
+        "aws_appsync_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_dms_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    # Reads the exposure the ELB and EC2 instance jobs above set on the environment's load balancers / instances.
+    run_analysis_job(
+        "aws_elasticbeanstalk_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
     run_analysis_job(
         "aws_redshift_cluster_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_mq_broker_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_msk_cluster_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
@@ -704,6 +752,32 @@ def _sync_multiple_accounts(
     # run_cleanup_job('aws_post_ingestion_dns_cleanup.json', neo4j_session, common_job_parameters)
 
 
+def _requested_syncs(services: List[Dict[str, Any]], common_job_parameters: Dict[str, Any]) -> List[str]:
+    """
+    Service names the caller asked for, recording each one's pagination in common_job_parameters.
+
+    cloudanix-web sends its configured service list, which can name a service this build does not have yet (web
+    config shipped before the cartography deploy). Such a name is skipped with a warning instead of failing the whole
+    AWS sync; the CLI keeps rejecting it through parse_and_validate_aws_requested_syncs.
+    """
+    names: List[str] = []
+    for service in services:
+        name = (service.get("name") or "").strip()
+        if service.get("pagination"):
+            pagination = service["pagination"]
+            pagination["hasNextPage"] = False
+            common_job_parameters["pagination"][name] = pagination
+        names.append(name)
+
+    unknown = [name for name in names if name not in RESOURCE_FUNCTIONS]
+    if unknown:
+        logger.warning(f"Skipping AWS services this cartography build does not sync: {unknown}")
+    known = [name for name in names if name in RESOURCE_FUNCTIONS]
+    if not known:
+        return []
+    return parse_and_validate_aws_requested_syncs(",".join(known))
+
+
 def _get_account_partition(boto3_session: boto3.session.Session, config: Config) -> str:
     """
     Partition of the synced account, so built ARNs read arn:aws-cn:/arn:aws-us-gov: where needed.
@@ -803,19 +877,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
 
     requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
     if config.aws_requested_syncs:
-        aws_requested_syncs_string = ""
-        for service in config.aws_requested_syncs:
-            aws_requested_syncs_string += f"{service.get('name', '')},"
-            if service.get("pagination", None):
-                pagination = service.get("pagination", {})
-                pagination["hasNextPage"] = False
-                common_job_parameters["pagination"][service.get("name", None)] = (
-                    pagination
-                )
-
-        requested_syncs = parse_and_validate_aws_requested_syncs(
-            aws_requested_syncs_string[:-1],
-        )
+        requested_syncs = _requested_syncs(config.aws_requested_syncs, common_job_parameters)
 
     sync_successful = _sync_multiple_accounts(
         neo4j_session,

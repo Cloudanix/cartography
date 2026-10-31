@@ -445,6 +445,18 @@ def dict_value_to_str(obj: Dict, key: str) -> Optional[str]:
         return None
 
 
+def dict_value_to_iso(obj: Dict, key: str) -> Optional[str]:
+    """
+    ISO-8601 string of the datetime under key, to whole seconds ('2026-10-30T10:00:00+00:00'), or None if absent.
+    The AWS evaluator parses graph-sourced dates with '%Y-%m-%dT%H:%M:%S%z', which neither str(datetime) (space
+    separator) nor fractional seconds satisfy. Non-datetime values fall back to str().
+    """
+    value = obj.get(key)
+    if isinstance(value, datetime):
+        return value.replace(microsecond=0).isoformat()
+    return dict_value_to_str(obj, key)
+
+
 def dict_date_to_epoch(obj: Dict, key: str) -> Optional[int]:
     """
     Convert the date referenced by the key in the dict to an epoch timestamp, if it exists, and return it. If it

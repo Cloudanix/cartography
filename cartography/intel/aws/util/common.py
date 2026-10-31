@@ -380,3 +380,30 @@ def is_resource_policy_internet_accessible(policy_document: Optional[str]) -> Op
     except (ValueError, TypeError, AttributeError) as e:
         logger.warning(f"Could not parse resource policy: {e}")
         return None
+
+
+def list_up_to(client: Any, operation: str, result_key: str, limit: int, page_size: int, **params: Any) -> List[Dict]:
+    """
+    Pages through a boto3 list operation and stops once `limit` items are read, so an account with years of job
+    history costs at most ceil(limit / page_size) calls. Pass SortBy/SortOrder in `params` to choose which items
+    are kept.
+    """
+    items: List[Dict] = []
+    for page in client.get_paginator(operation).paginate(**params, PaginationConfig={'PageSize': page_size}):
+        items.extend(page.get(result_key, []))
+        if len(items) >= limit:
+            break
+    return items[:limit]
+
+
+def cap_with_warning(items: List[Dict], cap: int, what: str, account_id: str, region: str) -> List[Dict]:
+    """
+    Keeps the first `cap` items. Callers fetch cap + 1 to detect that more exist; the extra items are not ingested,
+    and stale cleanup removes their nodes from earlier syncs, so say so where an operator will see it.
+    """
+    if len(items) <= cap:
+        return items
+    logger.warning(
+        f"{what}: more than {cap} in account {account_id} region {region}; ingesting the first {cap} only.",
+    )
+    return items[:cap]
