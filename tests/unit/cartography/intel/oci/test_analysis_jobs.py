@@ -26,3 +26,7 @@ def test_oci_boot_volume_exposure_runs_after_instance_exposure():
 
 def test_oci_db_system_exposure_is_wired():
     assert 'oci_db_system_asset_exposure.json' in oci_intel.OCI_ANALYSIS_JOBS
+
+
+def test_oci_oke_cluster_exposure_is_wired():
+    assert 'oci_oke_cluster_asset_exposure.json' in oci_intel.OCI_ANALYSIS_JOBS

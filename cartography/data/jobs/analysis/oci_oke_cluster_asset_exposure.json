@@ -1,0 +1,36 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OKE clusters in scope",
+      "query": "MATCH (n:OCIOKECluster)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Mark clusters created before VCN-native endpoints as exposed: their Kubernetes API endpoint has a public IP outside any subnet, so no security list or NSG can restrict it",
+      "query": "MATCH (cl:OCIOKECluster)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(cl.endpoint_subnet_id, '') = '' AND coalesce(cl.public_endpoint, '') <> '' SET cl.exposed_internet = true, (CASE WHEN NOT 'legacy_public_endpoint' IN coalesce(cl.exposed_internet_type, []) THEN cl END).exposed_internet_type = coalesce(cl.exposed_internet_type, []) + 'legacy_public_endpoint'",
+      "iterative": false
+    },
+    {
+      "__comment": "Mark clusters as exposed if their VCN-native API endpoint has a public IP and one of the endpoint subnet's OWN security lists admits TCP 6443 (the Kubernetes API port) from 0.0.0.0/0 or ::/0. internet_ingress_port_ranges ('<protocol>:<min>-<max>') is set at ingest; security lists synced before it existed count as open on every port when they admit any internet ingress.",
+      "query": "MATCH (cl:OCIOKECluster)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(cl.endpoint_subnet_id, '') <> '' AND (cl.endpoint_is_public_ip_enabled = true OR coalesce(cl.public_endpoint, '') <> '') MATCH (subnet:OCISubnet{id: cl.endpoint_subnet_id}) MATCH (sl:OCISecurityList) WHERE sl.id IN coalesce(subnet.security_list_ids, []) WITH cl, coalesce(sl.internet_ingress_port_ranges, CASE WHEN coalesce(sl.allows_internet_ingress, sl.ingress_security_rules CONTAINS '0.0.0.0/0' OR sl.ingress_security_rules CONTAINS '::/0') THEN ['all:1-65535'] ELSE [] END) AS ranges WHERE any(r IN ranges WHERE split(r, ':')[0] IN ['all', '6'] AND toInteger(split(split(r, ':')[1], '-')[0]) <= 6443 AND toInteger(split(split(r, ':')[1], '-')[1]) >= 6443) WITH DISTINCT cl SET cl.exposed_internet = true, (CASE WHEN NOT 'unrestricted_securitylist_ingress' IN coalesce(cl.exposed_internet_type, []) THEN cl END).exposed_internet_type = coalesce(cl.exposed_internet_type, []) + 'unrestricted_securitylist_ingress'",
+      "iterative": false
+    },
+    {
+      "__comment": "Mark clusters as exposed if their VCN-native API endpoint has a public IP and an NSG attached to the endpoint has a rule admitting TCP 6443 from 0.0.0.0/0 or ::/0. Rules synced before internet_ingress_port_range existed count as open on every port.",
+      "query": "MATCH (cl:OCIOKECluster)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(cl.endpoint_subnet_id, '') <> '' AND (cl.endpoint_is_public_ip_enabled = true OR coalesce(cl.public_endpoint, '') <> '') MATCH (nsg:OCINetworkSecurityGroup)-[:OCI_NSG_RULE]->(rule:OCINsgSecurityRule) WHERE nsg.id IN coalesce(cl.endpoint_nsg_ids, []) AND coalesce(rule.is_internet_ingress, rule.direction = 'INGRESS' AND rule.source IN ['0.0.0.0/0', '::/0']) WITH cl, coalesce(rule.internet_ingress_port_range, 'all:1-65535') AS r WHERE split(r, ':')[0] IN ['all', '6'] AND toInteger(split(split(r, ':')[1], '-')[0]) <= 6443 AND toInteger(split(split(r, ':')[1], '-')[1]) >= 6443 WITH DISTINCT cl SET cl.exposed_internet = true, (CASE WHEN NOT 'unrestricted_nsg_ingress' IN coalesce(cl.exposed_internet_type, []) THEN cl END).exposed_internet_type = coalesce(cl.exposed_internet_type, []) + 'unrestricted_nsg_ingress'",
+      "iterative": false
+    },
+    {
+      "__comment": "Fail-safe: a public API endpoint whose subnet, subnet security lists or NSGs are not in the graph (other compartment, not synced) cannot be proven closed, so the cluster is exposed",
+      "query": "MATCH (cl:OCIOKECluster)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(cl.endpoint_subnet_id, '') <> '' AND (cl.endpoint_is_public_ip_enabled = true OR coalesce(cl.public_endpoint, '') <> '') OPTIONAL MATCH (subnet:OCISubnet{id: cl.endpoint_subnet_id}) OPTIONAL MATCH (sl:OCISecurityList) WHERE sl.id IN coalesce(subnet.security_list_ids, []) WITH cl, subnet, count(DISTINCT sl) AS known_security_lists OPTIONAL MATCH (nsg:OCINetworkSecurityGroup) WHERE nsg.id IN coalesce(cl.endpoint_nsg_ids, []) WITH cl, subnet, known_security_lists, count(DISTINCT nsg) AS known_nsgs WHERE subnet IS NULL OR known_security_lists < size(coalesce(subnet.security_list_ids, [])) OR known_nsgs < size(coalesce(cl.endpoint_nsg_ids, [])) SET cl.exposed_internet = true, (CASE WHEN NOT 'public_endpoint_unresolved_rules' IN coalesce(cl.exposed_internet_type, []) THEN cl END).exposed_internet_type = coalesce(cl.exposed_internet_type, []) + 'public_endpoint_unresolved_rules'",
+      "iterative": false
+    },
+    {
+      "__comment": "Build publicContext JSON for exposed clusters",
+      "query": "MATCH (cl:OCIOKECluster)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE cl.exposed_internet = true SET cl.publicContext = apoc.convert.toJson([{resource: cl.id, resourceType: 'oci-containers-oke-cluster', context: [{clusterId: cl.id, clusterName: cl.name, publicEndpoint: cl.public_endpoint, endpointSubnetId: cl.endpoint_subnet_id, endpointNsgIds: coalesce(cl.endpoint_nsg_ids, []), apiPort: 6443, vcnId: cl.vcn_id, kubernetesVersion: cl.kubernetes_version, exposureTypes: cl.exposed_internet_type, region: cl.region}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "OCI OKE cluster asset internet exposure"
+}

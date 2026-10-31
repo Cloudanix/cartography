@@ -2,6 +2,7 @@
 # Runs the real OCI exposure analysis jobs against network data loaded by the real loaders.
 from cartography.intel.oci import database
 from cartography.intel.oci import network
+from cartography.intel.oci import oke
 from cartography.intel.oci import storage
 from cartography.util import run_analysis_job
 
@@ -33,6 +34,13 @@ ICMP_FROM_VCN = {'protocol': '1', 'source': '10.0.0.0/16', 'source-type': 'CIDR_
 DEFAULT_SECURITY_LIST_RULES = [OPEN_SSH, PATH_MTU_FROM_ANYWHERE, ICMP_FROM_VCN]
 HTTPS_FROM_VCN = {'protocol': '6', 'source': '10.0.0.0/16', 'source-type': 'CIDR_BLOCK'}
 ALL_FROM_ANYWHERE_V6 = {'protocol': 'all', 'source': '::/0', 'source-type': 'CIDR_BLOCK'}
+
+
+def _tcp_from_anywhere(port_min, port_max=None):
+    return {
+        'protocol': '6', 'source': '0.0.0.0/0', 'source-type': 'CIDR_BLOCK',
+        'tcp-options': {'destination-port-range': {'min': port_min, 'max': port_max or port_min}},
+    }
 
 
 def _seed_tenancy(neo4j_session, workspace_id, tenancy_id, compartment_id):
@@ -522,6 +530,61 @@ def test_db_system_exposure_needs_node_public_ip_and_own_open_rules(neo4j_sessio
     assert rows[0]['c'] is None
     assert 'oci-database-dbsystem-instance' in rows[1]['c'] and '203.0.113.30' in rows[1]['c']
     assert 'dbs-sl-default' in rows[1]['c'] and 'dbs-two-nodes' in rows[1]['c']
+
+
+def test_oke_cluster_exposed_when_public_api_endpoint_port_is_open(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _load_vcn(
+        neo4j_session, 'oke-vcn',
+        security_lists=[
+            # Default Security List: SSH (22) is open to the world, the API port (6443) is not.
+            ('oke-sl-default', DEFAULT_SECURITY_LIST_RULES),
+            ('oke-sl-api', [_tcp_from_anywhere(6443)]),
+            ('oke-sl-closed', [HTTPS_FROM_VCN]),
+            ('oke-sl-v6-all', [ALL_FROM_ANYWHERE_V6]),
+        ],
+        nsgs={'oke-nsg-api': [_tcp_from_anywhere(6443, 6443)], 'oke-nsg-ssh': [OPEN_SSH]},
+    )
+    for sl in ('default', 'api', 'closed', 'v6-all'):
+        _load_subnet(neo4j_session, f'oke-subnet-{sl}', 'oke-vcn', [f'oke-sl-{sl}'])
+    public = {'endpoint_is_public_ip_enabled': True, 'public_endpoint': '203.0.113.50:6443'}
+    clusters = [
+        {'id': 'oke-private', 'endpoint_subnet_id': 'oke-subnet-api', 'endpoint_is_public_ip_enabled': False},
+        # Clusters created before VCN-native endpoints have a public API endpoint outside any subnet.
+        {'id': 'oke-legacy', 'public_endpoint': '203.0.113.51:6443'},
+        {'id': 'oke-public-default-sl', 'endpoint_subnet_id': 'oke-subnet-default', **public},
+        {'id': 'oke-public-api-sl', 'endpoint_subnet_id': 'oke-subnet-api', **public},
+        {'id': 'oke-public-v6-all', 'endpoint_subnet_id': 'oke-subnet-v6-all', **public},
+        {
+            'id': 'oke-public-api-nsg', 'endpoint_subnet_id': 'oke-subnet-closed',
+            'endpoint_nsg_ids': ['oke-nsg-api'], **public,
+        },
+        {
+            'id': 'oke-public-ssh-nsg', 'endpoint_subnet_id': 'oke-subnet-closed',
+            'endpoint_nsg_ids': ['oke-nsg-ssh'], **public,
+        },
+        {'id': 'oke-public-unknown-subnet', 'endpoint_subnet_id': 'oke-subnet-not-synced', **public},
+        {
+            'id': 'oke-public-unknown-nsg', 'endpoint_subnet_id': 'oke-subnet-closed',
+            'endpoint_nsg_ids': ['oke-nsg-not-synced'], **public,
+        },
+    ]
+    oke.load_clusters(neo4j_session, clusters, COMPARTMENT_ID, UPDATE_TAG)
+
+    run_analysis_job('oci_oke_cluster_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIOKECluster', 'oke-') == {
+        'oke-legacy': ['legacy_public_endpoint'],
+        'oke-public-api-sl': ['unrestricted_securitylist_ingress'],
+        'oke-public-v6-all': ['unrestricted_securitylist_ingress'],
+        'oke-public-api-nsg': ['unrestricted_nsg_ingress'],
+        'oke-public-unknown-subnet': ['public_endpoint_unresolved_rules'],
+        'oke-public-unknown-nsg': ['public_endpoint_unresolved_rules'],
+    }
+    context = neo4j_session.run(
+        "MATCH (c:OCIOKECluster{id: 'oke-public-api-nsg'}) RETURN c.publicContext AS c",
+    ).single()['c']
+    assert 'oci-containers-oke-cluster' in context and '203.0.113.50:6443' in context and 'oke-nsg-api' in context
 
 
 def test_bucket_exposed_by_unexpired_read_pre_authenticated_request(neo4j_session):
