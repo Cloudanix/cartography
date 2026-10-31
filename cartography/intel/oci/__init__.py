@@ -42,6 +42,7 @@ OCI_ANALYSIS_JOBS = [
     'oci_instance_asset_exposure.json',
     # Reads the instance job's exposed_internet.
     'oci_boot_volume_asset_exposure.json',
+    'oci_db_system_asset_exposure.json',
     'oci_iam_user_analysis.json',
     'oci_iam_policy_analysis.json',
     'oci_encryption_analysis.json',

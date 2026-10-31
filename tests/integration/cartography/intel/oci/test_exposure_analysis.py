@@ -416,3 +416,90 @@ def test_database_cleanup_removes_stale_db_node_vnics(neo4j_session):
         "MATCH (n) WHERE n.id IN ['dbc-node', 'dbc-vnic'] RETURN n.id AS id ORDER BY id",
     ).value()
     assert left == []
+
+
+def _load_db_system(neo4j_session, system_id, subnet_id, nodes):
+    """
+    nodes: [(node_id, vnic) ...]; vnic is None when GetVnic returned nothing, else
+    {'public-ip': ..., 'nsg-ids': [...]}, loaded into subnet_id with the real loaders.
+    """
+    neo4j_session.run(
+        """
+        MATCH (c:OCICompartment{id: $compartment_id})
+        MERGE (c)-[:RESOURCE]->(s:OCIDbSystem{id: $system_id})
+        SET s.subnet_id = $subnet_id
+        """,
+        compartment_id=COMPARTMENT_ID, system_id=system_id, subnet_id=subnet_id,
+    )
+    database.load_db_nodes(
+        neo4j_session,
+        [{'id': node_id, 'db_system_id': system_id, 'vnic_id': f'{node_id}.vnic'} for node_id, _ in nodes],
+        UPDATE_TAG,
+    )
+    vnics = [{'id': f'{node_id}.vnic', 'subnet-id': subnet_id, **vnic} for node_id, vnic in nodes if vnic is not None]
+    database.load_db_node_vnics(neo4j_session, vnics, REGION, UPDATE_TAG)
+
+
+def test_db_system_exposure_needs_node_public_ip_and_own_open_rules(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _load_vcn(
+        neo4j_session, 'dbs-vcn',
+        security_lists=[
+            ('dbs-sl-default', DEFAULT_SECURITY_LIST_RULES),
+            ('dbs-sl-closed', [HTTPS_FROM_VCN, PATH_MTU_FROM_ANYWHERE]),
+        ],
+        nsgs={'dbs-nsg-open': [OPEN_SSH], 'dbs-nsg-closed': [HTTPS_FROM_VCN]},
+    )
+    _load_subnet(neo4j_session, 'dbs-subnet-default', 'dbs-vcn', ['dbs-sl-default'])
+    _load_subnet(neo4j_session, 'dbs-subnet-closed', 'dbs-vcn', ['dbs-sl-closed'])
+    _load_subnet(neo4j_session, 'dbs-subnet-private', 'dbs-vcn', ['dbs-sl-default'], prohibit_public_ip=True)
+    public = '203.0.113.30'
+
+    # Default Security List opens SSH, but the node has no public IP.
+    _load_db_system(neo4j_session, 'dbs-private-default-sl', 'dbs-subnet-default', [('dbs-n1', {'public-ip': None})])
+    _load_db_system(neo4j_session, 'dbs-public-default-sl', 'dbs-subnet-default', [('dbs-n2', {'public-ip': public})])
+    _load_db_system(
+        neo4j_session, 'dbs-public-closed', 'dbs-subnet-closed',
+        [('dbs-n3', {'public-ip': public, 'nsg-ids': ['dbs-nsg-closed']})],
+    )
+    _load_db_system(
+        neo4j_session, 'dbs-public-open-nsg', 'dbs-subnet-closed',
+        [('dbs-n4', {'public-ip': public, 'nsg-ids': ['dbs-nsg-open']})],
+    )
+    # Two-node RAC: one node private, the other public behind an open list.
+    _load_db_system(
+        neo4j_session, 'dbs-two-nodes', 'dbs-subnet-default',
+        [('dbs-n5', {'public-ip': None}), ('dbs-n6', {'public-ip': public})],
+    )
+    # Rules or VNICs we cannot see stay public.
+    _load_db_system(
+        neo4j_session, 'dbs-public-unknown-nsg', 'dbs-subnet-closed',
+        [('dbs-n7', {'public-ip': public, 'nsg-ids': ['dbs-nsg-not-synced']})],
+    )
+    _load_db_system(neo4j_session, 'dbs-no-vnic-public-subnet', 'dbs-subnet-default', [('dbs-n8', None)])
+    _load_db_system(neo4j_session, 'dbs-no-vnic-unknown-subnet', 'dbs-subnet-not-synced', [('dbs-n9', None)])
+    # A private subnet cannot give the node a public IP, so a missing VNIC does not matter.
+    _load_db_system(neo4j_session, 'dbs-no-vnic-private-subnet', 'dbs-subnet-private', [('dbs-n10', None)])
+    # Flag left by an earlier run must be cleared.
+    neo4j_session.run(
+        "MATCH (s:OCIDbSystem{id: 'dbs-public-closed'}) "
+        "SET s.exposed_internet = true, s.exposed_internet_type = ['unrestricted_securitylist_ingress'], "
+        "s.publicContext = '[]'",
+    )
+
+    run_analysis_job('oci_db_system_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIDbSystem', 'dbs-') == {
+        'dbs-public-default-sl': ['unrestricted_securitylist_ingress'],
+        'dbs-public-open-nsg': ['unrestricted_nsg_ingress'],
+        'dbs-two-nodes': ['unrestricted_securitylist_ingress'],
+        'dbs-public-unknown-nsg': ['public_ip_unresolved_rules'],
+        'dbs-no-vnic-public-subnet': ['db_node_vnic_unresolved'],
+        'dbs-no-vnic-unknown-subnet': ['db_node_vnic_unresolved'],
+    }
+    rows = neo4j_session.run(
+        "MATCH (s:OCIDbSystem) WHERE s.id IN ['dbs-two-nodes', 'dbs-public-closed'] "
+        "RETURN s.id AS id, s.publicContext AS c ORDER BY id",
+    ).data()
+    assert rows[0]['c'] is None
+    assert 'dbs-n6.vnic' in rows[1]['c'] and 'dbs-sl-default' in rows[1]['c'] and 'dbs-n5.vnic' not in rows[1]['c']

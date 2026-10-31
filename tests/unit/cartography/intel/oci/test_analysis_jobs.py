@@ -22,3 +22,7 @@ def test_oci_boot_volume_exposure_runs_after_instance_exposure():
     # The boot volume job reads the exposed_internet flag the instance job writes.
     jobs = oci_intel.OCI_ANALYSIS_JOBS
     assert jobs.index('oci_instance_asset_exposure.json') < jobs.index('oci_boot_volume_asset_exposure.json')
+
+
+def test_oci_db_system_exposure_is_wired():
+    assert 'oci_db_system_asset_exposure.json' in oci_intel.OCI_ANALYSIS_JOBS
