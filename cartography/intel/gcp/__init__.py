@@ -956,46 +956,7 @@ def _sync_multiple_projects(
         )
         if config.refresh_entitlements:
             run_cleanup_job("gcp_unused_cleanup.json", neo4j_session, common_job_parameters)
-        run_analysis_job(
-            "gcp_storage_bucket_policy_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_bigquery_dataset_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_compute_firewall_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_cloud_function_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_compute_instance_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_kms_keyring_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_cloud_function_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_sql_instance_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
+        # Analysis jobs run once, in start_gcp_ingestion, for this same project.
     del common_job_parameters["GCP_PROJECT_ID"]
 
 
