@@ -25,6 +25,9 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
+# The IP rule the portal adds for "Accept connections from within public Azure datacenters".
+AZURE_DATACENTERS_IP_RULE = '0.0.0.0'
+
 
 @timeit
 def get_client(credentials: Credentials, subscription_id: str) -> CosmosDBManagementClient:
@@ -60,7 +63,8 @@ def get_database_account_list(
     account_list = []
     for database_account in database_account_list:
         database_account['resourceGroup'] = get_azure_resource_group_name(database_account.get('id'))
-        database_account['publicNetworkAccess'] = database_account.get('public_network_access', 'Disabled')
+        # None (unknown) is not 'Disabled', so the exposure job keeps an unknown account public.
+        database_account['publicNetworkAccess'] = database_account.get('public_network_access')
         database_account['consolelink'] = safe_console_link(database_account['id'], common_job_parameters)
         database_account['location'] = database_account.get('location', '').replace(" ", "").lower()
         if regions is None:
@@ -69,6 +73,20 @@ def get_database_account_list(
             if database_account.get('location') in regions or database_account.get('location') == 'global':
                 account_list.append(database_account)
     return account_list
+
+
+def _is_public_ip_rule(ip_rule: str) -> bool:
+    """
+    True if a Cosmos IP rule (an address or a CIDR range) admits public addresses.
+    0.0.0.0 is not an address: it is the "accept connections from within Azure
+    datacenters" switch. An unparseable rule counts as public (fail-safe).
+    """
+    if ip_rule == AZURE_DATACENTERS_IP_RULE:
+        return False
+    try:
+        return not ipaddress.ip_network(str(ip_rule), strict=False).is_private
+    except ValueError:
+        return True
 
 
 @timeit
@@ -83,7 +101,9 @@ def transform_database_account_data(database_account_list: List[Dict]) -> List[D
             capabilities = [x['name'] for x in database_account['capabilities']]
         if 'ip_rules' in database_account and len(database_account['ip_rules']) > 0:
             iprules = [x['ip_address_or_range'] for x in database_account['ip_rules']]
-        database_account['ipruleslist'] = [ip for ip in iprules if not ipaddress.ip_address(str(ip)).is_private]
+        database_account['ipruleslist'] = [ip for ip in iprules if _is_public_ip_rule(ip)]
+        # Every rule, including 0.0.0.0: any rule at all means the account is not open to every network.
+        database_account['iprulecount'] = len(iprules)
         database_account['list_of_capabilities'] = capabilities
 
     return database_account_list
@@ -107,6 +127,7 @@ def load_database_account_data(
     d.kind = da.kind,
     d.name = da.name,
     d.ipranges = da.ipruleslist,
+    d.iprulecount = da.iprulecount,
     d.capabilities = da.list_of_capabilities,
     d.publicNetworkAccess = da.publicNetworkAccess,
     d.documentendpoint = da.document_endpoint,

@@ -36,3 +36,27 @@ def test_database_account_network_fields_arrive():
     assert account['ipruleslist'] == ['20.1.2.3']
     assert account['consistency_policy']['default_consistency_level'] == 'Session'
     assert account['location'] == 'eastus'
+
+
+def test_ip_rules_with_cidr_and_unknown_access():
+    client = MagicMock()
+    client.database_accounts.list.return_value = [
+        models.DatabaseAccountGetResults({
+            'id': ACC_ID, 'name': 'db', 'location': 'East US',
+            'properties': {
+                'ipRules': [
+                    {'ipAddressOrRange': '52.10.0.0/24'}, {'ipAddressOrRange': '0.0.0.0'},
+                    {'ipAddressOrRange': '20.1.2.3'},
+                ],
+            },
+        }),
+    ]
+
+    with patch.object(cosmosdb, 'get_client', return_value=client):
+        accounts = cosmosdb.get_database_account_list(MagicMock(), '00-00', None, PARAMS)
+    [account] = cosmosdb.transform_database_account_data(accounts)
+
+    # Unknown is not assumed Disabled: the exposure job keeps it public.
+    assert account['publicNetworkAccess'] is None
+    assert account['ipruleslist'] == ['52.10.0.0/24', '20.1.2.3']
+    assert account['iprulecount'] == 3
