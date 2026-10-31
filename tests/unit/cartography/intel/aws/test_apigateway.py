@@ -30,13 +30,20 @@ def test_console_link_still_deep_links_documented_arn():
 def test_parse_policy():
     res = parse_policy("1", test_data.DOUBLY_ESCAPED_POLICY)
 
-    assert (res) is not None
-    assert (res['api_id']) is not None
-    assert (res['internet_accessible']) is not None
-    assert (res['accessible_actions']) is not None
+    assert res == {'api_id': '1', 'internet_accessible': True}
 
 
-def test_none_policy():
-    res = parse_policy(None, None)
+def test_parse_policy_restricted_to_a_vpc_endpoint_is_not_internet_accessible():
+    policy = (
+        '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": "*", '
+        '"Action": "execute-api:Invoke", "Resource": "execute-api:/*", '
+        '"Condition": {"StringEquals": {"aws:SourceVpce": "vpce-1"}}}]}'
+    )
 
-    assert (res) is None
+    assert parse_policy("1", policy) == {"api_id": "1", "internet_accessible": False}
+
+
+def test_parse_policy_none_or_unparseable_is_unknown():
+    # No policy, or one we cannot read, leaves the API's reachability to its endpoint type.
+    assert parse_policy("1", None) == {"api_id": "1", "internet_accessible": None}
+    assert parse_policy("2", "{not json") == {"api_id": "2", "internet_accessible": None}
