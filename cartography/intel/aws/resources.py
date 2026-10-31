@@ -18,8 +18,8 @@ from . import emr
 from . import iam
 from . import identitystore
 from . import inspector
-from . import kms
 from . import kinesis
+from . import kms
 from . import lambda_function
 from . import permission_relationships
 from . import rds
@@ -44,6 +44,7 @@ from .ec2.key_pairs import sync_ec2_key_pairs
 from .ec2.launch_templates import sync_ec2_launch_templates
 from .ec2.load_balancer_v2s import sync_load_balancer_v2s
 from .ec2.load_balancers import sync_load_balancers
+from .ec2.network_acls import sync_network_acls
 from .ec2.network_interfaces import sync_network_interfaces
 from .ec2.reserved_instances import sync_ec2_reserved_instances
 from .ec2.route_tables import sync_route_tables
@@ -88,6 +89,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'ec2:internet_gateway': sync_internet_gateways,
     'ec2:tgw': sync_transit_gateways,
     'ec2:route_table': sync_route_tables,
+    'ec2:network_acl': sync_network_acls,
     # `ec2:instance` must be included before `ssm` and `ec2:images`,
     # they rely on EC2Instance data provided by this module.
     'ec2:instance': sync_ec2_instances,
