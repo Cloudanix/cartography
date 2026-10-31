@@ -143,7 +143,11 @@ Legend: Y = ingested, P = partially, N = not ingested.
 | NSGs + security rules | L2 | Y | `network.py` |
 | Route tables (UDR) | L2 | Y | `network.py`; no exposure job uses them yet |
 | Public IP addresses | L1/L2 | Y | `network.py`, `compute.py`, `sql.py` |
-| Load balancer frontends, LB rules, inbound NAT rules | L2 | Y | `network.py`, `compute.py` |
+| Load balancer frontends, backend pools | L2 | Y | `network.py`, `compute.py` |
+| LB rules, inbound NAT rules, NAT pools (ports) | L2 | **Y (new)** | `AzureLoadBalancerRule`, from the same `list_all` response |
+| Public IP and LB SKU | L2 | **Y (new)** | Standard SKU is closed without an NSG, Basic is open |
+| VMSS subnet / NSG ids | L2 | **Y (new)** | `compute.py`; per-instance public IP SKU still N (counted as Basic) |
+| LB backend pools by IP address | L2 | N | |
 | **Application Gateway** (listeners, backend pools, WAF) | L2/L3 | **N** | |
 | **Azure Firewall** (DNAT rules) | L2 | **N** | |
 | Effective NSG / effective routes | L2 | N | optional shortcut; per-NIC API calls are expensive, compute it ourselves instead |
@@ -153,10 +157,11 @@ Legend: Y = ingested, P = partially, N = not ingested.
 | AKS `api_server_access_profile` (authorized IPs, private) | L2 | Y | `aks.py` |
 | Storage `allow_blob_public_access` + container access level | L3 | Y | `storage.py` |
 | **App Service / Function auth settings (Easy Auth)** | L3 | **N** | |
-| **SQL Azure AD only auth, `disable_local_auth`** (Cosmos, Service Bus, ...) | L3 | **N** | |
-| **AKS Kubernetes version** | L4 | **N** | |
+| SQL Entra ID only auth, Cosmos `disable_local_auth` | L3 | **Y (new)** | `sql.py`, `cosmosdb.py`; Service Bus etc. still N |
+| ACR network rule default action, anonymous pull | L2/L3 | **Y (new)** | `containerregistry.py` |
+| AKS Kubernetes version | L4 | **Y (new)** | `aks.py` |
 | VM image reference (publisher / offer / sku / version) | L4 | Y | `compute.py` |
-| SQL server version, function app runtime stack | L4 | verify | |
+| PostgreSQL / MySQL server version, App Service runtime stack | L4 | Y | Azure SQL always reports "12.0": no identity emitted |
 | Minimum TLS version (storage, SQL, app service) | L4 | N | |
 | Managed identities on VMs / apps | L5 | Y | `compute.py`, `iam.py` |
 
@@ -165,14 +170,18 @@ Legend: Y = ingested, P = partially, N = not ingested.
 | Need | Layer | State | Where / note |
 |---|---|---|---|
 | VPC firewall rules | L2 | Y | `compute.py` |
-| **Hierarchical / network firewall policies** | L2 | **N** | evaluated before VPC rules; missing them means wrong answers in orgs that use them |
-| **VPC routes** (default internet gateway route) | L2 | **N** | only Cloud Run references routes |
+| Firewall source tags / source SAs / targets / per-rule allowed+denied ports | L2/L5 | **Y (new)** | flat properties on the firewall node; tag- and SA-sourced rules were invisible before |
+| **Hierarchical / network firewall policies** | L2 | **N** | evaluated before VPC rules: some `internet_reachable = true` may really be false |
+| VPC routes (default internet gateway route) | L2 | **Y (new)** | `GCPRoute`, one `compute.routes().list` per project, needs `compute.routes.list` |
 | Instance external IPs (`accessConfigs`) | L1/L2 | Y | `compute.py` |
 | Forwarding rules, backend services, URL maps, target proxies | L2 | Y | `compute.py`, `loadbalancer.py`, `cloudcdn.py` |
+| Backend service `port_name` / protocol, instance group `named_ports` | L2 | **Y (new)** | same calls |
+| Unmanaged instance group members | L2 | N | only managed-group backends resolve |
 | **Cloud Armor security policies** | L4 (mitigation) | **N** | |
-| **IAP on backend services** | L3 | **N** | IAP-protected = auth required |
-| Cloud Run / Functions ingress setting | L2 | Y | `cloudfunction.py` (verify Cloud Run) |
-| Cloud Run / Functions `allUsers` invoker | L3 | P | `allUsers` handled for storage, bigquery, iam; confirm for run / functions |
+| IAP on backend services | L3 | **Y (new)** | `iap_enabled` |
+| Functions ingress | L2 | Y | `cloudfunction.py` |
+| Cloud Run services, ingress, invokers | L2/L3 | **pending PR #507** | on `main` Cloud Run services are never loaded (`transform_services` empties its input); #507 fixes it and writes `ingress`, `invoker_iam_disabled`, `iam_policy_status`, `public_invokers`, which the layers already read |
+| Functions `allUsers` invoker | L3 | Y | existing bindings |
 | GCS `allUsers`, public access prevention | L3 | Y | `storage.py` |
 | GKE master authorized networks, private cluster | L2 | Y | `gke.py` |
 | GKE master version | L4 | Y | `gke.py` |
@@ -180,7 +189,6 @@ Legend: Y = ingested, P = partially, N = not ingested.
 | Cloud Functions runtime | L4 | Y | `cloudfunction.py` |
 | Instance source image / licenses (OS heuristic) | L4 | Y | `compute.py`, `images.py` |
 | Instance service accounts + scopes | L5 | Y | `compute.py`, `iam.py` |
-| Exposure jobs | all | P | only `gcp_gke_asset_exposure` and `gcp_load_balancer_exposure` write `exposed_internet`; compute instance, SQL, functions jobs exist under `analysis/` but use other flags. Verify. |
 
 ### 5.4 OCI
 
@@ -349,7 +357,66 @@ Ceilings: IPv4 only; unresolved route table does not block (via `route_table_unr
 LB -> backend hop accepts any source and skips its stateless return check; API Gateway multi-auth
 treated as authenticated; L5 same VCN only; dynamic groups, WAF, Network Firewall not ingested.
 
-### 10.4 cloudanix-web contract
+### 10.4 GCP (done)
+
+Runs in `start_gcp_ingestion` after `gcp_storage_bucket_policy_analysis.json`, per project.
+
+| Layer | Labels |
+|---|---|
+| L1/L2 | GCPInstance (external IPv4 / IPv6, default route to `default-internet-gateway`, firewall), instances behind external LBs, GCPForwardingRule, GCPBackendService, GKECluster, GCPSQLInstance, GCPFunction, GCPCloudRunService, GCPBucket, GCPBigqueryDataset |
+| L3 | `allUsers` / `allAuthenticatedUsers` on buckets, datasets, invokers = none; IAP backends, Cloud SQL, GKE = required; instances, forwarding rules, unread Cloud Run policy = unknown |
+| L4 | GKE master, Cloud SQL `databaseVersion` (`mysql@8.0`), Functions runtime (`python@3.12`), instance OS from boot image / license name (`image_name`) |
+| L5 | GCPInstance -[:CAN_NETWORK_REACH]-> GCPSQLInstance (private IP, same VPC) and -> GCPInstance (firewall source tag / SA) |
+
+Firewall: first match by priority, deny wins a tie, implied deny last; targets match by tag or SA.
+Proxy LBs need the Google front-end ranges (130.211.0.0/22, 35.191.0.0/16) admitted on the backend's
+named port; passthrough LBs and target pools need world rules.
+
+Rollout: `compute.routes.list` (in `roles/viewer`). Until routes are ingested a missing route does
+not block. Instances whose network firewalls are not visible (Shared VPC host outside the
+workspace) are marked reachable on every port with via `direct_ipv4_unresolved_firewall`, matching
+the legacy job's fail-safe.
+
+Ceilings: hierarchical / network firewall policies (largest gap); only `/0` routes compared;
+unmanaged instance group members; regional external Application LBs (proxy-only subnet source) read
+as unreachable; multi-NIC unioned; L5 skips CIDR-sourced internal rules (`default-allow-internal`
+would link every pair).
+
+### 10.5 Azure (done)
+
+Runs in `_sync_multiple_subscriptions` after the `azure_*_asset_exposure` jobs, per subscription.
+
+| Layer | Labels |
+|---|---|
+| L1/L2 | AzureNetworkInterface, AzureVirtualMachine, AzureVirtualMachineScaleSet, AzureNetworkLoadBalancer, AzureStorageAccount, AzureStorageBlobContainer, AzureSQLServer, AzureSQLDatabase, AzureCosmosDBAccount, AzureKeyVault, AzureFunctionApp, AzureCluster (AKS), AzureContainerRegistry |
+| L3 | anonymous blob container, ACR anonymous pull = none; storage, SQL (`entra_id_only` / credentials), Cosmos, Key Vault, AKS = required; Function App (Easy Auth not ingested), VM, VMSS, NIC, LB = unknown |
+| L4 | VM image offer / sku (`image_name`), AKS `kubernetes@`, PostgreSQL / MySQL, App Service runtime stack |
+| L5 | AzureVirtualMachine -[:CAN_NETWORK_REACH]-> AzureSQLServer / AzureCosmosDBAccount (via `firewall_ip_rule`, `azure_services_rule`, `public_endpoint`) |
+
+Path: public IP, or public LB frontend + LB rule / NAT rule / NAT pool, then subnet NSG AND NIC NSG
+on the backend port; first match by priority, no match = deny. Standard SKU IP / LB with no NSG at
+either level admits nothing. A UDR `0.0.0.0/0` to anything but Internet is reported as
+`unknown:udr_default_route_<hop>` in `internet_reachable_via` and not marked reachable. PaaS
+firewall semantics follow the legacy exposure jobs (SQL rule wider than /8 = world).
+
+Rollout: no new API calls or permissions. LB rules and SKUs appear after the next network sync;
+until then VMs behind an LB get no LB path and every SKU counts as Basic (open).
+
+Ceilings: NSG rules aimed at a single destination address are not matched per NIC (upper bound);
+`::/0` treated as IPv4 world; App Gateway, Azure Firewall DNAT, IP-based backend pools, Easy Auth not
+ingested; VM power state ignored; L5 does not resolve SNAT / NAT gateway egress IPs, private
+endpoints or service endpoints.
+
+### 10.6 Validation
+
+- 90 exposure-layer tests (core, 4 clouds, unit + integration) pass together in one Neo4j, stable
+  over repeated runs.
+- Full AWS / Azure / GCP / OCI unit + integration suites plus job-file tests: identical failure set
+  to base `2e76d1a09` (124 failed, 22 errors, all pre-existing); branch adds 78 passing tests.
+- pre-commit (flake8, autopep8, trailing commas, import order, mypy) clean on new code; remaining
+  findings are on untouched lines of existing files.
+
+### 10.7 cloudanix-web contract
 
 Read per node: `internet_reachable`, `internet_reachable_ports`, `access_auth`,
 `software_identity`, `software_identity_source`; per edge: `CAN_NETWORK_REACH.ports`. L4 join:
