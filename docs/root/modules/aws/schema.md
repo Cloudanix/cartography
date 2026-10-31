@@ -42,6 +42,7 @@ Representation of an AWS Account.
                               EFSFileSystem,
                               ElasticIPAddress,
                               ESDomain,
+                              FSxFileSystem,
                               LaunchConfiguration,
                               LaunchTemplate,
                               LaunchTemplateVersion,
@@ -3462,4 +3463,42 @@ Representation of an [Amazon EFS file system](https://docs.aws.amazon.com/efs/la
 
         ```
         (AWSAccount)-[RESOURCE]->(EFSFileSystem)
+        ```
+
+### FSxFileSystem
+
+Representation of an [Amazon FSx file system](https://docs.aws.amazon.com/fsx/latest/APIReference/API_FileSystem.html) (Windows File Server, Lustre, NetApp ONTAP or OpenZFS). FSx is reachable only through network interfaces inside its VPC, so it carries no internet exposure.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the file system |
+| arn | The ARN of the file system |
+| file\_system\_id | The file system ID |
+| file\_system\_type | WINDOWS, LUSTRE, ONTAP or OPENZFS |
+| creation\_time | When the file system was created (ISO-8601) |
+| lifecycle | The lifecycle state, such as AVAILABLE |
+| kms\_key\_id | The ARN of the KMS key that encrypts it |
+| storage\_capacity | Storage capacity in GiB |
+| storage\_type | SSD, HDD or INTELLIGENT\_TIERING |
+| dns\_name | The DNS name clients mount |
+| vpc\_id | The VPC of the file system |
+| subnet\_ids | The subnets of its network interfaces |
+| automatic\_backup\_retention\_days | Days FSx keeps its own daily automatic backups; 0 means they are off |
+| consolelink | Link to the file system in the AWS console |
+| region | The region of the file system |
+
+#### Relationships
+
+- FSxFileSystem is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(FSxFileSystem)
+        ```
+
+- FSxFileSystem is a member of a VPC.
+
+        ```
+        (FSxFileSystem)-[MEMBER_OF_AWS_VPC]->(AWSVpc)
         ```

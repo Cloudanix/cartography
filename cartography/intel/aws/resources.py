@@ -17,6 +17,7 @@ from . import eks
 from . import elasticache
 from . import elasticsearch
 from . import emr
+from . import fsx
 from . import iam
 from . import identitystore
 from . import inspector
@@ -113,6 +114,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'securityhub': securityhub.sync,
     'backup': backup.sync,
     'efs': efs.sync,
+    'fsx': fsx.sync,
     'permission_relationships': permission_relationships.sync,
     'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
 }
