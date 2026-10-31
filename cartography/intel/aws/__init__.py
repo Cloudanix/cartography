@@ -372,12 +372,6 @@ def _sync_one_account(
     )
 
     run_analysis_job(
-        "aws_s3acl_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
         "aws_s3_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
