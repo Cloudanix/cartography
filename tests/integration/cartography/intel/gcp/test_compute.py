@@ -1,6 +1,7 @@
 import cartography.intel.gcp.compute
 import tests.data.gcp.compute
 from cartography.util import run_analysis_job
+from cartography.util import run_cleanup_job
 
 TEST_WORKSPACE_ID = '1223344'
 TEST_PROJECT_ID = 'project-abc'
@@ -590,3 +591,96 @@ def test_compute_firewalls(neo4j_session):
     }
 
     assert actual_nodes == expected_nodes
+
+
+CLEANUP_PROJECT_ID = 'proj-fw-cleanup'
+CLEANUP_OLD_TAG = 100
+CLEANUP_NEW_TAG = 200
+CLEANUP_JOB_PARAMETERS = {
+    'UPDATE_TAG': CLEANUP_NEW_TAG,
+    'WORKSPACE_ID': 'ws-fw-cleanup',
+    'GCP_ORGANIZATION_ID': 'org-fw-cleanup',
+    'GCP_PROJECT_ID': CLEANUP_PROJECT_ID,
+}
+CLEANUP_VPC_ID = f'projects/{CLEANUP_PROJECT_ID}/global/networks/default'
+CLEANUP_FW_ID = f'projects/{CLEANUP_PROJECT_ID}/global/firewalls/allow-ssh'
+
+
+def _seed_cleanup_project(neo4j_session):
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(o:GCPOrganization{id: $org_id})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project_id})
+        MERGE (p)-[:RESOURCE]->(:GCPVpc{id: $vpc_id})
+        """,
+        workspace_id=CLEANUP_JOB_PARAMETERS['WORKSPACE_ID'], org_id=CLEANUP_JOB_PARAMETERS['GCP_ORGANIZATION_ID'],
+        project_id=CLEANUP_PROJECT_ID, vpc_id=CLEANUP_VPC_ID,
+    )
+
+
+def _load_firewall(neo4j_session, source_ranges, ports, target_tags, update_tag):
+    response = {
+        'id': f'projects/{CLEANUP_PROJECT_ID}/global/firewalls',
+        'items': [{
+            'name': 'allow-ssh', 'direction': 'INGRESS', 'disabled': False, 'priority': 1000,
+            'network': f'https://www.googleapis.com/compute/v1/{CLEANUP_VPC_ID}',
+            'selfLink': f'https://www.googleapis.com/compute/v1/{CLEANUP_FW_ID}',
+            'allowed': [{'IPProtocol': 'tcp', 'ports': ports}],
+            'sourceRanges': source_ranges, 'targetTags': target_tags,
+        }],
+    }
+    fw_list = cartography.intel.gcp.compute.transform_gcp_firewall(response)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, update_tag)
+
+
+def test_firewall_cleanup_removes_stale_rules_ranges_and_target_tags(neo4j_session):
+    _seed_cleanup_project(neo4j_session)
+    # Last sync: SSH open to the internet on instances tagged "web". The customer then narrowed it.
+    _load_firewall(neo4j_session, ['0.0.0.0/0'], ['22'], ['web'], CLEANUP_OLD_TAG)
+    _load_firewall(neo4j_session, ['10.0.0.0/8'], ['443'], ['db'], CLEANUP_NEW_TAG)
+
+    run_cleanup_job('gcp_compute_firewall_cleanup.json', neo4j_session, CLEANUP_JOB_PARAMETERS)
+
+    ranges = neo4j_session.run(
+        """
+        MATCH (rng)-[:MEMBER_OF_IP_RULE]->(rule:GCPIpRule)-[:ALLOWED_BY]->(:GCPFirewall{id: $fw_id})
+        RETURN rule.id AS rule, rng.id AS rng
+        """,
+        fw_id=CLEANUP_FW_ID,
+    )
+    assert {(r['rule'], r['rng']) for r in ranges} == {(f'{CLEANUP_FW_ID}/allow/443tcp', '10.0.0.0/8')}
+    stale_rules = neo4j_session.run(
+        "MATCH (rule:GCPIpRule) WHERE rule.id STARTS WITH $fw_id AND rule.lastupdated <> $tag RETURN rule.id",
+        fw_id=CLEANUP_FW_ID, tag=CLEANUP_NEW_TAG,
+    )
+    assert [r['rule.id'] for r in stale_rules] == []
+    tags = neo4j_session.run(
+        "MATCH (:GCPFirewall{id: $fw_id})-[:TARGET_TAG]->(t:GCPNetworkTag) RETURN t.value AS value",
+        fw_id=CLEANUP_FW_ID,
+    )
+    assert {t['value'] for t in tags} == {'db'}
+    # IpRange nodes are shared by every tenant's rules: only this firewall's edge goes, never the node.
+    assert neo4j_session.run("MATCH (r:IpRange{id: '0.0.0.0/0'}) RETURN count(r) AS n").single()['n'] == 1
+
+
+def test_instance_cleanup_removes_stale_network_tags(neo4j_session):
+    _seed_cleanup_project(neo4j_session)
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project_id})
+        MERGE (p)-[pr:RESOURCE]->(i:GCPInstance{id: 'cleanup-vm'})
+        SET i.lastupdated = $new, pr.lastupdated = $new
+        MERGE (i)-[old:TAGGED]->(:GCPNetworkTag{id: 'cleanup-web', value: 'web'})
+        SET old.lastupdated = $old
+        MERGE (i)-[cur:TAGGED]->(:GCPNetworkTag{id: 'cleanup-db', value: 'db'})
+        SET cur.lastupdated = $new
+        """,
+        project_id=CLEANUP_PROJECT_ID, old=CLEANUP_OLD_TAG, new=CLEANUP_NEW_TAG,
+    )
+
+    run_cleanup_job('gcp_compute_instance_cleanup.json', neo4j_session, CLEANUP_JOB_PARAMETERS)
+
+    tags = neo4j_session.run(
+        "MATCH (:GCPInstance{id: 'cleanup-vm'})-[:TAGGED]->(t:GCPNetworkTag) RETURN t.value AS value",
+    )
+    assert {t['value'] for t in tags} == {'db'}
