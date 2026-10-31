@@ -43,6 +43,8 @@ PORT_MAP = {
     "microsoft.dbforpostgresql": 5432,
     "microsoft.dbformysql": 3306,
 }
+# Widest firewall range (a /24) expanded into one public IP node per address.
+MAX_EXPANDED_FIREWALL_ADDRESSES = 256
 
 
 @timeit
@@ -764,7 +766,12 @@ def load_server_details(
             elif end_ip == "255.255.255.255":
                 ip_range = public_ips
 
-        if len(ip_range) == 0:
+        address_count = _firewall_rule_address_count(fw_rule)
+        if len(ip_range) == 0 and (address_count is None or address_count > MAX_EXPANDED_FIREWALL_ADDRESSES):
+            # One write per address would run for hours on a wide range. Link only the
+            # subscription's own public IPs inside it; exposure reads address_count instead.
+            ip_range = [ip for ip in public_ips if _ip_in_range(str(ip), start_ip, end_ip)]
+        elif len(ip_range) == 0:
             ip_range = iter_iprange(start_ip, end_ip)
 
         for ip in ip_range:
@@ -844,6 +851,14 @@ def _firewall_rule_address_count(fw_rule: Dict) -> Optional[int]:
     except ValueError:
         return None
     return int(end) - int(start) + 1
+
+
+def _ip_in_range(ip: str, start_ip: str, end_ip: str) -> bool:
+    """True if ip lies in the IPv4 range start_ip-end_ip; False if any of them is unparseable."""
+    try:
+        return ipaddress.IPv4Address(start_ip) <= ipaddress.IPv4Address(ip) <= ipaddress.IPv4Address(end_ip)
+    except ValueError:
+        return False
 
 
 @timeit
