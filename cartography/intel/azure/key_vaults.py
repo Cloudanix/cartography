@@ -126,6 +126,7 @@ def _load_key_vaults_tx(
     k.resourcegroup = vault.resource_group
     SET k.uri = vault.properties.vault_uri,
     k.network_acl_default_action = vault.properties.network_acls.default_action,
+    k.public_network_access = vault.properties.public_network_access,
     k.consolelink = coalesce(vault.consolelink, k.consolelink), k.lastupdated = $update_tag,
     k.name = vault.name
     WITH k

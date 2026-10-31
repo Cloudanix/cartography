@@ -99,6 +99,7 @@ def load_storage_account_data(
     s.statusofsecondary = account.status_of_secondary,
     s.supportshttpstrafficonly = account.enable_https_traffic_only,
     s.networkRuleDefaultAction = account.network_rule_set.default_action,
+    s.publicNetworkAccess = account.public_network_access,
     s.region = account.location
     WITH s
     MATCH (owner:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})
