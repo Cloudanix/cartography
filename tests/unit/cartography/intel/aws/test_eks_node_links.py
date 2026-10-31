@@ -3,7 +3,14 @@ from unittest.mock import MagicMock
 import cartography.intel.aws
 from cartography.intel.aws.ec2 import instances
 
-PARAMS = {"WORKSPACE_ID": "ws-1", "AWS_ID": "111111111111", "UPDATE_TAG": 42}
+PARAMS = {"WORKSPACE_ID": "ws-1", "ORGANIZATION_ID": "ws-1/o-1", "AWS_ID": "111111111111", "UPDATE_TAG": 42}
+# organizations.sync is the only writer of Workspace->Account ownership and always goes
+# through the organization; a direct Workspace->AWSAccount edge never exists.
+ORG_ACCOUNT_PATH = (
+    "(:CloudanixWorkspace{id:$WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id:$ORGANIZATION_ID})"
+    "-[:OWNER]->(a:AWSAccount{id:$AWS_ID})"
+)
+DIRECT_ACCOUNT_PATH = "(:CloudanixWorkspace{id:$WORKSPACE_ID})-[:OWNER]->(a:AWSAccount"
 
 
 def _run_captured_write(session):
@@ -13,17 +20,37 @@ def _run_captured_write(session):
     return tx.run.call_args
 
 
+def _compact(query):
+    """Drop all whitespace so assertions don't depend on how the Cypher is wrapped."""
+    return "".join(query.split())
+
+
 def test_link_ec2_to_eks_is_scoped_to_workspace_account_and_region():
     session = MagicMock()
 
     instances.link_ec2_to_eks(session, PARAMS)
 
     call = _run_captured_write(session)
-    query = call.args[0]
-    assert "(:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(a:AWSAccount{id: $AWS_ID})" in query
-    assert "(a)-[:RESOURCE]->(c:EKSCluster{name: i.eksclustername, region: i.region})" in query
-    assert "(c)<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup{name: i.eksnodegroupname})" in query
-    assert call.kwargs == {"WORKSPACE_ID": "ws-1", "AWS_ID": "111111111111", "UPDATE_TAG": 42}
+    query = _compact(call.args[0])
+    assert ORG_ACCOUNT_PATH in query
+    assert DIRECT_ACCOUNT_PATH not in query
+    assert "(a)-[:RESOURCE]->(c:EKSCluster{name:i.eksclustername,region:i.region})" in query
+    assert "(c)<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup{name:i.eksnodegroupname})" in query
+    assert call.kwargs == PARAMS
+
+
+def test_cleanup_eks_node_links_is_scoped_through_the_organization():
+    session = MagicMock()
+
+    instances.cleanup_eks_node_links(session, PARAMS)
+
+    call = _run_captured_write(session)
+    query = _compact(call.args[0])
+    assert (
+        "(:AWSAccount{id:$AWS_ID})<-[:OWNER]-(:AWSOrganization{id:$ORGANIZATION_ID})"
+        "<-[:OWNER]-(:CloudanixWorkspace{id:$WORKSPACE_ID})"
+    ) in query
+    assert call.kwargs == PARAMS
 
 
 def test_sync_eks_node_links_links_before_cleanup(mocker):

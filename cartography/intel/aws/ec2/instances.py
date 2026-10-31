@@ -505,10 +505,12 @@ def link_ec2_to_eks(neo4j_session: neo4j.Session, common_job_parameters: Dict[st
     Reads only graph state, so it must run after both the `ec2:instance` and `eks` syncs have
     loaded (see sync_eks_node_links). Cluster names are unique only per account+region, so the
     match is scoped to this workspace's account and the instance's region; a bare name match
-    would link nodes to another tenant's same-named cluster.
+    would link nodes to another tenant's same-named cluster. Accounts are owned through the
+    AWSOrganization (organizations.sync); there is no direct Workspace->AWSAccount edge.
     """
     query = """
-    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(a:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(i:EC2Instance)
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})
+        -[:OWNER]->(a:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(i:EC2Instance)
     WHERE i.eksclustername IS NOT NULL
     MATCH (a)-[:RESOURCE]->(c:EKSCluster{name: i.eksclustername, region: i.region})
     MERGE (c)-[r:HAS_NODE]->(i)
@@ -524,6 +526,7 @@ def link_ec2_to_eks(neo4j_session: neo4j.Session, common_job_parameters: Dict[st
         neo4j_session,
         query,
         WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        ORGANIZATION_ID=common_job_parameters['ORGANIZATION_ID'],
         AWS_ID=common_job_parameters['AWS_ID'],
         UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
     )
@@ -534,7 +537,8 @@ def cleanup_eks_node_links(neo4j_session: neo4j.Session, common_job_parameters: 
     cleanup_query = """
     MATCH (node:EC2Instance)<-[r:HAS_NODE]-(s)
     WHERE (s:EKSCluster OR s:EKSClusterNodeGroup)
-      AND (s)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
+      AND (s)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})
+          <-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
       AND r.lastupdated <> $UPDATE_TAG
     DELETE r
     """
@@ -542,8 +546,9 @@ def cleanup_eks_node_links(neo4j_session: neo4j.Session, common_job_parameters: 
         neo4j_session,
         cleanup_query,
         UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
-        AWS_ID=common_job_parameters['AWS_ID'],
         WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        ORGANIZATION_ID=common_job_parameters['ORGANIZATION_ID'],
+        AWS_ID=common_job_parameters['AWS_ID'],
     )
 
 
