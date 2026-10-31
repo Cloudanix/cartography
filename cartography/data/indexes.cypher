@@ -10,6 +10,7 @@ CREATE INDEX IF NOT EXISTS FOR (n:APIGatewayResource) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:APIGatewayStage) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:APIGatewayClientCertificate) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:APIGatewayStage) ON (n.clientcertificateid);
+CREATE INDEX IF NOT EXISTS FOR (n:AppSyncGraphqlApi) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AWSCloudfrontDistribution) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AWSAccount) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AWSCidrBlock) ON (n.id);

@@ -2468,6 +2468,36 @@ Representation of an AWS [API Gateway Resource](https://docs.aws.amazon.com/apig
         (APIGatewayRestAPI)-[RESOURCE]->(APIGatewayResource)
         ```
 
+### AppSyncGraphqlApi
+
+Representation of an AWS [AppSync GraphQL API](https://docs.aws.amazon.com/appsync/latest/APIReference/API_GraphqlApi.html), from `ListGraphqlApis`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the API |
+| arn | The ARN of the API |
+| api\_id | The API ID |
+| name | The API name |
+| region | The region of the API |
+| authentication\_type | The primary authorization mode (`API_KEY`, `AWS_IAM`, `AMAZON_COGNITO_USER_POOLS`, `OPENID_CONNECT`, `AWS_LAMBDA`) |
+| additional\_authentication\_types | The authorization modes of the additional authentication providers |
+| waf\_web\_acl\_arn | The ARN of the WAF web ACL associated with the API, if any |
+| visibility | `GLOBAL` (public endpoint) or `PRIVATE` (reachable only through an interface VPC endpoint). Defaults to `GLOBAL` when absent |
+| api\_type | `GRAPHQL` or `MERGED` |
+| xray\_enabled | Whether X-Ray tracing is enabled |
+| log\_field\_log\_level | The field-level log level (`NONE`, `ERROR`, `ALL`, ...), when logging is configured |
+| graphql\_uri | The GraphQL endpoint URI |
+
+#### Relationships
+
+- AppSync GraphQL APIs are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AppSyncGraphqlApi)
+        ```
+
 ### AutoScalingGroup
 
 Representation of an AWS [Auto Scaling Group Resource](https://docs.aws.amazon.com/autoscaling/ec2/userguide/AutoScalingGroup.html).

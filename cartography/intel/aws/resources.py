@@ -2,6 +2,7 @@ from typing import Dict
 from typing import List
 
 from . import apigateway
+from . import appsync
 from . import bedrock
 from . import cloudformation
 from . import cloudfront
@@ -18,8 +19,8 @@ from . import emr
 from . import iam
 from . import identitystore
 from . import inspector
-from . import kms
 from . import kinesis
+from . import kms
 from . import lambda_function
 from . import permission_relationships
 from . import rds
@@ -68,6 +69,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'kms': kms.sync,
     'kinesis': kinesis.sync,
     'apigateway': apigateway.sync,
+    'appsync': appsync.sync,
     'secretsmanager': secretsmanager.sync,
     'sqs': sqs.sync,
     'sns': sns.sync,
