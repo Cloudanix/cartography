@@ -1,0 +1,31 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OCI API gateways in scope",
+      "query": "MATCH (n:OCIApiGateway)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Mark PUBLIC API gateways as exposed if one of their subnet's OWN security lists admits TCP 443 (the only port a gateway serves) from 0.0.0.0/0 or ::/0. Security lists synced before internet_ingress_port_ranges existed count as open on every port when they admit any internet ingress.",
+      "query": "MATCH (gw:OCIApiGateway{endpoint_type: 'PUBLIC'})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (subnet:OCISubnet{id: gw.subnet_id}) MATCH (sl:OCISecurityList) WHERE sl.id IN coalesce(subnet.security_list_ids, []) WITH gw, coalesce(sl.internet_ingress_port_ranges, CASE WHEN coalesce(sl.allows_internet_ingress, sl.ingress_security_rules CONTAINS '0.0.0.0/0' OR sl.ingress_security_rules CONTAINS '::/0') THEN ['all:1-65535'] ELSE [] END) AS ranges WHERE any(r IN ranges WHERE split(r, ':')[0] IN ['all', '6'] AND toInteger(split(split(r, ':')[1], '-')[0]) <= 443 AND toInteger(split(split(r, ':')[1], '-')[1]) >= 443) WITH DISTINCT gw SET gw.exposed_internet = true, (CASE WHEN NOT 'unrestricted_securitylist_ingress' IN coalesce(gw.exposed_internet_type, []) THEN gw END).exposed_internet_type = coalesce(gw.exposed_internet_type, []) + 'unrestricted_securitylist_ingress'",
+      "iterative": false
+    },
+    {
+      "__comment": "Mark PUBLIC API gateways as exposed if one of their NSGs has a rule admitting TCP 443 from 0.0.0.0/0 or ::/0. Rules synced before internet_ingress_port_range existed count as open on every port.",
+      "query": "MATCH (gw:OCIApiGateway{endpoint_type: 'PUBLIC'})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (nsg:OCINetworkSecurityGroup)-[:OCI_NSG_RULE]->(rule:OCINsgSecurityRule) WHERE nsg.id IN coalesce(gw.nsg_ids, []) AND coalesce(rule.is_internet_ingress, rule.direction = 'INGRESS' AND rule.source IN ['0.0.0.0/0', '::/0']) WITH gw, coalesce(rule.internet_ingress_port_range, 'all:1-65535') AS r WHERE split(r, ':')[0] IN ['all', '6'] AND toInteger(split(split(r, ':')[1], '-')[0]) <= 443 AND toInteger(split(split(r, ':')[1], '-')[1]) >= 443 WITH DISTINCT gw SET gw.exposed_internet = true, (CASE WHEN NOT 'unrestricted_nsg_ingress' IN coalesce(gw.exposed_internet_type, []) THEN gw END).exposed_internet_type = coalesce(gw.exposed_internet_type, []) + 'unrestricted_nsg_ingress'",
+      "iterative": false
+    },
+    {
+      "__comment": "Fail-safe: a PUBLIC API gateway whose subnet, subnet security lists or NSGs are not in the graph (other compartment, not synced) cannot be proven closed, so it is exposed",
+      "query": "MATCH (gw:OCIApiGateway{endpoint_type: 'PUBLIC'})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) OPTIONAL MATCH (subnet:OCISubnet{id: gw.subnet_id}) OPTIONAL MATCH (sl:OCISecurityList) WHERE sl.id IN coalesce(subnet.security_list_ids, []) WITH gw, subnet, count(DISTINCT sl) AS known_security_lists OPTIONAL MATCH (nsg:OCINetworkSecurityGroup) WHERE nsg.id IN coalesce(gw.nsg_ids, []) WITH gw, subnet, known_security_lists, count(DISTINCT nsg) AS known_nsgs WHERE subnet IS NULL OR known_security_lists < size(coalesce(subnet.security_list_ids, [])) OR known_nsgs < size(coalesce(gw.nsg_ids, [])) SET gw.exposed_internet = true, (CASE WHEN NOT 'public_gateway_unresolved_rules' IN coalesce(gw.exposed_internet_type, []) THEN gw END).exposed_internet_type = coalesce(gw.exposed_internet_type, []) + 'public_gateway_unresolved_rules'",
+      "iterative": false
+    },
+    {
+      "__comment": "Build publicContext JSON for exposed API gateways. resourceType is the inventory service OCIApiGateway is expected to map to.",
+      "query": "MATCH (gw:OCIApiGateway)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE gw.exposed_internet = true SET gw.publicContext = apoc.convert.toJson([{resource: gw.id, resourceType: 'oci-apimanagement-apigateway-gateway', context: [{gatewayId: gw.id, gatewayName: gw.display_name, hostname: gw.hostname, endpointType: gw.endpoint_type, port: 443, subnetId: gw.subnet_id, nsgIds: coalesce(gw.nsg_ids, []), exposureTypes: gw.exposed_internet_type, region: gw.region}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "OCI API gateway asset internet exposure"
+}

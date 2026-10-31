@@ -53,6 +53,7 @@ OCI_ANALYSIS_JOBS = [
     'oci_file_storage_asset_exposure.json',
     'oci_autonomous_database_asset_exposure.json',
     'oci_oke_cluster_asset_exposure.json',
+    'oci_api_gateway_asset_exposure.json',
     'oci_logging_analysis.json',
 ]
 

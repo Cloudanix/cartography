@@ -1,5 +1,6 @@
 # Copyright (c) 2020, Oracle and/or its affiliates.
 # Runs the real OCI exposure analysis jobs against network data loaded by the real loaders.
+from cartography.intel.oci import api_gateway
 from cartography.intel.oci import database
 from cartography.intel.oci import load_balancer
 from cartography.intel.oci import network
@@ -720,6 +721,54 @@ def test_instance_exposed_as_backend_of_exposed_load_balancer(neo4j_session):
         "MATCH (i:OCIInstance{id: 'lbb-ip-backend'}) RETURN i.publicContext AS c",
     ).single()['c']
     assert 'lbb-public-lb' in context and 'lbb-other-tenancy-lb' not in context
+
+
+def test_api_gateway_exposed_when_public_and_https_is_open(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _load_vcn(
+        neo4j_session, 'apigw-vcn',
+        security_lists=[
+            ('apigw-sl-default', DEFAULT_SECURITY_LIST_RULES),
+            ('apigw-sl-https', [_tcp_from_anywhere(443)]),
+            ('apigw-sl-closed', [HTTPS_FROM_VCN]),
+        ],
+        nsgs={'apigw-nsg-https': [_tcp_from_anywhere(443)]},
+    )
+    for sl in ('default', 'https', 'closed'):
+        _load_subnet(neo4j_session, f'apigw-subnet-{sl}', 'apigw-vcn', [f'apigw-sl-{sl}'])
+
+    def gateway(gw_id, subnet, endpoint_type='PUBLIC', nsgs=()):
+        return {
+            'id': gw_id, 'endpoint-type': endpoint_type, 'subnet-id': subnet, 'network-security-group-ids': list(nsgs),
+        }
+
+    api_gateway.load_gateways(
+        neo4j_session,
+        api_gateway.transform_gateways(
+            [
+                gateway('apigw-private', 'apigw-subnet-https', endpoint_type='PRIVATE'),
+                gateway('apigw-https-sl', 'apigw-subnet-https'),
+                # Default Security List opens SSH only; gateways serve HTTPS (443).
+                gateway('apigw-default-sl', 'apigw-subnet-default'),
+                gateway('apigw-https-nsg', 'apigw-subnet-closed', nsgs=['apigw-nsg-https']),
+                gateway('apigw-unknown-subnet', 'apigw-subnet-not-synced'),
+            ],
+            REGION,
+        ),
+        COMPARTMENT_ID, UPDATE_TAG,
+    )
+
+    run_analysis_job('oci_api_gateway_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIApiGateway', 'apigw-') == {
+        'apigw-https-sl': ['unrestricted_securitylist_ingress'],
+        'apigw-https-nsg': ['unrestricted_nsg_ingress'],
+        'apigw-unknown-subnet': ['public_gateway_unresolved_rules'],
+    }
+    context = neo4j_session.run(
+        "MATCH (g:OCIApiGateway{id: 'apigw-https-nsg'}) RETURN g.publicContext AS c",
+    ).single()['c']
+    assert 'apigw-nsg-https' in context and 'apigw-subnet-closed' in context
 
 
 def test_bucket_exposed_by_unexpired_read_pre_authenticated_request(neo4j_session):

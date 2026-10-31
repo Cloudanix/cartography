@@ -34,5 +34,9 @@ def test_oci_load_balancer_exposure_runs_before_instance_exposure():
     assert jobs.index('oci_load_balancer_asset_exposure.json') < jobs.index('oci_instance_asset_exposure.json')
 
 
+def test_oci_api_gateway_exposure_is_wired():
+    assert 'oci_api_gateway_asset_exposure.json' in oci_intel.OCI_ANALYSIS_JOBS
+
+
 def test_oci_oke_cluster_exposure_is_wired():
     assert 'oci_oke_cluster_asset_exposure.json' in oci_intel.OCI_ANALYSIS_JOBS

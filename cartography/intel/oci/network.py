@@ -9,10 +9,12 @@ from typing import List
 from typing import Optional
 
 import neo4j
+import oci.apigateway
 import oci.load_balancer
 import oci.logging
 import oci.network_load_balancer
 
+from . import api_gateway
 from . import load_balancer
 from . import tags
 from . import utils
@@ -1294,6 +1296,11 @@ def sync(
         config=network.base_client.config,
         signer=getattr(network.base_client, "signer", None),
     )
+    # API gateways also sit in a VCN subnet behind its security lists and NSGs.
+    gateway_client = oci.apigateway.GatewayClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
 
     for region in regions:
         logger.info("Syncing OCI Network in region '%s' for compartment '%s'.", region, compartment_ocid)
@@ -1301,6 +1308,7 @@ def sync(
         logging_client.base_client.set_region(region)
         lb_client.base_client.set_region(region)
         nlb_client.base_client.set_region(region)
+        gateway_client.base_client.set_region(region)
 
         # Sync VCNs first (parent of all other network resources)
         sync_vcns(neo4j_session, network, compartments, tenancy_id, region, oci_update_tag, common_job_parameters)
@@ -1361,6 +1369,13 @@ def sync(
             )
         except Exception as e:
             logger.error("Error syncing OCI load balancers in region '%s': %s", region, e, exc_info=True)
+
+        try:
+            api_gateway.sync_gateways(
+                neo4j_session, gateway_client, compartment_ocid, region, oci_update_tag, common_job_parameters,
+            )
+        except Exception as e:
+            logger.error("Error syncing OCI API gateways in region '%s': %s", region, e, exc_info=True)
 
     # Cleanup stale network nodes
     run_cleanup_job('oci_import_network_cleanup.json', neo4j_session, common_job_parameters)

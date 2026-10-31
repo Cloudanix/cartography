@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 from cartography.intel.oci import network
 
 
@@ -132,6 +134,30 @@ def test_load_route_tables_records_default_routes_to_internet_gateways():
         'igw-default': [igw], 'igw-v6': [igw], 'igw-legacy': [igw],
         'igw-partial': [], 'nat-default': [], 'empty': [],
     }
+
+
+def test_sync_runs_load_balancer_and_api_gateway_syncs_per_region(monkeypatch):
+    for name in dir(network):
+        if name.startswith('sync_'):
+            monkeypatch.setattr(network, name, MagicMock())
+    monkeypatch.setattr(network, 'run_cleanup_job', MagicMock())
+    for module, client in (
+        (network.oci.logging, 'LoggingManagementClient'),
+        (network.oci.load_balancer, 'LoadBalancerClient'),
+        (network.oci.network_load_balancer, 'NetworkLoadBalancerClient'),
+        (network.oci.apigateway, 'GatewayClient'),
+    ):
+        monkeypatch.setattr(module, client, MagicMock())
+    # A load balancer failure must not stop the API gateway sync.
+    sync_lbs = MagicMock(side_effect=RuntimeError('boom'))
+    monkeypatch.setattr(network.load_balancer, 'sync_load_balancers', sync_lbs)
+    sync_gateways = MagicMock()
+    monkeypatch.setattr(network.api_gateway, 'sync_gateways', sync_gateways)
+
+    network.sync(MagicMock(), MagicMock(), 'tenancy', 1, {'OCI_COMPARTMENT_ID': 'comp'}, ['r1', 'r2'])
+
+    assert [c.args[4] for c in sync_lbs.call_args_list] == ['r1', 'r2']
+    assert [(c.args[2], c.args[3]) for c in sync_gateways.call_args_list] == [('comp', 'r1'), ('comp', 'r2')]
 
 
 class _RecordingSession:
