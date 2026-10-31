@@ -769,9 +769,13 @@ def load_server_details(
 
         for ip in ip_range:
             if str(ip) in public_ips:
-                attach_firewall_rule_to_public_ip(neo4j_session, fw_rule, str(ip), "Azure", "Internal", update_tag)
+                attach_firewall_rule_to_public_ip(
+                    neo4j_session, fw_rule, str(ip), "Azure", "Internal", update_tag, subscription_id,
+                )
             elif not ipaddress.ip_address(str(ip)).is_private:
-                attach_firewall_rule_to_public_ip(neo4j_session, fw_rule, str(ip), "Azure", "External", update_tag)
+                attach_firewall_rule_to_public_ip(
+                    neo4j_session, fw_rule, str(ip), "Azure", "External", update_tag, subscription_id,
+                )
 
     sync_database_details(neo4j_session, credentials, subscription_id, databases, update_tag, common_job_parameters)
 
@@ -896,30 +900,54 @@ def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id: str
     )
 
 
-def attach_firewall_rule_to_public_ip(session: neo4j.Session, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int) -> None:
-    session.execute_write(_attach_firewall_rule_to_public_ip_tx, fw_rule, public_ip, source, type, update_tag)
+def attach_firewall_rule_to_public_ip(
+    session: neo4j.Session, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int,
+    subscription_id: str,
+) -> None:
+    session.execute_write(
+        _attach_firewall_rule_to_public_ip_tx, fw_rule, public_ip, source, type, update_tag, subscription_id,
+    )
 
 
-def _attach_firewall_rule_to_public_ip_tx(tx: neo4j.Transaction, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int) -> None:
-    ingest_address = """
-    MATCH (fwr:AzureFirewallRule{id: $fw_rule})
-    WITH fwr
-    MERGE (ip:AzurePublicIPAddress{ipAddress: $public_ip})
-    ON CREATE SET ip.firstseen = timestamp()
-    SET
-        ip.id =$public_ip,
-        ip.name=$public_ip,
-        ip.source =$source,
-        ip.type=$type,
-        ip.resource=$resource,
-        ip.ipAddress=$public_ip
-    MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+def _attach_firewall_rule_to_public_ip_tx(
+    tx: neo4j.Transaction, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int,
+    subscription_id: str,
+) -> None:
     """
+    Link a firewall rule to the public IP it admits. An Internal IP is this subscription's
+    own AzurePublicIPAddress, matched through the subscription and never modified (it is
+    owned by the network sync). An External IP gets its own node keyed by subscription, so
+    a rule can never rewrite, or let the SQL cleanup delete, another subscription's node
+    that happens to hold the same address.
+    """
+    if type == "Internal":
+        query = """
+        MATCH (fwr:AzureFirewallRule{id: $fw_rule})
+        MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(ip:AzurePublicIPAddress{ipAddress: $public_ip})
+        MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
+        """
+    else:
+        query = """
+        MATCH (fwr:AzureFirewallRule{id: $fw_rule})
+        MERGE (ip:AzurePublicIPAddress{id: $ip_id})
+        ON CREATE SET ip.firstseen = timestamp()
+        SET ip.name = $public_ip,
+            ip.ipAddress = $public_ip,
+            ip.source = $source,
+            ip.type = $type,
+            ip.resource = $resource,
+            ip.lastupdated = $update_tag
+        MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
+        """
     tx.run(
-        ingest_address,
+        query,
         fw_rule=fw_rule['id'],
+        subscription_id=subscription_id,
+        ip_id=f"/subscriptions/{subscription_id}/sqlFirewallExternalIp/{public_ip}",
         public_ip=public_ip,
         source=source,
         type=type,

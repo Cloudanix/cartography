@@ -2,6 +2,9 @@
 Scenario test for azure_sql_asset_exposure.json, run for real on Neo4j with
 servers and firewall rules loaded through the sql.py loaders.
 """
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 from cartography.intel.azure import sql
 from cartography.util import run_analysis_job
 
@@ -87,3 +90,45 @@ def test_sql_server_exposure(neo4j_session):
         'flexible': (True, ['firewall_not_evaluated']),
         'stale': (None, []),
     }
+
+
+def test_firewall_public_ip_never_rewrites_another_subscriptions_node(neo4j_session):
+    other_pip = '/subscriptions/other-sub/resourceGroups/rg/providers/Microsoft.Network/publicIPAddresses/theirs'
+    own_pip = f'{PREFIX}Microsoft.Network/publicIPAddresses/ours'
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:AzureTenant{id: $tenant})-[:RESOURCE]->"
+        "(s:AzureSubscription{id: $sub}) "
+        "MERGE (s)-[:RESOURCE]->(:AzurePublicIPAddress{id: $own, ipAddress: '20.0.0.9', name: 'ours', lastupdated: 1}) "
+        "MERGE (:AzureSubscription{id: 'other-sub'})-[:RESOURCE]->"
+        "(:AzurePublicIPAddress{id: $other, ipAddress: '20.0.0.5', name: 'theirs', lastupdated: 1})",
+        ws=WORKSPACE, tenant=TENANT, sub=SUB, own=own_pip, other=other_pip,
+    )
+    server = _server('fw-ip')
+    sql.load_server_data(neo4j_session, SUB, [server], 2)
+    rules = [
+        {**_rule(server, 'external', '20.0.0.5', '20.0.0.5'), 'type': 'Microsoft.Sql/servers/firewallRules'},
+        {**_rule(server, 'internal', '20.0.0.9', '20.0.0.9'), 'type': 'Microsoft.Sql/servers/firewallRules'},
+    ]
+    details = [(server['id'], server['name'], 'rg', [], [], [], [], [], [], [], rules)]
+
+    with patch.object(sql.network, 'get_network_client'), \
+            patch.object(sql.network, 'get_public_ip_addresses_list', return_value=[{'ip_address': '20.0.0.9'}]), \
+            patch.object(sql, 'sync_database_details'):
+        sql.load_server_details(neo4j_session, MagicMock(), SUB, details, 2, {})
+    sql.cleanup_azure_sql_servers(neo4j_session, PARAMS)
+
+    theirs = neo4j_session.run(
+        "MATCH (ip:AzurePublicIPAddress{ipAddress: '20.0.0.5'})<-[:RESOURCE]-(:AzureSubscription{id: 'other-sub'}) "
+        "RETURN ip.id AS id, ip.name AS name, EXISTS { (ip)<-[:MEMBER_PUBLIC_IP_ADDRESS]-() } AS linked",
+    ).data()
+    assert theirs == [{'id': other_pip, 'name': 'theirs', 'linked': False}]
+
+    links = neo4j_session.run(
+        "MATCH (fw:AzureFirewallRule)-[:MEMBER_PUBLIC_IP_ADDRESS]->(ip:AzurePublicIPAddress) "
+        "WHERE fw.id STARTS WITH $server RETURN fw.name AS rule, ip.id AS ip, ip.type AS type",
+        server=server['id'],
+    ).data()
+    assert sorted(links, key=lambda row: row['rule']) == [
+        {'rule': 'external', 'ip': f'/subscriptions/{SUB}/sqlFirewallExternalIp/20.0.0.5', 'type': 'External'},
+        {'rule': 'internal', 'ip': own_pip, 'type': None},
+    ]
