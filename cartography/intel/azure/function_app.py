@@ -20,7 +20,8 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 
 # Access restriction sources that admit the whole internet ('Internet' is the service tag form).
-OPEN_ACCESS_RESTRICTION_SOURCES = {'any', '0.0.0.0/0', '::/0', 'internet'}
+# Azure Front Door is always internet-facing, so a site that admits it is reachable through it.
+OPEN_ACCESS_RESTRICTION_SOURCES = {'any', '0.0.0.0/0', '::/0', 'internet', 'azurefrontdoor.backend'}
 # Parallel per-site config reads; same order as the SQL server fetch pool.
 SITE_CONFIG_WORKERS = 5
 

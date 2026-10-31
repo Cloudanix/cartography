@@ -59,6 +59,7 @@ def test_site_access_restrictions_arrive():
         _site('locked', publicNetworkAccess='Enabled'),
         _site('allow-any'),
         _site('internet-tag'),
+        _site('front-door'),
         _site('deny-any'),
         _site('no-config'),
     ]
@@ -66,6 +67,7 @@ def test_site_access_restrictions_arrive():
         'locked': _config('Deny', _rule('52.1.2.3/32')),
         'allow-any': _config('Deny', _rule('Any')),
         'internet-tag': _config('Deny', _rule('Internet', tag='ServiceTag')),
+        'front-door': _config('Deny', _rule('AzureFrontDoor.Backend', tag='ServiceTag')),
         'deny-any': _config('Allow', _rule('0.0.0.0/0', action='Deny')),
     }
 
@@ -85,6 +87,8 @@ def test_site_access_restrictions_arrive():
         'locked': ('Enabled', 'Deny', False),
         'allow-any': (None, 'Deny', True),
         'internet-tag': (None, 'Deny', True),
+        # Front Door is internet-facing, so a site that admits it is reachable from the internet.
+        'front-door': (None, 'Deny', True),
         'deny-any': (None, 'Allow', False),
         # A failed config read leaves the restriction unknown, which the exposure job treats as open.
         'no-config': (None, None, None),
