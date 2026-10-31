@@ -115,3 +115,33 @@ def test_get_training_jobs_list_stops_paging_at_the_cap_and_warns(caplog):
     assert len(pages_read) == cap // 100 + 1
     warning = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warning) == 1 and ACCOUNT_ID in warning[0] and 'us-east-1' in warning[0]
+
+
+MODEL_ARN = 'arn:aws:sagemaker:us-east-1:111111111111:model/'
+
+
+def test_get_models_list_is_newest_first_without_a_time_filter_and_capped(caplog):
+    pages_read = []
+
+    def pages():
+        while True:
+            pages_read.append(1)
+            names = [f'model-{len(pages_read)}-{i}' for i in range(100)]
+            yield {'Models': [{'ModelName': n, 'ModelArn': f'{MODEL_ARN}{n}'} for n in names]}
+
+    session, client = _session(lambda **params: pages())
+
+    with caplog.at_level(logging.WARNING):
+        models = sagemaker.get_models_list(session, ACCOUNT_ID, 'us-east-1')
+
+    client.get_paginator.assert_called_once_with('list_models')
+    # No CreationTimeAfter: an old model can still back a live endpoint.
+    client.get_paginator.return_value.paginate.assert_called_once_with(
+        SortBy='CreationTime', SortOrder='Descending', PaginationConfig={'PageSize': 100},
+    )
+    cap = sagemaker.MAX_MODELS_PER_REGION
+    assert len(models) == cap
+    assert models[0]['ModelName'] == 'model-1-0'
+    assert len(pages_read) == cap // 100 + 1
+    warning = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning) == 1 and ACCOUNT_ID in warning[0] and 'us-east-1' in warning[0]

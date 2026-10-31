@@ -30,6 +30,9 @@ TRAINING_JOB_WINDOW_DAYS = 30
 TRAINING_JOB_ACTIVE_STATUSES = ('InProgress', 'Stopping')
 # Hard bound per region: at most 11 list calls (100 per page) and 1000 nodes, whatever the account's history.
 MAX_TRAINING_JOBS_PER_REGION = 1000
+# Models pile up (pipelines create one per run and nothing deletes them) but are not history: an old model can back a
+# live endpoint, so there is no time window, only this cap on the newest models.
+MAX_MODELS_PER_REGION = 1000
 
 
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str) -> Any:
@@ -266,14 +269,15 @@ def _load_training_jobs_tx(
 
 
 @timeit
-def get_models_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_models_list(boto3_session: boto3.session.Session, current_aws_account_id: str, region: str) -> List[Dict]:
     models: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
 
-        paginator = client.get_paginator("list_models")
-        for page in paginator.paginate():
-            models.extend(page["Models"])
+        models = list_up_to(
+            client, "list_models", "Models", MAX_MODELS_PER_REGION + 1, LIST_PAGE_SIZE,
+            SortBy='CreationTime', SortOrder='Descending',
+        )
 
         for model in models:
             model["region"] = region
@@ -283,7 +287,7 @@ def get_models_list(boto3_session: boto3.session.Session, region: str) -> List[D
         logger.warning(
             f"Could not list sagemaker models. skipping. - {e}",
         )
-    return models
+    return cap_with_warning(models, MAX_MODELS_PER_REGION, "SageMaker models", current_aws_account_id, region)
 
 
 @timeit
@@ -495,7 +499,7 @@ def sync_sagemaker(
 
     models_list = []
     for region in regions:
-        models_list.extend(get_models_list(boto3_session, region))
+        models_list.extend(get_models_list(boto3_session, current_aws_account_id, region))
 
     logger.info(f"Total models: {len(models_list)}")
 
