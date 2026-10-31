@@ -21,6 +21,7 @@ _MISSING_DEPS = [
     "msrestazure.azure_active_directory",
     "azure.common",
     "azure.common.credentials",
+    "azure.containerregistry",
     "azure.mgmt.containerinstance",
     "azure.mgmt.containerregistry",
     "azure.mgmt.network",
