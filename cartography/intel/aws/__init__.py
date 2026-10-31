@@ -736,6 +736,32 @@ def _sync_multiple_accounts(
     # run_cleanup_job('aws_post_ingestion_dns_cleanup.json', neo4j_session, common_job_parameters)
 
 
+def _requested_syncs(services: List[Dict[str, Any]], common_job_parameters: Dict[str, Any]) -> List[str]:
+    """
+    Service names the caller asked for, recording each one's pagination in common_job_parameters.
+
+    cloudanix-web sends its configured service list, which can name a service this build does not have yet (web
+    config shipped before the cartography deploy). Such a name is skipped with a warning instead of failing the whole
+    AWS sync; the CLI keeps rejecting it through parse_and_validate_aws_requested_syncs.
+    """
+    names: List[str] = []
+    for service in services:
+        name = (service.get("name") or "").strip()
+        if service.get("pagination"):
+            pagination = service["pagination"]
+            pagination["hasNextPage"] = False
+            common_job_parameters["pagination"][name] = pagination
+        names.append(name)
+
+    unknown = [name for name in names if name not in RESOURCE_FUNCTIONS]
+    if unknown:
+        logger.warning(f"Skipping AWS services this cartography build does not sync: {unknown}")
+    known = [name for name in names if name in RESOURCE_FUNCTIONS]
+    if not known:
+        return []
+    return parse_and_validate_aws_requested_syncs(",".join(known))
+
+
 def _get_account_partition(boto3_session: boto3.session.Session, config: Config) -> str:
     """
     Partition of the synced account, so built ARNs read arn:aws-cn:/arn:aws-us-gov: where needed.
@@ -835,19 +861,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
 
     requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
     if config.aws_requested_syncs:
-        aws_requested_syncs_string = ""
-        for service in config.aws_requested_syncs:
-            aws_requested_syncs_string += f"{service.get('name', '')},"
-            if service.get("pagination", None):
-                pagination = service.get("pagination", {})
-                pagination["hasNextPage"] = False
-                common_job_parameters["pagination"][service.get("name", None)] = (
-                    pagination
-                )
-
-        requested_syncs = parse_and_validate_aws_requested_syncs(
-            aws_requested_syncs_string[:-1],
-        )
+        requested_syncs = _requested_syncs(config.aws_requested_syncs, common_job_parameters)
 
     sync_successful = _sync_multiple_accounts(
         neo4j_session,
