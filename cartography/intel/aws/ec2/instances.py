@@ -315,6 +315,8 @@ def transform_ec2_instances(
                             "Description": network_interface["Description"],
                             "PrivateDnsName": network_interface.get("PrivateDnsName"),
                             "PrivateIpAddress": network_interface.get("PrivateIpAddress"),
+                            # Read by the ::/0 statement of aws_ec2_instance_asset_exposure.json
+                            "Ipv6Addresses": [a["Ipv6Address"] for a in network_interface.get("Ipv6Addresses", [])],
                             "InstanceId": instance_id,
                             "SubnetId": subnet_id,
                             "GroupId": security_group["GroupId"],
