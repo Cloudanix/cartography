@@ -44,13 +44,26 @@ def get_emr_describe_cluster(boto3_session: boto3.session.Session, region: str, 
     try:
         response = client.describe_cluster(ClusterId=cluster_id)
         cluster_details = response['Cluster']
-        public_access_configuration=client.get_block_public_access_configuration()
-        cluster_details['public_access_configuration']=public_access_configuration.get('BlockPublicAccessConfiguration',{}).get('BlockPublicSecurityGroupRules',True)
+        public_access_configuration = client.get_block_public_access_configuration()
+        cluster_details['public_access_configuration'] = public_access_configuration.get(
+            'BlockPublicAccessConfiguration', {},
+        ).get('BlockPublicSecurityGroupRules', True)
     except botocore.exceptions.ClientError as e:
         code = e.response['Error']['Code']
         msg = e.response['Error']['Message']
         logger.warning(f"Could not run EMR describe_cluster due to boto3 error {code}: {msg}. Skipping.")
     return cluster_details
+
+
+def get_master_security_group_ids(cluster: Dict[str, Any]) -> List[str]:
+    """
+    Security groups on the cluster's master node (EMR-managed plus additional), from describe_cluster.
+    aws_emr_asset_exposure.json reads them to tell whether the master is open to the internet.
+    """
+    attributes = cluster.get('Ec2InstanceAttributes', {})
+    managed = attributes.get('EmrManagedMasterSecurityGroup')
+    return ([managed] if managed else []) + attributes.get('AdditionalMasterSecurityGroups', [])
+
 
 @timeit
 def load_emr_clusters(
@@ -65,6 +78,7 @@ def load_emr_clusters(
         cluster['consolelink'] = (
             aws_console_link.get_console_link(arn=cluster['ClusterArn']) if cluster.get('ClusterArn') else None
         )
+        cluster['MasterSecurityGroupIds'] = get_master_security_group_ids(cluster)
     load(
         neo4j_session,
         EMRClusterSchema(),
