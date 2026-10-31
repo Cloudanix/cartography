@@ -16,6 +16,7 @@ from azure.mgmt.cosmosdb import CosmosDBManagementClient
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
@@ -23,6 +24,26 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+# The IP rule the portal adds for "Accept connections from within public Azure datacenters".
+AZURE_DATACENTERS_IP_RULE = '0.0.0.0'
+# Azure portal middleware IPs ("Add Azure Portal Middleware IPs"), current and legacy, for
+# Azure Public, 21Vianet and US Government. They let the portal's Data Explorer reach the
+# account, they do not open it to the internet. Source, 2026-07-27:
+# https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-configure-firewall
+AZURE_PORTAL_MIDDLEWARE_IPS = frozenset({
+    # Azure Public: All, MongoDB only, Apache Cassandra only
+    '13.91.105.215', '4.210.172.107', '13.88.56.148', '40.91.218.243',
+    '20.245.81.54', '40.118.23.126', '40.80.152.199', '13.95.130.121',
+    '40.113.96.14', '104.42.11.145', '137.117.230.240', '168.61.72.237',
+    # 21Vianet
+    '163.228.137.6', '143.64.170.142', '52.131.240.99', '143.64.61.130', '40.73.99.146', '143.64.62.47',
+    # US Government
+    '52.247.163.6', '52.244.134.181', '52.244.176.112', '52.247.148.42', '52.244.50.101', '52.227.165.24',
+    # Legacy middleware, all three clouds
+    '104.42.195.92', '40.76.54.131', '52.176.6.30', '52.169.50.45', '52.187.184.26', '139.217.8.252',
+    '52.244.48.71',
+})
 
 
 @timeit
@@ -36,13 +57,15 @@ def get_client(credentials: Credentials, subscription_id: str) -> CosmosDBManage
 
 
 @timeit
-def get_database_account_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
+def get_database_account_list(
+    credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict,
+) -> List[Dict]:
     """
     Get a list of all database accounts.
     """
     try:
         client = get_client(credentials, subscription_id)
-        database_account_list = list(map(lambda x: x.as_dict(), client.database_accounts.list()))
+        database_account_list = list(map(as_legacy_dict, client.database_accounts.list()))
 
     # ClientAuthenticationError and ResourceNotFoundError are subclasses under HttpResponseError
     except ClientAuthenticationError:
@@ -57,9 +80,8 @@ def get_database_account_list(credentials: Credentials, subscription_id: str, re
     account_list = []
     for database_account in database_account_list:
         database_account['resourceGroup'] = get_azure_resource_group_name(database_account.get('id'))
-        database_account['publicNetworkAccess'] = database_account.get(
-            'properties', {},
-        ).get('public_network_access', 'Disabled')
+        # None (unknown) is not 'Disabled', so the exposure job keeps an unknown account public.
+        database_account['publicNetworkAccess'] = database_account.get('public_network_access')
         database_account['consolelink'] = safe_console_link(database_account['id'], common_job_parameters)
         database_account['location'] = database_account.get('location', '').replace(" ", "").lower()
         if regions is None:
@@ -68,6 +90,20 @@ def get_database_account_list(credentials: Credentials, subscription_id: str, re
             if database_account.get('location') in regions or database_account.get('location') == 'global':
                 account_list.append(database_account)
     return account_list
+
+
+def _is_public_ip_rule(ip_rule: str) -> bool:
+    """
+    True if a Cosmos IP rule (an address or a CIDR range) admits public addresses.
+    0.0.0.0 is not an address: it is the "accept connections from within Azure
+    datacenters" switch. An unparseable rule counts as public (fail-safe).
+    """
+    if ip_rule == AZURE_DATACENTERS_IP_RULE:
+        return False
+    try:
+        return not ipaddress.ip_network(str(ip_rule), strict=False).is_private
+    except ValueError:
+        return True
 
 
 @timeit
@@ -82,7 +118,10 @@ def transform_database_account_data(database_account_list: List[Dict]) -> List[D
             capabilities = [x['name'] for x in database_account['capabilities']]
         if 'ip_rules' in database_account and len(database_account['ip_rules']) > 0:
             iprules = [x['ip_address_or_range'] for x in database_account['ip_rules']]
-        database_account['ipruleslist'] = [ip for ip in iprules if not ipaddress.ip_address(str(ip)).is_private]
+        database_account['ipruleslist'] = [ip for ip in iprules if _is_public_ip_rule(ip)]
+        # Every rule, including 0.0.0.0: any rule at all means the account is not open to every network.
+        database_account['iprulecount'] = len(iprules)
+        database_account['allowAzureDatacenters'] = AZURE_DATACENTERS_IP_RULE in iprules
         database_account['list_of_capabilities'] = capabilities
 
     return database_account_list
@@ -106,6 +145,8 @@ def load_database_account_data(
     d.kind = da.kind,
     d.name = da.name,
     d.ipranges = da.ipruleslist,
+    d.iprulecount = da.iprulecount,
+    d.allowAzureDatacenters = da.allowAzureDatacenters,
     d.capabilities = da.list_of_capabilities,
     d.publicNetworkAccess = da.publicNetworkAccess,
     d.documentendpoint = da.document_endpoint,
@@ -186,34 +227,37 @@ def sync_database_account_data_resources(
 def _load_database_account_associated_iprules(
     neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
 ) -> None:
-    """Relationship between Azure Cosmos DB And Public Ip Addresses in Cartography """
+    """
+    Relationship between Azure Cosmos DB and the public IPs its firewall allows.
+    Rule and IP nodes are keyed by the account id: keyed on the bare IP they were
+    shared across accounts and tenants and could attach to another subscription's
+    own AzurePublicIPAddress, which the cosmos cleanup could then delete.
+    """
     ingest_iprules = """
         UNWIND $DictList as ip_rule
-        MERGE (rule:AzureFirewallRule{id: ip_rule})
-        ON CREATE SET
-        rule.firstseen = timestamp(),
-        rule.name=ip_rule,
-        rule.id=ip_rule,
-        rule.ipAddress=ip_rule,
-        rule.source='Azure' ,
-        rule.type='External',
-        rule.resource=$resourceType
-        WITH rule
         MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MERGE (rule:AzureFirewallRule{id: $DatabaseAccountId + '/ipRules/' + ip_rule})
+        ON CREATE SET rule.firstseen = timestamp()
+        SET rule.name = ip_rule,
+        rule.ipAddress = ip_rule,
+        rule.source = 'Azure',
+        rule.type = 'External',
+        rule.resource = $resourceType,
+        rule.azure_portal_middleware = ip_rule IN $portal_ips,
+        rule.lastupdated = $azure_update_tag
         MERGE (d)-[r:FIREWALL_RULE]->(rule)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
-        with rule
-        MERGE (ip:AzurePublicIPAddress{ipAddress:rule.id})
-        ON CREATE SET
-        ip.firstseen = timestamp(),
-        ip.name=rule.name,
-        ip.id=rule.id,
-        ip.ipAddress=rule.ipAddress,
-        ip.type=rule.type,
-        ip.resource=rule.resource,
-        ip.source=rule.source
-        with ip,rule
+        WITH rule
+        MERGE (ip:AzurePublicIPAddress{id: rule.id + '/publicIp'})
+        ON CREATE SET ip.firstseen = timestamp()
+        SET ip.name = rule.name,
+        ip.ipAddress = rule.ipAddress,
+        ip.type = rule.type,
+        ip.resource = rule.resource,
+        ip.source = rule.source,
+        ip.lastupdated = $azure_update_tag
+        WITH ip, rule
         MERGE (rule)-[r1:MEMBER_OF_PUBLIC_IP]->(ip)
         ON CREATE SET r1.firstseen = timestamp()
         SET r1.lastupdated = $azure_update_tag
@@ -226,6 +270,7 @@ def _load_database_account_associated_iprules(
         database_account.get('ipruleslist', []),
         DatabaseAccountId=database_account.get('id'),
         resourceType=database_account.get('type'),
+        portal_ips=list(AZURE_PORTAL_MIDDLEWARE_IPS),
         azure_update_tag=azure_update_tag,
     )
 
@@ -577,7 +622,7 @@ def get_sql_databases(credentials: Credentials, subscription_id: str, database_a
         client = get_client(credentials, subscription_id)
         sql_database_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.sql_resources.list_sql_databases(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -607,7 +652,7 @@ def get_cassandra_keyspaces(credentials: Credentials, subscription_id: str, data
         client = get_client(credentials, subscription_id)
         cassandra_keyspace_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.cassandra_resources.list_cassandra_keyspaces(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -637,7 +682,7 @@ def get_mongodb_databases(credentials: Credentials, subscription_id: str, databa
         client = get_client(credentials, subscription_id)
         mongodb_database_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.mongo_db_resources.list_mongo_db_databases(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -667,7 +712,7 @@ def get_table_resources(credentials: Credentials, subscription_id: str, database
         client = get_client(credentials, subscription_id)
         table_resources_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.table_resources.list_tables(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -934,7 +979,7 @@ def get_sql_containers(credentials: Credentials, subscription_id: str, database:
         client = get_client(credentials, subscription_id)
         containers = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.sql_resources.list_sql_containers(
                     database['resource_group_name'],
                     database['database_account_name'],
@@ -1062,7 +1107,7 @@ def get_cassandra_tables(credentials: Credentials, subscription_id: str, keyspac
         client = get_client(credentials, subscription_id)
         cassandra_tables = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.cassandra_resources.list_cassandra_tables(
                     keyspace['resource_group_name'],
                     keyspace['database_account_name'],
@@ -1189,7 +1234,7 @@ def get_mongodb_collections(credentials: Credentials, subscription_id: str, data
         client = get_client(credentials, subscription_id)
         collections = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.mongo_db_resources.list_mongo_db_collections(
                     database['resource_group_name'],
                     database['database_account_name'],

@@ -21,6 +21,8 @@ class EKSClusterNodeProperties(CartographyNodeProperties):
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
     endpoint: PropertyRef = PropertyRef('endpoint')
     endpoint_public_access: PropertyRef = PropertyRef('clusterEndpointPublic')
+    endpoint_private_access: PropertyRef = PropertyRef('clusterEndpointPrivate')
+    public_access_cidrs: PropertyRef = PropertyRef('publicAccessCidrs')
     rolearn: PropertyRef = PropertyRef('roleArn')
     version: PropertyRef = PropertyRef('version')
     platform_version: PropertyRef = PropertyRef('platformVersion')

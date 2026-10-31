@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import pytest
+from azure.mgmt.network import models as network_models
 
 import cartography.intel.azure
 from cartography.intel.azure import compute
@@ -71,15 +72,19 @@ def test_vm_extensions_link_to_their_own_id_not_the_last_vm():
 def test_load_balancer_and_nic_children_get_consolelinks():
     lb_id = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/loadBalancers/lb"
     nic_id = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/nic"
-    lb = {
+    lb = network_models.LoadBalancer({
         "id": lb_id,
-        "frontend_ip_configurations": [{"id": f"{lb_id}/frontendIPConfigurations/fe"}],
-        "backend_address_pools": [{"id": f"{lb_id}/backendAddressPools/be"}],
-    }
-    nic = {"id": nic_id, "ip_configurations": [{"id": f"{nic_id}/ipConfigurations/ip"}]}
+        "properties": {
+            "frontendIPConfigurations": [{"id": f"{lb_id}/frontendIPConfigurations/fe"}],
+            "backendAddressPools": [{"id": f"{lb_id}/backendAddressPools/be"}],
+        },
+    })
+    nic = network_models.NetworkInterface({
+        "id": nic_id, "properties": {"ipConfigurations": [{"id": f"{nic_id}/ipConfigurations/ip"}]},
+    })
     client = MagicMock()
-    client.load_balancers.list_all.return_value = [MagicMock(as_dict=lambda: lb)]
-    client.network_interfaces.list_all.return_value = [MagicMock(as_dict=lambda: nic)]
+    client.load_balancers.list_all.return_value = [lb]
+    client.network_interfaces.list_all.return_value = [nic]
 
     with patch.object(network, "safe_console_link", side_effect=_fake_link):
         [loaded_lb] = network.get_load_balancers_list(client, None, {})

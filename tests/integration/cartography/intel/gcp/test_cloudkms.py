@@ -260,3 +260,40 @@ def test_cloudkms_function(neo4j_session):
     }
 
     assert actual_nodes == expected_nodes
+
+
+def test_kms_crypto_key_reset_clears_past_first_batch(neo4j_session):
+    # The crypto key reset runs in batches of 1000. 1500 keys stale-public under a keyring that is no longer public
+    # must all be cleared, not only the first batch.
+    params = {
+        "UPDATE_TAG": TEST_UPDATE_TAG,
+        "WORKSPACE_ID": 'ws-kms-batch',
+        "GCP_ORGANIZATION_ID": 'org-kms-batch',
+        "GCP_PROJECT_ID": 'proj-kms-batch',
+    }
+    neo4j_session.run(
+        """
+        MERGE (w:CloudanixWorkspace{id: $WORKSPACE_ID})
+        MERGE (w)-[:OWNER]->(o:GCPOrganization{id: $GCP_ORGANIZATION_ID})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $GCP_PROJECT_ID})
+        MERGE (p)-[:RESOURCE]->(l:GCPLocation{id: 'loc-kms-batch'})
+        MERGE (l)-[:RESOURCE]->(k:GCPKMSKeyRing{id: 'keyring-kms-batch'})
+        WITH k
+        UNWIND range(1, 1500) AS i
+        CREATE (k)-[:RESOURCE]->(:GCPKMSCryptoKey{
+            id: 'key-kms-batch-' + i, exposed_internet: true, exposed_internet_type: ['allUsers']
+        })
+        """,
+        **params,
+    )
+
+    run_analysis_job('gcp_kms_keyring_analysis.json', neo4j_session, params)
+
+    stale = neo4j_session.run(
+        """
+        MATCH (:GCPKMSKeyRing{id: 'keyring-kms-batch'})-[:RESOURCE]->(c:GCPKMSCryptoKey)
+        WHERE c.exposed_internet IS NOT NULL OR c.exposed_internet_type IS NOT NULL
+        RETURN count(c) AS stale
+        """,
+    ).single()['stale']
+    assert stale == 0
