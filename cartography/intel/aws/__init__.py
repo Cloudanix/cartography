@@ -430,6 +430,11 @@ def _sync_one_account(
         neo4j_session,
         common_job_parameters,
     )
+    run_analysis_job(
+        "aws_sagemaker_notebook_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
     run_analysis_job(
         "aws_redshift_cluster_asset_exposure.json",
