@@ -184,6 +184,8 @@ CREATE INDEX IF NOT EXISTS FOR (n:GCPBigqueryDataset) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPBigqueryTable) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPDataFlowJob) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPCloudTasksQueue) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:GCPArtifactRegistryRepository) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:GCPArtifactRegistryDockerImage) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPSpannerInstance) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPSpannerInstance) ON (n.config);
 CREATE INDEX IF NOT EXISTS FOR (n:GCPSpannerInstanceConfig) ON (n.id);
