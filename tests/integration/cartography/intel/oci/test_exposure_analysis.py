@@ -2,6 +2,7 @@
 # Runs the real OCI exposure analysis jobs against network data loaded by the real loaders.
 from cartography.intel.oci import database
 from cartography.intel.oci import network
+from cartography.intel.oci import storage
 from cartography.util import run_analysis_job
 
 WORKSPACE_ID = 'ws-oci-exposure'
@@ -521,6 +522,49 @@ def test_db_system_exposure_needs_node_public_ip_and_own_open_rules(neo4j_sessio
     assert rows[0]['c'] is None
     assert 'oci-database-dbsystem-instance' in rows[1]['c'] and '203.0.113.30' in rows[1]['c']
     assert 'dbs-sl-default' in rows[1]['c'] and 'dbs-two-nodes' in rows[1]['c']
+
+
+def test_bucket_exposed_by_unexpired_read_pre_authenticated_request(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    future, past = '2099-01-01T00:00:00+00:00', '2020-01-01T00:00:00+00:00'
+    pars = {
+        'par-bucket-read': [{'access-type': 'AnyObjectRead', 'time-expires': future}],
+        'par-object-read': [{'access-type': 'ObjectRead', 'time-expires': future, 'object-name': 'dump.sql'}],
+        'par-expired': [{'access-type': 'AnyObjectRead', 'time-expires': past}],
+        'par-write-only': [{'access-type': 'AnyObjectWrite', 'time-expires': future}],
+        'par-none': [],
+        'par-unknown': None,
+    }
+    storage.load_buckets(
+        neo4j_session,
+        storage.transform_buckets(
+            [{'name': name, 'id': name} for name in pars],
+            {name: {'public-access-type': 'NoPublicAccess'} for name in pars}, 'ns', REGION,
+            {**pars, 'par-unknown': [{'access-type': 'ObjectRead', 'time-expires': future}]},
+        ),
+        COMPARTMENT_ID, UPDATE_TAG,
+    )
+    # Next sync: ListPreauthenticatedRequests fails for par-unknown, so its last answer is kept.
+    storage.load_buckets(
+        neo4j_session,
+        storage.transform_buckets(
+            [{'name': name, 'id': name} for name in pars],
+            {name: {'public-access-type': 'NoPublicAccess'} for name in pars}, 'ns', REGION, pars,
+        ),
+        COMPARTMENT_ID, UPDATE_TAG + 1,
+    )
+
+    run_analysis_job('oci_object_storage_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIStorageBucket', 'par-') == {
+        'par-bucket-read': ['pre_authenticated_read'],
+        'par-object-read': ['pre_authenticated_read'],
+        'par-unknown': ['pre_authenticated_read'],
+    }
+    context = neo4j_session.run(
+        "MATCH (b:OCIStorageBucket{id: 'par-bucket-read'}) RETURN b.publicContext AS c",
+    ).single()['c']
+    assert 'AnyObjectRead' in context
 
 
 def test_db_node_backup_vnic_counts_for_exposure(neo4j_session):

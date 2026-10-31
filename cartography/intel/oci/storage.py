@@ -8,6 +8,7 @@
 #   - Volume Backups (Block + Boot)    https://docs.oracle.com/en-us/iaas/Content/Block/Concepts/blockvolumebackups.htm
 #   - File Storage (File Systems)      https://docs.oracle.com/en-us/iaas/Content/File/Concepts/filestorageoverview.htm
 import logging
+from datetime import datetime
 from typing import Any
 from typing import Dict
 from typing import List
@@ -23,6 +24,10 @@ from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
+
+# PAR access types that let the URL holder read: ObjectRead* covers one object,
+# AnyObjectRead* every object in the bucket. Write-only PARs are left out.
+READ_PAR_ACCESS_TYPES = ('ObjectRead', 'ObjectReadWrite', 'AnyObjectRead', 'AnyObjectReadWrite')
 
 
 class OCIStorageClients:
@@ -129,15 +134,64 @@ def get_bucket_details(
         return {}
 
 
+def get_bucket_pre_authenticated_requests(
+    object_storage: oci.object_storage.ObjectStorageClient,
+    namespace: str,
+    bucket_name: str,
+) -> Optional[List[Dict[str, Any]]]:
+    """
+    List the bucket's pre-authenticated requests (PARs). Anyone holding a PAR URL can
+    use it without credentials, so a read PAR is anonymous access to the bucket or object.
+    Returns None when the call fails, so load_buckets keeps the last known answer.
+    API: ListPreauthenticatedRequests,
+    https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingpreauthenticatedrequests.htm
+    """
+    try:
+        response = oci.pagination.list_call_get_all_results(
+            object_storage.list_preauthenticated_requests,
+            namespace_name=namespace,
+            bucket_name=bucket_name,
+        )
+        return utils.oci_object_to_json(response.data)
+    except oci.exceptions.ServiceError as e:
+        logger.warning(
+            "Could not retrieve pre-authenticated requests for '%s/%s': %s",
+            namespace, bucket_name, e.message,
+        )
+        return None
+
+
+def summarise_read_pars(pars: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """
+    Latest expiry (epoch ms) and access types of the PARs that grant read, or None for
+    both when the PARs are unknown. 0 / [] means "checked, none". The exposure job
+    compares the expiry with the time it runs, so a PAR that expires between syncs stops
+    counting without a new sync. An expiry that cannot be parsed makes the answer unknown.
+    """
+    if pars is None:
+        return {"read_par_expires_at": None, "read_par_access_types": None}
+    read_pars = [p for p in pars if p.get("access-type") in READ_PAR_ACCESS_TYPES]
+    try:
+        expiries = [int(datetime.fromisoformat(p["time-expires"]).timestamp() * 1000) for p in read_pars]
+    except (KeyError, TypeError, ValueError):
+        return {"read_par_expires_at": None, "read_par_access_types": None}
+    return {
+        "read_par_expires_at": max(expiries, default=0),
+        "read_par_access_types": sorted({p["access-type"] for p in read_pars}),
+    }
+
+
 def transform_buckets(
     bucket_summaries: List[Dict[str, Any]],
     bucket_details_by_name: Dict[str, Dict[str, Any]],
     namespace: str,
     region: str,
+    pars_by_name: Optional[Dict[str, Optional[List[Dict[str, Any]]]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Merge the per-bucket detail payload back onto each summary row and shape
-    the dicts to the keys our load_buckets Cypher expects.
+    the dicts to the keys our load_buckets Cypher expects. pars_by_name holds each
+    bucket's pre-authenticated requests (None when listing them failed).
     """
     transformed: List[Dict[str, Any]] = []
     for summary in bucket_summaries:
@@ -174,6 +228,7 @@ def transform_buckets(
             "consolelink": utils.get_console_link("bucket", region=region, namespace=namespace, bucket_name=name),
             "freeform-tags": merged.get("freeform-tags") or {},
             "defined-tags": merged.get("defined-tags") or {},
+            **summarise_read_pars((pars_by_name or {}).get(name)),
         })
     return transformed
 
@@ -201,6 +256,8 @@ def load_buckets(
             b.etag = bucket.etag,
             b.public_access_type = coalesce(bucket.public_access_type, b.public_access_type),
             b.is_public = (coalesce(bucket.public_access_type, b.public_access_type) <> 'NoPublicAccess'),
+            b.read_par_expires_at = coalesce(bucket.read_par_expires_at, b.read_par_expires_at),
+            b.read_par_access_types = coalesce(bucket.read_par_access_types, b.read_par_access_types),
             b.storage_tier = bucket.storage_tier,
             b.object_events_enabled = bucket.object_events_enabled,
             b.replication_enabled = bucket.replication_enabled,
@@ -237,7 +294,7 @@ def sync_buckets(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
-    common_job_parameters: Dict[str, Any] = None,
+    common_job_parameters: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Fetch → transform → load Object Storage buckets for one compartment.
@@ -259,6 +316,7 @@ def sync_buckets(
         return
 
     details_by_name: Dict[str, Dict[str, Any]] = {}
+    pars_by_name: Dict[str, Optional[List[Dict[str, Any]]]] = {}
     for summary in summaries:
         name = summary.get("name")
         if not name:
@@ -266,8 +324,9 @@ def sync_buckets(
         details = get_bucket_details(object_storage, namespace, name)
         if details:
             details_by_name[name] = details
+        pars_by_name[name] = get_bucket_pre_authenticated_requests(object_storage, namespace, name)
 
-    buckets = transform_buckets(summaries, details_by_name, namespace, region)
+    buckets = transform_buckets(summaries, details_by_name, namespace, region, pars_by_name)
     if buckets:
         load_buckets(neo4j_session, buckets, compartment_id, oci_update_tag)
         if common_job_parameters:
