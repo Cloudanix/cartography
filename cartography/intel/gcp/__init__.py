@@ -31,7 +31,7 @@ from cartography.intel.gcp import crm
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
 from cartography.intel.gcp.util.errors import is_permission_error
-from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 

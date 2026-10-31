@@ -5,6 +5,7 @@ import time
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
@@ -330,7 +331,9 @@ def sync_rds_snapshots(
         snps = get_rds_snapshots(boto3_session, region)
         for snp in snps:
             attrib = get_rds_snapshot_attributes(boto3_session, snp['DBSnapshotIdentifier'], region)
-            attributes.append(attrib)
+            if attrib:
+                # The identifier is only unique within an account and region; the ARN pins the snapshot.
+                attributes.append({**attrib, 'DBSnapshotArn': snp['DBSnapshotArn']})
 
         data.extend(transform_snapshots(snps, region))
 
@@ -339,6 +342,129 @@ def sync_rds_snapshots(
     load_rds_snapshots(neo4j_session, data, current_aws_account_id, update_tag)
     load_rds_snapshot_attributes(neo4j_session, attributes, update_tag)
     cleanup_rds_snapshots(neo4j_session, common_job_parameters)
+
+
+def _get_cluster_snapshot_restore_values(client: Any, snapshot_id: str) -> Optional[List[str]]:
+    """
+    The cluster snapshot's 'restore' attribute: the AWS account ids it is shared with, or 'all' when public.
+    None when the call fails: the sharing is unknown and the snapshot is not flagged public.
+    """
+    try:
+        response = client.describe_db_cluster_snapshot_attributes(DBClusterSnapshotIdentifier=snapshot_id)
+    except ClientError as e:
+        logger.warning(f"failed to fetch cluster snapshot attributes: {snapshot_id} {e}")
+        return None
+    attributes = response['DBClusterSnapshotAttributesResult'].get('DBClusterSnapshotAttributes', [])
+    for attribute in attributes:
+        if attribute.get('AttributeName') == 'restore':
+            return attribute.get('AttributeValues', [])
+    return []
+
+
+@timeit
+@aws_handle_regions
+def get_rds_cluster_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+    """
+    Aurora and Multi-AZ DB cluster snapshots owned by the account (manual and automated), with the restore
+    attribute of manual ones as RestoreAttributeValues. Automated snapshots cannot be shared, so it stays None.
+    """
+    client = boto3_session.client('rds', region_name=region, config=get_botocore_config())
+    paginator = client.get_paginator('describe_db_cluster_snapshots')
+    snapshots: List[Dict] = []
+    for page in paginator.paginate():
+        snapshots.extend(page['DBClusterSnapshots'])
+    snapshots = filter_available_rds_snapshots(snapshots)
+    for snapshot in snapshots:
+        snapshot['RestoreAttributeValues'] = None
+        if snapshot.get('SnapshotType') == 'manual':
+            snapshot['RestoreAttributeValues'] = _get_cluster_snapshot_restore_values(
+                client, snapshot['DBClusterSnapshotIdentifier'],
+            )
+    return snapshots
+
+
+def transform_cluster_snapshots(snapshots: List[Dict], region: str) -> List[Dict]:
+    for snapshot in snapshots:
+        snapshot['region'] = region
+        snapshot['name'] = snapshot['DBClusterSnapshotArn'].split(':')[-1]
+        snapshot['consolelink'] = aws_console_link.get_console_link(arn=snapshot['DBClusterSnapshotArn'])
+        snapshot['SnapshotCreateTime'] = dict_value_to_str(snapshot, 'SnapshotCreateTime')
+        snapshot['ClusterCreateTime'] = dict_value_to_str(snapshot, 'ClusterCreateTime')
+    return snapshots
+
+
+@timeit
+def load_rds_cluster_snapshots(
+    neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
+    """
+    Ingest RDS cluster snapshots, link them to the account and to their source cluster in the same account
+    and region (cluster identifiers are only unique within one).
+    """
+    ingest_cluster_snapshots = """
+    UNWIND $DictList as snp
+        MERGE (snapshot:RDSClusterSnapshot{id: snp.DBClusterSnapshotArn})
+        ON CREATE SET snapshot.firstseen = timestamp(),
+            snapshot.arn = snp.DBClusterSnapshotArn
+        SET snapshot.name = snp.name,
+            snapshot.db_cluster_snapshot_identifier = snp.DBClusterSnapshotIdentifier,
+            snapshot.db_cluster_identifier = snp.DBClusterIdentifier,
+            snapshot.snapshot_create_time = snp.SnapshotCreateTime,
+            snapshot.cluster_create_time = snp.ClusterCreateTime,
+            snapshot.engine = snp.Engine,
+            snapshot.engine_mode = snp.EngineMode,
+            snapshot.engine_version = snp.EngineVersion,
+            snapshot.allocated_storage = snp.AllocatedStorage,
+            snapshot.status = snp.Status,
+            snapshot.port = snp.Port,
+            snapshot.vpc_id = snp.VpcId,
+            snapshot.master_username = snp.MasterUsername,
+            snapshot.license_model = snp.LicenseModel,
+            snapshot.snapshot_type = snp.SnapshotType,
+            snapshot.percent_progress = snp.PercentProgress,
+            snapshot.storage_encrypted = snp.StorageEncrypted,
+            snapshot.kms_key_id = snp.KmsKeyId,
+            snapshot.source_db_cluster_snapshot_arn = snp.SourceDBClusterSnapshotArn,
+            snapshot.iam_database_authentication_enabled = snp.IAMDatabaseAuthenticationEnabled,
+            snapshot.storage_type = snp.StorageType,
+            snapshot.restore_attribute_values = snp.RestoreAttributeValues,
+            snapshot.region = snp.region,
+            snapshot.consolelink = snp.consolelink,
+            snapshot.lastupdated = $aws_update_tag
+        WITH snapshot, snp
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+        MERGE (aa)-[r:RESOURCE]->(snapshot)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $aws_update_tag
+        WITH aa, snapshot, snp
+        MATCH (aa)-[:RESOURCE]->(cluster:RDSCluster{db_cluster_identifier: snp.DBClusterIdentifier, region: snp.region})
+        MERGE (cluster)-[s:IS_SNAPSHOT_SOURCE]->(snapshot)
+        ON CREATE SET s.firstseen = timestamp()
+        SET s.lastupdated = $aws_update_tag
+    """
+    load_graph_data(
+        neo4j_session,
+        ingest_cluster_snapshots,
+        data,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        aws_update_tag=aws_update_tag,
+    )
+
+
+@timeit
+def sync_rds_cluster_snapshots(
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
+    update_tag: int, common_job_parameters: Dict,
+) -> None:
+    data: List[Dict] = []
+    for region in regions:
+        logger.info("Syncing RDS cluster snapshots for region '%s' in account '%s'.", region, current_aws_account_id)
+        data.extend(transform_cluster_snapshots(get_rds_cluster_snapshots(boto3_session, region), region))
+
+    logger.info(f"Total RDS Cluster Snapshots: {len(data)}")
+
+    load_rds_cluster_snapshots(neo4j_session, data, current_aws_account_id, update_tag)
+    run_cleanup_job('aws_import_rds_cluster_snapshots_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit
@@ -649,7 +775,7 @@ def load_rds_instances(
 
 @timeit
 def load_rds_snapshots(
-    neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
     """
@@ -713,24 +839,37 @@ def load_rds_snapshots(
 
 
 @timeit
-def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: Dict, aws_update_tag: int) -> None:
+def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict], aws_update_tag: int) -> None:
     """
     Ingest the RDS snapshot attributes to neo4j and link them to RDS snapshot.
+
+    Each snapshot gets its own attribute nodes, keyed by '<snapshot arn>/<attribute name>': the snapshot
+    identifier is only unique within an account and region, and the values differ per snapshot.
     """
     ingest_rds_snapshot_attributes = """
     UNWIND $DictList as result
-        MATCH (rdsSnapshot:RDSSnapshot{db_snapshot_identifier: result.DBSnapshotIdentifier})
+        MATCH (rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})
         WITH result, rdsSnapshot
         UNWIND result.DBSnapshotAttributes as attribute
-            MERGE (attrib:RDSSnapshotAttribute{name: attribute.AttributeName})
+            MERGE (attrib:RDSSnapshotAttribute{id: result.DBSnapshotArn + '/' + attribute.AttributeName})
             ON CREATE SET attrib.firstseen = timestamp()
             SET
+                attrib.name = attribute.AttributeName,
                 attrib.values = attribute.AttributeValues,
                 attrib.lastupdated = $aws_update_tag
             WITH attrib, result, rdsSnapshot
             MERGE (rdsSnapshot)-[r:HAS_ATTRIBUTE]->(attrib)
             ON CREATE SET r.firstseen = timestamp()
             SET r.lastupdated = $aws_update_tag
+    """
+    # The snapshot's own restore values (account ids, or 'all' when public); aws_rds_asset_exposure.json reads them.
+    ingest_restore_values = """
+    UNWIND $DictList as result
+        MATCH (rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})
+        SET rdsSnapshot.restore_attribute_values = [
+            attribute IN result.DBSnapshotAttributes WHERE attribute.AttributeName = 'restore'
+            | attribute.AttributeValues
+        ][0]
     """
 
     load_graph_data(
@@ -739,6 +878,7 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: Dict, aws_u
         data,
         aws_update_tag=aws_update_tag,
     )
+    load_graph_data(neo4j_session, ingest_restore_values, data)
 
 
 @timeit
@@ -942,7 +1082,7 @@ def _get_db_subnet_group_arn(
 
 
 @timeit
-def transform_rds_snapshots(data: Dict) -> List[Dict]:
+def transform_rds_snapshots(data: List[Dict]) -> List[Dict]:
     snapshots = []
 
     for snapshot in data:
@@ -1032,6 +1172,10 @@ def sync(
         common_job_parameters,
     )
     sync_rds_snapshots(
+        neo4j_session, boto3_session, regions, current_aws_account_id, update_tag,
+        common_job_parameters,
+    )
+    sync_rds_cluster_snapshots(
         neo4j_session, boto3_session, regions, current_aws_account_id, update_tag,
         common_job_parameters,
     )

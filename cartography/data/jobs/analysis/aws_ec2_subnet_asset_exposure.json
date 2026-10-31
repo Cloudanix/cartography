@@ -6,7 +6,7 @@
       "iterationsize": 100
     },
     {
-      "query": "MATCH (subnet:EC2Subnet{map_public_ip_on_launch: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET subnet.exposed_internet = true ,(CASE WHEN NOT 'endpoint_type' IN coalesce(subnet.exposed_internet_type , []) THEN subnet END).exposed_internet_type = coalesce(subnet.exposed_internet_type , []) + 'map_public_ip_on_launch';",
+      "query": "MATCH (subnet:EC2Subnet{map_public_ip_on_launch: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET subnet.exposed_internet = true ,(CASE WHEN NOT 'map_public_ip_on_launch' IN coalesce(subnet.exposed_internet_type , []) THEN subnet END).exposed_internet_type = coalesce(subnet.exposed_internet_type , []) + 'map_public_ip_on_launch';",
       "iterative": false
     },
     {

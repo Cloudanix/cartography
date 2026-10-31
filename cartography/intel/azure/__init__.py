@@ -23,7 +23,7 @@ from .util.timing import ServiceTimingContext
 from cartography.config import Config
 from cartography.graph.session import Session
 from cartography.intel.azure.util.common import parse_and_validate_azure_requested_syncs
-from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -309,6 +309,9 @@ def _sync_multiple_subscriptions(
             'azure_sql_asset_exposure.json',
             'azure_cosmosdb_asset_exposure.json',
             'azure_keyvault_asset_exposure.json',
+            'azure_aks_asset_exposure.json',
+            'azure_function_app_asset_exposure.json',
+            'azure_vmss_asset_exposure.json',
         ]
         analysis_timings: Dict[str, float] = {}
         for job_file in _analysis_jobs:

@@ -7,6 +7,7 @@ from typing import Any
 from typing import Dict
 from typing import Generator
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import neo4j
@@ -27,6 +28,7 @@ from . import network
 from . import tag as azure_tag
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from .util.timing import get_timing_policy
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
@@ -41,6 +43,8 @@ PORT_MAP = {
     "microsoft.dbforpostgresql": 5432,
     "microsoft.dbformysql": 3306,
 }
+# Widest firewall range (a /24) expanded into one public IP node per address.
+MAX_EXPANDED_FIREWALL_ADDRESSES = 256
 
 
 @timeit
@@ -180,7 +184,7 @@ def _get_sql_database_servers(credentials: Credentials, subscription_id: str) ->
     """
     try:
         client = get_client(credentials, subscription_id)
-        sql_servers = list(map(lambda x: x.as_dict(), client.servers.list()))
+        sql_servers = list(map(as_legacy_dict, client.servers.list()))
         logger.debug(f"Retrieved {len(sql_servers)} SQL Database servers")
         return sql_servers
     except ClientAuthenticationError as e:
@@ -197,8 +201,10 @@ def _get_postgresql_flexible_servers(credentials: Credentials, subscription_id: 
     Get Azure Database for PostgreSQL Flexible Servers.
     """
     try:
-        pg_flex_client = PostgreSQLFlexibleServersManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        pg_flex_servers = list(map(lambda x: x.as_dict(), pg_flex_client.servers.list()))
+        pg_flex_client = PostgreSQLFlexibleServersManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        pg_flex_servers = list(map(as_legacy_dict, pg_flex_client.servers.list()))
         logger.debug(f"Retrieved {len(pg_flex_servers)} PostgreSQL Flexible Servers")
         return pg_flex_servers
     except ClientAuthenticationError as e:
@@ -217,8 +223,10 @@ def _get_mysql_flexible_servers(credentials: Credentials, subscription_id: str) 
     Get Azure Database for MySQL Flexible Servers.
     """
     try:
-        mysql_flex_client = MySQLFlexibleServersManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        mysql_flex_servers = list(map(lambda x: x.as_dict(), mysql_flex_client.servers.list()))
+        mysql_flex_client = MySQLFlexibleServersManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        mysql_flex_servers = list(map(as_legacy_dict, mysql_flex_client.servers.list()))
         logger.debug(f"Retrieved {len(mysql_flex_servers)} MySQL Flexible Servers")
         return mysql_flex_servers
     except ClientAuthenticationError as e:
@@ -237,8 +245,10 @@ def _get_postgresql_rdbms_servers(credentials: Credentials, subscription_id: str
     Get Azure Database for PostgreSQL (Regular RDBMS) servers.
     """
     try:
-        pg_rdbms_client = PostgreSQLManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        pg_rdbms_servers = list(map(lambda x: x.as_dict(), pg_rdbms_client.servers.list()))
+        pg_rdbms_client = PostgreSQLManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        pg_rdbms_servers = list(map(as_legacy_dict, pg_rdbms_client.servers.list()))
         logger.debug(f"Retrieved {len(pg_rdbms_servers)} PostgreSQL RDBMS Servers")
         return pg_rdbms_servers
     except ClientAuthenticationError as e:
@@ -257,8 +267,10 @@ def _get_mysql_rdbms_servers(credentials: Credentials, subscription_id: str) -> 
     Get Azure Database for MySQL (Regular RDBMS) servers.
     """
     try:
-        mysql_rdbms_client = MySQLManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        mysql_rdbms_servers = list(map(lambda x: x.as_dict(), mysql_rdbms_client.servers.list()))
+        mysql_rdbms_client = MySQLManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        mysql_rdbms_servers = list(map(as_legacy_dict, mysql_rdbms_client.servers.list()))
         logger.debug(f"Retrieved {len(mysql_rdbms_servers)} MySQL RDBMS Servers")
         return mysql_rdbms_servers
     except ClientAuthenticationError as e:
@@ -282,7 +294,13 @@ def _enrich_server_data(
     Enrich server data with additional metadata.
     """
     server['resourceGroup'] = get_azure_resource_group_name(server.get('id'))
-    server['publicNetworkAccess'] = server.get('properties', {}).get('public_network_access', 'Disabled')
+    # Flexible servers nest it under network. None (unknown) is not 'Disabled', so the
+    # exposure job keeps an unknown server public.
+    server['publicNetworkAccess'] = (
+        server.get('public_network_access') or (server.get('network') or {}).get('public_network_access')
+    )
+    # A flexible server in private access mode lives in a delegated subnet and has no public endpoint.
+    server['vnetIntegrated'] = bool((server.get('network') or {}).get('delegated_subnet_resource_id'))
     server['consolelink'] = safe_console_link(server['id'], common_job_parameters)
     for private_endpoint_connection in server.get('private_endpoint_connections') or []:
         private_endpoint_connection['consolelink'] = safe_console_link(
@@ -330,6 +348,7 @@ def load_server_data(
     SET s.lastupdated = $azure_update_tag,
     s.name = server.name,
     s.publicNetworkAccess = server.publicNetworkAccess,
+    s.vnetIntegrated = server.vnetIntegrated,
     s.consolelink = coalesce(server.consolelink, s.consolelink),
     s.kind = server.kind,
     s.state = server.state,
@@ -410,7 +429,7 @@ def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server
 def _attach_resource_group_server_private_endpoint_connections(neo4j_session: neo4j.Session, private_endpoint_connection_id: str, resource_group: str, azure_update_tag: int) -> None:
     ingest_attach_private_endpoint_connection = """
     MATCH (aspec:AzureServerPrivateEndpointConnection{id: $aspec_id})
-    WITH aspec,
+    WITH aspec
     MATCH (rg:AzureResourceGroup{name: $resource_group})
     MERGE (aspec)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
@@ -464,7 +483,7 @@ def get_dns_aliases(credentials: Credentials, subscription_id: str, server: Dict
         client = get_client(credentials, subscription_id)
         dns_aliases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.server_dns_aliases.list_by_server(server['resourceGroup'], server['name']),
             ),
         )
@@ -492,7 +511,7 @@ def get_ad_admins(credentials: Credentials, subscription_id: str, server: Dict) 
         client = get_client(credentials, subscription_id)
         ad_admins = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.server_azure_ad_administrators.list_by_server(
                     server['resourceGroup'],
                     server['name'],
@@ -524,7 +543,7 @@ def get_recoverable_databases(credentials: Credentials, subscription_id: str, se
         client = get_client(credentials, subscription_id)
         recoverable_databases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.recoverable_databases.list_by_server(
                     server['resourceGroup'],
                     server['name'],
@@ -557,7 +576,7 @@ def get_restorable_dropped_databases(credentials: Credentials, subscription_id: 
         client = get_client(credentials, subscription_id)
         restorable_dropped_databases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.restorable_dropped_databases.list_by_server(
                     server['resourceGroup'], server['name'],
                 ),
@@ -585,7 +604,7 @@ def get_failover_groups(credentials: Credentials, subscription_id: str, server: 
     try:
         client = get_client(credentials, subscription_id)
         failover_groups = list(
-            map(lambda x: x.as_dict(), client.failover_groups.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.failover_groups.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -609,7 +628,7 @@ def get_elastic_pools(credentials: Credentials, subscription_id: str, server: Di
     try:
         client = get_client(credentials, subscription_id)
         elastic_pools = list(
-            map(lambda x: x.as_dict(), client.elastic_pools.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.elastic_pools.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -633,7 +652,7 @@ def get_databases(credentials: Credentials, subscription_id: str, server: Dict) 
     try:
         client = get_client(credentials, subscription_id)
         databases = list(
-            map(lambda x: x.as_dict(), client.databases.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.databases.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -665,6 +684,7 @@ def load_server_details(
     elastic_pools = []
     databases = []
     fw_rules = []
+    fw_rules_fetched = []
 
     for server_id, name, rg, dns_alias, ad_admin, r_database, rd_database, fg, elastic_pool, database, firewall_rules in details:
         if len(dns_alias) > 0:
@@ -717,13 +737,13 @@ def load_server_details(
                 db['consolelink'] = safe_console_link(db['id'], common_job_parameters)
                 databases.append(db)
 
-        if len(firewall_rules) > 0:
-            for rules in firewall_rules:
-                rules['server_name'] = name
-                rules['server_id'] = server_id
-                rules['resource_group_name'] = rg
-                rules['consolelink'] = safe_console_link(rules['id'], common_job_parameters)
-                fw_rules.append(rules)
+        fw_rules_fetched.append({'id': server_id, 'fetched': firewall_rules is not None})
+        for rules in firewall_rules or []:
+            rules['server_name'] = name
+            rules['server_id'] = server_id
+            rules['resource_group_name'] = rg
+            rules['consolelink'] = safe_console_link(rules['id'], common_job_parameters)
+            fw_rules.append(rules)
 
     _load_server_dns_aliases(neo4j_session, dns_aliases, update_tag)
     _load_server_ad_admins(neo4j_session, ad_admins, update_tag)
@@ -734,6 +754,7 @@ def load_server_details(
     _load_databases(neo4j_session, databases, update_tag)
     _load_database_tags(neo4j_session, databases, update_tag, common_job_parameters)
     _load_firewall_rules(neo4j_session, fw_rules, update_tag)
+    _load_firewall_rules_fetched(neo4j_session, fw_rules_fetched)
 
     network_client = network.get_network_client(credentials, subscription_id)
     public_ips = [ip.get('ip_address') for ip in network.get_public_ip_addresses_list(network_client, None, common_job_parameters) if ip.get('ip_address')]
@@ -750,14 +771,23 @@ def load_server_details(
             elif end_ip == "255.255.255.255":
                 ip_range = public_ips
 
-        if len(ip_range) == 0:
+        address_count = _firewall_rule_address_count(fw_rule)
+        if len(ip_range) == 0 and (address_count is None or address_count > MAX_EXPANDED_FIREWALL_ADDRESSES):
+            # One write per address would run for hours on a wide range. Link only the
+            # subscription's own public IPs inside it; exposure reads address_count instead.
+            ip_range = [ip for ip in public_ips if _ip_in_range(str(ip), start_ip, end_ip)]
+        elif len(ip_range) == 0:
             ip_range = iter_iprange(start_ip, end_ip)
 
         for ip in ip_range:
             if str(ip) in public_ips:
-                attach_firewall_rule_to_public_ip(neo4j_session, fw_rule, str(ip), "Azure", "Internal", update_tag)
+                attach_firewall_rule_to_public_ip(
+                    neo4j_session, fw_rule, str(ip), "Azure", "Internal", update_tag, subscription_id,
+                )
             elif not ipaddress.ip_address(str(ip)).is_private:
-                attach_firewall_rule_to_public_ip(neo4j_session, fw_rule, str(ip), "Azure", "External", update_tag)
+                attach_firewall_rule_to_public_ip(
+                    neo4j_session, fw_rule, str(ip), "Azure", "External", update_tag, subscription_id,
+                )
 
     sync_database_details(neo4j_session, credentials, subscription_id, databases, update_tag, common_job_parameters)
 
@@ -815,11 +845,47 @@ def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id:
     )
 
 
+def _firewall_rule_address_count(fw_rule: Dict) -> Optional[int]:
+    """
+    Number of IPv4 addresses a server firewall rule admits (end - start + 1), so the
+    exposure job can tell an internet-wide range from an office IP. None if unparseable.
+    """
+    try:
+        start = ipaddress.IPv4Address(fw_rule.get('start_ip_address'))
+        end = ipaddress.IPv4Address(fw_rule.get('end_ip_address'))
+    except ValueError:
+        return None
+    return int(end) - int(start) + 1
+
+
+def _load_firewall_rules_fetched(neo4j_session: neo4j.Session, servers: List[Dict]) -> None:
+    """
+    Record on each server whether its firewall rules were read this sync, so the exposure
+    job can tell "no rules" (not public) from "rules unknown" (kept public).
+    """
+    query = """
+    UNWIND $DictList as server
+    MATCH (s:AzureSQLServer{id: server.id})
+    SET s.firewall_rules_fetched = server.fetched
+    """
+    load_graph_data(neo4j_session, query, servers)
+
+
+def _ip_in_range(ip: str, start_ip: str, end_ip: str) -> bool:
+    """True if ip lies in the IPv4 range start_ip-end_ip; False if any of them is unparseable."""
+    try:
+        return ipaddress.IPv4Address(start_ip) <= ipaddress.IPv4Address(ip) <= ipaddress.IPv4Address(end_ip)
+    except ValueError:
+        return False
+
+
 @timeit
 def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], update_tag: int) -> None:
     """
     Ingest the firewall rules into neo4j.
     """
+    for fw_rule in fw_rules:
+        fw_rule['address_count'] = _firewall_rule_address_count(fw_rule)
     ingest_firewall_rules = """
     UNWIND $DictList as fw_rule
     MERGE (rule:AzureFirewallRule{id: fw_rule.id})
@@ -828,6 +894,7 @@ def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], upd
     rule.region = fw_rule.location,
     rule.start_ip_address = fw_rule.start_ip_address,
     rule.end_ip_address = fw_rule.end_ip_address,
+    rule.address_count = fw_rule.address_count,
     rule.consolelink = coalesce(fw_rule.consolelink, rule.consolelink),
     rule.lastupdated = $azure_update_tag
     WITH rule, fw_rule
@@ -866,30 +933,54 @@ def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id: str
     )
 
 
-def attach_firewall_rule_to_public_ip(session: neo4j.Session, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int) -> None:
-    session.execute_write(_attach_firewall_rule_to_public_ip_tx, fw_rule, public_ip, source, type, update_tag)
+def attach_firewall_rule_to_public_ip(
+    session: neo4j.Session, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int,
+    subscription_id: str,
+) -> None:
+    session.execute_write(
+        _attach_firewall_rule_to_public_ip_tx, fw_rule, public_ip, source, type, update_tag, subscription_id,
+    )
 
 
-def _attach_firewall_rule_to_public_ip_tx(tx: neo4j.Transaction, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int) -> None:
-    ingest_address = """
-    MATCH (fwr:AzureFirewallRule{id: $fw_rule})
-    WITH fwr
-    MERGE (ip:AzurePublicIPAddress{ipAddress: $public_ip})
-    ON CREATE SET ip.firstseen = timestamp()
-    SET
-        ip.id =$public_ip,
-        ip.name=$public_ip,
-        ip.source =$source,
-        ip.type=$type,
-        ip.resource=$resource,
-        ip.ipAddress=$public_ip
-    MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+def _attach_firewall_rule_to_public_ip_tx(
+    tx: neo4j.Transaction, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int,
+    subscription_id: str,
+) -> None:
     """
+    Link a firewall rule to the public IP it admits. An Internal IP is this subscription's
+    own AzurePublicIPAddress, matched through the subscription and never modified (it is
+    owned by the network sync). An External IP gets its own node keyed by subscription, so
+    a rule can never rewrite, or let the SQL cleanup delete, another subscription's node
+    that happens to hold the same address.
+    """
+    if type == "Internal":
+        query = """
+        MATCH (fwr:AzureFirewallRule{id: $fw_rule})
+        MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(ip:AzurePublicIPAddress{ipAddress: $public_ip})
+        MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
+        """
+    else:
+        query = """
+        MATCH (fwr:AzureFirewallRule{id: $fw_rule})
+        MERGE (ip:AzurePublicIPAddress{id: $ip_id})
+        ON CREATE SET ip.firstseen = timestamp()
+        SET ip.name = $public_ip,
+            ip.ipAddress = $public_ip,
+            ip.source = $source,
+            ip.type = $type,
+            ip.resource = $resource,
+            ip.lastupdated = $update_tag
+        MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
+        """
     tx.run(
-        ingest_address,
+        query,
         fw_rule=fw_rule['id'],
+        subscription_id=subscription_id,
+        ip_id=f"/subscriptions/{subscription_id}/sqlFirewallExternalIp/{public_ip}",
         public_ip=public_ip,
         source=source,
         type=type,
@@ -1295,7 +1386,7 @@ def get_replication_links(credentials: Credentials, subscription_id: str, databa
         client = get_client(credentials, subscription_id)
         replication_links = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.replication_links.list_by_database(
                     database['resource_group_name'],
                     database['server_name'],
@@ -1352,7 +1443,7 @@ def get_restore_points(credentials: Credentials, subscription_id: str, database:
         client = get_client(credentials, subscription_id)
         restore_points_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.restore_points.list_by_database(
                     database['resource_group_name'],
                     database['server_name'],
@@ -1400,26 +1491,49 @@ def get_transparent_data_encryptions(credentials: Credentials, subscription_id: 
     return transparent_data_encryptions_list
 
 
+def _firewall_rules_client(credentials: Credentials, subscription_id: str, server_id: str) -> Optional[Any]:
+    """
+    The management client that owns this server type's firewall rules: SQL, or the
+    PostgreSQL/MySQL flexible or single server client. None for an unknown server type.
+    """
+    server_id = server_id.lower()
+    if '/providers/microsoft.sql/servers/' in server_id:
+        return get_client(credentials, subscription_id)
+    rdbms_clients = [
+        ('/providers/microsoft.dbforpostgresql/flexibleservers/', PostgreSQLFlexibleServersManagementClient),
+        ('/providers/microsoft.dbforpostgresql/servers/', PostgreSQLManagementClient),
+        ('/providers/microsoft.dbformysql/flexibleservers/', MySQLFlexibleServersManagementClient),
+        ('/providers/microsoft.dbformysql/servers/', MySQLManagementClient),
+    ]
+    for marker, client_class in rdbms_clients:
+        if marker in server_id:
+            return client_class(credentials, subscription_id, per_call_policies=[get_timing_policy()])
+    return None
+
+
 @timeit
-def get_firewall_rules(credentials: Credentials, subscription_id: str, server: Dict) -> List[Dict]:
+def get_firewall_rules(credentials: Credentials, subscription_id: str, server: Dict) -> Optional[List[Dict]]:
+    """
+    Firewall rules of an Azure SQL, PostgreSQL or MySQL server.
+
+    :return: the rules, or None if they could not be read. None is "not evaluated",
+        which keeps a PostgreSQL/MySQL server public; [] means the server has no rules.
+    """
+    client = _firewall_rules_client(credentials, subscription_id, server['id'])
+    if client is None:
+        logger.warning(f"No firewall rules client for server {server['id']}")
+        return None
     try:
-        client = get_client(credentials, subscription_id)
-        firewall_rules = list(
+        return list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.firewall_rules.list_by_server(server['resourceGroup'], server['name']),
             ),
         )
-    except ClientAuthenticationError as e:
-        logger.warning(f"Client Authentication Error while retrieving Firewall Rules - {e}")
-        return []
-    except ResourceNotFoundError as e:
-        logger.warning(f"Firewall Rules resource not found error - {e}")
-        return []
     except HttpResponseError as e:
-        logger.warning(f"Error while retrieving Azure Server Firewall Rules - {e}")
-        return []
-    return firewall_rules
+        # Also covers ClientAuthenticationError and ResourceNotFoundError.
+        logger.warning(f"Error while retrieving firewall rules for server {server['id']} - {e}")
+        return None
 
 
 @timeit

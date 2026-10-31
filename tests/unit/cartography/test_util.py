@@ -1,3 +1,6 @@
+import importlib
+import logging
+import threading
 from unittest import mock
 from unittest.mock import Mock
 from unittest.mock import patch
@@ -24,6 +27,106 @@ def test_run_analysis_job_custom_package(mocker):
     read_text_mock = mocker.patch('cartography.util.read_text')
     util.run_analysis_job('test.json', mocker.Mock(), mocker.Mock(), package='a.b.c')
     read_text_mock.assert_called_once_with('a.b.c', 'test.json')
+
+
+def test_run_analysis_job_raises_on_failure(mocker):
+    # The strict runner stays strict: integration tests call it directly and must see job errors.
+    mocker.patch('cartography.util.GraphJob.run_from_json', side_effect=RuntimeError('boom'))
+    mocker.patch('cartography.util.read_text')
+    with pytest.raises(RuntimeError):
+        util.run_analysis_job('bad_job.json', mocker.Mock(), {})
+
+
+def test_run_analysis_job_logged_continues_after_failure(mocker, caplog):
+    run_from_json = mocker.patch(
+        'cartography.util.GraphJob.run_from_json',
+        side_effect=[RuntimeError('boom'), None],
+    )
+    mocker.patch('cartography.util.read_text', side_effect=lambda package, filename: filename)
+    params = {'WORKSPACE_ID': 'ws-1', 'AWS_ID': '123456789012', 'UPDATE_TAG': 1}
+
+    with caplog.at_level(logging.ERROR, logger='cartography.util'):
+        util.run_analysis_job_logged('bad_job.json', mocker.Mock(), params)
+        util.run_analysis_job_logged('good_job.json', mocker.Mock(), params)
+
+    # The job after the failing one still ran.
+    assert [c.args[1] for c in run_from_json.call_args_list] == ['bad_job.json', 'good_job.json']
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert 'bad_job.json' in errors[0].getMessage()
+    assert '123456789012' in errors[0].getMessage()
+    assert 'ws-1' in errors[0].getMessage()
+    assert 'UPDATE_TAG' not in errors[0].getMessage()
+    assert errors[0].exc_info is not None
+
+
+def test_collect_failed_analysis_jobs_records_failures_with_scope(mocker):
+    mocker.patch('cartography.util.GraphJob.run_from_json', side_effect=[RuntimeError('boom'), None])
+    mocker.patch('cartography.util.read_text')
+    params = {'WORKSPACE_ID': 'ws-1', 'AWS_ID': '123456789012', 'UPDATE_TAG': 1}
+
+    with util.collect_failed_analysis_jobs() as failed:
+        util.run_analysis_job_logged('bad_job.json', mocker.Mock(), params)
+        util.run_analysis_job_logged('good_job.json', mocker.Mock(), params)
+
+    assert failed == [{'job': 'bad_job.json', 'scope': {'WORKSPACE_ID': 'ws-1', 'AWS_ID': '123456789012'}}]
+
+
+def test_failed_oci_analysis_job_scope_names_the_compartment(mocker):
+    # OCI runs its analysis jobs once per compartment; the tenancy id alone does not say which run failed.
+    mocker.patch('cartography.util.GraphJob.run_from_json', side_effect=RuntimeError('boom'))
+    mocker.patch('cartography.util.read_text')
+    params = {'WORKSPACE_ID': 'ws-1', 'OCI_TENANCY_ID': 'ocid1.tenancy', 'OCI_COMPARTMENT_ID': 'ocid1.compartment'}
+
+    with util.collect_failed_analysis_jobs() as failed:
+        util.run_analysis_job_logged('oci_job.json', mocker.Mock(), params)
+
+    assert failed[0]['scope'] == params
+
+
+def test_collect_failed_analysis_jobs_stops_after_the_block(mocker):
+    mocker.patch('cartography.util.GraphJob.run_from_json', side_effect=RuntimeError('boom'))
+    mocker.patch('cartography.util.read_text')
+
+    with util.collect_failed_analysis_jobs() as failed:
+        pass
+    util.run_analysis_job_logged('late_job.json', mocker.Mock(), {})
+
+    # Outside a collecting block the failure is only logged; nothing leaks into the finished sync's list.
+    assert failed == []
+
+
+def test_collect_failed_analysis_jobs_isolated_between_concurrent_syncs(mocker):
+    # One process serves concurrent sync requests on separate threads; each must report only its own failures.
+    mocker.patch('cartography.util.GraphJob.run_from_json', side_effect=RuntimeError('boom'))
+    mocker.patch('cartography.util.read_text')
+    both_collecting = threading.Barrier(2)
+    results = {}
+
+    def sync(name):
+        with util.collect_failed_analysis_jobs() as failed:
+            both_collecting.wait()
+            util.run_analysis_job_logged(f'{name}_job.json', mocker.Mock(), {'AWS_ID': name})
+            both_collecting.wait()
+        results[name] = failed
+
+    threads = [threading.Thread(target=sync, args=(name,)) for name in ('a', 'b')]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert results == {
+        'a': [{'job': 'a_job.json', 'scope': {'AWS_ID': 'a'}}],
+        'b': [{'job': 'b_job.json', 'scope': {'AWS_ID': 'b'}}],
+    }
+
+
+@pytest.mark.parametrize('provider', ['aws', 'gcp', 'azure', 'oci'])
+def test_provider_syncs_use_logged_analysis_runner(provider):
+    # Provider syncs call run_analysis_job by name; the import alias is what makes them continue past a failing job.
+    module = importlib.import_module(f'cartography.intel.{provider}')
+    assert module.run_analysis_job is util.run_analysis_job_logged
 
 
 def test_run_scoped_analysis_job_default_package(mocker):
