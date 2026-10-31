@@ -794,25 +794,29 @@ def test_sql_server_analysis_public_exposure(neo4j_session):
         common_job_parameters,
     )
 
+    # testSQL1 only allows Azure services (0.0.0.0-0.0.0.0) and testSQL2 has no wide
+    # range: neither is internet-exposed (missing private endpoints no longer counts).
     expected_nodes = {
         (
             '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Sql/servers/testSQL1',
-            'unrestricted_firewall',
-        ),
-        (
-            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Sql/servers/testSQL2',
-            'no_private_endpoints',
+            'azure_services_allowed',
         ),
     }
 
     nodes = neo4j_session.run(
         """
-        MATCH (r:AzureSQLServer{exposed_internet: true}) RETURN r.id, r.exposed_internet_type;
+        MATCH (r:AzureSQLServer) WHERE r.id STARTS WITH '/subscriptions/00-00-00-00/'
+        AND r.exposed_internet_type IS NOT NULL AND r.exposed_internet IS NULL
+        RETURN r.id, r.exposed_internet_type;
         """,
     )
     actual_nodes = {(n['r.id'], ",".join(n['r.exposed_internet_type'])) for n in nodes}
 
     assert actual_nodes == expected_nodes
+    assert neo4j_session.run(
+        "MATCH (r:AzureSQLServer{exposed_internet: true}) WHERE r.id STARTS WITH '/subscriptions/00-00-00-00/' "
+        "RETURN count(r) AS c",
+    ).single()['c'] == 0
 
 
 def test_load_server_private_endpoint_connection(neo4j_session):

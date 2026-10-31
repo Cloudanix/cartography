@@ -7,6 +7,7 @@ from typing import Any
 from typing import Dict
 from typing import Generator
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import neo4j
@@ -828,11 +829,26 @@ def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id:
     )
 
 
+def _firewall_rule_address_count(fw_rule: Dict) -> Optional[int]:
+    """
+    Number of IPv4 addresses a server firewall rule admits (end - start + 1), so the
+    exposure job can tell an internet-wide range from an office IP. None if unparseable.
+    """
+    try:
+        start = ipaddress.IPv4Address(fw_rule.get('start_ip_address'))
+        end = ipaddress.IPv4Address(fw_rule.get('end_ip_address'))
+    except ValueError:
+        return None
+    return int(end) - int(start) + 1
+
+
 @timeit
 def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], update_tag: int) -> None:
     """
     Ingest the firewall rules into neo4j.
     """
+    for fw_rule in fw_rules:
+        fw_rule['address_count'] = _firewall_rule_address_count(fw_rule)
     ingest_firewall_rules = """
     UNWIND $DictList as fw_rule
     MERGE (rule:AzureFirewallRule{id: fw_rule.id})
@@ -841,6 +857,7 @@ def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], upd
     rule.region = fw_rule.location,
     rule.start_ip_address = fw_rule.start_ip_address,
     rule.end_ip_address = fw_rule.end_ip_address,
+    rule.address_count = fw_rule.address_count,
     rule.consolelink = coalesce(fw_rule.consolelink, rule.consolelink),
     rule.lastupdated = $azure_update_tag
     WITH rule, fw_rule
