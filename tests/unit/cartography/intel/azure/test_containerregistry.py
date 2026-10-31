@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from unittest.mock import Mock
 from unittest.mock import patch
@@ -62,10 +63,11 @@ def test_get_registry_client_targets_the_registry_data_plane():
 def test_get_repository_list_reads_the_catalog():
     client = _client()
 
-    result = get_repository_list(client, REGISTRY)
+    result, truncated = get_repository_list(client, REGISTRY)
 
     client.list_repository_names.assert_called_once_with(results_per_page=100)
     assert [r['name'] for r in result] == REPOSITORY_NAMES
+    assert truncated is False
     assert result[0]['id'] == f'{REGISTRY_ID}/repositories/webapp'
     assert result[0]['registry_id'] == REGISTRY_ID
     assert result[0]['uri'] == 'myregistry.azurecr.io/webapp'
@@ -76,12 +78,13 @@ def test_get_repository_list_reads_the_catalog():
 
 def test_get_image_list_reads_manifests_newest_first():
     client = _client()
-    repository = get_repository_list(client, REGISTRY)[0]
+    repository = get_repository_list(client, REGISTRY)[0][0]
 
-    result = get_image_list(client, repository)
+    result, truncated = get_image_list(client, repository)
 
     assert client.list_manifest_properties.call_args.args == ('webapp',)
-    assert client.list_manifest_properties.call_args.kwargs['order_by'] == 'timedesc'
+    assert client.list_manifest_properties.call_args.kwargs == {'order_by': 'timedesc', 'results_per_page': 51}
+    assert truncated is False
     assert [i['digest'] for i in result] == ['sha256:abc123def456', 'sha256:def456ghi789']
     assert result[0]['id'] == f'{REGISTRY_ID}/repositories/webapp@sha256:abc123def456'
     assert result[0]['repository_id'] == repository['id']
@@ -108,7 +111,8 @@ def test_sync_registry_contents_loads_repositories_and_images(get_client, load_r
     assert [r['name'] for r in load_repos.call_args.args[1]] == REPOSITORY_NAMES
     assert load_images.call_count == 2
     assert load_status.call_args.args[2] == {
-        'repositories_fetched': True, 'repositories_fetch_error': None, 'image_fetch_failures': 0,
+        'repositories_fetched': True, 'repositories_fetch_error': None, 'repositories_truncated': False,
+        'image_fetch_failures': 0,
     }
     client.close.assert_called_once()
 
@@ -205,3 +209,52 @@ def test_sync_cleans_children_before_parents(load_registries, get_registries, ru
         'azure_container_repositories_cleanup.json',
         'azure_container_registries_cleanup.json',
     ]
+
+
+class _Counting:
+    """A pager of `total` items that records how many the caller pulled."""
+
+    def __init__(self, total, make_item):
+        self.total = total
+        self.make_item = make_item
+        self.pulled = 0
+
+    def __iter__(self):
+        while self.pulled < self.total:
+            self.pulled += 1
+            yield self.make_item(self.pulled)
+
+
+@patch(f'{MODULE}.load_registry_fetch_status')
+@patch(f'{MODULE}.load_images')
+@patch(f'{MODULE}.load_repositories')
+@patch(f'{MODULE}.get_registry_client')
+def test_sync_registry_contents_bounds_repositories_and_manifests(
+    get_client, load_repos, load_images, load_status, caplog,
+):
+    catalog = _Counting(600, lambda i: f"repo-{i:04d}")
+    pagers = []
+
+    def manifests(name, **kwargs):
+        pager = _Counting(120, lambda i: SimpleNamespace(**{**vars(MANIFESTS[0]), 'digest': f'sha256:{i}'}))
+        pagers.append((pager, kwargs))
+        return iter(pager)
+    client = MagicMock()
+    client.list_repository_names.return_value = iter(catalog)
+    client.list_manifest_properties.side_effect = manifests
+    get_client.return_value = client
+
+    with caplog.at_level(logging.WARNING, logger=MODULE):
+        sync_registry_contents(Mock(), Mock(), REGISTRY, 7)
+
+    repositories = [r for c in load_repos.call_args_list for r in c.args[1]]
+    assert len(repositories) == 500
+    assert catalog.pulled == 501
+    assert {len(c.args[1]) for c in load_images.call_args_list} == {50}
+    assert len(pagers) == 500
+    # One page per repository: the page holds exactly what we keep plus one to detect older manifests.
+    assert {(p.pulled, kw['results_per_page'], kw['order_by']) for p, kw in pagers} == {(51, 51, 'timedesc')}
+    assert repositories[0]['manifests_truncated'] is True
+    assert load_status.call_args.args[2]['repositories_truncated'] is True
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and 'more than 500 repositories' in warnings[0]

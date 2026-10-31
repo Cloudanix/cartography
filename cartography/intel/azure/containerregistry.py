@@ -2,10 +2,13 @@ import json
 import logging
 import time
 from datetime import datetime
+from itertools import islice
 from typing import Any
 from typing import Dict
+from typing import Iterable
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 import neo4j
 from azure.core.exceptions import AzureError
@@ -27,6 +30,13 @@ logger = logging.getLogger(__name__)
 ACR_DATA_PLANE_AUDIENCE = "https://containerregistry.azure.net"
 # ACR serves 100 repository names per catalog page by default.
 CATALOG_PAGE_SIZE = 100
+# Manifests are unbounded push history (every CI push, every platform of a multi-arch image). Keep
+# the most recently updated ones: they are what is deployed or about to be. 50 covers ~10-25 multi-arch
+# releases and still fits one page, so a repository costs exactly one list call whatever N is.
+MAX_MANIFESTS_PER_REPOSITORY = 50
+# One manifest call per repository, so this caps the calls per registry (~500 + 6 catalog pages) and the
+# graph (<= 25k images per registry). The catalog is alphabetical: past the cap, later names are dropped.
+MAX_REPOSITORIES_PER_REGISTRY = 500
 # Data-plane roles a registry must grant us before its repositories can be listed.
 DATA_PLANE_ROLE_HINT = (
     "registries in 'RBAC Registry Permissions' mode need Reader (or AcrPull); ABAC-enabled registries need "
@@ -115,14 +125,25 @@ def _enum_value(value: Any) -> Optional[str]:
     return getattr(value, "value", value)
 
 
-def get_repository_list(client: Any, registry: Dict) -> List[Dict]:
-    """
-    List the registry's repositories from its catalog (GET /acr/v1/_catalog).
+def _first(items: Iterable, limit: int) -> Tuple[List, bool]:
+    """The first `limit` items, and whether there were more. Stops paging right after item limit + 1."""
+    head = list(islice(items, limit + 1))
+    return head[:limit], len(head) > limit
 
+
+def get_repository_list(client: Any, registry: Dict) -> Tuple[List[Dict], bool]:
+    """
+    List the registry's repositories from its catalog (GET /acr/v1/_catalog), at most
+    MAX_REPOSITORIES_PER_REGISTRY of them.
+
+    :return: the repositories, and whether the catalog had more
     :raises AzureError: on 401/403 (missing data-plane role, network rules) or when the registry is unreachable
     """
+    names, truncated = _first(
+        client.list_repository_names(results_per_page=CATALOG_PAGE_SIZE), MAX_REPOSITORIES_PER_REGISTRY,
+    )
     repositories = []
-    for name in client.list_repository_names(results_per_page=CATALOG_PAGE_SIZE):
+    for name in names:
         repositories.append({
             "id": f"{registry['id']}/repositories/{name}",
             "name": name,
@@ -134,17 +155,24 @@ def get_repository_list(client: Any, registry: Dict) -> List[Dict]:
             "subscription_id": registry["subscription_id"],
             "console_link": registry.get("console_link"),
         })
-    return repositories
+    return repositories, truncated
 
 
-def get_image_list(client: Any, repository: Dict) -> List[Dict]:
+def get_image_list(client: Any, repository: Dict) -> Tuple[List[Dict], bool]:
     """
-    List the repository's manifests, most recently updated first (GET /acr/v1/<repo>/_manifests?orderby=timedesc).
+    List the repository's MAX_MANIFESTS_PER_REPOSITORY most recently updated manifests
+    (GET /acr/v1/<repo>/_manifests?orderby=timedesc&n=MAX+1: one call).
 
+    :return: the images, newest first, and whether the repository has older ones
     :raises AzureError: on 401/403 or when the repository vanished between the catalog and this call
     """
+    manifests, truncated = _first(
+        client.list_manifest_properties(
+            repository["name"], order_by="timedesc", results_per_page=MAX_MANIFESTS_PER_REPOSITORY + 1,
+        ),
+        MAX_MANIFESTS_PER_REPOSITORY,
+    )
     images = []
-    manifests = client.list_manifest_properties(repository["name"], order_by="timedesc")
     for manifest in manifests:
         images.append({
             "id": f"{repository['id']}@{manifest.digest}",
@@ -166,7 +194,7 @@ def get_image_list(client: Any, repository: Dict) -> List[Dict]:
             "subscription_id": repository["subscription_id"],
             "console_link": repository["console_link"],
         })
-    return images
+    return images, truncated
 
 
 def _data_plane_error_reason(error: AzureError) -> str:
@@ -242,6 +270,8 @@ def _load_repositories_tx(tx: neo4j.Transaction, data_list: List[Dict], update_t
         r.region = repo.location,
         r.resourcegroup = repo.resource_group,
         r.subscription_id = repo.subscription_id,
+        r.last_update_time = repo.last_update_time,
+        r.manifests_truncated = repo.manifests_truncated,
         r.type = 'Microsoft.ContainerRegistry/registries/repositories',
         r.consolelink = coalesce(repo.console_link, r.consolelink)
 
@@ -319,17 +349,53 @@ def load_registry_fetch_status(session: neo4j.Session, registry_id: str, status:
     session.execute_write(_load_registry_fetch_status_tx, registry_id, status)
 
 
-def _fetch_status(fetched: bool, error: Optional[str] = None, image_fetch_failures: int = 0) -> Dict:
+def _fetch_status(
+    fetched: bool, error: Optional[str] = None, repositories_truncated: bool = False, image_fetch_failures: int = 0,
+) -> Dict:
     return {
         "repositories_fetched": fetched,
         "repositories_fetch_error": error,
+        "repositories_truncated": repositories_truncated,
         "image_fetch_failures": image_fetch_failures,
     }
 
 
+def _get_images(client: Any, repositories: List[Dict]) -> Tuple[Dict[str, List[Dict]], Dict[str, str]]:
+    """
+    Images per repository id, and the error reason per repository whose manifests could not be listed.
+    Marks each listed repository with its newest update and whether older manifests were left out.
+    """
+    images_by_repository: Dict[str, List[Dict]] = {}
+    failures: Dict[str, str] = {}
+    for repository in repositories:
+        try:
+            images, truncated = get_image_list(client, repository)
+        except AzureError as e:
+            failures[repository["name"]] = _data_plane_error_reason(e)
+            continue
+        repository["manifests_truncated"] = truncated
+        repository["last_update_time"] = images[0]["last_update_time"] if images else None
+        images_by_repository[repository["id"]] = images
+    return images_by_repository, failures
+
+
+def _log_image_outcome(registry: Dict, repositories: List[Dict], failures: Dict[str, str]) -> None:
+    if failures:
+        logger.warning(
+            "Could not list images of %d of %d repositories in container registry %s, e.g. %s",
+            len(failures), len(repositories), registry["id"], next(iter(failures.items())),
+        )
+    truncated = sum(1 for r in repositories if r.get("manifests_truncated"))
+    if truncated:
+        logger.info(
+            "Kept the %d most recent manifests of %d repositories in container registry %s",
+            MAX_MANIFESTS_PER_REPOSITORY, truncated, registry["id"],
+        )
+
+
 def _sync_repositories(session: neo4j.Session, client: Any, registry: Dict, update_tag: int) -> Dict:
     try:
-        repositories = get_repository_list(client, registry)
+        repositories, truncated = get_repository_list(client, registry)
     except AzureError as e:
         reason = _data_plane_error_reason(e)
         logger.warning(
@@ -337,22 +403,18 @@ def _sync_repositories(session: neo4j.Session, client: Any, registry: Dict, upda
             "registry: %s.", registry["id"], reason, type(e).__name__, DATA_PLANE_ROLE_HINT,
         )
         return _fetch_status(False, reason)
-    load_repositories(session, repositories, update_tag)
-
-    failures: Dict[str, str] = {}
-    for repository in repositories:
-        try:
-            images = get_image_list(client, repository)
-        except AzureError as e:
-            failures[repository["name"]] = _data_plane_error_reason(e)
-            continue
-        load_images(session, images, update_tag)
-    if failures:
+    if truncated:
         logger.warning(
-            "Could not list images of %d of %d repositories in container registry %s, e.g. %s",
-            len(failures), len(repositories), registry["id"], next(iter(failures.items())),
+            "Container registry %s has more than %d repositories; ingesting the first %d in catalog order",
+            registry["id"], MAX_REPOSITORIES_PER_REGISTRY, MAX_REPOSITORIES_PER_REGISTRY,
         )
-    return _fetch_status(True, image_fetch_failures=len(failures))
+
+    images_by_repository, failures = _get_images(client, repositories)
+    load_repositories(session, repositories, update_tag)
+    for images in images_by_repository.values():
+        load_images(session, images, update_tag)
+    _log_image_outcome(registry, repositories, failures)
+    return _fetch_status(True, repositories_truncated=truncated, image_fetch_failures=len(failures))
 
 
 def sync_registry_contents(

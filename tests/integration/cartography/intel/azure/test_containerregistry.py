@@ -82,6 +82,7 @@ def test_repositories_and_images_have_stable_ids_on_the_inventory_path(neo4j_ses
     ).single()['r']
     assert (repo['name'], repo['region'], repo['resourcegroup']) == ('webapp', 'eastus', 'rg-acr')
     assert repo['lastupdated'] == 2
+    assert (repo['last_update_time'], repo['manifests_truncated']) == ('2021-10-15T16:30:00+00:00', False)
     image = neo4j_session.run(
         "MATCH (i:AzureContainerImage{id: $id}) RETURN i", id=f'{WEBAPP_ID}@sha256:abc123def456',
     ).single()['i']

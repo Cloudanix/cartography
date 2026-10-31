@@ -136,7 +136,7 @@ def test_real_sdk_lists_repositories_and_manifests_through_the_data_plane():
     paths = [url.path for url in data_calls]
     assert paths == ['/acr/v1/_catalog', '/acr/v1/webapp/_manifests', '/acr/v1/api-service/_manifests']
     manifest_query = parse_qs(data_calls[1].query)
-    assert manifest_query['orderby'] == ['timedesc']
+    assert (manifest_query['orderby'], manifest_query['n']) == (['timedesc'], ['51'])
     # Every data-plane call costs 4 HTTP requests with this SDK: 401 challenge, AAD->ACR refresh
     # token exchange, refresh->access token exchange, and the authorized retry.
     assert len(transport.requests) == 4 * len(data_calls)

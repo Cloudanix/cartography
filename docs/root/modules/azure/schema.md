@@ -1984,7 +1984,8 @@ Representation of an [AzureContainerRegistryWebhook](https://docs.microsoft.com/
 A repository in an Azure Container Registry, read from the registry's data plane
 (`GET https://<loginServer>/acr/v1/_catalog`). Registries we cannot read (no data-plane role, firewall,
 public network access disabled) get none; see `repositories_fetched` / `repositories_fetch_error` on the
-registry.
+registry. At most 500 repositories per registry are ingested (catalog order; `repositories_truncated` on the
+registry says when more exist).
 
 | Field           | Description                                                    |
 | --------------- | -------------------------------------------------------------- |
@@ -1997,6 +1998,8 @@ registry.
 | location        | Region of the registry                                         |
 | resourcegroup   | Resource group of the registry                                 |
 | subscription_id | Subscription of the registry                                   |
+| last_update_time | Last update of the newest manifest                            |
+| manifests_truncated | True when the repository has more than the 50 manifests kept |
 
 #### Relationships
 
@@ -2008,7 +2011,8 @@ registry.
 
 ### AzureContainerImage
 
-A manifest in an Azure Container Repository (`GET https://<loginServer>/acr/v1/<repository>/_manifests`).
+A manifest in an Azure Container Repository (`GET https://<loginServer>/acr/v1/<repository>/_manifests`). Only the
+50 most recently updated manifests of each repository are ingested.
 
 | Field            | Description                                       |
 | ---------------- | ------------------------------------------------- |
