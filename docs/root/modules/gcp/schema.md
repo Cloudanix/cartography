@@ -809,3 +809,55 @@ Representation of [GCP Bigtable Tables](https://cloud.google.com/bigtable/docs/r
     ```
     (GCPBigtableInstance)-[RESOURCE]->(GCPBigtableTable)
     ```
+
+### GCPArtifactRegistryRepository
+
+Representation of an [Artifact Registry repository](https://cloud.google.com/artifact-registry/docs/reference/rest/v1/projects.locations.repositories), any format. gcr.io hosts are Artifact Registry repositories named `gcr.io`, `us.gcr.io`, ... (Container Registry is shut down).
+
+| Field                        | Description                                                                   |
+|------------------------------|-------------------------------------------------------------------------------|
+| id                           | Full resource name: `projects/<project>/locations/<location>/repositories/<repository>` |
+| name                         | Repository name                                                               |
+| region                       | Location of the repository (region or multi-region such as `us`)              |
+| format                       | DOCKER, MAVEN, NPM, PYTHON, ...                                               |
+| mode                         | STANDARD_REPOSITORY, REMOTE_REPOSITORY or VIRTUAL_REPOSITORY                  |
+| kms_key_name                 | Customer-managed encryption key, when set                                     |
+| size_bytes                   | Size of all artifact storage in the repository                                |
+| registry_uri                 | Repository endpoint, e.g. `us-docker.pkg.dev/my-proj/my-repo`                 |
+| immutable_tags               | Docker repositories: whether tags are immutable                               |
+| cleanup_policy_count         | Number of cleanup policies                                                    |
+| cleanup_policy_dry_run       | Whether cleanup policies only run in dry-run mode                             |
+| vulnerability_scanning_state | `vulnerabilityScanningConfig.enablementState`                                 |
+| consolelink                  | Google Cloud console link                                                     |
+
+#### Relationships
+
+- Repositories are part of GCP Projects; labels are GCPLabel nodes
+    ```
+    (GCPProject)-[RESOURCE]->(GCPArtifactRegistryRepository)-[LABELED]->(GCPLabel)
+    ```
+
+### GCPArtifactRegistryDockerImage
+
+Representation of an [Artifact Registry docker image](https://cloud.google.com/artifact-registry/docs/reference/rest/v1/projects.locations.repositories.dockerImages). Only the 50 most recently updated images of each DOCKER repository are ingested (`MAX_IMAGES_PER_REPOSITORY`); older ones are skipped with a warning.
+
+| Field            | Description                                                               |
+|------------------|---------------------------------------------------------------------------|
+| id               | Full resource name `.../repositories/<repository>/dockerImages/<image>@<digest>` |
+| name             | `<image path>@<digest>`                                                   |
+| image_name       | Image path inside the repository                                          |
+| digest           | Manifest digest                                                           |
+| uri              | Pullable URI                                                              |
+| tags             | Tags attached to the image                                                |
+| image_size_bytes | Image size                                                                |
+| upload_time      | Upload time                                                               |
+| build_time       | Build time, when reported                                                 |
+| update_time      | Last update time                                                          |
+| media_type       | Manifest media type                                                       |
+
+#### Relationships
+
+- Docker images are contained in repositories
+    ```
+    (GCPArtifactRegistryRepository)-[CONTAINS]->(GCPArtifactRegistryDockerImage)
+    ```
