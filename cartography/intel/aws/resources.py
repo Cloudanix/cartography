@@ -2,6 +2,7 @@ from typing import Dict
 from typing import List
 
 from . import apigateway
+from . import backup
 from . import bedrock
 from . import cloudformation
 from . import cloudfront
@@ -18,8 +19,8 @@ from . import emr
 from . import iam
 from . import identitystore
 from . import inspector
-from . import kms
 from . import kinesis
+from . import kms
 from . import lambda_function
 from . import permission_relationships
 from . import rds
@@ -109,6 +110,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'inspector': inspector.sync,
     'config': config.sync,
     'securityhub': securityhub.sync,
+    'backup': backup.sync,
     'permission_relationships': permission_relationships.sync,
     'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
 }

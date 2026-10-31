@@ -19,7 +19,9 @@ Representation of an AWS Account.
 - Many node types belong to an `AWSAccount`.
 
         ```
-        (AWSAccount)-[RESOURCE]->(AWSDNSZone,
+        (AWSAccount)-[RESOURCE]->(AWSBackupJob,
+                              AWSBackupProtectedResource,
+                              AWSDNSZone,
                               AWSGroup,
                               AWSInspectorFinding,
                               AWSInspectorPackage,
@@ -3376,4 +3378,57 @@ Representation of an AWS SSM [PatchComplianceData](https://docs.aws.amazon.com/s
 
         ```
         (EC2Instance)-[HAS_INFORMATION]->(SSMInstancePatch)
+        ```
+
+### AWSBackupJob
+
+Representation of an AWS Backup [backup job](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_BackupJob.html). Only jobs created in the last 30 days are synced (the window ListBackupJobs returns), capped per region.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The backup job ID |
+| backup\_job\_id | The backup job ID |
+| resource\_arn | The ARN of the resource the job backed up |
+| resource\_type | The type of the resource, such as EFS or EC2 |
+| recovery\_point\_arn | The ARN of the recovery point the job produced; empty until the job completes |
+| recovery\_point\_delete\_after\_days | Days after creation that the recovery point is deleted; empty when it is kept until deleted by hand |
+| creation\_date | When the job was created (ISO-8601) |
+| completion\_date | When the job finished (ISO-8601) |
+| state | The job state, such as COMPLETED or FAILED |
+| backup\_vault\_name | The name of the vault that holds the recovery point |
+| backup\_vault\_arn | The ARN of that vault |
+| region | The region of the job |
+
+#### Relationships
+
+- AWSBackupJob is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AWSBackupJob)
+        ```
+
+### AWSBackupProtectedResource
+
+Representation of a resource AWS Backup has [successfully backed up](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_ProtectedResource.html).
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node  |
+| lastupdated |  Timestamp of the last time the node was updated |
+| **id** | The ARN of the protected resource |
+| resource\_arn | The ARN of the protected resource |
+| resource\_type | The type of the resource, such as EFS or EC2 |
+| resource\_name | The name of the resource |
+| last\_backup\_time | When the resource was last backed up (ISO-8601) |
+| last\_recovery\_point\_arn | The ARN of the latest recovery point |
+| region | The region of the protected resource |
+
+#### Relationships
+
+- AWSBackupProtectedResource is a resource under the AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AWSBackupProtectedResource)
         ```
