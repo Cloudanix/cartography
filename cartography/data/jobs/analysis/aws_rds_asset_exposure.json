@@ -31,7 +31,14 @@
       "iterative": false
     },
     {
-      "query": "MATCH (attrib:RDSSnapshotAttribute{name: 'restore'})<-[HAS_ATTRIBUTE]-(snapshot:RDSSnapshot)<-[:IS_SNAPSHOT_SOURCE]-(rds:RDSInstance{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE 'all' IN attrib.values SET snapshot.exposed_internet = true,(CASE WHEN NOT 'restore_all_attrib' IN coalesce(snapshot.exposed_internet_type , []) THEN snapshot END).exposed_internet_type = coalesce(snapshot.exposed_internet_type , []) + 'restore_all_attrib';",
+      "__comment": "Clears snapshot flags left by an earlier sync; a snapshot unshared since must not stay public.",
+      "query": "MATCH (snapshot:RDSSnapshot)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE snapshot.exposed_internet IS NOT NULL WITH snapshot LIMIT $LIMIT_SIZE REMOVE snapshot.exposed_internet, snapshot.exposed_internet_type, snapshot.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "A snapshot whose restore attribute holds 'all' can be copied or restored by any AWS account, whatever its source instance is (which may be private or deleted).",
+      "query": "MATCH (snapshot:RDSSnapshot)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE 'all' IN snapshot.restore_attribute_values SET snapshot.exposed_internet = true,(CASE WHEN NOT 'restore_all_attrib' IN coalesce(snapshot.exposed_internet_type , []) THEN snapshot END).exposed_internet_type = coalesce(snapshot.exposed_internet_type , []) + 'restore_all_attrib';",
       "iterative": false
     },
     {
@@ -39,7 +46,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (snapshot:RDSSnapshot)<-[:IS_SNAPSHOT_SOURCE]-(rds:RDSInstance)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE snapshot.exposed_internet = true WITH snapshot, rds OPTIONAL MATCH (attrib:RDSSnapshotAttribute{name: 'restore'})<-[HAS_ATTRIBUTE]-(snapshot) WHERE 'all' IN attrib.values WITH snapshot, rds, attrib SET snapshot.publicContext = apoc.convert.toJson([{resource: snapshot.id, resourceType: 'aws-database-rds-snapshot', context: [{snapshotId: snapshot.id, snapshotArn: snapshot.arn, sourceInstanceId: rds.id, sourceEngine: rds.engine, restoreAttribute: attrib.values, exposureTypes: snapshot.exposed_internet_type, encrypted: coalesce(snapshot.encrypted, false)}]}])",
+      "query": "MATCH (snapshot:RDSSnapshot)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE snapshot.exposed_internet = true WITH snapshot OPTIONAL MATCH (snapshot)<-[:IS_SNAPSHOT_SOURCE]-(rds:RDSInstance) WITH snapshot, head(collect(rds)) AS rds SET snapshot.publicContext = apoc.convert.toJson([{resource: snapshot.id, resourceType: 'aws-database-rds-snapshot', context: [{snapshotId: snapshot.id, snapshotArn: snapshot.arn, sourceInstanceId: rds.id, sourceEngine: coalesce(rds.engine, snapshot.engine), restoreAttribute: snapshot.restore_attribute_values, exposureTypes: snapshot.exposed_internet_type, encrypted: coalesce(snapshot.encrypted, false)}]}])",
       "iterative": false
     },
     {

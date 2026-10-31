@@ -330,7 +330,9 @@ def sync_rds_snapshots(
         snps = get_rds_snapshots(boto3_session, region)
         for snp in snps:
             attrib = get_rds_snapshot_attributes(boto3_session, snp['DBSnapshotIdentifier'], region)
-            attributes.append(attrib)
+            if attrib:
+                # The identifier is only unique within an account and region; the ARN pins the snapshot.
+                attributes.append({**attrib, 'DBSnapshotArn': snp['DBSnapshotArn']})
 
         data.extend(transform_snapshots(snps, region))
 
@@ -649,7 +651,7 @@ def load_rds_instances(
 
 @timeit
 def load_rds_snapshots(
-    neo4j_session: neo4j.Session, data: Dict, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
     """
@@ -713,7 +715,7 @@ def load_rds_snapshots(
 
 
 @timeit
-def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: Dict, aws_update_tag: int) -> None:
+def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict], aws_update_tag: int) -> None:
     """
     Ingest the RDS snapshot attributes to neo4j and link them to RDS snapshot.
     """
@@ -732,6 +734,17 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: Dict, aws_u
             ON CREATE SET r.firstseen = timestamp()
             SET r.lastupdated = $aws_update_tag
     """
+    # RDSSnapshotAttribute nodes are merged by name alone, so one 'restore' node is shared by every snapshot
+    # in the graph and holds whichever snapshot was written last. Keep each snapshot's own restore values
+    # (account ids, or 'all' when public) on the snapshot; aws_rds_asset_exposure.json reads them.
+    ingest_restore_values = """
+    UNWIND $DictList as result
+        MATCH (rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})
+        SET rdsSnapshot.restore_attribute_values = [
+            attribute IN result.DBSnapshotAttributes WHERE attribute.AttributeName = 'restore'
+            | attribute.AttributeValues
+        ][0]
+    """
 
     load_graph_data(
         neo4j_session,
@@ -739,6 +752,7 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: Dict, aws_u
         data,
         aws_update_tag=aws_update_tag,
     )
+    load_graph_data(neo4j_session, ingest_restore_values, data)
 
 
 @timeit
@@ -942,7 +956,7 @@ def _get_db_subnet_group_arn(
 
 
 @timeit
-def transform_rds_snapshots(data: Dict) -> List[Dict]:
+def transform_rds_snapshots(data: List[Dict]) -> List[Dict]:
     snapshots = []
 
     for snapshot in data:
