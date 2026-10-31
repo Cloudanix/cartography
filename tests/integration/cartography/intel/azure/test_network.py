@@ -586,11 +586,7 @@ def test_network_security_group_analysis(neo4j_session):
             'networkSecurityGroups/Testgroup1',
             'direct_ipv4,public_icmp',
         ),
-        (
-            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Network/            '
-            'networkSecurityGroups/Testgroup2',
-            'inbound_public_ports',
-        ),
+        # Testgroup2 only opens 0-65535 with no internet source: not exposed.
     }
 
     nodes = neo4j_session.run(
