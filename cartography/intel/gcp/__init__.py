@@ -758,8 +758,8 @@ def _sync_single_project(
         except Exception as e:
             logger.warning(f"error to link GKE nodes for project {project_id} - {e}")
 
-    # Load balancer backend members need backend services (cloudcdn), instance groups (loadbalancer) and instances
-    # (compute) loaded; those syncs run in parallel.
+    # Load balancer backend members need backend services (cloudcdn), instance groups and NEGs (loadbalancer),
+    # instances (compute) and functions (cloudfunction) loaded; those syncs run in parallel.
     if "cloudcdn" in requested_syncs or "loadbalancer" in requested_syncs:
         try:
             loadbalancer.sync_external_backend_members(

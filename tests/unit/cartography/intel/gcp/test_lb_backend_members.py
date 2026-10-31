@@ -7,6 +7,7 @@ import cartography.intel.gcp
 from cartography.intel.gcp import loadbalancer
 
 API = 'https://www.googleapis.com/compute/v1'
+ZONE_P1 = 'projects/p1/zones/us-east1-b'
 PARAMS = {'UPDATE_TAG': 42, 'GCP_PROJECT_ID': 'p1', 'WORKSPACE_ID': 'ws', 'GCP_ORGANIZATION_ID': 'org'}
 
 
@@ -103,3 +104,141 @@ def test_project_sync_resolves_backend_members_after_the_parallel_syncs():
 
 def test_project_sync_skips_backend_members_without_load_balancer_syncs():
     assert 'members' not in _sync_project(['compute'])
+
+
+def _pages(collection, method, pages):
+    """collection.<method>(...).execute() returns each page in turn; <method>_next ends after the last."""
+    request = MagicMock()
+    request.execute.side_effect = pages
+    getattr(collection, method).return_value = request
+    getattr(collection, f'{method}_next').side_effect = [request] * (len(pages) - 1) + [None]
+
+
+def test_network_endpoint_groups_come_from_every_scope_once():
+    client = MagicMock()
+    zonal = {
+        'name': 'k8s1-neg', 'networkEndpointType': 'GCE_VM_IP_PORT', 'size': 3, 'defaultPort': 8080,
+        'selfLink': f'{API}/projects/p1/zones/us-east1-b/networkEndpointGroups/k8s1-neg',
+        'zone': f'{API}/projects/p1/zones/us-east1-b', 'network': f'{API}/projects/p1/global/networks/default',
+    }
+    run_neg = {
+        'name': 'run-neg', 'networkEndpointType': 'SERVERLESS', 'cloudRun': {'service': 'web'},
+        'selfLink': f'{API}/projects/p1/regions/us-east1/networkEndpointGroups/run-neg',
+        'region': f'{API}/projects/p1/regions/us-east1',
+    }
+    fn_neg = {
+        'name': 'fn-neg', 'networkEndpointType': 'SERVERLESS', 'cloudFunction': {'urlMask': '/<function>'},
+        'selfLink': f'{API}/projects/p1/regions/europe-west1/networkEndpointGroups/fn-neg',
+        'region': f'{API}/projects/p1/regions/europe-west1',
+    }
+    internet = {
+        'name': 'internet-neg', 'networkEndpointType': 'INTERNET_FQDN_PORT',
+        'selfLink': f'{API}/projects/p1/global/networkEndpointGroups/internet-neg',
+    }
+    # The aggregated list may also carry regional scopes: those NEGs must not be loaded twice.
+    _pages(
+        client.networkEndpointGroups.return_value, 'aggregatedList', [
+            {'items': {'zones/us-east1-b': {'networkEndpointGroups': [zonal]}, 'zones/us-east1-c': {'warning': {}}}},
+            {'items': {'regions/us-east1': {'networkEndpointGroups': [run_neg]}}},
+        ],
+    )
+    _pages(client.globalNetworkEndpointGroups.return_value, 'list', [{'items': [internet]}])
+    regional = client.regionNetworkEndpointGroups.return_value
+
+    def region_list(project, region):
+        request = MagicMock()
+        if region == 'asia-south1':
+            request.execute.side_effect = HttpError(MagicMock(status=403), b'{"error": {"code": 403}}')
+        else:
+            request.execute.return_value = {'items': {'us-east1': [run_neg], 'europe-west1': [fn_neg]}[region]}
+        return request
+    regional.list.side_effect = region_list
+    regional.list_next.return_value = None
+
+    negs = loadbalancer.transform_network_endpoint_groups(
+        loadbalancer.get_network_endpoint_groups(client, 'p1', ['us-east1', 'europe-west1', 'asia-south1']), 'p1',
+    )
+
+    by_name = {n['name']: n for n in negs}
+    assert sorted(by_name) == ['fn-neg', 'internet-neg', 'k8s1-neg', 'run-neg']
+    client.networkEndpointGroups.return_value.aggregatedList.assert_called_once_with(
+        project='p1', returnPartialSuccess=True,
+    )
+    k8s = by_name['k8s1-neg']
+    assert (k8s['id'], k8s['zone'], k8s['region'], k8s['network']) == (
+        'projects/p1/zones/us-east1-b/networkEndpointGroups/k8s1-neg', 'us-east1-b', 'us-east1',
+        'projects/p1/global/networks/default',
+    )
+    assert (k8s['network_endpoint_type'], k8s['size'], k8s['default_port']) == ('GCE_VM_IP_PORT', 3, 8080)
+    run = by_name['run-neg']
+    assert (run['id'], run['zone'], run['region'], run['cloud_run_service'], run['consolelink']) == (
+        'projects/p1/regions/us-east1/networkEndpointGroups/run-neg', None, 'us-east1', 'web', None,
+    )
+    assert (by_name['fn-neg']['cloud_function'], by_name['fn-neg']['url_mask']) == (None, '/<function>')
+    assert by_name['internet-neg']['region'] == 'global'
+
+
+def test_vm_neg_endpoints_are_grouped_per_instance():
+    client = MagicMock()
+    negs = client.networkEndpointGroups.return_value
+    _pages(
+        negs, 'listNetworkEndpoints', [
+            {
+                'items': [
+                    {'networkEndpoint': {'instance': 'node-1', 'ipAddress': '10.4.0.5', 'port': 8080}},
+                    {'networkEndpoint': {'instance': 'node-1', 'ipAddress': '10.4.0.6', 'port': 8080}},
+                ],
+            },
+            {
+                'items': [
+                    {'networkEndpoint': {'instance': f'{API}/{ZONE_P1}/instances/node-2', 'ipAddress': '10.4.1.2'}},
+                    # No instance: not a VM endpoint.
+                    {'networkEndpoint': {'ipAddress': '203.0.113.1', 'port': 443}},
+                ],
+            },
+        ],
+    )
+
+    endpoints = loadbalancer.get_neg_vm_endpoints(client, 'p1', 'us-east1-b', 'k8s1-neg')
+
+    negs.listNetworkEndpoints.assert_called_once_with(
+        project='p1', zone='us-east1-b', networkEndpointGroup='k8s1-neg', body={},
+    )
+    neg = 'projects/p1/zones/us-east1-b/networkEndpointGroups/k8s1-neg'
+    assert endpoints == [
+        {
+            'instance': 'projects/p1/zones/us-east1-b/instances/node-1', 'neg': neg,
+            'ip_addresses': ['10.4.0.5', '10.4.0.6'], 'ports': [8080],
+        },
+        {
+            'instance': 'projects/p1/zones/us-east1-b/instances/node-2', 'neg': neg,
+            'ip_addresses': ['10.4.1.2'], 'ports': [],
+        },
+    ]
+
+
+def test_unreadable_neg_leaves_its_endpoints_unresolved():
+    client = MagicMock()
+    client.networkEndpointGroups.return_value.listNetworkEndpoints.return_value.execute.side_effect = HttpError(
+        MagicMock(status=403), b'{"error": {"code": 403}}',
+    )
+
+    assert loadbalancer.get_neg_vm_endpoints(client, 'p1', 'us-east1-b', 'denied') == []
+
+
+def test_endpoints_are_listed_only_for_external_zonal_vm_negs():
+    client = MagicMock()
+    groups = ['projects/p1/zones/us-east1-b/networkEndpointGroups/k8s1-neg']
+    with patch.object(loadbalancer, 'get_external_backend_groups', return_value=groups), \
+            patch.object(loadbalancer, 'get_external_vm_negs', return_value=groups) as vm_negs, \
+            patch.object(loadbalancer, 'get_neg_vm_endpoints', return_value=[{'instance': 'i'}]) as list_endpoints, \
+            patch.object(loadbalancer, 'load_instance_group_members'), \
+            patch.object(loadbalancer, 'load_neg_vm_endpoints') as load, \
+            patch.object(loadbalancer, 'link_backend_services_to_negs') as link, \
+            patch.object(loadbalancer, 'run_cleanup_job'):
+        loadbalancer.sync_external_backend_members(MagicMock(), client, 'p1', PARAMS)
+
+    assert vm_negs.call_args.args[1:] == ('p1', groups)
+    list_endpoints.assert_called_once_with(client, 'p1', 'us-east1-b', 'k8s1-neg')
+    assert load.call_args.args[1] == [{'instance': 'i'}]
+    link.assert_called_once()

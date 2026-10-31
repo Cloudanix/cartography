@@ -5,6 +5,24 @@
 			"iterative": true,
 			"iterationsize": 100,
 			"__comment__": "Remove instance -> instance group memberships not seen this sync (instance left the group, or the group is no longer behind an external backend service)."
+		},
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPNetworkEndpointGroup)<-[r:MEMBER_OF_NETWORK_ENDPOINT_GROUP]-(:GCPInstance) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove instance -> NEG endpoint links not seen this sync."
+		},
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPNetworkEndpointGroup)<-[r:HAS_BACKEND]-(:GCPBackendService) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove backend service -> NEG links not seen this sync."
+		},
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPNetworkEndpointGroup)-[r:SERVERLESS_TARGET]->() WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove serverless NEG -> function links not seen this sync."
 		}
 	],
 	"name": "cleanup GCP load balancer backend members"

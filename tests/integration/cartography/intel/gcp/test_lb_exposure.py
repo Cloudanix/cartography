@@ -328,3 +328,145 @@ def test_unmanaged_instance_group_members_behind_an_external_backend_service_are
         # No external IP needed; the stopped member and the internal backend's VM are not reachable.
         ('GCPInstance', 'node-1'): LB,
     }
+
+
+def _neg(project, scope, name, neg_type, **fields):
+    return {
+        'name': name, 'networkEndpointType': neg_type,
+        'selfLink': f'{API}/projects/{project}/{scope}/networkEndpointGroups/{name}', **fields,
+    }
+
+
+def test_network_endpoint_groups_behind_an_external_backend_service_expose_their_targets(neo4j_session):
+    project = 'proj-lb-negs'
+    zone = f'projects/{project}/zones/us-east1-b'
+    region = f'projects/{project}/regions/us-east1'
+    _seed_project(neo4j_session, project)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(
+        neo4j_session,
+        [
+            _external_rule(
+                project, 'web-fr',
+                backend_services=[
+                    f'projects/{project}/global/backendServices/gke', f'projects/{project}/global/backendServices/fn',
+                    f'projects/{project}/global/backendServices/run', f'projects/{project}/global/backendServices/cdn',
+                ],
+            ),
+        ],
+        TAG,
+    )
+    cartography.intel.gcp.cloudcdn.load_backend_services(
+        neo4j_session, [
+            # GKE container-native load balancing: a GCE_VM_IP_PORT NEG of pod endpoints on the node VMs.
+            _backend_service(project, 'gke', 'EXTERNAL_MANAGED', [f'{zone}/networkEndpointGroups/k8s1-neg']),
+            _backend_service(project, 'fn', 'EXTERNAL_MANAGED', [f'{region}/networkEndpointGroups/fn-neg']),
+            _backend_service(project, 'run', 'EXTERNAL_MANAGED', [f'{region}/networkEndpointGroups/run-neg']),
+            _backend_service(
+                project, 'cdn', 'EXTERNAL_MANAGED', [f'projects/{project}/global/networkEndpointGroups/ext'],
+            ),
+            _backend_service(project, 'internal', 'INTERNAL_MANAGED', [f'{zone}/networkEndpointGroups/internal-neg']),
+        ], project, TAG,
+    )
+    negs = [
+        _neg(project, 'zones/us-east1-b', 'k8s1-neg', 'GCE_VM_IP_PORT', zone=f'{API}/{zone}'),
+        _neg(project, 'zones/us-east1-b', 'internal-neg', 'GCE_VM_IP_PORT', zone=f'{API}/{zone}'),
+        _neg(
+            project, 'regions/us-east1', 'fn-neg', 'SERVERLESS', region=f'{API}/{region}',
+            cloudFunction={'function': 'api'},
+        ),
+        _neg(
+            project, 'regions/us-east1', 'run-neg', 'SERVERLESS', region=f'{API}/{region}',
+            cloudRun={'service': 'web'},
+        ),
+        _neg(project, 'global', 'ext', 'INTERNET_FQDN_PORT'),
+    ]
+    loadbalancer = cartography.intel.gcp.loadbalancer
+    loadbalancer.load_network_endpoint_groups(
+        neo4j_session, loadbalancer.transform_network_endpoint_groups(negs, project), project, TAG,
+    )
+    _instances(neo4j_session, project, zone, ['gke-node-1', 'gke-node-2', 'internal-vm'])
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project})
+        UNWIND [['api', true], ['private-fn', false]] AS f
+        MERGE (p)-[:RESOURCE]->(fn:GCPFunction{id: 'projects/' + $project + '/locations/us-east1/functions/' + f[0]})
+        SET fn.exposed_internet = CASE WHEN f[1] THEN true END,
+            fn.exposed_internet_type = CASE WHEN f[1] THEN ['allUsers'] END
+        """,
+        project=project,
+    )
+    client = MagicMock()
+    client.networkEndpointGroups.return_value.listNetworkEndpoints.return_value.execute.return_value = {
+        'items': [
+            {'networkEndpoint': {'instance': 'gke-node-1', 'ipAddress': '10.8.0.4', 'port': 8080}},
+            {'networkEndpoint': {'instance': 'gke-node-1', 'ipAddress': '10.8.0.5', 'port': 8080}},
+        ],
+    }
+    client.networkEndpointGroups.return_value.listNetworkEndpoints_next.return_value = None
+
+    loadbalancer.sync_external_backend_members(neo4j_session, client, project, _params(project))
+    _run_exposure_jobs(neo4j_session, project)
+
+    # Endpoints are listed for the external zonal VM NEG only.
+    client.networkEndpointGroups.return_value.listNetworkEndpoints.assert_called_once_with(
+        project=project, zone='us-east1-b', networkEndpointGroup='k8s1-neg', body={},
+    )
+    edge = neo4j_session.run(
+        "MATCH (i:GCPInstance)-[r:MEMBER_OF_NETWORK_ENDPOINT_GROUP]->(neg) WHERE neg.id STARTS WITH $zone "
+        "RETURN split(i.id, '/')[-1] AS vm, r.ip_addresses AS ips, r.ports AS ports", zone=zone,
+    ).data()
+    assert edge == [{'vm': 'gke-node-1', 'ips': ['10.8.0.4', '10.8.0.5'], 'ports': [8080]}]
+    linked = neo4j_session.run(
+        "MATCH (:GCPProject{id: $project})-[:RESOURCE]->(bs:GCPBackendService)-[:HAS_BACKEND]->(neg) "
+        "OPTIONAL MATCH (neg)-[:SERVERLESS_TARGET]->(fn) RETURN bs.name AS bs, neg.name AS neg, fn.id AS fn",
+        project=project,
+    ).data()
+    assert sorted((r['bs'], r['neg'], r['fn']) for r in linked) == [
+        ('cdn', 'ext', None), ('fn', 'fn-neg', f'projects/{project}/locations/us-east1/functions/api'),
+        ('gke', 'k8s1-neg', None), ('internal', 'internal-neg', None), ('run', 'run-neg', None),
+    ]
+    exposed = _exposed_in(neo4j_session, project)
+    assert {k: v for k, v in exposed.items() if k[0] in ('GCPNetworkEndpointGroup', 'GCPInstance', 'GCPFunction')} == {
+        ('GCPNetworkEndpointGroup', 'k8s1-neg'): LB,
+        ('GCPNetworkEndpointGroup', 'fn-neg'): LB,
+        ('GCPNetworkEndpointGroup', 'run-neg'): LB,
+        ('GCPNetworkEndpointGroup', 'ext'): LB,
+        # The node VM hosting the pod endpoints; the node with no endpoint and the internal NEG's VM are not.
+        ('GCPInstance', 'gke-node-1'): LB,
+        # Already public through IAM; the load balancer is a second way in. private-fn is not behind any NEG.
+        ('GCPFunction', 'api'): ['allUsers', 'external_load_balancer'],
+    }
+    run_neg = neo4j_session.run(
+        "MATCH (n:GCPNetworkEndpointGroup{name: 'run-neg'}) RETURN n.cloud_run_service AS svc, n.region AS region",
+    ).single()
+    assert (run_neg['svc'], run_neg['region']) == ('web', 'us-east1')
+
+
+def test_stale_network_endpoint_groups_and_links_are_cleaned_up(neo4j_session):
+    project = 'proj-lb-neg-cleanup'
+    zone = f'projects/{project}/zones/us-east1-b'
+    _seed_project(neo4j_session, project)
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project})
+        MERGE (p)-[:RESOURCE]->(gone:GCPNetworkEndpointGroup{id: $zone + '/networkEndpointGroups/gone'})
+        SET gone.lastupdated = 1
+        MERGE (p)-[:RESOURCE]->(kept:GCPNetworkEndpointGroup{id: $zone + '/networkEndpointGroups/kept'})
+        SET kept.lastupdated = $tag
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance{id: $zone + '/instances/vm'})
+        MERGE (i)-[e:MEMBER_OF_NETWORK_ENDPOINT_GROUP]->(kept) SET e.lastupdated = 1
+        MERGE (p)-[:RESOURCE]->(bs:GCPBackendService{id: 'projects/' + $project + '/global/backendServices/bs'})
+        MERGE (bs)-[h:HAS_BACKEND]->(kept) SET h.lastupdated = 1
+        """,
+        project=project, zone=zone, tag=TAG,
+    )
+
+    run_cleanup_job('gcp_network_endpoint_groups_cleanup.json', neo4j_session, _params(project))
+    run_cleanup_job('gcp_lb_backend_members_cleanup.json', neo4j_session, _params(project))
+
+    rows = neo4j_session.run(
+        "MATCH (:GCPProject{id: $project})-[:RESOURCE]->(n:GCPNetworkEndpointGroup) "
+        "RETURN n.id AS id, COUNT { (n)<-[]-(:GCPInstance|GCPBackendService) } AS links",
+        project=project,
+    ).data()
+    assert rows == [{'id': f'{zone}/networkEndpointGroups/kept', 'links': 0}]
