@@ -16,6 +16,11 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
+# Cloud Run v1 service annotations, see https://cloud.google.com/run/docs/securing/ingress and
+# https://cloud.google.com/run/docs/securing/managing-access
+INGRESS_ANNOTATION = 'run.googleapis.com/ingress'
+INVOKER_IAM_DISABLED_ANNOTATION = 'run.googleapis.com/invoker-iam-disabled'
+
 
 @timeit
 def get_cloudrun_authorized_domains(cloudrun: Resource, project_id: str, common_job_parameters) -> List[Dict]:
@@ -257,7 +262,7 @@ def transform_routes(routes: List[Dict], project_id: str) -> List[Dict]:
 
 
 @timeit
-def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parameters) -> List[Dict]:
+def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parameters: Dict) -> List[Dict]:
     """
         Returns a list of Cloud Run Services for a given project.
 
@@ -271,13 +276,19 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
         :return: List of Cloud Run Services
     """
     try:
-        services = []
-        request = cloudrun.namespaces().services().list(parent=f'namespaces/{project_id}')
-        response = request.execute()
-        if response.get('items', []):
+        # One call per page for every region: the v1 global endpoint lists the services of all regions.
+        services: List[Dict] = []
+        page: Dict = {}
+        while True:
+            response = cloudrun.namespaces().services().list(parent=f'namespaces/{project_id}', **page).execute()
             services.extend(response.get('items', []))
-
-        return services
+            if response.get('unreachable'):
+                logger.warning(f"Cloud Run regions unreachable for project {project_id}: {response['unreachable']}")
+            token = response.get('metadata', {}).get('continue')
+            if not token:
+                return services
+            # 'continue' is a Python keyword, so the query parameter can only be passed through a dict.
+            page = {'continue': token}
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
         if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
@@ -304,17 +315,23 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
 
 @timeit
 def transform_services(services: List[Dict], project_id: str) -> List[Dict]:
-    services = []
+    result = []
     for item in services:
-        item['region'] = item.get('metadata').get('labels').get('cloud.googleapis.com/location')
+        metadata = item.get('metadata', {})
+        annotations = metadata.get('annotations') or {}
+        item['region'] = (metadata.get('labels') or {}).get('cloud.googleapis.com/location')
         item['consolelink'] = gcp_console_link.get_console_link(
             project_id=project_id,
-            cloud_run_service_name=item.get('metadata').get('name'), region=item['region'], resource_name='cloud_run_service',
+            cloud_run_service_name=metadata.get('name'), region=item['region'], resource_name='cloud_run_service',
         )
-        item['id'] = f"projects/{project_id}/services/{item.get('metadata').get('name')}"
-        services.append(item)
+        item['id'] = f"projects/{project_id}/services/{metadata.get('name')}"
+        item['url'] = item.get('status', {}).get('url')
+        # all | internal | internal-and-cloud-load-balancing; absent means all.
+        item['ingress'] = annotations.get(INGRESS_ANNOTATION)
+        item['invoker_iam_disabled'] = annotations.get(INVOKER_IAM_DISABLED_ANNOTATION) == 'true'
+        result.append(item)
 
-    return services
+    return result
 
 
 @timeit
@@ -638,7 +655,7 @@ def _load_cloudrun_services_tx(
         service.firstseen = timestamp()
     SET
         service.name = svc.metadata.name,
-        service.namspace = svc.metadata.namespace,
+        service.namespace = svc.metadata.namespace,
         service.selfLink = svc.metadata.selfLink,
         service.uid = svc.metadata.uid,
         service.region = svc.region,
@@ -649,6 +666,9 @@ def _load_cloudrun_services_tx(
         service.observedGeneration = svc.status.observedGeneration,
         service.latestReadyRevisionName = svc.status.latestReadyRevisionName,
         service.latestCreatedRevisionName = svc.status.latestCreatedRevisionName,
+        service.url = svc.url,
+        service.ingress = svc.ingress,
+        service.invoker_iam_disabled = svc.invoker_iam_disabled,
         service.lastupdated = $gcp_update_tag
     WITH service
     MATCH (owner:GCPProject{id: $ProjectId})
