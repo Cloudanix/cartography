@@ -16,3 +16,9 @@ def test_oci_security_list_exposure_runs_after_subnet_exposure():
     # The security list job reads the exposed_internet flag the subnet job writes.
     jobs = oci_intel.OCI_ANALYSIS_JOBS
     assert jobs.index('oci_subnet_asset_exposure.json') < jobs.index('oci_security_list_asset_exposure.json')
+
+
+def test_oci_boot_volume_exposure_runs_after_instance_exposure():
+    # The boot volume job reads the exposed_internet flag the instance job writes.
+    jobs = oci_intel.OCI_ANALYSIS_JOBS
+    assert jobs.index('oci_instance_asset_exposure.json') < jobs.index('oci_boot_volume_asset_exposure.json')

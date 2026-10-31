@@ -323,3 +323,40 @@ def test_security_list_exposed_when_attached_to_public_subnet_and_open(neo4j_ses
         "MATCH (s:OCISecurityList{id: 'sl-open-on-public'}) RETURN s.publicContext AS c",
     ).single()['c']
     assert 'sl-subnet-public' in context and 'sl-subnet-private' not in context
+
+
+def test_boot_volume_inherits_exposure_from_attached_instance(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, 'ocid1.compartment.oc1..bv-instances')
+    neo4j_session.run(
+        """
+        MATCH (c:OCICompartment{id: $compartment_id}), (ic:OCICompartment{id: 'ocid1.compartment.oc1..bv-instances'})
+        MERGE (c)-[:RESOURCE]->(public:OCIInstance{id: 'bv-inst-public'}) SET public.exposed_internet = true
+        MERGE (c)-[:RESOURCE]->(private:OCIInstance{id: 'bv-inst-private'})
+        // An exposed instance in another compartment whose boot volume lives in this one.
+        MERGE (ic)-[:RESOURCE]->(remote:OCIInstance{id: 'bv-inst-remote'}) SET remote.exposed_internet = true
+        MERGE (c)-[:RESOURCE]->(bv1:OCIBootVolume{id: 'bv-public'})
+        MERGE (c)-[:RESOURCE]->(bv2:OCIBootVolume{id: 'bv-private'})
+        MERGE (c)-[:RESOURCE]->(bv3:OCIBootVolume{id: 'bv-remote'})
+        MERGE (c)-[:RESOURCE]->(bv4:OCIBootVolume{id: 'bv-detached'})
+        MERGE (public)-[:OCI_BOOT_VOLUME]->(bv1)
+        MERGE (private)-[:OCI_BOOT_VOLUME]->(bv2)
+        MERGE (remote)-[:OCI_BOOT_VOLUME]->(bv3)
+        // Flag left by an earlier run, when the volume's instance was still exposed.
+        SET bv2.exposed_internet = true, bv2.exposed_internet_type = ['attached_instance_exposed'],
+            bv2.publicContext = '[]'
+        """,
+        compartment_id=COMPARTMENT_ID,
+    )
+
+    run_analysis_job('oci_boot_volume_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIBootVolume', 'bv-') == {
+        'bv-public': ['attached_instance_exposed'],
+        'bv-remote': ['attached_instance_exposed'],
+    }
+    row = neo4j_session.run(
+        "MATCH (b:OCIBootVolume) WHERE b.id IN ['bv-public', 'bv-private'] "
+        "RETURN b.id AS id, b.publicContext AS c ORDER BY id",
+    ).data()
+    assert 'bv-inst-public' in row[1]['c'] and row[0]['c'] is None
