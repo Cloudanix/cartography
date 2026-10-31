@@ -220,3 +220,39 @@ def test_subnet_exposure_needs_public_ips_and_own_default_route_to_internet_gate
         "MATCH (s:OCISubnet{id: 'sub-public-igw'}) RETURN s.publicContext AS c",
     ).single()['c']
     assert igw in context and 'sub-rt-igw' in context
+
+
+def test_mount_targets_and_file_systems_are_never_internet_exposed(neo4j_session):
+    # Mount targets only get private IPs, so a public subnet, an IGW route or an open security
+    # list / NSG cannot put them (or the file systems they export) on the internet.
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    igw = 'ocid1.internetgateway.oc1.phx.fss-igw'
+    _load_vcn(
+        neo4j_session, 'fss-vcn',
+        security_lists=[('fss-sl-default', DEFAULT_SECURITY_LIST_RULES)], nsgs={'fss-nsg-open': [OPEN_SSH]},
+    )
+    _load_internet_gateway(neo4j_session, igw, 'fss-vcn')
+    _load_route_table(neo4j_session, 'fss-rt-igw', 'fss-vcn', '0.0.0.0/0', igw)
+    _load_subnet(neo4j_session, 'fss-subnet', 'fss-vcn', ['fss-sl-default'], route_table_id='fss-rt-igw')
+    neo4j_session.run(
+        """
+        MATCH (c:OCICompartment{id: $compartment_id})
+        MERGE (c)-[:RESOURCE]->(mt:OCIMountTarget{id: 'fss-mt'})
+        SET mt.subnet_id = 'fss-subnet', mt.nsg_ids = ['fss-nsg-open']
+        MERGE (c)-[:RESOURCE]->(fs:OCIFileSystem{id: 'fss-fs'})
+        MERGE (mt)-[:OCI_EXPORT]->(fs)
+        // Flags written by the previous version of the job must be cleared.
+        SET mt.exposed_internet = true, mt.exposed_internet_type = ['public_subnet'], mt.publicContext = '[]',
+            fs.exposed_internet = true, fs.exposed_internet_type = ['public_subnet'], fs.publicContext = '[]'
+        """,
+        compartment_id=COMPARTMENT_ID,
+    )
+
+    run_analysis_job('oci_file_storage_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIMountTarget', 'fss-') == {}
+    assert _exposed(neo4j_session, 'OCIFileSystem', 'fss-') == {}
+    row = neo4j_session.run(
+        "MATCH (n) WHERE n.id IN ['fss-mt', 'fss-fs'] AND n.publicContext IS NOT NULL RETURN count(n) AS c",
+    ).single()
+    assert row['c'] == 0
