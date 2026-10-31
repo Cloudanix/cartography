@@ -360,3 +360,59 @@ def test_boot_volume_inherits_exposure_from_attached_instance(neo4j_session):
         "RETURN b.id AS id, b.publicContext AS c ORDER BY id",
     ).data()
     assert 'bv-inst-public' in row[1]['c'] and row[0]['c'] is None
+
+
+def test_load_db_node_vnics_links_db_nodes_to_their_vnics(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _load_vcn(neo4j_session, 'dbv-vcn')
+    _load_subnet(neo4j_session, 'dbv-subnet', 'dbv-vcn')
+    neo4j_session.run(
+        """
+        MATCH (c:OCICompartment{id: $compartment_id})
+        MERGE (c)-[:RESOURCE]->(:OCIDbSystem{id: 'dbv-system'})
+        """,
+        compartment_id=COMPARTMENT_ID,
+    )
+    database.load_db_nodes(
+        neo4j_session,
+        [{'id': 'dbv-node', 'db_system_id': 'dbv-system', 'vnic_id': 'dbv-vnic'}],
+        UPDATE_TAG,
+    )
+
+    database.load_db_node_vnics(
+        neo4j_session,
+        [{'id': 'dbv-vnic', 'subnet-id': 'dbv-subnet', 'public-ip': '203.0.113.20', 'nsg-ids': ['dbv-nsg']}],
+        REGION, UPDATE_TAG,
+    )
+
+    row = neo4j_session.run(
+        """
+        MATCH (:OCIDbSystem{id: 'dbv-system'})-[:HAS_DB_NODE]->(:OCIDbNode{id: 'dbv-node'})-[:OCI_VNIC]->(v:OCIVnic)
+        MATCH (:OCISubnet{id: 'dbv-subnet'})-[:OCI_VNIC]->(v)
+        RETURN v.id AS id, v.public_ip AS ip, v.nsg_ids AS nsgs
+        """,
+    ).single()
+    assert (row['id'], row['ip'], row['nsgs']) == ('dbv-vnic', '203.0.113.20', ['dbv-nsg'])
+
+
+def test_database_cleanup_removes_stale_db_node_vnics(neo4j_session):
+    # A DB node VNIC whose subnet is in another (unsynced) compartment is only reachable from the DB side.
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    neo4j_session.run(
+        """
+        MATCH (c:OCICompartment{id: $compartment_id})
+        MERGE (c)-[:RESOURCE]->(:OCIDbSystem{id: 'dbc-system', lastupdated: $tag})
+        """,
+        compartment_id=COMPARTMENT_ID, tag=UPDATE_TAG + 1,
+    )
+    database.load_db_nodes(
+        neo4j_session, [{'id': 'dbc-node', 'db_system_id': 'dbc-system', 'vnic_id': 'dbc-vnic'}], UPDATE_TAG,
+    )
+    database.load_db_node_vnics(neo4j_session, [{'id': 'dbc-vnic', 'subnet-id': 'dbc-subnet'}], REGION, UPDATE_TAG)
+
+    database.cleanup(neo4j_session, {**JOB_PARAMETERS, 'UPDATE_TAG': UPDATE_TAG + 1})
+
+    left = neo4j_session.run(
+        "MATCH (n) WHERE n.id IN ['dbc-node', 'dbc-vnic'] RETURN n.id AS id ORDER BY id",
+    ).value()
+    assert left == []
