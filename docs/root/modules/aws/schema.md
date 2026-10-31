@@ -2001,9 +2001,56 @@ Representation of an AWS [RedshiftCluster](https://docs.aws.amazon.com/redshift/
     (RedshiftCluster)-[MEMBER_OF_AWS_VPC]->(AWSVpc)
     ```
 
+### NeptuneCluster
+
+Representation of an [Amazon Neptune DB cluster](https://docs.aws.amazon.com/neptune/latest/apiref/API_DBCluster.html).
+Neptune clusters come from the same rds:DescribeDBClusters call as RDS clusters (engine `neptune`) and are loaded as
+NeptuneCluster instead of RDSCluster nodes. Their instances stay RDSInstance nodes.
+
+| Field | Description |
+|-------|-------------|
+| firstseen | Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | Cluster ARN |
+| **arn** | Cluster ARN |
+| name, db\_cluster\_identifier, db\_cluster\_resource\_id | Cluster identifiers |
+| engine, engine\_version, status | `neptune`, its version, and the cluster status |
+| endpoint, reader\_endpoint, port, privateIp, publicIp | Writer and reader endpoints, port (8182 by default) and the IPs the writer endpoint resolves to |
+| multi\_az, availability\_zones | Placement |
+| storage\_encrypted, kms\_key\_id | Encryption at rest |
+| iam\_database\_authentication\_enabled | Whether IAM database authentication is on (required for public instances) |
+| deletion\_protection, backup\_retention\_period, preferred\_backup\_window, preferred\_maintenance\_window, copy\_tags\_to\_snapshot | Cluster settings |
+| enabled\_cloudwatch\_logs\_exports | Log types exported to CloudWatch |
+| db\_subnet\_group, db\_parameter\_group | Subnet group and cluster parameter group names |
+| security\_groups, members | VPC security group ids and member instance identifiers |
+| master\_username, hosted\_zone\_id, cluster\_create\_time | Other cluster attributes |
+| region | AWS region |
+
+#### Relationships
+
+- Neptune clusters belong to AWS Accounts.
+
+    ```
+    (AWSAccount)-[RESOURCE]->(NeptuneCluster)
+    ```
+
+- Neptune clusters are members of EC2 Security Groups and of a DB Subnet Group.
+
+    ```
+    (NeptuneCluster)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+    (NeptuneCluster)-[MEMBER_OF_DB_SUBNET_GROUP]->(DBSubnetGroup)
+    ```
+
+- Neptune instances are members of their cluster in the same account and region.
+
+    ```
+    (RDSInstance)-[IS_CLUSTER_MEMBER_OF]->(NeptuneCluster)
+    ```
+
 ### RDSCluster
 
-Representation of an AWS Relational Database Service [DBCluster](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DBCluster.html)
+Representation of an AWS Relational Database Service [DBCluster](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DBCluster.html).
+Neptune clusters, which DescribeDBClusters also returns, are NeptuneCluster nodes instead.
 
 | Field | Description |
 |-------|-------------|
@@ -2100,10 +2147,12 @@ Representation of an Aurora or Multi-AZ [DBClusterSnapshot](https://docs.aws.ama
     (AWSAccount)-[RESOURCE]->(RDSClusterSnapshot)
     ```
 
-- RDS cluster snapshots are linked to their source cluster in the same account and region.
+- RDS cluster snapshots are linked to their source cluster in the same account and region (a Neptune cluster
+  snapshot to its NeptuneCluster).
 
     ```
     (RDSCluster)-[IS_SNAPSHOT_SOURCE]->(RDSClusterSnapshot)
+    (NeptuneCluster)-[IS_SNAPSHOT_SOURCE]->(RDSClusterSnapshot)
     ```
 
 ### RDSInstance

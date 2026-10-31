@@ -153,7 +153,8 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     'lambda:event-source-mapping': {'label': 'AWSLambdaEventSourceMapping', 'property': 'id'},
     'mq:broker': {'label': 'AWSMQBroker', 'property': 'id'},
     'redshift:cluster': {'label': 'RedshiftCluster', 'property': 'id'},
-    'rds:cluster': {'label': 'RDSCluster', 'property': 'id'},
+    # rds:cluster ARNs include Neptune clusters (NeptuneCluster nodes); a Neo4j 5 label expression matches both.
+    'rds:cluster': {'label': 'RDSCluster|NeptuneCluster', 'property': 'id'},
     'rds:db': {'label': 'RDSInstance', 'property': 'id'},
     'rds:subgrp': {'label': 'DBSubnetGroup', 'property': 'id'},
     'rds:snapshot': {'label': 'RDSSnapshot', 'property': 'id'},
