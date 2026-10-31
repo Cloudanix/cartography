@@ -10,6 +10,7 @@ from cloudconsolelink.clouds.gcp import GCPLinker
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
+from . import compute
 from . import label
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
@@ -53,6 +54,9 @@ def get_backend_buckets(compute: Resource, project_id: str) -> List[Dict]:
 
 @timeit
 def load_backend_buckets(session: neo4j.Session, buckets: List[Dict], project_id: str, update_tag: int) -> None:
+    for bucket in buckets:
+        # The node id is keyed on the GCS bucket name; URL maps reference the backend bucket by its own self-link.
+        bucket['partial_uri'] = compute._parse_compute_full_uri_to_partial_uri(bucket.get('selfLink', ''))
     session.execute_write(load_backend_buckets_tx, buckets, project_id, update_tag)
 
 
@@ -74,7 +78,8 @@ def load_backend_buckets_tx(
         bucket.consolelink = b.consolelink,
         bucket.enableCdn = b.enableCdn,
         bucket.defaultTtl = b.cdnPolicy.defaultTtl,
-        bucket.maxTtl = b.cdnPolicy.maxTtl
+        bucket.maxTtl = b.cdnPolicy.maxTtl,
+        bucket.partial_uri = b.partial_uri
     WITH bucket
     MATCH (owner:GCPProject{id:$ProjectId})
     MERGE (owner)-[r:RESOURCE]->(bucket)
@@ -238,7 +243,11 @@ def is_user_created_backend_service(service):
 
 
 @timeit
-def load_backend_services(session: neo4j.Session, backend_services: List[Dict], project_id: str, update_tag: int) -> None:
+def load_backend_services(
+    session: neo4j.Session, backend_services: List[Dict], project_id: str, update_tag: int,
+) -> None:
+    for service in backend_services:
+        service['backend_groups'] = compute.backend_group_refs(service)
     session.execute_write(load_backend_services_tx, backend_services, project_id, update_tag)
 
 
@@ -265,7 +274,8 @@ def load_backend_services_tx(
         service.sessionAffinity = s.sessionAffinity,
         service.loadBalancingScheme = s.loadBalancingScheme,
         service.defaultTtl = s.defaultTtl,
-        service.negativeCaching = s.cdnPolicy.negativeCaching
+        service.negativeCaching = s.cdnPolicy.negativeCaching,
+        service.backend_groups = s.backend_groups
     WITH service
     MATCH (owner:GCPProject{id:$ProjectId})
     MERGE (owner)-[r:RESOURCE]->(service)

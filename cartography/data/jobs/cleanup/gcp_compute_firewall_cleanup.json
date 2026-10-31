@@ -1,19 +1,19 @@
 {
 	"statements": [
 		{
-			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)-[:ALLOWED_BY|DENIED_BY]->(:GCPIpRule)-[r:MEMBER_OF_IP_RULE]->(:IpRange) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)<-[:ALLOWED_BY|DENIED_BY]-(:GCPIpRule)<-[r:MEMBER_OF_IP_RULE]-() WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
-			"__comment__": "Remove GCP IpRule-to-IpRange relationships that are out of date."
+			"__comment__": "Remove GCP IpRule-to-IpRange/Ipv6Range relationships that are out of date. Directions match ingestion: (range)-[:MEMBER_OF_IP_RULE]->(rule)-[:ALLOWED_BY|DENIED_BY]->(firewall). Range nodes are shared by every tenant, so only the edge is removed."
 		},
 		{
-			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)-[:ALLOWED_BY|DENIED_BY]->(n:GCPIpRule) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)<-[:ALLOWED_BY|DENIED_BY]-(n:GCPIpRule) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
 			"__comment__": "Delete GCP Ip Rules that no longer exist and detach them from all previously connected nodes."
 		},
 		{
-			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)-[r:ALLOWED_BY|DENIED_BY]->(:GcpIpRule) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)<-[r:ALLOWED_BY|DENIED_BY]-(:GCPIpRule) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
 			"__comment__": "Remove GCP Firewall-to-IpRule relationships that are out of date."
@@ -31,10 +31,10 @@
 			"__comment__": "Remove GCP Firewall-to-PublicIpAddress relationships that are out of date."
 		},
 		{
-			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)-[r:HAS_TARGET_TAG]-(:GCPTag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)-[r:TARGET_TAG]->(:GCPNetworkTag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
-			"__comment__": "Remove GCP Firewall-to-Tag relationships that are out of date. Deleting the tag itself is taken care of in GCP instance cleanup."
+			"__comment__": "Remove GCP Firewall-to-NetworkTag relationships that are out of date. Instance TAGGED edges are cleaned in GCP instance cleanup; tag nodes are kept."
 		},
 		{
 			"query": "MATCH (n:GCPFirewall)<-[:RESOURCE]-(:GCPVpc)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",

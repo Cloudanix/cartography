@@ -127,9 +127,17 @@ def transform_dataset_accesses(response_objects: List[Dict], dataset_id: str, pr
         # rather than role-based ACLs.
         if 'role' not in res:
             continue
-        res['id'] = f"projects/{project_id}/bigquery/{dataset_id}/role/{res['role']}"
+        # One node per role AND member: keyed on the role alone, every member of a role shared one node and the
+        # last entry overwrote the others (e.g. allUsers READER lost to a user READER).
+        member_field = next((f for f in DATASET_ACCESS_MEMBER_FIELDS if res.get(f)), None)
+        member = f"/{member_field}/{res[member_field]}" if member_field else ""
+        res['id'] = f"projects/{project_id}/bigquery/{dataset_id}/role/{res['role']}{member}"
         accesses_list.append(res)
     return accesses_list
+
+
+# Fields of a dataset access entry that name its member ("[Pick one]" in the API).
+DATASET_ACCESS_MEMBER_FIELDS = ('userByEmail', 'groupByEmail', 'domain', 'specialGroup', 'iamMember')
 
 
 @timeit
@@ -151,6 +159,7 @@ def attach_dataset_to_accesses_tx(
     SET
         access.lastupdated = $gcp_update_tag,
         access.special_group = record.specialGroup,
+        access.iam_member = record.iamMember,
         access.role = record.role
     WITH access
     MATCH (dataset:GCPBigqueryDataset{id:$DatasetId})

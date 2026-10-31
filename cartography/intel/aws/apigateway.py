@@ -12,6 +12,7 @@ import boto3
 import botocore
 import neo4j
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
@@ -150,6 +151,46 @@ def get_apigateway_rest_apis(boto3_session: boto3.session.Session, region: str) 
 
 
 @timeit
+def get_public_custom_domains(boto3_session: boto3.session.Session, region: str) -> Optional[Dict[str, List[str]]]:
+    """
+    Maps each REST API id in the region to the non-PRIVATE custom domain names whose base path mappings point at it.
+    Returns None when the custom domains cannot be read (unknown).
+    """
+    try:
+        client = boto3_session.client('apigateway', region_name=region, config=get_botocore_config())
+        domains: List[Dict] = []
+        for page in client.get_paginator('get_domain_names').paginate():
+            domains.extend(page['items'])
+        public_domains: Dict[str, List[str]] = {}
+        for domain in domains:
+            # A private custom domain is reachable only through VPC endpoints.
+            if 'PRIVATE' in domain.get('endpointConfiguration', {}).get('types', []):
+                continue
+            for page in client.get_paginator('get_base_path_mappings').paginate(domainName=domain['domainName']):
+                for mapping in page.get('items', []):
+                    public_domains.setdefault(mapping['restApiId'], []).append(domain['domainName'])
+        return public_domains
+    except (ClientError, BotoCoreError) as e:
+        logger.warning(f"Failed to retrieve API Gateway custom domains in {region} - {e}")
+        return None
+
+
+@timeit
+def add_public_custom_domains(boto3_session: boto3.session.Session, apis: List[Dict]) -> None:
+    """
+    Sets public_custom_domains on each API whose default execute-api endpoint is disabled: the list of public
+    custom domains that map to it, or None when they cannot be read. Only regions with such APIs are queried.
+    """
+    disabled = [api for api in apis if api.get('disableExecuteApiEndpoint')]
+    for region in {api['region'] for api in disabled}:
+        public_domains = get_public_custom_domains(boto3_session, region)
+        for api in disabled:
+            if api['region'] != region:
+                continue
+            api['public_custom_domains'] = None if public_domains is None else public_domains.get(api['id'], [])
+
+
+@timeit
 def transform_apigateway_rest_apis(apis):
     # neo4j does not accept datetime objects and values. This loop is used to convert
     # these values to string.
@@ -274,6 +315,7 @@ def load_apigateway_rest_apis(
     rest_api.minimumcompressionsize = r.minimumCompressionSize,
     rest_api.name = r.name,
     rest_api.disableexecuteapiendpoint = r.disableExecuteApiEndpoint,
+    rest_api.public_custom_domains = r.public_custom_domains,
     rest_api.endpoint_conf_types = r.endpointConfiguration.types,
     rest_api.lastupdated = $aws_update_tag,
     rest_api.region = r.region,
@@ -305,16 +347,19 @@ def load_apigateway_rest_apis(
 
 @timeit
 def _load_apigateway_policies(
-        neo4j_session: neo4j.Session, policies: List, update_tag: int,
+        neo4j_session: neo4j.Session, policies: List[Dict], aws_account_id: str, update_tag: int,
 ) -> None:
     """
-    Ingest API Gateway REST API policy results into neo4j.
+    Store on each REST API whether its resource policy is internet accessible (policy_internet_accessible).
+
+    Plain SET of this sync's result. anonymous_access is deliberately left alone: the exposure job flags a
+    REGIONAL/EDGE API public unless this says the policy shuts the internet out, and a PRIVATE API is never
+    reachable from the internet whatever its policy says.
     """
     ingest_policies = """
     UNWIND $DictList as policy
-    MATCH (r:APIGatewayRestAPI) where r.name = policy.api_id
-    SET r.anonymous_access = (coalesce(r.anonymous_access, false) OR policy.internet_accessible),
-    r.anonymous_actions = coalesce(r.anonymous_actions, []) + policy.accessible_actions,
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(r:APIGatewayRestAPI{id: policy.api_id})
+    SET r.policy_internet_accessible = policy.internet_accessible,
     r.lastupdated = $UpdateTag
     """
 
@@ -322,6 +367,7 @@ def _load_apigateway_policies(
         neo4j_session,
         ingest_policies,
         policies,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -470,9 +516,8 @@ def load_rest_api_details(
     resources: List[Dict] = []
     policies: List = []
     for api_id, stage, certificate, resource, policy, region in stages_certificate_resources:
-        parsed_policy = parse_policy(api_id, policy)
-        if parsed_policy is not None:
-            policies.append(parsed_policy)
+        # One row per API, policy or not, so a deleted policy clears the previous sync's value.
+        policies.append(parse_policy(api_id, policy))
 
         if len(stage) > 0:
             for s in stage:
@@ -490,8 +535,8 @@ def load_rest_api_details(
 
         if len(certificate) > 0:
             for cert in certificate:
-                cert['apiId']: api_id
-                cert['region']: region
+                cert['apiId'] = api_id
+                cert['region'] = region
 
             certificates.extend(certificate)
 
@@ -503,7 +548,7 @@ def load_rest_api_details(
     )
 
     partition = get_partition_from_params(common_job_parameters)
-    _load_apigateway_policies(neo4j_session, policies, update_tag)
+    _load_apigateway_policies(neo4j_session, policies, aws_account_id, update_tag)
     _load_apigateway_stages(neo4j_session, stages, update_tag, partition)
     _load_apigateway_certificates(neo4j_session, certificates, update_tag)
     _load_apigateway_resources(neo4j_session, resources, update_tag, partition)
@@ -511,29 +556,22 @@ def load_rest_api_details(
 
 
 @timeit
-def parse_policy(api_id: str, policy: Policy) -> Optional[Dict[Any, Any]]:
+def parse_policy(api_id: str, policy: Optional[str]) -> Dict[str, Any]:
     """
-    Uses PolicyUniverse to parse API Gateway REST API policy and returns the internet accessibility results
-    """
+    Uses PolicyUniverse to tell whether an API Gateway REST API resource policy lets anyone on the internet invoke it.
 
-    if policy is not None:
+    internet_accessible is None when there is no policy or it cannot be parsed: nothing then narrows the API's
+    endpoint type, and the exposure job keeps a REGIONAL/EDGE API public.
+    """
+    if policy is None:
+        return {"api_id": api_id, "internet_accessible": None}
+    try:
         # unescape doubly escaped JSON
-        policy = policy.replace("\\", "")
-        try:
-            policy = Policy(json.loads(policy))
-            if policy.is_internet_accessible():
-                return {
-                    "api_id": api_id,
-                    "internet_accessible": True,
-                    "accessible_actions": list(policy.internet_accessible_actions()),
-                }
-            else:
-                return None
-        except json.JSONDecodeError:
-            logger.warning(f"failed to decode policy json : {policy}")
-            return None
-    else:
-        return None
+        parsed = Policy(json.loads(policy.replace("\\", "")))
+    except json.JSONDecodeError:
+        logger.warning(f"failed to decode policy json : {policy}")
+        return {"api_id": api_id, "internet_accessible": None}
+    return {"api_id": api_id, "internet_accessible": parsed.is_internet_accessible()}
 
 
 @timeit
@@ -552,6 +590,7 @@ def sync_apigateway_rest_apis(
 
     logger.info(f"Total API Gateway APIs: {len(data)}")
 
+    add_public_custom_domains(boto3_session, data)
     partition = get_partition_from_params(common_job_parameters)
     load_apigateway_rest_apis(neo4j_session, data, current_aws_account_id, aws_update_tag, partition)
 

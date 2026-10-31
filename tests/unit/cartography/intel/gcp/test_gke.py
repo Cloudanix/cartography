@@ -481,3 +481,101 @@ def test_get_gke_clusters_no_resource_labels(mocker):
 
     assert len(clusters) == 1
     assert clusters[0]["labels"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests: control-plane access fields written by load_gke_clusters
+# ---------------------------------------------------------------------------
+
+def _loaded_access_fields(mocker, **cluster_fields):
+    """Load one cluster through a mocked writer and return the access fields it stores."""
+    write = mocker.patch("cartography.intel.gcp.gke.run_write_query")
+    cluster = {
+        "id": "c1", "name": "c1", "selfLink": "link", "createTime": "t", "location": "us-central1",
+        **cluster_fields,
+    }
+    load_gke_clusters(mocker.MagicMock(), [cluster], TEST_PROJECT_ID, TEST_UPDATE_TAG)
+    kwargs = write.call_args.kwargs
+    return {
+        "private_nodes": kwargs["ClusterPrivateNodes"],
+        "private_endpoint_enabled": kwargs["ClusterPrivateEndpointEnabled"],
+        "master_authorized_networks": kwargs["ClusterMasterAuthorizedNetworks"],
+        "cidr_blocks": kwargs["ClusterMasterAuthorizedCidrBlocks"],
+        "gcp_public_cidrs": kwargs["ClusterGcpPublicCidrsAccessEnabled"],
+    }
+
+
+def test_access_fields_public_cluster_without_private_config(mocker):
+    # The API omits false booleans: a plain public cluster has no privateClusterConfig at all.
+    assert _loaded_access_fields(mocker) == {
+        "private_nodes": False, "private_endpoint_enabled": False, "master_authorized_networks": False,
+        "cidr_blocks": [], "gcp_public_cidrs": None,
+    }
+
+
+def test_access_fields_legacy_shape(mocker):
+    fields = _loaded_access_fields(
+        mocker,
+        privateClusterConfig={"enablePrivateNodes": True, "enablePrivateEndpoint": True},
+        masterAuthorizedNetworksConfig={
+            "enabled": True,
+            "cidrBlocks": [{"displayName": "office", "cidrBlock": "203.0.113.0/24"}, {"displayName": "no-cidr"}],
+            "gcpPublicCidrsAccessEnabled": True,
+        },
+    )
+    assert fields == {
+        "private_nodes": True, "private_endpoint_enabled": True, "master_authorized_networks": True,
+        "cidr_blocks": ["203.0.113.0/24"], "gcp_public_cidrs": True,
+    }
+
+
+def test_access_fields_legacy_private_nodes_public_endpoint(mocker):
+    # Private nodes with the public endpoint on: enablePrivateEndpoint is omitted, so it was NULL before.
+    fields = _loaded_access_fields(mocker, privateClusterConfig={"enablePrivateNodes": True})
+    assert fields["private_nodes"] is True
+    assert fields["private_endpoint_enabled"] is False
+
+
+def test_access_fields_control_plane_endpoints_shape(mocker):
+    fields = _loaded_access_fields(
+        mocker,
+        networkConfig={"defaultEnablePrivateNodes": True},
+        controlPlaneEndpointsConfig={
+            "ipEndpointsConfig": {
+                "enabled": True,
+                "enablePublicEndpoint": False,
+                "authorizedNetworksConfig": {
+                    "enabled": True,
+                    "cidrBlocks": [{"cidrBlock": "0.0.0.0/0"}],
+                    "gcpPublicCidrsAccessEnabled": False,
+                },
+            },
+        },
+    )
+    assert fields == {
+        "private_nodes": True, "private_endpoint_enabled": True, "master_authorized_networks": True,
+        "cidr_blocks": ["0.0.0.0/0"], "gcp_public_cidrs": False,
+    }
+
+
+def test_access_fields_new_shape_wins_over_legacy(mocker):
+    fields = _loaded_access_fields(
+        mocker,
+        privateClusterConfig={"enablePrivateNodes": True, "enablePrivateEndpoint": True},
+        networkConfig={"defaultEnablePrivateNodes": False},
+        controlPlaneEndpointsConfig={"ipEndpointsConfig": {"enabled": True, "enablePublicEndpoint": True}},
+        masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]},
+    )
+    assert fields["private_nodes"] is False
+    assert fields["private_endpoint_enabled"] is False
+    # The new shape carries no authorizedNetworksConfig here, so the legacy one still applies.
+    assert fields["master_authorized_networks"] is True
+    assert fields["cidr_blocks"] == ["10.0.0.0/8"]
+
+
+def test_access_fields_ip_endpoints_disabled_is_private(mocker):
+    # DNS-based endpoint only: no IP endpoint exists, every request is IAM-authorized.
+    fields = _loaded_access_fields(
+        mocker, controlPlaneEndpointsConfig={"ipEndpointsConfig": {"enabled": False}},
+    )
+    assert fields["private_endpoint_enabled"] is True

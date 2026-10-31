@@ -1,42 +1,24 @@
 {
 	"statements": [
 		{
+			"__comment": "CIDR blocks of peer VPC stubs that no peering reported in this run. A stub has no arn, no owning account and nothing but peerings and CIDR blocks attached. Skipped while another account's peering still references the stub; that account's cleanup removes it.",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:AWSVpc)<-[:ACCEPTER_VPC|REQUESTER_VPC]-(:AWSPeeringConnection)-[r:ACCEPTER_CIDR|REQUESTER_CIDR]->(n:AWSCidrBlock)<-[:BLOCK_ASSOCIATION]-(v:AWSVpc) WHERE r.lastupdated <> $UPDATE_TAG AND v.arn IS NULL AND NOT (v)<-[:RESOURCE]-(:AWSAccount) AND NOT EXISTS { MATCH (v)-[x]-() WHERE NOT type(x) IN ['ACCEPTER_VPC', 'REQUESTER_VPC', 'BLOCK_ASSOCIATION'] } AND NOT EXISTS { MATCH (n)<-[ro:ACCEPTER_CIDR|REQUESTER_CIDR]-(:AWSPeeringConnection) WHERE ro.lastupdated = $UPDATE_TAG } AND NOT EXISTS { MATCH (v)<-[:ACCEPTER_VPC|REQUESTER_VPC]-(o:AWSPeeringConnection) WHERE NOT EXISTS { MATCH (o)-[:ACCEPTER_VPC|REQUESTER_VPC]->(:AWSVpc)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID}) } } WITH DISTINCT n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		},
+		{
+			"__comment": "Peer VPC stubs referenced only by this account's stale peerings, with their CIDR blocks. Runs before the stale peerings are deleted, because they are the path to the stubs.",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:AWSVpc)<-[:ACCEPTER_VPC|REQUESTER_VPC]-(p:AWSPeeringConnection)-[:ACCEPTER_VPC|REQUESTER_VPC]->(v:AWSVpc) WHERE p.lastupdated <> $UPDATE_TAG AND v.arn IS NULL AND NOT (v)<-[:RESOURCE]-(:AWSAccount) AND NOT EXISTS { MATCH (v)-[x]-() WHERE NOT type(x) IN ['ACCEPTER_VPC', 'REQUESTER_VPC', 'BLOCK_ASSOCIATION'] } AND NOT EXISTS { MATCH (v)<-[:ACCEPTER_VPC|REQUESTER_VPC]-(o:AWSPeeringConnection) WHERE o.lastupdated = $UPDATE_TAG OR NOT EXISTS { MATCH (o)-[:ACCEPTER_VPC|REQUESTER_VPC]->(:AWSVpc)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID}) } } WITH DISTINCT v LIMIT $LIMIT_SIZE OPTIONAL MATCH (v)-[:BLOCK_ASSOCIATION]->(c:AWSCidrBlock) DETACH DELETE c, v return COUNT(DISTINCT v) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		},
+		{
 			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:AWSVpc)<-[:ACCEPTER_VPC]-(n:AWSPeeringConnection) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100
 		},
 		{
 			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:AWSVpc)<-[:REQUESTER_VPC]-(n:AWSPeeringConnection) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (n:AWSCidrBlock)<-[:BLOCK_ASSOCIATION]-(:AWSVpc)<-[:RESOURCE]-(:AWSAccount{foreign: true, id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (:AWSCidrBlock)<-[r:BLOCK_ASSOCIATION]-(:AWSVpc)<-[:RESOURCE]-(:AWSAccount{foreign: true, id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (n:AWSVpc)<-[:RESOURCE]-(:AWSAccount{foreign: true, id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (:AWSVpc)<-[r:RESOURCE]-(:AWSAccount{foreign: true, id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (:AWSVpc)-[r:VPC_PEERING]-(:AWSVpc)<-[:RESOURCE]-(:AWSAccount{foreign: true, id: $AWS_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
-			"query": "MATCH (n:AWSAccount{foreign: true, id: $AWS_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100
 		}

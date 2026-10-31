@@ -1,0 +1,18 @@
+{
+  "statements": [
+    {
+      "query": "MATCH ((n:AzureCluster)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE n.exposed_internet IS NOT NULL OR n.exposed_internet_type IS NOT NULL OR n.publicContext IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (aks:AzureCluster)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(aks.enablePrivateCluster, false) = false AND (size(coalesce(aks.authorizedIPRanges, [])) = 0 OR '0.0.0.0/0' IN aks.authorizedIPRanges) SET aks.exposed_internet = true, aks.exposed_internet_type = ['public_api_server'];",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (aks:AzureCluster)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE aks.exposed_internet = true SET aks.publicContext = apoc.convert.toJson([{resource: aks.id, resourceType: 'azure-containers-aks-cluster', context: [{clusterId: aks.id, clusterName: aks.name, privateCluster: aks.enablePrivateCluster, authorizedIpRanges: coalesce(aks.authorizedIPRanges, []), exposureTypes: aks.exposed_internet_type, location: aks.location}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "Azure AKS cluster asset internet exposure"
+}

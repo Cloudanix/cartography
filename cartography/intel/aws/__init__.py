@@ -30,7 +30,7 @@ from cartography.intel.aws.util.arns import PARTITION_PARAM
 from cartography.stats import get_stats_client
 from cartography.util import is_aws_access_denied
 from cartography.util import merge_module_sync_metadata
-from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -366,18 +366,6 @@ def _sync_one_account(
     )
 
     run_analysis_job(
-        "aws_lambda_function_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_s3acl_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
         "aws_s3_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
@@ -397,6 +385,13 @@ def _sync_one_account(
 
     run_analysis_job(
         "aws_apigateway_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    # Must run after the API Gateway (and ELB) jobs: a Lambda behind an API Gateway or ALB
+    # trigger is only public when that REST API / load balancer is.
+    run_analysis_job(
+        "aws_lambda_function_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
@@ -423,6 +418,21 @@ def _sync_one_account(
     )
     run_analysis_job(
         "aws_emr_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_sns_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_sqs_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_sagemaker_notebook_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
