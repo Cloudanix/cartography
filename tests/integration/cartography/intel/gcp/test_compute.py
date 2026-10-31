@@ -734,7 +734,8 @@ def _seed_vms(neo4j_session, vms):
         MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
         SET i.natIP = v.nat_ip, i.status = coalesce(v.status, 'RUNNING'), i.exposed_internet = v.exposed_before,
             i.exposed_internet_type = CASE WHEN v.exposed_before THEN ['nat_ip'] END
-        MERGE (vpc:GCPVpc{id: coalesce(v.vpc, 'vpc-none')})
+        // The project's own networks: their firewalls (if any) are known.
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: coalesce(v.vpc, 'vpc-none')})
         MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
         FOREACH (tag IN coalesce(v.tags, []) | MERGE (t:GCPNetworkTag{id: v.vpc + '/' + tag}) MERGE (i)-[:TAGGED]->(t))
         """,
@@ -1060,11 +1061,12 @@ def test_shared_vpc_firewalls_apply_only_within_the_workspace_and_org(neo4j_sess
         {'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': ws, 'GCP_ORGANIZATION_ID': org, 'GCP_PROJECT_ID': svc},
     )
 
-    flagged = neo4j_session.run(
-        "MATCH (:GCPProject{id: $svc})-[:RESOURCE]->(i:GCPInstance) WHERE i.exposed_internet RETURN i.id AS id",
-        svc=svc,
-    ).value()
-    assert sorted(flagged) == ['xproj-vm-host', 'xproj-vm-host-tagged']
+    open_fw, unresolved = 'unrestricted_access_from_firewall', 'public_ip_unresolved_firewall'
+    # The networks only another workspace synced are unresolved here: public by the fail-safe, not by their rules.
+    assert _exposed_types(neo4j_session, svc) == {
+        'xproj-vm-host': [open_fw], 'xproj-vm-host-tagged': [open_fw],
+        'xproj-vm-foreign': [unresolved], 'xproj-vm-foreign-tagged': [unresolved],
+    }
     edges = neo4j_session.run(
         "MATCH (fw:GCPFirewall)-[:FIREWALL_INGRESS]->(i:GCPInstance) WHERE i.id STARTS WITH 'xproj-' "
         "RETURN i.id AS id",
@@ -1281,14 +1283,57 @@ def test_shared_vpc_firewalls_of_another_workspace_never_apply(neo4j_session):
 
     rows = neo4j_session.run(
         "MATCH (:GCPProject{id: 'proj-iso-svc'})-[:RESOURCE]->(i:GCPInstance) WHERE i.exposed_internet "
-        "RETURN i.id AS id, i.publicContext AS ctx",
+        "RETURN i.id AS id, i.exposed_internet_type AS types, i.publicContext AS ctx",
     ).data()
-    assert sorted(r['id'] for r in rows) == ['iso-vm-both', 'iso-vm-host-a']
+    # B's host network counts as unresolved for workspace A (its firewalls are never read), never as matched.
+    open_fw, unresolved = 'unrestricted_access_from_firewall', 'public_ip_unresolved_firewall'
+    assert {r['id']: r['types'] for r in rows} == {
+        'iso-vm-host-a': [open_fw], 'iso-vm-both': [open_fw, unresolved], 'iso-vm-host-b': [unresolved],
+    }
     for r in rows:
         # A set: earlier tests in this module MERGE duplicate 0.0.0.0/0 IpRange nodes, which repeats rows.
         firewalls = {f['firewallId'] for f in json.loads(r['ctx'])[0]['context'][0]['firewallRules']}
-        assert firewalls == {host_a + '/fw-ssh'}
+        assert firewalls == (set() if r['id'] == 'iso-vm-host-b' else {host_a + '/fw-ssh'})
     edges = neo4j_session.run(
         "MATCH (fw:GCPFirewall)-[:FIREWALL_INGRESS]->(i:GCPInstance) WHERE i.id STARTS WITH 'iso-' RETURN fw.id AS fw",
     ).value()
     assert set(edges) == {host_a + '/fw-ssh'}
+
+
+def test_vm_with_external_ip_on_a_network_whose_firewalls_we_cannot_see_is_public(neo4j_session):
+    _load_project_for(neo4j_session, 'ws-unres-a', 'proj-unres-svc')
+    _load_project_for(neo4j_session, 'ws-unres-b', 'proj-unres-host-b')
+    neo4j_session.run(
+        """
+        MATCH (svc:GCPProject{id: 'proj-unres-svc'}), (hb:GCPProject{id: 'proj-unres-host-b'})
+        MERGE (svc)-[:RESOURCE]->(own:GCPVpc{id: 'projects/proj-unres-svc/global/networks/own'})
+        MERGE (hb)-[:RESOURCE]->(other:GCPVpc{id: 'projects/proj-unres-host-b/global/networks/shared'})
+        // Host project not onboarded anywhere: only the stub the instance loader merges.
+        MERGE (stub:GCPVpc{id: 'projects/proj-unres-unsynced/global/networks/shared'})
+        WITH svc, own, other, stub
+        UNWIND [
+            {id: 'unres-own-net', vpc: own, nat: '34.4.4.1'},
+            {id: 'unres-other-workspace', vpc: other, nat: '34.4.4.2'},
+            {id: 'unres-unsynced-ipv6', vpc: stub, ipv6: '2600:1900::9'},
+            {id: 'unres-no-external-ip', vpc: stub},
+            {id: 'unres-stopped', vpc: stub, nat: '34.4.4.3', status: 'TERMINATED'}
+        ] AS v
+        MERGE (svc)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.natIP = v.nat, i.ipv6_nat_ip = v.ipv6, i.status = coalesce(v.status, 'RUNNING')
+        WITH i, v.vpc AS vpc
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        """,
+    )
+
+    run_analysis_job(
+        'gcp_compute_instance_analysis.json', neo4j_session,
+        {
+            'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-unres-a', 'GCP_ORGANIZATION_ID': TENANT_ORG,
+            'GCP_PROJECT_ID': 'proj-unres-svc',
+        },
+    )
+
+    assert _exposed_types(neo4j_session, 'proj-unres-svc') == {
+        'unres-other-workspace': ['public_ip_unresolved_firewall'],
+        'unres-unsynced-ipv6': ['public_ip_unresolved_firewall'],
+    }
