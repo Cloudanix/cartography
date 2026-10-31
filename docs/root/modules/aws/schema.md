@@ -2468,6 +2468,39 @@ Representation of an AWS [API Gateway Resource](https://docs.aws.amazon.com/apig
         (APIGatewayRestAPI)-[RESOURCE]->(APIGatewayResource)
         ```
 
+### AppSyncGraphqlApi
+
+Representation of an AWS [AppSync GraphQL API](https://docs.aws.amazon.com/appsync/latest/APIReference/API_GraphqlApi.html), from `ListGraphqlApis`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the API |
+| arn | The ARN of the API |
+| api\_id | The API ID |
+| name | The API name |
+| region | The region of the API |
+| authentication\_type | The primary authorization mode (`API_KEY`, `AWS_IAM`, `AMAZON_COGNITO_USER_POOLS`, `OPENID_CONNECT`, `AWS_LAMBDA`) |
+| additional\_authentication\_types | The authorization modes of the additional authentication providers |
+| waf\_web\_acl\_arn | The ARN of the WAF web ACL associated with the API, if any |
+| visibility | `GLOBAL` (public endpoint) or `PRIVATE` (reachable only through an interface VPC endpoint). Defaults to `GLOBAL` when absent |
+| api\_type | `GRAPHQL` or `MERGED` |
+| xray\_enabled | Whether X-Ray tracing is enabled |
+| log\_field\_log\_level | The field-level log level (`NONE`, `ERROR`, `ALL`, ...), when logging is configured |
+| graphql\_uri | The GraphQL endpoint URI |
+| exposed\_internet | Set by `aws_appsync_asset_exposure.json` when the API has a `GLOBAL` (public) endpoint |
+| exposed\_internet\_type | `global_endpoint`, plus `api_key_auth` when `API_KEY` is the primary or an additional auth mode |
+| publicContext | JSON: auth modes, WAF web ACL, endpoint and exposure types of an exposed API |
+
+#### Relationships
+
+- AppSync GraphQL APIs are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AppSyncGraphqlApi)
+        ```
+
 ### AutoScalingGroup
 
 Representation of an AWS [Auto Scaling Group Resource](https://docs.aws.amazon.com/autoscaling/ec2/userguide/AutoScalingGroup.html).
@@ -2626,6 +2659,83 @@ Representation of an AWS [Secrets Manager Secret](https://docs.aws.amazon.com/se
 
         ```
         (AWSAccount)-[RESOURCE]->(SecretsManagerSecret)
+        ```
+
+### DMSReplicationInstance
+
+Representation of an AWS [DMS replication instance](https://docs.aws.amazon.com/dms/latest/APIReference/API_ReplicationInstance.html), from `DescribeReplicationInstances`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the replication instance |
+| arn | The ARN of the replication instance |
+| name, replication\_instance\_identifier | The replication instance identifier |
+| region | The region of the replication instance |
+| replication\_instance\_class | The compute class, e.g. `dms.t3.medium` |
+| status | The replication instance status |
+| engine\_version | The DMS engine version |
+| publicly\_accessible | Whether the instance has a public IP address |
+| auto\_minor\_version\_upgrade | Whether minor engine upgrades are applied automatically |
+| multi\_az | Whether the instance is Multi-AZ |
+| kms\_key\_id | The KMS key that encrypts the instance storage |
+| network\_type | `IPV4` or `DUAL` |
+| availability\_zone | The Availability Zone of the instance |
+| public\_ip\_addresses | The public IP addresses of the instance |
+| private\_ip\_addresses | The private IP addresses of the instance |
+| security\_group\_ids | The VPC security group ids of the instance |
+| subnet\_group\_identifier | The replication subnet group |
+| vpc\_id | The VPC of the replication subnet group |
+| subnet\_ids | The subnets of the replication subnet group |
+| exposed\_internet | Set by `aws_dms_asset_exposure.json` when a publicly accessible instance is reachable from the internet |
+| exposed\_internet\_type | `publicly_accessible_open_sg` (a security group admits 0.0.0.0/0 or ::/0) or `publicly_accessible_sg_unresolved` (its security groups are not all in the graph, or it lists none) |
+| publicContext | JSON: public IPs, status, open security group rules or unresolved security group ids |
+
+#### Relationships
+
+- DMS replication instances are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(DMSReplicationInstance)
+        ```
+
+- DMS replication instances are members of their VPC security groups and subnets. These edges are created after
+  every service has synced (`link_replication_instance_networks`), only to nodes of the same account.
+
+        ```
+        (DMSReplicationInstance)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+        (DMSReplicationInstance)-[PART_OF_SUBNET]->(EC2Subnet)
+        ```
+
+### DMSEndpoint
+
+Representation of an AWS [DMS endpoint](https://docs.aws.amazon.com/dms/latest/APIReference/API_Endpoint.html), from `DescribeEndpoints`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the endpoint |
+| arn | The ARN of the endpoint |
+| name, endpoint\_identifier | The endpoint identifier |
+| region | The region of the endpoint |
+| endpoint\_type | `SOURCE` or `TARGET` |
+| engine\_name | The database engine, e.g. `postgres`, `s3` |
+| server\_name | The database server name |
+| port | The database port |
+| database\_name | The database name |
+| status | The endpoint status |
+| ssl\_mode | `none`, `require`, `verify-ca` or `verify-full`; `none` when the API omits it |
+| certificate\_arn | The ARN of the TLS certificate |
+| kms\_key\_id | The KMS key that encrypts the connection parameters |
+
+#### Relationships
+
+- DMS endpoints are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(DMSEndpoint)
         ```
 
 ### EBSVolume
@@ -2999,6 +3109,53 @@ Representation of an AWS EC2 [Elastic IP address](https://docs.aws.amazon.com/AW
 
         ```
         (NetworkInterface)-[ELASTIC_IP_ADDRESS]->(ElasticIPAddress)
+        ```
+
+### ElasticBeanstalkEnvironment
+
+Representation of an AWS [Elastic Beanstalk environment](https://docs.aws.amazon.com/elasticbeanstalk/latest/api/API_EnvironmentDescription.html), from `DescribeEnvironments` (terminated environments skipped), `DescribeEnvironmentResources` and `DescribeConfigurationSettings`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the environment |
+| arn | The ARN of the environment |
+| name | The environment name |
+| environment\_id | The environment ID (`e-...`) |
+| application\_name | The application the environment belongs to |
+| region | The region of the environment |
+| status | The environment status (`Ready`, `Updating`, ...) |
+| health, health\_status | The environment health color and enhanced health status |
+| tier\_name, tier\_type | `WebServer`/`Standard` or `Worker`/`SQS/HTTP` |
+| cname | The environment CNAME |
+| endpoint\_url | The load balancer DNS name, or the instance's Elastic IP for a single-instance environment |
+| platform\_arn, solution\_stack\_name, version\_label | Platform and deployed application version |
+| listener\_protocols | Protocols of the load balancer listeners from the configuration option settings |
+| environment\_type | `LoadBalanced` or `SingleInstance` (option `aws:elasticbeanstalk:environment` `EnvironmentType`) |
+| resources\_resolved | False when `DescribeEnvironmentResources` failed for the environment |
+| load\_balancer\_names | The environment's load balancers: names for Classic ELBs, ARNs for application / network load balancers |
+| instance\_ids | The environment's EC2 instance ids |
+| exposed\_internet | Set by `aws_elasticbeanstalk_asset_exposure.json` when a web server environment is reachable from the internet; worker environments are never flagged |
+| exposed\_internet\_type | `load_balancer` (one of its load balancers is exposed), `instance` (no load balancer and one of its instances is exposed) or `unresolved` (its resources could not be read, or a load balancer / instance is not in the graph) |
+| publicContext | JSON: CNAME, endpoint, tier and the exposed load balancers / instances or the unresolved ones |
+
+#### Relationships
+
+- Elastic Beanstalk environments are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(ElasticBeanstalkEnvironment)
+        ```
+
+- Elastic Beanstalk environments use load balancers and run on EC2 instances. These edges are created after every
+  service has synced (`link_environment_resources`), only to nodes of the same account (load balancers matched by
+  ARN, or by name in the environment's region).
+
+        ```
+        (ElasticBeanstalkEnvironment)-[USES_LOAD_BALANCER]->(LoadBalancerV2)
+        (ElasticBeanstalkEnvironment)-[USES_LOAD_BALANCER]->(LoadBalancer)
+        (ElasticBeanstalkEnvironment)-[HAS_INSTANCE]->(EC2Instance)
         ```
 
 ### ECSCluster

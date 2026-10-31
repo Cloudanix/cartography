@@ -34,6 +34,26 @@ def test_account_sync_does_not_run_the_duplicate_s3acl_job(mocker, monkeypatch):
     assert "aws_s3acl_analysis.json" not in jobs
 
 
+def test_account_sync_runs_the_appsync_exposure_job(mocker, monkeypatch):
+    jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
+
+    assert "aws_appsync_asset_exposure.json" in jobs
+
+
+def test_account_sync_runs_the_dms_exposure_job(mocker, monkeypatch):
+    jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
+
+    assert "aws_dms_asset_exposure.json" in jobs
+
+
+def test_account_sync_runs_the_beanstalk_exposure_job_after_the_elb_and_instance_jobs(mocker, monkeypatch):
+    jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
+
+    beanstalk = jobs.index("aws_elasticbeanstalk_asset_exposure.json")
+    assert beanstalk > jobs.index("aws_ec2_elb_asset_exposure.json")
+    assert beanstalk > jobs.index("aws_ec2_instance_asset_exposure.json")
+
+
 def test_every_analysis_job_run_by_account_sync_exists(mocker, monkeypatch):
     jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
 
