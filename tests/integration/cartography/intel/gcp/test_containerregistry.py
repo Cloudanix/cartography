@@ -189,3 +189,80 @@ def test_cleanup_is_scoped_to_the_synced_project(neo4j_session):
     }
     assert 'projects/ar-other-project/locations/us/repositories/keep' in ids
     assert 'projects/test-project/locations/us/repositories/stale' not in ids
+
+
+def test_sync_loads_the_latest_docker_images_per_docker_repository(neo4j_session, monkeypatch, caplog):
+    _seed_owner_chain(neo4j_session)
+    monkeypatch.setattr(cartography.intel.gcp.containerregistry, 'MAX_IMAGES_PER_REPOSITORY', 2)
+    data = tests.data.gcp.containerregistry
+    client = FakeArtifactRegistry(data.GCP_LOCATIONS, data.ARTIFACT_REGISTRY_REPOSITORIES, data.DOCKER_IMAGES)
+
+    _sync(neo4j_session, client)
+
+    # One bounded call per DOCKER repository, newest first; the PYTHON repository is not crawled.
+    assert sorted(c['parent'] for c in client.calls['dockerImages']) == sorted([data.GCR_REPO, data.MY_REPO])
+    assert {(c['pageSize'], c['orderBy']) for c in client.calls['dockerImages']} == {(2, 'update_time desc')}
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $pid})-[:RESOURCE]->(r:GCPArtifactRegistryRepository)
+              -[:CONTAINS]->(i:GCPArtifactRegistryDockerImage)
+        RETURN r.id AS repo, i.id AS id, i.name AS name, i.image_name AS image_name, i.digest AS digest,
+               i.uri AS uri, i.tags AS tags, i.image_size_bytes AS size, i.region AS region,
+               i.repository_id AS repository_id, i.project_id AS project_id
+        """,
+        pid=TEST_PROJECT_ID,
+    ).data()
+    by_id = {r['id']: r for r in rows}
+    # my-repo holds 3 images: only the 2 most recently updated are kept.
+    assert set(by_id) == {
+        f'{data.MY_REPO}/dockerImages/team%2Fapi@sha256:aaa1',
+        f'{data.MY_REPO}/dockerImages/team%2Fapi@sha256:aaa2',
+        f'{data.GCR_REPO}/dockerImages/nginx@sha256:bbb1',
+    }
+    latest = by_id[f'{data.MY_REPO}/dockerImages/team%2Fapi@sha256:aaa1']
+    assert latest['repo'] == data.MY_REPO
+    assert latest['name'] == 'team/api@sha256:aaa1'
+    assert latest['image_name'] == 'team/api'
+    assert latest['digest'] == 'sha256:aaa1'
+    assert latest['uri'] == 'us-central1-docker.pkg.dev/test-project/my-repo/team/api@sha256:aaa1'
+    assert latest['tags'] == ['v3', 'latest']
+    assert latest['size'] == 52428800
+    assert latest['region'] == 'us-central1'
+    assert latest['repository_id'] == data.MY_REPO
+    assert latest['project_id'] == TEST_PROJECT_ID
+    assert by_id[f'{data.GCR_REPO}/dockerImages/nginx@sha256:bbb1']['region'] == 'us'
+
+    truncated = [r for r in caplog.records if r.levelname == 'WARNING' and 'most recent' in r.getMessage()]
+    assert len(truncated) == 1
+    assert data.MY_REPO in truncated[0].getMessage()
+
+
+def test_image_cleanup_drops_images_that_left_the_window_and_stays_in_the_project(neo4j_session):
+    _seed_owner_chain(neo4j_session)
+    data = tests.data.gcp.containerregistry
+    other_image = 'projects/ar-other-project/locations/us/repositories/r/dockerImages/x@sha256:1'
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $other})
+        MERGE (p)-[:RESOURCE]->(r:GCPArtifactRegistryRepository{id: $other_repo})
+        SET r.lastupdated = 1
+        MERGE (r)-[:CONTAINS]->(i:GCPArtifactRegistryDockerImage{id: $other_image})
+        SET i.lastupdated = 1
+        WITH 1 AS x
+        MATCH (r:GCPArtifactRegistryRepository{id: $my_repo})
+        MERGE (r)-[:CONTAINS]->(old:GCPArtifactRegistryDockerImage{id: $old_image})
+        SET old.lastupdated = 1
+        """,
+        other=OTHER_PROJECT_ID, other_image=other_image, my_repo=data.MY_REPO,
+        other_repo='projects/ar-other-project/locations/us/repositories/r',
+        old_image=f'{data.MY_REPO}/dockerImages/team%2Fapi@sha256:old',
+    )
+    client = FakeArtifactRegistry(data.GCP_LOCATIONS, data.ARTIFACT_REGISTRY_REPOSITORIES, data.DOCKER_IMAGES)
+
+    _sync(neo4j_session, client)
+
+    ids = {r['id'] for r in neo4j_session.run('MATCH (i:GCPArtifactRegistryDockerImage) RETURN i.id AS id').data()}
+    assert other_image in ids
+    assert f'{data.MY_REPO}/dockerImages/team%2Fapi@sha256:old' not in ids
+    assert f'{data.MY_REPO}/dockerImages/team%2Fapi@sha256:aaa3' in ids  # default window (50) keeps all 3

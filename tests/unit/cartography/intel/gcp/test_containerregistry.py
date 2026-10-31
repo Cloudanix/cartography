@@ -94,3 +94,29 @@ def test_disabled_api_raises_for_the_dispatcher_to_skip_quietly():
     with pytest.raises(HttpError) as raised:
         containerregistry.get_artifact_registry_locations(client, PROJECT_ID)
     assert cartography.intel.gcp._is_service_not_enabled_error(raised.value) is True
+
+
+REPOSITORY = {'id': 'projects/test-project/locations/us/repositories/r', 'project_id': PROJECT_ID}
+
+
+@pytest.mark.parametrize(
+    'status, error', [
+        (403, PERMISSION_DENIED),
+        (404, {'code': 404, 'status': 'NOT_FOUND', 'message': 'Repository not found'}),
+    ],
+)
+def test_docker_images_of_one_unreadable_repository_are_skipped(status, error):
+    client = MagicMock()
+    client.projects().locations().repositories().dockerImages().list().execute.side_effect = _http_error(status, error)
+
+    assert containerregistry.get_artifact_registry_docker_images(client, REPOSITORY) == []
+
+
+def test_docker_images_other_errors_raise():
+    client = MagicMock()
+    client.projects().locations().repositories().dockerImages().list().execute.side_effect = _http_error(
+        500, {'code': 500, 'status': 'INTERNAL', 'message': 'boom'},
+    )
+
+    with pytest.raises(HttpError):
+        containerregistry.get_artifact_registry_docker_images(client, REPOSITORY)

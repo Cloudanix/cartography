@@ -53,3 +53,51 @@ ARTIFACT_REGISTRY_REPOSITORIES = [
         },
     },
 ]
+
+MY_REPO = "projects/test-project/locations/us-central1/repositories/my-repo"
+GCR_REPO = "projects/test-project/locations/us/repositories/gcr.io"
+
+DOCKER_IMAGES = {
+    MY_REPO: [
+        {
+            # image names containing "/" are URL-encoded in the resource name, not in the uri
+            "name": f"{MY_REPO}/dockerImages/team%2Fapi@sha256:aaa1",
+            "uri": "us-central1-docker.pkg.dev/test-project/my-repo/team/api@sha256:aaa1",
+            "tags": ["v3", "latest"],
+            "imageSizeBytes": "52428800",
+            "uploadTime": "2024-05-03T00:00:00Z",
+            "buildTime": "2024-05-02T23:00:00Z",
+            "updateTime": "2024-05-03T00:00:00Z",
+            "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        },
+        {
+            "name": f"{MY_REPO}/dockerImages/team%2Fapi@sha256:aaa2",
+            "uri": "us-central1-docker.pkg.dev/test-project/my-repo/team/api@sha256:aaa2",
+            "tags": ["v2"],
+            "imageSizeBytes": "52428000",
+            "uploadTime": "2024-05-02T00:00:00Z",
+            "updateTime": "2024-05-02T00:00:00Z",
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "imageManifests": [{"architecture": "amd64", "os": "linux", "digest": "sha256:m1"}],
+        },
+        {
+            "name": f"{MY_REPO}/dockerImages/team%2Fapi@sha256:aaa3",
+            "uri": "us-central1-docker.pkg.dev/test-project/my-repo/team/api@sha256:aaa3",
+            "imageSizeBytes": "52427000",
+            "uploadTime": "2024-05-01T00:00:00Z",
+            "updateTime": "2024-05-01T00:00:00Z",
+            "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        },
+    ],
+    GCR_REPO: [
+        {
+            "name": f"{GCR_REPO}/dockerImages/nginx@sha256:bbb1",
+            "uri": "gcr.io/test-project/nginx@sha256:bbb1",
+            "tags": ["1.25"],
+            "imageSizeBytes": "70000000",
+            "uploadTime": "2024-04-01T00:00:00Z",
+            "updateTime": "2024-04-01T00:00:00Z",
+            "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        },
+    ],
+}

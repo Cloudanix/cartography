@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from urllib.parse import unquote
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -20,6 +21,13 @@ gcp_console_link = GCPLinker()
 
 # Maximum page size of repositories.list; one call per location covers almost every project.
 REPOSITORY_PAGE_SIZE = 1000
+# Docker image history is unbounded (one image per CI push). Only the most recently updated images per repository
+# are ingested, fetched in a single dockerImages.list page (max pageSize is 1000), so a repository costs exactly one
+# call. 50 covers what is deployed plus a rollback window; older digests are history, not inventory.
+MAX_IMAGES_PER_REPOSITORY = 50
+IMAGES_ORDER_BY = 'update_time desc'
+# Virtual repositories only re-expose images of their upstream repositories, which are listed on their own.
+SKIP_IMAGE_REPOSITORY_MODES = {'VIRTUAL_REPOSITORY'}
 
 
 def _http_error_details(e: HttpError) -> Dict:
@@ -178,6 +186,124 @@ def cleanup_artifact_registry_repositories(neo4j_session: neo4j.Session, common_
 
 
 @timeit
+def get_artifact_registry_docker_images(artifacts: Resource, repository: Dict) -> List[Dict]:
+    """
+    The MAX_IMAGES_PER_REPOSITORY most recently updated images of one DOCKER repository, in a single call.
+    A WARNING names the repository when older images were left out.
+    """
+    try:
+        response = artifacts.projects().locations().repositories().dockerImages().list(
+            parent=repository['id'],
+            pageSize=MAX_IMAGES_PER_REPOSITORY,
+            orderBy=IMAGES_ORDER_BY,
+        ).execute()
+    except HttpError as e:
+        err = _http_error_details(e)
+        # Permission denied on one repository, or a repository deleted since it was listed: skip it only.
+        if _is_permission_denied(e, err) or e.resp.status == 404:
+            logger.warning(
+                "Could not list docker images of Artifact Registry repository %s on project %s. Code: %s, Message: %s",
+                repository['id'], repository['project_id'], err.get('code'), err.get('message'),
+            )
+            return []
+        raise
+    if response.get('nextPageToken'):
+        logger.warning(
+            "Artifact Registry repository %s on project %s has more docker images than the %s most recent ones "
+            "ingested; older images are skipped.",
+            repository['id'], repository['project_id'], MAX_IMAGES_PER_REPOSITORY,
+        )
+    return response.get('dockerImages', [])
+
+
+@timeit
+def transform_artifact_registry_docker_images(images: List[Dict], repository: Dict) -> List[Dict]:
+    transformed = []
+    for image in images:
+        # <repository>/dockerImages/<url-encoded image path>@<digest>
+        name = unquote(image['name'].split('/dockerImages/', 1)[1])
+        image_name, _, digest = name.partition('@')
+        transformed.append({
+            'id': image['name'],
+            'name': name,
+            'image_name': image_name,
+            'digest': digest,
+            'uri': image.get('uri'),
+            'tags': image.get('tags', []),
+            # int64 fields come back as strings in the REST API
+            'image_size_bytes': int(image.get('imageSizeBytes', 0)),
+            'upload_time': image.get('uploadTime'),
+            'build_time': image.get('buildTime'),
+            'update_time': image.get('updateTime'),
+            'media_type': image.get('mediaType'),
+            'artifact_type': image.get('artifactType'),
+            'region': repository['region'],
+            'project_id': repository['project_id'],
+            'repository_id': repository['id'],
+        })
+    return transformed
+
+
+@timeit
+def load_artifact_registry_docker_images(
+    session: neo4j.Session, data_list: List[Dict], repository_id: str, update_tag: int,
+) -> None:
+    session.execute_write(load_artifact_registry_docker_images_tx, data_list, repository_id, update_tag)
+
+
+@timeit
+def load_artifact_registry_docker_images_tx(
+    tx: neo4j.Transaction, data: List[Dict], repository_id: str, gcp_update_tag: int,
+) -> None:
+    query = """
+    MATCH (repo:GCPArtifactRegistryRepository{id: $RepositoryId})
+    UNWIND $Records as record
+    MERGE (image:GCPArtifactRegistryDockerImage{id: record.id})
+    ON CREATE SET
+        image.firstseen = timestamp()
+    SET
+        image.lastupdated = $gcp_update_tag,
+        image.name = record.name,
+        image.image_name = record.image_name,
+        image.digest = record.digest,
+        image.uri = record.uri,
+        image.tags = record.tags,
+        image.image_size_bytes = record.image_size_bytes,
+        image.upload_time = record.upload_time,
+        image.build_time = record.build_time,
+        image.update_time = record.update_time,
+        image.media_type = record.media_type,
+        image.artifact_type = record.artifact_type,
+        image.region = record.region,
+        image.project_id = record.project_id,
+        image.repository_id = record.repository_id
+    MERGE (repo)-[r:CONTAINS]->(image)
+    ON CREATE SET
+        r.firstseen = timestamp()
+    SET r.lastupdated = $gcp_update_tag
+    """
+    tx.run(query, Records=data, RepositoryId=repository_id, gcp_update_tag=gcp_update_tag)
+
+
+@timeit
+def sync_artifact_registry_docker_images(
+    neo4j_session: neo4j.Session, artifacts: Resource, repositories: List[Dict], gcp_update_tag: int,
+) -> None:
+    for repository in repositories:
+        if repository['format'] != 'DOCKER' or repository['mode'] in SKIP_IMAGE_REPOSITORY_MODES:
+            continue
+        images = transform_artifact_registry_docker_images(
+            get_artifact_registry_docker_images(artifacts, repository), repository,
+        )
+        load_artifact_registry_docker_images(neo4j_session, images, repository['id'], gcp_update_tag)
+
+
+@timeit
+def cleanup_artifact_registry_docker_images(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    run_cleanup_job('gcp_artifact_registry_docker_images_cleanup.json', neo4j_session, common_job_parameters)
+
+
+@timeit
 def sync(
     neo4j_session: neo4j.Session,
     artifacts: Resource,
@@ -187,7 +313,9 @@ def sync(
     regions: list,
 ) -> None:
     """
-    Sync Artifact Registry repositories of a project. gcr.io hosts are Artifact Registry repositories now
+    Sync Artifact Registry repositories of a project, plus the latest docker images of each DOCKER repository.
+    API calls per project: 1 locations.list + 1 repositories.list per location (+1 per extra page of 1000
+    repositories) + 1 dockerImages.list per DOCKER repository. gcr.io hosts are Artifact Registry repositories now
     (Container Registry is shut down), so there is no separate Container Registry API to call.
     `regions` (compute regions) is not used: repositories also live in multi-regions (us, europe, asia), so the
     locations come from the Artifact Registry API itself, like cloudtasks.
@@ -204,7 +332,10 @@ def sync(
         neo4j_session, repositories, gcp_update_tag, common_job_parameters,
         'artifact_registry_repositories', 'GCPArtifactRegistryRepository',
     )
+    sync_artifact_registry_docker_images(neo4j_session, artifacts, repositories, gcp_update_tag)
 
+    # Images first: their cleanup walks through the repository, which the repository cleanup may delete.
+    cleanup_artifact_registry_docker_images(neo4j_session, common_job_parameters)
     cleanup_artifact_registry_repositories(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
