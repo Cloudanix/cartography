@@ -4,9 +4,12 @@ from unittest.mock import patch
 import cartography.intel.aws.eks
 from cartography.intel.aws.ec2 import instances
 from cartography.intel.aws.eks import sync
+from cartography.util import run_analysis_job
 from tests.data.aws.eks import DESCRIBE_CLUSTERS
 from tests.data.aws.eks import LIST_CLUSTERS
 from tests.integration.cartography.intel.aws.common import create_test_account
+from tests.integration.cartography.intel.aws.common import create_test_org_account
+from tests.integration.cartography.intel.aws.common import exposure_job_parameters
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
@@ -50,6 +53,47 @@ def test_sync_eks_clusters(mock_describe_clusters, mock_get_clusters, neo4j_sess
     ) == {
         ('arn:aws:eks:eu-west-1:111111111111:cluster/cluster_1', '000000000000'),
         ('arn:aws:eks:eu-west-2:222222222222:cluster/cluster_2', '000000000000'),
+    }
+
+
+def _eks_cluster(name, public_access, public_access_cidrs):
+    return {
+        'name': name,
+        'arn': f'arn:aws:eks:us-east-1:333333333333:cluster/{name}',
+        'region': 'us-east-1',
+        'resourcesVpcConfig': {
+            'endpointPublicAccess': public_access,
+            'endpointPrivateAccess': True,
+            'publicAccessCidrs': public_access_cidrs,
+        },
+    }
+
+
+def test_eks_exposure_uses_ingested_public_access_cidrs(neo4j_session):
+    account_id = '333333333333'
+    create_test_org_account(neo4j_session, 'ws-eks', 'o-eks', account_id)
+    clusters = cartography.intel.aws.eks.transform([
+        _eks_cluster('eks-open', True, ['0.0.0.0/0']),
+        _eks_cluster('eks-allowlisted', True, ['203.0.113.0/24']),
+        _eks_cluster('eks-private-only', False, ['0.0.0.0/0']),
+    ])
+    cartography.intel.aws.eks.load_eks_clusters(neo4j_session, clusters, account_id, TEST_UPDATE_TAG)
+
+    run_analysis_job(
+        'aws_eks_asset_exposure.json', neo4j_session,
+        exposure_job_parameters('ws-eks', 'o-eks', account_id, TEST_UPDATE_TAG + 1),
+    )
+
+    result = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(c:EKSCluster{exposed_internet: true})
+        RETURN c.name AS name, c.exposed_internet_type AS types, c.endpoint_private_access AS private_access,
+               c.publicContext IS NOT NULL AS has_context
+        """,
+        account_id=account_id,
+    )
+    assert {r['name']: (r['types'], r['private_access'], r['has_context']) for r in result} == {
+        'eks-open': (['direct_ipv4'], True, True),
     }
 
 
