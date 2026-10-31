@@ -10,6 +10,7 @@ from msrest.exceptions import DeserializationError
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -113,12 +114,12 @@ def get_client(
 def get_function_apps_list(client: WebSiteManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         function_app_list = list(
-            map(lambda x: x.as_dict(), client.web_apps.list()),
+            map(as_legacy_dict, client.web_apps.list()),
         )
         function_list = []
         for function in function_app_list:
             function['resource_group'] = get_azure_resource_group_name(function.get('id'))
-            function['hostNamesDisabled'] = function.get('properties', {}).get('host_names_disabled', True)
+            function['hostNamesDisabled'] = function.get('host_names_disabled', True)
             function['location'] = function.get('location', '').replace(" ", "").lower()
             function['consolelink'] = safe_console_link(function['id'], common_job_parameters)
             if regions is None:
@@ -262,7 +263,7 @@ def get_function_apps_configuration_list(
         for function in function_apps_list:
             apps_conf_list = list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.web_apps.list_configurations(
                         function['resource_group'], function['name'],
                     ),
@@ -277,7 +278,7 @@ def get_function_apps_configuration_list(
                 ]
                 conf['consolelink'] = safe_console_link(conf['id'], common_job_parameters)
                 conf["location"] = function.get("location")
-                conf['publicNetworkAccess'] = conf.get('properties', {}).get('public_network_access', 'Disabled')
+                conf['publicNetworkAccess'] = conf.get('public_network_access', 'Disabled')
             function_apps_conf_list.extend(apps_conf_list)
         return function_apps_conf_list
 
@@ -395,7 +396,7 @@ def get_function_apps_functions_list(
         try:
             functions_list = list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.web_apps.list_functions(
                         function['resource_group'],
                         function['name'],
@@ -508,7 +509,7 @@ def get_function_apps_deployments_list(
     try:
         deployments_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_deployments(
                     function['resource_group'],
                     function['name'],
@@ -624,7 +625,7 @@ def get_function_apps_backups_list(
     try:
         backups_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_backups(
                     function['resource_group'],
                     function['name'],
@@ -744,7 +745,7 @@ def get_function_apps_processes_list(
 
         processes_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 items,
             ),
         )
@@ -856,7 +857,7 @@ def get_function_apps_snapshots_list(
     try:
         snapshots_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_snapshots(
                     function['resource_group'],
                     function['name'],
@@ -972,7 +973,7 @@ def get_function_apps_webjobs_list(
     try:
         webjobs_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_web_jobs(
                     function['resource_group'],
                     function['name'],
