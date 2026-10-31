@@ -3,7 +3,6 @@ import logging
 import time
 from typing import Dict
 from typing import List
-from typing import Optional
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -16,10 +15,6 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
-
-INGRESS_ANNOTATION = 'run.googleapis.com/ingress'
-INGRESS_ALL = 'all'
-INVOKER_ROLE = 'roles/run.invoker'
 
 
 @timeit
@@ -309,45 +304,17 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
 
 @timeit
 def transform_services(services: List[Dict], project_id: str) -> List[Dict]:
-    """
-    Add id, region, consolelink, ingress and url to Knative-style service objects.
-    Ingress is the run.googleapis.com/ingress annotation (all | internal | internal-and-cloud-load-balancing);
-    GCP treats a missing annotation as all.
-    """
-    # Was `services = []` before the loop, which shadowed the input and dropped every service.
-    transformed = []
+    services = []
     for item in services:
-        metadata = item.get('metadata') or {}
-        item['region'] = (metadata.get('labels') or {}).get('cloud.googleapis.com/location')
+        item['region'] = item.get('metadata').get('labels').get('cloud.googleapis.com/location')
         item['consolelink'] = gcp_console_link.get_console_link(
             project_id=project_id,
-            cloud_run_service_name=metadata.get('name'), region=item['region'], resource_name='cloud_run_service',
+            cloud_run_service_name=item.get('metadata').get('name'), region=item['region'], resource_name='cloud_run_service',
         )
-        item['id'] = f"projects/{project_id}/services/{metadata.get('name')}"
-        item['ingress'] = (metadata.get('annotations') or {}).get(INGRESS_ANNOTATION, INGRESS_ALL)
-        item['url'] = (item.get('status') or {}).get('url')
-        transformed.append(item)
+        item['id'] = f"projects/{project_id}/services/{item.get('metadata').get('name')}"
+        services.append(item)
 
-    return transformed
-
-
-def get_service_invoker_members(cloudrun: Resource, project_id: str, service: Dict) -> Optional[List[str]]:
-    """
-    Members of the roles/run.invoker binding of one service (one getIamPolicy call, run.services.getIamPolicy).
-    None when the policy can't be read, so the exposure layers report auth as unknown instead of required.
-    """
-    name = (service.get('metadata') or {}).get('name')
-    resource = f"projects/{project_id}/locations/{service.get('region')}/services/{name}"
-    try:
-        policy = cloudrun.projects().locations().services().getIamPolicy(resource=resource).execute()
-    except HttpError as e:
-        logger.warning(f"Could not read IAM policy of Cloud Run service {resource} - {e}")
-        return None
-    return sorted({
-        member
-        for binding in policy.get('bindings', []) if binding.get('role') == INVOKER_ROLE
-        for member in binding.get('members', [])
-    })
+    return services
 
 
 @timeit
@@ -682,9 +649,6 @@ def _load_cloudrun_services_tx(
         service.observedGeneration = svc.status.observedGeneration,
         service.latestReadyRevisionName = svc.status.latestReadyRevisionName,
         service.latestCreatedRevisionName = svc.status.latestCreatedRevisionName,
-        service.ingress = svc.ingress,
-        service.url = svc.url,
-        service.invoker_members = svc.invoker_members,
         service.lastupdated = $gcp_update_tag
     WITH service
     MATCH (owner:GCPProject{id: $ProjectId})
@@ -797,8 +761,6 @@ def sync(
     # CLOUDRUN SERVICES
     svcs = get_cloudrun_services(cloudrun, project_id, common_job_parameters)
     services = transform_services(svcs, project_id)
-    for service in services:
-        service['invoker_members'] = get_service_invoker_members(cloudrun, project_id, service)
     load_cloudrun_services(neo4j_session, services, project_id, gcp_update_tag)
     cleanup_gcp_cloudrun(neo4j_session, common_job_parameters)
     label.sync_labels(

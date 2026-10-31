@@ -2,7 +2,6 @@ from cartography.intel.exposure.layers import AUTH_NONE
 from cartography.intel.exposure.layers import AUTH_REQUIRED
 from cartography.intel.exposure.layers import AUTH_UNKNOWN
 from cartography.intel.exposure.ports import PortSet
-from cartography.intel.gcp.cloudrun import transform_services
 from cartography.intel.gcp.compute import firewall_entry_strings
 from cartography.intel.gcp.compute import transform_gcp_routes
 from cartography.intel.gcp.exposure_layers import access
@@ -171,10 +170,15 @@ def test_auth_verdicts():
     viewer = {"role": "roles/viewer", "members": ["allUsers"]}
     assert access.function_auth({"bindings": [invoker]}) == (AUTH_NONE, ["invoker_allusers"])
     assert access.function_auth({"bindings": [viewer]}) == (AUTH_REQUIRED, ["iam_invoker"])
-    assert access.cloud_run_auth({"members": None})[0] == AUTH_UNKNOWN
-    assert access.cloud_run_auth({"members": ["allAuthenticatedUsers"]}) == (
-        AUTH_REQUIRED, ["invoker_allauthenticatedusers"],
+    # Properties written by cloudrun.py (PR #507); absent before it merges.
+    assert access.cloud_run_auth({})[0] == AUTH_UNKNOWN
+    assert access.cloud_run_auth({"status": "not_needed"})[0] == AUTH_UNKNOWN
+    assert access.cloud_run_auth({"status": "unresolved"})[0] == AUTH_UNKNOWN
+    assert access.cloud_run_auth({"iam_disabled": True}) == (AUTH_NONE, ["invoker_iam_disabled"])
+    assert access.cloud_run_auth({"status": "resolved", "public_invokers": ["allAuthenticatedUsers"]}) == (
+        AUTH_NONE, ["invoker_allauthenticatedusers"],
     )
+    assert access.cloud_run_auth({"status": "resolved", "public_invokers": []}) == (AUTH_REQUIRED, ["iam_invoker"])
     assert access.backend_service_auth({"iap": True}) == (AUTH_REQUIRED, ["iap"])
 
 
@@ -212,7 +216,7 @@ def test_identity_sourced_instance_edges():
     assert rows == [{"src": "app", "dst": "db", "ports": ["tcp:5432-5432"], "via": "firewall_source_tag_or_sa"}]
 
 
-def test_transform_routes_and_cloud_run_services():
+def test_transform_routes():
     routes = transform_gcp_routes(
         [{
             "name": "default-route-1", "destRange": "0.0.0.0/0", "priority": 1000,
@@ -223,14 +227,3 @@ def test_transform_routes_and_cloud_run_services():
     )
     assert routes[0]["vpc_partial_uri"] == "projects/p/global/networks/default"
     assert routes[0]["next_hop_gateway"] == "projects/p/global/gateways/default-internet-gateway"
-    services = transform_services(
-        [{
-            "metadata": {
-                "name": "svc", "labels": {"cloud.googleapis.com/location": "us-central1"},
-                "annotations": {"run.googleapis.com/ingress": "internal"},
-            },
-            "status": {"url": "https://svc.run.app"},
-        }], "p",
-    )
-    assert len(services) == 1
-    assert services[0]["ingress"] == "internal" and services[0]["url"] == "https://svc.run.app"

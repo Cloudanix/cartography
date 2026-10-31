@@ -25,6 +25,7 @@ ALL_USERS = "allUsers"
 ALL_AUTHENTICATED_USERS = "allAuthenticatedUsers"
 PUBLIC_MEMBERS = (ALL_USERS, ALL_AUTHENTICATED_USERS)
 PAP_ENFORCED = "enforced"
+IAM_POLICY_RESOLVED = "resolved"
 # Predefined roles that carry an invoke permission (same list as gcp_cloud_function_analysis.json).
 INVOKE_ROLES = frozenset({
     "roles/cloudfunctions.admin", "roles/cloudfunctions.developer", "roles/run.admin", "roles/run.developer",
@@ -58,11 +59,10 @@ def can_invoke(role: str) -> bool:
 
 
 def invoker_verdict(members: Iterable[str]) -> Verdict:
+    """allAuthenticatedUsers is any Google account: as anonymous as allUsers for an attacker."""
     public = _public(members)
-    if ALL_USERS in public:
-        return AUTH_NONE, ["invoker_allusers"]
     if public:
-        return AUTH_REQUIRED, ["invoker_allauthenticatedusers"]
+        return AUTH_NONE, [f"invoker_{m.lower()}" for m in public]
     return AUTH_REQUIRED, ["iam_invoker"]
 
 
@@ -75,9 +75,16 @@ def function_auth(row: Dict) -> Verdict:
 
 
 def cloud_run_auth(row: Dict) -> Verdict:
-    if row.get("members") is None:
-        return AUTH_UNKNOWN, ["invoker_policy_not_ingested"]
-    return invoker_verdict(row["members"])
+    """
+    Reads what cloudrun.py writes (PR #507): invoker_iam_disabled, iam_policy_status
+    (resolved | unresolved | not_needed) and public_invokers. Anything but a resolved policy is
+    unknown: not_needed means the policy was skipped (internal ingress), not that it is closed.
+    """
+    if row.get("iam_disabled"):
+        return AUTH_NONE, ["invoker_iam_disabled"]
+    if row.get("status") != IAM_POLICY_RESOLVED:
+        return AUTH_UNKNOWN, ["invoker_policy_not_read"]
+    return invoker_verdict(row.get("public_invokers") or [])
 
 
 def backend_service_auth(row: Dict) -> Verdict:
@@ -118,7 +125,14 @@ RULES: Dict[str, Tuple[str, Callable[[Dict], Verdict]]] = {
         ),
         function_auth,
     ),
-    "GCPCloudRunService": (_q("GCPCloudRunService", ", n.invoker_members AS members"), cloud_run_auth),
+    "GCPCloudRunService": (
+        _q(
+            "GCPCloudRunService",
+            ", n.invoker_iam_disabled AS iam_disabled, n.iam_policy_status AS status, "
+            "n.public_invokers AS public_invokers",
+        ),
+        cloud_run_auth,
+    ),
     "GCPBackendService": (_q("GCPBackendService", ", coalesce(n.iap_enabled, false) AS iap"), backend_service_auth),
     "GCPSQLInstance": (_q("GCPSQLInstance"), fixed(AUTH_REQUIRED, "database_credentials")),
     "GKECluster": (_q("GKECluster"), fixed(AUTH_REQUIRED, "kubernetes_auth")),

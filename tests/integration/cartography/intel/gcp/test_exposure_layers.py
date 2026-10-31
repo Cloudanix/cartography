@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import cartography.intel.gcp.cloudcdn
-import cartography.intel.gcp.cloudrun
 import cartography.intel.gcp.compute
 import cartography.intel.gcp.instance_groups
 import cartography.intel.gcp.loadbalancer
@@ -20,6 +19,8 @@ API = 'https://www.googleapis.com/compute/v1'
 MAIN, NOROUTE = 'main', 'noroute'
 ZONE = f'projects/{PROJECT}/zones/us-east1-b'
 GFE = ['130.211.0.0/22', '35.191.0.0/16']
+RUN_PUBLIC = f'projects/{PROJECT}/locations/us-east1/services/run-public'
+RUN_INTERNAL = f'projects/{PROJECT}/locations/us-east1/services/run-internal'
 DB_SA = 'app@proj-gxl.iam.gserviceaccount.com'
 FR_ID = f'projects/{PROJECT}/locations/global/forwardingRules/https-fr'
 
@@ -158,21 +159,28 @@ def _load_https_lb(session):
 
 
 def _load_managed_services(session):
-    services = cartography.intel.gcp.cloudrun.transform_services(
-        [
+    # Shape written by cloudrun.py once PR #507 lands: ingress null means "all".
+    _run(
+        session,
+        """
+        MATCH (p:GCPProject{id: $project})
+        UNWIND $services AS svc
+            MERGE (p)-[:RESOURCE]->(s:GCPCloudRunService{id: svc.id})
+            SET s.url = svc.url, s.ingress = svc.ingress, s.iam_policy_status = svc.status,
+                s.public_invokers = svc.invokers
+        """,
+        project=PROJECT,
+        services=[
             {
-                'metadata': {
-                    'name': name, 'labels': {'cloud.googleapis.com/location': 'us-east1'},
-                    'annotations': {'run.googleapis.com/ingress': ingress},
-                },
-                'status': {'url': f'https://{name}.run.app'},
-            }
-            for name, ingress in (('run-public', 'all'), ('run-internal', 'internal'))
-        ], PROJECT,
+                'id': RUN_PUBLIC, 'url': 'https://run-public.run.app', 'ingress': None, 'status': 'resolved',
+                'invokers': ['allUsers'],
+            },
+            {
+                'id': RUN_INTERNAL, 'url': 'https://run-internal.run.app', 'ingress': 'internal',
+                'status': 'not_needed', 'invokers': [],
+            },
+        ],
     )
-    for service in services:
-        service['invoker_members'] = ['allUsers']
-    cartography.intel.gcp.cloudrun.load_cloudrun_services(session, services, PROJECT, TAG)
     _run(
         session,
         """
@@ -298,10 +306,10 @@ def test_gcp_exposure_layers_end_to_end(neo4j_session):
     bs = _props(s, f'projects/{PROJECT}/global/backendServices/web', 'GCPBackendService', 'id')
     assert bs['internet_reachable'] is True and bs['access_auth'] == 'required' and bs['access_auth_reasons'] == ['iap']
 
-    run_public = _props(s, f'projects/{PROJECT}/services/run-public', 'GCPCloudRunService', 'id')
-    run_internal = _props(s, f'projects/{PROJECT}/services/run-internal', 'GCPCloudRunService', 'id')
+    run_public = _props(s, RUN_PUBLIC, 'GCPCloudRunService', 'id')
+    run_internal = _props(s, RUN_INTERNAL, 'GCPCloudRunService', 'id')
     assert run_public['internet_reachable'] is True and run_public['access_auth'] == 'none'
-    assert run_internal['internet_reachable'] is False
+    assert run_internal['internet_reachable'] is False and run_internal['access_auth'] == 'unknown'
 
     sql = _props(s, 'sql-pg', 'GCPSQLInstance', 'id')
     assert sql['internet_reachable_ports'] == ['tcp:5432-5432']
