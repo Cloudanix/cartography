@@ -1,3 +1,7 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import cartography.intel.gcp.compute
 import tests.data.gcp.compute
 from cartography.util import run_analysis_job
@@ -813,3 +817,109 @@ def test_instance_exposure_firewall_paths(neo4j_session):
         'vm-tag-all': ['unrestricted_access_from_firewall'],
         'vm-tag-ssh': ['unrestricted_access_from_firewall'],
     }
+
+
+SYNC_WORKSPACE_ID = 'ws-vm-sync'
+SYNC_ORG_ID = 'org-vm-sync'
+SYNC_PROJECT_ID = 'proj-vm-sync'
+SYNC_OLD_TAG = 100
+SYNC_TAG = 200
+
+
+def _seed_sync_project(neo4j_session):
+    # Shapes as compute ingestion writes them, plus state a previous sync's analysis left behind.
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: 'sync-vpc'})
+        MERGE (vpc)-[:RESOURCE]->(fw_ssh:GCPFirewall{id: 'sync-fw-ssh'})
+        SET fw_ssh.name = 'allow-ssh', fw_ssh.direction = 'INGRESS', fw_ssh.disabled = false,
+            fw_ssh.has_target_service_accounts = false, fw_ssh.priority = 1000
+        MERGE (fw_ssh)-[:TARGET_TAG]->(ssh:GCPNetworkTag{id: 'sync-vpc/ssh'})
+        MERGE (r_ssh:GCPIpRule:IpRule:IpPermissionInbound{id: 'sync-r-ssh'})
+        MERGE (:IpRange{id: '0.0.0.0/0'})-[:MEMBER_OF_IP_RULE]->(r_ssh)
+        SET r_ssh.protocol = 'tcp', r_ssh.fromport = 22, r_ssh.toport = 22
+        MERGE (r_ssh)-[:ALLOWED_BY]->(fw_ssh)
+        MERGE (vpc)-[:RESOURCE]->(fw_office:GCPFirewall{id: 'sync-fw-office'})
+        SET fw_office.name = 'allow-office', fw_office.direction = 'INGRESS', fw_office.disabled = false,
+            fw_office.has_target_service_accounts = false, fw_office.priority = 1000
+        MERGE (fw_office)-[:TARGET_TAG]->(office:GCPNetworkTag{id: 'sync-vpc/office'})
+        MERGE (r_office:GCPIpRule:IpRule:IpPermissionInbound{id: 'sync-r-office'})
+        MERGE (:IpRange{id: '203.0.113.0/24'})-[:MEMBER_OF_IP_RULE]->(r_office)
+        SET r_office.protocol = 'tcp', r_office.fromport = 22, r_office.toport = 22
+        MERGE (r_office)-[:ALLOWED_BY]->(fw_office)
+        WITH p, vpc, ssh, office, fw_ssh
+        UNWIND [
+            {id: 'sync-vm-open', ip: '34.1.1.1', tag: 'ssh'},
+            {id: 'sync-vm-remediated', ip: '34.1.1.2', tag: 'office'}
+        ] AS v
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.name = v.id, i.natIP = v.ip, i.status = 'RUNNING', i.zone_name = 'us-central1-a',
+            i.machine_type = 'e2-small', i.networkIP = '10.0.0.' + right(v.ip, 1)
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        MERGE (i)-[:NETWORK_INTERFACE]->(nic:GCPNetworkInterface{id: v.id + '/nic0'})
+        MERGE (nic)-[:RESOURCE]->(:GCPNicAccessConfig{id: v.id + '/nic0/ac', public_ip: v.ip})
+        FOREACH (_ IN CASE WHEN v.tag = 'ssh' THEN [1] ELSE [] END | MERGE (i)-[:TAGGED]->(ssh))
+        FOREACH (_ IN CASE WHEN v.tag = 'office' THEN [1] ELSE [] END |
+            MERGE (i)-[:TAGGED]->(office)
+            // Flagged by the previous sync, when it was still tagged ssh.
+            SET i.exposed_internet = true, i.exposed_internet_type = ['unrestricted_access_from_firewall'],
+                i.publicContext = '[{"resource": "stale"}]'
+            MERGE (fw_ssh)-[stale:FIREWALL_INGRESS]->(i) SET stale.lastupdated = $old)
+        """,
+        ws=SYNC_WORKSPACE_ID, org=SYNC_ORG_ID, project=SYNC_PROJECT_ID, old=SYNC_OLD_TAG,
+    )
+
+
+def _run_gcp_sync_analysis(neo4j_session):
+    """Run start_gcp_ingestion with every API call stubbed, so all GCP analysis jobs run in production order."""
+    config = SimpleNamespace(
+        update_tag=SYNC_TAG, refresh_entitlements=False, gcp_requested_syncs=None,
+        params={'workspace': {'id_string': SYNC_WORKSPACE_ID, 'account_id': SYNC_PROJECT_ID}},
+        credentials={'token_uri': 'uri', 'account_email': 'sa@example.com'},
+    )
+
+    def _set_org(session, crm_v1, update_tag, common_job_parameters):
+        common_job_parameters['GCP_ORGANIZATION_ID'] = SYNC_ORG_ID
+
+    gcp = 'cartography.intel.gcp'
+    with patch(f'{gcp}.AuthHelper'), patch(f'{gcp}._initialize_resources'), \
+            patch(f'{gcp}.crm.sync_gcp_organizations', side_effect=_set_org), \
+            patch(f'{gcp}.crm.sync_gcp_folders'), patch(f'{gcp}.crm.sync_gcp_projects'), \
+            patch(f'{gcp}.crm.get_gcp_projects', return_value=[{'projectId': SYNC_PROJECT_ID}]), \
+            patch(f'{gcp}._sync_single_project'):
+        cartography.intel.gcp.start_gcp_ingestion(neo4j_session, config)
+
+
+def test_instance_flags_and_public_context_agree_after_a_full_sync(neo4j_session):
+    _seed_sync_project(neo4j_session)
+
+    _run_gcp_sync_analysis(neo4j_session)
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $project})-[:RESOURCE]->(i:GCPInstance)
+        WHERE i.exposed_internet IS NOT NULL OR i.publicContext IS NOT NULL
+        RETURN i.id AS id, i.exposed_internet AS exposed, i.exposed_internet_type AS types, i.publicContext AS ctx
+        """,
+        project=SYNC_PROJECT_ID,
+    ).data()
+    # The remediated VM keeps neither the flag nor the context the previous sync wrote.
+    assert [r['id'] for r in rows] == ['sync-vm-open']
+    row = rows[0]
+    assert row['exposed'] is True
+    assert row['types'] == ['unrestricted_access_from_firewall']
+    context = json.loads(row['ctx'])[0]['context'][0]
+    assert context['exposureTypes'] == row['types']
+    assert context['publicIp'] == '34.1.1.1'
+    assert context['privateIp'] == '10.0.0.1'
+    assert context['zone'] == 'us-central1-a'
+    assert [(r['firewallId'], r['fromPort']) for r in context['firewallRules']] == [('sync-fw-ssh', 22)]
+    # FIREWALL_INGRESS edges from an earlier sync are removed once the firewall no longer applies.
+    stale = neo4j_session.run(
+        "MATCH (:GCPFirewall)-[r:FIREWALL_INGRESS]->(:GCPInstance{id: 'sync-vm-remediated'}) "
+        "WHERE r.lastupdated <> $tag RETURN count(r) AS n",
+        tag=SYNC_TAG,
+    ).single()['n']
+    assert stale == 0

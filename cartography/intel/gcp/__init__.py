@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Set
 
 import googleapiclient.discovery
@@ -999,7 +1000,7 @@ def _sync_multiple_projects(
 
 
 @timeit
-def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
+def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optional[Dict]:
     """
     Starts the GCP ingestion process by initializing Google Application Default Credentials, creating the necessary
     resource objects, listing all GCP organizations and projects available to the GCP identity, and supplying that
@@ -1040,7 +1041,7 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             ),
             e,
         )
-        return
+        return None
 
     requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
     if config.gcp_requested_syncs:
@@ -1081,12 +1082,6 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
 
     run_analysis_job(
         "gcp_cloud_function_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_compute_asset_inet_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
