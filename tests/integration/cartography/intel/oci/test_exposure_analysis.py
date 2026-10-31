@@ -665,6 +665,63 @@ def test_load_balancer_exposed_when_public_and_a_listener_port_is_open(neo4j_ses
     assert 'lb-nsg-https' in context and '443' in context
 
 
+def test_instance_exposed_as_backend_of_exposed_load_balancer(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    # The load balancers live in another compartment of the same tenancy.
+    lb_compartment = 'ocid1.compartment.oc1..lbb-network'
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, lb_compartment)
+    _seed_tenancy(neo4j_session, OTHER_WORKSPACE_ID, OTHER_TENANCY_ID, OTHER_COMPARTMENT_ID)
+    _load_vcn(neo4j_session, 'lbb-vcn', security_lists=[('lbb-sl-closed', [HTTPS_FROM_VCN])])
+    _load_vcn(neo4j_session, 'lbb-vcn-2', security_lists=[('lbb-sl-closed-2', [HTTPS_FROM_VCN])])
+    _load_subnet(neo4j_session, 'lbb-subnet', 'lbb-vcn', ['lbb-sl-closed'])
+    _load_subnet(neo4j_session, 'lbb-subnet-2', 'lbb-vcn-2', ['lbb-sl-closed-2'])
+    # Private VMs (no public IP), so only a load balancer can put them on the internet.
+    _load_instance(neo4j_session, 'lbb-ip-backend', 'lbb-subnet', None)
+    _load_instance(neo4j_session, 'lbb-ocid-backend', 'lbb-subnet', None)
+    # Same private IP as lbb-ip-backend, but in another VCN.
+    _load_instance(neo4j_session, 'lbb-same-ip-other-vcn', 'lbb-subnet-2', None)
+    _load_instance(neo4j_session, 'lbb-private-lb-backend', 'lbb-subnet', None)
+    _load_instance(neo4j_session, 'lbb-other-tenancy-lb-backend', 'lbb-subnet', None)
+    neo4j_session.run(
+        """
+        UNWIND [['lbb-ip-backend', '10.0.0.5'], ['lbb-same-ip-other-vcn', '10.0.0.5'],
+                ['lbb-private-lb-backend', '10.0.0.6'], ['lbb-other-tenancy-lb-backend', '10.0.0.7']] AS pair
+        MATCH (:OCIInstance{id: pair[0]})-[:OCI_VNIC_ATTACHMENT]->()-[:OCI_VNIC]->(v:OCIVnic)
+        SET v.private_ip = pair[1]
+        """,
+    )
+    lbs = [
+        ('lbb-public-lb', lb_compartment, True, ['10.0.0.5'], []),
+        ('lbb-public-nlb', lb_compartment, True, [], ['lbb-ocid-backend']),
+        ('lbb-private-lb', lb_compartment, False, ['10.0.0.6'], []),
+        ('lbb-other-tenancy-lb', OTHER_COMPARTMENT_ID, True, ['10.0.0.7'], ['lbb-ocid-backend']),
+    ]
+    for lb_id, compartment_id, exposed, backend_ips, backend_target_ids in lbs:
+        load_balancer.load_load_balancers(
+            neo4j_session,
+            [{
+                'id': lb_id, 'subnet_ids': ['lbb-subnet'], 'backend_ips': backend_ips,
+                'backend_target_ids': backend_target_ids,
+            }],
+            'OCILoadBalancer', compartment_id, UPDATE_TAG,
+        )
+        # As written by oci_load_balancer_asset_exposure.json, which runs before the instance job.
+        neo4j_session.run(
+            "MATCH (lb:OCILoadBalancer{id: $id}) SET lb.exposed_internet = $exposed", id=lb_id, exposed=exposed or None,
+        )
+
+    run_analysis_job('oci_instance_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIInstance', 'lbb-') == {
+        'lbb-ip-backend': ['public_load_balancer_backend'],
+        'lbb-ocid-backend': ['public_load_balancer_backend'],
+    }
+    context = neo4j_session.run(
+        "MATCH (i:OCIInstance{id: 'lbb-ip-backend'}) RETURN i.publicContext AS c",
+    ).single()['c']
+    assert 'lbb-public-lb' in context and 'lbb-other-tenancy-lb' not in context
+
+
 def test_bucket_exposed_by_unexpired_read_pre_authenticated_request(neo4j_session):
     _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
     future, past = '2099-01-01T00:00:00+00:00', '2020-01-01T00:00:00+00:00'

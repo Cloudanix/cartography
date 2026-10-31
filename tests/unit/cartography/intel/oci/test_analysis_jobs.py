@@ -28,8 +28,10 @@ def test_oci_db_system_exposure_is_wired():
     assert 'oci_db_system_asset_exposure.json' in oci_intel.OCI_ANALYSIS_JOBS
 
 
-def test_oci_load_balancer_exposure_is_wired():
-    assert 'oci_load_balancer_asset_exposure.json' in oci_intel.OCI_ANALYSIS_JOBS
+def test_oci_load_balancer_exposure_runs_before_instance_exposure():
+    # The instance job reads the load balancer job's exposed_internet to flag LB backends.
+    jobs = oci_intel.OCI_ANALYSIS_JOBS
+    assert jobs.index('oci_load_balancer_asset_exposure.json') < jobs.index('oci_instance_asset_exposure.json')
 
 
 def test_oci_oke_cluster_exposure_is_wired():
