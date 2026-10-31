@@ -1497,6 +1497,46 @@ Representation of an AWS [ElasticSearch Domain](https://docs.aws.amazon.com/elas
         (DNSRecord)-[DNS_POINTS_TO]->(ESDomain)
         ```
 
+### AWSMQBroker
+
+Representation of an [Amazon MQ broker](https://docs.aws.amazon.com/amazon-mq/latest/api-reference/brokers-broker-id.html) (ActiveMQ or RabbitMQ), from ListBrokers plus one DescribeBroker per broker.
+
+| Field | Description |
+|-------|-------------|
+| firstseen | Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | Broker ARN |
+| **arn** | Broker ARN |
+| broker\_id, name | Broker id and name |
+| state | Broker state, e.g. `RUNNING` |
+| engine\_type, engine\_version | `ACTIVEMQ` or `RABBITMQ`, and its version |
+| deployment\_mode | `SINGLE_INSTANCE`, `ACTIVE_STANDBY_MULTI_AZ` or `CLUSTER_MULTI_AZ` |
+| host\_instance\_type | Broker instance type |
+| publicly\_accessible | Whether the broker has public endpoints. Null when DescribeBroker failed (unknown) |
+| security\_groups, subnet\_ids | Security group and subnet ids (a public RabbitMQ broker has no security groups) |
+| endpoints, console\_urls, ip\_addresses | Wire-protocol endpoints, web console URLs and IP addresses of the broker instances |
+| ports | Ports parsed from the endpoints and console URLs (443 for a console URL without a port) |
+| auto\_minor\_version\_upgrade, authentication\_strategy, storage\_type | Broker settings |
+| audit\_log\_enabled, general\_log\_enabled | CloudWatch log settings |
+| use\_aws\_owned\_key, kms\_key\_id | Encryption at rest |
+| created | Creation time |
+| region | AWS region |
+
+#### Relationships
+
+- Amazon MQ brokers belong to AWS Accounts.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(AWSMQBroker)
+        ```
+
+- Amazon MQ brokers can be members of EC2 Security Groups and sit in EC2 Subnets.
+
+        ```
+        (AWSMQBroker)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+        (AWSMQBroker)-[PART_OF_SUBNET]->(EC2Subnet)
+        ```
+
 ### Endpoint
 
 Representation of a generic network endpoint.

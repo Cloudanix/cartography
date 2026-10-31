@@ -150,6 +150,7 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     'lambda:function': {'label': 'AWSLambda', 'property': 'id'},
     'lambda:layer': {'label': 'AWSLambdaLayer', 'property': 'id'},
     'lambda:event-source-mapping': {'label': 'AWSLambdaEventSourceMapping', 'property': 'id'},
+    'mq:broker': {'label': 'AWSMQBroker', 'property': 'id'},
     'redshift:cluster': {'label': 'RedshiftCluster', 'property': 'id'},
     'rds:cluster': {'label': 'RDSCluster', 'property': 'id'},
     'rds:db': {'label': 'RDSInstance', 'property': 'id'},

@@ -95,6 +95,8 @@ CREATE INDEX IF NOT EXISTS FOR (n:EKSCluster) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:EKSClusterNodeGroup) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ElasticacheCluster) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ElasticacheCluster) ON (n.arn);
+CREATE INDEX IF NOT EXISTS FOR (n:AWSMQBroker) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:AWSMQBroker) ON (n.arn);
 CREATE INDEX IF NOT EXISTS FOR (n:ElasticIPAddress) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ELBListener) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:ELBV2Listener) ON (n.id);
