@@ -1,6 +1,7 @@
 # Copyright (c) 2020, Oracle and/or its affiliates.
 # Runs the real OCI exposure analysis jobs against network data loaded by the real loaders.
 from cartography.intel.oci import database
+from cartography.intel.oci import load_balancer
 from cartography.intel.oci import network
 from cartography.intel.oci import oke
 from cartography.intel.oci import storage
@@ -585,6 +586,83 @@ def test_oke_cluster_exposed_when_public_api_endpoint_port_is_open(neo4j_session
         "MATCH (c:OCIOKECluster{id: 'oke-public-api-nsg'}) RETURN c.publicContext AS c",
     ).single()['c']
     assert 'oci-containers-oke-cluster' in context and '203.0.113.50:6443' in context and 'oke-nsg-api' in context
+
+
+def test_load_balancer_exposed_when_public_and_a_listener_port_is_open(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    _load_vcn(
+        neo4j_session, 'lb-vcn',
+        security_lists=[
+            # Default Security List: SSH (22) is open to the world, HTTPS is not.
+            ('lb-sl-default', DEFAULT_SECURITY_LIST_RULES),
+            ('lb-sl-https', [_tcp_from_anywhere(443)]),
+            ('lb-sl-closed', [HTTPS_FROM_VCN]),
+        ],
+        nsgs={'lb-nsg-https': [_tcp_from_anywhere(80, 443)], 'lb-nsg-ssh': [OPEN_SSH]},
+    )
+    for sl in ('default', 'https', 'closed'):
+        _load_subnet(neo4j_session, f'lb-subnet-{sl}', 'lb-vcn', [f'lb-sl-{sl}'])
+    https = {'listeners': {'https': {'port': 443, 'protocol': 'HTTP'}}}
+
+    def lb(lb_id, subnets, nsgs=(), is_private=False, listeners=https):
+        return {
+            'id': lb_id, 'is-private': is_private, 'subnet-ids': list(subnets),
+            'network-security-group-ids': list(nsgs), **listeners,
+        }
+
+    load_balancer.load_load_balancers(
+        neo4j_session,
+        load_balancer.transform_load_balancers(
+            [
+                lb('lb-private', ['lb-subnet-https'], is_private=True),
+                lb('lb-https-sl', ['lb-subnet-closed', 'lb-subnet-https']),
+                lb('lb-default-sl', ['lb-subnet-default']),
+                lb('lb-https-nsg', ['lb-subnet-closed'], nsgs=['lb-nsg-https']),
+                lb('lb-ssh-nsg', ['lb-subnet-closed'], nsgs=['lb-nsg-ssh']),
+                # Public but nothing listens.
+                lb('lb-no-listener', ['lb-subnet-https'], listeners={}),
+                lb('lb-unknown-subnet', ['lb-subnet-not-synced']),
+                lb('lb-unknown-nsg', ['lb-subnet-closed'], nsgs=['lb-nsg-not-synced']),
+            ],
+            REGION,
+        ),
+        'OCILoadBalancer', COMPARTMENT_ID, UPDATE_TAG,
+    )
+    load_balancer.load_load_balancers(
+        neo4j_session,
+        load_balancer.transform_network_load_balancers(
+            [
+                # UDP 53 is not what the list opens (TCP 443).
+                {
+                    'id': 'nlb-udp', 'is-private': False, 'subnet-id': 'lb-subnet-https',
+                    'listeners': {'dns': {'port': 53, 'protocol': 'UDP'}},
+                },
+                # Every port and protocol: the Default Security List's SSH rule reaches it.
+                {
+                    'id': 'nlb-any', 'is-private': False, 'subnet-id': 'lb-subnet-default',
+                    'listeners': {'all': {'port': 0, 'protocol': 'ANY'}},
+                },
+            ],
+            REGION,
+        ),
+        'OCINetworkLoadBalancer', COMPARTMENT_ID, UPDATE_TAG,
+    )
+
+    run_analysis_job('oci_load_balancer_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCILoadBalancer', 'lb-') == {
+        'lb-https-sl': ['unrestricted_securitylist_ingress'],
+        'lb-https-nsg': ['unrestricted_nsg_ingress'],
+        'lb-unknown-subnet': ['public_lb_unresolved_rules'],
+        'lb-unknown-nsg': ['public_lb_unresolved_rules'],
+    }
+    assert _exposed(neo4j_session, 'OCINetworkLoadBalancer', 'nlb-') == {
+        'nlb-any': ['unrestricted_securitylist_ingress'],
+    }
+    context = neo4j_session.run(
+        "MATCH (lb:OCILoadBalancer{id: 'lb-https-nsg'}) RETURN lb.publicContext AS c",
+    ).single()['c']
+    assert 'lb-nsg-https' in context and '443' in context
 
 
 def test_bucket_exposed_by_unexpired_read_pre_authenticated_request(neo4j_session):

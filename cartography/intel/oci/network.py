@@ -9,8 +9,11 @@ from typing import List
 from typing import Optional
 
 import neo4j
+import oci.load_balancer
 import oci.logging
+import oci.network_load_balancer
 
+from . import load_balancer
 from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
@@ -48,7 +51,8 @@ def internet_ingress_port_range(rule: Dict[str, Any]) -> Optional[str]:
     """
     if not is_internet_ingress_rule(rule):
         return None
-    protocol = rule.get("protocol")
+    # OCI rules always name a protocol; a missing one errs open.
+    protocol = rule.get("protocol") or "all"
     options = rule.get(PORT_OPTIONS_BY_PROTOCOL.get(protocol, "")) or {}
     port_range = options.get("destination-port-range") or {}
     return f"{protocol}:{port_range.get('min') or MIN_PORT}-{port_range.get('max') or MAX_PORT}"
@@ -1260,7 +1264,7 @@ def sync(
     tenancy_id: str,
     oci_update_tag: int,
     common_job_parameters: Dict[str, Any],
-    regions: List[str] = None,
+    regions: Optional[List[str]] = None,
 ) -> None:
     """
     Sync OCI Network resources for the compartment specified in common_job_parameters.
@@ -1281,11 +1285,22 @@ def sync(
         config=network.base_client.config,
         signer=getattr(network.base_client, "signer", None),
     )
+    # Load balancers sit in VCN subnets and are judged by the same security lists and NSGs.
+    lb_client = oci.load_balancer.LoadBalancerClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
+    nlb_client = oci.network_load_balancer.NetworkLoadBalancerClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
 
     for region in regions:
         logger.info("Syncing OCI Network in region '%s' for compartment '%s'.", region, compartment_ocid)
         network.base_client.set_region(region)
         logging_client.base_client.set_region(region)
+        lb_client.base_client.set_region(region)
+        nlb_client.base_client.set_region(region)
 
         # Sync VCNs first (parent of all other network resources)
         sync_vcns(neo4j_session, network, compartments, tenancy_id, region, oci_update_tag, common_job_parameters)
@@ -1338,6 +1353,14 @@ def sync(
         sync_flow_logs(
             neo4j_session, logging_client, compartments, tenancy_id, region, oci_update_tag, common_job_parameters,
         )
+
+        # A failure here must not cost the rest of the network sync.
+        try:
+            load_balancer.sync_load_balancers(
+                neo4j_session, lb_client, nlb_client, compartment_ocid, region, oci_update_tag, common_job_parameters,
+            )
+        except Exception as e:
+            logger.error("Error syncing OCI load balancers in region '%s': %s", region, e, exc_info=True)
 
     # Cleanup stale network nodes
     run_cleanup_job('oci_import_network_cleanup.json', neo4j_session, common_job_parameters)

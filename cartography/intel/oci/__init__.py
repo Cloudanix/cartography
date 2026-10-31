@@ -39,6 +39,7 @@ OCI_ANALYSIS_JOBS = [
     'oci_subnet_asset_exposure.json',
     # Reads the subnet job's exposed_internet.
     'oci_security_list_asset_exposure.json',
+    'oci_load_balancer_asset_exposure.json',
     'oci_instance_asset_exposure.json',
     # Reads the instance job's exposed_internet.
     'oci_boot_volume_asset_exposure.json',
