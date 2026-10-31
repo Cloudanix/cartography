@@ -1537,6 +1537,42 @@ Representation of an [Amazon MQ broker](https://docs.aws.amazon.com/amazon-mq/la
         (AWSMQBroker)-[PART_OF_SUBNET]->(EC2Subnet)
         ```
 
+### MSKCluster
+
+Representation of an [Amazon MSK cluster](https://docs.aws.amazon.com/msk/1.0/apireference/v2-clusters.html), provisioned or serverless, from ListClustersV2.
+
+| Field | Description |
+|-------|-------------|
+| firstseen | Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | Cluster ARN |
+| **arn** | Cluster ARN |
+| name | Cluster name |
+| cluster\_type | `PROVISIONED` or `SERVERLESS` |
+| state, current\_version, creation\_time | Cluster state, version string and creation time |
+| kafka\_version, instance\_type, number\_of\_broker\_nodes | Provisioned broker settings |
+| public\_access\_type | `DISABLED` or `SERVICE_PROVIDED_EIPS` (provisioned only; null for serverless) |
+| security\_groups, subnet\_ids | Broker node group security groups and client subnets (serverless: from its VPC configs) |
+| iam\_auth\_enabled, scram\_auth\_enabled, tls\_auth\_enabled, unauthenticated\_access\_enabled | Client authentication methods |
+| client\_broker\_encryption, in\_cluster\_encryption, kms\_key\_id | Encryption in transit and at rest |
+| enhanced\_monitoring | Monitoring level |
+| region | AWS region |
+
+#### Relationships
+
+- MSK clusters belong to AWS Accounts.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(MSKCluster)
+        ```
+
+- MSK clusters can be members of EC2 Security Groups and sit in EC2 Subnets.
+
+        ```
+        (MSKCluster)-[MEMBER_OF_EC2_SECURITY_GROUP]->(EC2SecurityGroup)
+        (MSKCluster)-[PART_OF_SUBNET]->(EC2Subnet)
+        ```
+
 ### Endpoint
 
 Representation of a generic network endpoint.

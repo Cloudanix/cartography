@@ -22,6 +22,7 @@ from . import kinesis
 from . import kms
 from . import lambda_function
 from . import mq
+from . import msk
 from . import permission_relationships
 from . import rds
 from . import redshift
@@ -105,6 +106,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'elasticache': elasticache.sync,
     'elasticsearch': elasticsearch.sync,
     'mq': mq.sync,
+    'msk': msk.sync,
     'elastic_ip_addresses': sync_elastic_ip_addresses,
     'ssm': ssm.sync,
     'route53': route53.sync,

@@ -142,6 +142,7 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     },
     'elasticmapreduce:cluster': {'label': 'EMRCluster', 'property': 'arn'},
     'es:domain': {'label': 'ESDomain', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
+    'kafka:cluster': {'label': 'MSKCluster', 'property': 'id'},
     'iam:group': {'label': 'AWSGroup', 'property': 'arn'},
     'iam:policy': {'label': 'AWSPolicy', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'iam:role': {'label': 'AWSRole', 'property': 'arn'},
