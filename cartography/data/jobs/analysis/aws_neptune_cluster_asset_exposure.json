@@ -1,0 +1,15 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (cluster:NeptuneCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE cluster.exposed_internet IS NOT NULL WITH cluster LIMIT $LIMIT_SIZE REMOVE cluster.exposed_internet, cluster.exposed_internet_type, cluster.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Neptune has no cluster-level public setting. Since engine 1.4.6 an instance can be PubliclyAccessible (Neptune 'public endpoints'); the cluster and reader endpoints resolve to their instances, so the cluster is exposed when a member instance is. Instances are RDSInstance nodes judged by aws_rds_asset_exposure.json, which must run first. Members must sit in the same account.",
+      "query": "MATCH (account:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (account)-[:RESOURCE]->(cluster:NeptuneCluster)<-[:IS_CLUSTER_MEMBER_OF]-(rds:RDSInstance{exposed_internet: true})<-[:RESOURCE]-(account) WITH cluster, collect(DISTINCT {instanceId: rds.id, exposureTypes: rds.exposed_internet_type}) AS members SET cluster.exposed_internet = true, cluster.exposed_internet_type = ['public_member_instance'], cluster.publicContext = apoc.convert.toJson([{resource: cluster.arn, resourceType: 'aws-database-neptune-dbcluster', context: [{clusterArn: cluster.arn, clusterIdentifier: cluster.db_cluster_identifier, endpoint: cluster.endpoint, port: cluster.port, engineVersion: cluster.engine_version, iamDatabaseAuthentication: cluster.iam_database_authentication_enabled, securityGroups: cluster.security_groups, exposureTypes: ['public_member_instance'], exposedMembers: members}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws Neptune cluster internet exposure"
+}

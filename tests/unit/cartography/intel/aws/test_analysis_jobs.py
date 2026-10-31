@@ -46,6 +46,13 @@ def test_account_sync_runs_the_msk_exposure_job(mocker, monkeypatch):
     assert "aws_msk_cluster_asset_exposure.json" in jobs
 
 
+def test_account_sync_runs_the_neptune_exposure_job_after_the_rds_job(mocker, monkeypatch):
+    # Neptune clusters are exposed through their RDSInstance members, which the RDS job judges.
+    jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
+
+    assert jobs.index("aws_neptune_cluster_asset_exposure.json") > jobs.index("aws_rds_asset_exposure.json")
+
+
 def test_every_analysis_job_run_by_account_sync_exists(mocker, monkeypatch):
     jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch)
 
