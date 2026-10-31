@@ -89,6 +89,8 @@ def transform_network_interface_data(
                 'PrivateDnsName': network_interface.get('PrivateDnsName'),
                 'PrivateIpAddress': network_interface.get('PrivateIpAddress'),
                 'PublicIp': network_interface.get('Association', {}).get('PublicIp'),
+                # Read by the ::/0 statement of aws_ec2_instance_asset_exposure.json
+                'Ipv6Addresses': [a['Ipv6Address'] for a in network_interface.get('Ipv6Addresses', [])],
                 'RequesterId': network_interface.get('RequesterId'),
                 'RequesterManaged': network_interface.get('RequesterManaged'),
                 'SourceDestCheck': network_interface.get('SourceDestCheck'),
