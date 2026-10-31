@@ -1,6 +1,11 @@
 {
   "statements": [
     {
+      "query": "MATCH (cluster:RDSCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE cluster.exposed_internet IS NOT NULL WITH cluster LIMIT $LIMIT_SIZE REMOVE cluster.exposed_internet, cluster.exposed_internet_type, cluster.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
       "query": "MATCH (n)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) where n.exposed_internet IS NOT NULL AND labels(n) IN ['RDSInstance', 'RDSSnapshot'] WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext return COUNT(*) as TotalCompleted",
       "iterative": true,
       "iterationsize": 100
@@ -35,6 +40,11 @@
     },
     {
       "query": "MATCH (snapshot:RDSSnapshot)<-[:IS_SNAPSHOT_SOURCE]-(rds:RDSInstance)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE snapshot.exposed_internet = true WITH snapshot, rds OPTIONAL MATCH (attrib:RDSSnapshotAttribute{name: 'restore'})<-[HAS_ATTRIBUTE]-(snapshot) WHERE 'all' IN attrib.values WITH snapshot, rds, attrib SET snapshot.publicContext = apoc.convert.toJson([{resource: snapshot.id, resourceType: 'aws-database-rds-snapshot', context: [{snapshotId: snapshot.id, snapshotArn: snapshot.arn, sourceInstanceId: rds.id, sourceEngine: rds.engine, restoreAttribute: attrib.values, exposureTypes: snapshot.exposed_internet_type, encrypted: coalesce(snapshot.encrypted, false)}]}])",
+      "iterative": false
+    },
+    {
+      "__comment": "A cluster's endpoints resolve to its member instances, so it is exposed when any member is. Runs after the instance statements; the member must sit in the same account, because ingest links members by db_cluster_identifier alone.",
+      "query": "MATCH (account:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (account)-[:RESOURCE]->(cluster:RDSCluster)<-[:IS_CLUSTER_MEMBER_OF]-(rds:RDSInstance{exposed_internet: true})<-[:RESOURCE]-(account) WITH cluster, collect(DISTINCT {instanceId: rds.id, exposureTypes: rds.exposed_internet_type}) AS members SET cluster.exposed_internet = true, cluster.exposed_internet_type = ['public_member_instance'], cluster.publicContext = apoc.convert.toJson([{resource: cluster.id, resourceType: 'aws-database-rds-cluster', context: [{clusterId: cluster.id, clusterIdentifier: cluster.db_cluster_identifier, endpoint: cluster.endpoint, port: cluster.port, engine: cluster.engine, exposedMembers: members}]}])",
       "iterative": false
     }
   ],
