@@ -309,6 +309,9 @@ def _sync_multiple_subscriptions(
             'azure_sql_asset_exposure.json',
             'azure_cosmosdb_asset_exposure.json',
             'azure_keyvault_asset_exposure.json',
+            'azure_aks_asset_exposure.json',
+            'azure_function_app_asset_exposure.json',
+            'azure_vmss_asset_exposure.json',
         ]
         analysis_timings: Dict[str, float] = {}
         for job_file in _analysis_jobs:

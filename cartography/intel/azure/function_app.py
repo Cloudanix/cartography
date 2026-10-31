@@ -1,7 +1,9 @@
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
@@ -10,11 +12,18 @@ from msrest.exceptions import DeserializationError
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+# Access restriction sources that admit the whole internet ('Internet' is the service tag form).
+# Azure Front Door is always internet-facing, so a site that admits it is reachable through it.
+OPEN_ACCESS_RESTRICTION_SOURCES = {'any', '0.0.0.0/0', '::/0', 'internet', 'azurefrontdoor.backend'}
+# Parallel per-site config reads; same order as the SQL server fetch pool.
+SITE_CONFIG_WORKERS = 5
 
 
 def load_function_apps(
@@ -113,12 +122,12 @@ def get_client(
 def get_function_apps_list(client: WebSiteManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         function_app_list = list(
-            map(lambda x: x.as_dict(), client.web_apps.list()),
+            map(as_legacy_dict, client.web_apps.list()),
         )
         function_list = []
         for function in function_app_list:
             function['resource_group'] = get_azure_resource_group_name(function.get('id'))
-            function['hostNamesDisabled'] = function.get('properties', {}).get('host_names_disabled', True)
+            function['hostNamesDisabled'] = function.get('host_names_disabled')
             function['location'] = function.get('location', '').replace(" ", "").lower()
             function['consolelink'] = safe_console_link(function['id'], common_job_parameters)
             if regions is None:
@@ -126,11 +135,49 @@ def get_function_apps_list(client: WebSiteManagementClient, regions: list, commo
             else:
                 if function.get('location') in regions or function.get('location') == 'global':
                     function_list.append(function)
-        return function_list
 
     except HttpResponseError as e:
         logger.warning(f"Error while retrieving function apps - {e}")
         return []
+
+    # The site list leaves siteConfig empty, so access restrictions need one read per site.
+    with ThreadPoolExecutor(max_workers=SITE_CONFIG_WORKERS) as pool:
+        configs = list(pool.map(lambda site: _get_site_config(client, site), function_list))
+    for site, config in zip(function_list, configs):
+        _set_access_restrictions(site, config)
+    return function_list
+
+
+def _get_site_config(client: WebSiteManagementClient, site: Dict) -> Optional[Dict]:
+    """
+    Read a site's web config, which holds its access restrictions.
+
+    :return: the config as a legacy dict, or None if it could not be read.
+    """
+    try:
+        return as_legacy_dict(client.web_apps.get_configuration(site['resource_group'], site['name']))
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving access restrictions for {site.get('id')} - {e}")
+        return None
+
+
+def _set_access_restrictions(site: Dict, config: Optional[Dict]) -> None:
+    """
+    Store the network settings the exposure job reads. When the config could not be read,
+    the restriction fields stay None and the job keeps the site public.
+    """
+    site['publicNetworkAccess'] = site.get('public_network_access') or (config or {}).get('public_network_access')
+    if config is None:
+        site['ipSecurityRestrictionsDefaultAction'] = None
+        site['openAccessRestriction'] = None
+        return
+    site['ipSecurityRestrictionsDefaultAction'] = config.get('ip_security_restrictions_default_action')
+    # A rule without an action is treated as Allow, so an unclear rule keeps the site public.
+    site['openAccessRestriction'] = any(
+        (rule.get('action') or 'Allow').lower() == 'allow' and
+        (rule.get('ip_address') or '').lower() in OPEN_ACCESS_RESTRICTION_SOURCES
+        for rule in config.get('ip_security_restrictions') or []
+    )
 
 
 def _load_function_apps_tx(
@@ -145,10 +192,13 @@ def _load_function_apps_tx(
     f.type = function_app.type,
     f.location = function_app.location,
     f.region = function_app.location,
-    f.hostNamesDisabled = function_app.hostNamesDisabled,
     f.resourcegroup = function_app.resource_group
     SET f.consolelink = coalesce(function_app.consolelink, f.consolelink), f.lastupdated = $update_tag,
     f.name = function_app.name,
+    f.hostNamesDisabled = function_app.hostNamesDisabled,
+    f.publicNetworkAccess = function_app.publicNetworkAccess,
+    f.ipSecurityRestrictionsDefaultAction = function_app.ipSecurityRestrictionsDefaultAction,
+    f.openAccessRestriction = function_app.openAccessRestriction,
     f.container_size = function_app.container_size,
     f.default_host_name=function_app.default_host_name,
     f.last_modified_time_utc=function_app.last_modified_time_utc,
@@ -262,7 +312,7 @@ def get_function_apps_configuration_list(
         for function in function_apps_list:
             apps_conf_list = list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.web_apps.list_configurations(
                         function['resource_group'], function['name'],
                     ),
@@ -277,7 +327,7 @@ def get_function_apps_configuration_list(
                 ]
                 conf['consolelink'] = safe_console_link(conf['id'], common_job_parameters)
                 conf["location"] = function.get("location")
-                conf['publicNetworkAccess'] = conf.get('properties', {}).get('public_network_access', 'Disabled')
+                conf['publicNetworkAccess'] = conf.get('public_network_access', 'Disabled')
             function_apps_conf_list.extend(apps_conf_list)
         return function_apps_conf_list
 
@@ -395,7 +445,7 @@ def get_function_apps_functions_list(
         try:
             functions_list = list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.web_apps.list_functions(
                         function['resource_group'],
                         function['name'],
@@ -508,7 +558,7 @@ def get_function_apps_deployments_list(
     try:
         deployments_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_deployments(
                     function['resource_group'],
                     function['name'],
@@ -624,7 +674,7 @@ def get_function_apps_backups_list(
     try:
         backups_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_backups(
                     function['resource_group'],
                     function['name'],
@@ -744,7 +794,7 @@ def get_function_apps_processes_list(
 
         processes_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 items,
             ),
         )
@@ -856,7 +906,7 @@ def get_function_apps_snapshots_list(
     try:
         snapshots_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_snapshots(
                     function['resource_group'],
                     function['name'],
@@ -972,7 +1022,7 @@ def get_function_apps_webjobs_list(
     try:
         webjobs_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_web_jobs(
                     function['resource_group'],
                     function['name'],

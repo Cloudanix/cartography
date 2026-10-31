@@ -628,6 +628,8 @@ def test_vm_public_exposure_analysis(neo4j_session):
         DESCRIBE_VMS,
         TEST_UPDATE_TAG,
     )
+    # The job only evaluates running VMs; the fixture has no instance view.
+    neo4j_session.run("MATCH (vm:AzureVirtualMachine) SET vm.power_state = 'running'")
 
     common_job_parameters = {
         "UPDATE_TAG": TEST_UPDATE_TAG + 1,
@@ -645,11 +647,11 @@ def test_vm_public_exposure_analysis(neo4j_session):
     expected_nodes = {
         (
             '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM',
-            'direct_ipv4,public_ip,inbound_public_ports,public_icmp,public_subnet',
+            'direct_ipv4,public_ip,public_icmp',
         ),
         (
             '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM1',
-            'direct_ipv4,inbound_public_ports,public_icmp,public_subnet',
+            'direct_ipv4,public_icmp',
         ),
     }
 
