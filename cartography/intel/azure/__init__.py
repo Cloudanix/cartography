@@ -13,6 +13,7 @@ import neo4j
 from neo4j import GraphDatabase
 
 from . import compute
+from . import exposure_layers
 from . import subscription
 from . import tag
 from . import tenant
@@ -319,6 +320,12 @@ def _sync_multiple_subscriptions(
             run_analysis_job(job_file, neo4j_session, common_job_parameters)
             elapsed = round(time.time() - t0, 2)
             analysis_timings[job_file] = elapsed
+
+        # Reads what the jobs above and every sync wrote; a failure must not fail the subscription sync.
+        try:
+            exposure_layers.run(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"exposure layers failed for subscription {sub['subscriptionId']} - {e}", exc_info=True)
 
         logger.info(
             json.dumps({

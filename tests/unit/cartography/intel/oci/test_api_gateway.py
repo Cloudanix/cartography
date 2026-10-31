@@ -26,3 +26,11 @@ def test_get_gateway_list_data_returns_empty_on_error(monkeypatch):
 
     assert api_gateway.get_gateway_list_data(MagicMock(), 'compartment') == []
     assert list_all.call_args.kwargs == {'compartment_id': 'compartment', 'lifecycle_state': 'ACTIVE'}
+
+
+def test_get_deployment_list_data_is_unknown_when_denied(monkeypatch):
+    # None (not an empty list): a denied call must not read as "gateway has no deployments".
+    denied = api_gateway.oci.exceptions.ServiceError(404, 'NotAuthorizedOrNotFound', {}, 'x')
+    monkeypatch.setattr(api_gateway.oci.pagination, 'list_call_get_all_results', MagicMock(side_effect=denied))
+
+    assert api_gateway.get_deployment_list_data(MagicMock(), 'compartment') is None

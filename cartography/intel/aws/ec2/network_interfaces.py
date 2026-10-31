@@ -89,6 +89,10 @@ def transform_network_interface_data(
                 'PrivateDnsName': network_interface.get('PrivateDnsName'),
                 'PrivateIpAddress': network_interface.get('PrivateIpAddress'),
                 'PublicIp': network_interface.get('Association', {}).get('PublicIp'),
+                # IPv6 addresses are globally routable: the IPv6 half of the reachability walker needs them.
+                'Ipv6Addresses': [
+                    a['Ipv6Address'] for a in network_interface.get('Ipv6Addresses', []) if a.get('Ipv6Address')
+                ],
                 'RequesterId': network_interface.get('RequesterId'),
                 'RequesterManaged': network_interface.get('RequesterManaged'),
                 'SourceDestCheck': network_interface.get('SourceDestCheck'),

@@ -1021,6 +1021,7 @@ def load_vnics(
         v.lifecycle_state = vnic.lifecycle_state,
         v.private_ip = vnic.private_ip,
         v.public_ip = vnic.public_ip,
+        v.ipv6_addresses = vnic.ipv6_addresses,
         v.is_primary = vnic.is_primary,
         v.hostname_label = vnic.hostname_label,
         v.mac_address = vnic.mac_address,
@@ -1055,6 +1056,8 @@ def load_vnics(
             "lifecycle_state": vnic.get("lifecycle-state"),
             "private_ip": vnic.get("private-ip", ""),
             "public_ip": vnic.get("public-ip", ""),
+            # Already in the GetVnic response; the exposure walker's IPv6 path reads it.
+            "ipv6_addresses": vnic.get("ipv6-addresses") or [],
             "is_primary": vnic.get("is-primary", False),
             "hostname_label": vnic.get("hostname-label", ""),
             "mac_address": vnic.get("mac-address", ""),
@@ -1301,6 +1304,11 @@ def sync(
         config=network.base_client.config,
         signer=getattr(network.base_client, "signer", None),
     )
+    # Deployment specifications carry the route authentication the exposure layers read.
+    deployment_client = oci.apigateway.DeploymentClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
 
     for region in regions:
         logger.info("Syncing OCI Network in region '%s' for compartment '%s'.", region, compartment_ocid)
@@ -1309,6 +1317,7 @@ def sync(
         lb_client.base_client.set_region(region)
         nlb_client.base_client.set_region(region)
         gateway_client.base_client.set_region(region)
+        deployment_client.base_client.set_region(region)
 
         # Sync VCNs first (parent of all other network resources)
         sync_vcns(neo4j_session, network, compartments, tenancy_id, region, oci_update_tag, common_job_parameters)
@@ -1373,6 +1382,7 @@ def sync(
         try:
             api_gateway.sync_gateways(
                 neo4j_session, gateway_client, compartment_ocid, region, oci_update_tag, common_job_parameters,
+                deployment_client,
             )
         except Exception as e:
             logger.error("Error syncing OCI API gateways in region '%s': %s", region, e, exc_info=True)

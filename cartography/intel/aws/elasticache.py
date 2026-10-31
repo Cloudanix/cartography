@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Set
 
 import boto3
@@ -40,6 +41,18 @@ def transform_elasticache_topics(cluster_data: List[Dict]) -> List[Dict]:
     return topics
 
 
+def _cluster_port(cluster: Dict) -> Optional[int]:
+    """Memcached exposes a configuration endpoint; Redis only per-node endpoints."""
+    endpoint = cluster.get('ConfigurationEndpoint') or {}
+    if endpoint.get('Port'):
+        return endpoint['Port']
+    for node in cluster.get('CacheNodes') or []:
+        port = (node.get('Endpoint') or {}).get('Port')
+        if port:
+            return port
+    return None
+
+
 @timeit
 @aws_handle_regions
 def get_elasticache_clusters(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
@@ -47,10 +60,12 @@ def get_elasticache_clusters(boto3_session: boto3.session.Session, region: str) 
     client = boto3_session.client('elasticache', region_name=region, config=get_botocore_config())
     paginator = client.get_paginator('describe_cache_clusters')
     clusters: List[Dict] = []
-    for page in paginator.paginate():
+    # ShowCacheNodeInfo adds node endpoints (port) to the same call.
+    for page in paginator.paginate(ShowCacheNodeInfo=True):
         clusters.extend(page['CacheClusters'])
     for cluster in clusters:
         cluster['region'] = region
+        cluster['port'] = _cluster_port(cluster)
         cluster['consolelink'] = aws_console_link.get_console_link(arn=cluster['ARN'])
         topic_arn = (cluster.get('NotificationConfiguration') or {}).get('TopicArn')
         cluster['topic_consolelink'] = aws_console_link.get_console_link(arn=topic_arn) if topic_arn else None
@@ -71,7 +86,13 @@ def load_elasticache_clusters(
             cluster.cache_cluster_id = elasticache_cluster.CacheClusterId,
             cluster.region = elasticache_cluster.region
         SET cluster.lastupdated = $aws_update_tag,
-            cluster.consolelink = elasticache_cluster.consolelink
+            cluster.consolelink = elasticache_cluster.consolelink,
+            cluster.engine = elasticache_cluster.Engine,
+            cluster.engine_version = elasticache_cluster.EngineVersion,
+            cluster.port = elasticache_cluster.port,
+            cluster.auth_token_enabled = elasticache_cluster.AuthTokenEnabled,
+            cluster.transit_encryption_enabled = elasticache_cluster.TransitEncryptionEnabled,
+            cluster.replication_group_id = elasticache_cluster.ReplicationGroupId
 
         WITH cluster, elasticache_cluster
         MATCH (owner:AWSAccount{id: $aws_account_id})

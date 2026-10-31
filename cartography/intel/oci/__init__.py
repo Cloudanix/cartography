@@ -19,6 +19,7 @@ from oci.exceptions import ProfileNotFound
 
 from . import compartment
 from . import database
+from . import exposure_layers
 from . import iam
 from . import oke
 from . import organizations
@@ -161,6 +162,12 @@ def _sync_one_compartment(
     # Run analysis jobs after all resource syncs complete
     for job_file in OCI_ANALYSIS_JOBS:
         run_analysis_job(job_file, neo4j_session, common_job_parameters)
+
+    # Reads what the syncs and jobs above wrote; a failure must not fail the compartment sync.
+    try:
+        exposure_layers.run(neo4j_session, common_job_parameters)
+    except Exception as e:
+        logger.warning("Exposure layers failed for compartment '%s': %s", compartment_id, e, exc_info=True)
 
     logger.info(
         json.dumps({

@@ -33,6 +33,7 @@ class EC2NetworkInterfaceNodeProperties(CartographyNodeProperties):
     # Properties only returned by describe-network-interfaces
     interface_type: PropertyRef = PropertyRef('InterfaceType')
     public_ip: PropertyRef = PropertyRef('PublicIp', extra_index=True)
+    ipv6_addresses: PropertyRef = PropertyRef('Ipv6Addresses')
     requester_id: PropertyRef = PropertyRef('RequesterId', extra_index=True)
     requester_managed: PropertyRef = PropertyRef('RequesterManaged')
     source_dest_check: PropertyRef = PropertyRef('SourceDestCheck')

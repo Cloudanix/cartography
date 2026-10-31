@@ -2,10 +2,12 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import botocore
 import neo4j
+from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
@@ -16,6 +18,14 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+ALB_TYPE = 'application'
+# Listener protocols whose rules can carry authenticate actions.
+_RULE_PROTOCOLS = frozenset({'HTTP', 'HTTPS'})
+# Action types that make the caller prove an identity before any target sees the request.
+AUTH_ACTIONS = frozenset({'authenticate-oidc', 'authenticate-cognito', 'jwt-validation'})
+# Action types the LB answers itself: a path starting with one never reaches a target.
+_NO_TARGET_ACTIONS = frozenset({'redirect', 'fixed-response'})
 
 
 @timeit
@@ -64,9 +74,68 @@ def get_loadbalancer_v2_data(boto3_session: boto3.Session, region: str) -> List[
     # Make extra calls to get listeners
     for elbv2 in elbv2s:
         elbv2['Listeners'] = get_load_balancer_v2_listeners(client, elbv2['LoadBalancerArn'], region)
+        _add_listener_rules(client, elbv2)
         elbv2['TargetGroups'] = get_load_balancer_v2_target_groups(client, elbv2['LoadBalancerArn'])
         elbv2['region'] = region
     return elbv2s
+
+
+@timeit
+def get_listener_rules(client: botocore.client.BaseClient, listener_arn: str) -> Optional[List[Dict]]:
+    """
+    Rules of one listener, default rule included (elasticloadbalancing:DescribeRules).
+
+    :return: the rules, or None when the call fails (AccessDenied, throttling). None keeps the
+        listener's auth unknown; an empty list would wrongly read as "no unauthenticated path".
+    """
+    rules: List[Dict] = []
+    try:
+        for page in client.get_paginator('describe_rules').paginate(ListenerArn=listener_arn):
+            rules.extend(page['Rules'])
+    except ClientError as e:
+        logger.warning("describe_rules failed for listener %s: %s", listener_arn, e.response['Error']['Code'])
+        return None
+    return rules
+
+
+def _add_listener_rules(client: botocore.client.BaseClient, elbv2: Dict) -> None:
+    """One describe_rules call per HTTP(S) listener of an ALB, the only place auth actions exist."""
+    if elbv2.get('Type') != ALB_TYPE:
+        return
+    for listener in elbv2['Listeners']:
+        if listener.get('Protocol') in _RULE_PROTOCOLS:
+            listener['Rules'] = get_listener_rules(client, listener['ListenerArn'])
+
+
+def _first_action_type(actions: Optional[List[Dict]]) -> Optional[str]:
+    # Lowest Order runs first; Order may be omitted on single-action lists.
+    ordered = sorted(actions or [], key=lambda a: (a.get('Order') is None, a.get('Order') or 0))
+    return ordered[0].get('Type') if ordered else None
+
+
+def listener_auth_facts(listener: Dict) -> Dict:
+    """
+    L3 facts for one listener (docs/exposure-layers/plan.md).
+
+    all_paths_authenticated: True when no path (default action or rule) reaches a target before an
+        authenticate action; redirect / fixed-response paths answer at the LB and do not count.
+        None when rules were not read (non-ALB, non-HTTP listener, or describe_rules failed).
+    auth_action_types: authenticate action types that start some path.
+    """
+    rules = listener.get('Rules')
+    if rules is None:
+        return {'all_paths_authenticated': None, 'auth_action_types': None}
+    firsts = {_first_action_type(r.get('Actions')) for r in rules}
+    firsts.add(_first_action_type(listener.get('DefaultActions')))
+    unauthenticated = firsts - AUTH_ACTIONS - _NO_TARGET_ACTIONS
+    return {
+        'all_paths_authenticated': not unauthenticated,
+        'auth_action_types': sorted(t for t in firsts if t in AUTH_ACTIONS),
+    }
+
+
+def transform_listeners(listeners: List[Dict]) -> List[Dict]:
+    return [{**listener, **listener_auth_facts(listener)} for listener in listeners]
 
 
 @timeit
@@ -127,7 +196,9 @@ def load_load_balancer_v2s(
                 for group in lb["SecurityGroups"]
             )
         if lb.get('Listeners'):
-            listener_rows.append({"load_balancer_id": load_balancer_id, "listeners": lb['Listeners']})
+            listener_rows.append({
+                "load_balancer_id": load_balancer_id, "listeners": transform_listeners(lb['Listeners']),
+            })
         instance_rows.extend(_build_target_group_instance_rows(load_balancer_id, lb.get('TargetGroups') or []))
 
     load_graph_data(
@@ -214,6 +285,8 @@ def _load_lb_v2_listener_rows(neo4j_session: neo4j.Session, listener_rows: List[
         l.targetgrouparn = data.TargetGroupArn
         SET l.lastupdated = $update_tag,
         l.ssl_policy = data.SslPolicy,
+        l.all_paths_authenticated = data.all_paths_authenticated,
+        l.auth_action_types = data.auth_action_types,
         l.arn = data.ListenerArn,
         l.consolelink = elbv2.consolelink
         WITH l, elbv2

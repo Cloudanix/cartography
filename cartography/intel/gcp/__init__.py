@@ -22,6 +22,7 @@ from oauth2client.client import ApplicationDefaultCredentialsError
 from oauth2client.client import GoogleCredentials
 
 from . import compute
+from . import exposure_layers
 from . import label
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
@@ -1094,6 +1095,14 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
         neo4j_session,
         common_job_parameters,
     )
+
+    # Reads what the sync and the jobs above wrote; a failure must not fail the project sync.
+    try:
+        exposure_layers.run(neo4j_session, common_job_parameters)
+    except Exception as e:
+        logger.warning(
+            f"exposure layers failed for project {common_job_parameters.get('GCP_PROJECT_ID')} - {e}", exc_info=True,
+        )
 
     del common_job_parameters["service_labels"]
     return common_job_parameters

@@ -278,11 +278,12 @@ def transform_rest_api_client_certificate(
 @timeit
 def get_rest_api_resources(api: Dict, client: botocore.client.BaseClient) -> List[Any]:
     """
-    Gets the collection of Resource resources.
+    Gets the collection of Resource resources, with their methods embedded (same call, no extra
+    request) so method authorization feeds the L3 access layer.
     """
     resources: List[Any] = []
     paginator = client.get_paginator('get_resources')
-    response_iterator = paginator.paginate(restApiId=api['id'])
+    response_iterator = paginator.paginate(restApiId=api['id'], embed=['methods'])
     for page in response_iterator:
         resources.extend(page['items'])
 
@@ -480,7 +481,9 @@ def _load_apigateway_resources(
     s.consolelink = res.consolelink,
     s.region=res.region,
     s.lastupdated =$UpdateTag,
-    s.arn = res.arn
+    s.arn = res.arn,
+    s.method_authorization_types = res.method_authorization_types,
+    s.unauthenticated_methods = res.unauthenticated_methods
     WITH s, res
     MATCH (rest_api:APIGatewayRestAPI{id: res.apiId})
     MERGE (rest_api)-[r:RESOURCE]->(s)
@@ -493,6 +496,8 @@ def _load_apigateway_resources(
             resource['region'], f"restapis/{resource['apiId']}/resources/{resource['id']}", partition,
         )
         resource['consolelink'] = get_apigateway_console_link(resource['arn'])
+        # Resources are always fetched with embed=methods, so a missing key means "no methods".
+        resource.update(transform_resource_methods(resource.get('resourceMethods', {})))
 
     load_graph_data(
         neo4j_session,
@@ -500,6 +505,28 @@ def _load_apigateway_resources(
         resources,
         UpdateTag=update_tag,
     )
+
+
+def transform_resource_methods(resource_methods: Optional[Dict]) -> Dict[str, Optional[List[str]]]:
+    """
+    Reduce embedded resourceMethods to what the access layer needs.
+
+    A method is unauthenticated when authorizationType is NONE and no API key is required.
+    OPTIONS is skipped: it is the CORS preflight and returns no data.
+    None (not []) when the API returned no method data, so "unknown" stays distinguishable.
+    """
+    if resource_methods is None:
+        return {'method_authorization_types': None, 'unauthenticated_methods': None}
+    auth_types: List[str] = []
+    open_methods: List[str] = []
+    for verb, method in resource_methods.items():
+        if verb == 'OPTIONS':
+            continue
+        auth_type = method.get('authorizationType', 'NONE')
+        auth_types.append(auth_type)
+        if auth_type == 'NONE' and not method.get('apiKeyRequired', False):
+            open_methods.append(verb)
+    return {'method_authorization_types': sorted(set(auth_types)), 'unauthenticated_methods': sorted(open_methods)}
 
 
 @timeit

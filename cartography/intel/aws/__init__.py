@@ -16,6 +16,7 @@ import neo4j
 from neo4j import GraphDatabase
 
 from . import ec2
+from . import exposure_layers
 from . import organizations
 from .ec2.util import get_botocore_config
 from .resources import parse_and_validate_aws_requested_syncs
@@ -448,6 +449,12 @@ def _sync_one_account(
         neo4j_session,
         common_job_parameters,
     )
+
+    # Reads what the jobs above and every sync wrote; a failure must not fail the account sync.
+    try:
+        exposure_layers.run(neo4j_session, common_job_parameters)
+    except Exception as e:
+        logger.warning(f"exposure layers failed for account {current_aws_account_id} - {e}", exc_info=True)
 
     run_analysis_job(
         "aws_iam_user_analysis.json",

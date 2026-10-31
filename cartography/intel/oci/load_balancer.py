@@ -108,6 +108,11 @@ def _common_fields(lb: Dict[str, Any], region: str) -> Dict[str, Any]:
         ],
         "nsg_ids": lb.get("network-security-group-ids") or [],
         "backend_ips": sorted({b["ip-address"] for b in backends if b.get("ip-address")}),
+        # '<ip or instance ocid>:<port>' per backend; the exposure layers check the backend port.
+        "backend_endpoints": sorted({
+            f"{address}:{b.get('port') or ANY_PORT}"
+            for b in backends for address in (b.get("target-id"), b.get("ip-address")) if address
+        }),
         "time_created": str(lb.get("time-created", "")),
         "region": region,
     }
@@ -201,6 +206,7 @@ def load_load_balancers(
             lb.listener_targets = row.listener_targets,
             lb.backend_ips = row.backend_ips,
             lb.backend_target_ids = row.backend_target_ids,
+            lb.backend_endpoints = row.backend_endpoints,
             lb.region = row.region,
             lb.consolelink = row.consolelink,
             lb.lastupdated = $oci_update_tag
