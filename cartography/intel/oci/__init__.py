@@ -9,7 +9,6 @@ from typing import Dict
 from typing import List
 
 import neo4j
-import oci
 import oci.artifacts
 import oci.key_management
 import oci.logging
@@ -34,6 +33,21 @@ from cartography.util import run_analysis_job
 
 logger = logging.getLogger(__name__)
 Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging containerregistry database')
+
+# Analysis jobs run per compartment after all resource syncs, in this order.
+OCI_ANALYSIS_JOBS = [
+    'oci_subnet_asset_exposure.json',
+    'oci_instance_asset_exposure.json',
+    'oci_iam_user_analysis.json',
+    'oci_iam_policy_analysis.json',
+    'oci_encryption_analysis.json',
+    'oci_monitoring_analysis.json',
+    'oci_containerregistry_asset_exposure.json',
+    'oci_object_storage_asset_exposure.json',
+    'oci_file_storage_asset_exposure.json',
+    'oci_autonomous_database_asset_exposure.json',
+    'oci_logging_analysis.json',
+]
 
 
 def _sync_one_compartment(
@@ -137,19 +151,7 @@ def _sync_one_compartment(
             )
 
     # Run analysis jobs after all resource syncs complete
-    _oci_analysis_jobs = [
-        'oci_subnet_asset_exposure.json',
-        'oci_instance_asset_exposure.json',
-        'oci_iam_user_analysis.json',
-        'oci_iam_policy_analysis.json',
-        'oci_encryption_analysis.json',
-        'oci_monitoring_analysis.json',
-        'oci_containerregistry_asset_exposure.json',
-        'oci_object_storage_asset_exposure.json',
-        'oci_file_storage_asset_exposure.json',
-        'oci_logging_analysis.json',
-    ]
-    for job_file in _oci_analysis_jobs:
+    for job_file in OCI_ANALYSIS_JOBS:
         try:
             run_analysis_job(job_file, neo4j_session, common_job_parameters)
         except Exception as e:

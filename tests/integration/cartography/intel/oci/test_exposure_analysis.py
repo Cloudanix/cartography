@@ -1,5 +1,6 @@
 # Copyright (c) 2020, Oracle and/or its affiliates.
 # Runs the real OCI exposure analysis jobs against network data loaded by the real loaders.
+from cartography.intel.oci import database
 from cartography.intel.oci import network
 from cartography.util import run_analysis_job
 
@@ -256,3 +257,34 @@ def test_mount_targets_and_file_systems_are_never_internet_exposed(neo4j_session
         "MATCH (n) WHERE n.id IN ['fss-mt', 'fss-fs'] AND n.publicContext IS NOT NULL RETURN count(n) AS c",
     ).single()
     assert row['c'] == 0
+
+
+def test_autonomous_database_exposed_only_with_public_endpoint_and_open_acl(neo4j_session):
+    _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
+    raw = [
+        # Public endpoint, "secure access from everywhere": no ACL at all.
+        {'id': 'adb-public-no-acl'},
+        {'id': 'adb-public-open-acl', 'whitelisted-ips': ['198.51.100.7', '0.0.0.0/0']},
+        # Public endpoint restricted to one address and to a VCN (via service gateway).
+        {'id': 'adb-public-ip-acl', 'whitelisted-ips': ['198.51.100.7']},
+        {'id': 'adb-public-vcn-acl', 'whitelisted-ips': ['ocid1.vcn.oc1.phx.x;10.0.0.0/16']},
+        {'id': 'adb-private-endpoint', 'subnet-id': 'ocid1.subnet.oc1.phx.adb'},
+        # Dedicated Exadata infrastructure is only reachable from the customer's VCN.
+        {'id': 'adb-dedicated', 'is-dedicated': True},
+    ]
+    database.load_autonomous_databases(
+        neo4j_session,
+        database.transform_autonomous_databases([{'lifecycle-state': 'AVAILABLE', **adb} for adb in raw], REGION),
+        COMPARTMENT_ID, UPDATE_TAG,
+    )
+
+    run_analysis_job('oci_autonomous_database_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
+
+    assert _exposed(neo4j_session, 'OCIAutonomousDatabase', 'adb-') == {
+        'adb-public-no-acl': ['public_endpoint_no_acl'],
+        'adb-public-open-acl': ['public_endpoint_open_acl'],
+    }
+    context = neo4j_session.run(
+        "MATCH (a:OCIAutonomousDatabase{id: 'adb-public-open-acl'}) RETURN a.publicContext AS c",
+    ).single()['c']
+    assert '0.0.0.0/0' in context and 'oci-database-autonomous-database' in context
