@@ -2,6 +2,8 @@
 End-to-end check of the OCI exposure layers on a graph written by the real OCI loaders.
 Scenarios follow docs/exposure-layers/plan.md section 8 where the construct exists in OCI.
 """
+import json
+
 import pytest
 
 from cartography.intel.oci import api_gateway
@@ -139,6 +141,8 @@ def _instances(session):
     _instance(session, 'xl-i-stateless', 'xl-pub-stateless', public_ip='203.0.113.4')
     _instance(session, 'xl-i-nsg', 'xl-pub-closed', public_ip='203.0.113.5', nsgs=['xl-nsg-https'])
     _instance(session, 'xl-i-private', 'xl-private', private_ip='10.0.5.5', nsgs=['xl-nsg-app'])
+    # Graph-only shape (OCI refuses it): public addresses in a subnet that prohibits them.
+    _instance(session, 'xl-i-prohibited', 'xl-private', public_ip='203.0.113.6', ipv6=[GUA])
     # Plan section 8 scenario 12, OCI shape: IPv6 needs its own route and its own world rule.
     _instance(session, 'xl-i-v6', 'xl-pub-v6', ipv6=[GUA])
     _instance(session, 'xl-i-v6-v4rules', 'xl-pub-v6-v4rules', ipv6=[GUA])
@@ -249,11 +253,27 @@ def _reach(session, label, node_id):
     return p['internet_reachable'], p['internet_reachable_ports'], p['public_reasons']
 
 
+def _json(session, label, node_id, key):
+    return json.loads(_props(session, label, node_id)[key])
+
+
+def _gateway_hops(subnet_id, world=WORLD):
+    return [
+        {'hop': 'internet_gateway', 'id': IGW}, {'hop': 'route', 'id': f'rt-{subnet_id}', 'rule': f'{world} -> {IGW}'},
+    ]
+
+
 def test_open_security_list_and_public_ip_is_reachable(graph):
     p = _props(graph, 'OCIInstance', 'xl-i-open')
     assert (p['internet_reachable'], p['internet_reachable_ports']) == (True, ['tcp:22-22', 'tcp:443-443'])
     assert (p['public_reasons'], p['internet_reachable_via']) == (['public_ip'], [f'igw:{IGW}'])
     assert _props(graph, 'OCIVnic', 'xl-i-open.vnic')['internet_reachable'] is True
+    assert json.loads(p['exposure_paths']) == [{
+        'via': f'igw:{IGW}', 'entry': {'type': 'public_ip', 'id': '203.0.113.1'},
+        'ports': ['tcp:22-22', 'tcp:443-443'],
+        'hops': _gateway_hops('xl-pub-open') + [{'hop': 'security_list', 'id': 'xl-sl-open'}],
+    }]
+    assert (p['exposure_blocked_by'], p['exposure_evaluated_at']) == ('[]', TAG)
     # Legacy flag is never touched.
     assert p['exposed_internet'] == UNTOUCHED
 
@@ -264,12 +284,35 @@ def test_public_ip_but_closed_path_is_public_not_reachable(graph):
         assert _reach(graph, 'OCIInstance', instance) == (False, [], ['public_ip']), instance
 
 
+def test_blocked_by_explains_public_but_unreachable(graph):
+    expected = {
+        'xl-i-rfc1918': [{'hop': 'security_list', 'id': 'xl-sl-rfc1918', 'reason': 'not_allowed', 'detail': 'ipv4'}],
+        'xl-i-noroute': [{'hop': 'route', 'id': 'rt-xl-noroute', 'reason': 'no_internet_route', 'detail': 'ipv4'}],
+        'xl-i-stateless': [
+            {'hop': 'security_list', 'id': 'xl-sl-stateless', 'reason': 'return_path_denied', 'detail': 'ipv4'},
+        ],
+        'xl-i-v6-noroute': [{'hop': 'route', 'id': 'rt-xl-pub-open', 'reason': 'no_internet_route', 'detail': 'ipv6'}],
+        'xl-i-prohibited': [
+            {'hop': 'subnet', 'id': 'xl-private', 'reason': 'public_ip_prohibited', 'detail': family}
+            for family in ('ipv4', 'ipv6')
+        ],
+    }
+    for instance, blocked in expected.items():
+        assert _json(graph, 'OCIInstance', instance, 'exposure_blocked_by') == blocked, instance
+    # Not public: nothing to explain.
+    assert _props(graph, 'OCIInstance', 'xl-i-v6-ula')['exposure_blocked_by'] == '[]'
+
+
 def test_ipv6_path_uses_ipv6_route_and_rules_only(graph):
     p = _props(graph, 'OCIInstance', 'xl-i-v6')
     assert (p['internet_reachable'], p['internet_reachable_ports'], p['internet_reachable_via']) == (
         True, ['tcp:443-443'], ['direct_ipv6'],
     )
     assert p['public_reasons'] == ['public_ipv6']
+    assert json.loads(p['exposure_paths']) == [{
+        'via': 'direct_ipv6', 'entry': {'type': 'public_ipv6', 'id': GUA}, 'ports': ['tcp:443-443'],
+        'hops': _gateway_hops('xl-pub-v6', V6_WORLD) + [{'hop': 'security_list', 'id': 'xl-sl-v6'}],
+    }]
     assert _props(graph, 'OCIVnic', 'xl-i-v6.vnic')['ipv6_addresses'] == [GUA]
     # 0.0.0.0/0 rules do not admit IPv6 clients; no ::/0 route blocks a ::/0 NSG rule.
     for instance in ('xl-i-v6-v4rules', 'xl-i-v6-noroute'):
@@ -288,6 +331,17 @@ def test_private_instance_behind_public_load_balancer(graph):
         True, ['tcp:8080-8080'], ['lb:xl-lb'],
     )
     assert p['public_reasons'] == []
+    assert json.loads(p['exposure_paths']) == [{
+        'via': 'lb:xl-lb', 'entry': {'type': 'load_balancer', 'id': 'xl-lb', 'listener_ports': ['tcp:443-443']},
+        'ports': ['tcp:8080-8080'],
+        'hops': [
+            {'hop': 'listener', 'id': 'xl-lb', 'rule': 'tcp:443-443'}, {'hop': 'backend', 'id': '10.0.5.5:8080'},
+            {'hop': 'security_list', 'id': 'xl-sl-backend'}, {'hop': 'nsg', 'id': 'xl-nsg-app'},
+        ],
+    }]
+    assert _json(graph, 'OCILoadBalancer', 'xl-lb', 'exposure_paths')[0]['hops'] == (
+        _gateway_hops('xl-lb') + [{'hop': 'security_list', 'id': 'xl-sl-open'}]
+    )
     assert _props(graph, 'OCILoadBalancer', 'xl-lb')['access_auth'] == 'unknown'
 
 
@@ -337,6 +391,32 @@ def test_network_reach_edges_and_stale_cleanup(graph):
     assert sorted((r['src'], r['dst'], r['ports'], r['via']) for r in rows) == [
         ('xl-i-private', 'xl-db', ['tcp:1521-1521'], 'network_security_group'),
     ]
+
+
+def test_network_reach_summaries_and_counts(graph):
+    private = _props(graph, 'OCIInstance', 'xl-i-private')
+    assert json.loads(private['network_reachable_data_stores']) == [{
+        'id': 'xl-db', 'type': 'OCIDbSystem', 'ports': ['tcp:1521-1521'], 'via': 'network_security_group',
+        'admitted_by': 'xl-nsg-db',
+    }]
+    assert private['network_reachable_data_store_count'] == 1
+    # Every instance of the compartment is rewritten, the stale edge's source included.
+    isolated = _props(graph, 'OCIInstance', 'xl-i-open')
+    assert (isolated['network_reachable_data_stores'], isolated['network_reachable_data_store_count']) == ('[]', 0)
+    db = _props(graph, 'OCIDbSystem', 'xl-db')
+    # xl-i-private is itself reachable through the load balancer.
+    assert (
+        db['network_reachable_from_count'], db['network_reachable_from_internet_exposed_count'],
+        db['exposure_evaluated_at'],
+    ) == (1, 1, TAG)
+
+
+def test_every_written_node_carries_evaluated_at(graph):
+    for label, node_id in (
+        ('OCIVnic', 'xl-i-open.vnic'), ('OCIStorageBucket', 'xl-b-public'), ('OCIOKECluster', 'xl-oke'),
+        ('OCIAutonomousDatabase', 'xl-adb-acl'), ('OCILoadBalancer', 'xl-lb'),
+    ):
+        assert _props(graph, label, node_id)['exposure_evaluated_at'] == TAG, label
 
 
 def test_other_workspace_untouched(graph):

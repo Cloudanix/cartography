@@ -45,6 +45,7 @@ EXPOSURE_BLOCKED_BY = "exposure_blocked_by"
 EXPOSURE_EVALUATED_AT = "exposure_evaluated_at"
 
 # Hop kinds: one vocabulary across clouds so the console renders paths without per-cloud code.
+HOP_INTERNET_GATEWAY = "internet_gateway"
 HOP_ROUTE = "route"
 HOP_SUBNET = "subnet"
 HOP_NACL = "nacl"

@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 _PARAM_KEYS = ("WORKSPACE_ID", "OCI_TENANCY_ID", "OCI_COMPARTMENT_ID", "UPDATE_TAG")
 
 
-def _write(session: neo4j.Session, by_label: Dict[str, Dict[str, Dict]]) -> None:
+def _write(session: neo4j.Session, by_label: Dict[str, Dict[str, Dict]], update_tag: int) -> None:
     for label, by_id in by_label.items():
-        set_node_properties(session, label, [{"id": i, "props": p} for i, p in by_id.items()])
+        rows = [{"id": i, "props": p} for i, p in by_id.items()]
+        set_node_properties(session, label, rows, evaluated_at=update_tag)
 
 
 @timeit
@@ -48,10 +49,13 @@ def run(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 
     net = read_network(neo4j_session, params)
     vnic_rows = read_instance_vnics(neo4j_session, params)
+    tag = params["UPDATE_TAG"]
     reach_results = reach.compute(neo4j_session, params, net, vnic_rows)
-    _write(neo4j_session, {label: {i: r.props() for i, r in by_id.items()} for label, by_id in reach_results.items()})
-    _write(neo4j_session, access.compute(neo4j_session, params))
-    _write(neo4j_session, software.compute(neo4j_session, params))
+    # L1/L2 first: blast_radius counts which sources are internet_reachable.
+    reach_props = {label: {i: r.props() for i, r in by_id.items()} for label, by_id in reach_results.items()}
+    _write(neo4j_session, reach_props, tag)
+    _write(neo4j_session, access.compute(neo4j_session, params), tag)
+    _write(neo4j_session, software.compute(neo4j_session, params), tag)
     blast_radius.sync(neo4j_session, params, net, vnic_rows)
 
     logger.info(

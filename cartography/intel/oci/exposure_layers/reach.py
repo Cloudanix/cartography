@@ -26,6 +26,11 @@ from typing import Tuple
 
 import neo4j
 
+from cartography.intel.exposure.layers import BLOCK_NOT_ALLOWED
+from cartography.intel.exposure.layers import hop
+from cartography.intel.exposure.layers import HOP_BACKEND
+from cartography.intel.exposure.layers import HOP_FIREWALL
+from cartography.intel.exposure.layers import HOP_LISTENER
 from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
@@ -50,17 +55,29 @@ SERVICE_ENDPOINT = "oci_service_endpoint"
 PUBLIC_ENDPOINT = "public_endpoint"
 PUBLIC_IP = "public_ip"
 PUBLIC_IPV6 = "public_ipv6"
+# exposure_paths[].entry.type of LB paths; other entries reuse the reason / via names above.
+LOAD_BALANCER_ENTRY = "load_balancer"
+# exposure_blocked_by[].detail when an Autonomous DB access control list keeps the world out.
+ADB_ACL_DETAIL = "access_control_list"
+
+
+def entry(kind: str, entry_id: Optional[str], **extra: object) -> Dict:
+    """exposure_paths[].entry: where the internet comes in (public IP, LB, endpoint)."""
+    return {"type": kind, "id": entry_id, **extra}
 
 
 def _merge(into: Reach, other: Reach) -> None:
+    """
+    Owner = union of its parts. Paths keyed by the same via fold together, keeping the first
+    entry: two VNICs behind one gateway show one path. ponytail: key paths by entry if the
+    console needs each public IP apart.
+    """
     into.public_reasons |= other.public_reasons
-    into.ports = into.ports | other.ports
-    into.via |= other.via
-
-
-def _add_paths(reach: Reach, paths: Dict[str, PortSet], service: Optional[PortSet] = None) -> None:
-    for via, ports in paths.items():
-        reach.add_path(ports & service if service is not None else ports, via)
+    for path in other.paths.values():
+        into.add_path(path["ports"], path["via"], path["hops"], path["entry"])
+    for blocker in other.blocked:
+        if blocker not in into.blocked:
+            into.blocked.append(blocker)
 
 
 # ---------------------------------------------------------------- VNIC owners
@@ -73,7 +90,7 @@ def _is_global(address: str) -> bool:
         return False
 
 
-def has_global_ipv6(addresses: Optional[Iterable[str]]) -> bool:
+def global_ipv6(addresses: Optional[Iterable[str]]) -> List[str]:
     """
     ULA (fc00::/7) and link-local addresses never route from the internet; global ones may.
     The address alone suffices: OCI assigns it from one of the subnet's IPv6 prefixes, so a
@@ -81,7 +98,7 @@ def has_global_ipv6(addresses: Optional[Iterable[str]]) -> bool:
     ponytail: a GUA-shaped prefix the customer declared private (Vcn.ipv6_private_cidr_blocks)
     counts as global; ingest that list and exclude its prefixes if such VCNs show up.
     """
-    return any(_is_global(a) for a in addresses or [])
+    return [a for a in addresses or [] if _is_global(a)]
 
 
 def vnic_reach(row: Dict, net: Network) -> Reach:
@@ -90,10 +107,11 @@ def vnic_reach(row: Dict, net: Network) -> Reach:
     subnets, nsgs = [row.get("subnet_id")], row.get("nsg_ids") or []
     if row.get("public_ip"):
         reach.public_reasons.add(PUBLIC_IP)
-        _add_paths(reach, net.direct_paths(subnets, nsgs))
-    if has_global_ipv6(row.get("ipv6_addresses")):
+        net.walk(reach, subnets, nsgs, entry=entry(PUBLIC_IP, row["public_ip"]))
+    global_v6 = global_ipv6(row.get("ipv6_addresses"))
+    if global_v6:
         reach.public_reasons.add(PUBLIC_IPV6)
-        _add_paths(reach, net.direct_paths(subnets, nsgs, V6))
+        net.walk(reach, subnets, nsgs, V6, entry=entry(PUBLIC_IPV6, global_v6[0]))
     return reach
 
 
@@ -164,7 +182,9 @@ def load_balancer_reach(row: Dict, net: Network) -> Reach:
     if row["private"]:
         return reach
     reach.public_reasons.add("public_load_balancer")
-    _add_paths(reach, net.direct_paths(row["subnets"], row["nsgs"]), listener_ports(row["listeners"]))
+    listeners = listener_ports(row["listeners"])
+    lb_entry = entry(LOAD_BALANCER_ENTRY, row["id"], listener_ports=listeners.to_strings())
+    net.walk(reach, row["subnets"], row["nsgs"], service=listeners, entry=lb_entry)
     return reach
 
 
@@ -180,6 +200,11 @@ def backend_endpoints(row: Dict) -> List[Tuple[str, Optional[int]]]:
         address, _, port = endpoint.rpartition(":")
         pairs.append((address, int(port or 0) or None))
     return pairs
+
+
+def _endpoint(address: str, port: Optional[int]) -> str:
+    """Backend hop id. ponytail: backend set names are not ingested; the backend stands in for its set."""
+    return f"{address}:{port}" if port else address
 
 
 def _vnics_by_address(vnic_rows: List[Dict]) -> Dict[str, List[Dict]]:
@@ -209,14 +234,18 @@ def add_lb_backends(
         if lb_reach.ports.is_empty():
             continue
         vcns = {net.subnets[s].vcn_id for s in lb["subnets"] if s in net.subnets}
+        listeners = lb_reach.ports.to_strings()
+        lb_entry = entry(LOAD_BALANCER_ENTRY, lb["id"], listener_ports=listener_ports(lb["listeners"]).to_strings())
         for address, port in backend_endpoints(lb):
             target = union_all(PortSet.of(p, port, port) for p in lb_reach.ports.protocols())
+            lb_hops = [hop(HOP_LISTENER, lb["id"], ",".join(listeners)), hop(HOP_BACKEND, _endpoint(address, port))]
             for vnic in index.get(address, []):
                 subnet = net.subnets.get(vnic["subnet_id"] or "")
                 if address == vnic["private_ip"] and vcns and (subnet is None or subnet.vcn_id not in vcns):
                     continue
                 allowed = any_source_open(net.attachment_rules(vnic["subnet_id"], vnic["nsg_ids"]))
-                instances[vnic["owner"]].add_path(target & allowed, f"lb:{lb['id']}")
+                hops = lb_hops + net.filter_hops(vnic["subnet_id"], vnic["nsg_ids"])
+                instances[vnic["owner"]].add_path(target & allowed, f"lb:{lb['id']}", hops, lb_entry)
 
 
 # ---------------------------------------------------------------- endpoints and managed services
@@ -242,10 +271,11 @@ def subnet_endpoints(rows: List[Dict], net: Network, service: PortSet) -> Dict[s
         if not row["public"]:
             continue
         reach.public_reasons.add(PUBLIC_ENDPOINT)
+        endpoint = entry(PUBLIC_ENDPOINT, row["id"])
         if not row["subnet"]:
-            reach.add_path(service, PUBLIC_ENDPOINT)
+            reach.add_path(service, PUBLIC_ENDPOINT, entry=endpoint)
             continue
-        _add_paths(reach, net.direct_paths([row["subnet"]], row["nsgs"]), service)
+        net.walk(reach, [row["subnet"]], row["nsgs"], service=service, entry=endpoint)
     return out
 
 
@@ -268,7 +298,9 @@ def autonomous_databases(rows: List[Dict]) -> Dict[str, Reach]:
             continue
         reach.public_reasons.add(PUBLIC_ENDPOINT)
         if not row["acl"] or any(is_world(c) for c in row["acl"]):
-            reach.add_path(AUTONOMOUS_DB_PORTS, PUBLIC_ENDPOINT)
+            reach.add_path(AUTONOMOUS_DB_PORTS, PUBLIC_ENDPOINT, entry=entry(PUBLIC_ENDPOINT, row["id"]))
+            continue
+        reach.block(HOP_FIREWALL, row["id"], BLOCK_NOT_ALLOWED, AUTONOMOUS_DB_PORTS, ADB_ACL_DETAIL)
     return out
 
 
@@ -293,7 +325,7 @@ def service_endpoints(rows: List[Dict], public_reason: str) -> Dict[str, Reach]:
             reach.public_reasons.add(public_reason)
         if row["par"]:
             reach.public_reasons.add("pre_authenticated_request")
-        reach.add_path(HTTPS, SERVICE_ENDPOINT)
+        reach.add_path(HTTPS, SERVICE_ENDPOINT, entry=entry(SERVICE_ENDPOINT, row["id"]))
     return out
 
 

@@ -1,9 +1,11 @@
 import json
 
+from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.oci import api_gateway
 from cartography.intel.oci import load_balancer
 from cartography.intel.oci.exposure_layers import access
+from cartography.intel.oci.exposure_layers import blast_radius
 from cartography.intel.oci.exposure_layers import reach
 from cartography.intel.oci.exposure_layers import software
 from cartography.intel.oci.exposure_layers.network import default_route_igws
@@ -88,20 +90,37 @@ def test_default_route_igws_reads_ipv4_default_route_only():
 
 
 def _net(rules=(), **subnet):
-    facts = dict(vcn_id='vcn', security_list_ids=['sl'], prohibit_public_ip=False, igw_ids={V4: [IGW], V6: []})
+    facts = dict(
+        vcn_id='vcn', security_list_ids=['sl'], prohibit_public_ip=False, igw_ids={V4: [IGW], V6: []},
+        route_table_id='rt',
+    )
     facts.update(subnet)
     return Network(subnets={'s': SubnetFacts(**facts)}, igw_enabled={IGW: True}, rules={'sl': list(rules)})
 
 
-def test_internet_vias():
-    assert _net().internet_vias('s') == [f'igw:{IGW}']
-    assert _net(igw_ids={V4: [], V6: []}).internet_vias('s') == []
-    assert _net(prohibit_public_ip=True).internet_vias('s') == []
-    assert _net(igw_ids=None).internet_vias('s') == [ROUTE_UNRESOLVED]
-    assert _net().internet_vias('unknown') == [ROUTE_UNRESOLVED]
+def _routes(net, subnet='s', family=V4):
+    reach_ = Reach()
+    return list(net.routes(subnet, family, reach_)), reach_.blocked
+
+
+def test_routes_and_their_blockers():
+    assert _routes(_net()) == ([f'igw:{IGW}'], [])
+    assert _routes(_net(igw_ids={V4: [], V6: []})) == (
+        [], [{'hop': 'route', 'id': 'rt', 'reason': 'no_internet_route', 'detail': 'ipv4'}],
+    )
+    assert _routes(_net(prohibit_public_ip=True), family=V6) == (
+        [], [{'hop': 'subnet', 'id': 's', 'reason': 'public_ip_prohibited', 'detail': 'ipv6'}],
+    )
+    assert _routes(_net(igw_ids=None)) == ([ROUTE_UNRESOLVED], [])
+    assert _routes(_net(), 'unknown') == ([ROUTE_UNRESOLVED], [])
     disabled = _net()
     disabled.igw_enabled[IGW] = False
-    assert disabled.internet_vias('s') == []
+    assert _routes(disabled) == (
+        [], [{
+            'hop': 'route', 'id': 'rt', 'reason': 'no_internet_route',
+            'detail': f'ipv4; internet gateway disabled: {IGW}',
+        }],
+    )
 
 
 def test_default_route_igws_per_family():
@@ -164,6 +183,81 @@ def test_only_global_ipv6_addresses_are_public():
     assert dual['public_reasons'] == ['public_ip', 'public_ipv6']
 
 
+def _context(reach_):
+    props = reach_.props()
+    return json.loads(props['exposure_paths']), json.loads(props['exposure_blocked_by'])
+
+
+def test_paths_name_entry_gateway_route_and_pooled_filters():
+    net = _net(_sl([_tcp(WORLD, 22), _tcp(V6_WORLD, 443)]), igw_ids=DUAL_ROUTES)
+    paths, blocked = _context(reach.vnic_reach(_vnic(public_ip='203.0.113.1', nsg_ids=['nsg']), net))
+    filters = [{'hop': 'security_list', 'id': 'sl'}, {'hop': 'nsg', 'id': 'nsg'}]
+    assert paths == [
+        {
+            'via': 'direct_ipv6', 'entry': {'type': 'public_ipv6', 'id': GUA}, 'ports': ['tcp:443-443'],
+            'hops': [
+                {'hop': 'internet_gateway', 'id': IGW}, {'hop': 'route', 'id': 'rt', 'rule': f'::/0 -> {IGW}'},
+            ] + filters,
+        },
+        {
+            'via': f'igw:{IGW}', 'entry': {'type': 'public_ip', 'id': '203.0.113.1'}, 'ports': ['tcp:22-22'],
+            'hops': [
+                {'hop': 'internet_gateway', 'id': IGW}, {'hop': 'route', 'id': 'rt', 'rule': f'0.0.0.0/0 -> {IGW}'},
+            ] + filters,
+        },
+    ]
+    assert blocked == []
+
+
+def test_blocked_by_names_the_filters_and_the_family():
+    # No world rule: the pooled security lists and NSGs are named together.
+    rfc1918 = reach.vnic_reach(_vnic(public_ip='203.0.113.1', nsg_ids=['nsg']), _net(_sl([_tcp('10.0.0.0/16', 22)])))
+    assert _context(rfc1918) == (
+        [], [
+            {'hop': 'security_list', 'id': 'sl,nsg', 'reason': 'not_allowed', 'detail': 'ipv4'},
+            {'hop': 'route', 'id': 'rt', 'reason': 'no_internet_route', 'detail': 'ipv6'},
+        ],
+    )
+    stateless = reach.vnic_reach(
+        _vnic(ipv6_addresses=[], public_ip='203.0.113.1'), _net(
+            _sl([
+                _tcp(WORLD, 443, stateless=True),
+            ]),
+        ),
+    )
+    assert _context(stateless)[1] == [
+        {'hop': 'security_list', 'id': 'sl', 'reason': 'return_path_denied', 'detail': 'ipv4'},
+    ]
+
+
+def test_load_balancer_blocker_carries_listener_ports():
+    row = {'id': 'lb', 'private': False, 'subnets': ['s'], 'nsgs': [], 'listeners': ['6:443']}
+    paths, blocked = _context(reach.load_balancer_reach(row, _net(_sl([_tcp(WORLD, 22)]))))
+    assert (paths, blocked) == (
+        [], [
+            {'hop': 'security_list', 'id': 'sl', 'reason': 'not_allowed', 'ports': ['tcp:443-443'], 'detail': 'ipv4'},
+        ],
+    )
+    open_paths, _ = _context(reach.load_balancer_reach(row, _net(_sl([_tcp(WORLD, 443)]))))
+    assert open_paths[0]['entry'] == {'type': 'load_balancer', 'id': 'lb', 'listener_ports': ['tcp:443-443']}
+
+
+def test_owner_merges_paths_and_blockers_of_its_vnics():
+    net = _net(_sl([_tcp(WORLD, 22)]))
+    rows = [
+        {'owner': 'i', 'id': 'v1', 'subnet_id': 's', 'nsg_ids': [], 'public_ip': '203.0.113.1'},
+        {'owner': 'i', 'id': 'v2', 'subnet_id': 's', 'nsg_ids': [], 'public_ip': '203.0.113.2'},
+    ]
+    owners, vnics = reach.vnic_owners(rows, net)
+    paths, _ = _context(owners['i'])
+    # Same gateway: one path, first VNIC's entry.
+    assert [(p['via'], p['entry']['id'], p['ports']) for p in paths] == [(f'igw:{IGW}', '203.0.113.1', ['tcp:22-22'])]
+    closed = _net(prohibit_public_ip=True)
+    owners, _ = reach.vnic_owners(rows[:1], closed)
+    prohibited = {'hop': 'subnet', 'id': 's', 'reason': 'public_ip_prohibited', 'detail': 'ipv4'}
+    assert _context(owners['i'])[1] == [prohibited]
+
+
 def test_listener_ports_and_backend_endpoints():
     assert reach.listener_ports(['6:443', '17:53']).to_strings() == ['tcp:443-443', 'udp:53-53']
     assert reach.listener_ports(['any:0']) == PortSet.everything()
@@ -195,6 +289,28 @@ def test_autonomous_database_reach():
         'open': True, 'world': True, 'acl': False, 'dedicated': False, 'private': False,
     }
     assert out['acl'].props()['public_reasons'] == ['public_endpoint']
+    assert _context(out['acl'])[1] == [{
+        'hop': 'firewall', 'id': 'acl', 'reason': 'not_allowed', 'ports': ['tcp:443-443', 'tcp:1521-1522'],
+        'detail': 'access_control_list',
+    }]
+    assert _context(out['open'])[0][0]['entry'] == {'type': 'public_endpoint', 'id': 'open'}
+
+
+def test_blast_radius_rows_name_the_admitting_filter():
+    db_rule = {**HTTPS_NSG_ROW, 'source': 'app-nsg', 'tcp_dest_port_min': 1521, 'tcp_dest_port_max': 1521}
+    net = Network(
+        subnets={'db': SubnetFacts('vcn', ['sl'], True, None)}, igw_enabled={},
+        rules={'sl': _sl([_tcp('10.0.0.0/16', 1521)]), 'db-nsg': [nsg_rule(db_rule)]},
+    )
+    store = {'id': 'd', 'subnet': 'db', 'nsgs': ['db-nsg'], 'port_min': 1521, 'port_max': 1521}
+    by_nsg = {'id': 'i', 'ips': ['10.0.1.5'], 'nsgs': {'app-nsg'}, 'vcns': {'vcn'}}
+    by_cidr = {**by_nsg, 'id': 'j', 'nsgs': set()}
+    rows = blast_radius.reach_rows([by_nsg, by_cidr], [store], net, 'OCIDbSystem')
+    common = {'dst': 'd', 'dst_type': 'OCIDbSystem', 'ports': ['tcp:1521-1521']}
+    assert rows == [
+        {**common, 'src': 'i', 'via': 'network_security_group', 'admitted_by': 'db-nsg'},
+        {**common, 'src': 'j', 'via': 'cidr', 'admitted_by': 'sl'},
+    ]
 
 
 def test_api_deployment_anonymous_verdicts():
