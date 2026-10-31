@@ -1165,3 +1165,42 @@ def test_higher_priority_deny_cancels_an_open_allow_only_when_it_fully_covers_it
         'deny-lower-priority', 'deny-partial-ports', 'deny-tcp-vs-allow-all', 'deny-udp',
         'deny-office-source', 'deny-other-tag', 'deny-service-account', 'deny-disabled',
     }
+
+
+def test_ipv6_exposure_needs_an_external_ipv6_and_a_firewall_open_to_any_ipv6(neo4j_session):
+    params = dict(DENY_PARAMS, WORKSPACE_ID='ws-ipv6', GCP_ORGANIZATION_ID='org-ipv6', GCP_PROJECT_ID='proj-ipv6')
+    v6_allow = {
+        'id': 'allow-ssh-v6', 'action': 'allow', 'priority': 1000, 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+        'sources': ['::/0'],
+    }
+    v4_allow = dict(v6_allow, id='allow-ssh-v4', sources=['0.0.0.0/0'])
+    cases = {
+        # vm id: (rules in its VPC, natIP, external IPv6)
+        'v6-open': ([v6_allow], None, '2600:1900::1'),
+        'v6-no-firewall': ([], None, '2600:1900::2'),
+        'v6-only-v4-rule': ([v4_allow], None, '2600:1900::3'),
+        'v4-only-v6-rule': ([v6_allow], '34.6.6.6', None),
+        'v6-denied': ([v6_allow, dict(v6_allow, id='deny-v6', action='deny', priority=900)], None, '2600:1900::4'),
+        'v6-v4-deny': ([v6_allow, dict(v4_allow, id='deny-v4', action='deny', priority=900)], None, '2600:1900::5'),
+        'dual-open': ([v6_allow, v4_allow], '34.6.6.7', '2600:1900::6'),
+    }
+    rules, vms = [], []
+    for vm, (vm_rules, nat_ip, ipv6) in cases.items():
+        rules.extend(dict(r, vpc=f'vpc-{vm}') for r in vm_rules)
+        neo4j_session.run("MERGE (:GCPVpc{id: $vpc})", vpc=f'vpc-{vm}')
+        vms.append({'id': vm, 'vpc': f'vpc-{vm}', 'nat_ip': nat_ip, 'ipv6': ipv6})
+    _seed_firewall_rules(neo4j_session, params, rules)
+    neo4j_session.run(
+        "MATCH (p:GCPProject{id: $project}) UNWIND $vpcs AS v MATCH (vpc:GCPVpc{id: v}) MERGE (p)-[:RESOURCE]->(vpc)",
+        project=params['GCP_PROJECT_ID'], vpcs=[v['vpc'] for v in vms],
+    )
+    _seed_running_vms(neo4j_session, params, vms)
+
+    run_analysis_job('gcp_compute_instance_analysis.json', neo4j_session, params)
+
+    v6_type = 'unrestricted_ipv6_access_from_firewall'
+    assert _exposed_types(neo4j_session, params['GCP_PROJECT_ID']) == {
+        'v6-open': [v6_type],
+        'v6-v4-deny': [v6_type],
+        'dual-open': ['unrestricted_access_from_firewall', v6_type],
+    }
