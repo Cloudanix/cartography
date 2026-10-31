@@ -601,3 +601,31 @@ def test_network_security_group_analysis(neo4j_session):
     actual_nodes = {(n['r.id'], ",".join(n['r.exposed_internet_type'])) for n in nodes}
 
     assert actual_nodes == expected_nodes
+
+
+def test_edited_security_rule_is_updated_on_resync(neo4j_session):
+    nsg_id = '/subscriptions/00-00/resourceGroups/rg/providers/Microsoft.Network/networkSecurityGroups/resync'
+    rule_id = f'{nsg_id}/securityRules/r1'
+    rule = {
+        'id': rule_id, 'name': 'r1', 'security_group_id': nsg_id, 'location': 'global',
+        'access': 'Allow', 'direction': 'Inbound', 'protocol': 'Tcp', 'priority': 100,
+        'source_address_prefix': '*', 'source_address_prefixes': [], 'source_port_range': '*',
+        'destination_port_range': '22', 'destination_port_ranges': [], 'destination_address_prefix': '*',
+    }
+    network.load_network_security_rules(neo4j_session, [rule], TEST_UPDATE_TAG)
+
+    edited = {
+        **rule, 'access': 'Deny', 'protocol': 'Udp', 'priority': 200, 'source_address_prefix': None,
+        'source_address_prefixes': ['10.0.0.0/8'], 'destination_port_range': '443',
+    }
+    network.load_network_security_rules(neo4j_session, [edited], TEST_UPDATE_TAG + 1)
+
+    node = neo4j_session.run(
+        "MATCH (r:AzureNetworkSecurityRule{id: $id}) RETURN r", id=rule_id,
+    ).single()['r']
+    assert node['access'] == 'Deny'
+    assert node['protocol'] == 'Udp'
+    assert node['priority'] == 200
+    assert node.get('source_address_prefix') is None
+    assert node['source_address_prefixes'] == ['10.0.0.0/8']
+    assert node['destination_port_range'] == '443'

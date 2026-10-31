@@ -123,10 +123,10 @@ def _load_key_vaults_tx(
     k.type = vault.type,
     k.location = vault.location,
     k.region = vault.location,
-    k.uri = vault.properties.vault_uri,
-    k.network_acl_default_action = vault.properties.network_acls.default_action,
     k.resourcegroup = vault.resource_group
-    SET k.consolelink = coalesce(vault.consolelink, k.consolelink), k.lastupdated = $update_tag,
+    SET k.uri = vault.properties.vault_uri,
+    k.network_acl_default_action = vault.properties.network_acls.default_action,
+    k.consolelink = coalesce(vault.consolelink, k.consolelink), k.lastupdated = $update_tag,
     k.name = vault.name
     WITH k
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})

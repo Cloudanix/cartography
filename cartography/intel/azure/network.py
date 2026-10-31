@@ -913,16 +913,18 @@ def _load_network_security_rules_tx(
     UNWIND $network_security_rules_list as rule
     MERGE (n:AzureNetworkSecurityRule{id: rule.id})
     ON CREATE SET n.firstseen = timestamp(),
-    n.access = rule.access,
+    n.type = rule.type
+    SET n.access = rule.access,
     n.source_port_range = rule.source_port_range,
     n.protocol = rule.protocol,
     n.direction = rule.direction,
+    n.priority = rule.priority,
     n.destination_address_prefix = rule.destination_address_prefix,
     n.source_address_prefix = rule.source_address_prefix,
+    n.source_address_prefixes = rule.source_address_prefixes,
     n.destination_port_ranges = rule.destination_port_ranges,
     n.destination_port_range = rule.destination_port_range,
-    n.type = rule.type
-    SET n.consolelink = coalesce(rule.consolelink, n.consolelink), n.name = rule.name,
+    n.consolelink = coalesce(rule.consolelink, n.consolelink), n.name = rule.name,
     n.region = rule.location,
     n.lastupdated = $azure_update_tag,
     n.etag = rule.etag
