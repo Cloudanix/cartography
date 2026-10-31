@@ -534,12 +534,16 @@ def link_ec2_to_eks(neo4j_session: neo4j.Session, common_job_parameters: Dict[st
 
 @timeit
 def cleanup_eks_node_links(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    # Node groups have no account RESOURCE edge (only ASSOCIATED_WITH their cluster), so they
+    # are reached through this account's clusters.
     cleanup_query = """
-    MATCH (node:EC2Instance)<-[r:HAS_NODE]-(s)
-    WHERE (s:EKSCluster OR s:EKSClusterNodeGroup)
-      AND (s)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})
-          <-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
-      AND r.lastupdated <> $UPDATE_TAG
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})
+        -[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(c:EKSCluster)
+    OPTIONAL MATCH (c)<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup)
+    WITH c, collect(ng) + [c] AS owners
+    UNWIND owners AS s
+    MATCH (s)-[r:HAS_NODE]->(:EC2Instance)
+    WHERE r.lastupdated <> $UPDATE_TAG
     DELETE r
     """
     run_write_query(

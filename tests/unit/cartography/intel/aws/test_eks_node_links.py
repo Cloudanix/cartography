@@ -46,10 +46,9 @@ def test_cleanup_eks_node_links_is_scoped_through_the_organization():
 
     call = _run_captured_write(session)
     query = _compact(call.args[0])
-    assert (
-        "(:AWSAccount{id:$AWS_ID})<-[:OWNER]-(:AWSOrganization{id:$ORGANIZATION_ID})"
-        "<-[:OWNER]-(:CloudanixWorkspace{id:$WORKSPACE_ID})"
-    ) in query
+    assert ORG_ACCOUNT_PATH.replace("(a:AWSAccount", "(:AWSAccount") in query
+    # Node groups are reached through their cluster; they carry no account RESOURCE edge.
+    assert "(c)<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup)" in query
     assert call.kwargs == PARAMS
 
 

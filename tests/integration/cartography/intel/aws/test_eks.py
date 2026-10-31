@@ -57,7 +57,8 @@ def test_sync_eks_node_links_scoped_to_workspace_account_region(neo4j_session):
     # Accounts hang off the workspace through an organization, as organizations.sync builds
     # them. Same cluster name 'prod' exists in another region of this account and in another
     # workspace's account. Only the same account+region cluster may get the HAS_NODE edge,
-    # and cleanup must leave the other account's stale edge alone.
+    # and cleanup must leave the other account's stale edges alone. Node groups hang off
+    # their cluster only (no account RESOURCE edge), as the EKSClusterNodeGroup schema loads them.
     neo4j_session.run(
         """
         MERGE (w1:CloudanixWorkspace{id: 'eksl-w1'})-[:OWNER]->(o1:AWSOrganization{id: 'eksl-w1/o-1'})
@@ -67,15 +68,18 @@ def test_sync_eks_node_links_scoped_to_workspace_account_region(neo4j_session):
         MERGE (a1)-[:RESOURCE]->(c1:EKSCluster{id: 'eksl-c1', name: 'prod', region: 'us-east-1'})
         MERGE (a1)-[:RESOURCE]->(:EKSCluster{id: 'eksl-c1-eu', name: 'prod', region: 'eu-west-1'})
         MERGE (a2)-[:RESOURCE]->(c2:EKSCluster{id: 'eksl-c2', name: 'prod', region: 'us-east-1'})
-        MERGE (c1)<-[:ASSOCIATED_WITH]-(:EKSClusterNodeGroup{id: 'eksl-ng1', name: 'ng1'})
+        MERGE (c1)<-[:ASSOCIATED_WITH]-(ng1:EKSClusterNodeGroup{id: 'eksl-ng1', name: 'ng1'})
+        MERGE (c2)<-[:ASSOCIATED_WITH]-(ng2:EKSClusterNodeGroup{id: 'eksl-ng2', name: 'ng1'})
         MERGE (a1)-[:RESOURCE]->(:EC2Instance{
             id: 'eksl-i1', region: 'us-east-1', eksclustername: 'prod', eksnodegroupname: 'ng1'
         })
         MERGE (a1)-[:RESOURCE]->(:EC2Instance{id: 'eksl-i2', region: 'us-east-1', eksclustername: 'prod'})
         MERGE (a2)-[:RESOURCE]->(i3:EC2Instance{id: 'eksl-i3', region: 'us-east-1', eksclustername: 'prod'})
         MERGE (c2)-[:HAS_NODE{lastupdated: 1}]->(i3)
+        MERGE (ng2)-[:HAS_NODE{lastupdated: 1}]->(i3)
         MERGE (a1)-[:RESOURCE]->(old:EC2Instance{id: 'eksl-old', region: 'us-east-1'})
         MERGE (c1)-[:HAS_NODE{lastupdated: 1}]->(old)
+        MERGE (ng1)-[:HAS_NODE{lastupdated: 1}]->(old)
         """,
     )
 
@@ -96,5 +100,6 @@ def test_sync_eks_node_links_scoped_to_workspace_account_region(neo4j_session):
         )
     }
     assert links == {
-        ('eksl-c1', 'eksl-i1'), ('eksl-c1', 'eksl-i2'), ('eksl-ng1', 'eksl-i1'), ('eksl-c2', 'eksl-i3'),
+        ('eksl-c1', 'eksl-i1'), ('eksl-c1', 'eksl-i2'), ('eksl-ng1', 'eksl-i1'),
+        ('eksl-c2', 'eksl-i3'), ('eksl-ng2', 'eksl-i3'),
     }
