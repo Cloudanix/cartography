@@ -497,3 +497,74 @@ def test_ec2_instance_direct_exposure_requires_a_public_ip(neo4j_session):
         'exp-behind-lb': ['unrestricted_inbound_traffic_ipv4'],
         'exp-ipv6-open': ['direct_inbound_ipv6'],
     }
+
+
+NLB_ACCOUNT_ID = '111111112222'
+NLB_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': NLB_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-ec2-nlb',
+    'WORKSPACE_ID': 'ws-ec2-nlb',
+    'LIMIT_SIZE': 100,
+}
+
+
+def test_ec2_instance_exposed_through_internet_facing_nlb_without_security_group(neo4j_session):
+    # NLBs created before August 2023 have no security group: the LB forwards every listener port from
+    # anywhere, so the SG-based LB statements never match the instances behind it.
+    create_exposure_test_account(
+        neo4j_session, NLB_JOB_PARAMETERS['WORKSPACE_ID'], NLB_JOB_PARAMETERS['ORGANIZATION_ID'], NLB_ACCOUNT_ID,
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (:EC2SecurityGroup{id: 'sg-nlb-closed'})
+        WITH aa
+        UNWIND $lbs AS l
+        MERGE (aa)-[:RESOURCE]->(lb:LoadBalancerV2{id: l.id})
+        SET lb.scheme = l.scheme, lb.type = l.type
+        MERGE (aa)-[:RESOURCE]->(n:EC2Instance{id: l.instance})
+        // No public address: the LB path does not need one.
+        SET n.state = l.state
+        MERGE (lb)-[:EXPOSE]->(n)
+        WITH lb, n, l
+        MATCH (closed:EC2SecurityGroup{id: 'sg-nlb-closed'})
+        MERGE (n)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(closed)
+        FOREACH (_ IN CASE WHEN l.sg THEN [1] ELSE [] END | MERGE (lb)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(closed))
+        """,
+        account_id=NLB_ACCOUNT_ID, lbs=[
+            {
+                'id': 'nlb-public', 'scheme': 'internet-facing', 'type': 'network', 'instance': 'nlb-i-public',
+                'state': 'running',
+            },
+            {
+                'id': 'nlb-internal', 'scheme': 'internal', 'type': 'network', 'instance': 'nlb-i-internal',
+                'state': 'running',
+            },
+            {
+                'id': 'nlb-public-stopped', 'scheme': 'internet-facing', 'type': 'network',
+                'instance': 'nlb-i-stopped', 'state': 'stopped',
+            },
+            # An NLB with a security group goes through the SG statements: this one allows nothing.
+            {
+                'id': 'nlb-public-closed-sg', 'scheme': 'internet-facing', 'type': 'network',
+                'instance': 'nlb-i-closed-sg', 'state': 'running', 'sg': True,
+            },
+            # An ALB always has a security group; one that looks SG-less is missing data, not open.
+            {
+                'id': 'alb-public-no-sg', 'scheme': 'internet-facing', 'type': 'application',
+                'instance': 'nlb-i-alb', 'state': 'running',
+            },
+        ],
+    )
+
+    run_analysis_job('aws_ec2_instance_asset_exposure.json', neo4j_session, NLB_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(n:EC2Instance{exposed_internet: true})
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        account_id=NLB_ACCOUNT_ID,
+    )
+    assert {n['id']: sorted(n['types']) for n in nodes} == {'nlb-i-public': ['internet_facing_nlb']}
