@@ -3111,6 +3111,50 @@ Representation of an AWS EC2 [Elastic IP address](https://docs.aws.amazon.com/AW
         (NetworkInterface)-[ELASTIC_IP_ADDRESS]->(ElasticIPAddress)
         ```
 
+### ElasticBeanstalkEnvironment
+
+Representation of an AWS [Elastic Beanstalk environment](https://docs.aws.amazon.com/elasticbeanstalk/latest/api/API_EnvironmentDescription.html), from `DescribeEnvironments` (terminated environments skipped), `DescribeEnvironmentResources` and `DescribeConfigurationSettings`.
+
+| Field | Description |
+|-------|-------------|
+| firstseen| Timestamp of when a sync job first discovered this node |
+| lastupdated | Timestamp of the last time the node was updated |
+| **id** | The ARN of the environment |
+| arn | The ARN of the environment |
+| name | The environment name |
+| environment\_id | The environment ID (`e-...`) |
+| application\_name | The application the environment belongs to |
+| region | The region of the environment |
+| status | The environment status (`Ready`, `Updating`, ...) |
+| health, health\_status | The environment health color and enhanced health status |
+| tier\_name, tier\_type | `WebServer`/`Standard` or `Worker`/`SQS/HTTP` |
+| cname | The environment CNAME |
+| endpoint\_url | The load balancer DNS name, or the instance's Elastic IP for a single-instance environment |
+| platform\_arn, solution\_stack\_name, version\_label | Platform and deployed application version |
+| listener\_protocols | Protocols of the load balancer listeners from the configuration option settings |
+| environment\_type | `LoadBalanced` or `SingleInstance` (option `aws:elasticbeanstalk:environment` `EnvironmentType`) |
+| resources\_resolved | False when `DescribeEnvironmentResources` failed for the environment |
+| load\_balancer\_names | The environment's load balancers: names for Classic ELBs, ARNs for application / network load balancers |
+| instance\_ids | The environment's EC2 instance ids |
+
+#### Relationships
+
+- Elastic Beanstalk environments are resources under an AWS Account.
+
+        ```
+        (AWSAccount)-[RESOURCE]->(ElasticBeanstalkEnvironment)
+        ```
+
+- Elastic Beanstalk environments use load balancers and run on EC2 instances. These edges are created after every
+  service has synced (`link_environment_resources`), only to nodes of the same account (load balancers matched by
+  ARN, or by name in the environment's region).
+
+        ```
+        (ElasticBeanstalkEnvironment)-[USES_LOAD_BALANCER]->(LoadBalancerV2)
+        (ElasticBeanstalkEnvironment)-[USES_LOAD_BALANCER]->(LoadBalancer)
+        (ElasticBeanstalkEnvironment)-[HAS_INSTANCE]->(EC2Instance)
+        ```
+
 ### ECSCluster
 
 Representation of an AWS ECS [Cluster](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_Cluster.html)

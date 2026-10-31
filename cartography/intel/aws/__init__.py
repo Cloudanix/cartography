@@ -26,6 +26,7 @@ from cartography.graph.session import Session
 from cartography.intel.aws.dms import link_replication_instance_networks
 from cartography.intel.aws.ec2.instances import sync_eks_node_links
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.elasticbeanstalk import link_environment_resources
 from cartography.intel.aws.util.arns import get_partition
 from cartography.intel.aws.util.arns import PARTITION_PARAM
 from cartography.stats import get_stats_client
@@ -299,6 +300,13 @@ def _sync_one_account(
             link_replication_instance_networks(neo4j_session, common_job_parameters)
         except Exception as e:
             logger.warning(f"error to link DMS replication instances for account {current_aws_account_id} - {e}")
+
+    # Beanstalk environments link to load balancers and instances, which other syncs load in parallel.
+    if "elasticbeanstalk" in aws_requested_syncs:
+        try:
+            link_environment_resources(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link Beanstalk environments for account {current_aws_account_id} - {e}")
 
     # MAP IAM permissions
     if "permission_relationships" in aws_requested_syncs:

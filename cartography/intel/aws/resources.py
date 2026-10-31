@@ -15,6 +15,7 @@ from . import ecr
 from . import ecs
 from . import eks
 from . import elasticache
+from . import elasticbeanstalk
 from . import elasticsearch
 from . import emr
 from . import iam
@@ -106,6 +107,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'dms': dms.sync,
     'redshift': redshift.sync,
     'elasticache': elasticache.sync,
+    'elasticbeanstalk': elasticbeanstalk.sync,
     'elasticsearch': elasticsearch.sync,
     'elastic_ip_addresses': sync_elastic_ip_addresses,
     'ssm': ssm.sync,
