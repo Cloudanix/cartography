@@ -33,6 +33,22 @@ def test_load_buckets_batches_across_chunk_boundary(neo4j_session):
     assert (TEST_COMPARTMENT_ID, "oci.bucket.599") in rels
 
 
+def test_load_buckets_keeps_last_public_access_type_when_unknown(neo4j_session):
+    # A failed GetBucket transforms to public_access_type None; the last good value must survive.
+    _seed_compartment(neo4j_session)
+    bucket = {**test_data.bucket_list(1)[0], "id": "oci.bucket.keep", "public_access_type": "ObjectRead"}
+    storage.load_buckets(neo4j_session, [bucket], TEST_COMPARTMENT_ID, TEST_UPDATE_TAG)
+
+    storage.load_buckets(
+        neo4j_session, [{**bucket, "public_access_type": None}], TEST_COMPARTMENT_ID, TEST_UPDATE_TAG + 1,
+    )
+
+    row = neo4j_session.run(
+        "MATCH (b:OCIStorageBucket{id: 'oci.bucket.keep'}) RETURN b.public_access_type AS t, b.is_public AS p",
+    ).single()
+    assert (row["t"], row["p"]) == ("ObjectRead", True)
+
+
 def test_load_block_volumes(neo4j_session):
     _seed_compartment(neo4j_session)
     storage.load_block_volumes(

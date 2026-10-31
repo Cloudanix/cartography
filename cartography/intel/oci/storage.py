@@ -18,8 +18,8 @@ import oci
 
 from . import tags
 from . import utils
-from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -154,7 +154,10 @@ def transform_buckets(
             "compartment_id": merged.get("compartment-id"),
             "created_by": merged.get("created-by"),
             "etag": merged.get("etag"),
-            "public_access_type": merged.get("public-access-type") or "NoPublicAccess",
+            # Only GetBucket returns public-access-type. When it failed the value is
+            # unknown (None) and load_buckets keeps the last one instead of
+            # reporting a possibly public bucket as NoPublicAccess.
+            "public_access_type": (details.get("public-access-type") or "NoPublicAccess") if details else None,
             "storage_tier": merged.get("storage-tier") or "Standard",
             "object_events_enabled": bool(merged.get("object-events-enabled", False)),
             "replication_enabled": bool(merged.get("replication-enabled", False)),
@@ -196,8 +199,8 @@ def load_buckets(
             b.compartment_id = bucket.compartment_id,
             b.created_by = bucket.created_by,
             b.etag = bucket.etag,
-            b.public_access_type = bucket.public_access_type,
-            b.is_public = (bucket.public_access_type <> 'NoPublicAccess'),
+            b.public_access_type = coalesce(bucket.public_access_type, b.public_access_type),
+            b.is_public = (coalesce(bucket.public_access_type, b.public_access_type) <> 'NoPublicAccess'),
             b.storage_tier = bucket.storage_tier,
             b.object_events_enabled = bucket.object_events_enabled,
             b.replication_enabled = bucket.replication_enabled,
