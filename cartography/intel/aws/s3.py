@@ -296,12 +296,14 @@ def _load_s3_policies(
 
     policies = add_bucket_policy_documents(policies, boto3_session)
 
-    # NOTE we use the coalesce function so appending works when the value is null initially
+    # Plain SET of this sync's evaluation: an OR with the old value kept a bucket public forever.
+    # RestrictPublicBuckets (loaded before this) limits a public policy to AWS principals and the owner.
     ingest_policies = """
     UNWIND $DictList AS policy
     MATCH (s:S3Bucket) where s.name = policy.bucket
-    SET s.anonymous_access = (coalesce(s.anonymous_access, false) OR policy.internet_accessible),
-    s.anonymous_actions = coalesce(s.anonymous_actions, []) + policy.accessible_actions,
+    WITH s, policy, (policy.internet_accessible AND NOT coalesce(s.restrict_public_buckets, false)) AS public
+    SET s.anonymous_access = public,
+    s.anonymous_actions = CASE WHEN public THEN policy.accessible_actions ELSE [] END,
     s.lastupdated = $UpdateTag,
     s.policy_document = policy.policyDocument
     """
@@ -448,7 +450,7 @@ def _load_s3_public_access_block(
     MATCH (s:S3Bucket) where s.name = public_access_block.bucket
     SET s.block_public_acls = public_access_block.block_public_acls,
         s.ignore_public_acls = public_access_block.ignore_public_acls,
-        s.block_public_acls = public_access_block.block_public_acls,
+        s.block_public_policy = public_access_block.block_public_policy,
         s.restrict_public_buckets = public_access_block.restrict_public_buckets,
         s.lastupdated = $UpdateTag
     """
@@ -521,9 +523,7 @@ def load_s3_details(
         parsed_versioning = parse_versioning(bucket, versioning)
         if parsed_versioning is not None:
             versioning_configs.append(parsed_versioning)
-        parsed_public_access_block = parse_public_access_block(bucket, public_access_block)
-        if parsed_public_access_block is not None:
-            public_access_block_configs.append(parsed_public_access_block)
+        public_access_block_configs.append(parse_public_access_block(bucket, public_access_block))
 
     # cleanup existing policy properties set on S3 Buckets
     run_cleanup_job(
@@ -533,12 +533,13 @@ def load_s3_details(
     )
 
     _load_s3_acls(neo4j_session, acls, aws_account_id, update_tag, common_job_parameters)
+    # Before the policies: their anonymous_access reads this sync's restrict_public_buckets.
+    _load_s3_public_access_block(neo4j_session, public_access_block_configs, update_tag)
     _load_s3_policies(neo4j_session, policies, update_tag, boto3_session)
     _load_s3_policy_statuses(neo4j_session, policy_statuses, update_tag)
     _load_s3_policy_statements(neo4j_session, statements, update_tag)
     _load_s3_encryption(neo4j_session, encryption_configs, update_tag)
     _load_s3_versioning(neo4j_session, versioning_configs, update_tag)
-    _load_s3_public_access_block(neo4j_session, public_access_block_configs, update_tag)
     _set_default_values(neo4j_session, aws_account_id)
 
 
@@ -776,7 +777,7 @@ def parse_versioning(bucket: str, versioning: Optional[Dict]) -> Optional[Dict]:
 
 
 @timeit
-def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) -> Optional[Dict]:
+def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) -> Dict:
     """Parses the S3 public access block object and returns a dict of the relevant data"""
     # Versioning object JSON looks like:
     # {
@@ -787,9 +788,9 @@ def parse_public_access_block(bucket: str, public_access_block: Optional[Dict]) 
     #         'RestrictPublicBuckets': True|False
     #     }
     # }
-    if public_access_block is None:
-        return None
-    pab = public_access_block["PublicAccessBlockConfiguration"]
+    # No configuration (deleted, or unreadable) still yields a row: loading its nulls clears flags
+    # from an earlier sync, which would otherwise keep hiding a now-public bucket.
+    pab = (public_access_block or {}).get("PublicAccessBlockConfiguration", {})
     return {
         "bucket": bucket,
         "block_public_acls": pab.get("BlockPublicAcls"),
