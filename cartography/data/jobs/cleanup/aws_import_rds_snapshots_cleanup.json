@@ -1,12 +1,14 @@
 {
 	"statements": [
 		{
-			"query": "MATCH (n:RDSSnapshot)<-[:HAS_ATTRIBUTE]-(:RDSSnapshot)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"__comment": "Attribute nodes are per snapshot (id '<snapshot arn>/<name>'); one no longer returned for its snapshot is stale. Runs before the snapshot statements so a deleted snapshot's attributes go too.",
+			"query": "MATCH (n:RDSSnapshotAttribute)<-[:HAS_ATTRIBUTE]-(:RDSSnapshot)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100
 		},
 		{
-			"query": "MATCH (:RDSSnapshot)<-[r:HAS_ATTRIBUTE]-(:RDSSnapshot)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"__comment": "Legacy attribute nodes merged by name alone (no id) were shared by every snapshot of every tenant; nothing reads them.",
+			"query": "MATCH (n:RDSSnapshotAttribute) WHERE n.id IS NULL WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100
 		},

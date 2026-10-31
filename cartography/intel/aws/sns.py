@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.common import is_resource_policy_internet_accessible
 from cartography.util import aws_handle_regions
 from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
@@ -85,6 +86,9 @@ def transform_topics(boto3_session: boto3.session.Session, tps: List[Dict], regi
             topic['name'] = topic['TopicArn'].split(':')[-1]
             topic['consolelink'] = aws_console_link.get_console_link(arn=topic['TopicArn'])
             topic['attributes'] = client.get_topic_attributes(TopicArn=topic['TopicArn']).get('Attributes', {})
+            topic['policy_internet_accessible'] = is_resource_policy_internet_accessible(
+                topic['attributes'].get('Policy'),
+            )
             topic['subscriptions'] = list(filter(lambda s: s['TopicArn'] == topic['TopicArn'], subscriptions))
             topics.append(topic)
 
@@ -114,7 +118,8 @@ def _load_sns_topic_tx(tx: neo4j.Transaction, topics: List[Dict], current_aws_ac
         topic.subscriptions_deleted = record.attributes.SubscriptionsDeleted,
         topic.owner = record.attributes.Owner,
         topic.subscriptions_pending = record.attributes.SubscriptionsPending,
-        topic.kms_master_key_id = record.attributes.KmsMasterKeyId
+        topic.kms_master_key_id = record.attributes.KmsMasterKeyId,
+        topic.policy_internet_accessible = record.policy_internet_accessible
     WITH topic
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(topic)
