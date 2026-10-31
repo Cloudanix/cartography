@@ -11,7 +11,8 @@
       "iterationsize": 100
     },
     {
-      "query": "MATCH (n:AWSVpc)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+      "__comment": "A VPC whose arn names another account is that account's, reached through a legacy peering RESOURCE edge. Leave it; the next statement drops the stale edge.",
+      "query": "MATCH (n:AWSVpc)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG AND (n.arn IS NULL OR split(n.arn, ':')[4] = $AWS_ID) WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
       "iterative": true,
       "iterationsize": 100
     },
