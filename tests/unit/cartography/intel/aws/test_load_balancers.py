@@ -103,6 +103,9 @@ class TestLoadLoadBalancerV2s:
         assert session.execute_write.call_count == 5
         lb_call, subnet_call, sg_call, listener_call, instance_call = session.execute_write.call_args_list
         assert len(lb_call.kwargs["DictList"]) == 2
+        # all target groups, not only instance ones: Lambda exposure resolves ALB triggers by them
+        assert lb_call.kwargs["DictList"][0]["target_group_arns"] == ["arn:tg/1", "arn:tg/2"]
+        assert "elbv2.target_group_arns = item.target_group_arns" in lb_call.args[1]
         assert len(subnet_call.kwargs["DictList"]) == 4
         assert len(sg_call.kwargs["DictList"]) == 2
         assert len(listener_call.kwargs["DictList"]) == 2
