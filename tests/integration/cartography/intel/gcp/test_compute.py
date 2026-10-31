@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import cartography.intel.gcp.compute
+import cartography.intel.gcp.crm
 import tests.data.gcp.compute
 from cartography.util import run_analysis_job
 from cartography.util import run_cleanup_job
@@ -705,6 +706,7 @@ def _seed_vm_firewalls(neo4j_session, firewalls):
         """
         MERGE (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(o:GCPOrganization{id: $org_id})
         MERGE (o)-[:OWNER]->(p:GCPProject{id: $project_id})
+        SET p.workspace_ids = [$workspace_id]
         WITH p
         UNWIND $firewalls AS f
         MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: f.vpc})
@@ -832,6 +834,7 @@ def _seed_sync_project(neo4j_session):
         """
         MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
         MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        SET p.workspace_ids = [$ws]
         MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: 'sync-vpc'})
         MERGE (vpc)-[:RESOURCE]->(fw_ssh:GCPFirewall{id: 'sync-fw-ssh'})
         SET fw_ssh.name = 'allow-ssh', fw_ssh.direction = 'INGRESS', fw_ssh.disabled = false,
@@ -1002,6 +1005,7 @@ def _seed_network_with_open_ssh(neo4j_session, workspace_id, org_id, project_id,
         """
         MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
         MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        SET p.workspace_ids = [w IN coalesce(p.workspace_ids, []) WHERE w <> $ws] + $ws
         MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: $vpc})
         MERGE (vpc)-[:RESOURCE]->(fw:GCPFirewall{id: $vpc + '/fw-ssh'})
         SET fw.direction = 'INGRESS', fw.disabled = false, fw.has_target_service_accounts = false, fw.priority = 1000
@@ -1080,6 +1084,7 @@ def _seed_firewall_rules(neo4j_session, params, rules):
         """
         MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
         MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        SET p.workspace_ids = [$ws]
         WITH p
         UNWIND $rules AS f
         MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: f.vpc})
@@ -1204,3 +1209,86 @@ def test_ipv6_exposure_needs_an_external_ipv6_and_a_firewall_open_to_any_ipv6(ne
         'v6-v4-deny': [v6_type],
         'dual-open': ['unrestricted_access_from_firewall', v6_type],
     }
+
+
+TENANT_ORG = 'org-two-workspaces'
+
+
+def _load_project_for(neo4j_session, workspace_id, project_id, update_tag=TEST_UPDATE_TAG):
+    """What a workspace's sync writes for its org and project (the org edge as load_gcp_organizations writes it)."""
+    params = {'WORKSPACE_ID': workspace_id, 'GCP_ORGANIZATION_ID': TENANT_ORG, 'GCP_PROJECT_ID': project_id}
+    neo4j_session.run(
+        "MERGE (w:CloudanixWorkspace{id: $ws}) MERGE (o:GCPOrganization{id: $org}) MERGE (w)-[:OWNER]->(o)",
+        ws=workspace_id, org=TENANT_ORG,
+    )
+    # The installed cloudconsolelink has no GCP project link; the link is irrelevant here.
+    with patch('cartography.intel.gcp.crm.gcp_console_link.get_console_link', return_value=''):
+        cartography.intel.gcp.crm.load_gcp_projects(
+            neo4j_session, [{'projectId': project_id, 'projectNumber': 1}], update_tag, params, None,
+        )
+
+
+def test_project_workspace_ids_are_a_set_and_drop_workspaces_that_left_the_org(neo4j_session):
+    _load_project_for(neo4j_session, 'ws-tenant-a', 'proj-tenant-shared')
+    _load_project_for(neo4j_session, 'ws-tenant-a', 'proj-tenant-shared')
+    _load_project_for(neo4j_session, 'ws-tenant-b', 'proj-tenant-shared')
+    ids = neo4j_session.run("MATCH (p:GCPProject{id: 'proj-tenant-shared'}) RETURN p.workspace_ids AS ids").single()
+    assert sorted(ids['ids']) == ['ws-tenant-a', 'ws-tenant-b']
+
+    # Workspace B no longer owns the org (its organization cleanup removed the edge):
+    # its id is dropped on the next load.
+    neo4j_session.run("MATCH (:CloudanixWorkspace{id: 'ws-tenant-b'})-[r:OWNER]->(:GCPOrganization) DELETE r")
+    _load_project_for(neo4j_session, 'ws-tenant-a', 'proj-tenant-shared')
+    ids = neo4j_session.run("MATCH (p:GCPProject{id: 'proj-tenant-shared'}) RETURN p.workspace_ids AS ids").single()
+    assert ids['ids'] == ['ws-tenant-a']
+
+
+def test_shared_vpc_firewalls_of_another_workspace_never_apply(neo4j_session):
+    # Workspaces A and B onboarded different projects of the same GCP organization, so they share its org node.
+    for ws, project in (('ws-iso-a', 'proj-iso-svc'), ('ws-iso-a', 'proj-iso-host-a'), ('ws-iso-b', 'proj-iso-host-b')):
+        _load_project_for(neo4j_session, ws, project)
+    host_a = 'projects/proj-iso-host-a/global/networks/shared'
+    host_b = 'projects/proj-iso-host-b/global/networks/shared'
+    _seed_network_with_open_ssh(neo4j_session, 'ws-iso-a', TENANT_ORG, 'proj-iso-host-a', host_a)
+    _seed_network_with_open_ssh(neo4j_session, 'ws-iso-b', TENANT_ORG, 'proj-iso-host-b', host_b)
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: 'proj-iso-svc'}), (va:GCPVpc{id: $host_a}), (vb:GCPVpc{id: $host_b})
+        MERGE (p)-[:RESOURCE]->(a:GCPInstance:Instance{id: 'iso-vm-host-a'})
+        MERGE (p)-[:RESOURCE]->(b:GCPInstance:Instance{id: 'iso-vm-host-b'})
+        MERGE (p)-[:RESOURCE]->(both:GCPInstance:Instance{id: 'iso-vm-both'})
+        SET a.natIP = '34.5.5.1', b.natIP = '34.5.5.2', both.natIP = '34.5.5.3',
+            a.status = 'RUNNING', b.status = 'RUNNING', both.status = 'RUNNING'
+        MERGE (a)-[:MEMBER_OF_GCP_VPC]->(va)
+        MERGE (b)-[:MEMBER_OF_GCP_VPC]->(vb)
+        MERGE (both)-[:MEMBER_OF_GCP_VPC]->(va)
+        MERGE (both)-[:MEMBER_OF_GCP_VPC]->(vb)
+        WITH both, vb
+        // Left behind by a run that matched B's firewall.
+        MATCH (vb)-[:RESOURCE]->(fw:GCPFirewall)
+        MERGE (fw)-[e:FIREWALL_INGRESS]->(both) SET e.lastupdated = 1
+        """,
+        host_a=host_a, host_b=host_b,
+    )
+
+    run_analysis_job(
+        'gcp_compute_instance_analysis.json', neo4j_session,
+        {
+            'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-iso-a', 'GCP_ORGANIZATION_ID': TENANT_ORG,
+            'GCP_PROJECT_ID': 'proj-iso-svc',
+        },
+    )
+
+    rows = neo4j_session.run(
+        "MATCH (:GCPProject{id: 'proj-iso-svc'})-[:RESOURCE]->(i:GCPInstance) WHERE i.exposed_internet "
+        "RETURN i.id AS id, i.publicContext AS ctx",
+    ).data()
+    assert sorted(r['id'] for r in rows) == ['iso-vm-both', 'iso-vm-host-a']
+    for r in rows:
+        # A set: earlier tests in this module MERGE duplicate 0.0.0.0/0 IpRange nodes, which repeats rows.
+        firewalls = {f['firewallId'] for f in json.loads(r['ctx'])[0]['context'][0]['firewallRules']}
+        assert firewalls == {host_a + '/fw-ssh'}
+    edges = neo4j_session.run(
+        "MATCH (fw:GCPFirewall)-[:FIREWALL_INGRESS]->(i:GCPInstance) WHERE i.id STARTS WITH 'iso-' RETURN fw.id AS fw",
+    ).value()
+    assert set(edges) == {host_a + '/fw-ssh'}
