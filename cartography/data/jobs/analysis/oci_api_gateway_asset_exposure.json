@@ -22,8 +22,8 @@
       "iterative": false
     },
     {
-      "__comment": "Build publicContext JSON for exposed API gateways. resourceType is the inventory service OCIApiGateway is expected to map to.",
-      "query": "MATCH (gw:OCIApiGateway)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE gw.exposed_internet = true SET gw.publicContext = apoc.convert.toJson([{resource: gw.id, resourceType: 'oci-apimanagement-apigateway-gateway', context: [{gatewayId: gw.id, gatewayName: gw.display_name, hostname: gw.hostname, endpointType: gw.endpoint_type, port: 443, subnetId: gw.subnet_id, nsgIds: coalesce(gw.nsg_ids, []), exposureTypes: gw.exposed_internet_type, region: gw.region}]}])",
+      "__comment": "Build publicContext JSON for exposed API gateways. resourceType is the console resource-type key of the asset.",
+      "query": "MATCH (gw:OCIApiGateway)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE gw.exposed_internet = true SET gw.publicContext = apoc.convert.toJson([{resource: gw.id, resourceType: 'oci-integration-apigateway-gateway', context: [{gatewayId: gw.id, gatewayName: gw.display_name, hostname: gw.hostname, endpointType: gw.endpoint_type, port: 443, subnetId: gw.subnet_id, nsgIds: coalesce(gw.nsg_ids, []), exposureTypes: gw.exposed_internet_type, region: gw.region}]}])",
       "iterative": false
     }
   ],

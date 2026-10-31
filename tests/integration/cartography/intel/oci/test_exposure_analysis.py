@@ -664,6 +664,12 @@ def test_load_balancer_exposed_when_public_and_a_listener_port_is_open(neo4j_ses
         "MATCH (lb:OCILoadBalancer{id: 'lb-https-nsg'}) RETURN lb.publicContext AS c",
     ).single()['c']
     assert 'lb-nsg-https' in context and '443' in context
+    # resourceType is the console's resource-type key for the asset.
+    assert '"oci-networking-loadbalancer-load-balancer"' in context
+    context = neo4j_session.run(
+        "MATCH (lb:OCINetworkLoadBalancer{id: 'nlb-any'}) RETURN lb.publicContext AS c",
+    ).single()['c']
+    assert '"oci-networking-networkloadbalancer-networkloadbalancer"' in context
 
 
 def test_instance_exposed_as_backend_of_exposed_load_balancer(neo4j_session):
@@ -769,6 +775,7 @@ def test_api_gateway_exposed_when_public_and_https_is_open(neo4j_session):
         "MATCH (g:OCIApiGateway{id: 'apigw-https-nsg'}) RETURN g.publicContext AS c",
     ).single()['c']
     assert 'apigw-nsg-https' in context and 'apigw-subnet-closed' in context
+    assert '"oci-integration-apigateway-gateway"' in context
 
 
 def test_bucket_exposed_by_unexpired_read_pre_authenticated_request(neo4j_session):
