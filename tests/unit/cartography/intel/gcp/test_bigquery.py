@@ -17,10 +17,14 @@ def test_transform_dataset_accesses_role_based_entries():
     )
 
     assert len(result) == 2
-    assert result[0]['id'] == f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/WRITER"
+    assert result[0]['id'] == (
+        f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/WRITER/specialGroup/allAuthenticatedUsers"
+    )
     assert result[0]['role'] == 'WRITER'
     assert result[0]['specialGroup'] == 'allAuthenticatedUsers'
-    assert result[1]['id'] == f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/READER"
+    assert result[1]['id'] == (
+        f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/READER/userByEmail/user@example.com"
+    )
     assert result[1]['role'] == 'READER'
 
 
@@ -37,8 +41,12 @@ def test_transform_dataset_accesses_skips_view_entries():
     )
 
     assert len(result) == 2
-    assert result[0]['id'] == f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/OWNER"
-    assert result[1]['id'] == f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/READER"
+    assert result[0]['id'] == (
+        f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/OWNER/userByEmail/admin@example.com"
+    )
+    assert result[1]['id'] == (
+        f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/READER/specialGroup/projectReaders"
+    )
 
 
 def test_transform_dataset_accesses_skips_routine_entries():
@@ -91,3 +99,19 @@ def test_transform_dataset_accesses_all_view_entries():
     )
 
     assert result == []
+
+
+def test_transform_dataset_accesses_keeps_one_entry_per_member_of_a_role():
+    """Several members on the same role used to share one id, so the last one overwrote the others."""
+    result = cartography.intel.gcp.bigquery.transform_dataset_accesses(
+        [
+            {'role': 'READER', 'userByEmail': 'user@example.com'},
+            {'role': 'READER', 'iamMember': 'allUsers'},
+            {'role': 'READER', 'specialGroup': 'projectReaders'},
+        ],
+        TEST_DATASET_ID, TEST_PROJECT_ID,
+    )
+
+    assert len({r['id'] for r in result}) == 3
+    assert result[1]['id'] == f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/READER/iamMember/allUsers"
+    assert result[1]['iamMember'] == 'allUsers'

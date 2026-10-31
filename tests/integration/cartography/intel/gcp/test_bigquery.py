@@ -194,3 +194,62 @@ def test_cloud_function(neo4j_session):
     }
 
     assert actual_nodes == expected_nodes
+
+
+BQ_PARAMS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-bq', 'GCP_ORGANIZATION_ID': 'org-bq',
+    'GCP_PROJECT_ID': 'proj-bq', 'LIMIT_SIZE': 1000,
+}
+
+
+def test_dataset_exposure_reads_iam_members_and_special_groups(neo4j_session):
+    project = BQ_PARAMS['GCP_PROJECT_ID']
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:GCPOrganization{id: $org})-[:OWNER]->(:GCPProject{id: $p})",
+        ws=BQ_PARAMS['WORKSPACE_ID'], org=BQ_PARAMS['GCP_ORGANIZATION_ID'], p=project,
+    )
+    accesses = {
+        # datasets.get returns allUsers as an iamMember entry; allAuthenticatedUsers is a specialGroup.
+        'bq-all-users': [{'role': 'READER', 'iamMember': 'allUsers'}],
+        'bq-all-authenticated': [{'role': 'READER', 'specialGroup': 'allAuthenticatedUsers'}],
+        # Same role for an ordinary user and allUsers: both entries must survive.
+        'bq-shared-role': [{'role': 'READER', 'iamMember': 'allUsers'}, {'role': 'READER', 'userByEmail': 'a@x.io'}],
+        'bq-private': [
+            {'role': 'READER', 'specialGroup': 'projectReaders'}, {'role': 'OWNER', 'userByEmail': 'a@x.io'},
+        ],
+    }
+    datasets = [{'id': d, 'uniqueId': f'projects/{project}/datasets/{d}', 'details': {}} for d in accesses]
+    cartography.intel.gcp.bigquery.load_bigquery_datasets(neo4j_session, datasets, project, TEST_UPDATE_TAG)
+    for dataset_id, entries in accesses.items():
+        rows = cartography.intel.gcp.bigquery.transform_dataset_accesses(entries, dataset_id, project)
+        cartography.intel.gcp.bigquery.attach_dataset_to_accesses(neo4j_session, dataset_id, rows, TEST_UPDATE_TAG)
+    cartography.intel.gcp.bigquery.load_bigquery_tables(
+        neo4j_session, [
+            {'id': f'{d}-table', 'uniqueId': f'{d}-table', 'datasetId': d, 'details': {}}
+            for d in ('bq-all-users', 'bq-private')
+        ], project, TEST_UPDATE_TAG,
+    )
+    # A table flagged while its dataset was public; the dataset is private now.
+    neo4j_session.run(
+        "MATCH (t:GCPBigqueryTable{id: 'bq-private-table'}) "
+        "SET t.exposed_internet = true, t.exposed_internet_type = ['allUsers']",
+    )
+
+    run_analysis_job('gcp_bigquery_dataset_analysis.json', neo4j_session, BQ_PARAMS)
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $p})-[:RESOURCE]->(d:GCPBigqueryDataset)
+        OPTIONAL MATCH (d)-[:HAS_TABLE]->(t:GCPBigqueryTable)
+        WITH [n IN [d, t] WHERE n IS NOT NULL AND n.exposed_internet] AS exposed
+        UNWIND exposed AS n
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        p=project,
+    )
+    assert {r['id']: r['types'] for r in rows} == {
+        'bq-all-users': ['allUsers'],
+        'bq-all-users-table': ['allUsers'],
+        'bq-all-authenticated': ['allAuthenticatedUsers'],
+        'bq-shared-role': ['allUsers'],
+    }
