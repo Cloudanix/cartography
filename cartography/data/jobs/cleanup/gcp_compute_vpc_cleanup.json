@@ -1,10 +1,10 @@
 {
 	"statements": [
 		{
-			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPInstance)-[:MEMBER_OF_GCP_VPC]->(n:GCPVpc) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPInstance)-[:MEMBER_OF_GCP_VPC]->(n:GCPVpc) WHERE n.lastupdated <> $UPDATE_TAG AND NOT (:GCPProject)-[:RESOURCE]->(n) WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
-			"__comment__": "Remove GCP Instance-to-VPC relationships that are out of date."
+			"__comment__": "Delete stale VPC stubs that only instance membership created. A VPC owned by a project (this one or a Shared VPC host) is cleaned by its owner's statement below; deleting it here cut the host's firewalls off the network."
 		},
 		{
 			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPInstance)-[r:MEMBER_OF_GCP_VPC]->(:GCPVpc) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",

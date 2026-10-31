@@ -923,3 +923,74 @@ def test_instance_flags_and_public_context_agree_after_a_full_sync(neo4j_session
         tag=SYNC_TAG,
     ).single()['n']
     assert stale == 0
+
+
+SHARED_WORKSPACE_ID = 'ws-shared-vpc'
+SHARED_ORG_ID = 'org-shared-vpc'
+SHARED_HOST_PROJECT = 'proj-host'
+SHARED_SVC_PROJECT = 'proj-svc'
+SHARED_VPC_ID = f'projects/{SHARED_HOST_PROJECT}/global/networks/shared'
+SHARED_OWN_VPC_ID = f'projects/{SHARED_SVC_PROJECT}/global/networks/own'
+
+
+def _shared_vpc_params(project_id, update_tag):
+    return {
+        'UPDATE_TAG': update_tag, 'WORKSPACE_ID': SHARED_WORKSPACE_ID,
+        'GCP_ORGANIZATION_ID': SHARED_ORG_ID, 'GCP_PROJECT_ID': project_id, 'LIMIT_SIZE': 1000,
+    }
+
+
+def _transformed_instance(project_id, name, vpc_id, region='us-central1'):
+    """The fields load_gcp_instances reads, shaped as transform_gcp_instances returns them."""
+    network = f'https://www.googleapis.com/compute/v1/{vpc_id}'
+    subnet = f'projects/{vpc_id.split("/")[1]}/regions/{region}/subnetworks/default'
+    return {
+        'name': name, 'status': 'RUNNING', 'natIP': '34.9.9.9', 'project_id': project_id,
+        'partial_uri': f'projects/{project_id}/zones/{region}-a/instances/{name}',
+        'networkInterfaces': [{
+            'name': 'nic0', 'network': network, 'vpc_partial_uri': vpc_id,
+            'subnet_partial_uri': subnet, 'accessConfigs': [],
+        }],
+    }
+
+
+def test_instances_join_the_vpc_of_their_nic_network(neo4j_session):
+    # The host project's sync wrote the shared VPC and its firewall at an earlier tag. Subnets are
+    # stored as projects/<p>/locations/<r>/subnetworks/<s>, which a NIC's .../regions/... subnet never matches.
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(host:GCPProject{id: $host})
+        MERGE (o)-[:OWNER]->(svc:GCPProject{id: $svc})
+        MERGE (host)-[:RESOURCE]->(vpc:GCPVpc{id: $vpc}) SET vpc.lastupdated = $old
+        MERGE (vpc)-[:RESOURCE]->(:GCPFirewall{id: $vpc + '/fw'})
+        MERGE (svc)-[:RESOURCE]->(own:GCPVpc{id: $own})
+        MERGE (own)-[:RESOURCE]->(:GCPSubnet{id: 'projects/proj-svc/locations/us-central1/subnetworks/default'})
+        """,
+        ws=SHARED_WORKSPACE_ID, org=SHARED_ORG_ID, host=SHARED_HOST_PROJECT, svc=SHARED_SVC_PROJECT,
+        vpc=SHARED_VPC_ID, own=SHARED_OWN_VPC_ID, old=100,
+    )
+    instances = [
+        _transformed_instance(SHARED_SVC_PROJECT, 'svc-vm-shared', SHARED_VPC_ID),
+        _transformed_instance(SHARED_SVC_PROJECT, 'svc-vm-own', SHARED_OWN_VPC_ID),
+    ]
+    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instances, 200)
+    # The next service-project sync cleans VPCs before it reloads instances.
+    run_cleanup_job('gcp_compute_vpc_cleanup.json', neo4j_session, _shared_vpc_params(SHARED_SVC_PROJECT, 300))
+    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instances, 300)
+
+    members = neo4j_session.run(
+        "MATCH (i:GCPInstance)-[:MEMBER_OF_GCP_VPC]->(v:GCPVpc) WHERE i.project_id = $svc "
+        "RETURN i.instancename AS vm, v.id AS vpc",
+        svc=SHARED_SVC_PROJECT,
+    ).data()
+    assert sorted((m['vm'], m['vpc']) for m in members) == [
+        ('svc-vm-own', SHARED_OWN_VPC_ID), ('svc-vm-shared', SHARED_VPC_ID),
+    ]
+    # The service project's cleanup must not delete the host project's VPC or cut it from its firewalls.
+    owned = neo4j_session.run(
+        "MATCH (:GCPProject{id: $host})-[:RESOURCE]->(v:GCPVpc{id: $vpc})-[:RESOURCE]->(fw:GCPFirewall) "
+        "RETURN count(fw) AS n",
+        host=SHARED_HOST_PROJECT, vpc=SHARED_VPC_ID,
+    ).single()['n']
+    assert owned == 1

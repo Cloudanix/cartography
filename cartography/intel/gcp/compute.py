@@ -990,7 +990,7 @@ def load_gcp_instances(session: neo4j.Session, instances_list: List[Dict], gcp_u
     _attach_instance_tags(session, instances_list, gcp_update_tag)
     _attach_gcp_nics(session, instances_list, gcp_update_tag)
     _attach_gcp_nic_access_configs(session, instances_list, gcp_update_tag)
-    _attach_gcp_vpc(session, [i["partial_uri"] for i in instances_list], gcp_update_tag)
+    _attach_gcp_vpc(session, instances_list, gcp_update_tag)
     _attach_instance_service_account(session, instances_list, gcp_update_tag)
     # GKE -> instance HAS_NODE links are made by sync_gke_node_links after the parallel run.
 
@@ -1504,23 +1504,34 @@ def _attach_gcp_nic_access_configs(
 
 
 @timeit
-def _attach_gcp_vpc(neo4j_session: neo4j.Session, instance_ids: List[str], gcp_update_tag: int) -> None:
+def _attach_gcp_vpc(neo4j_session: neo4j.Session, instances_list: List[Dict], gcp_update_tag: int) -> None:
     """
-    Attach GCP instances directly to their VPCs.
+    Attach GCP instances directly to the VPC of each NIC's network.
+    Uses the NIC's network, not its subnet: subnets are stored as .../locations/<region>/... while a NIC names
+    .../regions/<region>/..., so a subnet path never matched. On a Shared VPC the network belongs to the host
+    project; the VPC node is merged by id so the host project's firewalls, synced separately, hang off it.
     :param neo4j_session: neo4j_session
-    :param instance_ids: The instance partial_uris
+    :param instances_list: The transformed GCP instance dicts
     :param gcp_update_tag:
     :return: Nothing
     """
     query = """
     UNWIND $DictList AS item
-    MATCH (i:GCPInstance{id: item.instance_id})-[:NETWORK_INTERFACE]->(nic:GCPNetworkInterface)
-          -[p:PART_OF_SUBNET]->(sn:GCPSubnet)<-[r:RESOURCE]-(vpc:GCPVpc)
+    MATCH (i:GCPInstance{id: item.instance_id})
+    MERGE (vpc:GCPVpc{id: item.vpc_partial_uri})
+    ON CREATE SET vpc.firstseen = timestamp(),
+    vpc.partial_uri = item.vpc_partial_uri
+    SET vpc.lastupdated = $gcp_update_tag
     MERGE (i)-[m:MEMBER_OF_GCP_VPC]->(vpc)
     ON CREATE SET m.firstseen = timestamp()
     SET m.lastupdated = $gcp_update_tag
     """
-    rows = [{"instance_id": instance_id} for instance_id in instance_ids]
+    rows = [
+        {"instance_id": instance["partial_uri"], "vpc_partial_uri": nic["vpc_partial_uri"]}
+        for instance in instances_list
+        for nic in instance.get("networkInterfaces", [])
+        if nic.get("vpc_partial_uri")
+    ]
     load_graph_data(neo4j_session, query, rows, gcp_update_tag=gcp_update_tag)
 
 
