@@ -4,6 +4,7 @@ Firewall evaluation shared by the cloud walkers.
 Two rule models cover every provider:
 - allow-only (stateful allow lists): AWS security groups, OCI security lists and NSGs.
 - first-match (ordered allow/deny): AWS NACLs, Azure NSGs, GCP firewall rules and policies.
+  Tiered first-match (tiered_open) chains several such lists with goto_next (GCP policy hierarchy).
 
 "Internet" means the whole internet: only rules whose source is a world CIDR or tag count.
 A rule admitting 203.0.113.0/24 opens a port to someone on the internet, not to everyone,
@@ -35,6 +36,8 @@ class FirewallRule:
     world: bool
     allow: bool = True
     priority: int = 0
+    # Neither allow nor deny: hands the ports it matches to the next level (tiered_open).
+    goto_next: bool = False
 
 
 def allow_only_open(rules: Iterable[FirewallRule]) -> PortSet:
@@ -54,15 +57,32 @@ def first_match_open(rules: Iterable[FirewallRule], default_allow: bool = False)
     elsewhere since AWS and Azure priorities are unique). Each port is decided by the first
     world rule covering it. Ports no rule decides fall to default_allow.
     """
+    return tiered_open([rules], default_allow)
+
+
+def tiered_open(levels: Iterable[Iterable[FirewallRule]], default_allow: bool = False) -> PortSet:
+    """
+    Ports opened to the whole internet by ordered levels of first-match lists, e.g. GCP:
+    org policy -> folder policies -> VPC firewall rules -> network firewall policy.
+
+    Within a level each port goes to its first world rule, as in first_match_open. allow and
+    deny end evaluation for that port; a goto_next rule, or no matching rule in the level, hands
+    the port to the next level. Ports no level decides fall to default_allow.
+    """
     undecided = PortSet.everything()
     opened = PortSet.empty()
-    for rule in sorted(rules, key=lambda r: (r.priority, r.allow)):
-        if not rule.world:
-            continue
-        decided = rule.ports & undecided
-        if rule.allow:
-            opened = opened | decided
-        undecided = undecided - decided
+    for level in levels:
+        pending = undecided
+        for rule in sorted(level, key=lambda r: (r.priority, r.allow)):
+            if not rule.world:
+                continue
+            hit = rule.ports & pending
+            pending = pending - hit
+            if rule.goto_next:
+                continue
+            if rule.allow:
+                opened = opened | hit
+            undecided = undecided - hit
     return opened | undecided if default_allow else opened
 
 

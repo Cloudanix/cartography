@@ -1,8 +1,14 @@
+from unittest.mock import MagicMock
+
+from googleapiclient.errors import HttpError
+
 from cartography.intel.exposure.layers import AUTH_NONE
 from cartography.intel.exposure.layers import AUTH_REQUIRED
 from cartography.intel.exposure.layers import AUTH_UNKNOWN
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.gcp.compute import firewall_entry_strings
+from cartography.intel.gcp.compute import get_gcp_effective_firewalls
+from cartography.intel.gcp.compute import transform_gcp_firewall_policy_rules
 from cartography.intel.gcp.compute import transform_gcp_routes
 from cartography.intel.gcp.exposure_layers import access
 from cartography.intel.gcp.exposure_layers import network
@@ -15,6 +21,7 @@ from cartography.intel.gcp.exposure_layers.network import VpcFacts
 
 WORLD = network.from_cidr("0.0.0.0/0")
 NO_TAGS: frozenset = frozenset()
+API = "https://www.googleapis.com/compute/v1"
 
 
 def _fw(allow, entries, priority=1000, **kw):
@@ -214,6 +221,146 @@ def test_identity_sourced_instance_edges():
     )
     rows = instance_rows([db, app, other], {"vpc": VpcFacts(visible=True, firewalls=[fw])})
     assert rows == [{"src": "app", "dst": "db", "ports": ["tcp:5432-5432"], "via": "firewall_source_tag_or_sa"}]
+
+
+VPC_URI = "projects/p/global/networks/main"
+
+
+def _policy_rule(priority, action, l4, ranges=("0.0.0.0/0",), **kw):
+    match = {"srcIpRanges": list(ranges), "layer4Configs": l4}
+    match.update(kw.pop("match", {}))
+    return {"priority": priority, "action": action, "direction": "INGRESS", "match": match, **kw}
+
+
+def test_transform_firewall_policy_rules_keeps_applicable_ingress_rules():
+    tcp22 = [{"ipProtocol": "tcp", "ports": ["22"]}]
+    ineffective = [{"name": "tagValues/1", "state": "INEFFECTIVE"}]
+    response = {
+        "firewallPolicys": [
+            {
+                "name": "111", "shortName": "org-baseline", "type": "HIERARCHY", "rules": [
+                    _policy_rule(10, "deny", tcp22, targetServiceAccounts=["a@p.iam"]),
+                    _policy_rule(20, "allow", tcp22, direction="EGRESS"),
+                    _policy_rule(30, "allow", tcp22, disabled=True),
+                    _policy_rule(40, "allow", tcp22, targetResources=[f"{API}/projects/p/global/networks/other"]),
+                    _policy_rule(50, "allow", tcp22, targetType="INTERNAL_MANAGED_LB"),
+                    _policy_rule(60, "allow", tcp22, targetSecureTags=ineffective),
+                ],
+            },
+            {
+                "name": "netpol", "type": "NETWORK", "priority": 1000, "rules": [
+                    _policy_rule(
+                        5, "goto_next", [{"ipProtocol": "all"}], ranges=(), targetResources=[f"{API}/{VPC_URI}"],
+                        match={"srcNetworkContext": "INTERNET", "srcRegionCodes": ["US"]},
+                        targetSecureTags=[{"name": "tagValues/2", "state": "EFFECTIVE"}],
+                    ),
+                ],
+            },
+        ],
+    }
+    rows = transform_gcp_firewall_policy_rules(response, VPC_URI)
+    assert [r["priority"] for r in rows] == [10, 5]
+    org, net = rows
+    assert org["id"] == f"{VPC_URI}/firewallPolicies/111/rules/10"
+    assert (org["policy_type"], org["policy_order"], org["policy_short_name"]) == ("HIERARCHY", 0, "org-baseline")
+    assert org["entries"] == ["tcp:22"] and org["target_service_accounts"] == ["a@p.iam"]
+    assert org["other_sources"] is False and org["network_context"] is None
+    assert (net["policy_order"], net["policy_priority"], net["entries"]) == (1, 1000, ["all"])
+    assert net["network_context"] == "INTERNET" and net["other_sources"] is True
+    assert net["target_secure_tags"] == ["tagValues/2"]
+
+
+def test_effective_firewalls_api_error_falls_back():
+    compute = MagicMock()
+    compute.networks.return_value.getEffectiveFirewalls.return_value.execute.side_effect = HttpError(
+        MagicMock(status=403), b'{"error": {"status": "PERMISSION_DENIED"}}',
+    )
+    assert get_gcp_effective_firewalls("p", "main", compute) is None
+    assert transform_gcp_firewall_policy_rules({}, VPC_URI) == []
+
+
+def _row(policy_type, order, priority, action, entries, **kw):
+    return {
+        "policy_type": policy_type, "policy_order": order, "priority": priority, "action": action,
+        "entries": entries, "source_ranges": ["0.0.0.0/0"], **kw,
+    }
+
+
+def _vpc(policy_rows, vpc_rules, order=None):
+    before, after = network.policy_levels(policy_rows, order)
+    return VpcFacts(visible=True, firewalls=vpc_rules, policies_before=before, policies_after=after)
+
+
+def _inst_open(vpc, sas=(), source="0.0.0.0/0"):
+    inst = Instance(id="i", running=True, vpcs=("vpc",), sas=frozenset(sas))
+    return network.instance_open(inst, {"vpc": vpc}, [source])[0].to_strings()
+
+
+VPC_ALLOW_ALL = [_fw(True, ["tcp:0-65535"], source_ranges=("0.0.0.0/0",))]
+
+
+def test_policy_deny_overrides_vpc_allow():
+    # Scenario 8: hierarchical deny beats the VPC allow.
+    org = _row("HIERARCHY", 0, 100, "deny", ["tcp:22"])
+    assert _inst_open(_vpc([org], VPC_ALLOW_ALL)) == ["tcp:0-21", "tcp:23-65535"]
+    # A folder allow below the org deny cannot reopen it; the org's goto_next hands it down.
+    folder = _row("HIERARCHY", 1, 1, "allow", ["tcp:22"])
+    assert _inst_open(_vpc([org, folder], [])) == []
+    handoff = _row("HIERARCHY", 0, 100, "goto_next", ["tcp:22"])
+    assert _inst_open(_vpc([handoff, folder], [])) == ["tcp:22-22"]
+    assert _inst_open(_vpc([handoff], VPC_ALLOW_ALL)) == ["tcp:0-65535"]
+
+
+def test_policy_allow_overrides_vpc_deny_and_no_data_falls_back():
+    org = _row("HIERARCHY", 0, 100, "allow", ["tcp:8443"])
+    assert _inst_open(_vpc([org], [])) == ["tcp:8443-8443"]
+    assert _inst_open(_vpc([], VPC_ALLOW_ALL)) == ["tcp:0-65535"]
+    unknown_action = _row("HIERARCHY", 0, 1, "mirror", ["all"])
+    assert _inst_open(_vpc([unknown_action], VPC_ALLOW_ALL)) == ["tcp:0-65535"]
+
+
+def test_network_policy_before_or_after_classic():
+    net_deny = _row("NETWORK", 1, 10, "deny", ["tcp:443"])
+    vpc_443 = [_fw(True, ["tcp:443-443"], source_ranges=("0.0.0.0/0",))]
+    assert _inst_open(_vpc([net_deny], vpc_443)) == ["tcp:443-443"]
+    assert _inst_open(_vpc([net_deny], vpc_443, "AFTER_CLASSIC_FIREWALL")) == ["tcp:443-443"]
+    assert _inst_open(_vpc([net_deny], vpc_443, "BEFORE_CLASSIC_FIREWALL")) == []
+    # Hierarchical policies run first whatever the order and whatever the response order.
+    org_allow = _row("HIERARCHY", 2, 1, "allow", ["tcp:443"])
+    assert _inst_open(_vpc([net_deny, org_allow], [], "BEFORE_CLASSIC_FIREWALL")) == ["tcp:443-443"]
+
+
+def test_policy_targets_and_contexts():
+    by_sa = _row("HIERARCHY", 0, 1, "deny", ["all"], target_service_accounts=["a@p.iam"])
+    assert _inst_open(_vpc([by_sa], VPC_ALLOW_ALL)) == ["tcp:0-65535"]
+    assert _inst_open(_vpc([by_sa], VPC_ALLOW_ALL), sas={"a@p.iam"}) == []
+    # Secure tag bindings are unknown: a tagged deny is not applied, a tagged allow is.
+    tagged_deny = _row("HIERARCHY", 0, 1, "deny", ["all"], target_secure_tags=["tagValues/1"])
+    tagged_allow = _row("HIERARCHY", 0, 1, "allow", ["tcp:22"], target_secure_tags=["tagValues/1"])
+    assert _inst_open(_vpc([tagged_deny], VPC_ALLOW_ALL)) == ["tcp:0-65535"]
+    assert _inst_open(_vpc([tagged_allow], [])) == ["tcp:22-22"]
+    # GFE traffic is non-internet: an INTERNET-context deny does not touch it, a plain /0 deny does.
+    internet_deny = _row("HIERARCHY", 0, 1, "deny", ["all"], source_ranges=[], network_context="INTERNET")
+    gfe = "35.191.0.0/16"
+    gfe_rule = [_fw(True, ["tcp:8080-8080"], source_ranges=(gfe,))]
+    assert _inst_open(_vpc([internet_deny], VPC_ALLOW_ALL)) == []
+    assert _inst_open(_vpc([internet_deny], gfe_rule), source=gfe) == ["tcp:8080-8080"]
+    assert _inst_open(_vpc([_row("HIERARCHY", 0, 1, "deny", ["all"])], gfe_rule), source=gfe) == []
+    # Region-code-only sources are not "everyone": they neither open nor close for the whole internet.
+    geo = _row("HIERARCHY", 0, 1, "deny", ["all"], source_ranges=[], other_sources=True)
+    assert _inst_open(_vpc([geo], VPC_ALLOW_ALL)) == ["tcp:0-65535"]
+
+
+def test_policy_world_deny_cuts_identity_edges_but_allow_adds_none():
+    db = Instance(id="db", running=True, vpcs=("vpc",), tags=frozenset({"db"}))
+    app = Instance(id="app", running=True, vpcs=("vpc",), sas=frozenset({"app@p.iam"}))
+    fw = _fw(True, ["tcp:5432-5432"], source_sas=frozenset({"app@p.iam"}), target_tags=frozenset({"db"}))
+    deny_all = _row("HIERARCHY", 0, 1, "deny", ["all"])
+    internet_only = _row("HIERARCHY", 0, 1, "deny", ["all"], network_context="INTERNET")
+    allow_ssh = _row("HIERARCHY", 0, 1, "allow", ["tcp:22"])
+    assert instance_rows([db, app], {"vpc": _vpc([deny_all], [fw])}) == []
+    assert [r["ports"] for r in instance_rows([db, app], {"vpc": _vpc([internet_only], [fw])})] == [["tcp:5432-5432"]]
+    assert [r["ports"] for r in instance_rows([db, app], {"vpc": _vpc([allow_ssh], [fw])})] == [["tcp:5432-5432"]]
 
 
 def test_transform_routes():

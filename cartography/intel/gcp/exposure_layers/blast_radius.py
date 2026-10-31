@@ -6,7 +6,8 @@ GCP L5 (network half): where an instance can open connections to if it is compro
         firewall rules do not filter traffic to Cloud SQL).
     (:GCPInstance)-[:CAN_NETWORK_REACH {ports, via}]->(:GCPInstance)
         target's ingress firewall admits the source by source tag or source service account,
-        evaluated first-match over the target's rules in the shared network.
+        evaluated first-match over the target's rules in the shared network, then narrowed by the
+        firewall policies in force on it (an org "deny all ingress" removes the edge).
 
 The identity half (instance -> service account -> roles) already exists in the graph.
 
@@ -26,13 +27,21 @@ from cartography.intel.exposure.layers import merge_reach_edges
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
 from cartography.intel.gcp.exposure_layers.network import Firewall
+from cartography.intel.gcp.exposure_layers.network import from_cidr
 from cartography.intel.gcp.exposure_layers.network import Instance
+from cartography.intel.gcp.exposure_layers.network import INTRA_VPC
+from cartography.intel.gcp.exposure_layers.network import levels_open
+from cartography.intel.gcp.exposure_layers.network import NON_INTERNET
 from cartography.intel.gcp.exposure_layers.network import open_ports
 from cartography.intel.gcp.exposure_layers.network import PROJECT
+from cartography.intel.gcp.exposure_layers.network import V4
 from cartography.intel.gcp.exposure_layers.network import VpcFacts
+from cartography.intel.gcp.exposure_layers.network import WORLD_CIDR
 
 VIA_PRIVATE_SERVICE_ACCESS = "private_service_access"
 VIA_FIREWALL_IDENTITY = "firewall_source_tag_or_sa"
+# Instance-to-instance traffic in one network, as a firewall policy source: any address, internal contexts.
+_INTERNAL_WORLD = from_cidr(WORLD_CIDR[V4], frozenset({NON_INTERNET, INTRA_VPC}))
 
 _SQL_QUERY = f"""
 MATCH {PROJECT}-[:RESOURCE]->(n:GCPSQLInstance)
@@ -59,12 +68,32 @@ def sql_rows(instances: List[Instance], stores: List[Dict]) -> List[Dict]:
 
 
 def from_identity(src: Instance) -> Callable[[Firewall], bool]:
-    """Rule source matches the source instance by network tag or service account."""
-    return lambda fw: bool(fw.source_tags & src.tags or fw.source_sas & src.sas)
+    """
+    VPC rule source matches the source instance by network tag or service account. Policy rules have
+    neither; one matches when its source covers every address (0.0.0.0/0) in an internal context.
+
+    ponytail: policy srcSecureTags, narrower CIDRs and the VPC_NETWORKS context are not matched to
+    instances (no per-instance address or tag bindings here); such policy rules never cut an edge.
+    """
+    def match(fw: Firewall) -> bool:
+        if fw.in_policy:
+            return _INTERNAL_WORLD(fw)
+        return bool(fw.source_tags & src.tags or fw.source_sas & src.sas)
+    return match
 
 
 def _identity_sourced(firewalls: List[Firewall]) -> bool:
     return any(fw.allow and (fw.source_tags or fw.source_sas) for fw in firewalls)
+
+
+def pair_ports(vpc: VpcFacts, src: Instance, dst: Instance) -> PortSet:
+    """Ports the VPC identity rules open from src to dst, narrowed by the firewall policies."""
+    source = from_identity(src)
+    ports = open_ports(vpc.firewalls, dst.tags, dst.sas, source)
+    if ports.is_empty():
+        return ports
+    # Policies only narrow identity edges: their world-sourced allows would link every pair.
+    return ports & levels_open(vpc.levels, dst.tags, dst.sas, source)
 
 
 def instance_rows(instances: List[Instance], vpcs: Dict[str, VpcFacts]) -> List[Dict]:
@@ -75,9 +104,7 @@ def instance_rows(instances: List[Instance], vpcs: Dict[str, VpcFacts]) -> List[
         members = [i for i in instances if vpc_id in i.vpcs]
         for dst in members:
             for src in members:
-                if src.id == dst.id:
-                    continue
-                ports = open_ports(vpc.firewalls, dst.tags, dst.sas, from_identity(src))
+                ports = pair_ports(vpc, src, dst) if src.id != dst.id else PortSet.empty()
                 if ports.is_empty():
                     continue
                 rows.append({"src": src.id, "dst": dst.id, "ports": ports.to_strings(), "via": VIA_FIREWALL_IDENTITY})

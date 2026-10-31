@@ -5,6 +5,7 @@ from cartography.intel.exposure.rules import allow_only_open
 from cartography.intel.exposure.rules import FirewallRule
 from cartography.intel.exposure.rules import first_match_open
 from cartography.intel.exposure.rules import is_world
+from cartography.intel.exposure.rules import tiered_open
 from cartography.intel.exposure.rules import with_stateless_return
 from cartography.intel.exposure.software import os_from_image_name
 
@@ -77,6 +78,34 @@ def test_first_match_tie_deny_wins_and_default():
     ]
     assert first_match_open(rules).is_empty()
     assert first_match_open([], default_allow=True) == PortSet.everything()
+
+
+def _rule(entries, allow=True, priority=1, goto_next=False, world=True):
+    return FirewallRule(ps(*entries), world=world, allow=allow, priority=priority, goto_next=goto_next)
+
+
+def test_tiered_upper_level_decides_first():
+    org_deny = [_rule(["tcp:22-22"], allow=False)]
+    org_allow = [_rule(["tcp:8443-8443"])]
+    vpc = [_rule(["tcp:0-65535"]), _rule(["tcp:8443-8443"], allow=False, priority=0)]
+    # Org deny beats a VPC allow; org allow beats a VPC deny; ports the org skips stay with the VPC.
+    assert tiered_open([org_deny, vpc]).to_strings() == ["tcp:0-21", "tcp:23-8442", "tcp:8444-65535"]
+    assert tiered_open([org_allow, vpc]).to_strings() == ["tcp:0-65535"]
+
+
+def test_tiered_goto_next_and_no_match_fall_through():
+    # goto_next on 22 skips the org's later deny-all; ports no org rule covers go on too.
+    org = [_rule(["tcp:22-22"], allow=False, goto_next=True), _rule(["tcp:0-1000"], allow=False, priority=2)]
+    vpc = [_rule(["tcp:22-22", "tcp:5000-5000"])]
+    assert tiered_open([org, vpc]).to_strings() == ["tcp:22-22", "tcp:5000-5000"]
+    assert tiered_open([org, vpc], default_allow=True).to_strings() == ["tcp:22-22", "tcp:1001-65535", "udp:0-65535"]
+
+
+def test_tiered_ignores_narrow_sources_and_matches_first_match():
+    narrow_deny = [_rule(["tcp:443-443"], allow=False, world=False)]
+    assert tiered_open([narrow_deny, [_rule(["tcp:443-443"])]]).to_strings() == ["tcp:443-443"]
+    rules = [_rule(["tcp:80-80"], priority=5), _rule(["tcp:0-100"], allow=False, priority=1)]
+    assert tiered_open([rules]) == first_match_open(rules)
 
 
 def test_stateless_return_requires_ephemeral_outbound():

@@ -1,17 +1,24 @@
 """
-GCP network facts for the exposure layers: VPC firewall evaluation and the internet route gate.
+GCP network facts for the exposure layers: firewall evaluation and the internet route gate.
 
 Path model for an instance, per IP family:
     internet -> external IP (accessConfig natIP / IPv6 access config)
              -> VPC route 0.0.0.0/0 (::/0) -> default-internet-gateway applying to the instance
-             -> VPC firewall ingress rules (priority order, deny wins ties, implied deny last)
+             -> firewall levels, in Cloud NGFW evaluation order:
+                  org policy -> folder policies (top-down) -> [system policies]
+                  -> VPC firewall rules (priority order, deny wins ties) and the global network
+                     firewall policy, ordered by the network's networkFirewallPolicyEnforcementOrder
+                  -> implied deny
              -> port
+https://cloud.google.com/firewall/docs/firewall-policies-rule-eval-order
 
-Firewall rules apply to an instance in the same network when they have no targets, or their
-target tags / target service accounts match the instance.
+In a level, allow / deny ends evaluation; goto_next or no matching rule moves to the next level.
+VPC rules apply to an instance when they have no targets, or their target tags / target service
+accounts match it; policy rules target service accounts or secure tags.
 
-Blind spots (reported as reachable / not hidden): hierarchical and network firewall policies
-(evaluated before VPC rules, not ingested), host firewalls, ports opened but not listening.
+Blind spots (reported as reachable / not hidden): regional network firewall policies, host
+firewalls, ports opened but not listening. Without policy data (call refused, older sync) only
+the VPC rules decide, as before policies were ingested.
 """
 import ipaddress
 from dataclasses import dataclass
@@ -30,7 +37,7 @@ from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
 from cartography.intel.exposure.ports import union_all
 from cartography.intel.exposure.rules import FirewallRule
-from cartography.intel.exposure.rules import first_match_open
+from cartography.intel.exposure.rules import tiered_open
 
 PROJECT = (
     "(:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id: $GCP_ORGANIZATION_ID})"
@@ -48,10 +55,25 @@ GFE_RANGES = ("130.211.0.0/22", "35.191.0.0/16")
 # Target kinds whose forwarding rules terminate the client connection at a proxy.
 PROXY_TARGETS = ("targetHttpProxies", "targetHttpsProxies", "targetSslProxies", "targetTcpProxies")
 
+# Firewall policy source network contexts. GFE and health-check traffic is non-internet:
+# https://cloud.google.com/firewall/docs/understand-network-contexts
+INTERNET, NON_INTERNET, INTRA_VPC, UNSPECIFIED = "INTERNET", "NON_INTERNET", "INTRA_VPC", "UNSPECIFIED"
+# Policy rule actions. ponytail: apply_security_profile_group hands the packet to an L7 inspection
+# endpoint that may still drop it; counted as allow (upper bound). Upgrade: ingest security profiles.
+ALLOW_ACTIONS = ("allow", "apply_security_profile_group")
+DENY, GOTO_NEXT = "deny", "goto_next"
+# Policy types evaluated before the VPC rules whatever the enforcement order, in this order.
+POLICY_TIERS = {"HIERARCHY": 0, "SYSTEM": 1}
+NETWORK_POLICY_TIER = len(POLICY_TIERS)
+BEFORE_CLASSIC_FIREWALL = "BEFORE_CLASSIC_FIREWALL"
+
 
 @dataclass(frozen=True)
 class Firewall:
-    """One VPC ingress firewall rule; GCP rules are either all-allow or all-deny."""
+    """
+    One ingress rule: a VPC firewall rule (all-allow or all-deny) or a firewall policy rule
+    (in_policy; may be goto_next, may carry a network context, unresolved sources, secure tag targets).
+    """
     allow: bool
     ports: PortSet
     priority: int = DEFAULT_PRIORITY
@@ -60,10 +82,18 @@ class Firewall:
     source_sas: FrozenSet[str] = frozenset()
     target_tags: FrozenSet[str] = frozenset()
     target_sas: FrozenSet[str] = frozenset()
+    goto_next: bool = False
+    in_policy: bool = False
+    network_context: Optional[str] = None
+    other_sources: bool = False
+    secure_tag_target: bool = False
 
     @property
     def has_source(self) -> bool:
-        return bool(self.source_ranges or self.source_tags or self.source_sas)
+        return bool(self.source_ranges or self.source_tags or self.source_sas or self.other_sources)
+
+
+Level = List[Firewall]
 
 
 @dataclass
@@ -71,10 +101,18 @@ class VpcFacts:
     """
     visible: firewalls of this network are synced by this workspace (else the verdict is unknown).
     routes: [{dest_range, priority, tags, next_hop_gateway}]; empty means routes were not ingested.
+    policies_before / policies_after: firewall policies (one level each) evaluated before / after the
+    VPC rules; empty when the network has none or they were not ingested.
     """
     visible: bool
     firewalls: List[Firewall] = field(default_factory=list)
     routes: List[Dict] = field(default_factory=list)
+    policies_before: List[Level] = field(default_factory=list)
+    policies_after: List[Level] = field(default_factory=list)
+
+    @property
+    def levels(self) -> List[Level]:
+        return self.policies_before + [self.firewalls] + self.policies_after
 
 
 # ---------------------------------------------------------------- pure evaluation
@@ -114,10 +152,60 @@ def firewall_from_row(row: Dict) -> Optional[Firewall]:
     )
 
 
+def policy_rule_from_row(row: Dict) -> Optional[Firewall]:
+    """A GCPFirewallPolicyRule row as a Firewall; None for an action that decides nothing about ingress."""
+    action = row.get("action")
+    if action not in ALLOW_ACTIONS and action not in (DENY, GOTO_NEXT):
+        return None
+    context = row.get("network_context")
+    return Firewall(
+        allow=action in ALLOW_ACTIONS,
+        goto_next=action == GOTO_NEXT,
+        ports=union_all(entry_ports(e) for e in row.get("entries") or []),
+        priority=int(row.get("priority") or 0),
+        source_ranges=tuple(row.get("source_ranges") or ()),
+        target_sas=frozenset(row.get("target_service_accounts") or ()),
+        in_policy=True,
+        network_context=None if context == UNSPECIFIED else context,
+        other_sources=bool(row.get("other_sources")),
+        secure_tag_target=bool(row.get("target_secure_tags")),
+    )
+
+
+def policy_levels(rows: List[Dict], enforcement_order: Optional[str]) -> Tuple[List[Level], List[Level]]:
+    """
+    Policy rule rows grouped into one level per policy, split into (before VPC rules, after VPC rules).
+    Hierarchical then system policies always come first; the network policy follows the VPC rules unless
+    the network's enforcement order is BEFORE_CLASSIC_FIREWALL.
+
+    ponytail: hierarchical policies keep the API response order (org first, folders top-down, as
+    `gcloud compute networks get-effective-firewalls` prints them); the response has no level field.
+    """
+    by_policy: Dict[Tuple[int, int], Level] = {}
+    for row in rows:
+        rule = policy_rule_from_row(row)
+        if rule is None:
+            continue
+        tier = POLICY_TIERS.get(row.get("policy_type") or "", NETWORK_POLICY_TIER)
+        by_policy.setdefault((tier, int(row.get("policy_order") or 0)), []).append(rule)
+    ordered = sorted(by_policy.items())
+    first = [level for (tier, _), level in ordered if tier < NETWORK_POLICY_TIER]
+    network = [level for (tier, _), level in ordered if tier >= NETWORK_POLICY_TIER]
+    return (first + network, []) if enforcement_order == BEFORE_CLASSIC_FIREWALL else (first, network)
+
+
 def applies_to(fw: Firewall, tags: FrozenSet[str], sas: FrozenSet[str]) -> bool:
-    """Targets: service accounts, else tags, else every instance of the network."""
+    """
+    Targets: service accounts, else secure tags, else network tags, else every instance of the network.
+
+    ponytail: secure tag bindings are not ingested. A secure-tag-targeted rule counts unless it denies,
+    so a deny is never claimed without proof; a tagged goto_next that in truth skips the instance (which a
+    later allow in the same policy would admit) is the remaining gap. Upgrade: ingest tag bindings.
+    """
     if fw.target_sas:
         return bool(fw.target_sas & sas)
+    if fw.secure_tag_target:
+        return fw.allow or fw.goto_next
     if fw.target_tags:
         return bool(fw.target_tags & tags)
     return True
@@ -131,30 +219,45 @@ def _contains(cidr: str, source: str) -> bool:
     return inner.version == outer.version and inner.network_address in outer and inner.broadcast_address in outer
 
 
-def from_cidr(source: str) -> Callable[[Firewall], bool]:
+def from_cidr(source: str, contexts: Optional[FrozenSet[str]] = None) -> Callable[[Firewall], bool]:
     """
-    Rule source matches when a source range covers the whole `source` block. An ingress rule
-    with no source at all defaults to 0.0.0.0/0 in GCP.
+    Rule source matches when a source range covers the whole `source` block. A VPC rule with no
+    source defaults to 0.0.0.0/0; a policy rule whose only source is a network context matches
+    that whole context. `contexts`: the policy network contexts the traffic belongs to, by default
+    INTERNET, or NON_INTERNET for the Google front-end ranges.
     """
     is_v4_world = source == WORLD_CIDR[V4]
+    traffic = contexts or frozenset({NON_INTERNET if source in GFE_RANGES else INTERNET})
 
     def match(fw: Firewall) -> bool:
+        if fw.network_context and fw.network_context not in traffic:
+            return False
         if not fw.has_source:
-            return is_v4_world
+            return is_v4_world or fw.network_context is not None
         return any(_contains(cidr, source) for cidr in fw.source_ranges)
     return match
+
+
+def levels_open(
+    levels: Iterable[Iterable[Firewall]], tags: FrozenSet[str], sas: FrozenSet[str],
+    source: Callable[[Firewall], bool],
+) -> PortSet:
+    """Ports a chain of rule levels (in evaluation order) opens to `source` on an instance with these tags / SAs."""
+    return tiered_open([
+        [
+            FirewallRule(fw.ports, world=source(fw), allow=fw.allow, priority=fw.priority, goto_next=fw.goto_next)
+            for fw in level if applies_to(fw, tags, sas)
+        ]
+        for level in levels
+    ])
 
 
 def open_ports(
     firewalls: Iterable[Firewall], tags: FrozenSet[str], sas: FrozenSet[str],
     source: Callable[[Firewall], bool],
 ) -> PortSet:
-    """Ports the network's ingress rules open to `source` on an instance with these tags / SAs."""
-    rules = [
-        FirewallRule(fw.ports, world=source(fw), allow=fw.allow, priority=fw.priority)
-        for fw in firewalls if applies_to(fw, tags, sas)
-    ]
-    return first_match_open(rules)
+    """Ports one list of ingress rules (e.g. the VPC rules alone) opens to `source`."""
+    return levels_open([firewalls], tags, sas, source)
 
 
 def internet_route(routes: List[Dict], tags: FrozenSet[str], family: str) -> Optional[bool]:
@@ -209,8 +312,10 @@ WITH vpc, count(owner) > 0 AS visible
 OPTIONAL MATCH (vpc)-[:RESOURCE]->(fw:GCPFirewall)
 WITH vpc, visible, collect(fw {{.*}}) AS firewalls
 OPTIONAL MATCH (vpc)-[:RESOURCE]->(rt:GCPRoute)
-RETURN vpc.id AS id, visible, firewalls,
-    collect(rt {{.dest_range, .priority, .tags, .next_hop_gateway}}) AS routes
+WITH vpc, visible, firewalls, collect(rt {{.dest_range, .priority, .tags, .next_hop_gateway}}) AS routes
+OPTIONAL MATCH (vpc)-[:RESOURCE]->(pr:GCPFirewallPolicyRule)
+RETURN vpc.id AS id, visible, firewalls, routes, collect(pr {{.*}}) AS policy_rules,
+    vpc.network_firewall_policy_enforcement_order AS enforcement_order
 """
 
 
@@ -242,7 +347,7 @@ def instance_open(
         if vpc is None or not vpc.visible:
             unresolved, opened = True, PortSet.everything()
         else:
-            opened = union_all(open_ports(vpc.firewalls, inst.tags, inst.sas, from_cidr(s)) for s in sources)
+            opened = union_all(levels_open(vpc.levels, inst.tags, inst.sas, from_cidr(s)) for s in sources)
         if family and vpc is not None and internet_route(vpc.routes, inst.tags, family) is False:
             opened = PortSet.empty()
         ports = ports | opened
@@ -286,7 +391,11 @@ def vpc_facts_from_row(row: Dict) -> VpcFacts:
     # not visible until its next sync instead of reporting an implied deny.
     stale = any(fw.get("allowed_entries") is None for fw in row["firewalls"])
     firewalls = [fw for fw in (firewall_from_row(r) for r in row["firewalls"]) if fw is not None]
-    return VpcFacts(visible=bool(row["visible"]) and not stale, firewalls=firewalls, routes=row["routes"])
+    before, after = policy_levels(row.get("policy_rules") or [], row.get("enforcement_order"))
+    return VpcFacts(
+        visible=bool(row["visible"]) and not stale, firewalls=firewalls, routes=row["routes"],
+        policies_before=before, policies_after=after,
+    )
 
 
 def read_vpcs(session: neo4j.Session, params: Dict) -> Dict[str, VpcFacts]:

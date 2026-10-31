@@ -701,6 +701,8 @@ def transform_gcp_vpcs(vpc_res: Dict) -> List[Dict]:
         vpc["auto_create_subnetworks"] = v.get("autoCreateSubnetworks", None)
         vpc["description"] = v.get("description", None)
         vpc["routing_config_routing_mode"] = v.get("routingConfig", {}).get("routingMode", None)
+        # Whether network firewall policies run before or after the VPC firewall rules (exposure layers).
+        vpc["network_firewall_policy_enforcement_order"] = v.get("networkFirewallPolicyEnforcementOrder")
 
         if v.get("name") == "default" and v.get("autoCreateSubnetworks"):
             vpc["isDefault"] = True
@@ -1312,6 +1314,7 @@ def load_gcp_vpcs(neo4j_session: neo4j.Session, vpcs: List[Dict], gcp_update_tag
     vpc.project_id = item.project_id,
     vpc.auto_create_subnetworks = item.auto_create_subnetworks,
     vpc.routing_config_routing_mode = item.routing_config_routing_mode,
+    vpc.network_firewall_policy_enforcement_order = item.network_firewall_policy_enforcement_order,
     vpc.description = item.description,
     vpc.consolelink = item.consolelink,
     vpc.lastupdated = $gcp_update_tag,
@@ -2078,7 +2081,7 @@ def sync_gcp_vpcs(
     project_id: str,
     gcp_update_tag: int,
     common_job_parameters: Dict,
-) -> None:
+) -> List[Dict]:
     """
     Get GCP VPCs, ingest to Neo4j, and clean up old data.
     :param neo4j_session: The Neo4j session
@@ -2086,7 +2089,7 @@ def sync_gcp_vpcs(
     :param project_id: The project ID to sync
     :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
     :param common_job_parameters: dict of other job parameters to pass to Neo4j
-    :return: Nothing
+    :return: the transformed VPCs of the project
     """
     vpc_res = get_gcp_vpcs(project_id, compute)
     vpcs = transform_gcp_vpcs(vpc_res)
@@ -2095,6 +2098,7 @@ def sync_gcp_vpcs(
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_vpcs(neo4j_session, common_job_parameters)
     label.sync_labels(neo4j_session, vpcs, gcp_update_tag, common_job_parameters, "vpcs", "GCPVpc")
+    return vpcs
 
 
 @timeit
@@ -2293,6 +2297,143 @@ def sync_gcp_routes(
     run_cleanup_job("gcp_compute_routes_cleanup.json", neo4j_session, common_job_parameters)
 
 
+# Firewall policy rule fields naming sources the exposure layers do not resolve to address ranges.
+_UNRESOLVED_POLICY_SOURCES = (
+    "srcFqdns", "srcRegionCodes", "srcThreatIntelligences", "srcAddressGroups", "srcSecureTags", "srcNetworks",
+)
+_POLICY_TARGET_INSTANCES = "INSTANCES"
+_INGRESS = "INGRESS"
+_SECURE_TAG_INEFFECTIVE = "INEFFECTIVE"
+
+
+@timeit
+def get_gcp_effective_firewalls(project_id: str, network: str, compute: Resource) -> Optional[Dict]:
+    """
+    Firewall policies in force on one VPC network: hierarchical (org, then folders) and the global
+    network firewall policy. Needs compute.networks.getEffectiveFirewalls (roles/viewer, roles/compute.viewer,
+    roles/compute.networkViewer). Any API error returns None: the exposure layers then use VPC rules only.
+
+    :param project_id: The project ID that owns the network
+    :param network: The network name
+    :param compute: The compute resource object created by googleapiclient.discovery.build()
+    :return: https://cloud.google.com/compute/docs/reference/rest/v1/networks/getEffectiveFirewalls response
+    """
+    try:
+        return compute.networks().getEffectiveFirewalls(project=project_id, network=network).execute()
+    except HttpError as e:
+        logger.warning(
+            f"Could not get effective firewalls of network {network} in project {project_id}; "
+            f"firewall policies are not evaluated for it - {e}",
+        )
+        return None
+
+
+def _policy_rule_applies(rule: Dict, vpc_partial_uri: str) -> bool:
+    """Enabled ingress rule aimed at VM instances of this network (secure tags, if any, still effective)."""
+    if rule.get("direction") != _INGRESS or rule.get("disabled"):
+        return False
+    if (rule.get("targetType") or _POLICY_TARGET_INSTANCES) != _POLICY_TARGET_INSTANCES:
+        return False
+    networks = _partial_uris(rule.get("targetResources", []))
+    if networks and vpc_partial_uri not in networks:
+        return False
+    tags = rule.get("targetSecureTags", [])
+    return not tags or any(t.get("state") != _SECURE_TAG_INEFFECTIVE for t in tags)
+
+
+def _policy_rule_row(policy: Dict, order: int, rule: Dict, vpc_partial_uri: str) -> Dict:
+    match = rule.get("match", {})
+    l4 = [{"IPProtocol": c.get("ipProtocol"), "ports": c.get("ports")} for c in match.get("layer4Configs", [])]
+    return {
+        "id": f"{vpc_partial_uri}/firewallPolicies/{policy.get('name')}/rules/{rule.get('priority')}",
+        "vpc_partial_uri": vpc_partial_uri,
+        "policy_name": policy.get("name"),
+        "policy_short_name": policy.get("shortName") or policy.get("displayName"),
+        "policy_type": policy.get("type"),
+        "policy_order": order,
+        "policy_priority": policy.get("priority"),
+        "priority": rule.get("priority"),
+        "action": rule.get("action"),
+        "rule_name": rule.get("ruleName"),
+        "entries": firewall_entry_strings(l4),
+        "source_ranges": match.get("srcIpRanges", []),
+        "network_context": match.get("srcNetworkContext") or match.get("srcNetworkType"),
+        "other_sources": any(match.get(k) for k in _UNRESOLVED_POLICY_SOURCES),
+        "target_service_accounts": rule.get("targetServiceAccounts", []),
+        "target_secure_tags": [t.get("name") for t in rule.get("targetSecureTags", [])],
+    }
+
+
+def transform_gcp_firewall_policy_rules(response: Dict, vpc_partial_uri: str) -> List[Dict]:
+    """
+    Ingress rules of every firewall policy in force on a network, one row per (policy, rule).
+    `policy_order` keeps the response order, the only record of which hierarchical policy is the org's
+    and which are folders' (the API returns no level field).
+
+    :param response: output of get_gcp_effective_firewalls(); VPC rules in it are ignored (synced separately)
+    :param vpc_partial_uri: e.g. projects/p/global/networks/default
+    :return: list of rule dicts for load_gcp_firewall_policy_rules()
+    """
+    return [
+        _policy_rule_row(policy, order, rule, vpc_partial_uri)
+        for order, policy in enumerate(response.get("firewallPolicys", []))
+        for rule in policy.get("rules", [])
+        if _policy_rule_applies(rule, vpc_partial_uri)
+    ]
+
+
+@timeit
+def load_gcp_firewall_policy_rules(neo4j_session: neo4j.Session, rules: List[Dict], gcp_update_tag: int) -> None:
+    """
+    Ingest policy rules as (:GCPVpc)-[:RESOURCE]->(:GCPFirewallPolicyRule), one node per network so a
+    rule's evaluation position travels with the network it applies to.
+
+    :param rules: output of transform_gcp_firewall_policy_rules()
+    :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    """
+    query = """
+    UNWIND $DictList AS item
+    MATCH (vpc:GCPVpc{id: item.vpc_partial_uri})
+    MERGE (rule:GCPFirewallPolicyRule{id: item.id})
+    ON CREATE SET rule.firstseen = timestamp()
+    SET rule += item {
+        .policy_name, .policy_short_name, .policy_type, .policy_order, .policy_priority, .priority, .action,
+        .rule_name, .entries, .source_ranges, .network_context, .other_sources, .target_service_accounts,
+        .target_secure_tags
+    },
+    rule.network = item.vpc_partial_uri,
+    rule.lastupdated = $gcp_update_tag
+
+    MERGE (vpc)-[r:RESOURCE]->(rule)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $gcp_update_tag
+    """
+    load_graph_data(neo4j_session, query, rules, gcp_update_tag=gcp_update_tag)
+
+
+@timeit
+def sync_gcp_firewall_policies(
+    neo4j_session: neo4j.Session,
+    compute: Resource,
+    project_id: str,
+    vpcs: List[Dict],
+    gcp_update_tag: int,
+    common_job_parameters: Dict,
+) -> None:
+    """
+    Firewall policy rules in force on each VPC of the project, one getEffectiveFirewalls call per network.
+
+    ponytail: regional network firewall policies are not in this response (they need
+    regionNetworkFirewallPolicies.getEffectiveFirewalls per region and network); their rules are not evaluated.
+    """
+    rules: List[Dict] = []
+    for vpc in vpcs:
+        response = get_gcp_effective_firewalls(project_id, vpc["name"], compute) or {}
+        rules.extend(transform_gcp_firewall_policy_rules(response, vpc["partial_uri"]))
+    load_gcp_firewall_policy_rules(neo4j_session, rules, gcp_update_tag)
+    run_cleanup_job("gcp_compute_firewall_policy_rules_cleanup.json", neo4j_session, common_job_parameters)
+
+
 def _zones_to_regions(zones: List[str]) -> List[Set]:
     """
     Return list of regions from the input list of zones
@@ -2343,7 +2484,7 @@ def sync(
             zones = zones_list
 
         regions = _zones_to_regions(zones)
-        sync_gcp_vpcs(neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters)
+        vpcs = sync_gcp_vpcs(neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters)
 
         sync_gcp_firewall_rules(
             neo4j_session,
@@ -2353,6 +2494,7 @@ def sync(
             common_job_parameters,
         )
         sync_gcp_routes(neo4j_session, compute, project_id, gcp_update_tag, common_job_parameters)
+        sync_gcp_firewall_policies(neo4j_session, compute, project_id, vpcs, gcp_update_tag, common_job_parameters)
 
         sync_gcp_subnets(
             neo4j_session,

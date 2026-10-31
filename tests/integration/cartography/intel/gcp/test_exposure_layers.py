@@ -5,6 +5,8 @@ Scenarios follow docs/exposure-layers/plan.md section 8 where the construct exis
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from googleapiclient.errors import HttpError
+
 import cartography.intel.gcp.cloudcdn
 import cartography.intel.gcp.compute
 import cartography.intel.gcp.instance_groups
@@ -329,6 +331,109 @@ def test_gcp_exposure_layers_end_to_end(neo4j_session):
 
     other = _props(s, 'other-open')
     assert 'internet_reachable' not in other and 'access_auth' not in other
+
+
+BLOCKED_SA, OPENED_SA, NETPOL_SA, LOCKED_DB_SA = (
+    f'{n}@{PROJECT}.iam.gserviceaccount.com' for n in (
+        'blocked', 'opened', 'netpol', 'lockeddb',
+    )
+)
+MAIN_URI = f'projects/{PROJECT}/global/networks/{MAIN}'
+VPC_LIST = [{'name': n, 'partial_uri': f'projects/{PROJECT}/global/networks/{n}'} for n in (MAIN, NOROUTE)]
+
+
+def _policy_rule(priority, action, l4, sa, ranges=('0.0.0.0/0',)):
+    return {
+        'priority': priority, 'action': action, 'direction': 'INGRESS', 'targetServiceAccounts': [sa],
+        'match': {'srcIpRanges': list(ranges), 'layer4Configs': l4},
+    }
+
+
+MAIN_POLICIES = {
+    'firewallPolicys': [
+        {
+            'name': '9001', 'shortName': 'org-baseline', 'type': 'HIERARCHY', 'rules': [
+                _policy_rule(100, 'deny', [{'ipProtocol': 'tcp', 'ports': ['443']}], BLOCKED_SA),
+                _policy_rule(200, 'allow', [{'ipProtocol': 'tcp', 'ports': ['8443']}], OPENED_SA),
+                _policy_rule(300, 'deny', [{'ipProtocol': 'all'}], LOCKED_DB_SA),
+            ],
+        },
+        {
+            'name': 'main-netpol', 'type': 'NETWORK', 'priority': 1000, 'rules': [
+                _policy_rule(10, 'deny', [{'ipProtocol': 'tcp', 'ports': ['443']}], NETPOL_SA),
+            ],
+        },
+    ],
+}
+
+
+def _compute(responses):
+    """Compute client whose getEffectiveFirewalls answers per network; a missing network is refused (403)."""
+    def call(project, network):
+        if network not in responses:
+            raise HttpError(MagicMock(status=403), b'{"error": {"status": "PERMISSION_DENIED"}}')
+        return MagicMock(execute=MagicMock(return_value=responses[network]))
+    compute = MagicMock()
+    compute.networks.return_value.getEffectiveFirewalls.side_effect = call
+    return compute
+
+
+def _sync_policies(session, responses, tag=TAG):
+    cartography.intel.gcp.compute.sync_gcp_firewall_policies(
+        session, _compute(responses), PROJECT, VPC_LIST, tag, {**PARAMS, 'UPDATE_TAG': tag, 'LIMIT_SIZE': 1000},
+    )
+
+
+def _policy_rules(session):
+    rows = session.run(
+        'MATCH (v:GCPVpc)-[:RESOURCE]->(r:GCPFirewallPolicyRule) RETURN v.id AS vpc, r.id AS id, r.action AS action, '
+        'r.policy_type AS type, r.policy_order AS ord, r.entries AS entries, r.target_service_accounts AS sas',
+    )
+    return {r['id']: dict(r) for r in rows}
+
+
+def test_gcp_firewall_policy_rules_load_and_cleanup(neo4j_session):
+    neo4j_session.run('MATCH (n) DETACH DELETE n').consume()
+    _seed_tenants(neo4j_session)
+    # NOROUTE's call is refused: it gets no rules and keeps VPC-rules-only behaviour.
+    _sync_policies(neo4j_session, {MAIN: MAIN_POLICIES})
+    rules = _policy_rules(neo4j_session)
+    assert len(rules) == 4 and {r['vpc'] for r in rules.values()} == {MAIN_URI}
+    org_deny = rules[f'{MAIN_URI}/firewallPolicies/9001/rules/100']
+    assert (org_deny['action'], org_deny['type'], org_deny['ord']) == ('deny', 'HIERARCHY', 0)
+    assert org_deny['entries'] == ['tcp:443'] and org_deny['sas'] == [BLOCKED_SA]
+    assert rules[f'{MAIN_URI}/firewallPolicies/main-netpol/rules/10']['ord'] == 1
+
+    _sync_policies(neo4j_session, {MAIN: {'firewallPolicys': []}}, tag=TAG + 1)
+    assert _policy_rules(neo4j_session) == {}
+
+
+def test_gcp_firewall_policies_end_to_end(neo4j_session):
+    _build(neo4j_session)
+    _load_instances(
+        neo4j_session, [
+            _instance(PROJECT, 'org-blocked', MAIN, tags=['web'], nat_ip='34.0.1.1', sa=BLOCKED_SA),
+            _instance(PROJECT, 'org-opened', MAIN, nat_ip='34.0.1.2', sa=OPENED_SA),
+            _instance(PROJECT, 'netpol-after', MAIN, tags=['web'], nat_ip='34.0.1.3', sa=NETPOL_SA),
+            _instance(PROJECT, 'locked-db', MAIN, tags=['db'], sa=LOCKED_DB_SA),
+        ],
+    )
+    _sync_policies(neo4j_session, {MAIN: MAIN_POLICIES})
+    exposure_layers.run(neo4j_session, PARAMS)
+    s = neo4j_session
+
+    # Scenario 8: the VPC rule web-443 admits it, the org policy's deny wins.
+    blocked = _props(s, 'org-blocked')
+    assert blocked['public_reasons'] == ['external_ip'] and blocked['internet_reachable'] is False
+    # No VPC rule opens 8443; the org allow does, before the implied deny.
+    assert _props(s, 'org-opened')['internet_reachable_ports'] == ['tcp:8443-8443']
+    # Default enforcement order: the VPC allow decides before the network policy's deny is reached.
+    assert _props(s, 'netpol-after')['internet_reachable_ports'] == ['tcp:443-443']
+    assert _props(s, 'open')['internet_reachable_ports'] == ['tcp:443-443']
+
+    edges = _edges(s)
+    assert edges[('app', 'db')] == (['tcp:5432-5432'], 'firewall_source_tag_or_sa')
+    assert ('app', 'locked-db') not in edges
 
 
 def test_gcp_exposure_layers_rerun_is_stable(neo4j_session):
