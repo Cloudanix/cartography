@@ -958,6 +958,7 @@ def load_vnics(
         v.mac_address = vnic.mac_address,
         v.skip_source_dest_check = vnic.skip_source_dest_check,
         v.subnet_id = vnic.subnet_id,
+        v.nsg_ids = vnic.nsg_ids,
         v.region = $REGION,
         v.consolelink = vnic.consolelink,
         v.lastupdated = $oci_update_tag
@@ -991,6 +992,8 @@ def load_vnics(
             "mac_address": vnic.get("mac-address", ""),
             "skip_source_dest_check": vnic.get("skip-source-dest-check", False),
             "subnet_id": vnic.get("subnet-id", ""),
+            # NSGs attached to this VNIC; the instance exposure job reads their rules.
+            "nsg_ids": vnic.get("nsg-ids") or [],
             "time_created": str(vnic.get("time-created", "")),
             "consolelink": utils.get_console_link(
                 "vnic", region=region, ocid=vnic.get("id"), instance_id=vnic.get("_instance_id", ""),

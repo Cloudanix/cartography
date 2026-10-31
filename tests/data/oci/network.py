@@ -129,6 +129,7 @@ VNICS = [
         "mac-address": "00:00:00:00:00:00",
         "skip-source-dest-check": False,
         "subnet-id": SUBNET_ID,
+        "nsg-ids": [NSG_ID],
         "time-created": "2024-01-01T00:00:00Z",
     },
 ]

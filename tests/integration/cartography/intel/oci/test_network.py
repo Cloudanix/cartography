@@ -125,6 +125,8 @@ def test_load_vnics_links_subnet(neo4j_session):
     )
     network.load_vnics(neo4j_session, test_data.VNICS, TEST_REGION, TEST_UPDATE_TAG)
     assert check_nodes(neo4j_session, "OCIVnic", ["id"]) == {("oci.vnic.0",)}
+    nsg_ids = neo4j_session.run("MATCH (v:OCIVnic{id: 'oci.vnic.0'}) RETURN v.nsg_ids AS ids").single()["ids"]
+    assert nsg_ids == [test_data.NSG_ID]
     assert (test_data.SUBNET_ID, "oci.vnic.0") in check_rels(
         neo4j_session, "OCISubnet", "id", "OCIVnic", "id", "OCI_VNIC",
     )
