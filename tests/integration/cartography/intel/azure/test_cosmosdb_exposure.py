@@ -38,9 +38,9 @@ def _run(neo4j_session, accounts):
     run_analysis_job('azure_cosmosdb_asset_exposure.json', neo4j_session, PARAMS)
 
     rows = neo4j_session.run(
-        "MATCH (a:AzureCosmosDBAccount) WHERE a.id STARTS WITH $prefix "
+        "MATCH (a:AzureCosmosDBAccount) WHERE a.id IN $ids "
         "RETURN a.name AS name, a.exposed_internet AS exposed, a.exposed_internet_type AS types",
-        prefix=PREFIX,
+        ids=[account['id'] for account in accounts],
     )
     return {r['name']: (r['exposed'], sorted(r['types'] or [])) for r in rows}
 
@@ -65,6 +65,35 @@ def test_cosmosdb_network_exposure(neo4j_session):
         'disabled-with-ip': (None, []),
         'vnet-only': (None, []),
         # 0.0.0.0 admits Azure datacenters only, so the account is not open to every network.
-        'datacenters-only': (None, []),
+        'datacenters-only': (None, ['azure_services_allowed']),
         'cidr': (True, ['public_ip']),
+    }
+
+
+# Middleware IPs the portal adds with "Add Azure Portal Middleware IPs" (All APIs, Azure Public).
+PORTAL_IPS = ['13.91.105.215', '4.210.172.107', '13.88.56.148', '40.91.218.243']
+
+
+def test_cosmosdb_portal_and_datacenter_rules(neo4j_session):
+    # Tagged by an earlier run, then the 0.0.0.0 rule was removed: the tag must not stick.
+    neo4j_session.run(
+        "MERGE (a:AzureCosmosDBAccount{id: $id}) SET a.exposed_internet_type = ['azure_services_allowed']",
+        id=PREFIX + 'datacenters-removed',
+    )
+    actual = _run(
+        neo4j_session, [
+            _account('portal-only', ips=PORTAL_IPS),
+            _account('portal-legacy', ips=['104.42.195.92', '40.76.54.131', '52.176.6.30']),
+            _account('portal-and-datacenters', ips=PORTAL_IPS + ['0.0.0.0']),
+            _account('portal-and-office', ips=PORTAL_IPS + ['52.1.2.3']),
+            _account('datacenters-removed', ips=['52.1.2.3']),
+        ],
+    )
+
+    assert actual == {
+        'datacenters-removed': (True, ['public_ip']),
+        'portal-only': (None, []),
+        'portal-legacy': (None, []),
+        'portal-and-datacenters': (None, ['azure_services_allowed']),
+        'portal-and-office': (True, ['public_ip']),
     }

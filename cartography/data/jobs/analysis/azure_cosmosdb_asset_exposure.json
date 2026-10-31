@@ -1,7 +1,7 @@
 {
   "statements": [
     {
-      "query": "MATCH ((n:AzureCosmosDBAccount)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "query": "MATCH ((n:AzureCosmosDBAccount)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE n.exposed_internet IS NOT NULL OR n.exposed_internet_type IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
       "iterative": true,
       "iterationsize": 100
     },
@@ -30,7 +30,11 @@
       "iterative": false
     },
     {
-      "query": "MATCH (:AzurePublicIPAddress)<-[:MEMBER_OF_PUBLIC_IP]-(:AzureFirewallRule)<-[:FIREWALL_RULE]-(acc:AzureCosmosDBAccount)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(acc.publicNetworkAccess, '') <> 'Disabled' SET acc.exposed_internet = true, (CASE WHEN NOT 'public_ip' IN coalesce(acc.exposed_internet_type, []) THEN acc END).exposed_internet_type = coalesce(acc.exposed_internet_type, []) + 'public_ip';",
+      "query": "MATCH (:AzurePublicIPAddress)<-[:MEMBER_OF_PUBLIC_IP]-(rule:AzureFirewallRule)<-[:FIREWALL_RULE]-(acc:AzureCosmosDBAccount)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(acc.publicNetworkAccess, '') <> 'Disabled' AND coalesce(rule.azure_portal_middleware, false) = false SET acc.exposed_internet = true, (CASE WHEN NOT 'public_ip' IN coalesce(acc.exposed_internet_type, []) THEN acc END).exposed_internet_type = coalesce(acc.exposed_internet_type, []) + 'public_ip';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (acc:AzureCosmosDBAccount{allowAzureDatacenters: true})<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(acc.publicNetworkAccess, '') <> 'Disabled' SET (CASE WHEN NOT 'azure_services_allowed' IN coalesce(acc.exposed_internet_type, []) THEN acc END).exposed_internet_type = coalesce(acc.exposed_internet_type, []) + 'azure_services_allowed';",
       "iterative": false
     },
     {

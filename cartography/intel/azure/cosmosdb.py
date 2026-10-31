@@ -27,6 +27,23 @@ logger = logging.getLogger(__name__)
 
 # The IP rule the portal adds for "Accept connections from within public Azure datacenters".
 AZURE_DATACENTERS_IP_RULE = '0.0.0.0'
+# Azure portal middleware IPs ("Add Azure Portal Middleware IPs"), current and legacy, for
+# Azure Public, 21Vianet and US Government. They let the portal's Data Explorer reach the
+# account, they do not open it to the internet. Source, 2026-07-27:
+# https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-configure-firewall
+AZURE_PORTAL_MIDDLEWARE_IPS = frozenset({
+    # Azure Public: All, MongoDB only, Apache Cassandra only
+    '13.91.105.215', '4.210.172.107', '13.88.56.148', '40.91.218.243',
+    '20.245.81.54', '40.118.23.126', '40.80.152.199', '13.95.130.121',
+    '40.113.96.14', '104.42.11.145', '137.117.230.240', '168.61.72.237',
+    # 21Vianet
+    '163.228.137.6', '143.64.170.142', '52.131.240.99', '143.64.61.130', '40.73.99.146', '143.64.62.47',
+    # US Government
+    '52.247.163.6', '52.244.134.181', '52.244.176.112', '52.247.148.42', '52.244.50.101', '52.227.165.24',
+    # Legacy middleware, all three clouds
+    '104.42.195.92', '40.76.54.131', '52.176.6.30', '52.169.50.45', '52.187.184.26', '139.217.8.252',
+    '52.244.48.71',
+})
 
 
 @timeit
@@ -104,6 +121,7 @@ def transform_database_account_data(database_account_list: List[Dict]) -> List[D
         database_account['ipruleslist'] = [ip for ip in iprules if _is_public_ip_rule(ip)]
         # Every rule, including 0.0.0.0: any rule at all means the account is not open to every network.
         database_account['iprulecount'] = len(iprules)
+        database_account['allowAzureDatacenters'] = AZURE_DATACENTERS_IP_RULE in iprules
         database_account['list_of_capabilities'] = capabilities
 
     return database_account_list
@@ -128,6 +146,7 @@ def load_database_account_data(
     d.name = da.name,
     d.ipranges = da.ipruleslist,
     d.iprulecount = da.iprulecount,
+    d.allowAzureDatacenters = da.allowAzureDatacenters,
     d.capabilities = da.list_of_capabilities,
     d.publicNetworkAccess = da.publicNetworkAccess,
     d.documentendpoint = da.document_endpoint,
@@ -224,6 +243,7 @@ def _load_database_account_associated_iprules(
         rule.source = 'Azure',
         rule.type = 'External',
         rule.resource = $resourceType,
+        rule.azure_portal_middleware = ip_rule IN $portal_ips,
         rule.lastupdated = $azure_update_tag
         MERGE (d)-[r:FIREWALL_RULE]->(rule)
         ON CREATE SET r.firstseen = timestamp()
@@ -250,6 +270,7 @@ def _load_database_account_associated_iprules(
         database_account.get('ipruleslist', []),
         DatabaseAccountId=database_account.get('id'),
         resourceType=database_account.get('type'),
+        portal_ips=list(AZURE_PORTAL_MIDDLEWARE_IPS),
         azure_update_tag=azure_update_tag,
     )
 
