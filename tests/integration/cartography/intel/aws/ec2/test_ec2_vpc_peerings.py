@@ -10,7 +10,13 @@ TEST_REGION = 'eu-north-1'
 TEST_UPDATE_TAG = 123456789
 
 
+def _seed_account(neo4j_session):
+    # organizations.sync creates the account before any service sync; the loader requires it.
+    neo4j_session.run('MERGE (:AWSAccount{id: $id})', id=TEST_ACCOUNT_ID)
+
+
 def test_load_vpc_peerings(neo4j_session):
+    _seed_account(neo4j_session)
     data = tests.data.aws.ec2.vpc_peerings.DESCRIBE_VPC_PEERINGS
     cartography.intel.aws.ec2.vpc_peerings.load_vpc_peerings(
         neo4j_session,
@@ -35,6 +41,7 @@ def test_load_vpc_peerings(neo4j_session):
 
 
 def test_vpc_peering_relationships_vpc(neo4j_session):
+    _seed_account(neo4j_session)
     data = tests.data.aws.ec2.vpc_peerings.DESCRIBE_VPC_PEERINGS
     cartography.intel.aws.ec2.vpc_peerings.load_vpc_peerings(
         neo4j_session,
@@ -68,6 +75,7 @@ def test_vpc_peering_relationships_vpc(neo4j_session):
 
 
 def test_vpc_peering_relationships_cidr(neo4j_session):
+    _seed_account(neo4j_session)
     data = tests.data.aws.ec2.vpc_peerings.DESCRIBE_VPC_PEERINGS
     cartography.intel.aws.ec2.vpc_peerings.load_vpc_peerings(
         neo4j_session,
@@ -304,3 +312,16 @@ def test_vpc_peering_cleanup_removes_only_this_accounts_stale_peer_stubs(neo4j_s
     assert 'pc-stub-shared' not in _ids(neo4j_session, 'AWSVpc')
     assert 'pc-stub-shared|10.3.0.0/16' not in _ids(neo4j_session, 'AWSCidrBlock')
     assert 'pc-t2-stub' not in _ids(neo4j_session, 'AWSVpc')
+
+
+def test_load_vpc_peerings_without_the_account_writes_nothing(neo4j_session):
+    # organizations.sync creates the account before any service sync. If it is missing anyway,
+    # the peering load must neither fail nor leave unowned peering, VPC or CIDR nodes behind.
+    rows = [_peering('pm-pcx-1', ('pm-a1', 'pm-vpc-own', ['10.0.0.0/16']), ('pm-ext', 'pm-vpc-ext', ['10.9.0.0/16']))]
+
+    _load_peerings(neo4j_session, rows, 'pm-a1', TEST_UPDATE_TAG)
+
+    left = neo4j_session.run(
+        "MATCH (n) WHERE n.id STARTS WITH 'pm-' RETURN count(n) AS c",
+    ).single()['c']
+    assert left == 0

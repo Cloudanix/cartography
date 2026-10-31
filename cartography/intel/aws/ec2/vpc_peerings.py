@@ -40,6 +40,8 @@ def load_vpc_peerings(
 ) -> None:
     ingest_vpc_peerings = """
     UNWIND $DictList AS vpc_peering
+    // organizations.sync creates the account first; without it, write nothing.
+    MATCH (account:AWSAccount{id: $aws_account_id})
 
     MERGE (pcx:AWSPeeringConnection{id: vpc_peering.VpcPeeringConnectionId})
     ON CREATE SET pcx.firstseen = timestamp()
@@ -76,8 +78,6 @@ def load_vpc_peerings(
     SET rrv.lastupdated = $update_tag
 
     // Only the side this account owns is its resource; the peer VPC belongs to OwnerId.
-    WITH vpc_peering, avpc, rvpc
-    MATCH (account:AWSAccount{id: $aws_account_id})
     FOREACH (_ IN CASE WHEN vpc_peering.AccepterVpcInfo.OwnerId = $aws_account_id THEN [1] ELSE [] END |
         MERGE (account)-[ra:RESOURCE]->(avpc)
         ON CREATE SET ra.firstseen = timestamp()
@@ -113,6 +113,8 @@ def load_accepter_cidrs(
 
     ingest_accepter_cidr = """
     UNWIND $DictList AS vpc_peering
+    // organizations.sync creates the account first; without it, write nothing.
+    MATCH (:AWSAccount{id: $aws_account_id})
     UNWIND vpc_peering.AccepterVpcInfo.CidrBlockSet AS c_b
 
     MERGE (ac_b:AWSCidrBlock:AWSIpv4CidrBlock{id: vpc_peering.AccepterVpcInfo.VpcId + '|' + c_b.CidrBlock})
@@ -149,6 +151,8 @@ def load_requester_cidrs(
 
     ingest_requester_cidr = """
     UNWIND $DictList AS vpc_peering
+    // organizations.sync creates the account first; without it, write nothing.
+    MATCH (:AWSAccount{id: $aws_account_id})
     UNWIND vpc_peering.RequesterVpcInfo.CidrBlockSet AS c_b
 
     MERGE (rc_b:AWSCidrBlock:AWSIpv4CidrBlock{id: vpc_peering.RequesterVpcInfo.VpcId + '|' + c_b.CidrBlock})
