@@ -482,9 +482,11 @@ def test_db_system_exposure_needs_node_public_ip_and_own_open_rules(neo4j_sessio
     _load_db_system(neo4j_session, 'dbs-no-vnic-private-subnet', 'dbs-subnet-private', [('dbs-n10', None)])
     # Flag left by an earlier run must be cleared.
     neo4j_session.run(
-        "MATCH (s:OCIDbSystem{id: 'dbs-public-closed'}) "
+        "MATCH (s:OCIDbSystem{id: 'dbs-public-closed'})-[:HAS_DB_NODE]->(n:OCIDbNode) "
         "SET s.exposed_internet = true, s.exposed_internet_type = ['unrestricted_securitylist_ingress'], "
-        "s.publicContext = '[]'",
+        "s.publicContext = '[]', "
+        "n.exposed_internet = true, n.exposed_internet_type = ['unrestricted_securitylist_ingress'], "
+        "n.publicContext = '[]'",
     )
 
     run_analysis_job('oci_db_system_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
@@ -503,3 +505,19 @@ def test_db_system_exposure_needs_node_public_ip_and_own_open_rules(neo4j_sessio
     ).data()
     assert rows[0]['c'] is None
     assert 'dbs-n6.vnic' in rows[1]['c'] and 'dbs-sl-default' in rows[1]['c'] and 'dbs-n5.vnic' not in rows[1]['c']
+    # The console asset is the DB node, so each node is judged by its own VNIC (n5, the private
+    # node of the two-node system, stays unexposed).
+    assert _exposed(neo4j_session, 'OCIDbNode', 'dbs-') == {
+        'dbs-n2': ['unrestricted_securitylist_ingress'],
+        'dbs-n4': ['unrestricted_nsg_ingress'],
+        'dbs-n6': ['unrestricted_securitylist_ingress'],
+        'dbs-n7': ['public_ip_unresolved_rules'],
+        'dbs-n8': ['db_node_vnic_unresolved'],
+        'dbs-n9': ['db_node_vnic_unresolved'],
+    }
+    rows = neo4j_session.run(
+        "MATCH (n:OCIDbNode) WHERE n.id IN ['dbs-n3', 'dbs-n6'] RETURN n.id AS id, n.publicContext AS c ORDER BY id",
+    ).data()
+    assert rows[0]['c'] is None
+    assert 'oci-database-dbsystem-instance' in rows[1]['c'] and '203.0.113.30' in rows[1]['c']
+    assert 'dbs-sl-default' in rows[1]['c'] and 'dbs-two-nodes' in rows[1]['c']
