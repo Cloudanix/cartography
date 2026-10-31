@@ -10,6 +10,7 @@ from azure.mgmt.keyvault import KeyVaultManagementClient
 
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -53,7 +54,7 @@ def get_key_vaults_list(client: KeyVaultManagementClient) -> List[Dict]:
         key_vaults_list = []
         for x in client.vaults.list_by_subscription():
             try:
-                key_vaults_list.append(x.as_dict())
+                key_vaults_list.append(as_legacy_dict(x))
             except (KeyError, AttributeError) as e:
                 logger.warning("Skipping key vault due to serialization error: %s", e)
         return key_vaults_list
@@ -100,8 +101,8 @@ def update_access_policies(vault: Dict, common_job_parameters: Dict, client: Key
 def transform_key_vaults(key_vaults: List[Dict], regions: List, common_job_parameters: Dict) -> List[Dict]:
     key_vaults_data = []
     for vault in key_vaults:
-        vault['created_on'] = (vault.get('systemData') or {}).get('createdAt')
-        vault['updated_on'] = (vault.get('systemData') or {}).get('lastModifiedAt')
+        vault['created_on'] = (vault.get('system_data') or {}).get('created_at')
+        vault['updated_on'] = (vault.get('system_data') or {}).get('last_modified_at')
         vault['resource_group'] = get_azure_resource_group_name(vault.get('id'))
         vault['consolelink'] = safe_console_link(vault.get('id'), common_job_parameters)
         if regions is None:
@@ -168,7 +169,7 @@ def get_key_vault_keys_list(client: KeyVaultManagementClient, vault: Dict) -> Li
         keys_list = []
         for x in client.keys.list(resource_group_name=vault['resource_group'], vault_name=vault['name']):
             try:
-                keys_list.append(x.as_dict())
+                keys_list.append(as_legacy_dict(x))
             except (KeyError, AttributeError) as e:
                 logger.warning("Skipping key vault key due to serialization error: %s", e)
         return keys_list
@@ -228,7 +229,7 @@ def get_key_vault_secrets(client: KeyVaultManagementClient, vault: Dict) -> List
         secrets_list = []
         for x in client.secrets.list(resource_group_name=vault['resource_group'], vault_name=vault['name']):
             try:
-                secrets_list.append(x.as_dict())
+                secrets_list.append(as_legacy_dict(x))
             except (KeyError, AttributeError) as e:
                 logger.warning("Skipping key vault secret due to serialization error: %s", e)
         return secrets_list
