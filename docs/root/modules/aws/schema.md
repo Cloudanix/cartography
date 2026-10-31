@@ -3136,6 +3136,9 @@ Representation of an AWS [Elastic Beanstalk environment](https://docs.aws.amazon
 | resources\_resolved | False when `DescribeEnvironmentResources` failed for the environment |
 | load\_balancer\_names | The environment's load balancers: names for Classic ELBs, ARNs for application / network load balancers |
 | instance\_ids | The environment's EC2 instance ids |
+| exposed\_internet | Set by `aws_elasticbeanstalk_asset_exposure.json` when a web server environment is reachable from the internet; worker environments are never flagged |
+| exposed\_internet\_type | `load_balancer` (one of its load balancers is exposed), `instance` (no load balancer and one of its instances is exposed) or `unresolved` (its resources could not be read, or a load balancer / instance is not in the graph) |
+| publicContext | JSON: CNAME, endpoint, tier and the exposed load balancers / instances or the unresolved ones |
 
 #### Relationships
 

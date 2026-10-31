@@ -462,6 +462,12 @@ def _sync_one_account(
         neo4j_session,
         common_job_parameters,
     )
+    # Reads the exposure the ELB and EC2 instance jobs above set on the environment's load balancers / instances.
+    run_analysis_job(
+        "aws_elasticbeanstalk_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
     run_analysis_job(
         "aws_redshift_cluster_asset_exposure.json",
