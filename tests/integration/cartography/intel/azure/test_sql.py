@@ -794,22 +794,48 @@ def test_sql_server_analysis_public_exposure(neo4j_session):
         common_job_parameters,
     )
 
+    # testSQL1 only allows Azure services (0.0.0.0-0.0.0.0) and testSQL2 has no wide
+    # range: neither is internet-exposed (missing private endpoints no longer counts).
     expected_nodes = {
         (
             '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Sql/servers/testSQL1',
-            'unrestricted_firewall',
-        ),
-        (
-            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Sql/servers/testSQL2',
-            'no_private_endpoints',
+            'azure_services_allowed',
         ),
     }
 
     nodes = neo4j_session.run(
         """
-        MATCH (r:AzureSQLServer{exposed_internet: true}) RETURN r.id, r.exposed_internet_type;
+        MATCH (r:AzureSQLServer) WHERE r.id STARTS WITH '/subscriptions/00-00-00-00/'
+        AND r.exposed_internet_type IS NOT NULL AND r.exposed_internet IS NULL
+        RETURN r.id, r.exposed_internet_type;
         """,
     )
     actual_nodes = {(n['r.id'], ",".join(n['r.exposed_internet_type'])) for n in nodes}
 
     assert actual_nodes == expected_nodes
+    assert neo4j_session.run(
+        "MATCH (r:AzureSQLServer{exposed_internet: true}) WHERE r.id STARTS WITH '/subscriptions/00-00-00-00/' "
+        "RETURN count(r) AS c",
+    ).single()['c'] == 0
+
+
+def test_load_server_private_endpoint_connection(neo4j_session):
+    server_id = '/subscriptions/00-00/resourceGroups/pe-rg/providers/Microsoft.Sql/servers/pe-server'
+    pec_id = f'{server_id}/privateEndpointConnections/pec1'
+    neo4j_session.run("MERGE (:AzureResourceGroup{name: 'pe-rg'})")
+    sql.load_server_data(neo4j_session, TEST_SUBSCRIPTION_ID, [{'id': server_id, 'name': 'pe-server'}], TEST_UPDATE_TAG)
+    server = {
+        'id': server_id,
+        'private_endpoint_connections': [
+            {'id': pec_id, 'properties': {'provisioning_state': 'Ready', 'private_endpoint': {'id': 'pe1'}}},
+        ],
+    }
+
+    sql.load_server_private_endpoint_connection(neo4j_session, [server], TEST_UPDATE_TAG)
+
+    row = neo4j_session.run(
+        'MATCH (:AzureSQLServer{id: $server})-[:HAS]->(p:AzureServerPrivateEndpointConnection)'
+        '-[:RESOURCE_GROUP]->(rg:AzureResourceGroup) RETURN p.private_endpoint AS pe, rg.name AS rg',
+        server=server_id,
+    ).single()
+    assert (row['pe'], row['rg']) == ('pe1', 'pe-rg')

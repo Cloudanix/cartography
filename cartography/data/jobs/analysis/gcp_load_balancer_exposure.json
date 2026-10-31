@@ -1,0 +1,31 @@
+{
+    "statements": [
+        {
+            "__comment": "Reset. This job is the only writer of exposure on load balancer resources. Iterative with a WHERE so every flagged node is reached, not only the first batch.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(n) WHERE (n:GCPForwardingRule OR n:GCPProxy OR n:GCPUrlMap OR n:GCPSSLPolicy OR n:GCPBackendService OR n:GCPBackendBucket OR n:GCPInstanceGroup) AND (n.exposed_internet IS NOT NULL OR n.exposed_internet_type IS NOT NULL) WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 1000
+        },
+        {
+            "__comment": "An EXTERNAL / EXTERNAL_MANAGED forwarding rule is an internet-facing front door, whether or not its backends can be resolved.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(fr:GCPForwardingRule)\nWHERE fr.load_balancing_scheme IN ['EXTERNAL', 'EXTERNAL_MANAGED']\nSET fr.exposed_internet = true, fr.exposed_internet_type = ['external_load_balancer']",
+            "iterative": false
+        },
+        {
+            "__comment": "Front end of those rules in the same project: the target proxy, the URL map behind an HTTP(S) proxy and the proxy's SSL policy (references resolved at ingestion, see compute.resolve_external_lb_backends).",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(p:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(fr:GCPForwardingRule)\nWHERE fr.load_balancing_scheme IN ['EXTERNAL', 'EXTERNAL_MANAGED']\nWITH p, collect(fr.target) AS targets, collect(fr.url_map) AS url_maps, collect(fr.ssl_policy) AS ssl_policies\nMATCH (p)-[:RESOURCE]->(n)\nWHERE (n:GCPProxy AND n.id IN targets) OR (n:GCPUrlMap AND n.partial_uri IN url_maps) OR (n:GCPSSLPolicy AND n.id IN ssl_policies)\nSET n.exposed_internet = true, n.exposed_internet_type = ['external_load_balancer']",
+            "iterative": false
+        },
+        {
+            "__comment": "Backends in the same project: backend services and backend buckets that an external rule reaches directly (SSL/TCP proxy, backend-service network LB) or through its URL map. Backends in another project (cross-project references) are not resolved.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(p:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(fr:GCPForwardingRule)\nWHERE fr.load_balancing_scheme IN ['EXTERNAL', 'EXTERNAL_MANAGED']\nOPTIONAL MATCH (p)-[:RESOURCE]->(um:GCPUrlMap) WHERE um.partial_uri = fr.url_map\nWITH p, reduce(acc = [], refs IN collect(coalesce(fr.backend_services, []) + coalesce(um.services, [])) | acc + refs) AS refs\nMATCH (p)-[:RESOURCE]->(n)\nWHERE (n:GCPBackendService AND n.id IN refs) OR (n:GCPBackendBucket AND n.partial_uri IN refs)\nSET n.exposed_internet = true, n.exposed_internet_type = ['external_load_balancer']",
+            "iterative": false
+        },
+        {
+            "__comment": "Instance groups behind those backend services (set by the previous statement of this job): unmanaged groups by id, managed groups by the instance group their manager runs.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(p:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(bs:GCPBackendService)\nWHERE 'external_load_balancer' IN coalesce(bs.exposed_internet_type, [])\nWITH p, reduce(acc = [], groups IN collect(coalesce(bs.backend_groups, [])) | acc + groups) AS groups\nMATCH (p)-[:RESOURCE]->(ig:GCPInstanceGroup)\nWHERE ig.id IN groups OR ig.instance_group IN groups\nSET ig.exposed_internet = true, ig.exposed_internet_type = ['external_load_balancer']",
+            "iterative": false
+        }
+    ],
+    "name": "GCP external load balancer exposure"
+}

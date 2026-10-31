@@ -1,5 +1,8 @@
 import cartography.intel.aws.ec2.subnets
 import tests.data.aws.ec2.subnets
+from cartography.util import run_analysis_job
+from tests.integration.cartography.intel.aws.common import create_test_org_account
+from tests.integration.cartography.intel.aws.common import exposure_job_parameters
 
 
 TEST_ACCOUNT_ID = '000000000000'
@@ -71,3 +74,28 @@ def test_load_subnet_relationships(neo4j_session):
     }
 
     assert actual == expected_nodes
+
+
+def test_subnet_exposure_marks_map_public_ip_on_launch_through_the_organization(neo4j_session):
+    account_id = '111111111111'
+    create_test_org_account(neo4j_session, 'ws-subnet', 'o-subnet', account_id)
+    cartography.intel.aws.ec2.subnets.load_subnets(
+        neo4j_session, [
+            {'SubnetId': 'subnet-auto-public-ip', 'CidrBlock': '10.0.1.0/24', 'MapPublicIpOnLaunch': True},
+            {'SubnetId': 'subnet-no-public-ip', 'CidrBlock': '10.0.2.0/24', 'MapPublicIpOnLaunch': False},
+        ], account_id, TEST_UPDATE_TAG,
+    )
+
+    run_analysis_job(
+        'aws_ec2_subnet_asset_exposure.json', neo4j_session,
+        exposure_job_parameters('ws-subnet', 'o-subnet', account_id, TEST_UPDATE_TAG + 1),
+    )
+
+    result = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(s:EC2Subnet{exposed_internet: true})
+        RETURN s.subnetid AS id, s.exposed_internet_type AS types
+        """,
+        account_id=account_id,
+    )
+    assert {r['id']: r['types'] for r in result} == {'subnet-auto-public-ip': ['map_public_ip_on_launch']}

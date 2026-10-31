@@ -265,19 +265,15 @@ def test_load_database_account_associated_iprules(neo4j_session):
             database_account,
             TEST_UPDATE_TAG,
         )
+    # Rule ids are scoped to their account.
     expected = {
-        (
-            "34.34.14.01"
-        ),
-        (
-            "56.89.88.01"
-        ),
-
+        (f"{account['id']}/ipRules/{ip}", account['id'])
+        for account in DESCRIBE_DATABASE_ACCOUNTS for ip in account['ipruleslist']
     }
     # Fetch relationships
     result = neo4j_session.run(
         """
-        MATCH (n1:AzureFirewallRule)-[:FIREWALL_RULE]->(n2:AzureCosmosDBAccount) RETURN n1.id, n2.id;
+        MATCH (n1:AzureFirewallRule)<-[:FIREWALL_RULE]-(n2:AzureCosmosDBAccount) RETURN n1.id, n2.id;
         """,
     )
 

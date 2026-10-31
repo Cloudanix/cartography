@@ -84,7 +84,7 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
     run_cleanup_job('aws_import_eks_cleanup.json', neo4j_session, common_job_parameters)
 
 
-def transform(cluster_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+def transform(cluster_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     transformed_list = []
     for cluster_dict in cluster_data:
         transformed_dict = cluster_dict.copy()
@@ -92,9 +92,11 @@ def transform(cluster_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         transformed_dict['consolelink'] = (
             aws_console_link.get_console_link(arn=transformed_dict['arn']) if transformed_dict.get('arn') else None
         )
-        transformed_dict['clusterEndpointPublic'] = transformed_dict.get('resourcesVpcConfig', {}).get(
-            'endpointPublicAccess',
-        )
+        vpc_config = transformed_dict.get('resourcesVpcConfig', {})
+        transformed_dict['clusterEndpointPublic'] = vpc_config.get('endpointPublicAccess')
+        transformed_dict['clusterEndpointPrivate'] = vpc_config.get('endpointPrivateAccess')
+        # aws_eks_asset_exposure.json treats a public endpoint as internet-exposed only when these allow any address.
+        transformed_dict['publicAccessCidrs'] = vpc_config.get('publicAccessCidrs')
         if 'createdAt' in transformed_dict:
             transformed_dict['created_at'] = str(transformed_dict['createdAt'])
         transformed_list.append(transformed_dict)

@@ -6,6 +6,8 @@ import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.compute import ComputeManagementClient
 
+from .util.sdk_models import as_legacy_dict
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +29,7 @@ def _get_vm_scale_set_vms_part_of_relations(
         try:
             vms = list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.virtual_machine_scale_set_vms.list(
                         resource_group_name=vm_scale_set["resource_group"],
                         virtual_machine_scale_set_name=vm_scale_set["name"],

@@ -1,7 +1,7 @@
 import cartography.intel.aws.elasticache
 import tests.data.aws.elasticache
 from cartography.util import run_analysis_job
-from tests.integration.cartography.intel.aws.common import create_exposure_test_account
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'us-east-1'
@@ -73,7 +73,7 @@ EXPOSURE_JOB_PARAMETERS = {
 def test_elasticache_cluster_exposure_never_public(neo4j_session):
     # ElastiCache nodes have no public address and are reachable only from inside the VPC, so an
     # open security group does not make a cluster internet exposed. The job only clears old flags.
-    create_exposure_test_account(
+    create_test_org_account(
         neo4j_session, EXPOSURE_JOB_PARAMETERS['WORKSPACE_ID'], EXPOSURE_JOB_PARAMETERS['ORGANIZATION_ID'],
         EXPOSURE_ACCOUNT_ID,
     )

@@ -19,12 +19,9 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
-# Applied at describe_snapshots so pending/error never leave the API.
+# Applied at describe_snapshots so pending/error never leave the API. Ownership goes in OwnerIds: the
+# owner-alias filter only knows Amazon-maintained aliases ('amazon'), not 'self'.
 EBS_SNAPSHOT_FILTERS = [
-    {
-        "Name": "owner-alias",
-        "Values": ["self"],
-    },
     {
         "Name": "status",
         "Values": ["completed"],
@@ -35,24 +32,28 @@ EBS_SNAPSHOT_FILTERS = [
 @timeit
 @aws_handle_regions
 def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+    """
+    The account's own completed snapshots. volume_permissions is ['all'] for a public snapshot (create volume
+    permission granted to the 'all' group), else []. One extra paginated call finds the public ones
+    (RestorableByUserIds=['all']) instead of a describe_snapshot_attribute call per snapshot.
+    """
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
-    snapshots = []
+    snapshots: List[Dict] = []
     try:
         paginator = client.get_paginator('describe_snapshots')
-
-        snapshots: List[Dict] = []
-
-        page_iterator = paginator.paginate(Filters=EBS_SNAPSHOT_FILTERS)
-        for page in page_iterator:
+        for page in paginator.paginate(OwnerIds=['self'], Filters=EBS_SNAPSHOT_FILTERS):
             snapshots.extend(page['Snapshots'])
+        public_ids = {
+            snapshot['SnapshotId']
+            for page in paginator.paginate(OwnerIds=['self'], RestorableByUserIds=['all'])
+            for snapshot in page['Snapshots']
+        }
         for snapshot in snapshots:
             snapshot['region'] = region
-            volume_permissions = get_snapshot_attribute(client=client, attribute_name='createVolumePermissions', snapshot_id=snapshot['SnapshotId'])
-            for volume_permission in volume_permissions:
-                snapshot['volume_permissions'] = volume_permission.get("Group", '')
+            snapshot['volume_permissions'] = ['all'] if snapshot['SnapshotId'] in public_ids else []
 
     except ClientError as e:
-        if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
+        if e.response['Error']['Code'] in ('AccessDeniedException', 'UnauthorizedOperation'):
             logger.warning(
                 'ec2:describe_snapshots failed with AccessDeniedException; continuing sync.',
                 exc_info=True,
@@ -61,23 +62,6 @@ def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dic
             raise
 
     return snapshots
-
-
-def get_snapshot_attribute(client, snapshot_id, attribute_name):
-    response = {}
-    try:
-        response = client.describe_snapshot_attribute(Attribute=attribute_name, SnapshotId=snapshot_id)
-
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
-            logger.warning(
-                'ec2:describe_snapshot_attribute failed with AccessDeniedException; continuing sync.',
-                exc_info=True,
-            )
-        else:
-            raise
-
-    return response
 
 
 @timeit

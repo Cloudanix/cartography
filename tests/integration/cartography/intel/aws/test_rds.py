@@ -8,7 +8,7 @@ from tests.data.aws.rds import DESCRIBE_DBINSTANCES_RESPONSE
 from tests.data.aws.rds import DESCRIBE_DBSNAPSHOT_ATTRIBUTE_RESPONSE
 from tests.data.aws.rds import DESCRIBE_DBSNAPSHOTS_RESPONSE
 from tests.data.aws.rds import DESCRIBE_SECURITY_GROUPS_RESPONSE
-from tests.integration.cartography.intel.aws.common import create_exposure_test_account
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 TEST_UPDATE_TAG = 123456789
 
@@ -359,7 +359,7 @@ RESET_JOB_PARAMETERS = {
 
 
 def test_rds_exposure_resets_stale_flags(neo4j_session):
-    create_exposure_test_account(
+    create_test_org_account(
         neo4j_session, RESET_JOB_PARAMETERS['WORKSPACE_ID'], RESET_JOB_PARAMETERS['ORGANIZATION_ID'],
         RESET_ACCOUNT_ID,
     )

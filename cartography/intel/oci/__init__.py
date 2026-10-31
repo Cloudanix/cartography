@@ -9,7 +9,6 @@ from typing import Dict
 from typing import List
 
 import neo4j
-import oci
 import oci.artifacts
 import oci.key_management
 import oci.logging
@@ -29,7 +28,7 @@ from . import utils
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.intel.oci.util.common import parse_and_validate_oci_requested_syncs
-from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 # from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -150,10 +149,7 @@ def _sync_one_compartment(
         'oci_logging_analysis.json',
     ]
     for job_file in _oci_analysis_jobs:
-        try:
-            run_analysis_job(job_file, neo4j_session, common_job_parameters)
-        except Exception as e:
-            logger.error("Error running OCI analysis job '%s': %s", job_file, e, exc_info=True)
+        run_analysis_job(job_file, neo4j_session, common_job_parameters)
 
     logger.info(
         json.dumps({

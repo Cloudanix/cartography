@@ -1,10 +1,13 @@
 import logging
 import time
+from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
+from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
@@ -15,9 +18,21 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
-def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
+def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str) -> Any:
     client = boto3_session.client(service, region_name=region, config=get_botocore_config())
     return client
+
+
+def _get_direct_internet_access(client: Any, notebook_name: str) -> Optional[str]:
+    """
+    'Enabled' when the notebook has internet access through the SageMaker-managed network, 'Disabled' when it only
+    has the VPC's. list_notebook_instances does not return it. None when the describe call fails (not flagged).
+    """
+    try:
+        return client.describe_notebook_instance(NotebookInstanceName=notebook_name).get('DirectInternetAccess')
+    except ClientError as e:
+        logger.warning(f"Could not describe sagemaker notebook instance {notebook_name}. skipping. - {e}")
+        return None
 
 
 @timeit
@@ -33,6 +48,7 @@ def get_notebook_instances_list(boto3_session: boto3.session.Session, region: st
         for instance in instances:
             instance["region"] = region
             instance["consolelink"] = aws_console_link.get_console_link(arn=instance['NotebookInstanceArn'])
+            instance["DirectInternetAccess"] = _get_direct_internet_access(client, instance['NotebookInstanceName'])
 
     except Exception as e:
         logger.warning(
@@ -70,6 +86,7 @@ def _load_notebook_instances_tx(
     i.url = instance.Url,
     i.instancetype = instance.InstanceType,
     i.defaultcoderepository = instance.DefaultCodeRepository,
+    i.direct_internet_access = instance.DirectInternetAccess,
     i.lastupdated =$aws_update_tag,
     i.region = instance.region,
     i.consolelink = instance.consolelink

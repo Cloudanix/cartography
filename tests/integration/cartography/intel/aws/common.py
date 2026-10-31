@@ -11,12 +11,24 @@ def create_test_account(neo4j_session, test_account_id, test_update_tag):
     )
 
 
-def create_exposure_test_account(neo4j_session, workspace_id, org_id, account_id):
-    # The asset exposure jobs match the full CloudanixWorkspace -> AWSOrganization -> AWSAccount chain.
+def create_test_org_account(neo4j_session, workspace_id, org_id, account_id):
+    # Production shape: CloudanixWorkspace-[:OWNER]->AWSOrganization-[:OWNER]->AWSAccount.
+    # There is no direct Workspace->Account edge, so exposure jobs must match through the Organization.
     neo4j_session.run(
         """
-        MERGE (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(o:AWSOrganization{id: $org_id})
+        MERGE (w:CloudanixWorkspace{id: $workspace_id})
+        MERGE (w)-[:OWNER]->(o:AWSOrganization{id: $org_id})
         MERGE (o)-[:OWNER]->(:AWSAccount{id: $account_id})
         """,
         workspace_id=workspace_id, org_id=org_id, account_id=account_id,
     )
+
+
+def exposure_job_parameters(workspace_id, org_id, account_id, update_tag):
+    return {
+        'UPDATE_TAG': update_tag,
+        'AWS_ID': account_id,
+        'ORGANIZATION_ID': org_id,
+        'WORKSPACE_ID': workspace_id,
+        'LIMIT_SIZE': 100,
+    }

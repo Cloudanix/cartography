@@ -293,8 +293,10 @@ DESCRIBE_DBSNAPSHOTS_RESPONSE = {
 }
 
 
+# DBSnapshotAttributesResult per snapshot, plus the DBSnapshotArn that sync_rds_snapshots adds.
 DESCRIBE_DBSNAPSHOT_ATTRIBUTE_RESPONSE = [
     {
+        'DBSnapshotArn': 'arn:aws:rds:us-east-1:some-arn:snapshot:some-prod-db-iad-0',
         'DBSnapshotIdentifier': 'some-db-snapshot-identifier',
         'DBSnapshotAttributes': [
             {
@@ -312,6 +314,7 @@ DESCRIBE_DBSNAPSHOT_ATTRIBUTE_RESPONSE = [
         ],
     },
     {
+        'DBSnapshotArn': 'arn:aws:rds:us-east-2:some-arn:snapshot:some-prod-db-iad-0',
         'DBSnapshotIdentifier': 'some-other-db-snapshot-identifier',
         'DBSnapshotAttributes': [
             {

@@ -1,5 +1,6 @@
 import cartography.intel.gcp.storage
 import tests.data.gcp.storage
+from cartography.util import run_analysis_job
 
 
 TEST_UPDATE_TAG = 123456789
@@ -59,3 +60,56 @@ def test_attach_storage_bucket_labels(neo4j_session):
         (expected_id, expected_label_key, expected_label_value),
     }
     assert actual_nodes == expected_nodes
+
+
+BUCKET_PARAMS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-buckets', 'GCP_ORGANIZATION_ID': 'org-buckets',
+    'GCP_PROJECT_ID': 'proj-buckets', 'LIMIT_SIZE': 1000,
+}
+
+
+def test_bucket_exposure_honours_public_access_prevention_and_legacy_acls(neo4j_session):
+    project = BUCKET_PARAMS['GCP_PROJECT_ID']
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:GCPOrganization{id: $org})-[:OWNER]->(:GCPProject{id: $p})",
+        ws=BUCKET_PARAMS['WORKSPACE_ID'], org=BUCKET_PARAMS['GCP_ORGANIZATION_ID'], p=project,
+    )
+
+    def bucket(name, pap='inherited', uniform=False, acl=(), default_acl=()):
+        return {
+            'name': name, 'location': 'US', 'projectNumber': 1,
+            'iamConfiguration': {'publicAccessPrevention': pap, 'uniformBucketLevelAccess': {'enabled': uniform}},
+            'acl': [{'entity': e} for e in acl], 'defaultObjectAcl': [{'entity': e} for e in default_acl],
+        }
+    raw = [
+        bucket('iam-public'),
+        bucket('iam-public-pap-enforced', pap='enforced'),
+        bucket('acl-public', acl=['allUsers', 'project-owners-1']),
+        bucket('default-acl-public', default_acl=['allAuthenticatedUsers']),
+        bucket('acl-public-uniform', uniform=True, acl=['allUsers']),
+        bucket('acl-public-pap-enforced', pap='enforced', acl=['allUsers']),
+        bucket('private', acl=['project-owners-1']),
+    ]
+    buckets = cartography.intel.gcp.storage.transform_gcp_buckets(raw, project, [])
+    cartography.intel.gcp.storage.load_gcp_buckets(neo4j_session, buckets, project, TEST_UPDATE_TAG)
+    for b in buckets:
+        if b['name'].startswith('iam-public'):
+            bindings = cartography.intel.gcp.storage.transform_gcp_bucket_iam_policy_bindings(
+                [{'role': 'roles/storage.objectViewer', 'members': ['allUsers']}], project, b['id'],
+            )
+            cartography.intel.gcp.storage.load_bucket_iam_policy_bindings(
+                neo4j_session, bindings, b['id'], TEST_UPDATE_TAG,
+            )
+
+    run_analysis_job('gcp_storage_bucket_policy_analysis.json', neo4j_session, BUCKET_PARAMS)
+
+    rows = neo4j_session.run(
+        "MATCH (:GCPProject{id: $p})-[:RESOURCE]->(b:GCPBucket) WHERE b.exposed_internet "
+        "RETURN b.name AS name, b.exposed_internet_type AS types",
+        p=project,
+    )
+    assert {r['name']: r['types'] for r in rows} == {
+        'iam-public': ['allUsers'],
+        'acl-public': ['allUsers'],
+        'default-acl-public': ['allAuthenticatedUsers'],
+    }

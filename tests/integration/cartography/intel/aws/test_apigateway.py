@@ -1,7 +1,7 @@
 import cartography.intel.aws.apigateway
 import tests.data.aws.apigateway
 from cartography.util import run_analysis_job
-from tests.integration.cartography.intel.aws.common import create_exposure_test_account
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'eu-west-1'
@@ -337,7 +337,7 @@ VPCE_POLICY = (
 
 
 def test_apigateway_exposure_honours_resource_policy(neo4j_session):
-    create_exposure_test_account(
+    create_test_org_account(
         neo4j_session, POLICY_JOB_PARAMETERS['WORKSPACE_ID'], POLICY_JOB_PARAMETERS['ORGANIZATION_ID'],
         POLICY_ACCOUNT_ID,
     )
@@ -420,7 +420,7 @@ DOMAIN_JOB_PARAMETERS = {
 
 
 def test_apigateway_exposure_honours_disabled_execute_api_endpoint(neo4j_session):
-    create_exposure_test_account(
+    create_test_org_account(
         neo4j_session, DOMAIN_JOB_PARAMETERS['WORKSPACE_ID'], DOMAIN_JOB_PARAMETERS['ORGANIZATION_ID'],
         DOMAIN_ACCOUNT_ID,
     )

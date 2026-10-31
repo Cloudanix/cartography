@@ -10,6 +10,7 @@ from azure.mgmt.compute import ComputeManagementClient
 from . import vmss
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
@@ -93,7 +94,7 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
         vm_data_raw = []
         for x in client.virtual_machines.list_all():
             try:
-                vm_data_raw.append(x.as_dict())
+                vm_data_raw.append(as_legacy_dict(x))
             except (KeyError, AttributeError) as e:
                 logger.warning("Skipping VM due to serialization error: %s", e)
         vm_data = []
@@ -426,7 +427,7 @@ def get_vm_available_sizes_list(vm_list: List[Dict], client: ComputeManagementCl
         for vm in vm_list:
             vm_available_size_list = list(
                 map(
-                    lambda x: x.as_dict(), client.virtual_machines.list_available_sizes(
+                    as_legacy_dict, client.virtual_machines.list_available_sizes(
                         resource_group_name=vm['resource_group'], vm_name=vm['name'],
                     ),
                 ),
@@ -508,10 +509,42 @@ def sync_virtual_machine_available_sizes(
     cleanup_virtual_machine_available_sizes(neo4j_session, common_job_parameters)
 
 
+def _vmss_front_doors(scale_set: Dict) -> Dict:
+    """
+    What can reach a scale set's instances from outside, read from its network profile:
+    a per-instance public IP, load balancer backend pools and inbound NAT pools. Uniform
+    scale set instances are not listed as VMs, so this is the only exposure input for them.
+    Ids are lowercased to match AzureNetworkLoadBalancer.inbound_backend_pool_ids.
+    """
+    network_profile = (scale_set.get('virtual_machine_profile') or {}).get('network_profile') or {}
+    ip_configurations = [
+        ip_configuration
+        for nic in network_profile.get('network_interface_configurations') or []
+        for ip_configuration in nic.get('ip_configurations') or []
+    ]
+    pool_ids = {
+        pool['id'].lower()
+        for ip_configuration in ip_configurations
+        for pool in ip_configuration.get('load_balancer_backend_address_pools') or []
+        if pool.get('id')
+    }
+    nat_lb_ids = {
+        pool['id'].lower().split('/inboundnatpools/')[0]
+        for ip_configuration in ip_configurations
+        for pool in ip_configuration.get('load_balancer_inbound_nat_pools') or []
+        if pool.get('id')
+    }
+    return {
+        'public_ip_per_instance': any(c.get('public_ip_address_configuration') for c in ip_configurations),
+        'lb_backend_pool_ids': sorted(pool_ids),
+        'lb_inbound_nat_lb_ids': sorted(nat_lb_ids),
+    }
+
+
 def get_vm_scale_sets_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
-        vm_scale_sets_list = list(map(lambda x: x.as_dict(), client.virtual_machine_scale_sets.list_all()))
+        vm_scale_sets_list = list(map(as_legacy_dict, client.virtual_machine_scale_sets.list_all()))
         sets_list = []
         for set in vm_scale_sets_list:
             x = set['id'].split('/')
@@ -521,6 +554,7 @@ def get_vm_scale_sets_list(credentials: Credentials, subscription_id: str, regio
             set['aks_cluster_name'] = aks_tags['aks_cluster_name']
             set['aks_pool_name'] = aks_tags['aks_pool_name']
             set['aks_cluster_rg'] = aks_tags['aks_cluster_rg']
+            set.update(_vmss_front_doors(set))
             if regions is None:
                 sets_list.append(set)
             else:
@@ -551,6 +585,9 @@ def _load_vm_scale_sets_tx(
     a.aks_cluster_name = set.aks_cluster_name,
     a.aks_pool_name = set.aks_pool_name,
     a.aks_cluster_rg = set.aks_cluster_rg,
+    a.public_ip_per_instance = set.public_ip_per_instance,
+    a.lb_backend_pool_ids = set.lb_backend_pool_ids,
+    a.lb_inbound_nat_lb_ids = set.lb_inbound_nat_lb_ids,
     a.subscription_id = $SUBSCRIPTION_ID,
     a.name = set.name
     WITH a
@@ -622,7 +659,7 @@ def get_vm_scale_sets_extensions_list(vm_scale_sets_list: List[Dict], client: Co
         for set in vm_scale_sets_list:
             extensions_list = list(
                 map(
-                    lambda x: x.as_dict(), client.virtual_machine_scale_set_extensions.list(
+                    as_legacy_dict, client.virtual_machine_scale_set_extensions.list(
                         resource_group_name=set['resource_group'], vm_scale_set_name=set['name'],
                     ),
                 ),
@@ -809,7 +846,7 @@ def cleanup_virtual_machine(neo4j_session: neo4j.Session, common_job_parameters:
 def get_disks(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         client = get_client(credentials, subscription_id)
-        disk_list = list(map(lambda x: x.as_dict(), client.disks.list()))
+        disk_list = list(map(as_legacy_dict, client.disks.list()))
         disk_data = []
         for disk in disk_list:
             x = disk['id'].split('/')
@@ -884,7 +921,7 @@ def cleanup_disks(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 def get_snapshots_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
-        snapshots = list(map(lambda x: x.as_dict(), client.snapshots.list()))
+        snapshots = list(map(as_legacy_dict, client.snapshots.list()))
         snapshot_list = []
         for snapshot in snapshots:
             x = snapshot['id'].split('/')

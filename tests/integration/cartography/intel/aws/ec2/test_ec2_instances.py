@@ -10,7 +10,7 @@ import tests.data.aws.ec2.subnets
 import tests.data.aws.iam
 from cartography.util import run_analysis_job
 from tests.data.aws.ec2.instances import DESCRIBE_INSTANCES
-from tests.integration.cartography.intel.aws.common import create_exposure_test_account
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
@@ -429,7 +429,7 @@ EXPOSURE_JOB_PARAMETERS = {
 
 
 def test_ec2_instance_direct_exposure_requires_a_public_ip(neo4j_session):
-    create_exposure_test_account(
+    create_test_org_account(
         neo4j_session, EXPOSURE_JOB_PARAMETERS['WORKSPACE_ID'], EXPOSURE_JOB_PARAMETERS['ORGANIZATION_ID'],
         EXPOSURE_ACCOUNT_ID,
     )
@@ -512,7 +512,7 @@ NLB_JOB_PARAMETERS = {
 def test_ec2_instance_exposed_through_internet_facing_nlb_without_security_group(neo4j_session):
     # NLBs created before August 2023 have no security group: the LB forwards every listener port from
     # anywhere, so the SG-based LB statements never match the instances behind it.
-    create_exposure_test_account(
+    create_test_org_account(
         neo4j_session, NLB_JOB_PARAMETERS['WORKSPACE_ID'], NLB_JOB_PARAMETERS['ORGANIZATION_ID'], NLB_ACCOUNT_ID,
     )
     neo4j_session.run(

@@ -204,6 +204,16 @@ def load_gcp_projects(
     MERGE (w)-[o:OWNER]->(project)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $gcp_update_tag
+    // Workspaces that sync this project, as a set. Several workspaces can own the same org node, so the
+    // workspace -> org -> project path can't tell whose project it is. A list, not a workspace -> project
+    // OWNER edge: gcp_crm_project_cleanup and gcp_logging_metrics_cleanup already walk that edge (never
+    // written today) and would start deleting. Ids of workspaces that no longer own the org are dropped.
+    WITH project
+    SET project.workspace_ids = [
+        ws IN coalesce(project.workspace_ids, [])
+        WHERE ws <> $WorkspaceId
+        AND EXISTS { MATCH (:CloudanixWorkspace{id: ws})-[:OWNER]->(:GCPOrganization)-[:OWNER]->(project) }
+    ] + $WorkspaceId
     """
 
     for project in data:
@@ -219,6 +229,7 @@ def load_gcp_projects(
             LifecycleState=project.get('lifecycleState', None),
             region="global",
             WorkspaceAccountId=project['projectId'],
+            WorkspaceId=common_job_parameters['WORKSPACE_ID'],
             consolelink=gcp_console_link.get_console_link(resource_name='project', project_id=project['projectId']),
             gcp_update_tag=gcp_update_tag,
         )

@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Set
 
 import googleapiclient.discovery
@@ -30,7 +31,7 @@ from cartography.intel.gcp import crm
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
 from cartography.intel.gcp.util.errors import is_permission_error
-from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -955,51 +956,12 @@ def _sync_multiple_projects(
         )
         if config.refresh_entitlements:
             run_cleanup_job("gcp_unused_cleanup.json", neo4j_session, common_job_parameters)
-        run_analysis_job(
-            "gcp_storage_bucket_policy_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_bigquery_dataset_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_compute_firewall_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_cloud_function_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_compute_instance_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_kms_keyring_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_cloud_function_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_sql_instance_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
+        # Analysis jobs run once, in start_gcp_ingestion, for this same project.
     del common_job_parameters["GCP_PROJECT_ID"]
 
 
 @timeit
-def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
+def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optional[Dict]:
     """
     Starts the GCP ingestion process by initializing Google Application Default Credentials, creating the necessary
     resource objects, listing all GCP organizations and projects available to the GCP identity, and supplying that
@@ -1040,7 +1002,7 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             ),
             e,
         )
-        return
+        return None
 
     requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
     if config.gcp_requested_syncs:
@@ -1086,12 +1048,6 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     )
 
     run_analysis_job(
-        "gcp_compute_asset_inet_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
         "gcp_compute_firewall_analysis.json",
         neo4j_session,
         common_job_parameters,
@@ -1117,6 +1073,12 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
 
     run_analysis_job(
         "gcp_kms_keyring_analysis.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
+    run_analysis_job(
+        "gcp_load_balancer_exposure.json",
         neo4j_session,
         common_job_parameters,
     )

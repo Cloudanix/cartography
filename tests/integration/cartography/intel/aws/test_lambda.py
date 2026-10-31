@@ -299,61 +299,244 @@ def test_load_lambda_layers_relationships(neo4j_session):
     assert actual == expected_nodes
 
 
-def test_lambda_exposure_analysis(neo4j_session):
+EXPOSURE_WORKSPACE_ID = 'ws-lambda-exposure'
+EXPOSURE_ORG_ID = 'o-lambda-exposure'
+EXPOSURE_ACCOUNT_ID = '111111111111'
+OTHER_WORKSPACE_ID = 'ws-other'
+EXPOSURE_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': EXPOSURE_ACCOUNT_ID,
+    'ORGANIZATION_ID': EXPOSURE_ORG_ID,
+    'WORKSPACE_ID': EXPOSURE_WORKSPACE_ID,
+    'LIMIT_SIZE': 100,
+}
+
+
+def _seed_exposure_account(neo4j_session, workspace_id, org_id, account_id):
     neo4j_session.run(
         """
-        MERGE (aws:AWSAccount{id: $aws_account_id})<-[:OWNER]-(:CloudanixWorkspace{id: $workspace_id})
-        ON CREATE SET aws.firstseen = timestamp()
-        SET aws.lastupdated = $aws_update_tag
+        MERGE (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(o:AWSOrganization{id: $org_id})
+        MERGE (o)-[:OWNER]->(:AWSAccount{id: $account_id})
         """,
-        aws_account_id=TEST_ACCOUNT_ID,
-        aws_update_tag=TEST_UPDATE_TAG,
-        workspace_id=TEST_WORKSPACE_ID,
-    )
-    data = tests.data.aws.lambda_function.LIST_LAMBDA_FUNCTIONS
-
-    cartography.intel.aws.lambda_function.load_lambda_functions(
-        neo4j_session,
-        data,
-        TEST_ACCOUNT_ID,
-        TEST_UPDATE_TAG,
+        workspace_id=workspace_id, org_id=org_id, account_id=account_id,
     )
 
-    common_job_parameters = {
-        'UPDATE_TAG': TEST_UPDATE_TAG + 1,
-        'AWS_ID': TEST_ACCOUNT_ID,
-        'WORKSPACE_ID': TEST_WORKSPACE_ID,
-    }
 
-    run_analysis_job(
-        'aws_lambda_function_asset_exposure.json',
-        neo4j_session,
-        common_job_parameters,
+def _seed_rest_apis(neo4j_session, account_id, apis):
+    neo4j_session.run(
+        """
+        UNWIND $apis AS a
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(:APIGatewayRestAPI{id: a.id, endpoint_conf_types: a.types})
+        """,
+        account_id=account_id, apis=apis,
     )
 
+
+def _seed_lambdas(neo4j_session, lambdas):
+    # Properties exactly as load_lambda_functions writes them; absent keys stay unset.
+    neo4j_session.run(
+        """
+        UNWIND $lambdas AS l
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(lf:AWSLambda{id: l.arn})
+        SET lf.arn = l.arn, lf.name = l.arn, lf.vpc_id = l.vpc_id,
+            lf.public_trigger_sources = l.public_trigger_sources,
+            lf.apigateway_source_api_ids = l.apigateway_source_api_ids,
+            lf.alb_source_target_group_arns = l.alb_source_target_group_arns
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID, lambdas=lambdas,
+    )
+
+
+def _seed_load_balancers(neo4j_session, account_id, load_balancers):
+    neo4j_session.run(
+        """
+        UNWIND $lbs AS l
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(:LoadBalancerV2{id: l.id, scheme: l.scheme, target_group_arns: l.tgs})
+        """,
+        account_id=account_id, lbs=load_balancers,
+    )
+
+
+def _exposed_lambdas(neo4j_session, id_prefix):
+    # Tests share the module's graph; each owns the Lambdas named with its prefix.
     nodes = neo4j_session.run(
         """
-        MATCH (s:AWSLambda{exposed_internet: true}) RETURN s.id;
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(lf:AWSLambda{exposed_internet: true})
+        WHERE lf.id STARTS WITH $id_prefix
+        RETURN lf.id AS id, lf.exposed_internet_type AS types
         """,
+        account_id=EXPOSURE_ACCOUNT_ID, id_prefix=id_prefix,
+    )
+    return {n['id']: sorted(n['types']) for n in nodes}
+
+
+def test_lambda_api_gateway_trigger_is_public_only_through_a_public_api(neo4j_session):
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    _seed_exposure_account(neo4j_session, OTHER_WORKSPACE_ID, 'o-other', '222222222222')
+    _seed_rest_apis(
+        neo4j_session, EXPOSURE_ACCOUNT_ID, [
+            {'id': 'privapi', 'types': ['PRIVATE']},
+            {'id': 'pubapi', 'types': ['REGIONAL']},
+            {'id': 'edgeapi', 'types': ['EDGE']},
+        ],
+    )
+    # A PRIVATE API in another tenant's workspace must not resolve for this workspace's Lambdas.
+    _seed_rest_apis(neo4j_session, '222222222222', [{'id': 'otherws', 'types': ['PRIVATE']}])
+    apigw = ['apigateway']
+    _seed_lambdas(
+        neo4j_session, [
+            {'arn': 'lf-private-api', 'public_trigger_sources': apigw, 'apigateway_source_api_ids': ['privapi']},
+            {'arn': 'lf-public-api', 'public_trigger_sources': apigw, 'apigateway_source_api_ids': ['pubapi']},
+            {'arn': 'lf-edge-api', 'public_trigger_sources': apigw, 'apigateway_source_api_ids': ['edgeapi']},
+            {
+                'arn': 'lf-private-and-public', 'public_trigger_sources': apigw,
+                'apigateway_source_api_ids': ['privapi', 'pubapi'],
+            },
+            {'arn': 'lf-any-api', 'public_trigger_sources': apigw, 'apigateway_source_api_ids': ['*']},
+            {
+                'arn': 'lf-private-and-any', 'public_trigger_sources': apigw,
+                'apigateway_source_api_ids': ['*', 'privapi'],
+            },
+            # Cross-account API, or an HTTP API (never private): not in the graph, stays public.
+            {'arn': 'lf-unknown-api', 'public_trigger_sources': apigw, 'apigateway_source_api_ids': ['notingraph']},
+            {
+                'arn': 'lf-other-workspace-api', 'public_trigger_sources': apigw,
+                'apigateway_source_api_ids': ['otherws'],
+            },
+            # Synced before apigateway_source_api_ids existed: no evidence to narrow, stays public.
+            {'arn': 'lf-no-ids', 'public_trigger_sources': apigw},
+            {'arn': 'lf-no-trigger', 'public_trigger_sources': [], 'vpc_id': 'vpc-1'},
+        ],
     )
 
-    actual_nodes = {
-        (
-            n['s.id'],
-        )
-        for n in nodes
+    run_analysis_job('aws_apigateway_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    assert _exposed_lambdas(neo4j_session, 'lf-') == {
+        'lf-public-api': ['apigateway_trigger'],
+        'lf-edge-api': ['apigateway_trigger'],
+        'lf-private-and-public': ['apigateway_trigger'],
+        'lf-any-api': ['apigateway_trigger'],
+        'lf-private-and-any': ['apigateway_trigger'],
+        'lf-unknown-api': ['apigateway_trigger'],
+        'lf-other-workspace-api': ['apigateway_trigger'],
+        'lf-no-ids': ['apigateway_trigger'],
     }
 
-    expected_nodes = {
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-1',),
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-2',),
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-3',),
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-4',),
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-5',),
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-6',),
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-7',),
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-8',),
-        ('arn:aws:lambda:us-west-2:000000000000:function:sample-function-9',),
 
+def test_lambda_alb_trigger_is_public_only_through_an_internet_facing_alb(neo4j_session):
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    _seed_exposure_account(neo4j_session, OTHER_WORKSPACE_ID, 'o-other', '222222222222')
+    _seed_load_balancers(
+        neo4j_session, EXPOSURE_ACCOUNT_ID, [
+            {'id': 'internal-alb', 'scheme': 'internal', 'tgs': ['tg-internal', 'tg-shared']},
+            {'id': 'public-alb', 'scheme': 'internet-facing', 'tgs': ['tg-public', 'tg-shared']},
+        ],
+    )
+    # An internal ALB in another tenant's workspace must not resolve for this workspace's Lambdas.
+    _seed_load_balancers(
+        neo4j_session, '222222222222', [{'id': 'other-alb', 'scheme': 'internal', 'tgs': ['tg-other']}],
+    )
+    alb = ['alb']
+    _seed_lambdas(
+        neo4j_session, [
+            {'arn': 'alb-internal', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['tg-internal']},
+            {'arn': 'alb-public', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['tg-public']},
+            # One target group behind both an internal and an internet-facing ALB.
+            {'arn': 'alb-shared', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['tg-shared']},
+            {'arn': 'alb-any', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['*']},
+            # Target group attached to no load balancer we know of (cross-account, unsynced region).
+            {
+                'arn': 'alb-internal-and-unknown', 'public_trigger_sources': alb,
+                'alb_source_target_group_arns': ['tg-internal', 'tg-unknown'],
+            },
+            {'arn': 'alb-other-workspace', 'public_trigger_sources': alb, 'alb_source_target_group_arns': ['tg-other']},
+            {'arn': 'alb-no-arns', 'public_trigger_sources': alb},
+        ],
+    )
+
+    run_analysis_job('aws_ec2_elb_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    assert _exposed_lambdas(neo4j_session, 'alb-') == {
+        'alb-public': ['alb_trigger'],
+        'alb-shared': ['alb_trigger'],
+        'alb-any': ['alb_trigger'],
+        'alb-internal-and-unknown': ['alb_trigger'],
+        'alb-other-workspace': ['alb_trigger'],
+        'alb-no-arns': ['alb_trigger'],
     }
-    assert actual_nodes == expected_nodes
+
+
+def test_lambda_function_url_is_public_only_without_auth(neo4j_session):
+    # A function URL is reachable whether or not the function is in a VPC (VPC config is
+    # outbound only); with AWS_IAM auth every request must be SigV4-signed by an allowed principal.
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    neo4j_session.run(
+        """
+        UNWIND $lambdas AS l
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(lf:AWSLambda{id: l.arn})
+        SET lf.arn = l.arn, lf.vpc_id = l.vpc_id, lf.functionurl = l.url, lf.functionurl_auth_type = l.auth
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID, lambdas=[
+            {'arn': 'url-iam-no-vpc', 'vpc_id': '', 'url': 'https://a.lambda-url.aws', 'auth': 'AWS_IAM'},
+            {'arn': 'url-none-no-vpc', 'vpc_id': '', 'url': 'https://b.lambda-url.aws', 'auth': 'NONE'},
+            {'arn': 'url-none-in-vpc', 'vpc_id': 'vpc-1', 'url': 'https://c.lambda-url.aws', 'auth': 'NONE'},
+            {'arn': 'url-absent-no-vpc', 'vpc_id': ''},
+        ],
+    )
+
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    assert _exposed_lambdas(neo4j_session, 'url-') == {
+        'url-none-no-vpc': ['function_url_public', 'vpc_none'],
+        'url-none-in-vpc': ['function_url_public'],
+    }
+
+
+def test_lambda_iot_and_cognito_triggers_are_not_internet_exposure(neo4j_session):
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    _seed_lambdas(
+        neo4j_session, [
+            {'arn': 'trig-iot', 'public_trigger_sources': ['iot'], 'vpc_id': 'vpc-1'},
+            {'arn': 'trig-cognito', 'public_trigger_sources': ['cognito'], 'vpc_id': 'vpc-1'},
+            # Still public through its other trigger.
+            {
+                'arn': 'trig-iot-and-any-api', 'public_trigger_sources': ['apigateway', 'iot'],
+                'apigateway_source_api_ids': ['*'], 'vpc_id': 'vpc-1',
+            },
+        ],
+    )
+
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    assert _exposed_lambdas(neo4j_session, 'trig-') == {'trig-iot-and-any-api': ['apigateway_trigger']}
+
+
+def test_lambda_anonymous_access_type_reset_covers_more_than_one_batch(neo4j_session):
+    # The reset is iterative (100 per batch) and the runner stops at the first batch that changes
+    # nothing, so an unfiltered reset re-matched the same cleared batch and left the rest stale.
+    _seed_exposure_account(neo4j_session, EXPOSURE_WORKSPACE_ID, EXPOSURE_ORG_ID, EXPOSURE_ACCOUNT_ID)
+    neo4j_session.run(
+        """
+        UNWIND range(1, 250) AS i
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (aa)-[:RESOURCE]->(lf:AWSLambda{id: 'reset-' + toString(i)})
+        SET lf.anonymous_access = false, lf.anonymous_access_type = ['policy']
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID,
+    )
+
+    run_analysis_job('aws_lambda_function_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    stale = neo4j_session.run(
+        """
+        MATCH (lf:AWSLambda) WHERE lf.id STARTS WITH 'reset-' AND lf.anonymous_access_type IS NOT NULL
+        RETURN count(lf) AS n
+        """,
+    ).single()['n']
+    assert stale == 0
