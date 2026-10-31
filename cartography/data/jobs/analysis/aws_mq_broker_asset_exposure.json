@@ -1,0 +1,34 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (broker:AWSMQBroker)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE broker.exposed_internet IS NOT NULL WITH broker LIMIT $LIMIT_SIZE REMOVE broker.exposed_internet, broker.exposed_internet_type, broker.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "A public broker without security groups is reachable from anywhere: AWS does not let a public RabbitMQ broker have security groups.",
+      "query": "MATCH (broker:AWSMQBroker{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE size(coalesce(broker.security_groups, [])) = 0 SET broker.exposed_internet = true, broker.exposed_internet_type = ['public_broker_no_security_group']",
+      "iterative": false
+    },
+    {
+      "__comment": "A public ActiveMQ broker is reachable when one of its security groups admits 0.0.0.0/0 or ::/0 over TCP on a broker port (any port when its endpoints gave none).",
+      "query": "MATCH (cidr)-[:MEMBER_OF_IP_RULE]->(rule:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(broker:AWSMQBroker{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE ((cidr:IpRange AND cidr.range = '0.0.0.0/0') OR (cidr:Ipv6Range AND cidr.range = '::/0')) AND (rule.protocol IS NULL OR rule.protocol IN ['-1', 'tcp', '6']) AND (rule.protocol = '-1' OR size(coalesce(broker.ports, [])) = 0 OR any(port IN broker.ports WHERE coalesce(rule.fromport, 0) <= port AND port <= coalesce(rule.toport, 65535))) WITH broker, collect(DISTINCT CASE WHEN cidr:IpRange THEN 'direct_ipv4' ELSE 'direct_ipv6' END) AS types SET broker.exposed_internet = true, broker.exposed_internet_type = [t IN coalesce(broker.exposed_internet_type, []) WHERE NOT t IN types] + types",
+      "iterative": false
+    },
+    {
+      "__comment": "Fail-safe: a public broker whose security groups are not all in the graph (EC2 security group sync missing or failed; a synced group has a name) cannot be resolved, so it stays public.",
+      "query": "MATCH (broker:AWSMQBroker{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE size(coalesce(broker.security_groups, [])) > 0 OPTIONAL MATCH (broker)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup) WHERE sg.id IN broker.security_groups AND sg.name IS NOT NULL WITH broker, count(DISTINCT sg) AS resolved WHERE resolved < size(broker.security_groups) SET broker.exposed_internet = true, broker.exposed_internet_type = [t IN coalesce(broker.exposed_internet_type, []) WHERE t <> 'public_broker_unresolved_security_group'] + 'public_broker_unresolved_security_group'",
+      "iterative": false
+    },
+    {
+      "__comment": "Fail-safe: DescribeBroker failed, so whether the broker is public is unknown; it stays public until a sync reads it.",
+      "query": "MATCH (broker:AWSMQBroker)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE broker.publicly_accessible IS NULL SET broker.exposed_internet = true, broker.exposed_internet_type = ['public_access_unknown']",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (broker:AWSMQBroker)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE broker.exposed_internet = true WITH broker OPTIONAL MATCH (cidr)-[:MEMBER_OF_IP_RULE]->(rule:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(broker) WHERE (cidr:IpRange AND cidr.range = '0.0.0.0/0') OR (cidr:Ipv6Range AND cidr.range = '::/0') WITH broker, [r IN collect(DISTINCT {securityGroupId: sg.id, fromPort: rule.fromport, toPort: rule.toport, protocol: rule.protocol, ipRange: cidr.range}) WHERE r.securityGroupId IS NOT NULL] AS securityRules SET broker.publicContext = apoc.convert.toJson([{resource: broker.arn, resourceType: 'aws-applicationintegration-mq-broker', context: [{brokerArn: broker.arn, brokerName: broker.name, engineType: broker.engine_type, deploymentMode: broker.deployment_mode, publiclyAccessible: broker.publicly_accessible, endpoints: broker.endpoints, ports: broker.ports, securityGroups: broker.security_groups, exposureTypes: broker.exposed_internet_type, securityRules: securityRules}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws Amazon MQ broker internet exposure"
+}
