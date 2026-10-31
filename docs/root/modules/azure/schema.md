@@ -1768,6 +1768,65 @@ Representation of an [AzureKeyVault](https://docs.microsoft.com/en-us/rest/api/k
         (AzureSubscription)-[RESOURCE]->(AzureKeyVault)
         ```
 
+### AzureRedisCache
+
+Representation of an [Azure Cache for Redis](https://learn.microsoft.com/en-us/rest/api/redis/redis/list-by-subscription) instance. Redis Enterprise (`Microsoft.Cache/redisEnterprise`) is a separate API and is not synced.
+
+| Field                             | Description                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------- |
+| firstseen                         | Timestamp of when a sync job discovered this node                                |
+| lastupdated                       | Timestamp of the last time the node was updated                                  |
+| **id**                            | The ARM resource ID of the cache                                                 |
+| name                              | The name of the cache                                                            |
+| location / region                 | The location where the cache is created                                          |
+| resourcegroup                     | The Resource Group of the cache (lower case)                                     |
+| sku_name / sku_family / sku_capacity | The SKU (Basic, Standard, Premium), family (C, P) and size                     |
+| enable_non_ssl_port               | Whether the non-TLS port 6379 is enabled                                         |
+| minimum_tls_version               | The minimum TLS version clients must use                                         |
+| public_network_access             | Enabled or Disabled                                                              |
+| redis_version                     | The Redis version                                                                |
+| subnet_id                         | The subnet the cache is injected into (Premium VNet injection), if any           |
+| static_ip                         | The private IP of a VNet-injected cache                                          |
+| host_name / port / ssl_port       | The cache endpoint                                                               |
+| private_endpoint_connection_count | Number of private endpoint connections                                          |
+| firewall_rules_fetched            | Whether the firewall rules were read this sync (false: read failed)              |
+| exposed_internet / exposed_internet_type / publicContext | Set by `azure_redis_asset_exposure.json`                  |
+
+#### Relationships
+
+- Azure Subscription contains one or more Redis caches.
+
+        ```
+        (AzureSubscription)-[RESOURCE]->(AzureRedisCache)
+        ```
+
+- A Redis cache belongs to a Resource Group, and to a subnet when VNet-injected.
+
+        ```
+        (AzureRedisCache)-[RESOURCE_GROUP]->(AzureResourceGroup)
+        (AzureRedisCache)-[SUBNET]->(AzureNetworkSubnet)
+        ```
+
+### AzureRedisFirewallRule
+
+Representation of an [Azure Cache for Redis firewall rule](https://learn.microsoft.com/en-us/rest/api/redis/firewall-rules/list).
+
+| Field            | Description                                                        |
+| ---------------- | ------------------------------------------------------------------ |
+| **id**           | The ARM resource ID of the rule                                    |
+| name             | The name of the rule                                               |
+| start_ip_address | First IPv4 address of the allowed range                            |
+| end_ip_address   | Last IPv4 address of the allowed range                             |
+| address_count    | Number of addresses the range admits (null when unparseable)       |
+
+#### Relationships
+
+- A Redis cache has zero or more firewall rules.
+
+        ```
+        (AzureRedisCache)-[HAS]->(AzureRedisFirewallRule)
+        ```
+
 ### AzureVirtualMachineExtension
 
 Representation of an [AzureVirtualMachineExtension](https://docs.microsoft.com/en-us/rest/api/compute/virtual-machine-extensions/list).
