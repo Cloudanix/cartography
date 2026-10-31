@@ -98,3 +98,35 @@ def test_public_ip_keeps_its_address():
 
     assert ip['ip_address'] == '20.1.2.3'
     assert ip['is_static_ip'] is True
+
+
+def test_load_balancer_records_inbound_backend_pools():
+    lb_id = f'{RG}/loadBalancers/lb1'
+    client = MagicMock()
+    client.load_balancers.list_all.return_value = [
+        models.LoadBalancer({
+            'id': lb_id, 'name': 'lb1', 'location': 'eastus',
+            'properties': {
+                'backendAddressPools': [{'id': f'{lb_id}/backendAddressPools/{p}'} for p in ('web', 'nat', 'egress')],
+                'loadBalancingRules': [{
+                    'id': f'{lb_id}/loadBalancingRules/http',
+                    'properties': {'backendAddressPool': {'id': f'{lb_id.upper()}/backendAddressPools/WEB'}},
+                }],
+                'inboundNatRules': [{
+                    'id': f'{lb_id}/inboundNatRules/ssh',
+                    'properties': {'backendAddressPool': {'id': f'{lb_id}/backendAddressPools/nat'}},
+                }],
+                'outboundRules': [{
+                    'id': f'{lb_id}/outboundRules/snat',
+                    'properties': {'backendAddressPool': {'id': f'{lb_id}/backendAddressPools/egress'}},
+                }],
+            },
+        }),
+    ]
+
+    [lb] = network.get_load_balancers_list(client, None, PARAMS)
+
+    # Outbound (SNAT-only) pools receive no inbound traffic; ids are compared lowercased.
+    assert lb['inbound_backend_pool_ids'] == [
+        f'{lb_id}/backendAddressPools/nat'.lower(), f'{lb_id}/backendAddressPools/web'.lower(),
+    ]

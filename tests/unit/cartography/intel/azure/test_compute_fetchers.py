@@ -37,3 +37,51 @@ def test_vm_network_interfaces_arrive():
     assert vm['os_type'] == 'Linux'
     assert vm['os_disk_name'] == 'disk1'
     assert vm['power_state'] == 'running'
+
+
+def _scale_set(name, ip_configuration):
+    return models.VirtualMachineScaleSet({
+        'id': f'{RG}/Microsoft.Compute/virtualMachineScaleSets/{name}', 'name': name, 'location': 'eastus',
+        'properties': {
+            'virtualMachineProfile': {
+                'networkProfile': {
+                    'networkInterfaceConfigurations': [{
+                        'name': 'nic', 'properties': {
+                            'primary': True, 'ipConfigurations': [{
+                                'name': 'ip', 'properties': ip_configuration,
+                            }],
+                        },
+                    }],
+                },
+            },
+        },
+    })
+
+
+def test_vmss_front_doors_arrive():
+    lb = f'{RG}/Microsoft.Network/loadBalancers/LB1'
+    client = MagicMock()
+    client.virtual_machine_scale_sets.list_all.return_value = [
+        _scale_set('pip', {'publicIPAddressConfiguration': {'name': 'pub', 'properties': {}}}),
+        _scale_set(
+            'pooled', {
+                'loadBalancerBackendAddressPools': [{'id': f'{lb}/backendAddressPools/web'}],
+                'loadBalancerInboundNatPools': [{'id': f'{lb}/inboundNatPools/ssh'}],
+            },
+        ),
+        models.VirtualMachineScaleSet({
+            'id': f'{RG}/Microsoft.Compute/virtualMachineScaleSets/bare', 'name': 'bare', 'location': 'eastus',
+        }),
+    ]
+
+    with patch.object(compute, 'get_client', return_value=client):
+        sets = {s['name']: s for s in compute.get_vm_scale_sets_list(MagicMock(), '00-00', None, PARAMS)}
+
+    assert {
+        name: (s['public_ip_per_instance'], s['lb_backend_pool_ids'], s['lb_inbound_nat_lb_ids'])
+        for name, s in sets.items()
+    } == {
+        'pip': (True, [], []),
+        'pooled': (False, [f'{lb}/backendAddressPools/web'.lower()], [lb.lower()]),
+        'bare': (False, [], []),
+    }

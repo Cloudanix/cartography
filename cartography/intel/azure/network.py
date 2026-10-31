@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Set
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
@@ -1186,6 +1187,19 @@ def get_network_interfaces_list(client: NetworkManagementClient, regions: list, 
         return []
 
 
+def _inbound_backend_pool_ids(load_balancer: Dict) -> List[str]:
+    """
+    Backend pools that receive inbound traffic: targets of load-balancing rules and
+    inbound NAT rules. Pools used only by outbound rules (SNAT egress) are left out.
+    Lowercased, because resources that reference a pool may spell its ARM id in another case.
+    """
+    pool_ids: Set[str] = set()
+    for rule in (load_balancer.get('load_balancing_rules') or []) + (load_balancer.get('inbound_nat_rules') or []):
+        pools = [rule.get('backend_address_pool')] + (rule.get('backend_address_pools') or [])
+        pool_ids.update(pool['id'].lower() for pool in pools if pool and pool.get('id'))
+    return sorted(pool_ids)
+
+
 def get_load_balancers_list(client: NetworkManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         network_load_balancer_list = list(map(as_legacy_dict, client.load_balancers.list_all()))
@@ -1206,6 +1220,7 @@ def get_load_balancers_list(client: NetworkManagementClient, regions: list, comm
                 backend_address_pool['consolelink'] = safe_console_link(
                     backend_address_pool.get('id'), common_job_parameters,
                 )
+            load_balancer['inbound_backend_pool_ids'] = _inbound_backend_pool_ids(load_balancer)
             load_balancer['consolelink'] = safe_console_link(load_balancer['id'], common_job_parameters)
             if regions is None:
                 load_balancer_list.append(load_balancer)
@@ -1281,7 +1296,8 @@ def _load_load_balancers_tx(
     n.location = lb.location,
     n.region = lb.location
     SET n.consolelink = coalesce(lb.consolelink, n.consolelink), n.lastupdated = $update_tag,
-    n.name = lb.name
+    n.name = lb.name,
+    n.inbound_backend_pool_ids = lb.inbound_backend_pool_ids
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(n)

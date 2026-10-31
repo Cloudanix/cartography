@@ -509,6 +509,38 @@ def sync_virtual_machine_available_sizes(
     cleanup_virtual_machine_available_sizes(neo4j_session, common_job_parameters)
 
 
+def _vmss_front_doors(scale_set: Dict) -> Dict:
+    """
+    What can reach a scale set's instances from outside, read from its network profile:
+    a per-instance public IP, load balancer backend pools and inbound NAT pools. Uniform
+    scale set instances are not listed as VMs, so this is the only exposure input for them.
+    Ids are lowercased to match AzureNetworkLoadBalancer.inbound_backend_pool_ids.
+    """
+    network_profile = (scale_set.get('virtual_machine_profile') or {}).get('network_profile') or {}
+    ip_configurations = [
+        ip_configuration
+        for nic in network_profile.get('network_interface_configurations') or []
+        for ip_configuration in nic.get('ip_configurations') or []
+    ]
+    pool_ids = {
+        pool['id'].lower()
+        for ip_configuration in ip_configurations
+        for pool in ip_configuration.get('load_balancer_backend_address_pools') or []
+        if pool.get('id')
+    }
+    nat_lb_ids = {
+        pool['id'].lower().split('/inboundnatpools/')[0]
+        for ip_configuration in ip_configurations
+        for pool in ip_configuration.get('load_balancer_inbound_nat_pools') or []
+        if pool.get('id')
+    }
+    return {
+        'public_ip_per_instance': any(c.get('public_ip_address_configuration') for c in ip_configurations),
+        'lb_backend_pool_ids': sorted(pool_ids),
+        'lb_inbound_nat_lb_ids': sorted(nat_lb_ids),
+    }
+
+
 def get_vm_scale_sets_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
@@ -522,6 +554,7 @@ def get_vm_scale_sets_list(credentials: Credentials, subscription_id: str, regio
             set['aks_cluster_name'] = aks_tags['aks_cluster_name']
             set['aks_pool_name'] = aks_tags['aks_pool_name']
             set['aks_cluster_rg'] = aks_tags['aks_cluster_rg']
+            set.update(_vmss_front_doors(set))
             if regions is None:
                 sets_list.append(set)
             else:
@@ -552,6 +585,9 @@ def _load_vm_scale_sets_tx(
     a.aks_cluster_name = set.aks_cluster_name,
     a.aks_pool_name = set.aks_pool_name,
     a.aks_cluster_rg = set.aks_cluster_rg,
+    a.public_ip_per_instance = set.public_ip_per_instance,
+    a.lb_backend_pool_ids = set.lb_backend_pool_ids,
+    a.lb_inbound_nat_lb_ids = set.lb_inbound_nat_lb_ids,
     a.subscription_id = $SUBSCRIPTION_ID,
     a.name = set.name
     WITH a
