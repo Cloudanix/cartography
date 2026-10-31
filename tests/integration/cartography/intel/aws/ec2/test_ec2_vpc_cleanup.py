@@ -15,7 +15,8 @@ def test_vpc_cleanup_spares_vpcs_of_other_accounts(neo4j_session):
     # Before the peering loader fix, a synced account took a RESOURCE edge to the peer side of
     # each peering. Those legacy edges are stale now. When the peer VPC is another account's real
     # VPC (its arn names that account), this account's cleanup must drop only its own stale edge,
-    # not the VPC. Its own stale VPC and a stale peer stub (no arn) are still deleted.
+    # not the VPC. Its own stale VPC, a stale peer stub (no arn) and a stale VPC whose arn cannot
+    # be parsed are still deleted, as before.
     neo4j_session.run(
         """
         MERGE (w:CloudanixWorkspace{id: 'vc-w1'})-[:OWNER]->(o:AWSOrganization{id: 'vc-w1/o-1'})
@@ -28,6 +29,8 @@ def test_vpc_cleanup_spares_vpcs_of_other_accounts(neo4j_session):
             id: 'vc-own-gone', arn: 'arn:aws:ec2:r:vc-a1:vpc/vc-own-gone', lastupdated: 1
         })
         MERGE (a)-[:RESOURCE{lastupdated: 1}]->(:AWSVpc{id: 'vc-stub', lastupdated: 1})
+        MERGE (a)-[:RESOURCE{lastupdated: 1}]->(:AWSVpc{id: 'vc-odd-arn', arn: 'vpc/vc-odd-arn', lastupdated: 1})
+        MERGE (a)-[:RESOURCE{lastupdated: 1}]->(:AWSVpc{id: 'vc-empty-arn', arn: '', lastupdated: 1})
         MERGE (b)-[:RESOURCE{lastupdated: 5}]->(vb:AWSVpc{
             id: 'vc-vpc-b', arn: 'arn:aws:ec2:r:vc-b1:vpc/vc-vpc-b', lastupdated: 5
         })
