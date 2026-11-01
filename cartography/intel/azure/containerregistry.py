@@ -92,7 +92,9 @@ def get_registry_list(
                 "admin_user_enabled": registry.admin_user_enabled,
                 "public_network_access": registry.public_network_access,
                 # Premium-only firewall; None (Basic / Standard) means every network is allowed.
-                "network_rule_default_action": getattr(registry.network_rule_set, "default_action", None),
+                "network_rule_default_action": getattr(
+                    getattr(registry, "network_rule_set", None), "default_action", None,
+                ),
                 "anonymous_pull_enabled": getattr(registry, "anonymous_pull_enabled", None),
                 "zone_redundancy": registry.zone_redundancy,
                 "encryption_status": registry.encryption.status if registry.encryption else None,
