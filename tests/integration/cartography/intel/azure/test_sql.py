@@ -785,6 +785,7 @@ def test_sql_server_analysis_public_exposure(neo4j_session):
     )
 
     sql._load_firewall_rules(neo4j_session, DESCRIBE_FIREWALL_RULES, TEST_UPDATE_TAG)
+    sql._load_firewall_rules_fetched(neo4j_session, [{'id': s['id'], 'fetched': True} for s in DESCRIBE_SERVERS])
 
     sql.load_server_private_endpoint_connection(neo4j_session, DESCRIBE_SERVERS, TEST_UPDATE_TAG)
 
