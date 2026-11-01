@@ -248,6 +248,12 @@ def test_auth_verdicts():
         assert access.bucket_auth({**unread, "ubla": False}) == (AUTH_NONE, ["gcs_allusers"])
         assert access.bucket_auth({**unread, "pap": "enforced"})[0] == AUTH_REQUIRED
     assert access.data_verdict("bigquery", [None, "user:a@b.c"]) == (AUTH_REQUIRED, ["iam"])
+    assert access.dataset_auth({"status": "resolved", "members": ["allUsers"]}) == (AUTH_NONE, ["bigquery_allusers"])
+    # Unread dataset: kept access entries may be stale.
+    for status in ("unresolved", None):
+        assert access.dataset_auth({"status": status, "members": ["allUsers"]}) == (
+            AUTH_UNKNOWN, ["dataset_access_not_read"],
+        )
     invoker = {"role": "roles/cloudfunctions.invoker", "members": ["allUsers"]}
     viewer = {"role": "roles/viewer", "members": ["allUsers"]}
     assert access.function_auth({"status": "resolved", "bindings": [invoker]}) == (AUTH_NONE, ["invoker_allusers"])

@@ -59,6 +59,13 @@ def bucket_auth(row: Dict) -> Verdict:
     return data_verdict("gcs", list(row.get("members") or []) + acl)
 
 
+def dataset_auth(row: Dict) -> Verdict:
+    """bigquery.py keeps the last-read access entries when the dataset read fails; they may be stale."""
+    if row.get("status") != IAM_POLICY_RESOLVED:
+        return AUTH_UNKNOWN, ["dataset_access_not_read"]
+    return data_verdict("bigquery", row.get("members") or [])
+
+
 def can_invoke(role: str) -> bool:
     """Unresolved custom roles (no roles/ prefix) may hold the invoke permission."""
     return role in INVOKE_ROLES or "invoke" in role.lower() or not role.startswith("roles/")
@@ -122,10 +129,11 @@ RULES: Dict[str, Tuple[str, Callable[[Dict], Verdict]]] = {
     ),
     "GCPBigqueryDataset": (
         _q(
-            "GCPBigqueryDataset", ", collect(a.special_group) + collect(a.iam_member) AS members",
+            "GCPBigqueryDataset",
+            ", n.iam_policy_status AS status, collect(a.special_group) + collect(a.iam_member) AS members",
             "OPTIONAL MATCH (a:GCPAcl)-[:APPLIES_TO]->(n)",
         ),
-        lambda row: data_verdict("bigquery", row["members"]),
+        dataset_auth,
     ),
     "GCPFunction": (
         _q(

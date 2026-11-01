@@ -1,5 +1,6 @@
 import cartography.intel.gcp.bigquery
 import tests.data.gcp.bigquery
+from cartography.intel.gcp.exposure_layers import access
 from cartography.util import run_analysis_job
 TEST_PROJECT_NUMBER = '000000000000'
 TEST_UPDATE_TAG = 123456789
@@ -253,3 +254,49 @@ def test_dataset_exposure_reads_iam_members_and_special_groups(neo4j_session):
         'bq-all-authenticated': ['allAuthenticatedUsers'],
         'bq-shared-role': ['allUsers'],
     }
+
+
+def test_unread_dataset_access_keeps_entries_and_reads_unknown(neo4j_session, mocker):
+    project = 'proj-bq-unread'
+    params = {**BQ_PARAMS, 'GCP_PROJECT_ID': project, 'service_labels': []}
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:GCPOrganization{id: $org})-[:OWNER]->(:GCPProject{id: $p})",
+        ws=params['WORKSPACE_ID'], org=params['GCP_ORGANIZATION_ID'], p=project,
+    )
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(
+        module, 'get_bigquery_dataset',
+        return_value=[{'datasetReference': {'datasetId': d}} for d in ('bq-read', 'bq-unread')],
+    )
+    mocker.patch.object(module, 'get_dataset_info', return_value={})
+    mocker.patch.object(module, 'get_bigquery_tables', return_value=[])
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+
+    def sync(tag, entries):
+        mocker.patch.object(module, 'get_dataset_access_info', side_effect=lambda _b, d, _p: entries[d]())
+        module.sync(neo4j_session, None, project, tag, {**params, 'UPDATE_TAG': tag}, [])
+
+    def open_access():
+        return [{'role': 'READER', 'iamMember': 'allUsers'}]
+
+    sync(TEST_UPDATE_TAG, {'bq-read': open_access, 'bq-unread': open_access})
+    # Next sync: bq-read no longer grants allUsers; bq-unread's datasets.get is denied.
+    sync(TEST_UPDATE_TAG + 1, {'bq-read': list, 'bq-unread': lambda: None})
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $p})-[:RESOURCE]->(d:GCPBigqueryDataset)
+        OPTIONAL MATCH (a:GCPAcl)-[:APPLIES_TO]->(d)
+        RETURN d.id AS id, d.iam_policy_status AS status, collect(a.iam_member) AS members
+        """,
+        p=project,
+    )
+    assert {r['id']: (r['status'], r['members']) for r in rows} == {
+        'bq-read': ('resolved', []),
+        'bq-unread': ('unresolved', ['allUsers']),
+    }
+    auth = access.compute(neo4j_session, params)['GCPBigqueryDataset']
+    assert auth['bq-read']['access_auth'] == 'required'
+    assert (auth['bq-unread']['access_auth'], auth['bq-unread']['access_auth_reasons']) == (
+        'unknown', ['dataset_access_not_read'],
+    )

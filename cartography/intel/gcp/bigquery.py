@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -11,6 +12,8 @@ from googleapiclient.discovery import Resource
 
 from . import label
 from cartography.intel.gcp.util.errors import is_permission_error
+from cartography.intel.gcp.util.errors import POLICY_RESOLVED
+from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -92,7 +95,8 @@ def get_dataset_info(bigquery, dataset_id, project_id):
 
 
 @timeit
-def get_dataset_access_info(bigquery, dataset_id, project_id):
+def get_dataset_access_info(bigquery: Resource, dataset_id: str, project_id: str) -> Optional[List[Dict]]:
+    """The dataset's access entries; None when the dataset could not be read."""
     response = {}
     try:
         response = bigquery.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
@@ -105,7 +109,7 @@ def get_dataset_access_info(bigquery, dataset_id, project_id):
                     "Could not retrieve Bigquery dataset info on project %s due to permissions issues. Code: %s, Message: %s"
                 ), project_id, err['code'], err['message'],
             )
-            return []
+            return None
         else:
             raise
 
@@ -274,7 +278,8 @@ def load_bigquery_datasets_tx(
         dataset.defaultPartitionExpirationMs = d.details.defaultPartitionExpirationMs,
         dataset.location = d.details.location,
         dataset.defaultCollation= d.details.defaultCollation,
-        dataset.maxTimeTravelHours = d.details.maxTimeTravelHours
+        dataset.maxTimeTravelHours = d.details.maxTimeTravelHours,
+        dataset.iam_policy_status = d.iam_policy_status
     WITH dataset
     MATCH (owner:GCPProject{id: $ProjectId})
     MERGE (owner)-[r:RESOURCE]->(dataset)
@@ -397,13 +402,17 @@ def sync(
     # BIGQUERY DATASETS
     datasets = get_bigquery_dataset(bigquery, project_id, common_job_parameters)
     bigquery_datasets = transform_bigquery_dataset(bigquery, datasets, project_id)
+    # Read access entries first so iam_policy_status lands with the dataset; the access cleanup keeps an
+    # unresolved dataset's last-read entries.
+    accesses = {d['id']: get_dataset_access_info(bigquery, d['id'], project_id) for d in bigquery_datasets}
+    for dataset in bigquery_datasets:
+        dataset['iam_policy_status'] = POLICY_UNRESOLVED if accesses[dataset['id']] is None else POLICY_RESOLVED
     load_bigquery_datasets(neo4j_session, bigquery_datasets, project_id, gcp_update_tag)
     label.sync_labels(neo4j_session, bigquery_datasets, gcp_update_tag, common_job_parameters, 'bigquerydataset', 'GCPBigqueryDataset')
 
     # BIGQUERY TABLES
     for dataset in bigquery_datasets:
-        accesses = get_dataset_access_info(bigquery, dataset['id'], project_id)
-        accesses_list = transform_dataset_accesses(accesses, dataset['id'], project_id)
+        accesses_list = transform_dataset_accesses(accesses[dataset['id']] or [], dataset['id'], project_id)
         attach_dataset_to_accesses(neo4j_session, dataset['id'], accesses_list, gcp_update_tag)
         tables = get_bigquery_tables(bigquery, dataset, project_id, common_job_parameters)
         bigquery_tables = transform_bigquery_tables(bigquery, dataset, tables, project_id)
