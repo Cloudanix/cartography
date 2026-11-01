@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import Tuple
 
 import neo4j
@@ -50,8 +51,6 @@ from cartography.intel.gcp.exposure_layers.network import VpcFacts
 from cartography.intel.gcp.exposure_layers.network import WORLD_CIDR
 
 Results = Dict[str, Dict[str, Reach]]  # label -> node id -> Reach
-# service id -> (backend service path, LB hops); None: no NEG ingested
-ServerlessLb = Optional[Dict[str, List[Tuple[Dict, List[Dict]]]]]
 
 EXTERNAL_SCHEMES = ("EXTERNAL", "EXTERNAL_MANAGED")
 FUNCTION_INGRESS_ALL = "ALLOW_ALL"
@@ -59,6 +58,7 @@ FUNCTION_INGRESS_LB = "ALLOW_INTERNAL_AND_GCLB"
 FUNCTION_GEN_2 = "GEN_2"
 RUN_INGRESS_ALL = "all"
 RUN_INGRESS_LB = "internal-and-cloud-load-balancing"
+SERVERLESS_NEG = "SERVERLESS"
 VIA_LB_UNRESOLVED = "load_balancer_unresolved"
 # exposure_paths[].entry.type: what the internet connects to first.
 ENTRY_EXTERNAL_IP = "external_ip"
@@ -273,18 +273,27 @@ def sql_instances(rows: List[Dict]) -> Dict[str, Reach]:
     return out
 
 
+@dataclass
+class ServerlessLb:
+    """
+    regions: regions holding a serverless NEG node. A regional NEG list that failed is cleaned out of
+    the graph while zonal NEGs (aggregatedList) stay, so only a serverless NEG in the service's own
+    region (serverless NEGs are regional) shows its list was read.
+    paths: function / Cloud Run service id -> (backend service path, hops to the NEG).
+    """
+    regions: Set[str]
+    paths: Dict[str, List[Tuple[Dict, List[Dict]]]]
+
+
 def serverless_lb_paths(negs: List[Dict], lb: LbFacts, backends: Dict[str, Reach]) -> ServerlessLb:
     """
-    Function / Cloud Run service id -> (backend service path, hops to the NEG) for every reachable
-    backend service whose serverless NEG names it. None when the project has no NEG node: the load
-    balancer sync did not run (or found nothing), so a service admitting load balancers is unresolved.
+    Every reachable backend service whose serverless NEG names a function / Cloud Run service.
 
     ponytail: a URL-mask NEG names no service and resolves to nothing; resolving the mask needs the
     services' URLs matched against it.
     """
-    if not negs:
-        return None
-    targets = {n["id"]: n["function"] or n["run"] for n in negs}
+    serverless = [n for n in negs if n["type"] == SERVERLESS_NEG]
+    targets = {n["id"]: n["function"] or n["run"] for n in serverless}
     out: Dict[str, List[Tuple[Dict, List[Dict]]]] = {}
     for bs_id, bs_reach in backends.items():
         for group in lb.backends[bs_id]["groups"]:
@@ -293,26 +302,27 @@ def serverless_lb_paths(negs: List[Dict], lb: LbFacts, backends: Dict[str, Reach
                 continue
             lb_hops = [hop(HOP_BACKEND, bs_id), hop(HOP_TARGET_GROUP, group)]
             out.setdefault(target, []).extend((path, lb_hops) for path in bs_reach.paths.values())
-    return out
+    return ServerlessLb(regions={n["region"] for n in serverless}, paths=out)
 
 
 def _add_serverless_paths(
-    reach: Reach, node_id: str, url: Optional[str], via: str, ingress: str, open_ingress: str, lb_ingress: str,
-    lb_paths: ServerlessLb,
+    reach: Reach, row: Dict, via: str, ingress: str, open_ingress: str, lb_ingress: str, lb: ServerlessLb,
 ) -> None:
     """
     Ingress `open_ingress`: the URL and any external load balancer reach it. `lb_ingress`: only an
-    external load balancer, through a serverless NEG naming it; with no NEG ingested that cannot be
-    told, so it stays reachable (unresolved), as the legacy function job does. Anything else: blocked.
+    external load balancer, through a serverless NEG naming it; with no serverless NEG ingested in the
+    row's region that cannot be told, so it stays reachable (unresolved), as the legacy function job
+    does. Anything else: blocked.
     """
+    node_id = row["id"]
     service = hop(HOP_SERVICE, node_id, rule=f"ingress {ingress}")
     if ingress == open_ingress:
-        reach.add_path(HTTPS, via, hops=[service], entry=entry(ENTRY_URL, url))
+        reach.add_path(HTTPS, via, hops=[service], entry=entry(ENTRY_URL, row.get("url")))
     if ingress in (open_ingress, lb_ingress):
-        for path, lb_hops in (lb_paths or {}).get(node_id, []):
+        for path, lb_hops in lb.paths.get(node_id, []):
             reach.add_path(path["ports"], path["via"], hops=[*path["hops"], *lb_hops, service], entry=path["entry"])
-    if ingress == lb_ingress and lb_paths is None:
-        reach.add_path(HTTPS, VIA_LB_UNRESOLVED, hops=[service], entry=entry(ENTRY_URL, url))
+    if ingress == lb_ingress and row.get("region") not in lb.regions:
+        reach.add_path(HTTPS, VIA_LB_UNRESOLVED, hops=[service], entry=entry(ENTRY_URL, row.get("url")))
     if not reach.via:
         reach.block(HOP_SERVICE, node_id, BLOCK_NOT_ALLOWED, detail="ingress")
 
@@ -326,7 +336,7 @@ def functions(rows: List[Dict], lb_paths: ServerlessLb) -> Dict[str, Reach]:
         if http:
             reach.public_reasons.add("https_trigger")
             _add_serverless_paths(
-                reach, row["id"], row.get("url"), "function_url", row.get("ingress") or FUNCTION_INGRESS_ALL,
+                reach, row, "function_url", row.get("ingress") or FUNCTION_INGRESS_ALL,
                 FUNCTION_INGRESS_ALL, FUNCTION_INGRESS_LB, lb_paths,
             )
         out[row["id"]] = reach
@@ -340,8 +350,8 @@ def cloud_run_services(rows: List[Dict], lb_paths: ServerlessLb) -> Dict[str, Re
         if row.get("url"):
             reach.public_reasons.add("run_url")
             _add_serverless_paths(
-                reach, row["id"], row["url"], "run_url", row.get("ingress") or RUN_INGRESS_ALL,
-                RUN_INGRESS_ALL, RUN_INGRESS_LB, lb_paths,
+                reach, row, "run_url", row.get("ingress") or RUN_INGRESS_ALL, RUN_INGRESS_ALL, RUN_INGRESS_LB,
+                lb_paths,
             )
         out[row["id"]] = reach
     return out
@@ -395,15 +405,15 @@ _SQL_QUERY = _q(
 _FUNCTION_QUERY = _q(
     "GCPFunction",
     "n.https_trigger_url AS url, n.environment AS environment, n.event_trigger_type AS event_trigger, "
-    "n.ingressSettings AS ingress",
+    "n.ingressSettings AS ingress, n.region AS region",
 )
-_RUN_QUERY = _q("GCPCloudRunService", "n.url AS url, n.ingress AS ingress")
+_RUN_QUERY = _q("GCPCloudRunService", "n.url AS url, n.ingress AS ingress, n.region AS region")
 # Serverless target of each NEG: the function loadbalancer.py linked, or the Cloud Run service id
 # (cloudrun.py: projects/<p>/locations/<region>/services/<name>).
 _NEG_QUERY = f"""
 MATCH {PROJECT}-[:RESOURCE]->(n:GCPNetworkEndpointGroup)
 OPTIONAL MATCH (n)-[:SERVERLESS_TARGET]->(fn:GCPFunction)
-RETURN n.id AS id, fn.id AS function,
+RETURN n.id AS id, n.network_endpoint_type AS type, n.region AS region, fn.id AS function,
     CASE WHEN n.cloud_run_service IS NULL THEN null
     ELSE 'projects/' + $GCP_PROJECT_ID + '/locations/' + n.region + '/services/' + n.cloud_run_service END AS run
 """

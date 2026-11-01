@@ -429,7 +429,7 @@ Runs in `start_gcp_ingestion` after `gcp_storage_bucket_policy_analysis.json`, p
 
 | Layer | Labels |
 |---|---|
-| L1/L2 | GCPInstance (external IPv4 / IPv6, default route to `default-internet-gateway`, firewall), instances behind external LBs, GCPForwardingRule, GCPBackendService, GKECluster, GCPSQLInstance, GCPFunction, GCPCloudRunService (ingress all, or a load-balancer ingress behind a serverless NEG of a reachable backend service; unresolved when no NEG is ingested), GCPBucket, GCPBigqueryDataset |
+| L1/L2 | GCPInstance (external IPv4 / IPv6, default route to `default-internet-gateway`, firewall), instances behind external LBs, GCPForwardingRule, GCPBackendService, GKECluster, GCPSQLInstance, GCPFunction, GCPCloudRunService (ingress all, or a load-balancer ingress behind a serverless NEG of a reachable backend service; unresolved when no serverless NEG is ingested in the service's region; zonal NEGs survive a failed regional list), GCPBucket, GCPBigqueryDataset |
 | L3 | `allUsers` / `allAuthenticatedUsers` on buckets, datasets, invokers = none; IAP backends, Cloud SQL, GKE = required; instances, forwarding rules, unread Cloud Run policy = unknown |
 | L4 | GKE master, Cloud SQL `databaseVersion` (`mysql@8.0`), Functions runtime (`python@3.12`), instance OS from boot image / license name (`image_name`) |
 | L5 | GCPInstance -[:CAN_NETWORK_REACH]-> GCPSQLInstance (private IP, same VPC) and -> GCPInstance (firewall source tag / SA) |

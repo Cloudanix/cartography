@@ -128,17 +128,17 @@ def test_named_port():
 
 def test_managed_service_reach():
     rows = [
-        {"id": "all", "url": "https://a.run.app", "ingress": "all"},
-        {"id": "internal", "url": "https://b.run.app", "ingress": "internal"},
-        {"id": "lb", "url": "https://c.run.app", "ingress": "internal-and-cloud-load-balancing"},
+        {"id": "all", "url": "https://a.run.app", "ingress": "all", "region": "us-east1"},
+        {"id": "internal", "url": "https://b.run.app", "ingress": "internal", "region": "us-east1"},
+        {"id": "lb", "url": "https://c.run.app", "ingress": "internal-and-cloud-load-balancing", "region": "us-east1"},
     ]
-    # NEGs ingested, none names "lb": no load balancer fronts it.
-    run = reach.cloud_run_services(rows, {})
+    # Serverless NEGs ingested in its region, none names "lb": no load balancer fronts it.
+    run = reach.cloud_run_services(rows, reach.ServerlessLb(regions={"us-east1"}, paths={}))
     assert run["all"].props()["internet_reachable"] is True
     assert run["internal"].props()["internet_reachable"] is False
     assert run["lb"].props()["internet_reachable"] is False
-    # No NEG ingested: a load balancer may front it, so it stays reachable (unresolved).
-    unresolved = reach.cloud_run_services(rows, None)
+    # No serverless NEG ingested in its region: a load balancer may front it, so it stays reachable (unresolved).
+    unresolved = reach.cloud_run_services(rows, reach.ServerlessLb(regions={"us-west1"}, paths={}))
     assert unresolved["lb"].props()["internet_reachable_via"] == ["load_balancer_unresolved"]
     assert unresolved["internal"].props()["internet_reachable"] is False
     sql = reach.sql_instances([
@@ -165,14 +165,20 @@ def test_function_reach_by_ingress():
         {"id": "all", "url": "https://f", "ingress": "ALLOW_ALL"},
         {"id": "internal", "url": "https://f", "ingress": "ALLOW_INTERNAL_ONLY"},
         {"id": "event", "url": None, "event_trigger": "google.pubsub.topic.publish", "ingress": "ALLOW_ALL"},
-        {"id": "gclb", "url": "https://f", "ingress": "ALLOW_INTERNAL_AND_GCLB"},
+        {"id": "gclb", "url": "https://f", "ingress": "ALLOW_INTERNAL_AND_GCLB", "region": "us-east1"},
     ]
-    out = reach.functions(rows, {})
+    lb = reach.LbFacts(url_maps={}, backends={}, named_ports={}, members={})
+    serverless = {"id": "neg-s", "type": "SERVERLESS", "region": "us-east1", "function": None, "run": "other"}
+    out = reach.functions(rows, reach.serverless_lb_paths([serverless], lb, {}))
     assert out["all"].props()["internet_reachable_ports"] == ["tcp:443-443"]
     assert not out["internal"].props()["internet_reachable"]
     assert out["event"].props() == reach.Reach().props()
     assert not out["gclb"].props()["internet_reachable"]
-    assert reach.functions(rows, None)["gclb"].props()["internet_reachable_via"] == ["load_balancer_unresolved"]
+    # A zonal NEG survives a failed regional list (aggregatedList): it does not show the region was read.
+    zonal = {"id": "neg-z", "type": "GCE_VM_IP_PORT", "region": "us-east1", "function": None, "run": None}
+    for negs in ([], [zonal], [{**serverless, "region": "us-west1"}]):
+        unresolved = reach.functions(rows, reach.serverless_lb_paths(negs, lb, {}))
+        assert unresolved["gclb"].props()["internet_reachable_via"] == ["load_balancer_unresolved"]
 
 
 def test_serverless_neg_behind_reachable_backend():
@@ -187,17 +193,18 @@ def test_serverless_neg_behind_reachable_backend():
     backends = {"bs": reach.Reach(), "bs-internal": reach.Reach()}
     backends["bs"].add_path(PortSet.of("tcp", 443, 443), "forwarding_rule:fr", hops=[listener], entry=lb_entry)
     negs = [
-        {"id": "neg-fn", "function": "fn", "run": None},
-        {"id": "neg-run", "function": None, "run": "run"},
-        {"id": "neg-mask", "function": None, "run": None},
-        {"id": "neg-fn-internal", "function": "fn-internal", "run": None},
+        {"id": n, "type": "SERVERLESS", "region": "us-east1", "function": fn, "run": run}
+        for n, fn, run in [
+            ("neg-fn", "fn", None), ("neg-run", None, "run"), ("neg-mask", None, None),
+            ("neg-fn-internal", "fn-internal", None),
+        ]
     ]
     paths = reach.serverless_lb_paths(negs, lb, backends)
-    assert reach.serverless_lb_paths([], lb, backends) is None
+    assert paths.regions == {"us-east1"}
     fns = reach.functions(
         [
-            {"id": "fn", "url": "https://f", "ingress": "ALLOW_INTERNAL_AND_GCLB"},
-            {"id": "fn-internal", "url": "https://g", "ingress": "ALLOW_INTERNAL_AND_GCLB"},
+            {"id": "fn", "url": "https://f", "ingress": "ALLOW_INTERNAL_AND_GCLB", "region": "us-east1"},
+            {"id": "fn-internal", "url": "https://g", "ingress": "ALLOW_INTERNAL_AND_GCLB", "region": "us-east1"},
         ], paths,
     )
     assert json.loads(fns["fn"].props()["exposure_paths"]) == [{
@@ -211,7 +218,10 @@ def test_serverless_neg_behind_reachable_backend():
     assert not fns["fn-internal"].props()["internet_reachable"]
     run = reach.cloud_run_services(
         [
-            {"id": "run", "url": "https://r.run.app", "ingress": "internal-and-cloud-load-balancing"},
+            {
+                "id": "run", "url": "https://r.run.app", "ingress": "internal-and-cloud-load-balancing",
+                "region": "us-east1",
+            },
         ], paths,
     )
     assert run["run"].props()["internet_reachable_via"] == ["forwarding_rule:fr"]

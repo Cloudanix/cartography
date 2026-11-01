@@ -26,6 +26,7 @@ RUN_PUBLIC = f'projects/{PROJECT}/locations/us-east1/services/run-public'
 RUN_INTERNAL = f'projects/{PROJECT}/locations/us-east1/services/run-internal'
 RUN_LB = f'projects/{PROJECT}/locations/us-east1/services/run-lb'
 RUN_LB_ORPHAN = f'projects/{PROJECT}/locations/us-east1/services/run-lb-orphan'
+RUN_LB_WEST = f'projects/{PROJECT}/locations/us-west1/services/run-lb-west'
 RUN_NEG = f'{API}/projects/{PROJECT}/regions/us-east1/networkEndpointGroups/run-neg'
 DB_SA = 'app@proj-gxl.iam.gserviceaccount.com'
 FR_ID = f'projects/{PROJECT}/locations/global/forwardingRules/https-fr'
@@ -154,10 +155,17 @@ def _load_https_lb(session):
     lbm = cartography.intel.gcp.loadbalancer
     lbm.load_network_endpoint_groups(
         session, lbm.transform_network_endpoint_groups(
-            [{
-                'selfLink': RUN_NEG, 'name': 'run-neg', 'networkEndpointType': 'SERVERLESS',
-                'region': f'{API}/projects/{PROJECT}/regions/us-east1', 'cloudRun': {'service': 'run-lb'},
-            }], PROJECT,
+            [
+                {
+                    'selfLink': RUN_NEG, 'name': 'run-neg', 'networkEndpointType': 'SERVERLESS',
+                    'region': f'{API}/projects/{PROJECT}/regions/us-east1', 'cloudRun': {'service': 'run-lb'},
+                }, {
+                    # us-west1's regional list failed this sync: only a zonal NEG there is left in the graph.
+                    'selfLink': f'{API}/projects/{PROJECT}/zones/us-west1-a/networkEndpointGroups/vm-neg',
+                    'name': 'vm-neg', 'networkEndpointType': 'GCE_VM_IP_PORT',
+                    'zone': f'{API}/projects/{PROJECT}/zones/us-west1-a',
+                },
+            ], PROJECT,
         ), PROJECT, TAG,
     )
     cartography.intel.gcp.loadbalancer.load_instance_groups(
@@ -184,7 +192,7 @@ def _load_managed_services(session):
         UNWIND $services AS svc
             MERGE (p)-[:RESOURCE]->(s:GCPCloudRunService{id: svc.id})
             SET s.url = svc.url, s.ingress = svc.ingress, s.iam_policy_status = svc.status,
-                s.public_invokers = svc.invokers
+                s.public_invokers = svc.invokers, s.region = coalesce(svc.region, 'us-east1')
         """,
         project=PROJECT,
         services=[
@@ -202,6 +210,10 @@ def _load_managed_services(session):
             },
             {
                 'id': RUN_LB_ORPHAN, 'url': 'https://run-lb-orphan.run.app',
+                'ingress': 'internal-and-cloud-load-balancing', 'status': 'resolved', 'invokers': ['allUsers'],
+            },
+            {
+                'id': RUN_LB_WEST, 'url': 'https://run-lb-west.run.app', 'region': 'us-west1',
                 'ingress': 'internal-and-cloud-load-balancing', 'status': 'resolved', 'invokers': ['allUsers'],
             },
         ],
@@ -340,6 +352,9 @@ def test_gcp_exposure_layers_end_to_end(neo4j_session):
     assert run_lb['internet_reachable_via'] == [f'forwarding_rule:{FR_ID}']
     assert run_lb['internet_reachable_ports'] == ['tcp:443-443']
     assert _props(s, RUN_LB_ORPHAN, 'GCPCloudRunService', 'id')['internet_reachable'] is False
+    # No serverless NEG in us-west1 (the zonal one does not count): a load balancer may still front it.
+    run_lb_west = _props(s, RUN_LB_WEST, 'GCPCloudRunService', 'id')
+    assert run_lb_west['internet_reachable_via'] == ['load_balancer_unresolved']
 
     sql = _props(s, 'sql-pg', 'GCPSQLInstance', 'id')
     assert sql['internet_reachable_ports'] == ['tcp:5432-5432']
