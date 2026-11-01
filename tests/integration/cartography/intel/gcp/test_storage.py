@@ -1,5 +1,6 @@
 import cartography.intel.gcp.storage
 import tests.data.gcp.storage
+from cartography.intel.gcp.exposure_layers import access
 from cartography.util import run_analysis_job
 
 
@@ -113,3 +114,47 @@ def test_bucket_exposure_honours_public_access_prevention_and_legacy_acls(neo4j_
         'acl-public': ['allUsers'],
         'default-acl-public': ['allAuthenticatedUsers'],
     }
+
+
+def test_unread_bucket_policy_keeps_bindings_and_reads_unknown(neo4j_session, mocker):
+    project = 'proj-buckets-unread'
+    params = {**BUCKET_PARAMS, 'GCP_PROJECT_ID': project, 'service_labels': []}
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:GCPOrganization{id: $org})-[:OWNER]->(:GCPProject{id: $p})",
+        ws=params['WORKSPACE_ID'], org=params['GCP_ORGANIZATION_ID'], p=project,
+    )
+    module = cartography.intel.gcp.storage
+    raw = [
+        {'name': name, 'location': 'US', 'projectNumber': 1, 'iamConfiguration': {}, 'acl': [], 'defaultObjectAcl': []}
+        for name in ('read', 'unread')
+    ]
+    mocker.patch.object(module, 'get_gcp_buckets', return_value=raw)
+
+    def sync(tag, policies):
+        mocker.patch.object(module, 'get_gcp_bucket_iam_policy', side_effect=lambda _s, name: policies[name]())
+        module.sync(neo4j_session, None, project, tag, {**params, 'UPDATE_TAG': tag}, [])
+
+    def open_policy():
+        return {'bindings': [{'role': 'roles/storage.objectViewer', 'members': ['allUsers']}]}
+
+    sync(TEST_UPDATE_TAG, {'read': open_policy, 'unread': open_policy})
+    # Next sync: 'read' no longer grants allUsers (a policy with no bindings omits the key); 'unread' is denied.
+    sync(TEST_UPDATE_TAG + 1, {'read': dict, 'unread': lambda: None})
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $p})-[:RESOURCE]->(b:GCPBucket)
+        OPTIONAL MATCH (b)-[:ATTACHED_BINDING]->(binding:GCPBucketPolicyBinding)
+        RETURN b.name AS name, b.iam_policy_status AS status, collect(binding.members) AS members
+        """,
+        p=project,
+    )
+    assert {r['name']: (r['status'], r['members']) for r in rows} == {
+        'read': ('resolved', []),
+        'unread': ('unresolved', [['allUsers']]),
+    }
+    auth = {k.split('/')[-1]: v for k, v in access.compute(neo4j_session, params)['GCPBucket'].items()}
+    assert auth['read']['access_auth'] == 'required'
+    assert (auth['unread']['access_auth'], auth['unread']['access_auth_reasons']) == (
+        'unknown', ['bucket_policy_not_read'],
+    )

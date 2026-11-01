@@ -46,11 +46,17 @@ def data_verdict(prefix: str, members: Iterable[str]) -> Verdict:
 
 
 def bucket_auth(row: Dict) -> Verdict:
-    """Public access prevention voids public grants; legacy ACLs count only without uniform access."""
+    """
+    Public access prevention voids public grants; legacy ACLs count only without uniform access.
+    An unread IAM policy keeps its last-read bindings (storage.py), which may be stale: only the ACL,
+    read with the bucket, can still show it public.
+    """
     if row.get("pap") == PAP_ENFORCED:
         return AUTH_REQUIRED, ["public_access_prevention"]
-    acl = [] if row.get("ubla") else row.get("acl") or []
-    return data_verdict("gcs", list(row.get("members") or []) + list(acl))
+    acl = list([] if row.get("ubla") else row.get("acl") or [])
+    if row.get("status") != IAM_POLICY_RESOLVED:
+        return data_verdict("gcs", acl) if _public(acl) else (AUTH_UNKNOWN, ["bucket_policy_not_read"])
+    return data_verdict("gcs", list(row.get("members") or []) + acl)
 
 
 def can_invoke(role: str) -> bool:
@@ -109,7 +115,7 @@ RULES: Dict[str, Tuple[str, Callable[[Dict], Verdict]]] = {
             "GCPBucket",
             ", reduce(a = [], m IN collect(b.members) | a + coalesce(m, [])) AS members, "
             "n.public_acl_entities AS acl, coalesce(n.uniform_bucket_level_access, false) AS ubla, "
-            "n.public_access_prevention AS pap",
+            "n.public_access_prevention AS pap, n.iam_policy_status AS status",
             "OPTIONAL MATCH (n)-[:ATTACHED_BINDING]->(b:GCPBucketPolicyBinding)",
         ),
         bucket_auth,

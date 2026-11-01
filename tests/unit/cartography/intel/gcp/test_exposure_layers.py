@@ -230,12 +230,23 @@ def test_serverless_neg_behind_reachable_backend():
 
 
 def test_auth_verdicts():
-    assert access.bucket_auth({"members": ["allUsers"], "acl": [], "ubla": True}) == (AUTH_NONE, ["gcs_allusers"])
-    assert access.bucket_auth({"members": ["allUsers"], "pap": "enforced"})[0] == AUTH_REQUIRED
-    assert access.bucket_auth({"members": [], "acl": ["allAuthenticatedUsers"], "ubla": True})[0] == AUTH_REQUIRED
-    assert access.bucket_auth({"members": [], "acl": ["allAuthenticatedUsers"], "ubla": False}) == (
+    read = {"status": "resolved"}
+    assert access.bucket_auth({**read, "members": ["allUsers"], "acl": [], "ubla": True}) == (
+        AUTH_NONE, ["gcs_allusers"],
+    )
+    assert access.bucket_auth({**read, "members": ["allUsers"], "pap": "enforced"})[0] == AUTH_REQUIRED
+    assert access.bucket_auth({**read, "members": [], "acl": ["allAuthenticatedUsers"], "ubla": True})[0] == (
+        AUTH_REQUIRED
+    )
+    assert access.bucket_auth({**read, "members": [], "acl": ["allAuthenticatedUsers"], "ubla": False}) == (
         AUTH_NONE, ["gcs_allauthenticatedusers"],
     )
+    # Unread IAM policy: kept bindings may be stale; the ACL (read with the bucket) and PAP still decide.
+    for status in ("unresolved", None):
+        unread = {"status": status, "members": ["allUsers"], "acl": ["allUsers"]}
+        assert access.bucket_auth({**unread, "ubla": True}) == (AUTH_UNKNOWN, ["bucket_policy_not_read"])
+        assert access.bucket_auth({**unread, "ubla": False}) == (AUTH_NONE, ["gcs_allusers"])
+        assert access.bucket_auth({**unread, "pap": "enforced"})[0] == AUTH_REQUIRED
     assert access.data_verdict("bigquery", [None, "user:a@b.c"]) == (AUTH_REQUIRED, ["iam"])
     invoker = {"role": "roles/cloudfunctions.invoker", "members": ["allUsers"]}
     viewer = {"role": "roles/viewer", "members": ["allUsers"]}

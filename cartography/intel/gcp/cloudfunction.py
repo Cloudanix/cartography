@@ -12,14 +12,13 @@ from googleapiclient.discovery import Resource
 
 from . import iam
 from . import label
+from cartography.intel.gcp.util.errors import POLICY_RESOLVED
+from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
-# GCPFunction.iam_policy_status, same values as GCPCloudRunService.iam_policy_status (cloudrun.py).
-IAM_POLICY_RESOLVED = 'resolved'
-IAM_POLICY_UNRESOLVED = 'unresolved'
 
 
 @timeit
@@ -368,7 +367,7 @@ def sync(
     bindings: Dict[str, List[Dict]] = {}
     for func in functions:
         policy = get_function_policy_bindings(function, func, project_id)
-        func['iam_policy_status'] = IAM_POLICY_UNRESOLVED if policy is None else IAM_POLICY_RESOLVED
+        func['iam_policy_status'] = POLICY_UNRESOLVED if policy is None else POLICY_RESOLVED
         bindings[func['id']] = transform_function_policy_bindings(policy or [], func['id'], project_id)
 
     load_functions(neo4j_session, functions, project_id, gcp_update_tag)

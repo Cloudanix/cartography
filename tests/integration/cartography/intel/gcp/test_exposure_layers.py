@@ -226,7 +226,8 @@ def _load_managed_services(session):
         SET s.databaseVersion = 'POSTGRES_15', s.ipV4Enabled = true, s.public_ip = '34.1.1.1', s.port = 5432,
             s.authorized_networks = ['0.0.0.0/0'], s.private_ip = '10.9.0.3',
             s.vpcNetworkID = 'projects/' + $project + '/global/networks/main'
-        MERGE (p)-[:RESOURCE]->(b:GCPBucket{id: 'public-bucket'}) SET b.uniform_bucket_level_access = true
+        MERGE (p)-[:RESOURCE]->(b:GCPBucket{id: 'public-bucket'})
+        SET b.uniform_bucket_level_access = true, b.iam_policy_status = 'resolved'
         MERGE (b)-[:ATTACHED_BINDING]->(:GCPBucketPolicyBinding{id: 'pb', role: 'roles/storage.objectViewer',
             members: ['allUsers']})
         """,
