@@ -239,8 +239,11 @@ def test_auth_verdicts():
     assert access.data_verdict("bigquery", [None, "user:a@b.c"]) == (AUTH_REQUIRED, ["iam"])
     invoker = {"role": "roles/cloudfunctions.invoker", "members": ["allUsers"]}
     viewer = {"role": "roles/viewer", "members": ["allUsers"]}
-    assert access.function_auth({"bindings": [invoker]}) == (AUTH_NONE, ["invoker_allusers"])
-    assert access.function_auth({"bindings": [viewer]}) == (AUTH_REQUIRED, ["iam_invoker"])
+    assert access.function_auth({"status": "resolved", "bindings": [invoker]}) == (AUTH_NONE, ["invoker_allusers"])
+    assert access.function_auth({"status": "resolved", "bindings": [viewer]}) == (AUTH_REQUIRED, ["iam_invoker"])
+    # Unread policy (or a sync before the status was stored): kept bindings may be stale.
+    for status in ("unresolved", None):
+        assert access.function_auth({"status": status, "bindings": []}) == (AUTH_UNKNOWN, ["invoker_policy_not_read"])
     # Properties written by cloudrun.py (PR #507); absent before it merges.
     assert access.cloud_run_auth({})[0] == AUTH_UNKNOWN
     assert access.cloud_run_auth({"status": "not_needed"})[0] == AUTH_UNKNOWN

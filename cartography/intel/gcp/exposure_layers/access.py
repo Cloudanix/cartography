@@ -67,6 +67,9 @@ def invoker_verdict(members: Iterable[str]) -> Verdict:
 
 
 def function_auth(row: Dict) -> Verdict:
+    """cloudfunction.py keeps the last-read bindings when getIamPolicy fails; they may be stale, so unknown."""
+    if row.get("status") != IAM_POLICY_RESOLVED:
+        return AUTH_UNKNOWN, ["invoker_policy_not_read"]
     members = [
         m for b in row.get("bindings") or [] if can_invoke(str(b.get("role") or ""))
         for m in b.get("members") or []
@@ -120,7 +123,7 @@ RULES: Dict[str, Tuple[str, Callable[[Dict], Verdict]]] = {
     ),
     "GCPFunction": (
         _q(
-            "GCPFunction", ", collect(b {.role, .members}) AS bindings",
+            "GCPFunction", ", n.iam_policy_status AS status, collect(b {.role, .members}) AS bindings",
             "OPTIONAL MATCH (n)-[:ATTACHED_BINDING]->(b:GCPBinding)",
         ),
         function_auth,
