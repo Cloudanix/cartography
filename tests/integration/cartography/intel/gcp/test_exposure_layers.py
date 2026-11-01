@@ -24,6 +24,9 @@ ZONE = f'projects/{PROJECT}/zones/us-east1-b'
 GFE = ['130.211.0.0/22', '35.191.0.0/16']
 RUN_PUBLIC = f'projects/{PROJECT}/locations/us-east1/services/run-public'
 RUN_INTERNAL = f'projects/{PROJECT}/locations/us-east1/services/run-internal'
+RUN_LB = f'projects/{PROJECT}/locations/us-east1/services/run-lb'
+RUN_LB_ORPHAN = f'projects/{PROJECT}/locations/us-east1/services/run-lb-orphan'
+RUN_NEG = f'{API}/projects/{PROJECT}/regions/us-east1/networkEndpointGroups/run-neg'
 DB_SA = 'app@proj-gxl.iam.gserviceaccount.com'
 FR_ID = f'projects/{PROJECT}/locations/global/forwardingRules/https-fr'
 
@@ -143,8 +146,19 @@ def _load_https_lb(session):
     cartography.intel.gcp.cloudcdn.load_backend_services(
         session, [{
             'id': f'projects/{PROJECT}/global/backendServices/web', 'name': 'web', 'portName': 'http',
-            'iap': {'enabled': True}, 'backends': [{'group': f'{API}/{ZONE}/instanceGroups/web-mig'}],
+            'iap': {'enabled': True},
+            'backends': [{'group': f'{API}/{ZONE}/instanceGroups/web-mig'}, {'group': RUN_NEG}],
         }], PROJECT, TAG,
+    )
+    # Serverless NEG: the LB fronts RUN_LB, whose ingress admits only load balancers.
+    lbm = cartography.intel.gcp.loadbalancer
+    lbm.load_network_endpoint_groups(
+        session, lbm.transform_network_endpoint_groups(
+            [{
+                'selfLink': RUN_NEG, 'name': 'run-neg', 'networkEndpointType': 'SERVERLESS',
+                'region': f'{API}/projects/{PROJECT}/regions/us-east1', 'cloudRun': {'service': 'run-lb'},
+            }], PROJECT,
+        ), PROJECT, TAG,
     )
     cartography.intel.gcp.loadbalancer.load_instance_groups(
         session, [{
@@ -181,6 +195,14 @@ def _load_managed_services(session):
             {
                 'id': RUN_INTERNAL, 'url': 'https://run-internal.run.app', 'ingress': 'internal',
                 'status': 'not_needed', 'invokers': [],
+            },
+            {
+                'id': RUN_LB, 'url': 'https://run-lb.run.app', 'ingress': 'internal-and-cloud-load-balancing',
+                'status': 'resolved', 'invokers': ['allUsers'],
+            },
+            {
+                'id': RUN_LB_ORPHAN, 'url': 'https://run-lb-orphan.run.app',
+                'ingress': 'internal-and-cloud-load-balancing', 'status': 'resolved', 'invokers': ['allUsers'],
             },
         ],
     )
@@ -313,6 +335,11 @@ def test_gcp_exposure_layers_end_to_end(neo4j_session):
     run_internal = _props(s, RUN_INTERNAL, 'GCPCloudRunService', 'id')
     assert run_public['internet_reachable'] is True and run_public['access_auth'] == 'none'
     assert run_internal['internet_reachable'] is False and run_internal['access_auth'] == 'unknown'
+    # Ingress internal-and-cloud-load-balancing: reachable only through a NEG behind an external LB.
+    run_lb = _props(s, RUN_LB, 'GCPCloudRunService', 'id')
+    assert run_lb['internet_reachable_via'] == [f'forwarding_rule:{FR_ID}']
+    assert run_lb['internet_reachable_ports'] == ['tcp:443-443']
+    assert _props(s, RUN_LB_ORPHAN, 'GCPCloudRunService', 'id')['internet_reachable'] is False
 
     sql = _props(s, 'sql-pg', 'GCPSQLInstance', 'id')
     assert sql['internet_reachable_ports'] == ['tcp:5432-5432']

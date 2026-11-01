@@ -127,14 +127,20 @@ def test_named_port():
 
 
 def test_managed_service_reach():
-    run = reach.cloud_run_services([
+    rows = [
         {"id": "all", "url": "https://a.run.app", "ingress": "all"},
         {"id": "internal", "url": "https://b.run.app", "ingress": "internal"},
         {"id": "lb", "url": "https://c.run.app", "ingress": "internal-and-cloud-load-balancing"},
-    ])
+    ]
+    # NEGs ingested, none names "lb": no load balancer fronts it.
+    run = reach.cloud_run_services(rows, {})
     assert run["all"].props()["internet_reachable"] is True
     assert run["internal"].props()["internet_reachable"] is False
     assert run["lb"].props()["internet_reachable"] is False
+    # No NEG ingested: a load balancer may front it, so it stays reachable (unresolved).
+    unresolved = reach.cloud_run_services(rows, None)
+    assert unresolved["lb"].props()["internet_reachable_via"] == ["load_balancer_unresolved"]
+    assert unresolved["internal"].props()["internet_reachable"] is False
     sql = reach.sql_instances([
         {"id": "open", "ipv4": True, "public_ip": "1.2.3.4", "networks": ["0.0.0.0/0"], "port": 5432},
         {"id": "narrow", "ipv4": True, "public_ip": "1.2.3.4", "networks": ["203.0.113.0/24"], "port": 5432},
@@ -159,11 +165,58 @@ def test_function_reach_by_ingress():
         {"id": "all", "url": "https://f", "ingress": "ALLOW_ALL"},
         {"id": "internal", "url": "https://f", "ingress": "ALLOW_INTERNAL_ONLY"},
         {"id": "event", "url": None, "event_trigger": "google.pubsub.topic.publish", "ingress": "ALLOW_ALL"},
+        {"id": "gclb", "url": "https://f", "ingress": "ALLOW_INTERNAL_AND_GCLB"},
     ]
-    out = reach.functions(rows)
+    out = reach.functions(rows, {})
     assert out["all"].props()["internet_reachable_ports"] == ["tcp:443-443"]
     assert not out["internal"].props()["internet_reachable"]
     assert out["event"].props() == reach.Reach().props()
+    assert not out["gclb"].props()["internet_reachable"]
+    assert reach.functions(rows, None)["gclb"].props()["internet_reachable_via"] == ["load_balancer_unresolved"]
+
+
+def test_serverless_neg_behind_reachable_backend():
+    listener = {"hop": "listener", "id": "fr", "rule": "443-443"}
+    lb_entry = {"type": "forwarding_rule", "id": "fr", "listener_ports": ["tcp:443-443"]}
+    lb = reach.LbFacts(
+        url_maps={}, backends={
+            "bs": {"groups": ["neg-fn", "neg-run", "neg-mask"], "port_name": None},
+            "bs-internal": {"groups": ["neg-fn-internal"], "port_name": None},
+        }, named_ports={}, members={},
+    )
+    backends = {"bs": reach.Reach(), "bs-internal": reach.Reach()}
+    backends["bs"].add_path(PortSet.of("tcp", 443, 443), "forwarding_rule:fr", hops=[listener], entry=lb_entry)
+    negs = [
+        {"id": "neg-fn", "function": "fn", "run": None},
+        {"id": "neg-run", "function": None, "run": "run"},
+        {"id": "neg-mask", "function": None, "run": None},
+        {"id": "neg-fn-internal", "function": "fn-internal", "run": None},
+    ]
+    paths = reach.serverless_lb_paths(negs, lb, backends)
+    assert reach.serverless_lb_paths([], lb, backends) is None
+    fns = reach.functions(
+        [
+            {"id": "fn", "url": "https://f", "ingress": "ALLOW_INTERNAL_AND_GCLB"},
+            {"id": "fn-internal", "url": "https://g", "ingress": "ALLOW_INTERNAL_AND_GCLB"},
+        ], paths,
+    )
+    assert json.loads(fns["fn"].props()["exposure_paths"]) == [{
+        "via": "forwarding_rule:fr", "ports": ["tcp:443-443"], "entry": lb_entry,
+        "hops": [
+            listener, {"hop": "backend", "id": "bs"}, {"hop": "target_group", "id": "neg-fn"},
+            {"hop": "service", "id": "fn", "rule": "ingress ALLOW_INTERNAL_AND_GCLB"},
+        ],
+    }]
+    # Its backend service is not reached by any external forwarding rule.
+    assert not fns["fn-internal"].props()["internet_reachable"]
+    run = reach.cloud_run_services(
+        [
+            {"id": "run", "url": "https://r.run.app", "ingress": "internal-and-cloud-load-balancing"},
+        ], paths,
+    )
+    assert run["run"].props()["internet_reachable_via"] == ["forwarding_rule:fr"]
+    internal = reach.cloud_run_services([{"id": "run", "url": "https://r.run.app", "ingress": "internal"}], paths)
+    assert not internal["run"].props()["internet_reachable"]
 
 
 def test_auth_verdicts():
