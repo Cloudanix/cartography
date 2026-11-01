@@ -520,3 +520,8 @@ CREATE INDEX IF NOT EXISTS FOR (n:ModuleSyncMetadata) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:SyncMetadata) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AzureNetworkInterface) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:GKENodePool) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:RipplingCompany) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:RipplingUser) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:RipplingGroup) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:RipplingAccessGroup) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:RipplingApplication) ON (n.id);

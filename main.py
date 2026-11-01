@@ -84,6 +84,8 @@ def gcp_cartography_worker(event, ctx):
         azure_devops_process_request(logger, params)
     elif params.get("templateType") == "OCIINVENTORYVIEWS":
         oci_process_request(logger, params)
+    elif params.get("templateType") == "RPINVENTORYVIEWS":
+        rippling_process_request(logger, params)
 
     return {
         "statusCode": 200,
@@ -583,6 +585,55 @@ def gitlab_process_request(logger, params):
 
     logger.info(f"inventory sync gcp response - {params.get('eventId')}: {json.dumps(resp)}")
 
+    return {"status": "success"}
+
+
+def rippling_process_request(logger, params):
+    logger.info(
+        "rippling request received",
+        extra={
+            "template_type": params.get("templateType"),
+            "event_id": params.get("eventId"),
+            "workspace": params.get("workspace"),
+        },
+    )
+
+    body = {
+        "credentials": {},
+        "neo4j": {
+            "uri": params.get("neo4j", {}).get("uri", ""),
+            "user": params.get("neo4j", {}).get("user", ""),
+            "pwd": params.get("neo4j", {}).get("pwd", ""),
+            "connection_lifetime": 200,
+        },
+        "logging": {
+            "mode": "verbose",
+        },
+        "rippling": {
+            "access_token": params.get("accessToken"),
+        },
+        "params": {
+            "sessionString": params.get("sessionString"),
+            "eventId": params.get("eventId"),
+            "templateType": params.get("templateType"),
+            "workspace": params.get("workspace"),
+            "actions": params.get("actions"),
+            "resultTopic": params.get("resultTopic"),
+            "requestTopic": params.get("requestTopic"),
+            "partial": params.get("partial"),
+            "services": params.get("services"),
+        },
+        "services": params.get("services") or [],
+        "updateTag": params.get("runTimestamp"),
+    }
+
+    resp = cartography.cli.run_rippling(body)
+    if resp.get("status") == "success":
+        logger.info(f"successfully processed cartography: {resp}")
+    else:
+        logger.info(f"failed to process cartography: {resp.get('message')}")
+
+    publish_response(logger, body, resp, params)
     return {"status": "success"}
 
 
