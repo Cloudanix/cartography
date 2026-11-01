@@ -32,7 +32,8 @@ LIMIT_RE = re.compile(
     re.IGNORECASE,
 )
 REMOVE_RE = re.compile(r'\bREMOVE\s+(?P<items>.*?)(?:\bRETURN\b|$)', re.IGNORECASE)
-DELETE_RE = re.compile(r'\bDELETE\s+\(?\s*(?P<var>\w+)', re.IGNORECASE)
+# Every item of a DELETE list: `DELETE (n)`, `DETACH DELETE c, v`.
+DELETE_RE = re.compile(r'\bDELETE\s+(?P<vars>\(?\s*\w+\s*\)?(?:\s*,\s*\(?\s*\w+\s*\)?)*)', re.IGNORECASE)
 # `var.prop` (property) or `var:Label` (label) items of a REMOVE clause.
 REMOVED_ITEM_RE = re.compile(r'(\w+)([.:])(\w+)')
 
@@ -65,8 +66,12 @@ def _problem(query: str) -> Optional[str]:
         return 'REMOVE without filtering on what it removes: ' + ', '.join(''.join(item) for item in removed)
 
     delete = DELETE_RE.search(query, limit.end())
-    if delete is not None and delete.group('var') not in limited_vars:
-        return f'DELETE of {delete.group("var")}, which is not the batched variable ({", ".join(limited_vars)})'
+    if delete is None:
+        return None
+    # A batch makes progress when any deleted item is the batched variable (`DETACH DELETE c, v` with v batched).
+    deleted = re.findall(r'\w+', delete.group('vars'))
+    if not limited_vars.intersection(deleted):
+        return f'DELETE of {", ".join(deleted)}, none of which is the batched variable ({", ".join(limited_vars)})'
     return None
 
 
@@ -86,6 +91,7 @@ def _offenders() -> List[str]:
 def test_problem_flags_unfiltered_reset():
     assert _problem('MATCH (x:Foo) WITH x LIMIT $LIMIT_SIZE REMOVE x.exposed_internet RETURN COUNT(*)')
     assert _problem('MATCH (x:Foo) WITH x LIMIT $LIMIT_SIZE OPTIONAL MATCH (x)-[r:R]->() DELETE r')
+    assert _problem('MATCH (x:Foo) WITH x LIMIT $LIMIT_SIZE OPTIONAL MATCH (x)-[r:R]->(c) DETACH DELETE c, r')
 
 
 def test_problem_accepts_filtered_reset_and_delete():
@@ -102,6 +108,9 @@ def test_problem_accepts_filtered_reset_and_delete():
         "MATCH (x:Foo) WHERE x.id STARTS WITH 'https://' WITH x LIMIT $LIMIT_SIZE DETACH DELETE (x)",
     ) is None
     assert _problem('MATCH (:A)-[r:R]-(:B) WITH distinct r LIMIT $LIMIT_SIZE DELETE (r)') is None
+    assert _problem(
+        'MATCH (v:Vpc) WITH DISTINCT v LIMIT $LIMIT_SIZE OPTIONAL MATCH (v)-[:B]->(c) DETACH DELETE c, v RETURN 1',
+    ) is None
 
 
 def test_iterative_statements_make_progress_every_batch():
