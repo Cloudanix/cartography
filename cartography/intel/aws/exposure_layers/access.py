@@ -118,11 +118,13 @@ RULES: Dict[str, Tuple[str, Callable[[Dict], Verdict]]] = {
         ),
         lambda_auth,
     ),
+    # The comprehension keeps a null property (unread methods) in the list, and no resources
+    # gives [], so both reach apigateway_auth as unknown; collect() would drop them.
     "APIGatewayRestAPI": (
         f"""MATCH {ACCOUNT}-[:RESOURCE]->(n:APIGatewayRestAPI)
         OPTIONAL MATCH (n)-[:RESOURCE]->(r:APIGatewayResource)
         RETURN n.id AS id, coalesce(n.policy_internet_accessible, true) AS policy_open,
-            collect(CASE WHEN r IS NULL THEN [] ELSE r.unauthenticated_methods END) AS unauthenticated""",
+            [res IN collect(r) | res.unauthenticated_methods] AS unauthenticated""",
         apigateway_auth,
     ),
     "ElasticacheCluster": (

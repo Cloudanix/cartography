@@ -173,6 +173,11 @@ def _managed(session):
         MERGE (a)-[:RESOURCE]->(api:APIGatewayRestAPI{id: 'api-open'})
         SET api.endpoint_conf_types = ['REGIONAL'], api.disableexecuteapiendpoint = false
         MERGE (api)-[:RESOURCE]->(:APIGatewayResource{id: 'res-1', unauthenticated_methods: ['GET']})
+        // get_resources failed: no resources, or methods stored null next to an empty list.
+        MERGE (a)-[:RESOURCE]->(:APIGatewayRestAPI{id: 'api-no-resources'})
+        MERGE (a)-[:RESOURCE]->(api_null:APIGatewayRestAPI{id: 'api-null-methods'})
+        MERGE (api_null)-[:RESOURCE]->(:APIGatewayResource{id: 'res-empty', unauthenticated_methods: []})
+        MERGE (api_null)-[:RESOURCE]->(:APIGatewayResource{id: 'res-unread'})
         MERGE (a)-[:RESOURCE]->(c:ElasticacheCluster{id: 'cache-1'})
         SET c.engine = 'redis', c.engine_version = '7.1.0', c.auth_token_enabled = true, c.port = 6379
         MERGE (a)-[:RESOURCE]->(b:S3Bucket{id: 'bucket-public'}) SET b.anonymous_access = true
@@ -465,6 +470,8 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
 
     assert auth('AWSLambda', 'fn-url') == ('none', ['function_url_auth_none'])
     assert auth('APIGatewayRestAPI', 'api-open') == ('none', ['method_authorization_none'])
+    assert auth('APIGatewayRestAPI', 'api-no-resources') == ('unknown', ['methods_not_ingested'])
+    assert auth('APIGatewayRestAPI', 'api-null-methods') == ('unknown', ['methods_not_ingested'])
     assert auth('RDSInstance', 'db-public') == ('required', ['database_credentials'])
     assert auth('ElasticacheCluster', 'cache-1') == ('required', ['auth_token'])
     assert auth('S3Bucket', 'bucket-public')[0] == 'none'
