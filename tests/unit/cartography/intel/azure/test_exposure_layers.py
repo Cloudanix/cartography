@@ -158,10 +158,12 @@ def test_sql_servers_world_threshold_and_unread_firewall():
     office = sql_servers([{**base, 'rules': [{'address_count': 256}]}])['s']
     world = sql_servers([{**base, 'rules': [{'address_count': 4294967296}]}])['s']
     unread_pg = sql_servers([{**base, 'engine': 'postgres', 'fetched': False, 'port': 5432, 'rules': []}])['s']
+    unread_mssql = sql_servers([{**base, 'fetched': False, 'rules': []}])['s']
     disabled = sql_servers([{**base, 'pna': 'Disabled', 'rules': [{'address_count': None}]}])['s']
     assert (office.public_reasons, office.ports.is_empty()) == ({'public_endpoint'}, True)
     assert world.ports.to_strings() == ['tcp:1433-1433']
     assert unread_pg.ports.to_strings() == ['tcp:5432-5432']
+    assert unread_mssql.ports.to_strings() == ['tcp:1433-1433']
     assert (disabled.public_reasons, disabled.ports.is_empty()) == (set(), True)
 
 

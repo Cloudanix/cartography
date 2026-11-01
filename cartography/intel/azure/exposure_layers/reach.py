@@ -320,12 +320,14 @@ def sql_world_rule(rule: Dict) -> bool:
 
 
 def sql_servers(rows: List[Dict]) -> Dict[str, Reach]:
-    """Open with a world firewall rule, or when a non-SQL-Server firewall could not be read."""
+    """
+    Open with a world firewall rule, or when the firewall could not be read (sql.py records
+    firewall_rules_fetched for every engine, so an unread SQL Server firewall stays open too).
+    """
     out = {}
     for r in rows:
         public = _enabled(r["pna"]) and not r["vnet"]
-        unread = r["engine"] != SQL_SERVER_ENGINE and not r["fetched"]
-        opened = unread or any(sql_world_rule(rule) for rule in r["rules"])
+        opened = not r["fetched"] or any(sql_world_rule(rule) for rule in r["rules"])
         port = r.get("port")
         out[r["id"]] = _endpoint(r["id"], public, opened, PortSet.of(TCP, port, port) if port else PortSet.of(TCP))
     return out
