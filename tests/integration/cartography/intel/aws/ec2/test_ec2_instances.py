@@ -446,12 +446,15 @@ def test_ec2_instance_direct_exposure_requires_a_public_ip(neo4j_session):
         WITH aa
         UNWIND $instances AS i
         MERGE (aa)-[:RESOURCE]->(n:EC2Instance{id: i.id})
-        SET n.state = 'running', n.publicipaddress = i.public_ip, n.exposed_internet = i.stale
+        SET n.state = 'running', n.publicipaddress = i.public_ip, n.ipv6address = i.ipv6,
+            n.exposed_internet = i.stale
         WITH n, i
         MATCH (sg:EC2SecurityGroup{id: i.sg})
         MERGE (n)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
         FOREACH (_ IN CASE WHEN i.eni_ip IS NULL THEN [] ELSE [1] END |
             MERGE (n)-[:NETWORK_INTERFACE]->(:NetworkInterface{id: i.id + '-eni', public_ip: i.eni_ip}))
+        FOREACH (_ IN CASE WHEN i.eni_ipv6 IS NULL THEN [] ELSE [1] END |
+            MERGE (n)-[:NETWORK_INTERFACE]->(:NetworkInterface{id: i.id + '-eni6', ipv6_addresses: i.eni_ipv6}))
         FOREACH (_ IN CASE WHEN i.secondary_ip IS NULL THEN [] ELSE [1] END |
             MERGE (n)-[:NETWORK_INTERFACE]->(eni:NetworkInterface{id: i.id + '-eni2'})
             MERGE (eni)-[:PRIVATE_IP_ADDRESS]->(:EC2PrivateIp{id: i.id + '-ip2', public_ip: i.secondary_ip}))
@@ -466,8 +469,12 @@ def test_ec2_instance_direct_exposure_requires_a_public_ip(neo4j_session):
             {'id': 'exp-public-ip-closed-sg', 'sg': 'sg-exp-closed', 'public_ip': '54.0.0.4'},
             # Behind an internet-facing load balancer whose SG is open: public through the LB.
             {'id': 'exp-behind-lb', 'sg': 'sg-exp-closed'},
-            # IPv6 addresses on ENIs are not ingested, so the ::/0 path is unchanged.
-            {'id': 'exp-ipv6-open', 'sg': 'sg-exp-open6'},
+            # ::/0 ingress only reaches an instance that has an IPv6 address (own or on an attached ENI).
+            {'id': 'exp-ipv6-no-address', 'sg': 'sg-exp-open6', 'stale': True},
+            {'id': 'exp-ipv6-open', 'sg': 'sg-exp-open6', 'ipv6': '2600:1f18::1'},
+            {'id': 'exp-ipv6-eni', 'sg': 'sg-exp-open6', 'eni_ipv6': ['2600:1f18::2']},
+            {'id': 'exp-ipv6-eni-empty', 'sg': 'sg-exp-open6', 'eni_ipv6': []},
+            {'id': 'exp-ipv6-closed-sg', 'sg': 'sg-exp-closed', 'ipv6': '2600:1f18::3'},
         ],
     )
     neo4j_session.run(
@@ -496,6 +503,7 @@ def test_ec2_instance_direct_exposure_requires_a_public_ip(neo4j_session):
         'exp-secondary-ip': ['direct_inbound_ipv4'],
         'exp-behind-lb': ['unrestricted_inbound_traffic_ipv4'],
         'exp-ipv6-open': ['direct_inbound_ipv6'],
+        'exp-ipv6-eni': ['direct_inbound_ipv6'],
     }
 
 

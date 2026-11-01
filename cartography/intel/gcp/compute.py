@@ -848,15 +848,19 @@ def transform_gcp_forwarding_rules(fwd_response: Resource) -> List[Dict]:
 # Forwarding rules with these schemes take traffic from the internet.
 EXTERNAL_LB_SCHEMES = ("EXTERNAL", "EXTERNAL_MANAGED")
 
-# Target kind (as it appears in a forwarding rule's target URI) -> (global API, regional API, get() parameter).
-# targetInstances (zonal protocol forwarding) and targetGrpcProxies (internal only) are not resolved.
+# Target kind (as it appears in a forwarding rule's target URI) -> (global API, regional or zonal API, get()
+# parameter). targetGrpcProxies (internal only) are not resolved.
 _LB_TARGET_APIS: Dict[str, Tuple[Optional[str], Optional[str], str]] = {
     "targetHttpProxies": ("targetHttpProxies", "regionTargetHttpProxies", "targetHttpProxy"),
     "targetHttpsProxies": ("targetHttpsProxies", "regionTargetHttpsProxies", "targetHttpsProxy"),
     "targetSslProxies": ("targetSslProxies", None, "targetSslProxy"),
     "targetTcpProxies": ("targetTcpProxies", "regionTargetTcpProxies", "targetTcpProxy"),
     "targetPools": (None, "targetPools", "targetPool"),
+    # Protocol forwarding to a single VM (zonal).
+    "targetInstances": (None, "targetInstances", "targetInstance"),
 }
+# Location segment of a regional / zonal target URI -> the get() parameter that names it.
+_LB_TARGET_LOCATIONS = {"regions": "region", "zones": "zone"}
 
 
 def _partial_uris(uris: List[Optional[str]]) -> List[str]:
@@ -881,23 +885,23 @@ def backend_group_refs(backend_service: Dict) -> List[str]:
 
 def _get_lb_target(compute: Resource, target_partial_uri: str) -> Dict:
     """
-    Read the target proxy or target pool an external forwarding rule points at.
+    Read the target proxy, target pool or target instance an external forwarding rule points at.
     Returns {} for a target kind we don't resolve, or when the read fails (e.g. missing compute.<kind>.get).
     """
     parts = target_partial_uri.split("/")
     if len(parts) == 5 and parts[2] == "global":
-        project, region, kind, name = parts[1], None, parts[3], parts[4]
-    elif len(parts) == 6 and parts[2] == "regions":
-        project, region, kind, name = parts[1], parts[3], parts[4], parts[5]
+        project, location, kind, name = parts[1], None, parts[3], parts[4]
+    elif len(parts) == 6 and parts[2] in _LB_TARGET_LOCATIONS:
+        project, location, kind, name = parts[1], parts[3], parts[4], parts[5]
     else:
         return {}
-    global_api, regional_api, param = _LB_TARGET_APIS.get(kind, (None, None, ""))
-    api = regional_api if region else global_api
+    global_api, located_api, param = _LB_TARGET_APIS.get(kind, (None, None, ""))
+    api = located_api if location else global_api
     if not api:
         return {}
     kwargs = {"project": project, param: name}
-    if region:
-        kwargs["region"] = region
+    if location:
+        kwargs[_LB_TARGET_LOCATIONS[parts[2]]] = location
     try:
         return getattr(compute, api)().get(**kwargs).execute()
     except HttpError as e:
@@ -909,8 +913,8 @@ def resolve_external_lb_backends(compute: Resource, fwd_list: List[Dict]) -> Non
     """
     For each external forwarding rule, record what it sends internet traffic to, so the analysis jobs can mark
     those resources public: url_map (HTTP(S) proxies), backend_services (SSL/TCP proxies and backend-service
-    network LBs), target_instances (target pools) and ssl_policy. One get() per external rule with a target.
-    Internal rules are left untouched. A rule whose target can't be read keeps empty references.
+    network LBs), target_instances (target pools and target instances) and ssl_policy. One get() per external rule
+    with a target. Internal rules are left untouched. A rule whose target can't be read keeps empty references.
     """
     for fwd in fwd_list:
         if fwd.get("load_balancing_scheme") not in EXTERNAL_LB_SCHEMES:
@@ -921,7 +925,7 @@ def resolve_external_lb_backends(compute: Resource, fwd_list: List[Dict]) -> Non
         fwd["ssl_policy"] = _parse_compute_full_uri_to_partial_uri(ssl_policy) if ssl_policy else None
         # backend_service is already a partial URI; parsing a partial URI returns it unchanged.
         fwd["backend_services"] = _partial_uris([fwd.get("backend_service"), target.get("service")])
-        fwd["target_instances"] = _partial_uris(target.get("instances", []))
+        fwd["target_instances"] = _partial_uris(target.get("instances", []) + [target.get("instance")])
 
 
 @timeit

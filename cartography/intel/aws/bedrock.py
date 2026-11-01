@@ -1,5 +1,9 @@
 import logging
 import time
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
+from typing import Any
 from typing import Dict
 from typing import List
 
@@ -10,14 +14,26 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.util.arns import DEFAULT_PARTITION
 from cartography.intel.aws.util.arns import get_partition_from_params
+from cartography.intel.aws.util.common import cap_with_warning
+from cartography.intel.aws.util.common import list_up_to
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
+# maxResults ceiling of the Bedrock list APIs.
+LIST_PAGE_SIZE = 1000
+# Customisation jobs are history that Bedrock never expires. Two live rules (model_customization_job_security_group,
+# bedrock_model_customization_jobs_use_vpc) apply to jobs of any age, so the window is a year rather than a month:
+# each job is a paid fine-tuning run, so a year is still small, and the cap below is the hard bound.
+CUSTOMISATION_JOB_WINDOW_DAYS = 365
+CUSTOMISATION_JOB_ACTIVE_STATUSES = ('InProgress', 'Stopping')
+# Hard bound per region: at most 2 list calls (1000 per page) and 1000 nodes.
+MAX_CUSTOMISATION_JOBS_PER_REGION = 1000
 
-def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
+
+def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str) -> Any:
     client = boto3_session.client(service, region_name=region, config=get_botocore_config())
     return client
 
@@ -95,24 +111,42 @@ def _load_bedrock_agents_tx(
 
 
 @timeit
-def get_model_customisation_jobs_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
-    model_customisation_jobs: List[Dict] = []
+def get_model_customisation_jobs_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str,
+) -> List[Dict]:
+    """
+    Running jobs whatever their age, plus every job created in the last CUSTOMISATION_JOB_WINDOW_DAYS, newest first
+    and capped per region. Unfiltered, list_model_customization_jobs returns the account's whole job history.
+    """
+    model_customisation_jobs: Dict[str, Dict] = {}
     try:
         client = get_boto3_client(boto3_session, "bedrock", region)
 
-        paginator = client.get_paginator("list_model_customization_jobs")
-        for page in paginator.paginate():
-            model_customisation_jobs.extend(page["modelCustomizationJobSummaries"])
+        window_start = datetime.now(timezone.utc) - timedelta(days=CUSTOMISATION_JOB_WINDOW_DAYS)
+        queries: List[Dict[str, Any]] = [{'statusEquals': status} for status in CUSTOMISATION_JOB_ACTIVE_STATUSES]
+        queries.append({'creationTimeAfter': window_start})
+        for query in queries:
+            for job in list_up_to(
+                client, "list_model_customization_jobs", "modelCustomizationJobSummaries",
+                MAX_CUSTOMISATION_JOBS_PER_REGION + 1, LIST_PAGE_SIZE, sortBy='CreationTime', sortOrder='Descending',
+                **query,
+            ):
+                model_customisation_jobs.setdefault(job['jobArn'], job)
 
-        for model_customisation_job in model_customisation_jobs:
+        for model_customisation_job in model_customisation_jobs.values():
             model_customisation_job["region"] = region
-            model_customisation_job["consolelink"] = aws_console_link.get_console_link(arn=model_customisation_job['jobArn'])
+            model_customisation_job["consolelink"] = aws_console_link.get_console_link(
+                arn=model_customisation_job["jobArn"],
+            )
 
     except Exception as e:
         logger.warning(
             f"Could not list bedrock model customisation jobs. skipping. - {e}",
         )
-    return model_customisation_jobs
+    return cap_with_warning(
+        list(model_customisation_jobs.values()), MAX_CUSTOMISATION_JOBS_PER_REGION,
+        "Bedrock model customisation jobs", current_aws_account_id, region,
+    )
 
 
 @timeit
@@ -122,7 +156,9 @@ def load_model_customisation_jobs(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_model_customisation_jobs_tx, model_customisation_jobs, current_aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(
+        _load_model_customisation_jobs_tx, model_customisation_jobs, current_aws_account_id, aws_update_tag,
+    )
 
 
 @timeit
@@ -295,7 +331,7 @@ def cleanup_bedrock(neo4j_session: neo4j.Session, common_job_parameters: Dict) -
 
 @timeit
 def sync_bedrock(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: str, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
     partition = get_partition_from_params(common_job_parameters)
@@ -311,7 +347,9 @@ def sync_bedrock(
 
     model_customisation_jobs_list = []
     for region in regions:
-        model_customisation_jobs_list.extend(get_model_customisation_jobs_list(boto3_session, region))
+        model_customisation_jobs_list.extend(
+            get_model_customisation_jobs_list(boto3_session, current_aws_account_id, region),
+        )
 
     logger.info(f"Total Bedrock model customisation jobs list: {len(model_customisation_jobs_list)}")
 

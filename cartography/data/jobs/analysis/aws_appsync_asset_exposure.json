@@ -1,0 +1,15 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (api:AppSyncGraphqlApi)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE api.exposed_internet IS NOT NULL WITH api LIMIT $LIMIT_SIZE REMOVE api.exposed_internet, api.exposed_internet_type, api.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "A GLOBAL API has a public endpoint; a PRIVATE one answers only through an interface VPC endpoint. Visibility is stored as GLOBAL when the API omits it (appsync.py), so an unknown visibility is public. Every auth mode still sits behind that public endpoint, so it is context, not a gate; API_KEY (primary or additional) is added as api_key_auth because anyone holding the key is authorized.",
+      "query": "MATCH (api:AppSyncGraphqlApi)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(api.visibility, 'GLOBAL') <> 'PRIVATE' WITH api, ['global_endpoint'] + CASE WHEN api.authentication_type = 'API_KEY' OR 'API_KEY' IN coalesce(api.additional_authentication_types, []) THEN ['api_key_auth'] ELSE [] END AS types SET api.exposed_internet = true, api.exposed_internet_type = types, api.publicContext = apoc.convert.toJson([{resource: api.id, resourceType: 'aws-networking-appsync-graphqlapi', context: [{apiId: api.api_id, apiName: api.name, region: api.region, graphqlUri: api.graphql_uri, visibility: coalesce(api.visibility, 'GLOBAL'), authenticationType: api.authentication_type, additionalAuthenticationTypes: coalesce(api.additional_authentication_types, []), wafWebAclArn: api.waf_web_acl_arn, wafAssociated: api.waf_web_acl_arn IS NOT NULL, exposureTypes: types}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws AppSync GraphQL API internet exposure"
+}

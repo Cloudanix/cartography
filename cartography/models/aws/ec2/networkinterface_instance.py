@@ -23,6 +23,7 @@ class EC2NetworkInterfaceInstanceNodeProperties(CartographyNodeProperties):
     description: PropertyRef = PropertyRef('Description')
     private_dns_name: PropertyRef = PropertyRef('PrivateDnsName', extra_index=True)
     private_ip_address: PropertyRef = PropertyRef('PrivateIpAddress', extra_index=True)
+    ipv6_addresses: PropertyRef = PropertyRef('Ipv6Addresses')
     region: PropertyRef = PropertyRef('Region', set_in_kwargs=True)
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
 

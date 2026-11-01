@@ -1,0 +1,20 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (dms:DMSReplicationInstance)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE dms.exposed_internet IS NOT NULL WITH dms LIMIT $LIMIT_SIZE REMOVE dms.exposed_internet, dms.exposed_internet_type, dms.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "A replication instance connects out to its endpoints, but a publicly accessible one has a public IP, so it is reachable when one of its security groups admits 0.0.0.0/0 or ::/0. Security group edges come from dms.link_replication_instance_networks (same account only).",
+      "query": "MATCH (dms:DMSReplicationInstance{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (cidr)-[:MEMBER_OF_IP_RULE]->(rule:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(dms) WHERE (cidr:IpRange AND cidr.range = '0.0.0.0/0') OR (cidr:Ipv6Range AND cidr.range = '::/0') WITH dms, collect(DISTINCT {securityGroupId: sg.id, protocol: rule.protocol, fromPort: rule.fromport, toPort: rule.toport, ipRange: cidr.range}) AS securityRules SET dms.exposed_internet = true, dms.exposed_internet_type = ['publicly_accessible_open_sg'], dms.publicContext = apoc.convert.toJson([{resource: dms.id, resourceType: 'aws-database-dms-replication-instance', context: [{replicationInstanceIdentifier: dms.replication_instance_identifier, region: dms.region, status: dms.status, publicIpAddresses: coalesce(dms.public_ip_addresses, []), exposureTypes: ['publicly_accessible_open_sg'], securityRules: securityRules}]}])",
+      "iterative": false
+    },
+    {
+      "__comment": "Fail-safe: a publicly accessible instance whose security groups are not all in the graph (or that lists none) cannot be shown closed, so it stays public.",
+      "query": "MATCH (dms:DMSReplicationInstance{publicly_accessible: true})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE dms.exposed_internet IS NULL OPTIONAL MATCH (dms)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup) WITH dms, collect(sg.id) AS linked WITH dms, [id IN coalesce(dms.security_group_ids, []) WHERE NOT id IN linked] AS unresolved WHERE size(coalesce(dms.security_group_ids, [])) = 0 OR size(unresolved) > 0 SET dms.exposed_internet = true, dms.exposed_internet_type = ['publicly_accessible_sg_unresolved'], dms.publicContext = apoc.convert.toJson([{resource: dms.id, resourceType: 'aws-database-dms-replication-instance', context: [{replicationInstanceIdentifier: dms.replication_instance_identifier, region: dms.region, status: dms.status, publicIpAddresses: coalesce(dms.public_ip_addresses, []), exposureTypes: ['publicly_accessible_sg_unresolved'], unresolvedSecurityGroupIds: unresolved}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws DMS replication instance internet exposure"
+}

@@ -1,9 +1,15 @@
 {
     "statements": [
         {
-            "query": "MATCH (n:AzureContainerImage)<-[:CONTAINS_IMAGE]-(repo:AzureContainerRepository)<-[:CONTAINS_REPOSITORY]-(r:AzureContainerRegistry)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "query": "MATCH (n:AzureContainerImage)<-[:CONTAIN]-(:AzureContainerRepository)<-[:CONTAIN]-(:AzureContainerRegistry)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
             "iterative": true,
             "iterationsize": 100
+        },
+        {
+            "query": "MATCH (n:AzureContainerImage{subscription_id: $AZURE_SUBSCRIPTION_ID}) WHERE n.lastupdated <> $UPDATE_TAG AND NOT (n)<-[:CONTAIN]-(:AzureContainerRepository) WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100,
+            "__comment": "Images no path reaches any more: their repository/registry was deleted first, or they were written by the pre-id loader (CONTAINS, no id)."
         }
     ],
     "name": "cleanup Azure Container Image resources"

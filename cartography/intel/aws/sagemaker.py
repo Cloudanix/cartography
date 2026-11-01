@@ -1,5 +1,8 @@
 import logging
 import time
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
@@ -11,11 +14,25 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.common import cap_with_warning
+from cartography.intel.aws.util.common import list_up_to
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+# MaxResults ceiling of the SageMaker list APIs.
+LIST_PAGE_SIZE = 100
+# Training jobs are history: SageMaker keeps every job forever and one hyperparameter tuning job alone can create up
+# to 750. A month covers a monthly retraining cadence, so each live pipeline shows up through its latest jobs.
+TRAINING_JOB_WINDOW_DAYS = 30
+TRAINING_JOB_ACTIVE_STATUSES = ('InProgress', 'Stopping')
+# Hard bound per region: at most 11 list calls (100 per page) and 1000 nodes, whatever the account's history.
+MAX_TRAINING_JOBS_PER_REGION = 1000
+# Models pile up (pipelines create one per run and nothing deletes them) but are not history: an old model can back a
+# live endpoint, so there is no time window, only this cap on the newest models.
+MAX_MODELS_PER_REGION = 1000
 
 
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str) -> Any:
@@ -171,16 +188,28 @@ def _load_endpoints_tx(
 
 
 @timeit
-def get_training_jobs_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
-    training_jobs: List[Dict] = []
+def get_training_jobs_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str,
+) -> List[Dict]:
+    """
+    Running jobs whatever their age, plus every job created in the last TRAINING_JOB_WINDOW_DAYS, newest first and
+    capped per region. Unfiltered, list_training_jobs returns the account's whole job history.
+    """
+    training_jobs: Dict[str, Dict] = {}
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
 
-        paginator = client.get_paginator("list_training_jobs")
-        for page in paginator.paginate():
-            training_jobs.extend(page["TrainingJobSummaries"])
+        window_start = datetime.now(timezone.utc) - timedelta(days=TRAINING_JOB_WINDOW_DAYS)
+        queries: List[Dict[str, Any]] = [{'StatusEquals': status} for status in TRAINING_JOB_ACTIVE_STATUSES]
+        queries.append({'CreationTimeAfter': window_start})
+        for query in queries:
+            for job in list_up_to(
+                client, "list_training_jobs", "TrainingJobSummaries", MAX_TRAINING_JOBS_PER_REGION + 1,
+                LIST_PAGE_SIZE, SortBy='CreationTime', SortOrder='Descending', **query,
+            ):
+                training_jobs.setdefault(job['TrainingJobArn'], job)
 
-        for training_job in training_jobs:
+        for training_job in training_jobs.values():
             training_job["region"] = region
             training_job["consolelink"] = aws_console_link.get_console_link(arn=training_job['TrainingJobArn'])
 
@@ -188,7 +217,10 @@ def get_training_jobs_list(boto3_session: boto3.session.Session, region: str) ->
         logger.warning(
             f"Could not list sagemaker training jobs. skipping. - {e}",
         )
-    return training_jobs
+    return cap_with_warning(
+        list(training_jobs.values()), MAX_TRAINING_JOBS_PER_REGION, "SageMaker training jobs",
+        current_aws_account_id, region,
+    )
 
 
 @timeit
@@ -237,14 +269,15 @@ def _load_training_jobs_tx(
 
 
 @timeit
-def get_models_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_models_list(boto3_session: boto3.session.Session, current_aws_account_id: str, region: str) -> List[Dict]:
     models: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
 
-        paginator = client.get_paginator("list_models")
-        for page in paginator.paginate():
-            models.extend(page["Models"])
+        models = list_up_to(
+            client, "list_models", "Models", MAX_MODELS_PER_REGION + 1, LIST_PAGE_SIZE,
+            SortBy='CreationTime', SortOrder='Descending',
+        )
 
         for model in models:
             model["region"] = region
@@ -254,7 +287,7 @@ def get_models_list(boto3_session: boto3.session.Session, region: str) -> List[D
         logger.warning(
             f"Could not list sagemaker models. skipping. - {e}",
         )
-    return models
+    return cap_with_warning(models, MAX_MODELS_PER_REGION, "SageMaker models", current_aws_account_id, region)
 
 
 @timeit
@@ -437,7 +470,7 @@ def cleanup_sagemaker(neo4j_session: neo4j.Session, common_job_parameters: Dict)
 
 @timeit
 def sync_sagemaker(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: str, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
     notebook_instances_list = []
@@ -458,7 +491,7 @@ def sync_sagemaker(
 
     training_jobs_list = []
     for region in regions:
-        training_jobs_list.extend(get_training_jobs_list(boto3_session, region))
+        training_jobs_list.extend(get_training_jobs_list(boto3_session, current_aws_account_id, region))
 
     logger.info(f"Total training jobs: {len(training_jobs_list)}")
 
@@ -466,7 +499,7 @@ def sync_sagemaker(
 
     models_list = []
     for region in regions:
-        models_list.extend(get_models_list(boto3_session, region))
+        models_list.extend(get_models_list(boto3_session, current_aws_account_id, region))
 
     logger.info(f"Total models: {len(models_list)}")
 
