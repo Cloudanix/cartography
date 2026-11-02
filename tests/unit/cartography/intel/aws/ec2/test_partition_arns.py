@@ -123,7 +123,7 @@ def test_load_load_balancers(load_graph_data, _subnets, _listeners, kwargs, regi
         'Subnets': [], 'SecurityGroups': [], 'SourceSecurityGroup': None, 'Instances': [],
         'ListenerDescriptions': [],
     }
-    load_balancers.load_load_balancers(MagicMock(), [lb], ACCOUNT, 1, **kwargs)
+    load_balancers.load_load_balancers(MagicMock(), [lb], ACCOUNT, 1, 'ws', **kwargs)
     assert _rows(load_graph_data)[0]['arn'] == \
         f'{prefix}elasticloadbalancing:{region}:{ACCOUNT}:loadbalancer/lb-1'
 

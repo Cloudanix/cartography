@@ -54,7 +54,7 @@ def test_classic_elb_source_security_group_stays_in_its_own_account_and_vpc(neo4
     cartography.intel.aws.ec2.load_balancers.load_load_balancers(
         neo4j_session,
         [_classic_elb('ssg-elb', 'vpc-ssg-a'), _classic_elb('ssg-elb-novpc', None)],
-        ACCOUNT_ID, TEST_UPDATE_TAG,
+        ACCOUNT_ID, TEST_UPDATE_TAG, 'ws-ssg',
     )
 
     # Only the "default" group of the load balancer's own VPC: never another VPC's, never another tenant's.

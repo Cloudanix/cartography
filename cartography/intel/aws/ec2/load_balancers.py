@@ -39,12 +39,12 @@ def get_loadbalancer_data(boto3_session: boto3.session.Session, region: str) -> 
 
 @timeit
 def load_load_balancer_listeners(
-    neo4j_session: neo4j.Session, listener_rows: List[Dict], update_tag: int,
+    neo4j_session: neo4j.Session, listener_rows: List[Dict], current_aws_account_id: str, update_tag: int,
 ) -> None:
     """Each row: load_balancer_id, consolelink, listeners (the ListenerDescriptions list)."""
     ingest_listener = """
     UNWIND $DictList AS item
-    MATCH (elb:LoadBalancer{id: item.load_balancer_id})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(elb:LoadBalancer{id: item.load_balancer_id})
     WITH elb, item
     UNWIND item.listeners as data
         MERGE (l:Endpoint:ELBListener{id: elb.id + toString(data.Listener.LoadBalancerPort) +
@@ -60,28 +60,38 @@ def load_load_balancer_listeners(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
     """
-    load_graph_data(neo4j_session, ingest_listener, listener_rows, update_tag=update_tag)
+    load_graph_data(
+        neo4j_session, ingest_listener, listener_rows, AWS_ACCOUNT_ID=current_aws_account_id, update_tag=update_tag,
+    )
 
 
 @timeit
 def load_load_balancer_subnets(
-    neo4j_session: neo4j.Session, subnet_rows: List[Dict], update_tag: int,
+    neo4j_session: neo4j.Session, subnet_rows: List[Dict], current_aws_account_id: str, workspace_id: str,
+    update_tag: int,
 ) -> None:
     """Each row: load_balancer_id, subnet_id."""
+    # A subnet shared in from the VPC owner (VPC sharing) can belong to another account of the workspace;
+    # another customer's subnet is never linked.
     ingest_load_balancer_subnet = """
     UNWIND $DictList AS item
-    MATCH (elb:LoadBalancer{id: item.load_balancer_id}), (subnet:EC2Subnet{subnetid: item.subnet_id})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(elb:LoadBalancer{id: item.load_balancer_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(subnet:EC2Subnet{subnetid: item.subnet_id})
     MERGE (elb)-[r:SUBNET]->(subnet)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    load_graph_data(neo4j_session, ingest_load_balancer_subnet, subnet_rows, update_tag=update_tag)
+    load_graph_data(
+        neo4j_session, ingest_load_balancer_subnet, subnet_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id, WORKSPACE_ID=workspace_id, update_tag=update_tag,
+    )
 
 
 @timeit
 def load_load_balancers(
     neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
-    update_tag: int, partition: str = DEFAULT_PARTITION,
+    update_tag: int, workspace_id: str, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_load_balancer = """
     UNWIND $DictList AS item
@@ -101,18 +111,21 @@ def load_load_balancers(
     # so resolve it inside the load balancer's own account and VPC.
     ingest_load_balancersource_security_group = """
     UNWIND $DictList AS item
-    MATCH (elb:LoadBalancer{id: item.load_balancer_id}),
-    (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:EC2SecurityGroup{name: item.group_name})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(elb:LoadBalancer{id: item.load_balancer_id}),
+    (aa)-[:RESOURCE]->(group:EC2SecurityGroup{name: item.group_name})
     <-[:MEMBER_OF_EC2_SECURITY_GROUP]-(:AWSVpc{id: item.vpc_id})
     MERGE (elb)-[r:SOURCE_SECURITY_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
 
+    # A security group shared in from the VPC owner (VPC sharing) can belong to another account of the
+    # workspace; another customer's group is never linked.
     ingest_load_balancer_security_group = """
     UNWIND $DictList AS item
-    MATCH (elb:LoadBalancer{id: item.load_balancer_id}),
-    (group:EC2SecurityGroup{groupid: item.group_id})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(elb:LoadBalancer{id: item.load_balancer_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(group:EC2SecurityGroup{groupid: item.group_id})
     MERGE (elb)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -120,7 +133,8 @@ def load_load_balancers(
 
     ingest_instances = """
     UNWIND $DictList AS item
-    MATCH (elb:LoadBalancer{id: item.load_balancer_id}), (instance:EC2Instance{instanceid: item.instance_id})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(elb:LoadBalancer{id: item.load_balancer_id})
+    MATCH (aa)-[:RESOURCE]->(instance:EC2Instance{instanceid: item.instance_id})
     MERGE (elb)-[r:EXPOSE]->(instance)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -189,8 +203,11 @@ def load_load_balancers(
         neo4j_session, ingest_load_balancer, lb_rows,
         AWS_ACCOUNT_ID=current_aws_account_id, update_tag=update_tag,
     )
-    load_load_balancer_subnets(neo4j_session, subnet_rows, update_tag)
-    load_graph_data(neo4j_session, ingest_load_balancer_security_group, sg_rows, update_tag=update_tag)
+    load_load_balancer_subnets(neo4j_session, subnet_rows, current_aws_account_id, workspace_id, update_tag)
+    load_graph_data(
+        neo4j_session, ingest_load_balancer_security_group, sg_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id, WORKSPACE_ID=workspace_id, update_tag=update_tag,
+    )
     load_graph_data(
         neo4j_session, ingest_load_balancersource_security_group, source_sg_rows,
         AWS_ACCOUNT_ID=current_aws_account_id, update_tag=update_tag,
@@ -199,7 +216,7 @@ def load_load_balancers(
         neo4j_session, ingest_instances, instance_rows,
         AWS_ACCOUNT_ID=current_aws_account_id, update_tag=update_tag,
     )
-    load_load_balancer_listeners(neo4j_session, listener_rows, update_tag)
+    load_load_balancer_listeners(neo4j_session, listener_rows, current_aws_account_id, update_tag)
 
 
 @timeit
@@ -224,7 +241,7 @@ def sync_load_balancers(
     logger.info(f"Total Load Balancers: {len(data)}")
 
     load_load_balancers(
-        neo4j_session, data, current_aws_account_id, update_tag,
+        neo4j_session, data, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'],
         partition=get_partition_from_params(common_job_parameters),
     )
     cleanup_load_balancers(neo4j_session, common_job_parameters)
