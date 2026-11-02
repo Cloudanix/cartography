@@ -209,7 +209,7 @@ def load_gke_node_pools(
     :param clusters: Processed cluster list from get_gke_clusters(). Each dict must
                      have an "id" key (set by get_gke_clusters) and a "nodePools" list.
     :type project_id: str
-    :param project_id: The GCP project ID (used for logging and console links)
+    :param project_id: The syncing GCP project; pools attach only to its clusters (also logging, console links)
     :type gcp_update_tag: int
     :param gcp_update_tag: Timestamp to stamp on all upserted nodes and relationships
     :rtype: NoneType
@@ -253,10 +253,12 @@ def load_gke_node_pools(
         return
 
     logger.info("Loading %d GKE node pools for project %s.", len(pool_records), project_id)
-    neo4j_session.execute_write(_load_gke_node_pools_tx, pool_records, gcp_update_tag)
+    neo4j_session.execute_write(_load_gke_node_pools_tx, pool_records, project_id, gcp_update_tag)
 
 
-def _load_gke_node_pools_tx(tx: neo4j.Transaction, pool_records: List[Dict], gcp_update_tag: int) -> None:
+def _load_gke_node_pools_tx(
+    tx: neo4j.Transaction, pool_records: List[Dict], project_id: str, gcp_update_tag: int,
+) -> None:
     """
     Write transaction for load_gke_node_pools.
 
@@ -286,12 +288,12 @@ def _load_gke_node_pools_tx(tx: neo4j.Transaction, pool_records: List[Dict], gcp
         p.consolelink = pool.consolelink,
         p.lastupdated = $gcp_update_tag
     WITH p, pool
-    MATCH (cluster:GKECluster{id: pool.cluster_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(cluster:GKECluster{id: pool.cluster_id})
     MERGE (cluster)-[r:HAS_NODE_POOL]->(p)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    tx.run(query, PoolRecords=pool_records, gcp_update_tag=gcp_update_tag)
+    tx.run(query, PoolRecords=pool_records, ProjectId=project_id, gcp_update_tag=gcp_update_tag)
 
 
 def _control_plane_access(cluster: Dict) -> Dict:
