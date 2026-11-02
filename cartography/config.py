@@ -152,6 +152,7 @@ class Config:
         bitbucket_access_token=None,
         gitlab_access_token=None,
         gitlab_hosted_domain=None,
+        rippling_access_token=None,
         aws_internal_accounts=None,
         partial=None,
         manual_run=None,
@@ -196,6 +197,7 @@ class Config:
         self.bitbucket_access_token = bitbucket_access_token
         self.gitlab_access_token = gitlab_access_token
         self.gitlab_hosted_domain = gitlab_hosted_domain
+        self.rippling_access_token = rippling_access_token
         self.digitalocean_token = digitalocean_token
         self.permission_relationships_file = permission_relationships_file
         self.jamf_base_uri = jamf_base_uri

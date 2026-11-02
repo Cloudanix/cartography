@@ -674,7 +674,7 @@ class CLI:
             )
             config.gsuite_config = os.environ.get(config.gsuite_tokens_env_var)
         else:
-            config.gsuite_tokens_env_var = None
+            config.gsuite_config = None
 
         # Lastpass config
         if config.lastpass_cid_env_var:
@@ -992,6 +992,29 @@ def run_gitlab(request):
         params=request["params"],
         gitlab_access_token=request["gitlab"]["access_token"],
         gitlab_hosted_domain=request["gitlab"].get("hosted_domain"),
+        update_tag=request.get("updateTag", None),
+    )
+
+    if request["logging"]["mode"] == "verbose":
+        config.verbose = True
+    elif request["logging"]["mode"] == "quiet":
+        config.quiet = True
+
+    return CLI(default_sync, prog="cartography").process(config)
+
+
+def run_rippling(request):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+
+    default_sync = cartography.sync.build_rippling_sync()
+    config = Config(
+        request["neo4j"]["uri"],
+        neo4j_user=request["neo4j"]["user"],
+        neo4j_password=request["neo4j"]["pwd"],
+        neo4j_max_connection_lifetime=request["neo4j"]["connection_lifetime"],
+        params=request["params"],
+        rippling_access_token=request["rippling"]["access_token"],
         update_tag=request.get("updateTag", None),
     )
 
