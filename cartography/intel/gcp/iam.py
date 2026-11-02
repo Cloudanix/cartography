@@ -128,16 +128,26 @@ def classify_external_member(
     return None
 
 
-def _get_organization_domains(neo4j_session: neo4j.Session, project_id: str) -> frozenset:
+def _get_organization_domains(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> frozenset:
     """Return the set of domains the customer org owns, lowercased.
 
-    Derived from GCPDomain nodes already loaded for the org/project. An empty
-    set means user/group/domain members are treated as external (safe
-    over-report) until verified-domain data is ingested.
+    Derived from GCPDomain nodes already loaded for the projects of the
+    syncing org (GCPDomain nodes are shared: every tenant's domains are in
+    the graph). An empty set means user/group/domain members are treated as
+    external (safe over-report) until verified-domain data is ingested.
     """
-    query = "MATCH (d:GCPDomain) WHERE d.name IS NOT NULL RETURN DISTINCT d.name AS name"
+    query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id: $GCP_ORGANIZATION_ID})
+        -[:OWNER]->(:GCPProject)-[:RESOURCE]->(d:GCPDomain)
+    WHERE d.name IS NOT NULL
+    RETURN DISTINCT d.name AS name
+    """
     try:
-        rows = neo4j_session.execute_read(read_list_of_dicts_tx, query)
+        rows = neo4j_session.execute_read(
+            read_list_of_dicts_tx, query,
+            WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+            GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
+        )
     except Exception:
         return frozenset()
     return frozenset(row["name"].lower() for row in rows if row.get("name"))
@@ -786,7 +796,7 @@ def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 
 @timeit
 def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id: str, organization_id: str, gcp_update_tag: int, common_job_parameters: Dict) -> None:
-    organization_domains = _get_organization_domains(neo4j_session, project_id)
+    organization_domains = _get_organization_domains(neo4j_session, common_job_parameters)
     for binding in bindings:
         role_id = get_role_id(binding['role'], project_id, common_job_parameters)
 
