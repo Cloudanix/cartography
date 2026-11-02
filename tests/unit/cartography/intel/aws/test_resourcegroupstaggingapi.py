@@ -121,7 +121,13 @@ def test_expanded_mappings_present():
 def test_every_mapping_has_label_and_property():
     for resource_type, mapping in rgta.TAG_RESOURCE_TYPE_MAPPINGS.items():
         assert mapping.get('label'), resource_type
-        assert mapping.get('property') in ('id', 'arn', 'name', 'subnetid', 'zoneid'), resource_type
+        assert mapping.get('property') in ('id', 'arn', 'name', 'subnetid', 'zoneid', 'attachment_id'), resource_type
+
+
+def test_tgw_attachment_tags_match_on_attachment_id():
+    # Peering / client-vpn attachment nodes are keyed per account (<attachment id>|<account>); every attachment
+    # node carries the bare id in attachment_id, which is what the tagging API returns.
+    assert rgta.TAG_RESOURCE_TYPE_MAPPINGS['ec2:transit-gateway-attachment']['property'] == 'attachment_id'
 
 
 def test_untaggable_types_removed():

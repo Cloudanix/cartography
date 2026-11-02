@@ -147,15 +147,29 @@ def _attach_shared_transit_gateway(
         )
 
 
+# Attachment types that are one attachment listed by both sides (the two peered gateways' owners), or have no
+# reliable owner field (client-vpn). Every account that lists one gets its own node, so no account's sync or
+# cleanup writes on, or deletes, another account's (maybe another tenant's) copy.
+PER_ACCOUNT_ATTACHMENT_TYPES = frozenset({"peering", "tgw-peering", "client-vpn"})
+
+
+def tgw_attachment_node_id(tgwa: Dict, current_aws_account_id: str) -> str:
+    tgwa_id = tgwa["TransitGatewayAttachmentId"]
+    if tgwa.get("ResourceType") in PER_ACCOUNT_ATTACHMENT_TYPES:
+        return f"{tgwa_id}|{current_aws_account_id}"
+    return tgwa_id
+
+
 @timeit
 def load_tgw_attachments(
     neo4j_session: neo4j.Session, data: List[Dict], region: str, current_aws_account_id: str,
     update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_transit_gateway = """
-    MERGE (tgwa:AWSTransitGatewayAttachment{id: $TgwAttachmentId})
+    MERGE (tgwa:AWSTransitGatewayAttachment{id: $TgwAttachmentNodeId})
     ON CREATE SET tgwa.firstseen = timestamp()
-    SET tgwa.region = $Region,
+    SET tgwa.attachment_id = $TgwAttachmentId,
+    tgwa.region = $Region,
     tgwa.resource_type = $ResourceType,
     tgwa.state = $State,
     tgwa.arn = $Arn,
@@ -182,6 +196,7 @@ def load_tgw_attachments(
         run_write_query(
             neo4j_session,
             ingest_transit_gateway,
+            TgwAttachmentNodeId=tgw_attachment_node_id(tgwa, current_aws_account_id),
             TgwAttachmentId=tgwa_id,
             TransitGatewayId=tgwa["TransitGatewayId"],
             ResourceId=tgwa.get("ResourceId"),
