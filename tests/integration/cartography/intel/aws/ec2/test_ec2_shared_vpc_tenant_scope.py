@@ -34,7 +34,7 @@ def _igw(igw_id, vpc_id, is_default):
 
 def _sync(neo4j_session, account_id, update_tag, vpcs, igws):
     vpc.load_ec2_vpcs(neo4j_session, vpcs, account_id, update_tag)
-    internet_gateways.load_internet_gateways(neo4j_session, igws, REGION, account_id, update_tag)
+    internet_gateways.load_internet_gateways(neo4j_session, igws, REGION, account_id, update_tag, f'sv-ws-{account_id[3:]}')
     for job in ('aws_import_vpc_cleanup.json', 'aws_import_internet_gateways_cleanup.json'):
         GraphJob.run_from_json(
             neo4j_session, read_text('cartography.data.jobs.cleanup', job), {

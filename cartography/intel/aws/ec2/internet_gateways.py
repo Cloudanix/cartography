@@ -93,7 +93,7 @@ def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> 
 @timeit
 def load_internet_gateways(
     neo4j_session: neo4j.Session, internet_gateways: List[Dict], region: str,
-    current_aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
+    current_aws_account_id: str, update_tag: int, workspace_id: str, partition: str = DEFAULT_PARTITION,
 ) -> None:
     logger.info("Loading %d Internet Gateways in %s.", len(internet_gateways), region)
     owned: List[Dict] = []
@@ -122,11 +122,14 @@ def load_internet_gateways(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
         WITH igw, ig
-    """ + _ATTACH_TO_VPCS
+        UNWIND igw.Attachments as attachment
+        MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(vpc:AWSVpc{id: attachment.VpcId})
+    """ + _ATTACH_TO_VPC
 
     # A gateway of a VPC shared into this account (RAM) belongs to the VPC owner, maybe another tenant:
     # no RESOURCE claim, nothing SET on an existing node (is_default is computed against this account's
-    # default VPC). It is still linked to its VPC, which this account's resources in shared subnets reach.
+    # default VPC). It is still linked to its VPC, which this account's resources in shared subnets reach,
+    # when an account of this workspace owns that VPC; another customer's VPC is never linked.
     shared_query = """
     UNWIND $DictList as igw
         MERGE (ig:AWSInternetGateway{id: igw.InternetGatewayId})
@@ -138,7 +141,10 @@ def load_internet_gateways(
             ig.arn = "arn:"+$partition+":ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
             ig.consolelink = igw.consolelink
         WITH igw, ig
-    """ + _ATTACH_TO_VPCS
+        UNWIND igw.Attachments as attachment
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+            -[:RESOURCE]->(vpc:AWSVpc{id: attachment.VpcId})
+    """ + _ATTACH_TO_VPC
 
     for statement, rows in ((query, owned), (shared_query, shared)):
         if not rows:
@@ -150,13 +156,12 @@ def load_internet_gateways(
             region=region,
             partition=partition,
             aws_account_id=current_aws_account_id,
+            WORKSPACE_ID=workspace_id,
             aws_update_tag=update_tag,
         )
 
 
-_ATTACH_TO_VPCS = """
-        UNWIND igw.Attachments as attachment
-        MATCH (vpc:AWSVpc{id: attachment.VpcId})
+_ATTACH_TO_VPC = """
         MERGE (vpc)-[r:ATTACHED_TO]->(ig)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -185,7 +190,8 @@ def sync_internet_gateways(
         logger.info(f"Total Internet Gateways: {len(internet_gateways)} for {region}")
 
         load_internet_gateways(
-            neo4j_session, internet_gateways, region, current_aws_account_id, update_tag, partition=partition,
+            neo4j_session, internet_gateways, region, current_aws_account_id, update_tag,
+            common_job_parameters['WORKSPACE_ID'], partition=partition,
         )
 
     cleanup(neo4j_session, common_job_parameters)

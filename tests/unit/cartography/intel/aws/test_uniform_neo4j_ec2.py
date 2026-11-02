@@ -68,7 +68,7 @@ class TestBatchedLoaders:
         session = MagicMock()
         data = [{"InternetGatewayId": "igw-1", "Attachments": []}]
 
-        internet_gateways.load_internet_gateways(session, data, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        internet_gateways.load_internet_gateways(session, data, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
 
         session.run.assert_not_called()
         assert_batched(session.execute_write.call_args, data)
@@ -169,7 +169,7 @@ class TestManagedScalarWrites:
     def test_instance_image_relations_write_is_managed(self):
         session = MagicMock()
 
-        images.link_ec2_instances_to_images(session, TEST_UPDATE_TAG)
+        images.link_ec2_instances_to_images(session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         session.execute_write.assert_called_once()

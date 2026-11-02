@@ -173,7 +173,7 @@ def test_load_launch_templates_console_arn(console_link, _load, kwargs, region, 
 @patch.object(internet_gateways, 'load_graph_data')
 def test_load_internet_gateways_passes_partition_to_cypher(load_graph_data, kwargs, region, prefix):
     igw = {'InternetGatewayId': 'igw-1', 'OwnerId': ACCOUNT}
-    internet_gateways.load_internet_gateways(MagicMock(), [igw], region, ACCOUNT, 1, **kwargs)
+    internet_gateways.load_internet_gateways(MagicMock(), [igw], region, ACCOUNT, 1, "ws", **kwargs)
     # ig.arn is assembled in Cypher as "arn:" + $partition + ":ec2:" + ...
     assert load_graph_data.call_args.kwargs['partition'] == prefix[len('arn:'):-1]
 
