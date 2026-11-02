@@ -148,14 +148,16 @@ DATASET_ACCESS_MEMBER_FIELDS = ('userByEmail', 'groupByEmail', 'domain', 'specia
 
 
 @timeit
-def attach_dataset_to_accesses(session: neo4j.Session, dataset_id: str, accesses: List[Dict], gcp_update_tag: int) -> None:
-    session.execute_write(attach_dataset_to_accesses_tx, accesses, dataset_id, gcp_update_tag)
+def attach_dataset_to_accesses(
+    session: neo4j.Session, dataset_id: str, accesses: List[Dict], gcp_update_tag: int, project_id: str,
+) -> None:
+    session.execute_write(attach_dataset_to_accesses_tx, accesses, dataset_id, gcp_update_tag, project_id)
 
 
 @timeit
 def attach_dataset_to_accesses_tx(
     tx: neo4j.Transaction, accesses: List[Dict],
-    dataset_id: str, gcp_update_tag: int,
+    dataset_id: str, gcp_update_tag: int, project_id: str,
 ) -> None:
 
     query = """
@@ -169,7 +171,7 @@ def attach_dataset_to_accesses_tx(
         access.iam_member = record.iamMember,
         access.role = record.role
     WITH access
-    MATCH (dataset:GCPBigqueryDataset{id:$DatasetId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(dataset:GCPBigqueryDataset{id:$DatasetId})
     MERGE (dataset)<-[a:APPLIES_TO]-(access)
     ON CREATE SET
         a.firstseen = timestamp()
@@ -179,6 +181,7 @@ def attach_dataset_to_accesses_tx(
         query,
         Records=accesses,
         DatasetId=dataset_id,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -328,7 +331,7 @@ def load_bigquery_tables_tx(
         table.numLongTermBytes = t.details.numLongTermBytes,
         table.numRows = t.details.numRows
     WITH table, t
-    MATCH (dataset:GCPBigqueryDataset{id:t.datasetId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(dataset:GCPBigqueryDataset{id:t.datasetId})
     MERGE (dataset)-[r:HAS_TABLE]->(table)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -421,7 +424,7 @@ def sync(
     for dataset in bigquery_datasets:
         # GCPAcl ids already carry the project (projects/{p}/bigquery/{d}/role/...): built from the short id, unchanged.
         accesses_list = transform_dataset_accesses(accesses[dataset['id']] or [], dataset['name'], project_id)
-        attach_dataset_to_accesses(neo4j_session, dataset['id'], accesses_list, gcp_update_tag)
+        attach_dataset_to_accesses(neo4j_session, dataset['id'], accesses_list, gcp_update_tag, project_id)
         tables = get_bigquery_tables(bigquery, dataset, project_id, common_job_parameters)
         bigquery_tables = transform_bigquery_tables(bigquery, dataset, tables, project_id)
         load_bigquery_tables(neo4j_session, bigquery_tables, project_id, gcp_update_tag)

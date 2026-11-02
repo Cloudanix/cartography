@@ -165,7 +165,9 @@ def test_cloud_function(neo4j_session):
     cartography.intel.gcp.bigquery.load_bigquery_datasets(neo4j_session, data, TEST_PROJECT_NUMBER, TEST_UPDATE_TAG)
     accesses_data = tests.data.gcp.bigquery.TEST_ACCESSES
 
-    cartography.intel.gcp.bigquery.attach_dataset_to_accesses(neo4j_session, TEST_DATASET_ID, accesses_data, TEST_UPDATE_TAG)
+    cartography.intel.gcp.bigquery.attach_dataset_to_accesses(
+        neo4j_session, TEST_DATASET_ID, accesses_data, TEST_UPDATE_TAG, TEST_PROJECT_NUMBER,
+    )
 
     query1 = """
     MATCH (access:GCPAcl)-[a:APPLIES_TO]->(dataset:GCPBigqueryDataset)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE dataset.exposed_internet=true
@@ -224,7 +226,9 @@ def test_dataset_exposure_reads_iam_members_and_special_groups(neo4j_session):
     cartography.intel.gcp.bigquery.load_bigquery_datasets(neo4j_session, datasets, project, TEST_UPDATE_TAG)
     for dataset_id, entries in accesses.items():
         rows = cartography.intel.gcp.bigquery.transform_dataset_accesses(entries, dataset_id, project)
-        cartography.intel.gcp.bigquery.attach_dataset_to_accesses(neo4j_session, dataset_id, rows, TEST_UPDATE_TAG)
+        cartography.intel.gcp.bigquery.attach_dataset_to_accesses(
+            neo4j_session, dataset_id, rows, TEST_UPDATE_TAG, project,
+        )
     cartography.intel.gcp.bigquery.load_bigquery_tables(
         neo4j_session, [
             {'id': f'{d}-table', 'uniqueId': f'{d}-table', 'datasetId': d, 'details': {}}
