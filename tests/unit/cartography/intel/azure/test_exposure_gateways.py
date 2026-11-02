@@ -15,6 +15,8 @@ from cartography.intel.azure.exposure_layers.gateways import nics_by_ip
 from cartography.intel.azure.exposure_layers.gateways import peered_vnets
 from cartography.intel.azure.exposure_layers.gateways import ports_of
 from cartography.intel.azure.exposure_layers.gateways import resolve_ip
+from cartography.intel.azure.exposure_layers.gateways import WEB_APP
+from cartography.intel.azure.exposure_layers.gateways import web_app_hosts
 from cartography.intel.azure.exposure_layers.network import nsg_open
 from cartography.intel.azure.exposure_layers.network import nsg_open_from
 from cartography.intel.azure.exposure_layers.network import source_covers
@@ -252,3 +254,53 @@ def test_app_gateway_waf_is_a_reason_only():
     assert prevention == ('unknown', ['backend_decides', 'waf_prevention'])
     assert app_gateway({'waf_enabled': True, 'waf_mode': 'Detection'}) == ('unknown', ['backend_decides'])
     assert app_gateway({'waf_enabled': None, 'waf_mode': None}) == ('unknown', ['backend_decides'])
+
+
+def test_web_app_hosts():
+    rows = [
+        {'id': 'app', 'hosts': ['App.AzureWebsites.net', 'www.contoso.com.', None]},
+        {'id': 'other', 'hosts': []},
+    ]
+    assert web_app_hosts(rows) == {'app.azurewebsites.net': 'app', 'www.contoso.com': 'app'}
+
+
+def test_app_gateway_fqdn_backend_reaches_web_app():
+    results = {NIC: {}, WEB_APP: {'app': Reach(), 'untouched': Reach()}}
+    backends = _backends(results)
+    backends.apps_by_host = {'app.azurewebsites.net': 'app'}
+    route = {
+        **_route(ipconfigs=()), 'backend_port': 443, 'backend_protocol': 'Https',
+        'backend_fqdns': ['APP.azurewebsites.net', 'api.example.com'],
+    }
+
+    app_gateways([_gateway([route])], backends)
+
+    app = results[WEB_APP]['app']
+    assert (app.ports.to_strings(), app.via) == (['tcp:443-443'], {'appgw:agw'})
+    assert _paths(app)[0]['hops'] == [
+        {'hop': 'listener', 'id': 'route-1', 'rule': 'https 443 -> https 443'}, {'hop': 'service', 'id': 'app'},
+    ]
+    assert results[WEB_APP]['untouched'].ports.is_empty()  # external host stays unresolved
+
+
+def test_app_gateway_closed_listener_does_not_reach_web_app():
+    results = {NIC: {}, WEB_APP: {'app': Reach()}}
+    nsg_rules = {'nsg-agw': [_rule(100, ports='80')]}
+    backends = _backends(results, nsg_rules=nsg_rules, subnets={'vnet/subnets/agw': SubnetFacts(['nsg-agw'], [])})
+    backends.apps_by_host = {'app.azurewebsites.net': 'app'}
+    app_gateways([_gateway([{**_route(ipconfigs=()), 'backend_fqdns': ['app.azurewebsites.net']}])], backends)
+    assert results[WEB_APP]['app'].ports.is_empty()
+
+
+def test_firewall_translated_fqdn_reaches_web_app():
+    results = {NIC: {}, WEB_APP: {'app': Reach()}}
+    backends = _backends(results)
+    backends.apps_by_host = {'app.azurewebsites.net': 'app'}
+    rule = {**_dnat(translated=None, port='8443', translated_port='443'), 'translated_fqdn': 'app.azurewebsites.net'}
+
+    fw = firewalls([_firewall([rule])], backends)['fw']
+
+    assert fw.ports.to_strings() == ['tcp:8443-8443']
+    assert (results[WEB_APP]['app'].ports.to_strings(), results[WEB_APP]['app'].via) == (
+        ['tcp:443-443'], {'azure_firewall_dnat:fw'},
+    )

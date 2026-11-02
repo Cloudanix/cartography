@@ -5,6 +5,7 @@ Azure L1/L2 through managed front doors that forward to private backends:
              -> backend settings port -> backend subnet NSG + NIC NSG (source: gateway subnet)
     internet -> Azure Firewall public IP, DNAT rule with a world source
              -> translated ip:port -> backend subnet NSG + NIC NSG (source: AzureFirewallSubnet)
+    either front door -> backend FQDN naming a web app of the subscription -> the app (service hop)
 
 The gateway terminates HTTP, so it answers on its listener whatever the backends do. The
 firewall answers on a DNAT port when the translated target is open or cannot be resolved
@@ -37,6 +38,7 @@ from cartography.intel.exposure.layers import hop
 from cartography.intel.exposure.layers import HOP_DNAT_RULE
 from cartography.intel.exposure.layers import HOP_FIREWALL
 from cartography.intel.exposure.layers import HOP_LISTENER
+from cartography.intel.exposure.layers import HOP_SERVICE
 from cartography.intel.exposure.layers import Reach
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import union_all
@@ -44,6 +46,8 @@ from cartography.intel.exposure.rules import is_world
 
 APP_GATEWAY = "AzureApplicationGateway"
 FIREWALL = "AzureFirewall"
+# web_apps.list() returns web and function apps alike; both load as AzureFunctionApp.
+WEB_APP = "AzureFunctionApp"
 VIA_APPGW = "appgw:"
 VIA_DNAT = "azure_firewall_dnat:"
 VIA_LISTENER = "public_listener"
@@ -70,6 +74,7 @@ class Backends:
     results: Results
     world_denies: Set[str] = field(default_factory=set)  # NSGs with a deny for internet sources
     peers: Dict[str, Set[str]] = field(default_factory=dict)  # lowercased VNet id -> Connected peer ids
+    apps_by_host: Dict[str, str] = field(default_factory=dict)  # lowercased host name -> web app id
 
 
 def vnets_of(subnet_ids: Iterable[str]) -> Set[str]:
@@ -135,6 +140,29 @@ def open_backends(
     return opened or not targets
 
 
+def _host(name: Optional[str]) -> str:
+    return (name or "").lower().rstrip(".")
+
+
+def web_app_hosts(rows: List[Dict]) -> Dict[str, str]:
+    """Host name -> web app id, from default and enabled custom host names (no DNS lookups)."""
+    return {_host(h): r["id"] for r in rows for h in r["hosts"] if h}
+
+
+def open_web_apps(
+    backends: Backends, fqdns: Iterable[Optional[str]], ports: PortSet, via: str, hops: List[Dict], entry: Dict,
+) -> None:
+    """
+    A backend FQDN that names a web app of this subscription: the app answers through the front door.
+    ponytail: the app's access restrictions are not checked against the front door's address (they
+    usually admit it); external hosts and apps in other subscriptions stay unresolved.
+    """
+    apps = backends.results.get(WEB_APP, {})
+    for app_id in sorted({backends.apps_by_host.get(_host(f)) for f in fqdns} - {None}):
+        if app_id in apps:
+            apps[app_id].add_path(ports, via, [*hops, hop(HOP_SERVICE, app_id)], entry)
+
+
 def ports_of(protocols: Optional[Iterable[Optional[str]]], specs: Iterable[Optional[str]]) -> PortSet:
     """Ports for every protocol x port spec ("443", "8000-8100"); unparseable specs add nothing."""
     ports = PortSet.empty()
@@ -157,7 +185,6 @@ def appgw_targets(rule: Dict, backends: Backends, near_vnets: Set[str]) -> List[
     peered = peered_vnets(backends, near_vnets)
     resolved = (resolve_ip(ip, backends, near_vnets, peered) for ip in rule.get("backend_ip_addresses") or [])
     found += [t for t in resolved if t]
-    # ponytail: FQDN backends (App Service, external hosts) are not resolved.
     return sorted({t for t in found if t in backends.members})
 
 
@@ -182,7 +209,9 @@ def _route(
         return
     targets = appgw_targets(rule, backends, vnets_of(gw["subnets"]))
     backend = ports_of([rule.get("backend_protocol")], [rule.get("backend_port")])
-    open_backends(backends, nsgs_from, targets, backend, f"{VIA_APPGW}{gw['id']}", hops, entry)
+    via = f"{VIA_APPGW}{gw['id']}"
+    open_backends(backends, nsgs_from, targets, backend, via, hops, entry)
+    open_web_apps(backends, rule.get("backend_fqdns") or [], backend, via, hops, entry)
 
 
 def app_gateways(rows: List[Dict], backends: Backends) -> Dict[str, Reach]:
@@ -241,7 +270,9 @@ def _dnat(fw: Dict, rule: Dict, nsgs_from: Dict[str, PortSet], backends: Backend
     entry = {"type": ENTRY_FIREWALL, "id": fw["id"]}
     targets = [target] if target else []
     hops = [hop(HOP_FIREWALL, fw["id"]), rule_hop]
-    if open_backends(backends, nsgs_from, targets, backend, f"{VIA_DNAT}{fw['id']}", hops, entry):
+    via = f"{VIA_DNAT}{fw['id']}"
+    open_web_apps(backends, [rule.get("translated_fqdn")], backend, via, hops, entry)
+    if open_backends(backends, nsgs_from, targets, backend, via, hops, entry):
         listening = ports_of(rule.get("protocols"), rule.get("destination_ports") or [])
         reach.add_path(listening, VIA_DNAT_RULE, [rule_hop], entry)
 
@@ -278,7 +309,7 @@ MATCH {SUBSCRIPTION}-[:RESOURCE]->(n:{APP_GATEWAY})
 OPTIONAL MATCH (n)-[:HAS]->(r:AzureApplicationGatewayRule)
 RETURN n.id AS id, subnets, prefixes, public, collect(r {{
     .id, .frontend_public, .listener_protocol, .listener_port, .backend_protocol, .backend_port,
-    .backend_pool_id, .backend_ip_configuration_ids, .backend_ip_addresses
+    .backend_pool_id, .backend_ip_configuration_ids, .backend_ip_addresses, .backend_fqdns
 }}) AS rules
 """
 
@@ -288,8 +319,15 @@ MATCH {SUBSCRIPTION}-[:RESOURCE]->(n:{FIREWALL})
 OPTIONAL MATCH (n)-[:HAS]->(r:AzureFirewallNatRule)
 RETURN n.id AS id, subnets, prefixes, public, public_ips, collect(r {{
     .id, .source_addresses, .destination_addresses, .destination_ports, .protocols,
-    .translated_address, .translated_port
+    .translated_address, .translated_fqdn, .translated_port
 }}) AS rules
+"""
+
+# A site with host names disabled answers on none of them.
+WEB_APP_HOST_QUERY = f"""
+MATCH {SUBSCRIPTION}-[:RESOURCE]->(n:{WEB_APP})
+WHERE NOT coalesce(n.hostNamesDisabled, false)
+RETURN n.id AS id, [n.default_host_name] + coalesce(n.enabled_host_names, []) AS hosts
 """
 
 

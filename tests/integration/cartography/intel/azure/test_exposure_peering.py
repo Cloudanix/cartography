@@ -1,8 +1,12 @@
 """
-Hub-spoke: an Application Gateway in the hub forwards to a private IP that two spokes reuse.
-VNet peerings (read inline from virtual_networks.list_all) pick the spoke the hub peers with.
+Hub-spoke: an Application Gateway in the hub forwards to a private IP that two spokes reuse and
+to a web app by custom host name. VNet peerings (read inline from virtual_networks.list_all) pick
+the spoke the hub peers with; the host name resolves against ingested web apps (no DNS).
 """
+import json
+
 from cartography.intel.azure import exposure_layers
+from cartography.intel.azure import function_app
 from cartography.intel.azure import network
 from cartography.intel.azure import network_gateways
 from cartography.util import run_cleanup_job
@@ -21,6 +25,7 @@ def arm(kind, name):
 
 
 AGW_ID = arm('applicationGateways', 'agw-hub')
+SITE_ID = f'/subscriptions/{SUB}/resourceGroups/rg/providers/Microsoft.Web/sites/shop'
 HUB, SPOKE_A, SPOKE_B = (arm('virtualNetworks', v) for v in ('hub', 'spoke-a', 'spoke-b'))
 
 
@@ -100,7 +105,13 @@ def _build(session):
     agw_subnet = _subnet(session, HUB, 'agw', ['10.0.50.0/24'])
     _nic(session, 'nic-a', _subnet(session, SPOKE_A, 'app', ['10.1.0.0/24']))
     _nic(session, 'nic-b', _subnet(session, SPOKE_B, 'app', ['10.1.0.0/24']))
-    _app_gateway(session, agw_subnet, [{'ip_address': REUSED_IP}])
+    # Private-endpoint-only site: no direct path, reachable through the gateway.
+    site = {
+        'id': SITE_ID, 'name': 'shop', 'publicNetworkAccess': 'Disabled',
+        'default_host_name': 'shop.azurewebsites.net', 'enabled_host_names': ['shop.contoso.com'],
+    }
+    function_app.load_function_apps(session, SUB, [site], TAG)
+    _app_gateway(session, agw_subnet, [{'ip_address': REUSED_IP}, {'fqdn': 'Shop.Contoso.com'}])
 
 
 def _reachable(session, label, node_id):
@@ -123,6 +134,22 @@ def test_hub_gateway_resolves_reused_ip_in_peered_spoke(neo4j_session):
     assert peering == [{'v': SPOKE_B, 's': 'Connected'}]
     stored = neo4j_session.run("MATCH (n:AzureNetwork{id: $id}) RETURN n.peered_network_ids AS p", id=HUB).single()
     assert stored['p'] == [SPOKE_B.lower()]
+
+
+def test_hub_gateway_reaches_web_app_by_custom_host_name(neo4j_session):
+    _build(neo4j_session)
+    exposure_layers.run(neo4j_session, PARAMS)
+
+    assert _reachable(neo4j_session, 'AzureFunctionApp', SITE_ID) == (True, [f'appgw:{AGW_ID}'])
+    record = neo4j_session.run(
+        "MATCH (n:AzureFunctionApp{id: $id}) RETURN n.internet_reachable_ports AS ports, n.exposure_paths AS paths",
+        id=SITE_ID,
+    ).single()
+    assert record['ports'] == ['tcp:8080-8080']
+    assert json.loads(record['paths'])[0]['hops'] == [
+        {'hop': 'listener', 'id': f'{AGW_ID}/rule', 'rule': 'https 443 -> http 8080'},
+        {'hop': 'service', 'id': SITE_ID},
+    ]
 
 
 def test_stale_peering_edge_is_cleaned(neo4j_session):

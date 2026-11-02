@@ -530,6 +530,15 @@ peering two overlapping VNets, so at most one); a single candidate still resolve
 transit is not modelled). Rollout: values appear after the next network sync; until then
 resolution behaves as before.
 
+FQDN backends (follow-up): an App Gateway backend FQDN (`backend_fqdns`) or a DNAT
+`translated_fqdn` that equals a web / function app's `default_host_name` or one of its
+`enabled_host_names` (new property, same `web_apps.list` response; host names disabled = no
+match) gives that `AzureFunctionApp` a path via `appgw:<id>` / `azure_firewall_dnat:<id>` on the
+backend port, hops listener (or firewall + DNAT rule) then `service`. Match is case-insensitive,
+trailing dot ignored, no DNS lookups. The app's access restrictions are not checked against the
+front door's address (they usually admit it: upper bound); external hosts and apps in other
+subscriptions stay unresolved. A private-endpoint-only app behind a gateway now reads reachable.
+
 Context (Azure): hops in traffic order. Direct: `public_ip`, `route` (table whose `0.0.0.0/0`
 goes to Internet), `nsg` (subnet, then NIC). LB: `public_ip` (frontend), `listener` (LB / NAT rule,
 `tcp 443 -> 8080`), backend NSGs. App Gateway: `listener` (routing rule, `https 443 -> http 8080`).
@@ -543,7 +552,7 @@ Firewall: `firewall`, `dnat_rule` (`Any -> <dest>:<port> => <ip>:<port>`). PaaS:
 AzureSQLServer / AzureCosmosDBAccount. NSG and route table hop ids are lowercased.
 
 Ceilings: NSG rules aimed at a single destination address are not matched per NIC (upper bound);
-`::/0` treated as IPv4 world; WAF policy mode, v2 TCP/TLS listeners, FQDN backends, IP-group DNAT
+`::/0` treated as IPv4 world; WAF policy mode, v2 TCP/TLS listeners, external FQDN backends, IP-group DNAT
 sources, DNAT to an internal LB, cross-subscription or parent firewall policies, Virtual WAN hub
 firewalls not handled; hub NVA / UDR transit between unpeered VNets not modelled; one excluded Easy Auth path makes the site
 `unknown`; UDR `0.0.0.0/0` to an Azure Firewall stays `unknown:udr_default_route_virtualappliance`;

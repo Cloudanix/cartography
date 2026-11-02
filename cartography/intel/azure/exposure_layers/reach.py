@@ -59,7 +59,7 @@ SQL_SERVER = "AzureSQLServer"
 SQL_DATABASE = "AzureSQLDatabase"
 COSMOS = "AzureCosmosDBAccount"
 KEY_VAULT = "AzureKeyVault"
-FUNCTION_APP = "AzureFunctionApp"
+FUNCTION_APP = gateways.WEB_APP
 AKS = "AzureCluster"
 ACR = "AzureContainerRegistry"
 
@@ -457,13 +457,14 @@ RETURN n.id AS id, coalesce(n.enablePrivateCluster, false) AS private, coalesce(
 def front_door_backends(
     nic_rows: List[Dict], vmss_rows: List[Dict], index: BackendIndex,
     subnets: Dict[str, SubnetFacts], nsg_rules: Dict[str, List[Dict]], nsgs: Dict[str, PortSet], results: Results,
-    peers: Dict[str, Set[str]],
+    q: Callable[[str], List[Dict]],
 ) -> gateways.Backends:
     members = {(NIC, r["id"]): (r["subnets"], r["nsgs"]) for r in nic_rows}
     members.update({(VMSS, r["id"]): (r["subnets"], r["nsgs"]) for r in vmss_rows})
     return gateways.Backends(
         index.by_ipconfig, index.by_pool, gateways.nics_by_ip(nic_rows, NIC), members,
-        subnets, nsg_rules, nsgs, results, world_denies(nsg_rules), peers,
+        subnets, nsg_rules, nsgs, results, world_denies(nsg_rules),
+        gateways.vnet_peers(q(gateways.PEERING_QUERY)), gateways.web_app_hosts(q(gateways.WEB_APP_HOST_QUERY)),
     )
 
 
@@ -473,11 +474,11 @@ def _compute_paths(q: Callable[[str], List[Dict]], subnets: Dict, nsg_rules: Dic
     nic_rows, vmss_rows = q(_NIC_QUERY), q(_VMSS_QUERY)
     nics, nic_gates = attachments(nic_rows, NIC, REASON_PUBLIC_IP, subnets, nsgs, denies)
     vmss, vmss_gates = attachments(vmss_rows, VMSS, REASON_PER_INSTANCE_IP, subnets, nsgs, denies)
-    results: Results = {NIC: nics, VMSS: vmss}
+    # Function apps first: front doors add paths to the apps their backend FQDNs name.
+    results: Results = {NIC: nics, VMSS: vmss, FUNCTION_APP: function_apps(q(_FUNCTION_APP_QUERY))}
     index = backend_index(nic_rows, vmss_rows, q(_POOL_QUERY))
     results[LB] = load_balancers(q(_LB_QUERY), index, {**nic_gates, **vmss_gates}, results)
-    peers = gateways.vnet_peers(q(gateways.PEERING_QUERY))
-    backends = front_door_backends(nic_rows, vmss_rows, index, subnets, nsg_rules, nsgs, results, peers)
+    backends = front_door_backends(nic_rows, vmss_rows, index, subnets, nsg_rules, nsgs, results, q)
     results.update(gateways.compute(q, backends))
     results[VM] = union_of(q(_VM_QUERY), "nics", nics)
     return results
@@ -499,7 +500,6 @@ def compute(session: neo4j.Session, params: Dict) -> Results:
         COSMOS: cosmos_accounts(q(_COSMOS_QUERY)),
         KEY_VAULT: network_acl_endpoints(q(_KEY_VAULT_QUERY)),
         ACR: network_acl_endpoints(q(_ACR_QUERY)),
-        FUNCTION_APP: function_apps(q(_FUNCTION_APP_QUERY)),
         AKS: aks_clusters(q(_AKS_QUERY)),
     })
     return results
