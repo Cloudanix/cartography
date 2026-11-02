@@ -51,8 +51,9 @@ def test_sync_db_systems_loads_db_node_vnics(monkeypatch):
     load_db_node_vnics = MagicMock()
     monkeypatch.setattr(database, 'load_db_node_vnics', load_db_node_vnics)
 
-    database.sync_db_systems(MagicMock(), MagicMock(), 'compartment', 'us-phoenix-1', 1)
+    database.sync_db_systems(MagicMock(), MagicMock(), 'tenancy', 'compartment', 'us-phoenix-1', 1)
 
     network_client.base_client.set_region.assert_called_once_with('us-phoenix-1')
     vnics = load_db_node_vnics.call_args.args[1]
     assert [v['id'] for v in vnics] == ['vnic-1']
+    assert load_db_node_vnics.call_args.args[2] == 'tenancy'

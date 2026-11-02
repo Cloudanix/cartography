@@ -11,8 +11,8 @@ import oci.key_management
 
 from . import tags
 from . import utils
-from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def load_vaults(
         v.consolelink = vault.consolelink,
         v.lastupdated = $oci_update_tag
         WITH v, vault
-        MATCH (cc:OCICompartment{id: vault.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: vault.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(v)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -92,7 +92,7 @@ def load_vaults(
     ]
     load_graph_data(
         neo4j_session, ingest_vault, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -199,7 +199,7 @@ def load_keys(
         k.consolelink = key.consolelink,
         k.lastupdated = $oci_update_tag
         WITH k
-        MATCH (v:OCIKmsVault{id: $VAULT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(v:OCIKmsVault{id: $VAULT_ID})
         MERGE (v)-[r:OCI_KMS_KEY]->(k)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -221,7 +221,7 @@ def load_keys(
     ]
     load_graph_data(
         neo4j_session, ingest_key, rows,
-        VAULT_ID=vault_id, REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, VAULT_ID=vault_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -243,13 +243,13 @@ def sync_keys(
 
     for compartment in compartments:
         query = (
-            "MATCH (:OCICompartment{id: $COMPARTMENT_ID})"
+            "MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})"
             "-[:RESOURCE]->(v:OCIKmsVault) "
             "WHERE v.region = $REGION AND v.lifecycle_state = 'ACTIVE' "
             "RETURN v.ocid as ocid, v.management_endpoint as endpoint"
         )
         vaults = neo4j_session.execute_read(
-            read_list_of_dicts_tx, query, COMPARTMENT_ID=compartment["ocid"], REGION=region,
+            read_list_of_dicts_tx, query, TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment["ocid"], REGION=region,
         )
         for vault in vaults:
             endpoint = vault["endpoint"]

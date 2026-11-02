@@ -23,7 +23,7 @@ class TestDatabaseBatchedLoaders:
         session = MagicMock()
         adbs = [{"id": "ocid1.autonomousdatabase.oc1..cccc", "compartment-id": TEST_COMPARTMENT_ID}]
 
-        database.load_autonomous_databases(session, adbs, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG)
+        database.load_autonomous_databases(session, adbs, 'tenancy', TEST_COMPARTMENT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert_batched(session.execute_write.call_args_list[0], adbs)
@@ -32,7 +32,7 @@ class TestDatabaseBatchedLoaders:
         session = MagicMock()
         systems = [{"id": "ocid1.dbsystem.oc1..dddd", "compartment-id": TEST_COMPARTMENT_ID}]
 
-        database.load_db_systems(session, systems, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG)
+        database.load_db_systems(session, systems, 'tenancy', TEST_COMPARTMENT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert_batched(session.execute_write.call_args_list[0], systems)

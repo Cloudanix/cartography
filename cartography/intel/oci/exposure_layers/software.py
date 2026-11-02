@@ -66,7 +66,8 @@ RULES: Dict[str, Tuple[str, Extractor]] = {
     ),
     "OCIInstance": (
         f"""MATCH {COMPARTMENT}(n:OCIInstance)
-        OPTIONAL MATCH (img:OCIImage{{id: n.image_id}})
+        OPTIONAL MATCH (:OCITenancy{{id: $OCI_TENANCY_ID}})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(img:OCIImage{{id: n.image_id}})
         RETURN n.id AS id, img.display_name AS image, n.vm_os AS os, n.vm_os_version AS os_version""",
         lambda r: ([instance_os(r)], SOURCE_IMAGE_NAME),
     ),

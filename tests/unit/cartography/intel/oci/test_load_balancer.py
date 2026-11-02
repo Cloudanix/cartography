@@ -70,8 +70,9 @@ def test_sync_load_balancers_loads_both_kinds(monkeypatch):
     monkeypatch.setattr(load_balancer, 'load_load_balancers', load)
     monkeypatch.setattr(load_balancer.tags, 'sync_tags', MagicMock())
 
-    load_balancer.sync_load_balancers(MagicMock(), MagicMock(), MagicMock(), 'compartment', REGION, 1, {})
+    load_balancer.sync_load_balancers(MagicMock(), MagicMock(), MagicMock(), 'tenancy', 'compartment', REGION, 1, {})
 
-    assert [(c.args[2], c.args[1][0]['id']) for c in load.call_args_list] == [
-        ('OCILoadBalancer', 'lb-1'), ('OCINetworkLoadBalancer', 'nlb-1'),
+    assert [(c.args[2], c.args[1][0]['id'], c.args[3], c.args[4]) for c in load.call_args_list] == [
+        ('OCILoadBalancer', 'lb-1', 'tenancy', 'compartment'),
+        ('OCINetworkLoadBalancer', 'nlb-1', 'tenancy', 'compartment'),
     ]

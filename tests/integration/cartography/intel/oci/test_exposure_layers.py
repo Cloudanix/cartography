@@ -89,7 +89,8 @@ def _network(session):
     for nsg_id, rules in NSGS.items():
         network.load_network_security_groups(session, [{'id': nsg_id, 'vcn-id': VCN}], *args)
         network.load_nsg_security_rules(
-            session, [{'id': f'{nsg_id}.r{i}', 'direction': 'INGRESS', **r} for i, r in enumerate(rules)], nsg_id, TAG,
+            session, [{'id': f'{nsg_id}.r{i}', 'direction': 'INGRESS', **r} for i, r in enumerate(rules)],
+            nsg_id, TENANCY, TAG,
         )
     for subnet_id, (sl_id, target, prohibit) in SUBNETS.items():
         worlds = [WORLD, V6_WORLD] if subnet_id in V6_ROUTED else [WORLD]
@@ -120,7 +121,10 @@ def _instance(
         """
         MATCH (c:OCICompartment{id: $compartment})
         MERGE (c)-[:RESOURCE]->(i:OCIInstance{id: $instance_id})
-        MERGE (i)-[:OCI_VNIC_ATTACHMENT]->(:OCIVnicAttachment{id: $vnic_id + '.att', vnic_id: $vnic_id})
+        MERGE (i)-[:OCI_VNIC_ATTACHMENT]->(a:OCIVnicAttachment{id: $vnic_id + '.att', vnic_id: $vnic_id})
+        // Linked here, not by load_vnics, so another workspace's VM can still reach this tenancy's subnet
+        // (a pre-anchoring cross-tenant edge) and the walker's own scoping stays under test.
+        MERGE (a)-[:OCI_VNIC]->(:OCIVnic{id: $vnic_id})
         """,
         compartment=compartment, instance_id=instance_id, vnic_id=vnic_id,
     )
@@ -130,7 +134,7 @@ def _instance(
             'id': vnic_id, 'subnet-id': subnet_id, 'public-ip': public_ip, 'private-ip': private_ip,
             'nsg-ids': list(nsgs), 'ipv6-addresses': list(ipv6),
         }],
-        REGION, TAG,
+        TENANCY, REGION, TAG,
     )
 
 
@@ -151,9 +155,10 @@ def _instances(session):
     _run(
         session,
         "MATCH (i:OCIInstance{id: 'xl-i-open'}) SET i.image_id = 'xl-img', i.exposed_internet = $u "
-        "MERGE (:OCIImage{id: 'xl-img', display_name: 'Oracle-Linux-8.9-2024.01.26-0'}) "
+        "WITH i MATCH (c:OCICompartment{id: $compartment}) "
+        "MERGE (c)-[:RESOURCE]->(:OCIImage{id: 'xl-img', display_name: 'Oracle-Linux-8.9-2024.01.26-0'}) "
         "WITH i MATCH (s:OCIInstance{id: 'xl-i-rfc1918'}) SET s.internet_reachable = true",
-        u=UNTOUCHED,
+        u=UNTOUCHED, compartment=COMPARTMENT,
     )
 
 
@@ -164,7 +169,7 @@ def _load_balancer(session):
         'backend-sets': {'web': {'backends': [{'ip-address': '10.0.5.5', 'port': 8080}]}},
     }
     rows = load_balancer.transform_load_balancers([lb], REGION)
-    load_balancer.load_load_balancers(session, rows, load_balancer.LOAD_BALANCER_LABEL, COMPARTMENT, TAG)
+    load_balancer.load_load_balancers(session, rows, load_balancer.LOAD_BALANCER_LABEL, TENANCY, COMPARTMENT, TAG)
 
 
 def _databases(session):
@@ -177,7 +182,7 @@ def _databases(session):
             }],
             REGION,
         ),
-        COMPARTMENT, TAG,
+        TENANCY, COMPARTMENT, TAG,
     )
     database.load_db_homes(
         session,
@@ -185,13 +190,13 @@ def _databases(session):
             [{'id': 'xl-db-home', 'lifecycle-state': 'AVAILABLE', 'db-system-id': 'xl-db', 'db-version': '19.22.0.0'}],
             REGION,
         ),
-        TAG,
+        TENANCY, TAG,
     )
     adbs = [{'id': 'xl-adb-open'}, {'id': 'xl-adb-acl', 'whitelisted-ips': ['198.51.100.7']}]
     database.load_autonomous_databases(
         session,
         database.transform_autonomous_databases([{'lifecycle-state': 'AVAILABLE', **a} for a in adbs], REGION),
-        COMPARTMENT, TAG,
+        TENANCY, COMPARTMENT, TAG,
     )
     # Left over from an earlier sync: the DB no longer admits this instance.
     _run(
@@ -210,18 +215,18 @@ def _managed(session):
     storage.load_buckets(
         session,
         storage.transform_buckets([{'name': n, 'id': n} for n in details], details, 'ns', REGION, {}),
-        COMPARTMENT, TAG,
+        TENANCY, COMPARTMENT, TAG,
     )
     cluster = {
         'id': 'xl-oke', 'lifecycle-state': 'ACTIVE', 'kubernetes-version': 'v1.29.1',
         'endpoint-config': {'subnet-id': 'xl-pub-open', 'is-public-ip-enabled': True},
     }
-    oke.load_clusters(session, oke.transform_clusters([cluster], {}, REGION), COMPARTMENT, TAG)
+    oke.load_clusters(session, oke.transform_clusters([cluster], {}, REGION), TENANCY, COMPARTMENT, TAG)
     gateways = api_gateway.transform_gateways(
         [{'id': 'xl-gw', 'endpoint-type': 'PUBLIC', 'subnet-id': 'xl-lb'}], REGION,
         [{'id': 'xl-dep', 'gateway-id': 'xl-gw', 'specification': {'routes': [{}]}}],
     )
-    api_gateway.load_gateways(session, gateways, COMPARTMENT, TAG)
+    api_gateway.load_gateways(session, gateways, TENANCY, COMPARTMENT, TAG)
 
 
 def _other_workspace(session):
