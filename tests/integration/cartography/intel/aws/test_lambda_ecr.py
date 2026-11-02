@@ -46,14 +46,20 @@ def test_lambda_ecr_links_through_the_organization(neo4j_session):
     assert links == {('lecr-l1', 'sha256:lecr-abc'), ('lecr-l4', 'sha256:lecr-old')}
 
 
-def test_lambda_ecr_links_only_images_in_the_account_repositories(neo4j_session):
-    # ECRImage is one node per digest for every tenant. The digest 'only-b' is in the other
-    # tenant's repository only, so this account's Lambda with that code hash must not link to it;
-    # 'both' is in a repository of each tenant and links through this account's own repository.
+def test_lambda_ecr_links_only_images_in_the_workspace_repositories(neo4j_session):
+    # ECRImage is one node per digest for every tenant, and the tenant boundary is the workspace.
+    # 'only-b' is only in another workspace's repository: no link. 'both' is in a repository of
+    # each workspace: links through this workspace's one. 'central' is only in a central ECR
+    # account of the same workspace (here under a second organization): linked.
     neo4j_session.run(
         """
         MERGE (w1:CloudanixWorkspace{id: 'lecr2-w1'})-[:OWNER]->(o1:AWSOrganization{id: 'lecr2-o-1'})
         MERGE (o1)-[:OWNER]->(a1:AWSAccount{id: 'lecr2-a1'})
+        MERGE (w1)-[:OWNER]->(:AWSOrganization{id: 'lecr2-o-1b'})-[:OWNER]->(central:AWSAccount{id: 'lecr2-central'})
+        MERGE (central_img:ECRImage{id: 'sha256:lecr2-central'})
+        MERGE (central)-[:RESOURCE]->(:ECRRepository{id: 'lecr2-repo-central'})-[:REPO_IMAGE]->
+            (:ECRRepositoryImage{id: 'lecr2-repo-central:app'})-[:IMAGE]->(central_img)
+        MERGE (a1)-[:RESOURCE]->(:AWSLambda{id: 'lecr2-l-central', codesha256: 'lecr2-central'})
         MERGE (w2:CloudanixWorkspace{id: 'lecr2-w2'})-[:OWNER]->(o2:AWSOrganization{id: 'lecr2-o-2'})
         MERGE (o2)-[:OWNER]->(a2:AWSAccount{id: 'lecr2-a2'})
         MERGE (only_b:ECRImage{id: 'sha256:lecr2-only-b'})
@@ -85,4 +91,4 @@ def test_lambda_ecr_links_only_images_in_the_account_repositories(neo4j_session)
             """,
         )
     }
-    assert links == {('lecr2-l-own', 'sha256:lecr2-both')}
+    assert links == {('lecr2-l-own', 'sha256:lecr2-both'), ('lecr2-l-central', 'sha256:lecr2-central')}
