@@ -66,23 +66,26 @@ def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_j
         mem.username = member.username,
         mem.state = member.state,
         mem.profile_url = member.web_url,
-        mem.created_by = member.created_by,
-        mem.access_level = member.access_level,
         mem.avatar_url = member.avatar_url,
         mem.email = member.public_email,
-        mem.expires_at = member.expires_at,
-        mem.group_id = member.group_id,
         mem.locked = member.locked,
-        mem.membership_state = member.membership_state,
         mem.web_url = member.web_url,
         mem.consolelink = member.consolelink,
         mem.lastupdated = $UpdateTag
+    // The member node is shared by every group (and tenant) the user is in: the membership values go on
+    // this group's MEMBER edge.
+    REMOVE mem.created_by, mem.access_level, mem.expires_at, mem.group_id, mem.membership_state
 
-    WITH mem
+    WITH mem, member
     MATCH (owner:GitLabGroup {id: $GroupId})
     MERGE (owner)-[o:MEMBER]->(mem)
     ON CREATE SET o.firstseen = timestamp()
-    SET o.lastupdated = $UpdateTag
+    SET o.lastupdated = $UpdateTag,
+        o.created_by = member.created_by,
+        o.access_level = member.access_level,
+        o.expires_at = member.expires_at,
+        o.group_id = member.group_id,
+        o.membership_state = member.membership_state
 
     """
     for member in members_data:

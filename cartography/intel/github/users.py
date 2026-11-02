@@ -96,16 +96,17 @@ def load_organization_users(
     SET u.fullname = user.node.name,
     u.username = user.node.login,
     u.has_2fa_enabled = user.hasTwoFactorEnabled,
-    u.role = user.role,
     u.is_site_admin = user.node.isSiteAdmin,
     u.email = user.node.email,
     u.company = user.node.company,
     u.consolelink = user.consolelink,
     u.lastupdated = $UpdateTag
+    // The user node is shared by every org (and tenant) the user is in: the org role goes on this org's edge.
+    REMOVE u.role
 
     MERGE (u)-[r:MEMBER_OF]->(org)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
+    SET r.lastupdated = $UpdateTag, r.role = user.role
     WITH org
     match (owner:CloudanixWorkspace{id:$workspace_id})
     merge (org)<-[o:OWNER]-(owner)
