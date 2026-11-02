@@ -330,7 +330,7 @@ def _load_bigtable_clusters_tx(
         c.defaultStorageType = cluster.defaultStorageType,
         c.lastupdated = $gcp_update_tag
     WITH c,cluster
-    MATCH (i:GCPBigtableInstance{id:cluster.instance_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPBigtableInstance{id:cluster.instance_id})
     MERGE (i)-[r:HAS_CLUSTER]->(c)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -388,7 +388,8 @@ def _load_bigtable_cluster_backups_tx(
         b.consolelink = backup.consolelink,
         b.lastupdated = $gcp_update_tag
     WITH b,backup
-    MATCH (c:GCPBigtableCluster{id:backup.cluster_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(:GCPBigtableInstance)
+        -[:HAS_CLUSTER]->(c:GCPBigtableCluster{id:backup.cluster_id})
     MERGE (c)-[r:HAS_BACKUP]->(b)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -440,7 +441,7 @@ def _load_bigtable_tables_tx(
         t.sourceType = table.restoreInfo.sourceType,
         t.lastupdated = $gcp_update_tag
     WITH table, t
-    MATCH (i:GCPBigtableInstance{id:table.instance_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPBigtableInstance{id:table.instance_id})
     MERGE (i)-[r:HAS_TABLE]->(t)
     ON CREATE SET
         r.firstseen = timestamp()
