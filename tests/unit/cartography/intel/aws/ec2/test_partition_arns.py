@@ -93,7 +93,7 @@ def test_load_reserved_instances(load_graph_data, kwargs, region, prefix):
 @patch.object(security_groups, 'load_graph_data')
 def test_load_ec2_security_groupinfo(load_graph_data, _rules, kwargs, region, prefix):
     data = [{'GroupId': 'sg-1', 'region': region}]
-    security_groups.load_ec2_security_groupinfo(MagicMock(), data, ACCOUNT, 1, **kwargs)
+    security_groups.load_ec2_security_groupinfo(MagicMock(), data, ACCOUNT, 1, "ws", **kwargs)
     assert _rows(load_graph_data)[0]['group_arn'] == f'{prefix}ec2:{region}:{ACCOUNT}:security-group/sg-1'
 
 

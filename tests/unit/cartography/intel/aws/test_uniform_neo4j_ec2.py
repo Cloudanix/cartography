@@ -113,10 +113,10 @@ class TestBatchedLoaders:
         session = MagicMock()
         data = [{"SubnetId": "subnet-1"}]
 
-        subnets.load_subnets(session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        subnets.load_subnets(session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
 
         session.run.assert_not_called()
-        # subnet nodes, vpc relations, account relations
+        # subnet nodes, account relations, vpc relations
         assert session.execute_write.call_count == 3
         for call in session.execute_write.call_args_list:
             assert_batched(call, data)
@@ -148,7 +148,7 @@ class TestBatchedLoaders:
         session = MagicMock()
         vpc_data = {"CidrBlockAssociationSet": [{"AssociationId": "a-1", "CidrBlock": "10.0.0.0/16"}]}
 
-        vpc.load_cidr_association_set(session, "vpc-1", vpc_data, "ipv4", TEST_UPDATE_TAG)
+        vpc.load_cidr_association_set(session, "vpc-1", vpc_data, "ipv4", TEST_UPDATE_TAG, TEST_ACCOUNT_ID)
 
         session.run.assert_not_called()
         call = session.execute_write.call_args

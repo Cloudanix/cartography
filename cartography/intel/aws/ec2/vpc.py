@@ -52,7 +52,7 @@ def get_ec2_vpcs(boto3_session: boto3.session.Session, region: str) -> List[Dict
 
 def _get_cidr_association_statement(block_type: str) -> str:
     INGEST_CIDR_TEMPLATE = Template("""
-    MATCH (vpc:AWSVpc{id: $VpcId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(vpc:AWSVpc{id: $VpcId})
     WITH vpc
     UNWIND $DictList as block_data
         MERGE (new_block:$block_label{id: $VpcId + '|' + block_data.$block_cidr})
@@ -88,8 +88,9 @@ def _get_cidr_association_statement(block_type: str) -> str:
 @timeit
 def load_cidr_association_set(
     neo4j_session: neo4j.Session, vpc_id: str, vpc_data: Dict, block_type: str,
-    update_tag: int,
+    update_tag: int, current_aws_account_id: str,
 ) -> None:
+    # Only this account's VPC: a VPC shared in through RAM gets its blocks from its owner's sync.
     ingest_statement = _get_cidr_association_statement(block_type)
 
     if block_type == "ipv6":
@@ -102,6 +103,7 @@ def load_cidr_association_set(
         ingest_statement,
         data,
         VpcId=vpc_id,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
@@ -206,6 +208,7 @@ def load_ec2_vpcs(
             block_type="ipv4",
             vpc_data=vpc,
             update_tag=update_tag,
+            current_aws_account_id=current_aws_account_id,
         )
 
         load_cidr_association_set(
@@ -214,6 +217,7 @@ def load_ec2_vpcs(
             block_type="ipv6",
             vpc_data=vpc,
             update_tag=update_tag,
+            current_aws_account_id=current_aws_account_id,
         )
 
 

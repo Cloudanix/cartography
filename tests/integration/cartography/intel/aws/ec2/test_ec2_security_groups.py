@@ -5,6 +5,7 @@ import tests.data.aws.ec2.security_groups
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'eu-north-1'
 TEST_UPDATE_TAG = 123456789
+TEST_WORKSPACE_ID = 'ws-security-groups'
 
 
 def test_load_security_groups(neo4j_session):
@@ -12,9 +13,9 @@ def test_load_security_groups(neo4j_session):
     cartography.intel.aws.ec2.security_groups.load_ec2_security_groupinfo(
         neo4j_session,
         data,
-        TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected_nodes = {
@@ -50,9 +51,9 @@ def test_load_security_groups_relationships(neo4j_session):
     cartography.intel.aws.ec2.security_groups.load_ec2_security_groupinfo(
         neo4j_session,
         data,
-        TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected_nodes = {

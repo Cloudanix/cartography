@@ -271,6 +271,7 @@ def test_rds_exposure(neo4j_session):
         DESCRIBE_SUBNETS,
         '1234',
         TEST_UPDATE_TAG,
+        '1234',
     )
 
     cartography.intel.aws.ec2.security_groups.load_ec2_security_groupinfo(
@@ -278,6 +279,7 @@ def test_rds_exposure(neo4j_session):
         DESCRIBE_SGS,
         '1234',
         TEST_UPDATE_TAG,
+        '1234',
     )
 
     cartography.intel.aws.rds.load_rds_instances(

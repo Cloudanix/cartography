@@ -130,9 +130,9 @@ def test_shared_subnet_is_claimed_and_written_by_its_owner_only(neo4j_session):
         """,
         owner=OWNER, participant=PARTICIPANT,
     )
-    subnets.load_subnets(neo4j_session, [_subnet(True)], OWNER, OWNER_TAG)
+    subnets.load_subnets(neo4j_session, [_subnet(True)], OWNER, OWNER_TAG, 'sv-ws-owner')
     # The participant sees the subnet, not as part of its own default VPC.
-    subnets.load_subnets(neo4j_session, [_subnet(False)], PARTICIPANT, PARTICIPANT_TAG)
+    subnets.load_subnets(neo4j_session, [_subnet(False)], PARTICIPANT, PARTICIPANT_TAG, 'sv-ws-participant')
     GraphJob.run_from_json(
         neo4j_session, read_text('cartography.data.jobs.cleanup', 'aws_ingest_subnets_cleanup.json'), {
             'WORKSPACE_ID': 'sv-ws-participant', 'ORGANIZATION_ID': 'sv-ws-participant-org', 'AWS_ID': PARTICIPANT,
