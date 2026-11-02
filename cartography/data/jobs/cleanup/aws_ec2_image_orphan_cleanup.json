@@ -1,0 +1,11 @@
+{
+	"statements": [
+		{
+			"__comment": "Global orphan sweep, deliberately tenant-independent: tenant cleanups delete only their own edges to EC2Image (a legacy node can still be linked from several tenants), and the node goes once no edge refers to it.",
+			"query": "MATCH (n:EC2Image) WHERE NOT EXISTS { (n)--() } WITH n LIMIT $LIMIT_SIZE DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		}
+	],
+	"name": "cleanup orphan EC2Image"
+}

@@ -12,14 +12,13 @@ from cloudconsolelink.clouds.aws import AWSLinker
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import run_write_query
-from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.util.arns import DEFAULT_PARTITION
 from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.intel.aws.util.common import build_trusted_accounts
 from cartography.intel.aws.util.common import is_cross_account_statement
-from cartography.models.aws.ec2.images import EC2ImageSchema
 from cartography.util import aws_handle_regions
+from cartography.util import run_cleanup_job
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
@@ -233,8 +232,10 @@ def load_images(
 
 @timeit
 def cleanup_images(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
-    cleanup_job = GraphJob.from_node_schema(EC2ImageSchema(), common_job_parameters)
-    cleanup_job.run(neo4j_session)
+    # Not the EC2ImageSchema node cleanup: that deletes stale nodes, and a node still linked from
+    # another tenant must only lose this account's edge. Nodes left with no edge are swept after.
+    run_cleanup_job('aws_import_ec2_images_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job('aws_ec2_image_orphan_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit

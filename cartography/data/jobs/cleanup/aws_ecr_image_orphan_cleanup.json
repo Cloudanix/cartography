@@ -1,0 +1,11 @@
+{
+  "statements": [
+    {
+      "__comment": "Global orphan sweep, deliberately tenant-independent: ECRImage is one node per digest shared by every account that pushed it, so tenant cleanups delete only their own edges and the image goes once no repository image or Lambda refers to it.",
+      "query": "MATCH (n:ECRImage) WHERE NOT EXISTS { (n)--() } WITH n LIMIT $LIMIT_SIZE DELETE (n) RETURN COUNT(*) AS TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    }
+  ],
+  "name": "cleanup orphan ECRImage"
+}

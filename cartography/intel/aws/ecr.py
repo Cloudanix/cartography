@@ -177,6 +177,8 @@ def load_ecr_repository_images(
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     logger.debug("Running ECR cleanup job.")
     run_cleanup_job("aws_import_ecr_cleanup.json", neo4j_session, common_job_parameters)
+    # ECRImage is shared across tenants: the account cleanup only drops its edges, this drops orphans.
+    run_cleanup_job("aws_ecr_image_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def _get_image_data(
