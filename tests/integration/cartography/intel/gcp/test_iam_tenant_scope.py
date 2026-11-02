@@ -149,7 +149,10 @@ def test_policy_members_link_only_the_orgs_own_principals(neo4j_session):
             _params(tenant)['GCP_PROJECT_ID'], TEST_UPDATE_TAG,
         )
     api_id = 'projects/proj-iamt-a/locations/global/apis/api-iamt'
-    neo4j_session.run("MERGE (:GCPAPI{id: $id})", id=api_id)
+    neo4j_session.run(
+        "MATCH (p:GCPProject{id: $p}) MERGE (p)-[:HAS_API_ENABLED]->(:GCPAPI{id: $id})",
+        p=_params(TENANT)['GCP_PROJECT_ID'], id=api_id,
+    )
     # This customer's API policy names its own service account and the other customer's.
     api = {'id': api_id, 'entities': [{'email': _service_account(TENANT)}, {'email': _service_account(OTHER_TENANT)}]}
 

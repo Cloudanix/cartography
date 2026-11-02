@@ -522,7 +522,7 @@ def load_apis_entity_relation_tx(
     UNWIND $entities AS entity
     """ + ORG_PRINCIPAL_MATCH + """
     WITH DISTINCT principal
-    MATCH (api:GCPAPI{id: $api_id})
+    MATCH (:GCPProject{id: $GCP_PROJECT_ID})-[:HAS_API_ENABLED]->(api:GCPAPI{id: $api_id})
     MERGE (principal)-[r:USES]->(api)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag    """
@@ -532,6 +532,7 @@ def load_apis_entity_relation_tx(
         entities=api.get('entities', []),
         WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
         GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
+        GCP_PROJECT_ID=common_job_parameters['GCP_PROJECT_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -567,7 +568,8 @@ def load_gateway_entity_relation_tx(
     UNWIND $entities AS entity
     """ + ORG_PRINCIPAL_MATCH + """
     WITH DISTINCT principal
-    MATCH (gateway:GCPAPIGateway{id: $gateway_id})
+    MATCH (:GCPProject{id: $GCP_PROJECT_ID})-[:HAS_API_ENABLED]->(:GCPAPI)-[:HAS_CONFIG]->(:GCPAPIConfig)
+        -[:HAS_GATEWAY]->(gateway:GCPAPIGateway{id: $gateway_id})
     MERGE (principal)-[r:USES]->(gateway)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag    """
@@ -577,6 +579,7 @@ def load_gateway_entity_relation_tx(
         entities=gateway.get('entities', []),
         WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
         GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
+        GCP_PROJECT_ID=common_job_parameters['GCP_PROJECT_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -624,7 +627,7 @@ def load_api_configs_tx(tx: neo4j.Transaction, configs: List[Dict], project_id: 
         config.consolelink = conf.consolelink,
         config.lastupdated = $gcp_update_tag
     WITH config,conf
-    MATCH (api:GCPAPI{id:conf.api_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:HAS_API_ENABLED]->(api:GCPAPI{id:conf.api_id})
     MERGE (api)-[r:HAS_CONFIG]->(config)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -699,7 +702,8 @@ def load_gateways_tx(tx: neo4j.Transaction, gateways: List[Dict], project_id: st
         gateway.consolelink = g.consolelink,
         gateway.lastupdated = $gcp_update_tag
     WITH gateway,g
-    MATCH (apiconfig:GCPAPIConfig{id:g.apiConfig})
+    MATCH (:GCPProject{id: $ProjectId})-[:HAS_API_ENABLED]->(:GCPAPI)
+        -[:HAS_CONFIG]->(apiconfig:GCPAPIConfig{id:g.apiConfig})
     MERGE (apiconfig)-[r:HAS_GATEWAY]->(gateway)
     ON CREATE SET
         r.firstseen = timestamp()
