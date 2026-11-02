@@ -155,10 +155,13 @@ def load_ec2_auto_scaling_groups(
         SET r.lastupdated = $update_tag
     """
 
+    # The group names its launch configuration, and names are unique only per account and region
+    # (the ARN carries a random id): resolve it inside the syncing account and region.
     ingest_lcs = """
     UNWIND $DictList as ag
         MATCH (group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
-        MATCH (config:LaunchConfiguration{name: ag.LaunchConfigurationName})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->
+            (config:LaunchConfiguration{name: ag.LaunchConfigurationName, region: $Region})
         MERGE (group)-[r:HAS_LAUNCH_CONFIG]->(config)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
