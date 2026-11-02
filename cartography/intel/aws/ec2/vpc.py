@@ -160,10 +160,21 @@ def load_ec2_vpcs(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag"""
 
+    # A VPC shared into this account through RAM belongs to OwnerId, maybe another tenant: no RESOURCE claim,
+    # and its owner's facts (name tag, is_default, state) are not overwritten with this account's view. The
+    # arn, built from OwnerId, is the same whoever writes it; it is SET so a node an older sync stamped with
+    # this account's arn stops passing aws_import_vpc_cleanup.json's owner check (which would delete it).
+    ingest_shared_vpc = """
+    MERGE (new_vpc:AWSVpc{id: $VpcId})
+    ON CREATE SET new_vpc.firstseen = timestamp(), new_vpc.vpcid = $VpcId, new_vpc.region = $Region,
+        new_vpc.primary_cidr_block = $PrimaryCIDRBlock, new_vpc.lastupdated = $update_tag
+    SET new_vpc.arn = $Arn, new_vpc.consolelink = $consolelink"""
+
     for vpc in data:
         region = vpc.get('region', '')
         vpc_id = vpc["VpcId"]  # fail if not present
-        vpc_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:vpc/{vpc_id}"
+        owner_id = vpc.get("OwnerId", current_aws_account_id)
+        vpc_arn = f"arn:{partition}:ec2:{region}:{owner_id}:vpc/{vpc_id}"
         consolelink = aws_console_link.get_console_link(arn=vpc_arn)
         vpc_name = vpc_id
         for tag in vpc.get("Tags", []):
@@ -173,7 +184,7 @@ def load_ec2_vpcs(
 
         run_write_query(
             neo4j_session,
-            ingest_vpc,
+            ingest_vpc if owner_id == current_aws_account_id else ingest_shared_vpc,
             VpcId=vpc_id,
             InstanceTenancy=vpc.get("InstanceTenancy", None),
             State=vpc.get("State", None),

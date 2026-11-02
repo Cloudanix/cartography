@@ -96,9 +96,13 @@ def load_internet_gateways(
     current_aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     logger.info("Loading %d Internet Gateways in %s.", len(internet_gateways), region)
+    owned: List[Dict] = []
+    shared: List[Dict] = []
     for igw in internet_gateways:
         arn = f"arn:{partition}:ec2:{region}:{igw.get('OwnerId', '')}:internet-gateway/{igw['InternetGatewayId']}"
         igw['consolelink'] = aws_console_link.get_console_link(arn=arn)
+        (owned if igw.get('OwnerId', current_aws_account_id) == current_aws_account_id else shared).append(igw)
+
     query = """
     UNWIND $DictList as igw
         MERGE (ig:AWSInternetGateway{id: igw.InternetGatewayId})
@@ -118,23 +122,45 @@ def load_internet_gateways(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
         WITH igw, ig
+    """ + _ATTACH_TO_VPCS
 
+    # A gateway of a VPC shared into this account (RAM) belongs to the VPC owner, maybe another tenant:
+    # no RESOURCE claim, nothing SET on an existing node (is_default is computed against this account's
+    # default VPC). It is still linked to its VPC, which this account's resources in shared subnets reach.
+    shared_query = """
+    UNWIND $DictList as igw
+        MERGE (ig:AWSInternetGateway{id: igw.InternetGatewayId})
+        ON CREATE SET
+            ig.firstseen = timestamp(),
+            ig.region = $region,
+            ig.lastupdated = $aws_update_tag,
+            ig.ownerid = igw.OwnerId,
+            ig.arn = "arn:"+$partition+":ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
+            ig.consolelink = igw.consolelink
+        WITH igw, ig
+    """ + _ATTACH_TO_VPCS
+
+    for statement, rows in ((query, owned), (shared_query, shared)):
+        if not rows:
+            continue
+        load_graph_data(
+            neo4j_session,
+            statement,
+            rows,
+            region=region,
+            partition=partition,
+            aws_account_id=current_aws_account_id,
+            aws_update_tag=update_tag,
+        )
+
+
+_ATTACH_TO_VPCS = """
         UNWIND igw.Attachments as attachment
         MATCH (vpc:AWSVpc{id: attachment.VpcId})
         MERGE (vpc)-[r:ATTACHED_TO]->(ig)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
-    """
-
-    load_graph_data(
-        neo4j_session,
-        query,
-        internet_gateways,
-        region=region,
-        partition=partition,
-        aws_account_id=current_aws_account_id,
-        aws_update_tag=update_tag,
-    )
+"""
 
 
 @timeit
