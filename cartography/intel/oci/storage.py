@@ -451,7 +451,8 @@ def load_block_volumes(
     MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
         -[:RESOURCE]->(vol:OCIBlockVolume)
     WHERE vol.lastupdated = $oci_update_tag
-    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)-[:OCI_VOLUME_ATTACHMENT]->(att:OCIVolumeAttachment)
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)
+        -[:OCI_VOLUME_ATTACHMENT]->(att:OCIVolumeAttachment)
     WHERE att.volume_id = vol.ocid
       AND att.lifecycle_state = 'ATTACHED'
     MERGE (inst)-[r:OCI_VOLUME_ATTACHMENT]->(vol)
@@ -617,7 +618,8 @@ def load_boot_volumes(
     MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
         -[:RESOURCE]->(bv:OCIBootVolume)
     WHERE bv.lastupdated = $oci_update_tag
-    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)-[:OCI_BOOT_VOLUME_ATTACHMENT]->(att:OCIBootVolumeAttachment)
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)
+        -[:OCI_BOOT_VOLUME_ATTACHMENT]->(att:OCIBootVolumeAttachment)
     WHERE att.boot_volume_id = bv.ocid
       AND att.lifecycle_state = 'ATTACHED'
     MERGE (inst)-[r:OCI_BOOT_VOLUME_ATTACHMENT]->(bv)
@@ -803,7 +805,8 @@ def load_volume_backups(
     link_block = """
     UNWIND $DictList AS bk
         WITH bk WHERE bk.source_kind = 'BLOCK' AND bk.parent_volume_id IS NOT NULL
-        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(parent:OCIBlockVolume{id: bk.parent_volume_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(parent:OCIBlockVolume{id: bk.parent_volume_id})
         // The backup has no tenancy path of its own (its parent may be gone); it was MERGEd by its
         // OCID (globally unique) just above, so MERGE on that key instead of looking it up.
         MERGE (b:OCIVolumeBackup{id: bk.id})
@@ -816,7 +819,8 @@ def load_volume_backups(
     link_boot = """
     UNWIND $DictList AS bk
         WITH bk WHERE bk.source_kind = 'BOOT' AND bk.parent_volume_id IS NOT NULL
-        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(parent:OCIBootVolume{id: bk.parent_volume_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(parent:OCIBootVolume{id: bk.parent_volume_id})
         // The backup has no tenancy path of its own (its parent may be gone); it was MERGEd by its
         // OCID (globally unique) just above, so MERGE on that key instead of looking it up.
         MERGE (b:OCIVolumeBackup{id: bk.id})
