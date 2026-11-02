@@ -1,0 +1,11 @@
+{
+  "statements": [
+    {
+      "__comment": "Only nodes no sync has written for 24h (86400s; lastupdated is a sync start time, reused across a paginated run) are swept, so a node another worker has just written and not yet linked survives.",
+      "query": "MATCH (n:AzureDevOpsUser) WHERE NOT (n)--() AND coalesce(n.lastupdated, 0) < $UPDATE_TAG - 86400 WITH n LIMIT $LIMIT_SIZE DELETE (n) return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    }
+  ],
+  "name": "orphan sweep of shared AzureDevOpsUser nodes"
+}

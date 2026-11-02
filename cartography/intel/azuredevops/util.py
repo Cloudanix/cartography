@@ -21,6 +21,19 @@ RETRY_DELAY = 1
 # Web link for an Azure DevOps entity, or None (logged) when an identifier is missing or the configured
 # org url is not plain http(s); never fails a sync. The org url's userinfo, query and fragment are dropped.
 get_console_link = partial(git_links.get_console_link, "azuredevops")
+AZURE_DEVOPS_HOST = "dev.azure.com"
+
+
+def get_org_node_id(url: Optional[str], org_name: Optional[str]) -> git_links.ScmKey:
+    """
+    AzureDevOpsOrganization graph id. Organization names are unique on dev.azure.com, which keeps the bare name
+    it has always had; an Azure DevOps Server collection ("DefaultCollection") is unique only on its server, so
+    it is keyed "<host>[/path]/<name>".
+
+    :param url: the configured Azure DevOps base url, e.g. https://dev.azure.com
+    :param org_name: the organization (collection) name
+    """
+    return git_links.host_scoped_key(url, AZURE_DEVOPS_HOST, org_name)
 
 
 def get_access_token(

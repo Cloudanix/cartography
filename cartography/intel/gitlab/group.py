@@ -9,6 +9,7 @@ from urllib.parse import quote
 import neo4j
 
 from cartography.intel.gitlab.common import get_console_link
+from cartography.intel.gitlab.common import get_node_id
 from cartography.intel.gitlab.common import get_web_base_url
 from cartography.intel.gitlab.pagination import paginate_request
 from cartography.util import make_requests_url
@@ -60,6 +61,7 @@ def get_namespace(hosted_domain: str, access_token: str, group_id: int) -> Dict:
 def transform_groups(groups: List[Dict], hosted_domain: Optional[str]) -> List[Dict]:
     base_url = get_web_base_url(hosted_domain)
     for grp in groups:
+        grp["node_id"] = get_node_id(hosted_domain, grp.get("full_path"))
         grp["consolelink"] = get_console_link("group", base_url=base_url, group_path=grp.get("full_path"))
     return groups
 
@@ -81,7 +83,7 @@ def _load_group_data(
     UNWIND $groups AS grp
     WITH grp
     WHERE grp.id IS NOT NULL AND grp.name IS NOT NULL
-    MERGE (group:GitLabGroup{id: grp.full_path})
+    MERGE (group:GitLabGroup{id: grp.node_id})
     ON CREATE SET
         group.firstseen = timestamp(),
         group.created_at = grp.created_at,

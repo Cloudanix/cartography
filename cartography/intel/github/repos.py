@@ -21,6 +21,7 @@ from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import describe_request_error
 from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_org_node_id
 from cartography.intel.github.util import get_retry_delay_seconds
 from cartography.intel.github.util import get_web_base_url
 from cartography.intel.github.util import handle_rate_limit_sleep
@@ -312,7 +313,7 @@ def transform(repos_json: List[Dict], web_base_url: Optional[str] = None) -> Dic
     for repo_object in repos_json:
         _transform_repo_languages(repo_object["url"], repo_object, transformed_repo_languages)
         _transform_repo_objects(repo_object, transformed_repo_list, web_base_url)
-        _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
+        _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners, web_base_url)
         _transform_collaborators(repo_object.get("collaborators"), repo_object["url"], transformed_collaborators)
         _transform_branches(repo_object["url"], repo_object, transformed_branches, web_base_url)
         # _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
@@ -490,18 +491,22 @@ def _transform_repo_objects(
     )
 
 
-def _transform_repo_owners(owner_id: str, repo: Dict, repo_owners: List[Dict]) -> None:
+def _transform_repo_owners(
+    owner_id: str, repo: Dict, repo_owners: List[Dict], web_base_url: Optional[str] = None,
+) -> None:
     """
     Helper function to transform repo owners.
     :param owner_id: The URL of the owner object (either of type Organization or User).
     :param repo: The repo object; see tests.data.github.repos.GET_REPOS for data shape.
     :param repo_owners: Output array to append transformed results to.
+    :param web_base_url: GitHub web host the repo lives on; None means github.com.
     :return: Nothing.
     """
     repo_owners.append(
         {
             "repo_id": repo["url"],
             "owner": repo["owner"]["login"],
+            "owner_node_id": get_org_node_id(web_base_url, repo["owner"]["login"]),
             "owner_id": owner_id,
             "type": repo["owner"]["__typename"],
         },
@@ -723,12 +728,15 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
 
 
 @timeit
-def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_languages: List[Dict]) -> None:
+def load_github_languages(
+    neo4j_session: neo4j.Session, update_tag: int, repo_languages: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the relationships for repo languages
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param repo_languages: list of language to repo mappings
+    :param workspace_id: the syncing Cloudanix workspace; a language links only to a repo of its orgs
     :return: Nothing
     """
     ingest_languages = """
@@ -740,7 +748,8 @@ def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_la
         SET pl.lastupdated = $UpdateTag
         WITH pl, lang
 
-        MATCH (repo:GitHubRepository{id: lang.repo_id})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
+            -[:RESOURCE]->(repo:GitHubRepository{id: lang.repo_id})
         MERGE (pl)<-[r:LANGUAGE]-(repo)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $UpdateTag"""
@@ -750,22 +759,28 @@ def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_la
         ingest_languages,
         repo_languages,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
 @timeit
-def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owners: List[Dict]) -> None:
+def load_github_owners(
+    neo4j_session: neo4j.Session, update_tag: int, repo_owners: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the relationships for repo owners
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param repo_owners: list of owner to repo mappings
+    :param workspace_id: the syncing Cloudanix workspace; a repo is claimed only by an org this workspace owns
+        (organization.sync creates it first), never by an org node of another workspace
     :return: Nothing
     """
+    # The repo was MERGEd by load_github_repos in this sync (its id is the host-qualified repo url); this RESOURCE
+    # edge is its tenant claim, so it is the one lookup that cannot go through the org.
     ingest_owner_template = Template("""
         UNWIND $DictList AS item
-        MERGE (node:$account_type{id: item.owner})
-        ON CREATE SET node.firstseen = timestamp()
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(node:$account_type{id: item.owner_node_id})
         SET node.username = item.owner,
         node.lastupdated = $UpdateTag
         WITH node, item
@@ -781,7 +796,7 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
 
     for owner_type, type_label in account_type.items():
         rows = [
-            {"owner": owner["owner"], "repo_id": owner["repo_id"]}
+            {"owner": owner["owner"], "owner_node_id": owner["owner_node_id"], "repo_id": owner["repo_id"]}
             for owner in repo_owners
             if owner["type"] == owner_type
         ]
@@ -790,11 +805,12 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
             ingest_owner_template.safe_substitute(account_type=type_label),
             rows,
             UpdateTag=update_tag,
+            WORKSPACE_ID=workspace_id,
         )
 
 
 @timeit
-def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborators: Dict) -> None:
+def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborators: Dict, workspace_id: str) -> None:
     query = Template("""
     UNWIND $DictList as user
 
@@ -808,7 +824,8 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
     u.lastupdated = $UpdateTag
 
     WITH u, user
-    MATCH (repo:GitHubRepository{id: user.repo_url})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
+        -[:RESOURCE]->(repo:GitHubRepository{id: user.repo_url})
     MERGE (repo)<-[o:$rel_label]-(u)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
@@ -820,26 +837,33 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
             query.safe_substitute(rel_label=relationship_label),
             collaborators[collab_type],
             UpdateTag=update_tag,
+            WORKSPACE_ID=workspace_id,
         )
 
 
 @timeit
 def load(neo4j_session: neo4j.Session, common_job_parameters: Dict, repo_data: Dict) -> None:
-    load_github_repos(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repos"])
-    load_github_branches(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["branches"])
-    load_github_owners(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_owners"])
-    load_github_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_languages"])
-    load_collaborators(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_collaborators"])
-    load_python_requirements(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["python_requirements"])
+    update_tag = common_job_parameters["UPDATE_TAG"]
+    workspace_id = common_job_parameters["WORKSPACE_ID"]
+    load_github_repos(neo4j_session, update_tag, repo_data["repos"])
+    # Owners first: the org's RESOURCE edge is what every later repo lookup is anchored through.
+    load_github_owners(neo4j_session, update_tag, repo_data["repo_owners"], workspace_id)
+    load_github_branches(neo4j_session, update_tag, repo_data["branches"], workspace_id)
+    load_github_languages(neo4j_session, update_tag, repo_data["repo_languages"], workspace_id)
+    load_collaborators(neo4j_session, update_tag, repo_data["repo_collaborators"], workspace_id)
+    load_python_requirements(neo4j_session, update_tag, repo_data["python_requirements"], workspace_id)
 
 
 @timeit
-def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_data: List[Dict]) -> None:
+def load_github_branches(
+    neo4j_session: neo4j.Session, update_tag: int, branch_data: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the GitHub branch information
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param branch_data: branch data objects
+    :param workspace_id: the syncing Cloudanix workspace; a branch links only to a repo of its orgs
     :return: None
     """
     ingest_branches = """
@@ -852,7 +876,8 @@ def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_d
     branch.lastupdated = $UpdateTag
 
     WITH branch, branch_info
-    MATCH (repo:GitHubRepository{id: branch_info.repo_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
+        -[:RESOURCE]->(repo:GitHubRepository{id: branch_info.repo_id})
     MERGE (repo)-[r:BRANCH]->(branch)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -862,11 +887,14 @@ def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_d
         ingest_branches,
         branch_data,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
 @timeit
-def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requirements_objects: List[Dict]) -> None:
+def load_python_requirements(
+    neo4j_session: neo4j.Session, update_tag: int, requirements_objects: List[Dict], workspace_id: str,
+) -> None:
     query = """
     UNWIND $DictList AS req
         MERGE (lib:PythonLibrary:Dependency{id: req.id})
@@ -876,7 +904,8 @@ def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requ
         lib.version = req.version
 
         WITH lib, req
-        MATCH (repo:GitHubRepository{id: req.repo_url})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
+            -[:RESOURCE]->(repo:GitHubRepository{id: req.repo_url})
         MERGE (repo)-[r:REQUIRES]->(lib)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $UpdateTag,
@@ -887,6 +916,7 @@ def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requ
         query,
         requirements_objects,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
@@ -1116,6 +1146,10 @@ def sync(
     load(neo4j_session, common_job_parameters, repo_data)
 
     run_cleanup_job("github_repos_cleanup.json", neo4j_session, common_job_parameters)
+    # ProgrammingLanguage / PythonLibrary are catalog nodes every tenant's repos share, so the tenant cleanup above
+    # removes only this org's stale edges; this tenant-independent sweep deletes a catalog node once nothing links
+    # to it. Plain DELETE: a node another sync is linking at that moment fails this sweep, never loses the edge.
+    run_cleanup_job("github_repos_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process GitHub repositories: {toc - tic:0.4f} seconds")

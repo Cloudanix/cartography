@@ -6,6 +6,7 @@ from datetime import timedelta
 from datetime import timezone as tz
 from functools import partial
 from typing import Any
+from typing import cast
 from typing import Dict
 from typing import List
 from typing import NamedTuple
@@ -23,7 +24,8 @@ GITHUB_API_HOST = "api.github.com"
 # GHE.com data residency: the API is served at api.<tenant>.ghe.com, the web UI at <tenant>.ghe.com.
 GHEC_API_HOST_PREFIX = "api."
 GHEC_HOST_SUFFIX = ".ghe.com"
-GITHUB_WEB_BASE_URL = "https://github.com"
+GITHUB_HOST = "github.com"
+GITHUB_WEB_BASE_URL = f"https://{GITHUB_HOST}"
 # Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
 _TIMEOUT = (60, 60)
 _GRAPHQL_RATE_LIMIT_REMAINING_THRESHOLD = 500
@@ -49,6 +51,17 @@ def get_web_base_url(api_url: str) -> str:
     if host.startswith(GHEC_API_HOST_PREFIX) and host.endswith(GHEC_HOST_SUFFIX):
         return base.replace(f"://{GHEC_API_HOST_PREFIX}", "://", 1)
     return base
+
+
+def get_org_node_id(web_base_url: Optional[str], login: str) -> str:
+    """
+    GitHubOrganization graph id. Logins are unique only within one GitHub host, so an org on GitHub Enterprise
+    Server or GHE.com is keyed "<host>/<login>"; github.com keeps the bare login it has always had.
+
+    :param web_base_url: the org's web host (get_web_base_url of the configured API url); None means github.com
+    :param login: the organization login
+    """
+    return cast(str, git_links.host_scoped_key(web_base_url, GITHUB_HOST, login))  # a str key stays a str
 
 
 # Web link for a GitHub entity, or None (logged) when an identifier is missing; never fails a sync.
