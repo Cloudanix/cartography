@@ -88,6 +88,7 @@ def test_load_storage_account_data_relationships(neo4j_session):
 def test_load_queue_services(neo4j_session):
     storage._load_queue_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_QUEUE_SERVICES,
         TEST_UPDATE_TAG,
     )
@@ -119,6 +120,7 @@ def test_load_queue_services_relationships(neo4j_session):
 
     storage._load_queue_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_QUEUE_SERVICES,
         TEST_UPDATE_TAG,
     )
@@ -149,6 +151,7 @@ def test_load_queue_services_relationships(neo4j_session):
 def test_load_table_services(neo4j_session):
     storage._load_table_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TABLE_SERVICES,
         TEST_UPDATE_TAG,
     )
@@ -180,6 +183,7 @@ def test_load_table_services_relationships(neo4j_session):
 
     storage._load_table_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TABLE_SERVICES,
         TEST_UPDATE_TAG,
     )
@@ -210,6 +214,7 @@ def test_load_table_services_relationships(neo4j_session):
 def test_load_file_services(neo4j_session):
     storage._load_file_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_FILE_SERVICES,
         TEST_UPDATE_TAG,
     )
@@ -241,6 +246,7 @@ def test_load_file_services_relationships(neo4j_session):
 
     storage._load_file_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_FILE_SERVICES,
         TEST_UPDATE_TAG,
     )
@@ -271,6 +277,7 @@ def test_load_file_services_relationships(neo4j_session):
 def test_load_blob_services(neo4j_session):
     storage._load_blob_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_BLOB_SERVICES,
         TEST_UPDATE_TAG,
     )
@@ -302,6 +309,7 @@ def test_load_blob_services_relationships(neo4j_session):
 
     storage._load_blob_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_BLOB_SERVICES,
         TEST_UPDATE_TAG,
     )
@@ -332,6 +340,7 @@ def test_load_blob_services_relationships(neo4j_session):
 def test_load_queues(neo4j_session):
     storage._load_queues(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_QUEUE,
         TEST_UPDATE_TAG,
     )
@@ -356,12 +365,14 @@ def test_load_queues_relationships(neo4j_session):
     # Create Test Azure Storage Queue Service
     storage._load_queue_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_QUEUE_SERVICES,
         TEST_UPDATE_TAG,
     )
 
     storage._load_queues(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_QUEUE,
         TEST_UPDATE_TAG,
     )
@@ -394,6 +405,7 @@ def test_load_queues_relationships(neo4j_session):
 def test_load_tables(neo4j_session):
     storage._load_tables(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TABLES,
         TEST_UPDATE_TAG,
     )
@@ -418,12 +430,14 @@ def test_load_tables_relationships(neo4j_session):
     # Create Test Azure Storage Table Service
     storage._load_table_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TABLE_SERVICES,
         TEST_UPDATE_TAG,
     )
 
     storage._load_tables(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TABLES,
         TEST_UPDATE_TAG,
     )
@@ -456,6 +470,7 @@ def test_load_tables_relationships(neo4j_session):
 def test_load_shares(neo4j_session):
     storage._load_shares(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_FILE_SHARES,
         TEST_UPDATE_TAG,
     )
@@ -480,12 +495,14 @@ def test_load_shares_relationships(neo4j_session):
     # Create Test Azure Storage File Service
     storage._load_file_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_FILE_SERVICES,
         TEST_UPDATE_TAG,
     )
 
     storage._load_shares(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_FILE_SHARES,
         TEST_UPDATE_TAG,
     )
@@ -518,6 +535,7 @@ def test_load_shares_relationships(neo4j_session):
 def test_load_blob_containers(neo4j_session):
     storage._load_blob_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_BLOB_CONTAINERS,
         TEST_UPDATE_TAG,
     )
@@ -542,12 +560,14 @@ def test_load_blob_containers_relationships(neo4j_session):
     # Create Test Azure Storage Blob Service
     storage._load_blob_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_BLOB_SERVICES,
         TEST_UPDATE_TAG,
     )
 
     storage._load_blob_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_BLOB_CONTAINERS,
         TEST_UPDATE_TAG,
     )
@@ -586,12 +606,14 @@ def test_storage_public_facing_analysis(neo4j_session):
     )
     storage._load_blob_services(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_BLOB_SERVICES,
         TEST_UPDATE_TAG,
     )
 
     storage._load_blob_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_BLOB_CONTAINERS,
         TEST_UPDATE_TAG,
     )
