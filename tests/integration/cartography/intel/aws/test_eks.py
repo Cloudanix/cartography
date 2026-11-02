@@ -19,7 +19,11 @@ TEST_UPDATE_TAG = 123456789
 TEST_WORKSPACE_ID = '12345'
 
 
-@patch.object(cartography.intel.aws.eks, 'get_eks_clusters', return_value=LIST_CLUSTERS)
+@patch.object(
+    cartography.intel.aws.eks, 'get_eks_clusters',
+    # get_eks_clusters returns {name, region} per cluster, not the raw list_clusters names.
+    return_value=[{'name': name, 'region': TEST_REGION} for name in LIST_CLUSTERS],
+)
 @patch.object(cartography.intel.aws.eks, 'get_eks_describe_cluster', side_effect=DESCRIBE_CLUSTERS)
 def test_sync_eks_clusters(mock_describe_clusters, mock_get_clusters, neo4j_session):
     # Arrange
@@ -33,7 +37,7 @@ def test_sync_eks_clusters(mock_describe_clusters, mock_get_clusters, neo4j_sess
         [TEST_REGION],
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
-        {'UPDATE_TAG': TEST_UPDATE_TAG, 'AWS_ID': TEST_ACCOUNT_ID},
+        exposure_job_parameters(TEST_WORKSPACE_ID, 'o-eks-sync', TEST_ACCOUNT_ID, TEST_UPDATE_TAG),
     )
 
     # Assert

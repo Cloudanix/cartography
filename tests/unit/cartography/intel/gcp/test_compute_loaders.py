@@ -168,6 +168,8 @@ class TestInstanceRowBuilders:
             "name": "nic0",
             "consolelink": "https://console/nic0",
             "subnet_partial_uri": "projects/p1/regions/us-east1/subnetworks/default",
+            "vpc_partial_uri": "projects/p1/global/networks/default",
+            "network_ip": None,
         }]
 
     def test_access_config_rows(self):

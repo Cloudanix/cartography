@@ -354,6 +354,8 @@ class Instance:
     # Path entry points; with several access configs, the lowest address.
     external_ipv4: Optional[str] = None
     external_ipv6: Optional[str] = None
+    # (network id, internal IPv4) per NIC: the address internal CIDR-sourced firewall rules match.
+    internal_ips: Tuple[Tuple[str, str], ...] = ()
 
 
 def vpc_open(inst: Instance, vpc: Optional[VpcFacts], sources: List[str], family: Optional[str] = None) -> PortSet:
@@ -466,15 +468,29 @@ OPTIONAL MATCH (i)-[:TAGGED]->(t:GCPNetworkTag)
 WITH i, vpcs, collect(DISTINCT t.value) AS tags
 OPTIONAL MATCH (i)-[:USES]->(sa:GCPServiceAccount)
 WITH i, vpcs, tags, collect(DISTINCT sa.email) AS sas
+OPTIONAL MATCH (i)-[:NETWORK_INTERFACE]->(nic:GCPNetworkInterface)
+WITH i, vpcs, tags, sas, collect(DISTINCT nic {{vpc: nic.vpc_partial_uri, ip: nic.network_ip}}) AS nics
 OPTIONAL MATCH (i)-[:NETWORK_INTERFACE]->(:GCPNetworkInterface)-[:RESOURCE]->(ac:GCPNicAccessConfig)
-WITH i, vpcs, tags, sas, collect(DISTINCT ac.public_ip) AS ac_ips
-RETURN i.id AS id, i.status AS status, vpcs, tags, sas, i.ipv6_nat_ip AS ipv6,
+WITH i, vpcs, tags, sas, nics, collect(DISTINCT ac.public_ip) AS ac_ips
+RETURN i.id AS id, i.status AS status, vpcs, tags, sas, nics, i.networkIP AS networkIP, i.ipv6_nat_ip AS ipv6,
     [ip IN ac_ips + [i.natIP] WHERE ip IS NOT NULL] AS public_ips
 """
 
 
+def internal_ips(row: Dict) -> Tuple[Tuple[str, str], ...]:
+    """
+    (network, internal IPv4) per NIC. NICs synced before they carried their address fall back to
+    the instance's networkIP for every network: exact for single-NIC instances (the common case).
+    """
+    pairs = sorted((n["vpc"], n["ip"]) for n in row.get("nics") or [] if n.get("vpc") and n.get("ip"))
+    if pairs or not row.get("networkIP"):
+        return tuple(pairs)
+    return tuple((v, row["networkIP"]) for v in sorted(row.get("vpcs") or ()))
+
+
 def instance_from_row(row: Dict) -> Instance:
     return Instance(
+        internal_ips=internal_ips(row),
         id=row["id"],
         # An unknown status (older sync) is not a reason to hide a path.
         running=row.get("status") in (None, "RUNNING"),

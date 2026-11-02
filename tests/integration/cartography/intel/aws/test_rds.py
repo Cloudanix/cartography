@@ -249,16 +249,7 @@ def test_snapshot_attributes(neo4j_session):
 
 
 def test_rds_exposure(neo4j_session):
-    neo4j_session.run(
-        """
-        MERGE (aws:AWSAccount{id: $aws_account_id})<-[:OWNER]-(:CloudanixWorkspace{id: $workspace_id})
-        ON CREATE SET aws.firstseen = timestamp()
-        SET aws.lastupdated = $aws_update_tag
-        """,
-        aws_account_id='1234',
-        aws_update_tag=TEST_UPDATE_TAG,
-        workspace_id='1234',
-    )
+    create_test_org_account(neo4j_session, '1234', 'o-rds-exposure', '1234')
 
     cartography.intel.aws.ec2.route_tables.load_route_tables(
         neo4j_session,
@@ -300,7 +291,9 @@ def test_rds_exposure(neo4j_session):
     common_job_parameters = {
         "UPDATE_TAG": TEST_UPDATE_TAG + 1,
         "WORKSPACE_ID": '1234',
+        "ORGANIZATION_ID": 'o-rds-exposure',
         "AWS_ID": '1234',
+        "LIMIT_SIZE": 100,
     }
 
     run_analysis_job(
@@ -325,7 +318,8 @@ def test_rds_exposure(neo4j_session):
     expected_nodes = {
         (
             'arn:aws:rds:us-east-1:some-arn:db:some-prod-db-iad-0',
-            'direct_ipv4,public_subnet',
+            # Statement order: publicly_accessible, then 0.0.0.0/0 SG rule, then IGW route.
+            'direct,direct_ipv4,public_subnet_ipv4',
         ),
     }
 
