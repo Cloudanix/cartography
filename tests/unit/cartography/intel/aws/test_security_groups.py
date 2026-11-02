@@ -69,6 +69,21 @@ class TestBuildRuleAndRangeRows:
         ]
         assert len(range_rows["Ipv6Range"]) == 1
 
+    def test_prefix_list_sources_are_kept_on_the_rule(self):
+        group = {
+            "GroupId": "sg-2",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [], "Ipv6Ranges": [],
+                    "PrefixListIds": [{"PrefixListId": "pl-3b927c52"}, {"Description": "no id"}],
+                },
+                {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "IpRanges": [], "Ipv6Ranges": []},
+            ],
+        }
+        rule_rows, _ = security_groups._build_rule_and_range_rows([group])
+
+        assert [r["prefix_list_ids"] for r in rule_rows["IpPermissionInbound"]] == [["pl-3b927c52"], []]
+
     def test_empty_groups(self):
         rule_rows, range_rows = security_groups._build_rule_and_range_rows([])
         assert all(not rows for rows in rule_rows.values())
