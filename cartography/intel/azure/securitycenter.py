@@ -10,7 +10,6 @@ from azure.mgmt.security import SecurityCenter
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
-from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -77,24 +76,24 @@ def _load_security_contacts_tx(
     )
     for security_contact in security_contacts:
         resource_group=get_azure_resource_group_name(security_contact.get('id'))
-        _attach_resource_group_security_contacts(tx, security_contact['id'], resource_group,update_tag)
+        _attach_resource_group_security_contacts(tx, subscription_id, security_contact['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_security_contacts(tx: neo4j.Transaction, security_contact_id:str,resource_group:str ,update_tag: int) -> None:
+def _attach_resource_group_security_contacts(
+    tx: neo4j.Transaction, subscription_id: str, security_contact_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_contacts = """
-    MATCH(c:AzureSecurityContact{id: $security_contact_id})
-    WITH c
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(c:AzureSecurityContact{id: $security_contact_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (c)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
     tx.run(
         ingest_contacts,
+        subscription_id=subscription_id,
         security_contact_id=security_contact_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(security_contact_id),
         update_tag=update_tag,
     )
 
