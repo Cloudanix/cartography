@@ -236,6 +236,13 @@ def test_trust_classification_lives_on_each_policys_edge(neo4j_session):
     # Both policies trust the same OCIExternalPrincipal node; the last sync must not rewrite ws-iam's view.
     assert (OWN_SECOND_TENANCY, 'CrossAccount', 'endorse') in _trusted_principals(neo4j_session, 'iam-policy')
     assert _trusted_principals(neo4j_session, 'iam-policy-other') == {(OWN_SECOND_TENANCY, 'ThirdParty', 'admit')}
+    # The shared node holds only global facts.
+    node = neo4j_session.run(
+        "MATCH (ep:OCIExternalPrincipal{principal: $p}) RETURN ep.access_type AS a, ep.statement_verb AS v, "
+        "ep.account_id AS account_id",
+        p=OWN_SECOND_TENANCY,
+    ).single()
+    assert (node['a'], node['v'], node['account_id']) == (None, None, OWN_SECOND_TENANCY)
 
 
 def test_tenancy_lookups_return_only_the_tenancys_own_iam_objects(neo4j_session):
