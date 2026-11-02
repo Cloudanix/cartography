@@ -187,25 +187,51 @@ def _seed_cross_tenancy_policy(neo4j_session):
 
 
 def _trusted_principals(neo4j_session, policy_id):
+    """(principal, access_type, statement_verb) as this policy's trust edge records them."""
     rows = neo4j_session.run(
         """
         MATCH (:OCIPolicy{id: $policy_id})-[r:TRUSTS_OCI_PRINCIPAL]->(ep:OCIExternalPrincipal)
-        RETURN ep.principal AS principal, ep.access_type AS access_type
+        RETURN ep.principal AS principal, r.access_type AS access_type, r.statement_verb AS verb
         """,
         policy_id=policy_id,
     )
-    return {(row['principal'], row['access_type']) for row in rows}
+    return {(row['principal'], row['access_type'], row['verb']) for row in rows}
+
+
+def _sync_policy_references(neo4j_session, workspace_id, tenancy_id):
+    iam.sync_oci_policy_references(
+        neo4j_session, tenancy_id, NEW_TAG,
+        {'WORKSPACE_ID': workspace_id, 'OCI_TENANCY_ID': tenancy_id, 'UPDATE_TAG': NEW_TAG},
+    )
 
 
 def test_cross_tenancy_classification_only_knows_the_workspaces_own_tenancies(neo4j_session):
     _seed_cross_tenancy_policy(neo4j_session)
 
-    iam.sync_oci_policy_references(
-        neo4j_session, OWN_TENANCY, NEW_TAG,
-        {'WORKSPACE_ID': 'ws-iam', 'OCI_TENANCY_ID': OWN_TENANCY, 'UPDATE_TAG': NEW_TAG},
-    )
+    _sync_policy_references(neo4j_session, 'ws-iam', OWN_TENANCY)
 
     # Another Cloudanix customer's tenancy is a third party to this workspace, not "known".
     assert _trusted_principals(neo4j_session, 'iam-policy') == {
-        (OWN_SECOND_TENANCY, 'CrossAccount'), (OTHER_CUSTOMER_TENANCY, 'ThirdParty'),
+        (OWN_SECOND_TENANCY, 'CrossAccount', 'endorse'), (OTHER_CUSTOMER_TENANCY, 'ThirdParty', 'endorse'),
     }
+
+
+def test_trust_classification_lives_on_each_policys_edge(neo4j_session):
+    _seed_cross_tenancy_policy(neo4j_session)
+    # The other customer admits a group of ws-iam's second tenancy: to them it is a third party.
+    neo4j_session.run(
+        """
+        MATCH (t:OCITenancy{id: $other})
+        MERGE (t)-[:RESOURCE]->(p:OCIPolicy{id: 'iam-policy-other'})
+        SET p.ocid = 'iam-policy-other', p.name = 'admit-vendor', p.compartmentid = $other,
+            p.statements = ['Admit group Vendors of tenancy ' + $own2 + ' to read all-resources in tenancy']
+        """,
+        other=OTHER_CUSTOMER_TENANCY, own2=OWN_SECOND_TENANCY,
+    )
+
+    _sync_policy_references(neo4j_session, 'ws-iam', OWN_TENANCY)
+    _sync_policy_references(neo4j_session, 'ws-iam-other', OTHER_CUSTOMER_TENANCY)
+
+    # Both policies trust the same OCIExternalPrincipal node; the last sync must not rewrite ws-iam's view.
+    assert (OWN_SECOND_TENANCY, 'CrossAccount', 'endorse') in _trusted_principals(neo4j_session, 'iam-policy')
+    assert _trusted_principals(neo4j_session, 'iam-policy-other') == {(OWN_SECOND_TENANCY, 'ThirdParty', 'admit')}

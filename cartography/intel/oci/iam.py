@@ -516,6 +516,10 @@ def load_oci_external_principal(
     external_principal: Dict[str, str],
     oci_update_tag: int,
 ) -> None:
+    # One OCIExternalPrincipal per foreign tenancy OCID is shared by every customer that trusts it, while
+    # access_type (relative to the trusting workspace) and statement_verb belong to one policy: they are
+    # written on the policy's TRUSTS_OCI_PRINCIPAL edge. The node copies are kept only until readers
+    # (inventory-sync IAM deep dive) move to the edge; they hold whichever tenant synced last.
     ingest_external_principal = """
     MERGE (ep:OCIExternalPrincipal{principal: $PRINCIPAL})
     ON CREATE SET ep.firstseen = timestamp()
@@ -527,7 +531,9 @@ def load_oci_external_principal(
     MATCH (p:OCIPolicy{id: $POLICY_ID})
     MERGE (p)-[r:TRUSTS_OCI_PRINCIPAL]->(ep)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    SET r.lastupdated = $oci_update_tag,
+    r.access_type = $ACCESS_TYPE,
+    r.statement_verb = $STATEMENT_VERB
     """
     run_write_query(
         neo4j_session,
