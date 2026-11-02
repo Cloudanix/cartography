@@ -219,8 +219,10 @@ def load_tgw_attachments(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
 
-    WITH tgwa
-    MATCH (tgw:AWSTransitGateway {tgw_id: $TransitGatewayId})
+    // The gateway this account owns ((account)-[:RESOURCE]->(tgw)) or that is RAM-shared into it
+    // ((tgw)-[:SHARED_WITH]->(account)); another customer's gateway with this id is never linked.
+    WITH tgwa, awsAccount
+    MATCH (awsAccount)-[:RESOURCE|SHARED_WITH]-(tgw:AWSTransitGateway {tgw_id: $TransitGatewayId})
     MERGE (tgwa)-[attach:ATTACHED_TO]->(tgw)
     ON CREATE SET attach.firstseen = timestamp()
     SET attach.lastupdated = $update_tag
