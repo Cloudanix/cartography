@@ -145,6 +145,12 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job(
         "azure_devops_members_cleanup.json", neo4j_session, common_job_parameters,
     )
+    # An AzureDevOpsUser can be a member of several tenants' organizations, so the tenant cleanup above removes
+    # only this org's stale MEMBER_OF edges; this tenant-independent sweep deletes a user once no org links to it.
+    # Plain DELETE: a user another sync is linking at that moment fails this sweep instead of losing the edge.
+    run_cleanup_job(
+        "azure_devops_members_orphan_cleanup.json", neo4j_session, common_job_parameters,
+    )
 
 
 @timeit
