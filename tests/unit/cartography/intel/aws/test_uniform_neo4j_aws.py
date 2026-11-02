@@ -175,7 +175,7 @@ class TestElasticsearch:
     def test_access_policy_tag_write_is_managed(self):
         session = MagicMock()
 
-        elasticsearch._process_access_policy(session, "domain-1", {"Endpoint": None})
+        elasticsearch._process_access_policy(session, "domain-1", {"Endpoint": None}, TEST_ACCOUNT_ID)
 
         session.run.assert_not_called()
         session.execute_write.assert_called_once()
@@ -184,7 +184,7 @@ class TestElasticsearch:
         session = MagicMock()
         domain = {"VPCOptions": {"SubnetIds": ["subnet-1"], "SecurityGroupIds": []}}
 
-        elasticsearch._link_es_domain_vpc(session, "domain-1", domain, TEST_UPDATE_TAG)
+        elasticsearch._link_es_domain_vpc(session, "domain-1", domain, TEST_ACCOUNT_ID, "ws", TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         # subnets batch writes; the empty security-group list short-circuits
@@ -241,7 +241,7 @@ class TestLambda:
         aliases = [{"AliasArn": "arn:aws:lambda:us-east-1:1234:function:f1:live", "FunctionArn": "f1"}]
 
         lambda_function.load_lambda_functions(session, functions, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-        lambda_function._load_lambda_function_aliases(session, aliases, TEST_UPDATE_TAG)
+        lambda_function._load_lambda_function_aliases(session, aliases, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2

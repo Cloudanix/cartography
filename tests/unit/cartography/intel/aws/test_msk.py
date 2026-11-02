@@ -62,7 +62,7 @@ def test_get_and_transform_msk_clusters_reads_network_and_security_from_the_list
 def test_load_msk_clusters_is_batched_and_links_groups_and_subnets():
     session = MagicMock()
 
-    msk.load_msk_clusters(session, msk.transform_msk_clusters([PROVISIONED], 'us-east-1'), '111111111111', 42)
+    msk.load_msk_clusters(session, msk.transform_msk_clusters([PROVISIONED], 'us-east-1'), '111111111111', 42, 'ws')
 
     session.run.assert_not_called()
     calls = session.execute_write.call_args_list
@@ -78,7 +78,7 @@ def test_sync_skips_regions_without_msk(mocker):
     mocker.patch.object(msk, 'load_msk_clusters')
     mocker.patch.object(msk, 'cleanup')
 
-    msk.sync(MagicMock(), session, ['us-east-1', 'xx-new-1'], '111111111111', 42, {'AWS_ID': '111111111111'})
+    msk.sync(MagicMock(), session, ['us-east-1', 'xx-new-1'], '111111111111', 42, {'AWS_ID': '111111111111', 'WORKSPACE_ID': 'ws'})
 
     session.get_available_regions.assert_called_once_with('kafka', partition_name='aws')
     assert [c.args[1] for c in get.call_args_list] == ['us-east-1']

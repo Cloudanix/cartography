@@ -32,6 +32,7 @@ def _load(neo4j_session, account_id, clusters):
         raw.append(cluster)
     cartography.intel.aws.msk.load_msk_clusters(
         neo4j_session, cartography.intel.aws.msk.transform_msk_clusters(raw, 'us-east-1'), account_id, TEST_UPDATE_TAG,
+        f'ws-{account_id}',
     )
 
 

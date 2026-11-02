@@ -229,10 +229,10 @@ def load_redshift_cluster_data(
         AWS_ACCOUNT_ID=current_aws_account_id, aws_update_tag=aws_update_tag,
     )
     _attach_ec2_security_groups(neo4j_session, clusters, aws_update_tag, current_aws_account_id, partition)
-    _attach_iam_roles(neo4j_session, clusters, aws_update_tag)
-    _attach_aws_vpc(neo4j_session, clusters, aws_update_tag)
-    _attach_aws_network_interface(neo4j_session, clusters, aws_update_tag)
-    _attach_aws_ec2_subnet(neo4j_session, clusters, aws_update_tag)
+    _attach_iam_roles(neo4j_session, clusters, aws_update_tag, current_aws_account_id)
+    _attach_aws_vpc(neo4j_session, clusters, aws_update_tag, current_aws_account_id)
+    _attach_aws_network_interface(neo4j_session, clusters, aws_update_tag, current_aws_account_id)
+    _attach_aws_ec2_subnet(neo4j_session, clusters, aws_update_tag, current_aws_account_id)
 
 
 @timeit
@@ -242,7 +242,7 @@ def _attach_ec2_security_groups(
 ) -> None:
     attach_cluster_to_group = """
     UNWIND $DictList AS item
-    MATCH (c:RedshiftCluster{id:item.cluster_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:RedshiftCluster{id:item.cluster_arn})
     MERGE (sg:EC2SecurityGroup{id:item.group_id})
     SET sg.consolelink = item.consolelink
     MERGE (c)-[m:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
@@ -260,14 +260,16 @@ def _attach_ec2_security_groups(
                 "consolelink": aws_console_link.get_console_link(arn=group_arn),
                 "group_id": group["VpcSecurityGroupId"],
             })
-    load_graph_data(neo4j_session, attach_cluster_to_group, rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, attach_cluster_to_group, rows, aws_update_tag=aws_update_tag, AWS_ACCOUNT_ID=account_id,
+    )
 
 
 @timeit
-def _attach_iam_roles(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
+def _attach_iam_roles(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int, account_id: str) -> None:
     attach_cluster_to_role = """
     UNWIND $DictList AS item
-    MATCH (c:RedshiftCluster{id:item.cluster_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:RedshiftCluster{id:item.cluster_arn})
     MERGE (p:AWSPrincipal{arn:item.role_arn})
     MERGE (c)-[s:STS_ASSUMEROLE_ALLOW]->(p)
     ON CREATE SET s.firstseen = timestamp()
@@ -278,14 +280,16 @@ def _attach_iam_roles(neo4j_session: neo4j.Session, clusters: List[Dict], aws_up
         for cluster in clusters
         for role in cluster.get("IamRoles", [])
     ]
-    load_graph_data(neo4j_session, attach_cluster_to_role, rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, attach_cluster_to_role, rows, aws_update_tag=aws_update_tag, AWS_ACCOUNT_ID=account_id,
+    )
 
 
 @timeit
-def _attach_aws_vpc(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
+def _attach_aws_vpc(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int, account_id: str) -> None:
     attach_cluster_to_vpc = """
     UNWIND $DictList AS item
-    MATCH (c:RedshiftCluster{id:item.cluster_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:RedshiftCluster{id:item.cluster_arn})
     MERGE (v:AWSVpc{id:item.vpc_id})
     MERGE (c)-[m:MEMBER_OF_AWS_VPC]->(v)
     ON CREATE SET m.firstseen = timestamp()
@@ -296,14 +300,18 @@ def _attach_aws_vpc(neo4j_session: neo4j.Session, clusters: List[Dict], aws_upda
         for cluster in clusters
         if cluster.get("VpcId")
     ]
-    load_graph_data(neo4j_session, attach_cluster_to_vpc, rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, attach_cluster_to_vpc, rows, aws_update_tag=aws_update_tag, AWS_ACCOUNT_ID=account_id,
+    )
 
 
 @timeit
-def _attach_aws_network_interface(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
+def _attach_aws_network_interface(
+    neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int, account_id: str,
+) -> None:
     attach_cluster_to_network_interface = """
     UNWIND $DictList AS item
-        MATCH (c:RedshiftCluster{id:item.cluster_arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:RedshiftCluster{id:item.cluster_arn})
         MERGE (v:NetworkInterface{id: item.network_interface_id})
         MERGE (c)-[m:NETWORK_INTERFACE]->(v)
         ON CREATE SET m.firstseen = timestamp()
@@ -315,14 +323,19 @@ def _attach_aws_network_interface(neo4j_session: neo4j.Session, clusters: List[D
         for vpc_endpoint in cluster.get("VpcEndpoints", [])
         for nic in vpc_endpoint["NetworkInterfaces"]
     ]
-    load_graph_data(neo4j_session, attach_cluster_to_network_interface, rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, attach_cluster_to_network_interface, rows, aws_update_tag=aws_update_tag,
+        AWS_ACCOUNT_ID=account_id,
+    )
 
 
 @timeit
-def _attach_aws_ec2_subnet(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
+def _attach_aws_ec2_subnet(
+    neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int, account_id: str,
+) -> None:
     attach_cluster_to_ec2_subnet = """
     UNWIND $DictList AS item
-        MATCH (c:RedshiftCluster{id:item.cluster_arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:RedshiftCluster{id:item.cluster_arn})
         MERGE (s:EC2Subnet{subnetid: item.subnet_id})
         MERGE (c)-[m:CLUSTER_SUBNET]->(s)
         ON CREATE SET m.firstseen = timestamp()
@@ -334,7 +347,9 @@ def _attach_aws_ec2_subnet(neo4j_session: neo4j.Session, clusters: List[Dict], a
         for vpc_endpoint in cluster.get("VpcEndpoints", [])
         for nic in vpc_endpoint["NetworkInterfaces"]
     ]
-    load_graph_data(neo4j_session, attach_cluster_to_ec2_subnet, rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, attach_cluster_to_ec2_subnet, rows, aws_update_tag=aws_update_tag, AWS_ACCOUNT_ID=account_id,
+    )
 
 
 @timeit

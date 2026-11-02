@@ -69,6 +69,7 @@ def transform_es_domains(
 @timeit
 def _load_es_domains(
     neo4j_session: neo4j.Session, domain_list: List[Dict], aws_account_id: str, aws_update_tag: int,
+    workspace_id: str,
 ) -> None:
     """
     Ingest Elastic Search domains
@@ -123,8 +124,8 @@ def _load_es_domains(
     for domain in domain_list:
         domain_id = domain["DomainId"]
         _link_es_domains_to_dns(neo4j_session, domain_id, domain, aws_update_tag)
-        _link_es_domain_vpc(neo4j_session, domain_id, domain, aws_update_tag)
-        _process_access_policy(neo4j_session, domain_id, domain)
+        _link_es_domain_vpc(neo4j_session, domain_id, domain, aws_account_id, workspace_id, aws_update_tag)
+        _process_access_policy(neo4j_session, domain_id, domain, aws_account_id)
 
 
 @timeit
@@ -150,30 +151,38 @@ def _link_es_domains_to_dns(
 
 
 @timeit
-def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict, aws_update_tag: int) -> None:
+def _link_es_domain_vpc(
+    neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict, aws_account_id: str, workspace_id: str,
+    aws_update_tag: int,
+) -> None:
     """
     Link the ES domain to its DNS FQDN endpoint and create associated nodes in the graph
     if needed
+
+    The domain is this account's; its subnets and security groups can be shared in from another account of
+    the workspace (VPC sharing), never another customer's.
 
     :param neo4j_session: Neo4j session object
     :param domain_id: ES domain id
     :param domain_data: domain data
     """
     ingest_subnet = """
-    MATCH (es:ESDomain{id: $DomainId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(es:ESDomain{id: $DomainId})
     WITH es
     UNWIND $DictList as subnet_id
-        MATCH (subnet_node:EC2Subnet{subnetid: subnet_id})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+            -[:RESOURCE]->(subnet_node:EC2Subnet{subnetid: subnet_id})
         MERGE (es)-[r:PART_OF_SUBNET]->(subnet_node)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
 
     ingest_sec_groups = """
-    MATCH (es:ESDomain{id: $DomainId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(es:ESDomain{id: $DomainId})
     WITH es
     UNWIND $DictList as ecsecgroup_id
-        MATCH (group_node:EC2SecurityGroup{id: ecsecgroup_id})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+            -[:RESOURCE]->(group_node:EC2SecurityGroup{id: ecsecgroup_id})
         MERGE (es)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(group_node)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -189,6 +198,8 @@ def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_dat
             ingest_subnet,
             subnetList,
             DomainId=domain_id,
+            AWS_ACCOUNT_ID=aws_account_id,
+            WORKSPACE_ID=workspace_id,
             aws_update_tag=aws_update_tag,
         )
         load_graph_data(
@@ -196,12 +207,16 @@ def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_dat
             ingest_sec_groups,
             groupList,
             DomainId=domain_id,
+            AWS_ACCOUNT_ID=aws_account_id,
+            WORKSPACE_ID=workspace_id,
             aws_update_tag=aws_update_tag,
         )
 
 
 @timeit
-def _process_access_policy(neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict) -> None:
+def _process_access_policy(
+    neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict, aws_account_id: str,
+) -> None:
     """
     Link the ES domain to its DNS FQDN endpoint and create associated nodes in the graph
     if needed
@@ -210,7 +225,10 @@ def _process_access_policy(neo4j_session: neo4j.Session, domain_id: str, domain_
     :param domain_id: ES domain id
     :param domain_data: domain data
     """
-    tag_es = "MATCH (es:ESDomain{id: $DomainId}) SET es.exposed_internet = $InternetExposed"
+    tag_es = """
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(es:ESDomain{id: $DomainId})
+    SET es.exposed_internet = $InternetExposed
+    """
 
     exposed_internet = False
 
@@ -219,7 +237,9 @@ def _process_access_policy(neo4j_session: neo4j.Session, domain_id: str, domain_
         if policy.is_internet_accessible():
             exposed_internet = True
 
-    run_write_query(neo4j_session, tag_es, DomainId=domain_id, InternetExposed=exposed_internet)
+    run_write_query(
+        neo4j_session, tag_es, DomainId=domain_id, InternetExposed=exposed_internet, AWS_ACCOUNT_ID=aws_account_id,
+    )
 
 
 @timeit
@@ -322,7 +342,7 @@ def sync(
         logger.info("Syncing Elasticsearch Service for region '%s' in account '%s'.", region, current_aws_account_id)
         client = boto3_session.client('es', region_name=region, config=get_botocore_config())
         data = _get_es_domains(client)
-        _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag)
+        _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'])
 
     tic = time.perf_counter()
     logger.info("Syncing Elasticsearch Service for account '%s', at %s.", current_aws_account_id, tic)
@@ -342,7 +362,7 @@ def sync(
 
     logger.info(f"Total ElasticSearch Reserved Instances: {len(data)}")
 
-    _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag)
+    _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'])
 
     cleanup(neo4j_session, common_job_parameters)
 

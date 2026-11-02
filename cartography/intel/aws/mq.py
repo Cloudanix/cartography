@@ -109,6 +109,7 @@ def transform_mq_brokers(brokers: List[Dict], region: str) -> List[Dict]:
 @timeit
 def load_mq_brokers(
     neo4j_session: neo4j.Session, brokers: List[Dict], current_aws_account_id: str, update_tag: int,
+    workspace_id: str,
 ) -> None:
     query = """
     UNWIND $DictList AS item
@@ -150,16 +151,18 @@ def load_mq_brokers(
     load_graph_data(
         neo4j_session, query, brokers, aws_update_tag=update_tag, aws_account_id=current_aws_account_id,
     )
-    _attach_security_groups(neo4j_session, brokers, update_tag)
-    _attach_subnets(neo4j_session, brokers, update_tag)
+    _attach_security_groups(neo4j_session, brokers, current_aws_account_id, update_tag)
+    _attach_subnets(neo4j_session, brokers, current_aws_account_id, workspace_id, update_tag)
 
 
 @timeit
-def _attach_security_groups(neo4j_session: neo4j.Session, brokers: List[Dict], update_tag: int) -> None:
+def _attach_security_groups(
+    neo4j_session: neo4j.Session, brokers: List[Dict], current_aws_account_id: str, update_tag: int,
+) -> None:
     # The group node may not be synced yet (services run in parallel); MERGE it like RDS and ElastiCache do.
     query = """
     UNWIND $DictList AS item
-        MATCH (broker:AWSMQBroker{id: item.arn})
+        MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(broker:AWSMQBroker{id: item.arn})
         MERGE (sg:EC2SecurityGroup{id: item.group_id})
         ON CREATE SET sg.firstseen = timestamp()
         MERGE (broker)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
@@ -167,20 +170,28 @@ def _attach_security_groups(neo4j_session: neo4j.Session, brokers: List[Dict], u
         SET r.lastupdated = $aws_update_tag
     """
     rows = [{'arn': b['BrokerArn'], 'group_id': group_id} for b in brokers for group_id in b['SecurityGroups']]
-    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag)
+    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag, aws_account_id=current_aws_account_id)
 
 
 @timeit
-def _attach_subnets(neo4j_session: neo4j.Session, brokers: List[Dict], update_tag: int) -> None:
+def _attach_subnets(
+    neo4j_session: neo4j.Session, brokers: List[Dict], current_aws_account_id: str, workspace_id: str, update_tag: int,
+) -> None:
+    # A broker or cluster can sit in subnets shared in from another account of the workspace (VPC sharing).
     query = """
     UNWIND $DictList AS item
-        MATCH (broker:AWSMQBroker{id: item.arn}), (subnet:EC2Subnet{subnetid: item.subnet_id})
+        MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(broker:AWSMQBroker{id: item.arn})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+            -[:RESOURCE]->(subnet:EC2Subnet{subnetid: item.subnet_id})
         MERGE (broker)-[r:PART_OF_SUBNET]->(subnet)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
     rows = [{'arn': b['BrokerArn'], 'subnet_id': subnet_id} for b in brokers for subnet_id in b['SubnetIds']]
-    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag)
+    load_graph_data(
+        neo4j_session, query, rows, aws_update_tag=update_tag, aws_account_id=current_aws_account_id,
+        WORKSPACE_ID=workspace_id,
+    )
 
 
 @timeit
@@ -206,7 +217,9 @@ def sync(
         logger.info("Syncing Amazon MQ brokers for region '%s' in account '%s'.", region, current_aws_account_id)
         brokers.extend(transform_mq_brokers(get_mq_brokers(boto3_session, region), region))
 
-    load_mq_brokers(neo4j_session, brokers, current_aws_account_id, update_tag)
+    load_mq_brokers(
+        neo4j_session, brokers, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'],
+    )
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
