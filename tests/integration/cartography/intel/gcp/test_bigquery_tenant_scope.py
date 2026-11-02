@@ -93,11 +93,9 @@ def test_same_dataset_and_table_name_in_two_tenants_stay_apart(neo4j_session, mo
 def test_dataflow_job_references_tables_only_inside_its_org(neo4j_session, mocker):
     _sync(neo4j_session, mocker, PROJECT, [])
     _sync(neo4j_session, mocker, OTHER_PROJECT, [])
-    # The loader chains its UNWINDs, so a job only reaches the BigQuery step when its Bigtable tables resolve.
-    neo4j_session.run("MERGE (:GCPBigtableTable{id: 'projects/proj-bqt-a/instances/i/tables/t'})")
     job = {
         'id': 'job-bqt', 'name': 'job-bqt', 'environment': {},
-        'bigTables': ['projects/proj-bqt-a/instances/i/tables/t'],
+        'bigTables': [],
         # A job may read or write any project's table, including another customer's.
         'bigQueries': [_table_id(PROJECT), _table_id(OTHER_PROJECT)],
         'pubSub': [], 'spannerDatabases': [],

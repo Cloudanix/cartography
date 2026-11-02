@@ -88,6 +88,32 @@ def transform_jobs(jobs: List[Dict], project_id: str) -> List[Dict]:
     return transformed_jobs
 
 
+# What a job reads or writes, as (list of ids in the record, path from a project of the syncing organization to
+# the target). A job may name a table, topic or database in any project, including another customer's: only
+# targets inside the syncing workspace and organization are linked. One statement per kind: chained UNWINDs
+# dropped every later link, and the job's project edge, whenever an earlier list was empty or unresolved.
+REFERENCES = (
+    ('record.bigTables', '-[:RESOURCE]->(:GCPBigtableInstance)-[:HAS_TABLE]->(target:GCPBigtableTable{id: ref})'),
+    ('record.bigQueries', '-[:RESOURCE]->(:GCPBigqueryDataset)-[:HAS_TABLE]->(target:GCPBigqueryTable{id: ref})'),
+    ('[p IN record.pubSub | p.topicId]', '-[:RESOURCE]->(target:GCPPubsubTopic{id: ref})'),
+    ('[p IN record.pubSub | p.subscriptionId]', '-[:RESOURCE]->(target:GCPPubsubSubscription{id: ref})'),
+    (
+        'record.spannerDatabases',
+        '-[:RESOURCE]->(:GCPSpannerInstance)-[:HAS_DATABASE]->(target:GCPSpannerInstanceDatabase{id: ref})',
+    ),
+)
+REFERENCE_QUERY = """
+UNWIND $Records AS record
+MATCH (:GCPProject{{id: $ProjectId}})-[:RESOURCE]->(job:GCPDataFlowJob{{id: record.id}})
+UNWIND coalesce({refs}, []) AS ref
+MATCH (:CloudanixWorkspace{{id: $WORKSPACE_ID}})-[:OWNER]->(:GCPOrganization{{id: $GCP_ORGANIZATION_ID}})
+    -[:OWNER]->(:GCPProject){target}
+MERGE (job)-[r:REFERENCES]->(target)
+ON CREATE SET r.firstseen = timestamp()
+SET r.lastupdated = $gcp_update_tag
+"""
+
+
 @timeit
 def load_dataflow_jobs(
     session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int, common_job_parameters: Dict,
@@ -124,38 +150,6 @@ def load_dataflow_jobs_tx(
         job.requested_state = record.requestedState,
         job.consolelink = record.consolelink,
         job.satisfies_pzs = record.satisfiesPzs
-    WITH job, record
-    UNWIND record.bigTables as big_table_id
-    MATCH (big_table:GCPBigtableTable{id: big_table_id})
-    MERGE (job)-[rjbt:REFERENCES]->(big_table)
-    ON CREATE SET
-        rjbt.firstseen = timestamp()
-    WITH job, record
-    UNWIND record.bigQueries as big_query_id
-    // A job may name a table in any project, including another customer's: only follow it inside this org.
-    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id: $GCP_ORGANIZATION_ID})
-        -[:OWNER]->(:GCPProject)-[:RESOURCE]->(:GCPBigqueryDataset)
-        -[:HAS_TABLE]->(big_query:GCPBigqueryTable{id: big_query_id})
-    MERGE (job)-[rjbq:REFERENCES]->(big_query)
-    ON CREATE SET
-        rjbq.firstseen = timestamp()
-    WITH job, record
-    UNWIND record.pubSub as pubsub
-    MATCH (topic:GCPPubsubTopic{id: pubsub.topicId})
-    MERGE (job)-[rt:REFERENCES]->(topic)
-    ON CREATE SET
-        rt.firstseen = timestamp()
-    WITH job, pubsub, record
-    MATCH (subscription:GCPPubsubSubscription{id: pubsub.subscriptionId})
-    MERGE (job)-[rs:REFERENCES]->(subscription)
-    ON CREATE SET
-        rs.firstseen = timestamp()
-    WITH job, record
-    UNWIND record.spannerDatabases as spanner_database_id
-    MATCH (database:GCPSpannerInstanceDatabase{id: spanner_database_id})
-    MERGE (job)-[rd:REFERENCES]->(database)
-    ON CREATE SET
-        rd.firstseen = timestamp()
     WITH job
     MATCH (owner:GCPProject{id: $ProjectId})
     MERGE (owner)-[r:RESOURCE]->(job)
@@ -167,10 +161,17 @@ def load_dataflow_jobs_tx(
         query,
         Records=data,
         ProjectId=project_id,
-        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
-        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
+    for refs, target in REFERENCES:
+        tx.run(
+            REFERENCE_QUERY.format(refs=refs, target=target),
+            Records=data,
+            ProjectId=project_id,
+            WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+            GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
+            gcp_update_tag=gcp_update_tag,
+        )
 
 
 @timeit
