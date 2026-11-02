@@ -80,6 +80,7 @@ def test_redis_cache_exposure(neo4j_session):
     redis.load_caches(neo4j_session, 'redisx-other', [other_ws], 2)
     redis.load_firewall_rules(
         neo4j_session,
+        SUB,
         [
             _rule(closed_open_rule, 'all', '0.0.0.0', '255.255.255.255'),
             _rule(injected, 'all', '0.0.0.0', '255.255.255.255'),

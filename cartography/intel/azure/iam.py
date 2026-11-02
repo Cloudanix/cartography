@@ -732,16 +732,19 @@ async def _gather_group_members_fail_fast(
 
 
 @timeit
-def load_group_memberships(neo4j_session: neo4j.Session, memberships: List[Dict], update_tag: int) -> None:
-    neo4j_session.execute_write(_load_group_memberships_tx, memberships, update_tag)
+def load_group_memberships(
+    neo4j_session: neo4j.Session, tenant_id: str, memberships: List[Dict], update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_group_memberships_tx, tenant_id, memberships, update_tag)
 
 
 @timeit
-def _load_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], update_tag: int) -> None:
+def _load_group_memberships_tx(tx: neo4j.Transaction, tenant_id: str, memberships: List[Dict], update_tag: int) -> None:
+    # Object ids are unique per directory, but the group and the member must both be this tenant's nodes.
     ingest_memberships = """
     UNWIND $memberships AS membership
-        MATCH (p:AzureGroup{id: membership.group_id})
-        MATCH (pr:AzurePrincipal{object_id: membership.id})
+        MATCH (t:AzureTenant{id: $tenant_id})-[:RESOURCE]->(p:AzureGroup{id: membership.group_id})
+        MATCH (t)-[:RESOURCE]->(pr:AzurePrincipal{object_id: membership.id})
         WITH p,pr
         MERGE (pr)-[r:MEMBER_AZURE_GROUP]->(p)
         ON CREATE SET
@@ -752,6 +755,7 @@ def _load_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], u
 
     tx.run(
         ingest_memberships,
+        tenant_id=tenant_id,
         memberships=memberships,
         update_tag=update_tag,
     )
@@ -800,7 +804,7 @@ async def sync_tenant_groups(
                 logger.warning(f"IAM tenant={tenant_id}: group member fetch error — {result}")
             continue
         if result:
-            load_group_memberships(neo4j_session, result, update_tag)
+            load_group_memberships(neo4j_session, tenant_id, result, update_tag)
     cleanup_tenant_groups(neo4j_session, common_job_parameters)
     logger.info(f"IAM tenant={tenant_id}: group Neo4j write done in {time.perf_counter() - t0:.2f}s")
 
@@ -1311,7 +1315,7 @@ def _load_roles_tx(
     ON CREATE SET tr.firstseen = timestamp()
     SET tr.lastupdated = $update_tag
     WITH i,role
-    MATCH (sub:AzureSubscription{id: $SUBSCRIPTION_ID})
+    MATCH (:AzureTenant{id: $tenant_id})-[:RESOURCE]->(sub:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (sub)<-[sr:HAS_ACCESS]-(i)
     ON CREATE SET sr.firstseen = timestamp()
     SET sr.lastupdated = $update_tag
@@ -1329,9 +1333,9 @@ def _load_roles_tx(
 
     attach_role = """
     UNWIND $role_assignments AS ra
-    MATCH (principal:AzurePrincipal{object_id: ra.principal_id})
-    WITH principal, ra
-    MATCH (i:AzureRole{id: ra.role_id})
+    MATCH (t:AzureTenant{id: $TENANT_ID})-[:RESOURCE]->(principal:AzurePrincipal{object_id: ra.principal_id})
+    WITH t, principal, ra
+    MATCH (t)-[:RESOURCE]->(i:AzureRole{id: ra.role_id})
     MERGE (principal)-[r:ASSUME_ROLE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -1344,7 +1348,7 @@ def _load_roles_tx(
         }
         for ra in role_assignments_list
     ]
-    tx.run(attach_role, role_assignments=prepared_assignments, update_tag=update_tag)
+    tx.run(attach_role, role_assignments=prepared_assignments, update_tag=update_tag, TENANT_ID=tenant_id)
 
     # Emit an AzureExternalPrincipal for any assigned principal homed outside the
     # customer tenant (foreign multi-tenant service principal) or federated in as
@@ -1353,8 +1357,8 @@ def _load_roles_tx(
     # principal nodes, so this joins against them rather than re-fetching.
     attach_external_principals = """
     UNWIND $role_assignments AS ra
-    MATCH (principal:AzurePrincipal{object_id: ra.principal_id})
-    MATCH (i:AzureRole{id: ra.role_id})
+    MATCH (t:AzureTenant{id: $TENANT_ID})-[:RESOURCE]->(principal:AzurePrincipal{object_id: ra.principal_id})
+    MATCH (t)-[:RESOURCE]->(i:AzureRole{id: ra.role_id})
     WITH principal, i,
          toLower(coalesce(principal.app_owner_organization_id, '')) AS home_tenant,
          toLower(coalesce(principal.user_type, '')) AS user_type
@@ -1383,6 +1387,7 @@ def _load_roles_tx(
         attach_external_principals,
         role_assignments=prepared_assignments,
         update_tag=update_tag,
+        TENANT_ID=tenant_id,
         tenant_id=(tenant_id or "").lower(),
         ms_tenant_id=AZURE_MICROSOFT_TENANT_ID,
     )
@@ -1627,7 +1632,7 @@ async def sync_scoped_users_and_groups(
     if scoped_users:
         load_tenant_users(neo4j_session, tenant_id, scoped_users, update_tag)
     if all_memberships:
-        load_group_memberships(neo4j_session, all_memberships, update_tag)
+        load_group_memberships(neo4j_session, tenant_id, all_memberships, update_tag)
     logger.info(
         f"IAM tenant={tenant_id}: Neo4j write done in {time.perf_counter() - t0:.2f}s",
     )

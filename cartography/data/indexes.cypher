@@ -285,6 +285,7 @@ CREATE INDEX IF NOT EXISTS FOR (n:S3Bucket) ON (n.arn);
 CREATE INDEX IF NOT EXISTS FOR (n:User) ON (n.arn);
 CREATE INDEX IF NOT EXISTS FOR (n:AzureTenant) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AzurePrincipal) ON (n.id);
+CREATE INDEX IF NOT EXISTS FOR (n:AzurePrincipal) ON (n.object_id);
 CREATE INDEX IF NOT EXISTS FOR (n:AzureSubscription) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AzureCosmosDBAccount) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AzureCosmosDBLocation) ON (n.id);

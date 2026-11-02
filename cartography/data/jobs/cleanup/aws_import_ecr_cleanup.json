@@ -1,11 +1,7 @@
 {
   "statements": [
     {
-      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:ECRRepository)-[:REPO_IMAGE]->(:ECRRepositoryImage)-[:IMAGE]->(n:ECRImage) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-      "iterative": true,
-      "iterationsize": 100
-    },
-    {
+      "__comment": "ECRImage is one node per digest shared by every account that pushed it, and its lastupdated is whichever tenant synced last, so an account's cleanup removes only its own stale IMAGE edges; aws_ecr_image_orphan_cleanup.json removes the image once no edge refers to it.",
       "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:ECRRepository)-[:REPO_IMAGE]->(:ECRRepositoryImage)-[r:IMAGE]->(:ECRImage) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) RETURN COUNT(*) AS TotalCompleted",
       "iterative": true,
       "iterationsize": 100

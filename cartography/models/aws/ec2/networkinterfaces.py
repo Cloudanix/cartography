@@ -40,20 +40,8 @@ class EC2NetworkInterfaceNodeProperties(CartographyNodeProperties):
     subnetid: PropertyRef = PropertyRef('SubnetId', extra_index=True)
 
 
-@dataclass(frozen=True)
-class EC2NetworkInterfaceToElbRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-
-
-@dataclass(frozen=True)
-class EC2NetworkInterfaceToElb(CartographyRelSchema):
-    target_node_label: str = 'LoadBalancer'
-    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'name': PropertyRef('ElbV1Id')},
-    )
-    direction: LinkDirection = LinkDirection.INWARD
-    rel_label: str = "NETWORK_INTERFACE"
-    properties: EC2NetworkInterfaceToElbRelProperties = EC2NetworkInterfaceToElbRelProperties()
+# The classic load balancer link is not here: the ENI names a classic ELB only by name, which needs an
+# account + region anchor the target matcher cannot express (see load_classic_elb_network_interfaces).
 
 
 @dataclass(frozen=True)
@@ -64,8 +52,9 @@ class EC2NetworkInterfaceToElbV2RelProperties(CartographyRelProperties):
 @dataclass(frozen=True)
 class EC2NetworkInterfaceToElbV2(CartographyRelSchema):
     target_node_label: str = 'LoadBalancerV2'
+    # The full load balancer ARN (account + region embedded), built from the ENI description.
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('ElbV2Id')},
+        {'arn': PropertyRef('ElbV2Arn')},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "NETWORK_INTERFACE"
@@ -84,7 +73,6 @@ class EC2NetworkInterfaceSchema(CartographyNodeSchema):
         [
             EC2NetworkInterfaceToEC2Subnet(),
             EC2NetworkInterfaceToEC2SecurityGroup(),
-            EC2NetworkInterfaceToElb(),
             EC2NetworkInterfaceToElbV2(),
             EC2NetworkInterfaceToEC2Instance(),
         ],

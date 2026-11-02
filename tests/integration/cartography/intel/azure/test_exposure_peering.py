@@ -45,6 +45,7 @@ def _vnets(session, tag=TAG):
     for row in rows:
         network.add_peerings(row)
     network.load_networks(session, SUB, rows, tag)
+    network.load_network_peerings(session, SUB, WS, rows, tag)
 
 
 def _subnet(session, vnet_id, name, prefixes):
@@ -63,8 +64,8 @@ def _nic(session, name, subnet_id):
         'subnet': [{'subnet_id': subnet_id}],
     }
     network.load_network_interfaces(session, SUB, [nic], TAG)
-    network.load_ip_configurations(session, [nic], TAG)
-    network.attach_subnet_to_network_interfaces(session, [nic], TAG)
+    network.load_ip_configurations(session, SUB, [nic], TAG)
+    network.attach_subnet_to_network_interfaces(session, SUB, [nic], TAG)
 
 
 def _app_gateway(session, subnet_id, addresses):
@@ -91,7 +92,7 @@ def _app_gateway(session, subnet_id, addresses):
         }],
     }
     network_gateways.load_application_gateways(
-        session, SUB, [network_gateways.transform_application_gateway(gateway, {})], TAG,
+        session, SUB, WS, [network_gateways.transform_application_gateway(gateway, {})], TAG,
     )
 
 
@@ -157,6 +158,7 @@ def test_stale_peering_edge_is_cleaned(neo4j_session):
     rows = [{'id': HUB, 'name': 'hub', 'virtual_network_peerings': []}]
     network.add_peerings(rows[0])
     network.load_networks(neo4j_session, SUB, rows, TAG + 1)
+    network.load_network_peerings(neo4j_session, SUB, WS, rows, TAG + 1)
     run_cleanup_job('azure_import_networks_cleanup.json', neo4j_session, {**PARAMS, 'UPDATE_TAG': TAG + 1})
     count = neo4j_session.run("MATCH (:AzureNetwork{id: $hub})-[r:PEERED_WITH]->() RETURN count(r) AS c", hub=HUB)
     assert count.single()['c'] == 0

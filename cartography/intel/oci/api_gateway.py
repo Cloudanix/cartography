@@ -133,6 +133,7 @@ def transform_gateways(
 def load_gateways(
     neo4j_session: neo4j.Session,
     gateways: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -158,17 +159,21 @@ def load_gateways(
             gw.consolelink = row.consolelink,
             gw.lastupdated = $oci_update_tag
         WITH gw
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(gw)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, ingest, gateways, COMPARTMENT_ID=compartment_id, oci_update_tag=oci_update_tag)
+    load_graph_data(
+        neo4j_session, ingest, gateways,
+        TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_gateways(
     neo4j_session: neo4j.Session,
     gateway_client: oci.apigateway.GatewayClient,
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
@@ -186,5 +191,5 @@ def sync_gateways(
     gateways = transform_gateways(raw, region, deployments)
     if not gateways:
         return
-    load_gateways(neo4j_session, gateways, compartment_id, oci_update_tag)
+    load_gateways(neo4j_session, gateways, tenancy_id, compartment_id, oci_update_tag)
     tags.sync_tags(neo4j_session, raw, 'OCIApiGateway', oci_update_tag, common_job_parameters)

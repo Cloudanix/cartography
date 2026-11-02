@@ -5,6 +5,8 @@ from collections import namedtuple
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
+from typing import Tuple
 
 import boto3
 import neo4j
@@ -12,6 +14,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
 from cartography.client.core.tx import load
+from cartography.client.core.tx import load_graph_data
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.util.arns import DEFAULT_PARTITION
 from cartography.intel.aws.util.arns import get_partition_from_params
@@ -20,6 +23,7 @@ from cartography.models.aws.ec2.privateip_networkinterface import EC2PrivateIpNe
 from cartography.models.aws.ec2.securitygroup_networkinterface import EC2SecurityGroupNetworkInterfaceSchema
 from cartography.models.aws.ec2.subnet_networkinterface import EC2SubnetNetworkInterfaceSchema
 from cartography.util import aws_handle_regions
+from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -52,6 +56,22 @@ def get_network_interface_data(boto3_session: boto3.session.Session, region: str
     return subnets
 
 
+def _parse_elb_description(
+    description: str, region: str, aws_account_id: str, partition: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Returns (classic load balancer name, ALB/NLB/GWLB ARN) named by an ELB-owned ENI's description.
+    https://repost.aws/knowledge-center/elb-find-load-balancer-IP
+    "ELB app|net|gwy/<name>/<id>" is the tail of the load balancer ARN; "ELB <name>" is a classic one.
+    The load balancer lives in the ENI's account and region, so the ARN is built from them.
+    """
+    v2_match = re.match(r'^ELB ((?:app|net|gwy)/[^/]+/[^/]+)$', description)
+    if v2_match:
+        return None, f'arn:{partition}:elasticloadbalancing:{region}:{aws_account_id}:loadbalancer/{v2_match[1]}'
+    v1_match = re.match(r'^ELB ([A-Za-z0-9-]+)$', description)
+    return (v1_match[1] if v1_match else None), None
+
+
 def transform_network_interface_data(
     data_list: List[Dict[str, Any]], region: str, aws_account_id: str, partition: str = DEFAULT_PARTITION,
 ) -> Ec2NetworkData:
@@ -61,17 +81,9 @@ def transform_network_interface_data(
     subnet_list = []
 
     for network_interface in data_list:
-        # Parse network interface description for ELB association
-        # https://aws.amazon.com/premiumsupport/knowledge-center/elb-find-load-balancer-IP/
-        elb_v1_id = None
-        elb_v2_id = None
-        elb_match = re.match(r'^ELB (?:net|app)/([^\/]+)\/(.*)', network_interface.get('Description', ''))
-        if elb_match:
-            elb_v1_id = f'{elb_match[1]}-{elb_match[2]}.elb.{region}.amazonaws.com'
-        else:
-            elb_match = re.match(r'^ELB (.*)', network_interface.get('Description', ''))
-            if elb_match:
-                elb_v2_id = elb_match[1]
+        elb_v1_name, elb_v2_arn = _parse_elb_description(
+            network_interface.get('Description') or '', region, aws_account_id, partition,
+        )
         network_interface_arn = (
             f"arn:{partition}:ec2:{region}:{aws_account_id}:network-interface/{network_interface['NetworkInterfaceId']}"
         )
@@ -99,8 +111,8 @@ def transform_network_interface_data(
                 'SourceDestCheck': network_interface.get('SourceDestCheck'),
                 'Status': network_interface.get('Status'),
                 'SubnetId': network_interface.get('SubnetId'),
-                'ElbV1Id': elb_v1_id,
-                'ElbV2Id': elb_v2_id,
+                'ElbV1Name': elb_v1_name,
+                'ElbV2Arn': elb_v2_arn,
                 'Arn': network_interface_arn,
                 'consolelink': aws_console_link.get_console_link(arn=network_interface_arn),
             },
@@ -133,8 +145,7 @@ def transform_network_interface_data(
                 {
                     'NetworkInterfaceId': network_interface_id,
                     'SubnetId': subnet_id,
-                    'ElbV1Id': elb_v1_id,
-                    'ElbV2Id': elb_v2_id,
+                    'ElbV2Arn': elb_v2_arn,
                 },
             )
 
@@ -231,6 +242,37 @@ def load_subnet_network_interface(
     )
 
 
+@timeit
+def load_classic_elb_network_interfaces(
+        neo4j_session: neo4j.Session,
+        data: List[Dict[str, Any]],
+        region: str,
+        aws_account_id: str,
+        update_tag: int,
+) -> None:
+    """
+    Links a classic load balancer to its ENIs and their subnets. The ENI names it only by load balancer
+    name, which is unique within one account and region, so resolve it among this account's load
+    balancers in this region (the LoadBalancer arn holds the DNS name, so there is no global key to match).
+    Runs after the subnet load: the subnet link follows the ENI's own PART_OF_SUBNET edge.
+    """
+    query = """
+    UNWIND $DictList AS item
+    MATCH (aa:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(ni:NetworkInterface{id: item.NetworkInterfaceId})
+    MATCH (aa)-[:RESOURCE]->(elb:LoadBalancer{name: item.ElbV1Name, region: $Region})
+    MERGE (elb)-[r:NETWORK_INTERFACE]->(ni)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    WITH elb, ni
+    MATCH (ni)-[:PART_OF_SUBNET]->(subnet:EC2Subnet)
+    MERGE (elb)-[s:PART_OF_SUBNET]->(subnet)
+    ON CREATE SET s.firstseen = timestamp()
+    SET s.lastupdated = $update_tag
+    """
+    rows = [ni for ni in data if ni.get('ElbV1Name')]
+    load_graph_data(neo4j_session, query, rows, AWS_ID=aws_account_id, Region=region, update_tag=update_tag)
+
+
 def load_network_data(
         neo4j_session: neo4j.Session,
         region: str,
@@ -245,12 +287,17 @@ def load_network_data(
     load_private_ip_network_interface(neo4j_session, private_ip_list, region, current_aws_account_id, update_tag)
     load_subnet_network_interface(neo4j_session, subnet_list, region, current_aws_account_id, update_tag)
     load_security_group_network_interface(neo4j_session, sg_list, region, current_aws_account_id, update_tag)
+    load_classic_elb_network_interfaces(
+        neo4j_session, network_interface_list, region, current_aws_account_id, update_tag,
+    )
 
 
 @timeit
 def cleanup_network_interfaces(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     GraphJob.from_node_schema(EC2NetworkInterfaceSchema(), common_job_parameters).run(neo4j_session)
     GraphJob.from_node_schema(EC2PrivateIpNetworkInterfaceSchema(), common_job_parameters).run(neo4j_session)
+    # Load balancer links the schema jobs above do not cover (classic ELB, and both kinds' subnet links).
+    run_cleanup_job('aws_ec2_network_interface_elb_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit

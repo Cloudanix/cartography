@@ -186,16 +186,12 @@ Representation of an AWS [Inspector Finding](https://docs.aws.amazon.com/inspect
     (AWSInspectorFinding)-[:AFFECTS]->(EC2Instance)
     ```
 
-- AWSInspectorFinding may affect ECR Repositories
+- AWSInspectorFinding may affect ECR Repositories. A container image finding affects the image's
+  repository and keeps the image digest in `ecrimageid` (ECRImage is shared by every account that
+  pushed the same digest, so findings do not link to it).
 
     ```
     (AWSInspectorFinding)-[:AFFECTS]->(ECRRepository)
-    ```
-
-- AWSInspectorFinding may affect ECR Images
-
-    ```
-    (AWSInspectorFinding)-[:AFFECTS]->(ECRImage)
     ```
 
 - AWSInspectorFindings belong to AWSAccounts.
@@ -211,7 +207,7 @@ Representation of an AWS [Inspector Finding Package](https://docs.aws.amazon.com
 | Field | Description | Required|
 |-------|-------------|------|---|
 |**arn**|The AWS ARN|yes
-|id|Uses the format of `name|arch|version|release|epoch` to uniqulely identify packages|yes
+|id|Uses the format of `account|name|arch|version|release|epoch` (account of the finding) to uniquely identify packages per account|yes
 |region|AWS region the finding is from|yes
 |awsaccount|AWS account the finding is from|yes
 |findingarn|The AWS ARN for a related finding|yes
@@ -1330,7 +1326,8 @@ This way, more than one `ECRRepositoryImage` can reference/be connected to the s
 
 Representation of an ECR image identified by its digest (e.g. a SHA hash). Specifically, this is the "digest part" of
 [`ecr.list_images()`](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_ImageIdentifier.html). Also see
-ECRRepositoryImage.
+ECRRepositoryImage. The same digest pushed by several accounts is one node, so it holds only the digest; region,
+tag and console link live on the account's ECRRepositoryImage.
 
 | Field | Description |
 |--------|-----------|
@@ -2696,7 +2693,7 @@ Representation of an AWS [EC2 Images (AMIs)](https://docs.aws.amazon.com/AWSEC2/
 |-------|-------------|
 | firstseen| Timestamp of when a sync job first discovered this node  |
 | lastupdated |  Timestamp of the last time the node was updated |
-| **id** | The ID of the AMI.|
+| **id** | `ImageId\|region` for an AMI the account owns; `ImageId\|region\|account` for an AMI the account only uses (public, marketplace or shared by another account), so each using account has its own node.|
 | name | The name of the AMI that was provided during image creation. |
 | creationdate | The date and time the image was created. |
 | architecture | The architecture of the image. |

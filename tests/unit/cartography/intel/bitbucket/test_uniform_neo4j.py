@@ -14,7 +14,7 @@ class TestLoadLanguages:
         session = MagicMock()
         langs = [{"primary_language": "python", "repo_id": "r1"}]
 
-        repositories.load_languages(session, TEST_UPDATE_TAG, langs)
+        repositories.load_languages(session, TEST_UPDATE_TAG, langs, "ws-1")
 
         session.run.assert_not_called()
         call = session.execute_write.call_args
@@ -23,7 +23,7 @@ class TestLoadLanguages:
 
     def test_empty_list_writes_nothing(self):
         session = MagicMock()
-        repositories.load_languages(session, TEST_UPDATE_TAG, [])
+        repositories.load_languages(session, TEST_UPDATE_TAG, [], "ws-1")
         session.execute_write.assert_not_called()
 
 
@@ -32,7 +32,7 @@ class TestUpdateRepoLastActivity:
         session = MagicMock()
         branches = [{"name": "main", "date": "2024-01-01T00:00:00+00:00"}]
 
-        repositories._update_repo_last_activity(session, "r1", branches, "main")
+        repositories._update_repo_last_activity(session, "r1", branches, "main", "ws-1")
 
         session.run.assert_not_called()
         session.execute_write.assert_called_once()
@@ -40,7 +40,7 @@ class TestUpdateRepoLastActivity:
     def test_no_dates_no_write(self):
         session = MagicMock()
 
-        repositories._update_repo_last_activity(session, "r1", [{"name": "main"}], "main")
+        repositories._update_repo_last_activity(session, "r1", [{"name": "main"}], "main", "ws-1")
 
         session.execute_write.assert_not_called()
         session.run.assert_not_called()

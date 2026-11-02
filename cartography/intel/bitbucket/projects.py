@@ -73,7 +73,7 @@ def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_
     pro.lastupdated = $UpdateTag
 
     WITH pro,project
-    MATCH (work:BitbucketWorkspace{id:project.workspace.uuid})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(work:BitbucketWorkspace{id:project.workspace.uuid})
     merge (work)-[o:RESOURCE]->(pro)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
@@ -83,6 +83,7 @@ def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_
         ingest_workspace,
         projectData=project_data,
         UpdateTag=common_job_parameters['UPDATE_TAG'],
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
     )
 
 

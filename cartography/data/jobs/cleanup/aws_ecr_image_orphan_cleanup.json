@@ -1,0 +1,11 @@
+{
+  "statements": [
+    {
+      "__comment": "Global orphan sweep, deliberately tenant-independent: ECRImage is one node per digest shared by every account that pushed it, so tenant cleanups delete only their own edges and the image goes once no repository image or Lambda refers to it. Only images no sync has written for 24h (86400s; lastupdated is a sync start time, reused across a paginated run) are swept, so an image another worker has just written and not yet linked survives.",
+      "query": "MATCH (n:ECRImage) WHERE NOT EXISTS { (n)--() } AND coalesce(n.lastupdated, 0) < $UPDATE_TAG - 86400 WITH n LIMIT $LIMIT_SIZE DELETE (n) RETURN COUNT(*) AS TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    }
+  ],
+  "name": "cleanup orphan ECRImage"
+}

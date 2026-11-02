@@ -172,7 +172,8 @@ class TestManagedScalarWrites:
         images.link_ec2_instances_to_images(session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
-        session.execute_write.assert_called_once()
+        # link, then drop the account's stale links
+        assert session.execute_write.call_count == 2
 
     def test_tgw_attachment_writes_are_managed(self):
         session = MagicMock()

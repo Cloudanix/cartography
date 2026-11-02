@@ -54,7 +54,7 @@ def load_organization(
     Load Azure DevOps organization data into Neo4j with comprehensive properties.
 
     Properties mapped from Azure DevOps API:
-    - id: Organization name (unique identifier)
+    - id: org_data["node_id"]: the organization name on dev.azure.com, host-qualified elsewhere (get_org_node_id)
     - url: Organization URL
     - status: Organization status
     - type: Organization type
@@ -63,7 +63,7 @@ def load_organization(
     - last_updated: Last update timestamp
     """
     query = """
-    MERGE (org:AzureDevOpsOrganization{id: $OrgName})
+    MERGE (org:AzureDevOpsOrganization{id: $OrgNodeId})
     ON CREATE SET org.firstseen = timestamp()
     SET org.url = $OrgUrl,
         org.status = $OrgStatus,
@@ -82,7 +82,7 @@ def load_organization(
     run_write_query(
         neo4j_session,
         query,
-        OrgName=org_data.get("name"),
+        OrgNodeId=org_data["node_id"],
         OrgUrl=org_data.get("url"),
         OrgStatus=org_data.get("status"),
         OrgType=org_data.get("type"),
@@ -112,6 +112,7 @@ def sync(
     logger.info(f"Syncing Azure DevOps Organization '{org_name}'")
     # There is no direct api to get org data
     org_data = {
+        "node_id": common_job_parameters["ORGANIZATION_ID"],
         "name": org_name,
         "url": f"{url}/{org_name}",
         "consolelink": get_console_link("organization", base_url=url, organization=org_name),

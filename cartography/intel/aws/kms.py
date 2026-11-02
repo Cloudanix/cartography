@@ -198,10 +198,11 @@ def _load_kms_key_policies(
     """
     Ingest KMS Key policy results into neo4j.
     """
-    # NOTE we use the coalesce function so appending works when the value is null initially
+    # NOTE we use the coalesce function so appending works when the value is null initially.
+    # policy.kms_key is the KeyId (the KMSKey node id); resolve it among this account's keys only.
     ingest_policies = """
     UNWIND $DictList AS policy
-    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(k:KMSKey) where k.name = policy.kms_key
+    MATCH (:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(k:KMSKey{id: policy.kms_key})
     SET k.anonymous_access = (coalesce(k.anonymous_access, false) OR policy.internet_accessible),
     k.region=policy.region,
     k.anonymous_actions = coalesce(k.anonymous_actions, []) + policy.accessible_actions,
@@ -212,7 +213,7 @@ def _load_kms_key_policies(
         neo4j_session,
         ingest_policies,
         policies,
-        AWS_ACCOUNT_ID=aws_account_id,
+        AWS_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 

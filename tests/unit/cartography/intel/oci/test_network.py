@@ -72,11 +72,17 @@ def test_load_nsg_security_rules_records_internet_ingress_port_range():
             },
             {'id': 'in-vcn', 'direction': 'INGRESS', 'protocol': '6', 'source': '10.0.0.0/16'},
         ],
-        'nsg', 1,
+        'nsg', 'tenancy', 1,
     )
     assert {r['ocid']: r['internet_ingress_port_range'] for r in session.rows} == {
         'in-https': '6:443-443', 'in-vcn': None,
     }
+
+
+def test_load_nsg_security_rules_keys_rules_by_nsg_and_rule_id():
+    session = _RecordingSession()
+    network.load_nsg_security_rules(session, [{'id': '04ABEC'}, {'direction': 'INGRESS'}], 'ocid1.nsg', 'tenancy', 1)
+    assert [(r['id'], r['ocid']) for r in session.rows] == [('ocid1.nsg/04ABEC', '04ABEC')]
 
 
 def test_load_security_lists_flags_internet_ingress():
@@ -104,7 +110,7 @@ def test_load_nsg_security_rules_flags_internet_ingress():
             {'id': 'in-vcn', 'direction': 'INGRESS', 'protocol': '6', 'source': '10.0.0.0/16'},
             {'id': 'out-open', 'direction': 'EGRESS', 'protocol': 'all', 'destination': '0.0.0.0/0'},
         ],
-        'nsg', 1,
+        'nsg', 'tenancy', 1,
     )
     assert {r['ocid']: r['is_internet_ingress'] for r in session.rows} == {
         'in-open': True, 'in-vcn': False, 'out-open': False,
@@ -157,8 +163,12 @@ def test_sync_runs_load_balancer_and_api_gateway_syncs_per_region(monkeypatch):
 
     network.sync(MagicMock(), MagicMock(), 'tenancy', 1, {'OCI_COMPARTMENT_ID': 'comp'}, ['r1', 'r2'])
 
-    assert [c.args[4] for c in sync_lbs.call_args_list] == ['r1', 'r2']
-    assert [(c.args[2], c.args[3]) for c in sync_gateways.call_args_list] == [('comp', 'r1'), ('comp', 'r2')]
+    assert [(c.args[3], c.args[4], c.args[5]) for c in sync_lbs.call_args_list] == [
+        ('tenancy', 'comp', 'r1'), ('tenancy', 'comp', 'r2'),
+    ]
+    assert [(c.args[2], c.args[3], c.args[4]) for c in sync_gateways.call_args_list] == [
+        ('tenancy', 'comp', 'r1'), ('tenancy', 'comp', 'r2'),
+    ]
 
 
 class _RecordingSession:

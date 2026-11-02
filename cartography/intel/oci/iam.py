@@ -292,13 +292,13 @@ def sync_group_memberships(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     logger.debug("Syncing IAM group membership for account '%s'.", current_tenancy_id)
-    query = "MATCH (group:OCIGroup)<-[:RESOURCE]-(OCITenancy{id: $OCI_TENANCY_ID}) " \
+    query = "MATCH (group:OCIGroup)<-[:RESOURCE]-(:OCITenancy{id: $OCI_TENANCY_ID}) " \
             "return group.name as name, group.ocid as ocid;"
     groups = neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=current_tenancy_id)
     groups_membership = {
         group["ocid"]: get_group_membership_data(iam, group['ocid'], current_tenancy_id) for group in groups
     }
-    load_group_memberships(neo4j_session, groups_membership, oci_update_tag)
+    load_group_memberships(neo4j_session, groups_membership, current_tenancy_id, oci_update_tag)
     run_cleanup_job(
         'oci_import_groups_membership_cleanup.json',
         neo4j_session,
@@ -309,13 +309,14 @@ def sync_group_memberships(
 def load_group_memberships(
     neo4j_session: neo4j.Session,
     group_memberships: Dict[str, Any],
+    current_tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     ingest_membership = """
     UNWIND $DictList AS m
-        MATCH (group:OCIGroup{id: m.group_ocid})
-        WITH group, m
-        MATCH (user:OCIUser{id: m.user_ocid})
+        MATCH (t:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(group:OCIGroup{id: m.group_ocid})
+        WITH t, group, m
+        MATCH (t)-[:RESOURCE]->(user:OCIUser{id: m.user_ocid})
         MERGE (user)-[r:MEMBER_OCID_GROUP]->(group)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -329,6 +330,7 @@ def load_group_memberships(
             })
     load_graph_data(
         neo4j_session, ingest_membership, rows,
+        OCI_TENANCY_ID=current_tenancy_id,
         oci_update_tag=oci_update_tag,
     )
 
@@ -414,8 +416,8 @@ def load_oci_policy_group_reference(
     oci_update_tag: int,
 ) -> None:
     ingest_policy_group_reference = """
-    MATCH (aa:OCIPolicy{id: $POLICY_ID})
-    MATCH (bb:OCIGroup{id: $GROUP_ID})
+    MATCH (t:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(aa:OCIPolicy{id: $POLICY_ID})
+    MATCH (t)-[:RESOURCE]->(bb:OCIGroup{id: $GROUP_ID})
     MERGE (aa)-[r:OCI_POLICY_REFERENCE]->(bb)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -423,6 +425,7 @@ def load_oci_policy_group_reference(
     run_write_query(
         neo4j_session,
         ingest_policy_group_reference,
+        OCI_TENANCY_ID=tenancy_id,
         POLICY_ID=policy_id,
         GROUP_ID=group_id,
         oci_update_tag=oci_update_tag,
@@ -437,8 +440,8 @@ def load_oci_policy_compartment_reference(
     oci_update_tag: int,
 ) -> None:
     ingest_policy_compartment_reference = """
-    MATCH (aa:OCIPolicy{id: $POLICY_ID})
-    MATCH (bb:OCICompartment{id: $COMPARTMENT_ID})
+    MATCH (t:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(aa:OCIPolicy{id: $POLICY_ID})
+    MATCH (t)-[:OWNER]->(bb:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (aa)-[r:OCI_POLICY_REFERENCE]->(bb)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -446,6 +449,7 @@ def load_oci_policy_compartment_reference(
     run_write_query(
         neo4j_session,
         ingest_policy_compartment_reference,
+        OCI_TENANCY_ID=tenancy_id,
         POLICY_ID=policy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
@@ -496,10 +500,17 @@ def _oci_external_access_type(ocid: str, tenancy_id: str, known_tenancy_ids: set
     return "ThirdParty"
 
 
-def _get_known_tenancy_ids(neo4j_session: neo4j.Session) -> set:
-    """Return every OCITenancy OCID already loaded, used to split CrossAccount from ThirdParty."""
-    query = "MATCH (t:OCITenancy) WHERE t.id IS NOT NULL RETURN t.id AS ocid"
-    rows = neo4j_session.execute_read(read_list_of_dicts_tx, query)
+def _get_known_tenancy_ids(neo4j_session: neo4j.Session, workspace_id: str) -> set:
+    """
+    Return the OCIDs of the tenancies this workspace has onboarded, used to split CrossAccount from ThirdParty.
+    Only the workspace's own tenancies count: another customer's tenancy is a third party to this one.
+    """
+    query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(t:OCITenancy)
+    WHERE t.id IS NOT NULL
+    RETURN t.id AS ocid
+    """
+    rows = neo4j_session.execute_read(read_list_of_dicts_tx, query, WORKSPACE_ID=workspace_id)
     return {row["ocid"].lower() for row in rows if row.get("ocid")}
 
 
@@ -507,24 +518,29 @@ def load_oci_external_principal(
     neo4j_session: neo4j.Session,
     policy_id: str,
     external_principal: Dict[str, str],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
+    # One OCIExternalPrincipal per foreign tenancy OCID is shared by every customer that trusts it, so it
+    # holds only global facts. access_type (relative to the trusting workspace) and statement_verb belong
+    # to one policy and live on the policy's TRUSTS_OCI_PRINCIPAL edge.
     ingest_external_principal = """
     MERGE (ep:OCIExternalPrincipal{principal: $PRINCIPAL})
     ON CREATE SET ep.firstseen = timestamp()
     SET ep.lastupdated = $oci_update_tag,
-    ep.access_type = $ACCESS_TYPE,
-    ep.account_id = $PRINCIPAL,
-    ep.statement_verb = $STATEMENT_VERB
+    ep.account_id = $PRINCIPAL
     WITH ep
-    MATCH (p:OCIPolicy{id: $POLICY_ID})
+    MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(p:OCIPolicy{id: $POLICY_ID})
     MERGE (p)-[r:TRUSTS_OCI_PRINCIPAL]->(ep)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $oci_update_tag
+    SET r.lastupdated = $oci_update_tag,
+    r.access_type = $ACCESS_TYPE,
+    r.statement_verb = $STATEMENT_VERB
     """
     run_write_query(
         neo4j_session,
         ingest_external_principal,
+        OCI_TENANCY_ID=tenancy_id,
         POLICY_ID=policy_id,
         PRINCIPAL=external_principal["principal"],
         ACCESS_TYPE=external_principal["access_type"],
@@ -543,7 +559,7 @@ def sync_oci_policy_references(
     groups = list(utils.get_groups_in_tenancy(neo4j_session, tenancy_id))
     compartments = list(utils.get_compartments_in_tenancy(neo4j_session, tenancy_id))
     policies = list(utils.get_policies_in_tenancy(neo4j_session, tenancy_id))
-    known_tenancy_ids = _get_known_tenancy_ids(neo4j_session)
+    known_tenancy_ids = _get_known_tenancy_ids(neo4j_session, common_job_parameters.get("WORKSPACE_ID", ""))
     for policy in policies:
         check_compart = policy["compartmentid"]
         for statement in policy["statements"]:
@@ -572,7 +588,7 @@ def sync_oci_policy_references(
                 external_principal["principal"], tenancy_id, known_tenancy_ids,
             )
             load_oci_external_principal(
-                neo4j_session, policy["ocid"], external_principal, oci_update_tag,
+                neo4j_session, policy["ocid"], external_principal, tenancy_id, oci_update_tag,
             )
 
 

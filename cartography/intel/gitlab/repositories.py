@@ -54,7 +54,7 @@ def _load_repositories_data(
     re.lastupdated = $UpdateTag
 
     WITH re, repo
-    MATCH (project:GitLabProject{id: $ProjectID})
+    MATCH (:GitLabGroup{id: $GroupId})-[:RESOURCE]->(project:GitLabProject{id: $ProjectID})
     MERGE (project)<-[o:HAS]-(re)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
@@ -64,6 +64,7 @@ def _load_repositories_data(
         ingest_repositories,
         reposData=repos_data,
         ProjectID=project_id,
+        GroupId=common_job_parameters["GITLAB_GROUP_NODE_ID"],
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 

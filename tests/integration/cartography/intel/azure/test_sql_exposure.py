@@ -58,10 +58,11 @@ def test_sql_server_exposure(neo4j_session):
     # As load_server_details records it: flexible's and mssql-unread's firewall list failed.
     unread = {flexible['id'], mssql_unread['id']}
     sql._load_firewall_rules_fetched(
-        neo4j_session, [{'id': s['id'], 'fetched': s['id'] not in unread} for s in servers],
+        neo4j_session, SUB, [{'id': s['id'], 'fetched': s['id'] not in unread} for s in servers],
     )
     sql._load_firewall_rules(
         neo4j_session,
+        SUB,
         [
             _rule(closed, 'all', '0.0.0.0', '255.255.255.255'),
             _rule(open_all, 'all', '0.0.0.0', '255.255.255.255'),

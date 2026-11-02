@@ -53,19 +53,22 @@ def _get_vm_scale_set_vms_part_of_relations(
 
 def _load_vm_scale_set_vms_part_of_relationships_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     relations: List[Dict],
     update_tag: int,
 ) -> None:
+    # A flexible scale set's VMs live in the scale set's subscription: both are reached from the syncing one.
     ingest_part_of = """
     UNWIND $relations AS rel
-    MATCH (vm:AzureVirtualMachine {id: rel.vm_id})
-    MATCH (vmss:AzureVirtualMachineScaleSet {id: rel.vmss_id})
+    MATCH (sub:AzureSubscription {id: $subscription_id})-[:RESOURCE]->(vm:AzureVirtualMachine {id: rel.vm_id})
+    MATCH (sub)-[:RESOURCE]->(vmss:AzureVirtualMachineScaleSet {id: rel.vmss_id})
     MERGE (vm)-[r:PART_OF]->(vmss)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
     tx.run(
         ingest_part_of,
+        subscription_id=subscription_id,
         relations=relations,
         update_tag=update_tag,
     )
@@ -92,6 +95,7 @@ def sync_vm_scale_sets_vms_part_of_relationships(
 
     neo4j_session.execute_write(
         _load_vm_scale_set_vms_part_of_relationships_tx,
+        subscription_id,
         relations,
         update_tag,
     )

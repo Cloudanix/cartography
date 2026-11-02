@@ -163,16 +163,18 @@ def _load_event_rules_tx(
         rule.state = record.State,
         rule.role_arn = record.RoleArn
     WITH rule, record
-    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(bus:AWSEventBridgeEventBus{arn:record.EventBusName})
-    MERGE (bus)-[rt:HAS]->(rule)
-    ON CREATE SET
-        rt.firstseen = timestamp()
-    SET rt.lastupdated = $aws_update_tag
-    WITH rule
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(rule)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
+    WITH owner, rule, record
+    // ListRules returns the bus name, not its ARN, and a name ("default") is unique only within
+    // one account and region: resolve it among this account's buses in the rule's region.
+    MATCH (owner)-[:RESOURCE]->(bus:AWSEventBridgeEventBus{name: record.EventBusName, region: record.region})
+    MERGE (bus)-[rt:HAS]->(rule)
+    ON CREATE SET
+        rt.firstseen = timestamp()
+    SET rt.lastupdated = $aws_update_tag
     """
 
     tx.run(

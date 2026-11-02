@@ -49,8 +49,8 @@ def test_same_ip_on_two_accounts_is_scoped_and_cleaned_per_account(neo4j_session
         id=NETWORK_PIP, ip=IP,
     )
 
-    for key in ACCOUNTS:
-        cosmosdb._load_database_account_associated_iprules(neo4j_session, _account(key, [IP]), 10)
+    for key, (_, _, sub) in ACCOUNTS.items():
+        cosmosdb._load_database_account_associated_iprules(neo4j_session, sub, _account(key, [IP]), 10)
 
     rules_a, rules_b = _rules(neo4j_session, 'a'), _rules(neo4j_session, 'b')
     assert rules_a == [{
@@ -74,7 +74,7 @@ def test_same_ip_on_two_accounts_is_scoped_and_cleaned_per_account(neo4j_session
     # Account a drops the IP; its next sync (tag 11) runs the cosmos cleanup.
     ws, tenant, sub = ACCOUNTS['a']
     cosmosdb.load_database_account_data(neo4j_session, sub, [_account('a', [])], 11)
-    cosmosdb._load_database_account_associated_iprules(neo4j_session, _account('a', []), 11)
+    cosmosdb._load_database_account_associated_iprules(neo4j_session, sub, _account('a', []), 11)
     cosmosdb.cleanup_azure_database_accounts(
         neo4j_session, {
             'UPDATE_TAG': 11, 'WORKSPACE_ID': ws, 'AZURE_TENANT_ID': tenant, 'AZURE_SUBSCRIPTION_ID': sub,

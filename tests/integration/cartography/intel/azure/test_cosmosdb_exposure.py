@@ -33,7 +33,7 @@ def _run(neo4j_session, accounts):
     accounts = cosmosdb.transform_database_account_data(accounts)
     cosmosdb.load_database_account_data(neo4j_session, SUB, accounts, 1)
     for account in accounts:
-        cosmosdb._load_database_account_associated_iprules(neo4j_session, account, 1)
+        cosmosdb._load_database_account_associated_iprules(neo4j_session, SUB, account, 1)
 
     run_analysis_job('azure_cosmosdb_asset_exposure.json', neo4j_session, PARAMS)
 

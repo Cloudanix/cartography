@@ -88,6 +88,8 @@ def get_tenant_id(credentials: Credentials) -> str:
 def load_azure_tenant(
     neo4j_session: neo4j.Session, tenant_obj: Dict, current_user: str, update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    # One login (or a multi-tenant app's client id) can connect several customers' tenants, so the
+    # principal node is shared: its object id and name differ per tenant and live on the tenant's edge.
     query = """
     MERGE (w:CloudanixWorkspace{id: $workspaceId})
     SET w.lastupdated = $update_tag
@@ -110,12 +112,12 @@ def load_azure_tenant(
     WITH at
     MERGE (ap:AzurePrincipal{id: $userEmail})
     ON CREATE SET ap.email = $userEmail, ap.firstseen = timestamp()
-    SET ap.lastupdated = $update_tag,
-    ap.name=$userName, ap.userid=$userId
+    SET ap.lastupdated = $update_tag
     WITH at, ap
     MERGE (at)-[r:RESOURCE]->(ap)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag;
+    SET r.lastupdated = $update_tag,
+    r.name = $userName, r.userid = $userId;
     """
     run_write_query(
         neo4j_session,

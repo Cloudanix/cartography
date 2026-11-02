@@ -10,6 +10,7 @@ import neo4j
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_org_node_id
 from cartography.intel.github.util import get_web_base_url
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
@@ -84,7 +85,7 @@ def load_organization_users(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     query = """
-    MERGE (org:GitHubOrganization{id: $OrgLogin})
+    MERGE (org:GitHubOrganization{id: $OrgNodeId})
     ON CREATE SET org.firstseen = timestamp()
     SET org.lastupdated = $UpdateTag
     WITH org
@@ -117,7 +118,7 @@ def load_organization_users(
         query,
         user_data,
         OrgUrl=org_data["url"],
-        OrgLogin=org_data["login"],
+        OrgNodeId=org_data["node_id"],
         UpdateTag=common_job_parameters["UPDATE_TAG"],
         workspace_id=common_job_parameters["WORKSPACE_ID"],
     )
@@ -135,9 +136,11 @@ def sync(
     logger.info("Syncing GitHub Users in account %s - url %s", organization, github_url)
 
     user_data, org_data = get_users(github_api_key, github_url, organization)
-    user_data = transform_users(user_data, get_web_base_url(github_url))
+    web_base_url = get_web_base_url(github_url)
+    user_data = transform_users(user_data, web_base_url)
+    org_data["node_id"] = get_org_node_id(web_base_url, org_data["login"])
 
-    common_job_parameters["ORGANIZATION_ID"] = org_data.get("login")
+    common_job_parameters["ORGANIZATION_ID"] = org_data["node_id"]
 
     load_organization_users(neo4j_session, user_data, org_data, common_job_parameters)
     merge_module_sync_metadata(
@@ -150,6 +153,10 @@ def sync(
     )
 
     run_cleanup_job("github_users_cleanup.json", neo4j_session, common_job_parameters)
+    # A GitHubUser (keyed by profile URL) can belong to several tenants' orgs, so the tenant cleanup above removes
+    # only this org's stale edges; this tenant-independent sweep deletes a user once no org or repo links to it.
+    # Plain DELETE: a user another sync is linking at that moment fails this sweep, never loses the edge.
+    run_cleanup_job("github_users_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process GitHub Users: {toc - tic:0.4f} seconds")

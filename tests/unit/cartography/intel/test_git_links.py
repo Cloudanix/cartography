@@ -20,3 +20,21 @@ def test_get_console_link_never_builds_a_link_from_an_unsafe_base_url() -> None:
         "azuredevops", "organization", base_url="https://pat:secret@dev.azure.com/", organization="acme",
     ) == "https://dev.azure.com/acme"
     assert git_links.get_console_link("bitbucket", "workspace", workspace="acme") == "https://bitbucket.org/acme"
+
+
+def test_host_scoped_key_keeps_saas_keys_and_qualifies_other_hosts() -> None:
+    # SaaS ids stay as they are (no console churn), whatever their type.
+    assert git_links.host_scoped_key("https://github.com", "github.com", "acme") == "acme"
+    assert git_links.host_scoped_key("https://gitlab.com", "gitlab.com", 42) == 42
+    assert git_links.host_scoped_key("https://dev.azure.com", "dev.azure.com", "acme") == "acme"
+    assert git_links.host_scoped_key(None, "gitlab.com", "platform") == "platform"
+    assert git_links.host_scoped_key("javascript://evil.com", "gitlab.com", "platform") == "platform"
+    # Any other instance: host (and port / sub-path), never credentials.
+    assert git_links.host_scoped_key("https://ghe.acme.com", "github.com", "acme") == "ghe.acme.com/acme"
+    assert git_links.host_scoped_key(
+        "https://user:glpat@GitLab.Acme.com:8443/gitlab/", "gitlab.com", 42,
+    ) == "gitlab.acme.com:8443/gitlab/42"
+    assert git_links.host_scoped_key("https://ado.acme.com/tfs", "dev.azure.com", "DefaultCollection") == (
+        "ado.acme.com/tfs/DefaultCollection"
+    )
+    assert git_links.host_scoped_key("https://ghe.acme.com", "github.com", None) is None

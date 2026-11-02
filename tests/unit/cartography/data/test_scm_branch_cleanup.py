@@ -21,5 +21,6 @@ def test_gitlab_branch_cleanup_follows_the_loaded_edge_direction():
     # _load_branches_data writes (project)-[:BRANCH]->(branch).
     text = _queries('gitlab_group_project_cleanup.json')
     assert '(:GitLabProject)-[:BRANCH]->(n:GitLabBranch)' in text
-    assert '(:GitLabProject)-[r:BRANCH]->(:GitLabBranch) WHERE r.lastupdated' in text
+    assert '(:GitLabProject)-[r:BRANCH]->(:GitLabBranch) WHERE' in text
+    assert 'r.lastupdated <> $UPDATE_TAG' in text
     assert '(:GitLabProject)<-[:BRANCH]-' not in text

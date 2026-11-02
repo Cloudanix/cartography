@@ -82,7 +82,7 @@ def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_j
     mem.lastupdated = $UpdateTag
 
     WITH mem,member
-    MATCH (owner:BitbucketWorkspace{id:member.workspace.uuid})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(owner:BitbucketWorkspace{id:member.workspace.uuid})
     merge (owner)-[o:MEMBER]->(mem)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
@@ -91,6 +91,7 @@ def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_j
     tx.run(
         ingest_workspace,
         membersData=members_data,
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
         UpdateTag=common_job_parameters['UPDATE_TAG'],
     )
 

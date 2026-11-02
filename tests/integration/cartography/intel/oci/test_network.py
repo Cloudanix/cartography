@@ -12,7 +12,10 @@ TEST_UPDATE_TAG = 123456789
 
 def _seed_compartment(neo4j_session):
     neo4j_session.run(
-        "MERGE (c:OCICompartment{id: $id}) SET c.lastupdated = $tag",
+        "MERGE (t:OCITenancy{id: $tenancy_id}) "
+        "MERGE (c:OCICompartment{id: $id}) SET c.lastupdated = $tag "
+        "MERGE (t)-[:OWNER]->(c)",
+        tenancy_id=TEST_TENANCY_ID,
         id=TEST_COMPARTMENT_ID,
         tag=TEST_UPDATE_TAG,
     )
@@ -73,12 +76,12 @@ def test_load_nsgs_and_rules(neo4j_session):
         "OCI_NETWORK_SECURITY_GROUP",
     )
     network.load_nsg_security_rules(
-        neo4j_session, test_data.NSG_SECURITY_RULES, test_data.NSG_ID, TEST_UPDATE_TAG,
+        neo4j_session, test_data.NSG_SECURITY_RULES, test_data.NSG_ID, TEST_TENANCY_ID, TEST_UPDATE_TAG,
     )
     assert check_nodes(neo4j_session, "OCINsgSecurityRule", ["id", "tcp_dest_port_min"]) == {
-        ("oci.nsgrule.0", 22),
+        (f"{test_data.NSG_ID}/oci.nsgrule.0", 22),
     }
-    assert (test_data.NSG_ID, "oci.nsgrule.0") in check_rels(
+    assert (test_data.NSG_ID, f"{test_data.NSG_ID}/oci.nsgrule.0") in check_rels(
         neo4j_session, "OCINetworkSecurityGroup", "id", "OCINsgSecurityRule", "id",
         "OCI_NSG_RULE",
     )
@@ -123,7 +126,7 @@ def test_load_vnics_links_subnet(neo4j_session):
         neo4j_session, test_data.SUBNETS, TEST_TENANCY_ID,
         TEST_COMPARTMENT_ID, TEST_REGION, TEST_UPDATE_TAG,
     )
-    network.load_vnics(neo4j_session, test_data.VNICS, TEST_REGION, TEST_UPDATE_TAG)
+    network.load_vnics(neo4j_session, test_data.VNICS, TEST_TENANCY_ID, TEST_REGION, TEST_UPDATE_TAG)
     assert check_nodes(neo4j_session, "OCIVnic", ["id"]) == {("oci.vnic.0",)}
     nsg_ids = neo4j_session.run("MATCH (v:OCIVnic{id: 'oci.vnic.0'}) RETURN v.nsg_ids AS ids").single()["ids"]
     assert nsg_ids == [test_data.NSG_ID]
@@ -139,7 +142,7 @@ def test_load_flow_logs_links_subnet(neo4j_session):
         TEST_COMPARTMENT_ID, TEST_REGION, TEST_UPDATE_TAG,
     )
     network.load_flow_logs(
-        neo4j_session, test_data.FLOW_LOGS, "oci.lg.0", TEST_REGION, TEST_UPDATE_TAG,
+        neo4j_session, test_data.FLOW_LOGS, "oci.lg.0", TEST_TENANCY_ID, TEST_REGION, TEST_UPDATE_TAG,
     )
     assert check_nodes(neo4j_session, "OCIFlowLog", ["id"]) == {("oci.flowlog.0",)}
     assert (test_data.SUBNET_ID, "oci.flowlog.0") in check_rels(

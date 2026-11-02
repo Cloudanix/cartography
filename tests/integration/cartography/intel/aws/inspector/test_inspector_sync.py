@@ -124,8 +124,8 @@ def test_sync_inspector_ec2_package_findings(mock_get, neo4j_session):
         'HAS',
         rel_direction_right=True,
     ) == {
-        ('arn:aws:test456', 'kernel-tools|X86_64|4.9.17|6.29.amzn1|0'),
-        ('arn:aws:test456', 'kernel|X86_64|4.9.17|6.29.amzn1|0'),
+        ('arn:aws:test456', '123456789012|kernel-tools|X86_64|4.9.17|6.29.amzn1|0'),
+        ('arn:aws:test456', '123456789012|kernel|X86_64|4.9.17|6.29.amzn1|0'),
     }
 
     # Assert AWSAccount to Finding exists
