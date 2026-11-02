@@ -111,17 +111,19 @@ def load_route_tables_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id
         rtab.owner_id = route_table.OwnerId,
         rtab.is_default = route_table.isDefault
 
+    // Claim first: the routes and associations below reach the table through this claim, whether or not
+    // this account's VPC node exists yet.
     WITH route_table, rtab
-    MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(vpc:AWSVpc{id: route_table.VpcId})
-    MERGE (rtab)-[r:MEMBER_OF_AWS_VPC]->(vpc)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
-
-    WITH rtab
     MATCH (aws:AWSAccount{id: $aws_account_id})
     MERGE (aws)-[rel:RESOURCE]->(rtab)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $aws_update_tag
+
+    WITH route_table, rtab, aws
+    MATCH (aws)-[:RESOURCE]->(vpc:AWSVpc{id: route_table.VpcId})
+    MERGE (rtab)-[r:MEMBER_OF_AWS_VPC]->(vpc)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
     """
     tx.run(
         ingest_route_tables,
