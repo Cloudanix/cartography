@@ -193,6 +193,7 @@ def get_networks_list(client: NetworkManagementClient, regions: list, common_job
             network['resource_group'] = get_azure_resource_group_name(network.get('id'))
             network['consolelink'] = safe_console_link(network['id'], common_job_parameters)
             network['isDefault'] = False  # since in Azure all the VPCs are created by the user and no defaults exist
+            add_peerings(network)
             if regions is None:
                 network_data.append(network)
             else:
@@ -203,6 +204,67 @@ def get_networks_list(client: NetworkManagementClient, regions: list, common_job
     except HttpResponseError as e:
         logger.warning(f"Error while retrieving networks - {e}")
         return []
+
+
+PEERING_CONNECTED = "connected"
+
+
+def peerings_of(network: Dict) -> Optional[List[Dict]]:
+    """
+    VNet peerings as virtual_networks.list_all() returns them inline (no extra API call).
+    :return: one row per peering with a remote VNet; None when the response carried no peering
+        list, so "not read" never reads as "no peerings".
+    """
+    peerings = network.get('virtual_network_peerings')
+    if peerings is None:
+        return None
+    return [
+        {
+            'id': p.get('id'),
+            'name': p.get('name'),
+            'remote_network_id': p['remote_virtual_network']['id'],
+            'peering_state': p.get('peering_state'),
+            'allow_virtual_network_access': p.get('allow_virtual_network_access'),
+            'allow_forwarded_traffic': p.get('allow_forwarded_traffic'),
+            'allow_gateway_transit': p.get('allow_gateway_transit'),
+            'use_remote_gateways': p.get('use_remote_gateways'),
+        }
+        for p in peerings if (p.get('remote_virtual_network') or {}).get('id')
+    ]
+
+
+def connected_peer_ids(peerings: Optional[List[Dict]]) -> Optional[List[str]]:
+    """
+    Lowercased remote VNet ids this VNet can send to: peering Connected and VNet access not
+    switched off (the API default is allow). None when peerings were not read.
+    """
+    if peerings is None:
+        return None
+    return sorted({
+        p['remote_network_id'].lower() for p in peerings
+        if str(p.get('peering_state') or '').lower() == PEERING_CONNECTED and
+        p.get('allow_virtual_network_access') is not False
+    })
+
+
+def add_peerings(network: Dict) -> None:
+    network['peerings'] = peerings_of(network)
+    # Exposure layers read the list property, so the remote VNet need not be ingested (other subscription).
+    network['peered_network_ids'] = connected_peer_ids(network['peerings'])
+
+
+# Only peerings whose remote VNet is ingested (same or another synced subscription) get an edge.
+_PEERED_WITH_QUERY = """
+UNWIND $networks AS network
+UNWIND coalesce(network.peerings, []) AS peering
+MATCH (n:AzureNetwork{id: network.id}), (remote:AzureNetwork{id: peering.remote_network_id})
+MERGE (n)-[r:PEERED_WITH]->(remote)
+ON CREATE SET r.firstseen = timestamp()
+SET r.lastupdated = $update_tag, r.peering_id = peering.id, r.peering_state = peering.peering_state,
+    r.allow_virtual_network_access = peering.allow_virtual_network_access,
+    r.allow_forwarded_traffic = peering.allow_forwarded_traffic,
+    r.allow_gateway_transit = peering.allow_gateway_transit, r.use_remote_gateways = peering.use_remote_gateways
+"""
 
 
 def _load_networks_tx(tx: neo4j.Transaction, subscription_id: str, networks_list: List[Dict], update_tag: int) -> None:
@@ -221,7 +283,8 @@ def _load_networks_tx(tx: neo4j.Transaction, subscription_id: str, networks_list
     n.provisioning_state=network.provisioning_state,
     n.enable_ddos_protection=network.enable_ddos_protection,
     n.etag=network.etag,
-    n.is_default=network.isDefault
+    n.is_default=network.isDefault,
+    n.peered_network_ids=network.peered_network_ids
     WITH n
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (owner)-[r:RESOURCE]->(n)
@@ -235,6 +298,7 @@ def _load_networks_tx(tx: neo4j.Transaction, subscription_id: str, networks_list
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
+    tx.run(_PEERED_WITH_QUERY, networks=networks_list, update_tag=update_tag)
     for network in networks_list:
         resource_group = get_azure_resource_group_name(network.get('id'))
         _attach_resource_group_networks(tx, network['id'], resource_group, update_tag)
