@@ -1,0 +1,10 @@
+{
+	"statements": [
+		{
+			"query": "MATCH (p:GitLabProject) WHERE NOT (p)<-[:RESOURCE]-() WITH p LIMIT $LIMIT_SIZE OPTIONAL MATCH (p)-[br:BRANCH]->(b:GitLabBranch) DELETE br, b WITH DISTINCT p DELETE p return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		}
+	],
+	"name": "orphan sweep of GitLabProject nodes no group links to, with their branches"
+}

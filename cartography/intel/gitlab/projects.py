@@ -259,6 +259,12 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
         neo4j_session,
         common_job_parameters,
     )
+    # A project can hang off two tenants' groups (one onboards a parent group, another its subgroup; projects are
+    # listed with include_subgroups), so the tenant cleanup above removes only this group's stale RESOURCE edges
+    # and prunes branches only of projects this sync refreshed. This tenant-independent sweep deletes a project,
+    # with its branches, once no group links to it. Plain DELETE: a project another sync is linking at that moment
+    # fails this sweep instead of losing the edge.
+    run_cleanup_job("gitlab_projects_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def sync(
