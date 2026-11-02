@@ -12,6 +12,7 @@ GET_REPOS = [
         'createdAt': '2011-02-15T18:40:15Z',
         'description': 'My description',
         'updatedAt': '2020-01-02T20:10:09Z',
+        'pushedAt': '2020-01-02T20:10:09Z',
         'homepageUrl': '',
         'languages': {
             'totalCount': 1,
@@ -53,6 +54,7 @@ GET_REPOS = [
         'createdAt': '2011-09-21T18:55:16Z',
         'description': 'Some other description',
         'updatedAt': '2020-07-03T00:25:25Z',
+        'pushedAt': '2020-07-03T00:25:25Z',
         'homepageUrl': 'http://example.com/',
         'languages': {
             'totalCount': 1,
@@ -85,6 +87,7 @@ GET_REPOS = [
         'createdAt': '2019-02-27T00:16:29Z',
         'description': 'One graph to rule them all',
         'updatedAt': '2020-09-02T18:35:17Z',
+        'pushedAt': '2020-09-02T18:35:17Z',
         'homepageUrl': '',
         'languages': {
             'totalCount': 2,

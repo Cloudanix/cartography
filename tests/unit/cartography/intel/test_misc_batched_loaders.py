@@ -19,7 +19,7 @@ class TestGithubOwners:
             {"type": "Organization", "owner": "acme", "owner_node_id": "acme", "repo_id": "https://github.com/acme/b"},
         ]
 
-        repos.load_github_owners(session, TEST_UPDATE_TAG, owners)
+        repos.load_github_owners(session, TEST_UPDATE_TAG, owners, "ws-1")
 
         assert session.execute_write.call_count == 1
         call = session.execute_write.call_args
@@ -31,7 +31,7 @@ class TestGithubOwners:
 
     def test_empty_owners_write_nothing(self):
         session = MagicMock()
-        repos.load_github_owners(session, TEST_UPDATE_TAG, [])
+        repos.load_github_owners(session, TEST_UPDATE_TAG, [], "ws-1")
         session.execute_write.assert_not_called()
 
 

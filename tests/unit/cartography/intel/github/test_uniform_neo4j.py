@@ -47,9 +47,9 @@ class TestReposLoaders:
     def test_repos_languages_branches_requirements_batched(self):
         session = MagicMock()
         repos.load_github_repos(session, TEST_UPDATE_TAG, [{"id": "r1"}])
-        repos.load_github_languages(session, TEST_UPDATE_TAG, [{"language_name": "python", "repo_id": "r1"}])
-        repos.load_github_branches(session, TEST_UPDATE_TAG, [{"id": "b1", "repo_id": "r1"}])
-        repos.load_python_requirements(session, TEST_UPDATE_TAG, [{"id": "req|1", "name": "req"}])
+        repos.load_github_languages(session, TEST_UPDATE_TAG, [{"language_name": "python", "repo_id": "r1"}], "ws-1")
+        repos.load_github_branches(session, TEST_UPDATE_TAG, [{"id": "b1", "repo_id": "r1"}], "ws-1")
+        repos.load_python_requirements(session, TEST_UPDATE_TAG, [{"id": "req|1", "name": "req"}], "ws-1")
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 4
@@ -64,7 +64,7 @@ class TestReposLoaders:
             "READ": [{"url": "https://github.com/u2", "repo_url": "r1"}],
         }
 
-        repos.load_collaborators(session, TEST_UPDATE_TAG, collaborators)
+        repos.load_collaborators(session, TEST_UPDATE_TAG, collaborators, "ws-1")
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2
