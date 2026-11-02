@@ -577,7 +577,7 @@ def test_oke_cluster_exposed_when_public_api_endpoint_port_is_open(neo4j_session
             'endpoint_nsg_ids': ['oke-nsg-not-synced'], **public,
         },
     ]
-    oke.load_clusters(neo4j_session, clusters, COMPARTMENT_ID, UPDATE_TAG)
+    oke.load_clusters(neo4j_session, clusters, TENANCY_ID, COMPARTMENT_ID, UPDATE_TAG)
 
     run_analysis_job('oci_oke_cluster_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
 

@@ -220,7 +220,7 @@ def _managed(session):
         'id': 'xl-oke', 'lifecycle-state': 'ACTIVE', 'kubernetes-version': 'v1.29.1',
         'endpoint-config': {'subnet-id': 'xl-pub-open', 'is-public-ip-enabled': True},
     }
-    oke.load_clusters(session, oke.transform_clusters([cluster], {}, REGION), COMPARTMENT, TAG)
+    oke.load_clusters(session, oke.transform_clusters([cluster], {}, REGION), TENANCY, COMPARTMENT, TAG)
     gateways = api_gateway.transform_gateways(
         [{'id': 'xl-gw', 'endpoint-type': 'PUBLIC', 'subnet-id': 'xl-lb'}], REGION,
         [{'id': 'xl-dep', 'gateway-id': 'xl-gw', 'specification': {'routes': [{}]}}],
