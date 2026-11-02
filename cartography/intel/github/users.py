@@ -153,6 +153,10 @@ def sync(
     )
 
     run_cleanup_job("github_users_cleanup.json", neo4j_session, common_job_parameters)
+    # A GitHubUser (keyed by profile URL) can belong to several tenants' orgs, so the tenant cleanup above removes
+    # only this org's stale edges; this tenant-independent sweep deletes a user once no org or repo links to it.
+    # Plain DELETE: a user another sync is linking at that moment fails this sweep, never loses the edge.
+    run_cleanup_job("github_users_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process GitHub Users: {toc - tic:0.4f} seconds")

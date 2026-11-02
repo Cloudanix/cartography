@@ -65,3 +65,47 @@ def test_orphan_sweep_deletes_only_unlinked_catalog_nodes(neo4j_session):
     run_cleanup_job('github_repos_orphan_cleanup.json', neo4j_session, {'UPDATE_TAG': SYNC_TAG})
 
     assert _catalog(neo4j_session) == {'Python', 'requests'}
+
+
+def _seed_users(neo4j_session):
+    # One GitHub user (keyed by profile URL) is in two tenants' orgs. Tenant A's stale OWNER edge still points at
+    # the user, whose lastupdated is tenant B's tag. A second user has no edges left at all.
+    neo4j_session.run(
+        """
+        MERGE (wa:CloudanixWorkspace{id: 'ws-usr-a'})-[:OWNER]->(oa:GitHubOrganization{id: 'org-usr-a'})
+        MERGE (oa)-[:RESOURCE]->(repo:GitHubRepository{id: 'repo-usr-a'})
+        MERGE (wb:CloudanixWorkspace{id: 'ws-usr-b'})-[:OWNER]->(ob:GitHubOrganization{id: 'org-usr-b'})
+        MERGE (u:GitHubUser{id: 'https://github.com/shared-user'}) SET u.lastupdated = $other
+        MERGE (u)-[o:OWNER]->(repo) SET o.lastupdated = $old
+        MERGE (u)-[m:MEMBER_OF]->(ob) SET m.lastupdated = $other
+        MERGE (gone:GitHubUser{id: 'https://github.com/departed-user'}) SET gone.lastupdated = $old
+        """,
+        old=OLD_TAG, other=OTHER_TENANT_TAG,
+    )
+
+
+def _user_links(neo4j_session):
+    rows = neo4j_session.run(
+        "MATCH (u:GitHubUser)-[r]->(n) WHERE u.id STARTS WITH 'https://github.com/' RETURN u.id AS u, type(r) AS r, "
+        "n.id AS n",
+    )
+    return {(row['u'], row['r'], row['n']) for row in rows}
+
+
+def test_users_cleanup_keeps_a_user_another_tenant_still_has(neo4j_session):
+    _seed_users(neo4j_session)
+
+    run_cleanup_job(
+        'github_users_cleanup.json', neo4j_session,
+        {'UPDATE_TAG': SYNC_TAG, 'WORKSPACE_ID': 'ws-usr-a', 'ORGANIZATION_ID': 'org-usr-a'},
+    )
+
+    # Tenant A's stale edge is gone; the user and its membership in tenant B's org survive.
+    assert _user_links(neo4j_session) == {('https://github.com/shared-user', 'MEMBER_OF', 'org-usr-b')}
+
+
+def test_users_orphan_sweep_deletes_only_unlinked_users(neo4j_session):
+    run_cleanup_job('github_users_orphan_cleanup.json', neo4j_session, {'UPDATE_TAG': SYNC_TAG})
+
+    rows = neo4j_session.run("MATCH (u:GitHubUser) WHERE u.id STARTS WITH 'https://github.com/' RETURN u.id AS id")
+    assert {row['id'] for row in rows} == {'https://github.com/shared-user'}
