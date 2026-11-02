@@ -12,7 +12,6 @@ from azure.mgmt.monitor import MonitorManagementClient
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
-from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -94,24 +93,24 @@ def _load_monitor_log_profiles_tx(
     )
     for log_profile in log_profiles_list:
         resource_group=get_azure_resource_group_name(log_profile.get('id'))
-        _attach_resource_group_monitor_logs(tx,log_profile['id'],resource_group,update_tag)
+        _attach_resource_group_monitor_logs(tx, subscription_id, log_profile['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_monitor_logs(tx: neo4j.Transaction, log_profile_id:str,resource_group:str ,update_tag: int) -> None:
+def _attach_resource_group_monitor_logs(
+    tx: neo4j.Transaction, subscription_id: str, log_profile_id: str, resource_group: str, update_tag: int,
+) -> None:
     query = """
-    MATCH (log:AzureMonitorLogProfile{id: $log_profile_id})
-    WITH log
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(log:AzureMonitorLogProfile{id: $log_profile_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (log)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
     tx.run(
         query,
+        subscription_id=subscription_id,
         log_profile_id=log_profile_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(log_profile_id),
         update_tag=update_tag,
     )
 
