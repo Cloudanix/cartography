@@ -38,7 +38,11 @@ class TestLoadLoadBalancers:
             session.execute_write.call_args_list
 
         assert len(lb_call.kwargs["DictList"]) == 2
-        assert lb_call.kwargs["DictList"][0]["arn"].endswith(f"loadbalancer/{ELB['DNSName']}")
+        # Real classic ELB ARN (by name), the key evaluator findings use; the node id stays the DNS name.
+        assert lb_call.kwargs["DictList"][0]["arn"] == (
+            f"arn:aws:elasticloadbalancing:us-east-1:{TEST_ACCOUNT_ID}:loadbalancer/{ELB['LoadBalancerName']}"
+        )
+        assert lb_call.kwargs["DictList"][0]["id"] == ELB["DNSName"]
         assert lb_call.kwargs["DictList"][0]["consolelink"].startswith("https://us-east-1.console.aws.amazon.com/ec2/")
         assert "elb.consolelink = item.consolelink" in lb_call.args[1]
         assert len(subnet_call.kwargs["DictList"]) == 4  # 2 subnets x 2 lbs

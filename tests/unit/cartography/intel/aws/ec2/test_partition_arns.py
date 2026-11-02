@@ -125,7 +125,7 @@ def test_load_load_balancers(load_graph_data, _subnets, _listeners, kwargs, regi
     }
     load_balancers.load_load_balancers(MagicMock(), [lb], ACCOUNT, 1, **kwargs)
     assert _rows(load_graph_data)[0]['arn'] == \
-        f'{prefix}elasticloadbalancing:{region}:{ACCOUNT}:loadbalancer/lb-1.elb.amazonaws.com'
+        f'{prefix}elasticloadbalancing:{region}:{ACCOUNT}:loadbalancer/lb-1'
 
 
 @pytest.mark.parametrize('kwargs, region, prefix', PARTITION_CASES)
