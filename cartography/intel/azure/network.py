@@ -14,6 +14,7 @@ from . import network_gateways
 from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.sdk_models import as_legacy_dict
+from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -23,6 +24,16 @@ logger = logging.getLogger(__name__)
 
 def load_networks(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.execute_write(_load_networks_tx, subscription_id, data_list, update_tag)
+
+
+def load_network_peerings(
+    session: neo4j.Session, subscription_id: str, workspace_id: str, data_list: List[Dict], update_tag: int,
+) -> None:
+    """PEERED_WITH from this subscription's VNets (already loaded) to the peered VNets of the same workspace."""
+    run_write_query(
+        session, _PEERED_WITH_QUERY, networks=data_list, subscription_id=subscription_id, workspace_id=workspace_id,
+        update_tag=update_tag,
+    )
 
 
 def load_networks_subnets(session: neo4j.Session, data_list: List[Dict], subscription_id: str, update_tag: int) -> None:
@@ -304,11 +315,15 @@ def add_peerings(network: Dict) -> None:
     network['peered_network_ids'] = connected_peer_ids(network['peerings'])
 
 
-# Only peerings whose remote VNet is ingested (same or another synced subscription) get an edge.
+# Only peerings whose remote VNet is ingested (same or another synced subscription) get an edge. A peering may
+# cross subscriptions and tenants, so the remote VNet is reached from the customer's workspace: a VNet another
+# customer owns never gets the edge.
 _PEERED_WITH_QUERY = """
 UNWIND $networks AS network
 UNWIND coalesce(network.peerings, []) AS peering
-MATCH (n:AzureNetwork{id: network.id}), (remote:AzureNetwork{id: peering.remote_network_id})
+MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(n:AzureNetwork{id: network.id})
+MATCH (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(:AzureTenant)-[:RESOURCE]->(:AzureSubscription)
+    -[:RESOURCE]->(remote:AzureNetwork{id: peering.remote_network_id})
 MERGE (n)-[r:PEERED_WITH]->(remote)
 ON CREATE SET r.firstseen = timestamp()
 SET r.lastupdated = $update_tag, r.peering_id = peering.id, r.peering_state = peering.peering_state,
@@ -349,7 +364,6 @@ def _load_networks_tx(tx: neo4j.Transaction, subscription_id: str, networks_list
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
-    tx.run(_PEERED_WITH_QUERY, networks=networks_list, update_tag=update_tag)
     for network in networks_list:
         resource_group = get_azure_resource_group_name(network.get('id'))
         _attach_resource_group_networks(tx, subscription_id, network['id'], resource_group, update_tag)
@@ -385,6 +399,9 @@ def sync_networks(
     networks_list = get_networks_list(client, regions, common_job_parameters)
 
     load_networks(neo4j_session, subscription_id, networks_list, update_tag)
+    load_network_peerings(
+        neo4j_session, subscription_id, common_job_parameters['WORKSPACE_ID'], networks_list, update_tag,
+    )
     sync_networks_subnets(neo4j_session, networks_list, client, subscription_id, update_tag, common_job_parameters)
     sync_network_routetables(neo4j_session, client, subscription_id, update_tag, common_job_parameters, regions)
     sync_public_ip_addresses(neo4j_session, client, subscription_id, update_tag, common_job_parameters, regions)

@@ -248,3 +248,33 @@ def test_gateways_and_firewalls_stay_in_the_workspace(neo4j_session):
         assert linked_ids(neo4j_session, label, A[key], PIP_REL, PIP) == {A['pip'], A2['pip']}, label
     connected = linked_ids(neo4j_session, 'AzureApplicationGateway', A['agw'], 'CONNECTED_TO', NIC)
     assert connected == {A['nic'], A2['nic']}
+
+
+def test_vnet_peerings_stay_in_the_workspace(neo4j_session):
+    _seed(neo4j_session)
+    own_peer = ids(SUB_A, '-peer')['vnet']
+    neo4j_session.run(
+        "MATCH (s:AzureSubscription{id: $sub}) MERGE (s)-[:RESOURCE]->(:AzureNetwork{id: $vnet})",
+        sub=SUB_A, vnet=own_peer,
+    ).consume()
+    peers = [own_peer, A2['vnet'], B['vnet']]
+    rows = [
+        {
+            'id': A['vnet'], 'virtual_network_peerings': [
+                {'id': f"{A['vnet']}/virtualNetworkPeerings/{i}", 'remote_virtual_network': {'id': peer}}
+                for i, peer in enumerate(peers)
+            ],
+        },
+        # A row naming the other customer's VNet as its own: it is not under the syncing subscription.
+        {'id': B['vnet'], 'virtual_network_peerings': [{'id': 'x', 'remote_virtual_network': {'id': A['vnet']}}]},
+    ]
+    for row in rows:
+        network.add_peerings(row)
+
+    network.load_network_peerings(neo4j_session, SUB_A, WS_A, rows, TAG)
+
+    # Same subscription and another subscription of the customer peer; another customer's VNet never does.
+    assert linked_ids(neo4j_session, 'AzureNetwork', A['vnet'], 'PEERED_WITH', 'AzureNetwork') == {
+        own_peer, A2['vnet'],
+    }
+    assert linked_ids(neo4j_session, 'AzureNetwork', B['vnet'], 'PEERED_WITH', 'AzureNetwork') == set()
