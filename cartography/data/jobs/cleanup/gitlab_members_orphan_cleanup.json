@@ -1,0 +1,10 @@
+{
+	"statements": [
+		{
+			"query": "MATCH (n:GitLabMember) WHERE NOT (n)--() WITH n LIMIT $LIMIT_SIZE DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		}
+	],
+	"name": "orphan sweep of shared GitLabMember nodes"
+}

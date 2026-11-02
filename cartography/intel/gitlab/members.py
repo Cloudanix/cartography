@@ -105,6 +105,10 @@ def _load_members_data(
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job("gitlab_group_member_cleanup.json", neo4j_session, common_job_parameters)
+    # A GitLabMember (keyed by username per instance) can be in several tenants' groups, so the tenant cleanup
+    # above removes only this group's stale MEMBER edges; this tenant-independent sweep deletes a member once no
+    # group links to it. Plain DELETE: a member another sync is linking at that moment fails this sweep instead.
+    run_cleanup_job("gitlab_members_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def sync(
