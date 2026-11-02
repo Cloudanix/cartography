@@ -15,8 +15,10 @@ def _seed(neo4j_session):
         MATCH (own:AWSAccount{id: $own}), (other:AWSAccount{id: $other})
         MERGE (own)-[:RESOURCE]->(:ECRRepository{id: 'repo-own', uri: 'uri-own'})
         MERGE (other)-[:RESOURCE]->(:ECRRepository{id: 'repo-other', uri: 'uri-other'})
-        MERGE (own)-[:RESOURCE]->(:EKSCluster{id: 'cl-own'})<-[:ASSOCIATED_WITH]-(:EKSClusterNodeGroup{arn: 'ng-own'})
-        MERGE (other)-[:RESOURCE]->(:EKSCluster{id: 'cl-other'})<-[:ASSOCIATED_WITH]-(:EKSClusterNodeGroup{arn: 'ng-other'})
+        MERGE (own)-[:RESOURCE]->(:EKSCluster{id: 'cl-own'})
+            <-[:ASSOCIATED_WITH]-(:EKSClusterNodeGroup{arn: 'ng-own'})
+        MERGE (other)-[:RESOURCE]->(:EKSCluster{id: 'cl-other'})
+            <-[:ASSOCIATED_WITH]-(:EKSClusterNodeGroup{arn: 'ng-other'})
         """,
         own=OWN, other=OTHER,
     )
