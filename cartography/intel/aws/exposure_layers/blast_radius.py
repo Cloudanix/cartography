@@ -231,15 +231,19 @@ WHERE {_ROUTE_FILTER}
 RETURN v.id AS id, cidrs, collect({_ROUTE}) AS routes
 """
 
+# Both reads start from {ACCOUNT}; the state filters sit in WHERE because the tenant guard cannot see an
+# anchor that an f-string inserts and would read an inline {status_code: ...} as an unanchored lookup.
 _PEERING_QUERY = f"""
-MATCH {ACCOUNT}-[:RESOURCE]->(:AWSVpc)<-[:ACCEPTER_VPC|REQUESTER_VPC]-(p:AWSPeeringConnection{{status_code: 'active'}})
+MATCH {ACCOUNT}-[:RESOURCE]->(:AWSVpc)<-[:ACCEPTER_VPC|REQUESTER_VPC]-(p:AWSPeeringConnection)
+WHERE p.status_code = 'active'
 MATCH (p)-[:ACCEPTER_VPC]->(a:AWSVpc), (p)-[:REQUESTER_VPC]->(r:AWSVpc)
 RETURN DISTINCT p.id AS id, [a.id, r.id] AS vpcs, coalesce(p.accepter_region = p.requester_region, false) AS sg_refs
 """
 
 _TGW_QUERY = f"""
-MATCH {ACCOUNT}-[:RESOURCE]->(v:AWSVpc)-[:RESOURCE]->(:AWSTransitGatewayAttachment{{state: 'available'}})
+MATCH {ACCOUNT}-[:RESOURCE]->(v:AWSVpc)-[:RESOURCE]->(a:AWSTransitGatewayAttachment)
     -[:ATTACHED_TO]->(t:AWSTransitGateway)
+WHERE a.state = 'available'
 RETURN t.tgw_id AS id, collect(DISTINCT v.id) AS vpcs, false AS sg_refs
 """
 
