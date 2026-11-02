@@ -318,7 +318,9 @@ def transform_ec2_instances(
                             # Read by the ::/0 statement of aws_ec2_instance_asset_exposure.json
                             "Ipv6Addresses": [a["Ipv6Address"] for a in network_interface.get("Ipv6Addresses", [])],
                             "InstanceId": instance_id,
-                            "SubnetId": subnet_id,
+                            # An ENI lives in its own subnet; a secondary ENI can sit in a different
+                            # subnet from the instance's primary one.
+                            "SubnetId": network_interface.get("SubnetId"),
                             "GroupId": security_group["GroupId"],
                         },
                     )
