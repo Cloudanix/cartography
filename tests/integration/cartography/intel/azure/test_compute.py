@@ -96,6 +96,7 @@ def test_load_vms_relationships(neo4j_session):
 def test_load_vm_data_disks(neo4j_session):
     compute.load_vm_data_disks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM",
         DESCRIBE_VM_DATA_DISKS,
         TEST_UPDATE_TAG,
@@ -128,6 +129,7 @@ def test_load_vm_data_disk_relationships(neo4j_session):
 
     compute.load_vm_data_disks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         "/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Compute/virtualMachines/TestVM",
         DESCRIBE_VM_DATA_DISKS,
         TEST_UPDATE_TAG,
@@ -297,6 +299,7 @@ def test_load_snapshot_relationships(neo4j_session):
 def test_load_vm_extensions(neo4j_session):
     compute.load_vm_extensions(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_VMEXTENSIONS,
         TEST_UPDATE_TAG,
     )
@@ -327,6 +330,7 @@ def test_load_vm_extensions_relationships(neo4j_session):
 
     compute.load_vm_extensions(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_VMEXTENSIONS,
         TEST_UPDATE_TAG,
     )
@@ -357,6 +361,7 @@ def test_load_vm_extensions_relationships(neo4j_session):
 def test_load_vm_available_sizes(neo4j_session):
     compute.load_vm_available_sizes(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_VMAVAILABLESIZES,
         TEST_UPDATE_TAG,
     )
@@ -385,6 +390,7 @@ def test_load_vm_available_sizes_relationships(neo4j_session):
 
     compute.load_vm_available_sizes(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_VMAVAILABLESIZES,
         TEST_UPDATE_TAG,
     )
@@ -482,6 +488,7 @@ def test_load_vms_scale_sets_relationships(neo4j_session):
 def test_load_vm_scale_set_extensions(neo4j_session):
     compute.load_vm_scale_sets_extensions(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_VMSCALESETEXTENSIONS,
         TEST_UPDATE_TAG,
     )
@@ -512,6 +519,7 @@ def test_load_vm_scale_set_extensions_relationships(neo4j_session):
 
     compute.load_vm_scale_sets_extensions(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_VMSCALESETEXTENSIONS,
         TEST_UPDATE_TAG,
     )
