@@ -54,7 +54,9 @@ def test_spanner_instance_configs(neo4j_session: neo4j.Session):
 
 def test_spanner_instance_configs_replica(neo4j_session: neo4j.Session):
     data = tests.data.gcp.spanner.TEST_INSTANCE_CONFIG_REPLICA
-    cartography.intel.gcp.spanner.load_spanner_instance_configs_replicas(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
+    cartography.intel.gcp.spanner.load_spanner_instance_configs_replicas(
+        neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG,
+    )
     expected_nodes = {'us-central1', 'us-central2'}
 
     nodes = neo4j_session.run(
@@ -95,7 +97,9 @@ def test_spanner_instance_to_instance_config_to_replica_relation(neo4j_session: 
     data = tests.data.gcp.spanner.TEST_INSTANCE_CONFIG
     cartography.intel.gcp.spanner.load_spanner_instance_configs(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
     data = tests.data.gcp.spanner.TEST_INSTANCE_CONFIG_REPLICA
-    cartography.intel.gcp.spanner.load_spanner_instance_configs_replicas(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
+    cartography.intel.gcp.spanner.load_spanner_instance_configs_replicas(
+        neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG,
+    )
 
     expected_nodes = {
         ('projects/project-123/instanceConfigs/config1/replicas/us-central1', 'projects/project-123/instanceConfigs/config1', 'projects/project-123/instances/instance1'),
