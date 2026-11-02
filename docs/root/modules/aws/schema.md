@@ -2696,7 +2696,7 @@ Representation of an AWS [EC2 Images (AMIs)](https://docs.aws.amazon.com/AWSEC2/
 |-------|-------------|
 | firstseen| Timestamp of when a sync job first discovered this node  |
 | lastupdated |  Timestamp of the last time the node was updated |
-| **id** | The ID of the AMI.|
+| **id** | `ImageId\|region` for an AMI the account owns; `ImageId\|region\|account` for an AMI the account only uses (public, marketplace or shared by another account), so each using account has its own node.|
 | name | The name of the AMI that was provided during image creation. |
 | creationdate | The date and time the image was created. |
 | architecture | The architecture of the image. |

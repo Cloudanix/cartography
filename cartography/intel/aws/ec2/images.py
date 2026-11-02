@@ -9,7 +9,6 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
-from cartography.client.core.tx import load
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import run_write_query
@@ -174,6 +173,19 @@ def transform_images(
     return images
 
 
+def image_node_id(image: Dict, current_aws_account_id: str) -> str:
+    """
+    EC2Image node id. AMI ids are unique per region, so an image the syncing account owns keeps
+    "ImageId|region" (only its owner loads it). An image the account only uses (public, marketplace,
+    shared by another account) is many tenants' asset at once, and each tenant writes its own arn,
+    consolelink and has_cross_account_access, so it gets one node per using account.
+    """
+    node_id = f"{image['ImageId']}|{image.get('region', '')}"
+    if image.get('OwnerId') == current_aws_account_id:
+        return node_id
+    return f"{node_id}|{current_aws_account_id}"
+
+
 @timeit
 def load_images(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
@@ -204,9 +216,8 @@ def load_images(
     SET r.lastupdated = $update_tag
     """
 
-    # AMI IDs are unique to each AWS Region. Hence we make an 'ID' string that is a combo of ImageId and region
     for image in data:
-        image['ID'] = image['ImageId'] + '|' + image.get('region', '')
+        image['ID'] = image_node_id(image, current_aws_account_id)
         image['arn'] = (
             f"arn:{partition}:ec2:{image.get('region', '')}:{current_aws_account_id}:image/{image['ImageId']}"
         )
@@ -227,10 +238,11 @@ def cleanup_images(neo4j_session: neo4j.Session, common_job_parameters: Dict[str
 
 
 @timeit
-def link_ec2_instances_to_images(neo4j_session: neo4j.Session, update_tag: int) -> None:
+def link_ec2_instances_to_images(neo4j_session: neo4j.Session, current_aws_account_id: str, update_tag: int) -> None:
     """
-    Create EC2Instance -[:CHILDREN]-> EC2Image relationships for all instances
-    whose ImageId matches a loaded EC2Image node.
+    Create EC2Instance -[:CHILDREN]-> EC2Image relationships for the account's instances, to the
+    account's own image node in the instance's region, then drop the account's stale CHILDREN edges
+    (including old ones to another tenant's image node).
 
     This must run AFTER both EC2Instance nodes (from ec2:instance sync) and
     EC2Image nodes (from ec2:images sync) are present in the graph.  That is
@@ -238,8 +250,9 @@ def link_ec2_instances_to_images(neo4j_session: neo4j.Session, update_tag: int) 
     sync_ec2_images(), not inside instances.py (which runs earlier).
     """
     ingest_instance_image_rel = """
-    MATCH (img:EC2Image)
-    MATCH (i:EC2Instance {imageid: img.imageid})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(i:EC2Instance)
+    MATCH (aa)-[:RESOURCE]->(img:EC2Image{imageid: i.imageid})
+    WHERE img.region = i.region
     MERGE (i)-[r:CHILDREN]->(img)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -247,6 +260,18 @@ def link_ec2_instances_to_images(neo4j_session: neo4j.Session, update_tag: int) 
     run_write_query(
         neo4j_session,
         ingest_instance_image_rel,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        update_tag=update_tag,
+    )
+    stale_instance_image_rel = """
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:EC2Instance)-[r:CHILDREN]->(:EC2Image)
+    WHERE r.lastupdated <> $update_tag
+    DELETE r
+    """
+    run_write_query(
+        neo4j_session,
+        stale_instance_image_rel,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
@@ -296,7 +321,7 @@ def sync_ec2_images(
     # This runs after both node types are guaranteed to exist in the graph.
     # (ec2:instance syncs before ec2:images, so the call in instances.py
     # may find no EC2Image nodes yet — this call here is the reliable one.)
-    link_ec2_instances_to_images(neo4j_session, update_tag)
+    link_ec2_instances_to_images(neo4j_session, current_aws_account_id, update_tag)
 
     toc = time.perf_counter()
     logger.info(f"Time to process Images: {toc - tic:0.4f} seconds")
