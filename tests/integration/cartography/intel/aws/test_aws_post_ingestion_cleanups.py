@@ -46,7 +46,8 @@ def test_post_ingestion_dns_cleanup_runs_and_spares_other_tenants(neo4j_session)
             "MATCH (r:AWSDNSRecord)-[:DNS_POINTS_TO]->(:NameServer{id: 'pd-ns-1.awsdns-01.com'}) RETURN r.id AS id",
         )
     }
-    assert 'pd-a2-ns' in sources
+    # This account's stale edge goes (zone-membership directions fixed); the other tenant's stays.
+    assert sources == {'pd-a2-ns'}
 
 
 def test_post_ingestion_principals_cleanup_spares_other_tenants_principals(neo4j_session):

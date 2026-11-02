@@ -116,6 +116,37 @@ def test_route53_links_stay_in_the_workspace(neo4j_session):
     ).single()['link'] is None
 
 
+def test_route53_cleanup_deletes_own_stale_records_only(neo4j_session):
+    create_test_org_account(neo4j_session, 'r53r-ws1', 'r53r-o1', 'r53r-a1')
+    create_test_org_account(neo4j_session, 'r53r-ws2', 'r53r-o2', 'r53r-b1')
+    neo4j_session.run(
+        """
+        MATCH (a:AWSAccount{id: 'r53r-a1'}), (b:AWSAccount{id: 'r53r-b1'})
+        MERGE (a)-[:RESOURCE]->(za:AWSDNSZone:DNSZone{zoneid: 'r53r-za'}) SET za.lastupdated = $tag
+        MERGE (a)-[:RESOURCE]->(gone:AWSDNSZone:DNSZone{zoneid: 'r53r-za-gone'}) SET gone.lastupdated = 1
+        MERGE (b)-[:RESOURCE]->(zb:AWSDNSZone:DNSZone{zoneid: 'r53r-zb'}) SET zb.lastupdated = 5
+        MERGE (:AWSDNSRecord:DNSRecord{id: 'r53r-a-fresh', lastupdated: $tag})-[:MEMBER_OF_DNS_ZONE]->(za)
+        MERGE (:AWSDNSRecord:DNSRecord{id: 'r53r-a-stale', lastupdated: 1})-[:MEMBER_OF_DNS_ZONE]->(za)
+        MERGE (:AWSDNSRecord:DNSRecord{id: 'r53r-a-in-gone-zone', lastupdated: 1})-[:MEMBER_OF_DNS_ZONE]->(gone)
+        MERGE (:AWSDNSRecord:DNSRecord{id: 'r53r-b-other-tag', lastupdated: 5})-[:MEMBER_OF_DNS_ZONE]->(zb)
+        """,
+        tag=TEST_UPDATE_TAG,
+    )
+
+    route53.cleanup_route53(
+        neo4j_session, {
+            'WORKSPACE_ID': 'r53r-ws1', 'ORGANIZATION_ID': 'r53r-o1', 'AWS_ID': 'r53r-a1',
+            'UPDATE_TAG': TEST_UPDATE_TAG, 'LIMIT_SIZE': 100,
+        },
+    )
+
+    assert {
+        r['id'] for r in neo4j_session.run(
+            "MATCH (n:AWSDNSRecord) WHERE n.id STARTS WITH 'r53r-' RETURN n.id AS id",
+        )
+    } == {'r53r-a-fresh', 'r53r-b-other-tag'}
+
+
 def test_route53_cleanup_drops_own_name_server_links_not_shared_name_servers(neo4j_session):
     create_test_org_account(neo4j_session, 'r53c-ws1', 'r53c-o1', 'r53c-a1')
     create_test_org_account(neo4j_session, 'r53c-ws2', 'r53c-o2', 'r53c-b1')
