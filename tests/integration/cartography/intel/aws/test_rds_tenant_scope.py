@@ -1,4 +1,5 @@
 from cartography.intel.aws import rds
+from cartography.util import run_cleanup_job
 from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 TEST_UPDATE_TAG = 123456789
@@ -120,3 +121,42 @@ def test_rds_cluster_subnet_group_is_the_accounts_own(neo4j_session):
     )
 
     assert _targets(neo4j_session, 'ATTACHED_TO', cluster) == {_arn(ACCOUNT_ID, 'subgrp', 'default')}
+
+
+def test_rds_cleanup_removes_links_the_sync_no_longer_writes(neo4j_session):
+    _seed(neo4j_session)
+    own_snapshot = _arn(ACCOUNT_ID, 'snapshot', 'snap-1')
+    own_cluster = _arn(ACCOUNT_ID, 'cluster', 'cluster-1')
+    other_db = _arn(OTHER_ACCOUNT_ID, 'db', 'database-1')
+    other_snapshot = _arn(OTHER_ACCOUNT_ID, 'snapshot', 'snap-1')
+    stale, fresh = TEST_UPDATE_TAG - 1, TEST_UPDATE_TAG
+    # Edges the old name-only matching left behind, plus a link this sync just wrote and another tenant's own link.
+    neo4j_session.run(
+        """
+        MATCH (od:RDSInstance{id: $other_db}), (s:RDSSnapshot{id: $own_snapshot}), (os:RDSSnapshot{id: $other_snapshot}),
+              (c:RDSCluster{id: $own_cluster}), (og:DBSubnetGroup{id: $other_group}), (g:DBSubnetGroup{id: $own_group}),
+              (d:RDSInstance{id: $own_db})
+        MERGE (od)-[r1:IS_SNAPSHOT_SOURCE]->(s) SET r1.lastupdated = $stale
+        MERGE (d)-[r2:IS_SNAPSHOT_SOURCE]->(s) SET r2.lastupdated = $fresh
+        MERGE (od)-[r3:IS_SNAPSHOT_SOURCE]->(os) SET r3.lastupdated = $stale
+        MERGE (c)-[r4:ATTACHED_TO]->(og) SET r4.lastupdated = $stale
+        MERGE (c)-[r5:ATTACHED_TO]->(g) SET r5.lastupdated = $fresh
+        """,
+        other_db=other_db, own_snapshot=own_snapshot, other_snapshot=other_snapshot, own_cluster=own_cluster,
+        own_db=_arn(ACCOUNT_ID, 'db', 'database-1'),
+        other_group=_arn(OTHER_ACCOUNT_ID, 'subgrp', 'default'), own_group=_arn(ACCOUNT_ID, 'subgrp', 'default'),
+        stale=stale, fresh=fresh,
+    )
+    params = {
+        'UPDATE_TAG': fresh, 'AWS_ID': ACCOUNT_ID, 'ORGANIZATION_ID': 'o-rds', 'WORKSPACE_ID': 'ws-rds', 'LIMIT_SIZE': 100,
+    }
+
+    run_cleanup_job('aws_import_rds_snapshots_cleanup.json', neo4j_session, params)
+    run_cleanup_job('aws_import_rds_clusters_cleanup.json', neo4j_session, params)
+
+    sources = _sources(neo4j_session, 'IS_SNAPSHOT_SOURCE', own_snapshot)
+    assert other_db not in sources
+    assert _arn(ACCOUNT_ID, 'db', 'database-1') in sources
+    assert _targets(neo4j_session, 'ATTACHED_TO', own_cluster) == {_arn(ACCOUNT_ID, 'subgrp', 'default')}
+    # The other tenant's own snapshot link belongs to its sync and cleanup, not this one.
+    assert _sources(neo4j_session, 'IS_SNAPSHOT_SOURCE', other_snapshot) == {other_db}
