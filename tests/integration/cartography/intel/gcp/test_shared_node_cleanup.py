@@ -155,3 +155,31 @@ def test_container_cleanups_stay_inside_the_project(neo4j_session):
         "MATCH (n) WHERE n:GCPContainerRepository OR n:GCPContainerPackage OR n:GCPContainerVersion RETURN n.id AS id",
     )
     assert {r['id'] for r in rows} == {'proj-snc-b/repo', 'proj-snc-b/pkg', 'proj-snc-b/ver'}
+
+
+def test_sql_cleanup_never_deletes_a_shared_vpc_host_network(neo4j_session):
+    # Tenant b's host project owns a Shared VPC; tenant a's SQL instance (a service project) is attached to it.
+    for tenant, tag in (('a', OWN_TAG), ('b', OTHER_TAG)):
+        _seed(neo4j_session, tenant, tag)
+    host_vpc = 'proj-snc-b/vpc'
+    neo4j_session.run(
+        "MATCH (i:GCPSQLInstance{id: 'proj-snc-a/sql'}), (v:GCPVpc{id: $v}) MERGE (i)-[r:VPC_NETWORK]->(v) "
+        "SET r.lastupdated = $tag",
+        v=host_vpc, tag=OWN_TAG,
+    )
+
+    def network_links():
+        rows = neo4j_session.run("MATCH (i)-[:VPC_NETWORK]->(:GCPVpc{id: $v}) RETURN i.id AS i", v=host_vpc)
+        return {r['i'] for r in rows}
+
+    # Tenant a's cleanup sees the host VPC stamped with tenant b's tag.
+    run_cleanup_job('gcp_sql_cleanup.json', neo4j_session, _params('a', OWN_TAG))
+    assert network_links() == {'proj-snc-a/sql'}
+
+    # Tenant a's instance leaves the Shared VPC: its edge goes, the host VPC stays.
+    _seed(neo4j_session, 'a', OWN_TAG + 1)
+    run_cleanup_job('gcp_sql_cleanup.json', neo4j_session, _params('a', OWN_TAG + 1))
+    assert network_links() == set()
+    assert neo4j_session.run(
+        "MATCH (:GCPProject{id: 'proj-snc-b'})-[:RESOURCE]->(v:GCPVpc{id: $v}) RETURN count(v) AS c", v=host_vpc,
+    ).single()['c'] == 1
