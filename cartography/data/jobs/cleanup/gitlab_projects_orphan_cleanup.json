@@ -1,7 +1,8 @@
 {
 	"statements": [
 		{
-			"query": "MATCH (p:GitLabProject) WHERE NOT (p)<-[:RESOURCE]-() WITH p LIMIT $LIMIT_SIZE OPTIONAL MATCH (p)-[br:BRANCH]->(b:GitLabBranch) DELETE br, b WITH DISTINCT p DELETE p return COUNT(*) as TotalCompleted",
+			"__comment": "Only projects no sync has written for 24h (86400s; lastupdated is a sync start time, reused across a paginated run) are swept, so a project another worker has just written and not yet linked survives.",
+			"query": "MATCH (p:GitLabProject) WHERE NOT (p)<-[:RESOURCE]-() AND coalesce(p.lastupdated, 0) < $UPDATE_TAG - 86400 WITH p LIMIT $LIMIT_SIZE OPTIONAL MATCH (p)-[br:BRANCH]->(b:GitLabBranch) DELETE br, b WITH DISTINCT p DELETE p return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100
 		}

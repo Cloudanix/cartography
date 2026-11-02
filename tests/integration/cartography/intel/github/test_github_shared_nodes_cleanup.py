@@ -1,8 +1,10 @@
 from cartography.util import run_cleanup_job
 
-OLD_TAG = 1
-OTHER_TENANT_TAG = 2
-SYNC_TAG = 3
+# Real-looking epoch seconds: the orphan sweep keeps anything written within ORPHAN_GRACE of SYNC_TAG.
+ORPHAN_GRACE = 86400
+SYNC_TAG = 1_793_600_000
+OTHER_TENANT_TAG = SYNC_TAG - ORPHAN_GRACE - 3600
+OLD_TAG = SYNC_TAG - 3 * ORPHAN_GRACE
 
 
 def _seed_repos(neo4j_session):
