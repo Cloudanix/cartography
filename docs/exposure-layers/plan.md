@@ -373,8 +373,16 @@ service), `no_listener`. L5 summaries on every EC2Instance (`admitted_by` = stor
 on RDSInstance / RedshiftCluster / ElasticacheCluster. A blocker is recorded only when a stage stops
 every port that reached it.
 
-Known ceilings (each marked `ponytail:` in code): multi-ENI instances are unioned; LB target
-admission accepts any source, not only the LB; LB auth requires every listener to authenticate,
+EC2 instances are evaluated per ENI: each ENI is walked with its own subnet, SGs and addresses, and
+the instance gets the union of the per-ENI results. The instance's public IP belongs to the ENI
+holding its primary private IP, and instance-type LB targets are checked against that ENI's SGs.
+ENIs without subnet / SG rels fall back to the instance's own; an instance without ENIs is one
+attachment.
+
+Known ceilings (each marked `ponytail:` in code): when no ENI holds the instance's primary private
+IP (partial ENI data), every ENI is a primary candidate; two public ENIs share one `direct_*` path;
+IP-type LB targets are not modelled (no EXPOSE edge); LB target admission accepts any source, not
+only the LB; LB auth requires every listener to authenticate,
 even unreachable ones; Redis RBAC and classic-ELB targets are not evaluated; Redshift / EMR subnets
 are not ingested, so route and NACL checks are skipped for them (SG verdict kept). L5: IPv4 only;
 NACLs between subnets and longest-prefix route match not evaluated; TGW route tables not ingested
