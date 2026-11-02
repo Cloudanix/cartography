@@ -9,9 +9,11 @@ CONSTRAINT = cloudanix.WORKSPACE_ID_CONSTRAINT
 
 def _drop_schema(neo4j_session):
     neo4j_session.run(f"DROP CONSTRAINT {CONSTRAINT} IF EXISTS")
-    for record in list(neo4j_session.run(
-        "SHOW INDEXES YIELD name, labelsOrTypes WHERE labelsOrTypes = ['CloudanixWorkspace'] RETURN name",
-    )):
+    for record in list(
+        neo4j_session.run(
+            "SHOW INDEXES YIELD name, labelsOrTypes WHERE labelsOrTypes = ['CloudanixWorkspace'] RETURN name",
+        ),
+    ):
         neo4j_session.run(f"DROP INDEX `{record['name']}` IF EXISTS")
     neo4j_session.run("MATCH (w:CloudanixWorkspace) DETACH DELETE w")
 
