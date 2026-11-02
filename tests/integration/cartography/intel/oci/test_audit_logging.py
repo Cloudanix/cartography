@@ -56,11 +56,10 @@ def test_load_logging_services(neo4j_session):
         neo4j_session, test_data.LOGGING_SERVICES, TEST_TENANCY_ID,
         TEST_COMPARTMENT_ID, TEST_REGION, TEST_UPDATE_TAG,
     )
+    service_id = f"oci.logging.service.{TEST_COMPARTMENT_ID}.objectstorage.us-phoenix-1"
     assert check_nodes(neo4j_session, "OCILoggingService", ["id", "name"]) == {
-        ("oci.logging.service.objectstorage.us-phoenix-1", "Object Storage"),
+        (service_id, "Object Storage"),
     }
-    assert (
-        TEST_COMPARTMENT_ID, "oci.logging.service.objectstorage.us-phoenix-1",
-    ) in check_rels(
+    assert (TEST_COMPARTMENT_ID, service_id) in check_rels(
         neo4j_session, "OCICompartment", "id", "OCILoggingService", "id", "RESOURCE",
     )

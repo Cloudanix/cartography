@@ -1,5 +1,7 @@
+from cartography.intel.oci import audit_logging
 from cartography.intel.oci import database
 from cartography.intel.oci import network
+from cartography.util import run_cleanup_job
 
 OLD_TAG = 1
 NEW_TAG = 2
@@ -110,3 +112,46 @@ def test_nsg_rule_ids_are_scoped_to_their_nsg(neo4j_session):
 
     for nsg_id, port in nsgs.items():
         assert _nsg_rules(neo4j_session, nsg_id) == {(f'{nsg_id}/04ABEC', '04ABEC', port)}
+
+
+def _compartment_logging_services(neo4j_session, compartment_id):
+    rows = neo4j_session.run(
+        """
+        MATCH (:OCICompartment{id: $compartment_id})-[:RESOURCE]->(ls:OCILoggingService)
+        RETURN ls.id AS id, ls.compartment_id AS compartment_id
+        """,
+        compartment_id=compartment_id,
+    )
+    return {(row['id'], row['compartment_id']) for row in rows}
+
+
+def test_logging_service_nodes_belong_to_one_compartment(neo4j_session):
+    # ListServices returns the same catalog ("objectstorage") to every tenancy.
+    services = [{'id': 'objectstorage', 'name': 'Object Storage'}]
+    for prefix in ('ls-a', 'ls-b'):
+        _seed_tenant(neo4j_session, prefix)
+        audit_logging.load_logging_services(
+            neo4j_session, services, f'{prefix}-tenancy', f'{prefix}-compartment', 'us-phoenix-1', NEW_TAG,
+        )
+
+    for prefix in ('ls-a', 'ls-b'):
+        compartment_id = f'{prefix}-compartment'
+        assert _compartment_logging_services(neo4j_session, compartment_id) == {
+            (f'oci.logging.service.{compartment_id}.objectstorage.us-phoenix-1', compartment_id),
+        }
+
+
+def test_logging_cleanup_of_one_tenant_keeps_the_other_tenants_logging_services(neo4j_session):
+    services = [{'id': 'objectstorage', 'name': 'Object Storage'}]
+    for prefix in ('lsc-a', 'lsc-b'):
+        _seed_tenant(neo4j_session, prefix)
+        audit_logging.load_logging_services(
+            neo4j_session, services, f'{prefix}-tenancy', f'{prefix}-compartment', 'us-phoenix-1', OLD_TAG,
+        )
+
+    # Tenant B's next sync could not list services (e.g. a permission error), so its cleanup sees them stale.
+    params_b = _seed_tenant(neo4j_session, 'lsc-b')
+    run_cleanup_job('oci_import_logging_cleanup.json', neo4j_session, {**params_b, 'UPDATE_TAG': NEW_TAG})
+
+    assert len(_compartment_logging_services(neo4j_session, 'lsc-a-compartment')) == 1
+    assert _compartment_logging_services(neo4j_session, 'lsc-b-compartment') == set()

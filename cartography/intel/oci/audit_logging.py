@@ -27,8 +27,8 @@ import oci.object_storage
 
 from . import tags
 from . import utils
-from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -381,7 +381,9 @@ def load_logging_services(
 
         svc_id = svc.get("id") or svc.get("service-type") or svc.get("name", "")
         rows.append({
-            "service_id": f"oci.logging.service.{svc_id}.{region}",
+            # ListServices is the same catalog for every tenancy: the compartment in the id keeps each
+            # compartment's node (and its compartment_id) its own.
+            "service_id": f"oci.logging.service.{compartment_id}.{svc_id}.{region}",
             "name": svc.get("name", "") or svc.get("service-type", ""),
             "namespace": svc.get("namespace", ""),
             "resource_types": resource_types,
