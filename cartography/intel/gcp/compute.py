@@ -1567,6 +1567,9 @@ def _build_nic_rows(instances_list: List[Dict]) -> List[Dict]:
             "name": nic["name"],
             "consolelink": nic.get("consolelink"),
             "subnet_partial_uri": nic["subnet_partial_uri"],
+            # Per-NIC network and address: CIDR-sourced firewall rules match on them (exposure L5).
+            "vpc_partial_uri": nic.get("vpc_partial_uri"),
+            "network_ip": nic.get("networkIP"),
         }
         for instance in instances_list
         for nic in instance.get("networkInterfaces", [])
@@ -1623,6 +1626,8 @@ def _attach_gcp_nics(
     SET nic.network = item.network,
     nic.consolelink = item.consolelink,
     nic.name = item.name,
+    nic.vpc_partial_uri = item.vpc_partial_uri,
+    nic.network_ip = item.network_ip,
     nic.lastupdated = $gcp_update_tag
     MERGE (i)-[r:NETWORK_INTERFACE]->(nic)
     ON CREATE SET r.firstseen = timestamp()
