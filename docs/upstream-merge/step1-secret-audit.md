@@ -39,8 +39,8 @@ Additional **live secrets** in every `*.env.prod.yml`:
 
 | Key | Type |
 |---|---|
-| `CDX_APP_NEO4J_PWD` | Neo4j US password (`Piwbiv-…`) |
-| `CDX_IN_APP_NEO4J_PWD` | Neo4j India password (`fejboz-…`) |
+| `CDX_APP_NEO4J_PWD` | Neo4j US password |
+| `CDX_IN_APP_NEO4J_PWD` | Neo4j India password |
 
 Also infra-identifying (not credentials, but blanked in templates to avoid leak):
 `CDX_APP_NEO4J_URI` / `CDX_IN_APP_NEO4J_URI` (prod server IPs),
