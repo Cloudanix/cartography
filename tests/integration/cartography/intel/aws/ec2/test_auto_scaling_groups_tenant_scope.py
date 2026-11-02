@@ -54,3 +54,31 @@ def test_asg_launch_configuration_is_resolved_in_its_own_account_and_region(neo4
         )
     }
     assert configs == {_lc_arn(ACCOUNT_ID, REGION)}
+
+
+def test_asg_launch_template_is_resolved_in_its_own_account(neo4j_session):
+    create_test_org_account(neo4j_session, 'ws-asg', 'o-asg', ACCOUNT_ID)
+    create_test_org_account(neo4j_session, 'ws-asg-other', 'o-asg-other', OTHER_ACCOUNT_ID)
+    neo4j_session.run(
+        """
+        MATCH (own:AWSAccount{id: $own}), (other:AWSAccount{id: $other})
+        MERGE (own)-[:RESOURCE]->(:LaunchTemplate{id: 'lt-own'})
+        MERGE (other)-[:RESOURCE]->(:LaunchTemplate{id: 'lt-other'})
+        """,
+        own=ACCOUNT_ID, other=OTHER_ACCOUNT_ID,
+    )
+    groups = [
+        {
+            'AutoScalingGroupARN': f'arn:aws:autoscaling:{REGION}:{ACCOUNT_ID}:autoScalingGroup:2:autoScalingGroupName/{lt}',
+            'AutoScalingGroupName': lt, 'LaunchTemplate': {'LaunchTemplateId': lt},
+            'CreatedTime': datetime.datetime(2021, 9, 21, 10, 55, 34), 'MaxSize': 1, 'MinSize': 1,
+        }
+        for lt in ('lt-own', 'lt-other')
+    ]
+
+    auto_scaling_groups.load_ec2_auto_scaling_groups(neo4j_session, groups, REGION, ACCOUNT_ID, TEST_UPDATE_TAG)
+
+    templates = neo4j_session.run(
+        "MATCH (g:AutoScalingGroup)-[:HAS_LAUNCH_TEMPLATE]->(t:LaunchTemplate) RETURN g.name AS g, t.id AS t",
+    )
+    assert {(r['g'], r['t']) for r in templates} == {('lt-own', 'lt-own')}

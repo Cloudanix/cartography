@@ -123,7 +123,7 @@ def load_ec2_auto_scaling_groups(
     ON CREATE SET subnet.firstseen = timestamp()
     SET subnet.lastupdated = $update_tag
     WITH subnet
-    MATCH (group:AutoScalingGroup{arn: $GROUPARN})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AutoScalingGroup{arn: $GROUPARN})
     MERGE (subnet)<-[r:VPC_IDENTIFIER]-(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -135,7 +135,7 @@ def load_ec2_auto_scaling_groups(
     ON CREATE SET instance.firstseen = timestamp()
     SET instance.lastupdated = $update_tag, instance.region=$Region
     WITH instance
-    MATCH (group:AutoScalingGroup{arn: $GROUPARN})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AutoScalingGroup{arn: $GROUPARN})
     MERGE (instance)-[r:MEMBER_AUTO_SCALE_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -148,8 +148,8 @@ def load_ec2_auto_scaling_groups(
 
     ingest_lts = """
     UNWIND $DictList as ag
-        MATCH (group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
-        MATCH (template:LaunchTemplate{id: ag.LaunchTemplate.LaunchTemplateId})
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
+        MATCH (aa)-[:RESOURCE]->(template:LaunchTemplate{id: ag.LaunchTemplate.LaunchTemplateId})
         MERGE (group)-[r:HAS_LAUNCH_TEMPLATE]->(template)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
@@ -159,9 +159,8 @@ def load_ec2_auto_scaling_groups(
     # (the ARN carries a random id): resolve it inside the syncing account and region.
     ingest_lcs = """
     UNWIND $DictList as ag
-        MATCH (group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
-        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->
-            (config:LaunchConfiguration{name: ag.LaunchConfigurationName, region: $Region})
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
+        MATCH (aa)-[:RESOURCE]->(config:LaunchConfiguration{name: ag.LaunchConfigurationName, region: $Region})
         MERGE (group)-[r:HAS_LAUNCH_CONFIG]->(config)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
@@ -215,6 +214,7 @@ def load_ec2_auto_scaling_groups(
                 ingest_vpc,
                 data,
                 GROUPARN=group_arn,
+                AWS_ACCOUNT_ID=current_aws_account_id,
                 update_tag=update_tag,
             )
 
