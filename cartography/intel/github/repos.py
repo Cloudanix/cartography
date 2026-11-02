@@ -1121,6 +1121,10 @@ def sync(
     load(neo4j_session, common_job_parameters, repo_data)
 
     run_cleanup_job("github_repos_cleanup.json", neo4j_session, common_job_parameters)
+    # ProgrammingLanguage / PythonLibrary are catalog nodes every tenant's repos share, so the tenant cleanup above
+    # removes only this org's stale edges; this tenant-independent sweep deletes a catalog node once nothing links
+    # to it. Plain DELETE: a node another sync is linking at that moment fails this sweep, never loses the edge.
+    run_cleanup_job("github_repos_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process GitHub repositories: {toc - tic:0.4f} seconds")
