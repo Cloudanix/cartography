@@ -20,7 +20,8 @@ def _attachment(attachment_id, resource_type):
 def _attachments(neo4j_session):
     rows = neo4j_session.run(
         """
-        MATCH (a:AWSAccount)-[:RESOURCE]->(t:AWSTransitGatewayAttachment) WHERE t.attachment_id STARTS WITH 'tgw-attach-ppa'
+        MATCH (a:AWSAccount)-[:RESOURCE]->(t:AWSTransitGatewayAttachment)
+        WHERE t.attachment_id STARTS WITH 'tgw-attach-ppa'
         RETURN a.id AS account, t.id AS id, t.attachment_id AS attachment_id, t.arn AS arn
         """,
     )

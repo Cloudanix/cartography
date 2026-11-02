@@ -220,6 +220,7 @@ def test_iam_role_tags_fetched_once_per_account(mocker, monkeypatch):
     calls = [(c.args[2], c.args[3]) for c in sync_tags.call_args_list]
     assert [c for c in calls if c[1] == 'iam:role'] == [('us-east-1', 'iam:role')]
 
+
 def test_sync_tags_streams_pages_without_buffering(mocker):
     """Each tagging-API page is transform+load'd immediately; pages are not accumulated."""
     pages = [
@@ -246,4 +247,3 @@ def test_get_tags_collects_all_pages(mocker):
     assert rgta.get_tags(mocker.MagicMock(), 'ec2:instance', 'us-east-1') == [
         {'ResourceARN': 'a'}, {'ResourceARN': 'b'},
     ]
-
