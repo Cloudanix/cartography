@@ -169,9 +169,11 @@ def load_gcp_external_principal(
     ep.access_type = $ACCESS_TYPE,
     ep.member_type = $MEMBER_TYPE
     WITH ep
-    MATCH (role:GCPRole{id: $ROLE_ID})
+    // The role of the granting (syncing) project: its custom role, or a role of the organization that owns it.
+    MATCH (project:GCPProject{id: $ProjectId}), (role:GCPRole{id: $ROLE_ID})
+    WHERE (project)-[:RESOURCE]->(role) OR (project)<-[:OWNER]-(:GCPOrganization)-[:RESOURCE]->(role)
     // The granting project is this tenant's fact: one edge per project, carrying it.
-    MERGE (role)-[r:TRUSTS_GCP_PRINCIPAL{account_id: $PROJECT_ID}]->(ep)
+    MERGE (role)-[r:TRUSTS_GCP_PRINCIPAL{account_id: $ProjectId}]->(ep)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag, r.access_type = $ACCESS_TYPE
     """
@@ -182,7 +184,7 @@ def load_gcp_external_principal(
         PRINCIPAL=external_principal["principal"],
         ACCESS_TYPE=external_principal["access_type"],
         MEMBER_TYPE=external_principal.get("member_type", ""),
-        PROJECT_ID=project_id,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
