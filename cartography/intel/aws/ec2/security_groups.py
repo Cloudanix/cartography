@@ -85,6 +85,10 @@ def _build_rule_and_range_rows(groups: List[Dict]) -> tuple:
                     "to_port": to_port,
                     "protocol": protocol,
                     "group_id": group_id,
+                    # Sources that are neither CIDRs nor groups (e.g. the CloudFront origin-facing list).
+                    "prefix_list_ids": [
+                        p["PrefixListId"] for p in rule.get("PrefixListIds") or [] if p.get("PrefixListId")
+                    ],
                 })
 
                 for ip_range in rule["IpRanges"]:
@@ -116,7 +120,7 @@ def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dic
     ON CREATE SET rule :IpRule, rule.firstseen = timestamp(), rule.fromport = item.from_port,
     rule.toport = item.to_port,
     rule.protocol = item.protocol
-    SET rule.lastupdated = $update_tag
+    SET rule.lastupdated = $update_tag, rule.prefix_list_ids = item.prefix_list_ids
     WITH rule, item
     MATCH (group:EC2SecurityGroup{groupid: item.group_id})
     MERGE (group)<-[r:MEMBER_OF_EC2_SECURITY_GROUP]-(rule)
