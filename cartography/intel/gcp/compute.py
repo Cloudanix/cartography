@@ -1733,10 +1733,31 @@ def _attach_instance_service_account(
 ) -> None:
     """
     Attach service accounts to GCP instances.
+    An account of the instance's own project is merged (a stub when the iam sync has not loaded it); any other
+    account is only matched inside the syncing workspace and organization.
     :param neo4j_session: The session
     :param instances_list: The transformed GCP instance dicts
     :param gcp_update_tag: The timestamp
+    :param common_job_parameters: The sync's GCP_PROJECT_ID, WORKSPACE_ID and GCP_ORGANIZATION_ID
     :return: Nothing
+    """
+    own_project_query = """
+    UNWIND $DictList AS item
+    MATCH (p:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(i:GCPInstance{id: item.instance_id})
+    WITH p, i, item
+    WHERE item.email ENDS WITH '@' + p.id + '.iam.gserviceaccount.com'
+        OR item.email = toString(p.projectnumber) + '-compute@developer.gserviceaccount.com'
+    // The email names this project, so it is a globally unique key this tenant owns. Keyed like iam.py
+    // (id = email) and hung off the project the same way, so the iam sync updates this node, not a twin.
+    MERGE (sa:GCPServiceAccount{id: item.email})
+    ON CREATE SET sa:GCPPrincipal, sa.firstseen = timestamp()
+    SET sa.email = item.email, sa.lastupdated = $gcp_update_tag
+    MERGE (p)-[o:RESOURCE]->(sa)
+    ON CREATE SET o.firstseen = timestamp()
+    SET o.lastupdated = $gcp_update_tag
+    MERGE (i)-[r:USES]->(sa)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $gcp_update_tag
     """
     query = """
     UNWIND $DictList AS item
@@ -1750,10 +1771,11 @@ def _attach_instance_service_account(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    load_graph_data(
-        neo4j_session, query, _build_service_account_rows(instances_list), gcp_update_tag=gcp_update_tag,
-        **_tenant_anchors(common_job_parameters),
-    )
+    rows = _build_service_account_rows(instances_list)
+    for statement in (own_project_query, query):
+        load_graph_data(
+            neo4j_session, statement, rows, gcp_update_tag=gcp_update_tag, **_tenant_anchors(common_job_parameters),
+        )
 
 
 @timeit

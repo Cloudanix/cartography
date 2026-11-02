@@ -206,9 +206,9 @@ class TestLoadGcpInstancesBatching:
         compute.load_gcp_instances(session, instances, TEST_UPDATE_TAG, TENANT)
 
         # 1 instance batch + tags + nics + access configs + vpc membership +
-        # service accounts + image relations = 7 writes total for ANY number of instances
+        # service accounts (own project, then others) + image relations = 8 writes for ANY number of instances
         # (was ~8 writes PER instance). GKE node links run later in sync_gke_node_links.
-        assert session.execute_write.call_count == 7
+        assert session.execute_write.call_count == 8
         unwind_calls = [c for c in session.execute_write.call_args_list if "DictList" in c.kwargs]
         for call in unwind_calls:
             assert "UNWIND" in call.args[1]

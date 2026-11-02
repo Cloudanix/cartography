@@ -154,3 +154,24 @@ def test_firewall_links_start_from_the_syncing_project(neo4j_session):
     assert targets(neo4j_session, _fw(FOREIGN), 'TARGET_TAG') == set()
     assert targets(neo4j_session, _fw(FOREIGN), 'MEMBER_OF_PUBLIC_IP_ADDRESS') == set()
     assert sources(neo4j_session, 'RESOURCE', f'{_vpc(FOREIGN)}/policy-rule') == set()
+
+
+def test_service_accounts_of_the_own_project_are_stubbed_others_only_matched(neo4j_session):
+    _seed(neo4j_session)
+    neo4j_session.run("MATCH (p:GCPProject{id: $p}) SET p.projectnumber = '4242'", p=OWN)
+    own_custom, own_default = f'app@{OWN}.iam.gserviceaccount.com', '4242-compute@developer.gserviceaccount.com'
+    foreign_unloaded = f'other@{FOREIGN}.iam.gserviceaccount.com'
+    vm = f'{_vm(OWN)}-sa'
+    put(neo4j_session, 'GCPProject', OWN, 'RESOURCE', 'GCPInstance', vm)
+    emails = (own_custom, own_default, _sa(OWN_OTHER), _sa(FOREIGN), foreign_unloaded)
+    instance = {'partial_uri': vm, 'serviceAccounts': [{'email': e} for e in emails]}
+
+    compute._attach_instance_service_account(neo4j_session, [instance], TAG, tenant_params())
+
+    # Own-project accounts the iam sync has not loaded get a stub under the project, keyed like iam.py's;
+    # a sibling project's loaded account is matched; another customer's account is neither linked nor stubbed.
+    assert targets(neo4j_session, vm, 'USES') == {own_custom, own_default, _sa(OWN_OTHER)}
+    assert {own_custom, own_default} <= targets(neo4j_session, OWN, 'RESOURCE')
+    assert sources(neo4j_session, 'USES', _sa(FOREIGN)) == set()
+    stubs = neo4j_session.run("MATCH (sa:GCPServiceAccount{email: $e}) RETURN count(sa) AS n", e=foreign_unloaded)
+    assert stubs.single()['n'] == 0
