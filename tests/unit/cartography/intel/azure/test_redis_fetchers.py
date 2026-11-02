@@ -128,4 +128,4 @@ def test_sync_marks_failed_firewall_read_on_the_cache(get_client, load_caches, l
 
     [cache] = load_caches.call_args.args[2]
     assert cache['firewall_rules_fetched'] is False
-    assert load_firewall_rules.call_args.args[1] == []
+    assert load_firewall_rules.call_args.args[2] == []

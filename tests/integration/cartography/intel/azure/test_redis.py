@@ -44,7 +44,8 @@ def _seed(neo4j_session):
         "MERGE (t)-[:RESOURCE]->(other:AzureSubscription{id: $other}) "
         "MERGE (sub)-[:RESOURCE]->(:AzureResourceGroup{id: $rg_id, name: 'RG-Cache'}) "
         "MERGE (other)-[:RESOURCE]->(:AzureResourceGroup{id: $other_rg_id, name: 'RG-Cache'}) "
-        "MERGE (:AzureNetworkSubnet{id: $subnet})",
+        "MERGE (sub)-[:RESOURCE]->(:AzureNetwork{id: $vnet})-[:CONTAIN]->(:AzureNetworkSubnet{id: $subnet})",
+        vnet=SUBNET_ID.rsplit('/subnets/', 1)[0],
         ws=WORKSPACE, tenant=TENANT, sub=SUB, other=OTHER_SUB,
         rg_id=f'/subscriptions/{SUB}/resourceGroups/RG-Cache', subnet=SUBNET_ID,
         other_rg_id=f'/subscriptions/{OTHER_SUB}/resourceGroups/RG-Cache',
@@ -56,7 +57,7 @@ def test_load_caches_and_links(neo4j_session):
     injected = _cache('injected', sku_name='Premium', subnet_id=SUBNET_ID, static_ip='10.0.0.4')
     public = _cache('public')
     redis.load_caches(neo4j_session, SUB, [injected, public], 2)
-    redis.load_firewall_rules(neo4j_session, [_rule(public, 'office', '203.0.113.10', '203.0.113.10')], 2)
+    redis.load_firewall_rules(neo4j_session, SUB, [_rule(public, 'office', '203.0.113.10', '203.0.113.10')], 2)
 
     rows = neo4j_session.run(
         "MATCH (:AzureSubscription{id: $sub})-[:RESOURCE]->(c:AzureRedisCache) "
@@ -83,10 +84,10 @@ def test_cleanup_removes_stale_caches_and_rules(neo4j_session):
     kept = _cache('kept')
     redis.load_caches(neo4j_session, SUB, [gone, kept], 1)
     redis.load_firewall_rules(
-        neo4j_session, [_rule(gone, 'a', '1.1.1.1', '1.1.1.1'), _rule(kept, 'old', '2.2.2.2', '2.2.2.2')], 1,
+        neo4j_session, SUB, [_rule(gone, 'a', '1.1.1.1', '1.1.1.1'), _rule(kept, 'old', '2.2.2.2', '2.2.2.2')], 1,
     )
     redis.load_caches(neo4j_session, SUB, [kept], 2)
-    redis.load_firewall_rules(neo4j_session, [_rule(kept, 'new', '3.3.3.3', '3.3.3.3')], 2)
+    redis.load_firewall_rules(neo4j_session, SUB, [_rule(kept, 'new', '3.3.3.3', '3.3.3.3')], 2)
 
     redis.cleanup(neo4j_session, PARAMS)
 

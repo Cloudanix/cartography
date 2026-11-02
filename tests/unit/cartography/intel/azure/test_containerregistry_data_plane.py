@@ -113,7 +113,7 @@ def _sync(transport: FakeRegistry, credential: Any) -> Dict[str, Any]:
             patch.object(containerregistry, 'load_repositories') as load_repositories, \
             patch.object(containerregistry, 'load_images') as load_images, \
             patch.object(containerregistry, 'load_registry_fetch_status') as load_status:
-        containerregistry.sync_registry_contents(MagicMock(), credential, REGISTRY, 7)
+        containerregistry.sync_registry_contents(MagicMock(), credential, 'sub-123', REGISTRY, 7)
     return {
         'repositories': [r for call in load_repositories.call_args_list for r in call.args[-2]],
         'images': [i for call in load_images.call_args_list for i in call.args[-2]],

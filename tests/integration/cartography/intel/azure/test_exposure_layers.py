@@ -53,7 +53,9 @@ def _nsg(session, name, rules):
         ],
     }
     network.load_network_security_groups(session, SUB, [nsg], TAG)
-    network.load_network_security_rules(session, network.get_network_security_rules_list([nsg], None, {}), TAG)
+    network.load_network_security_rules(
+        session, SUB, network.get_network_security_rules_list([nsg], None, {}), TAG,
+    )
 
 
 def _subnet(session, name, nsg=None, udr_hop=None, prefixes=()):
@@ -68,9 +70,9 @@ def _subnet(session, name, nsg=None, udr_hop=None, prefixes=()):
     if udr_hop:
         table = {'id': arm('routeTables', f'rt-{name}'), 'name': f'rt-{name}', 'subnets': [{'id': subnet_id}]}
         network.load_network_routetables(session, SUB, [table], TAG)
-        network.attach_network_routetables_to_subnet(session, [table], TAG)
+        network.attach_network_routetables_to_subnet(session, SUB, [table], TAG)
         network.load_network_routes(
-            session, [{
+            session, SUB, [{
                 'id': f"{table['id']}/routes/default", 'name': 'default', 'routetable_id': table['id'],
                 'address_prefix': '0.0.0.0/0', 'next_hop_type': udr_hop,
             }], TAG,
@@ -87,13 +89,15 @@ def _nic(session, name, subnet_id, nsg=None, public_ip=None, sku=None, private_i
         'subnet': [{'subnet_id': subnet_id}],
     }
     network.load_network_interfaces(session, SUB, [nic], TAG)
-    network.load_ip_configurations(session, [nic], TAG)
-    network.attach_subnet_to_network_interfaces(session, [nic], TAG)
+    network.load_ip_configurations(session, SUB, [nic], TAG)
+    network.attach_subnet_to_network_interfaces(session, SUB, [nic], TAG)
     if public_ip:
         pip_id = arm('publicIPAddresses', f'{name}-pip')
         pip = {'id': pip_id, 'name': f'{name}-pip', 'ip_address': public_ip, 'sku': {'name': sku}}
         network.load_public_ip_addresses(session, SUB, [pip], TAG)
-        network.load_public_ip_network_interfaces_relationship(session, nic_id, [{'public_ip_id': pip_id}], TAG)
+        network.load_public_ip_network_interfaces_relationship(
+            session, SUB, WS, nic_id, [{'public_ip_id': pip_id}], TAG,
+        )
     return nic_id
 
 
@@ -130,10 +134,10 @@ def _load_balancer(session, backend_nic_id):
     lb['rules'] = network._load_balancer_rules(lb)
     network.load_public_ip_addresses(session, SUB, [{'id': pip_id, 'name': 'lb1-pip', 'ip_address': '20.9.9.9'}], TAG)
     network.load_load_balancers(session, SUB, [lb], TAG)
-    network.load_backend_address_pools(session, [lb], TAG)
-    network.load_frontend_ip_configurations(session, [lb], TAG)
-    network.load_load_balancer_rules(session, [lb], TAG)
-    network.create_relationship_between_network_interface_and_load_balancer(session, [lb], TAG)
+    network.load_backend_address_pools(session, SUB, WS, [lb], TAG)
+    network.load_frontend_ip_configurations(session, SUB, WS, [lb], TAG)
+    network.load_load_balancer_rules(session, SUB, [lb], TAG)
+    network.create_relationship_between_network_interface_and_load_balancer(session, SUB, WS, [lb], TAG)
     return lb_id
 
 
@@ -383,7 +387,7 @@ def test_load_balancer_rule_cleanup(neo4j_session):
     lb = {'id': lb_id, 'name': 'lb', 'load_balancing_rules': [{'id': f'{lb_id}/loadBalancingRules/old'}]}
     lb['rules'] = network._load_balancer_rules(lb)
     network.load_load_balancers(neo4j_session, 'sub-lbr', [lb], 1)
-    network.load_load_balancer_rules(neo4j_session, [lb], 1)
+    network.load_load_balancer_rules(neo4j_session, 'sub-lbr', [lb], 1)
     params = {
         'UPDATE_TAG': 2, 'WORKSPACE_ID': 'ws-lbr', 'AZURE_TENANT_ID': 'tenant-lbr', 'AZURE_SUBSCRIPTION_ID': 'sub-lbr',
         'LIMIT_SIZE': 100,
@@ -431,7 +435,7 @@ def _app_gateway(session, subnet_id, backend_nic_ids):
         }],
     }
     rows = [network_gateways.transform_application_gateway(gateway, {})]
-    network_gateways.load_application_gateways(session, SUB, rows, TAG)
+    network_gateways.load_application_gateways(session, SUB, WS, rows, TAG)
 
 
 def _firewall(session, subnet_id):
@@ -455,7 +459,7 @@ def _firewall(session, subnet_id):
             ],
         }],
     }
-    network_gateways.load_firewalls(session, SUB, [network_gateways.transform_firewall(firewall, {})], TAG)
+    network_gateways.load_firewalls(session, SUB, WS, [network_gateways.transform_firewall(firewall, {})], TAG)
 
 
 def _function_apps(session):
@@ -552,9 +556,11 @@ def test_front_door_cleanup(neo4j_session):
         ],
     }
     network_gateways.load_application_gateways(
-        neo4j_session, 'sub-fd', [network_gateways.transform_application_gateway(gateway, {})], 1,
+        neo4j_session, 'sub-fd', 'ws-fd', [network_gateways.transform_application_gateway(gateway, {})], 1,
     )
-    network_gateways.load_firewalls(neo4j_session, 'sub-fd', [network_gateways.transform_firewall(firewall, {})], 1)
+    network_gateways.load_firewalls(
+        neo4j_session, 'sub-fd', 'ws-fd', [network_gateways.transform_firewall(firewall, {})], 1,
+    )
     params = {
         'UPDATE_TAG': 2, 'WORKSPACE_ID': 'ws-fd', 'AZURE_TENANT_ID': 'tenant-fd', 'AZURE_SUBSCRIPTION_ID': 'sub-fd',
         'LIMIT_SIZE': 100,

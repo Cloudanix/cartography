@@ -105,12 +105,12 @@ def test_sync_registry_contents_loads_repositories_and_images(get_client, load_r
     client = _client()
     get_client.return_value = client
 
-    sync_registry_contents(Mock(), Mock(), REGISTRY, 7)
+    sync_registry_contents(Mock(), Mock(), 'sub-123', REGISTRY, 7)
 
     assert get_client.call_args.args[1] == 'myregistry.azurecr.io'
-    assert [r['name'] for r in load_repos.call_args.args[1]] == REPOSITORY_NAMES
+    assert [r['name'] for r in load_repos.call_args.args[2]] == REPOSITORY_NAMES
     assert load_images.call_count == 2
-    assert load_status.call_args.args[2] == {
+    assert load_status.call_args.args[3] == {
         'repositories_fetched': True, 'repositories_fetch_error': None, 'repositories_truncated': False,
         'image_fetch_failures': 0,
     }
@@ -133,11 +133,11 @@ def test_sync_registry_contents_skips_registry_without_data_plane_role(get_clien
         get_client.return_value = client
 
         with caplog.at_level(logging.WARNING, logger=MODULE):
-            sync_registry_contents(Mock(), Mock(), REGISTRY, 7)
+            sync_registry_contents(Mock(), Mock(), 'sub-123', REGISTRY, 7)
 
         load_repos.assert_not_called()
-        assert load_status.call_args.args[2]['repositories_fetched'] is False
-        assert load_status.call_args.args[2]['repositories_fetch_error'] == reason
+        assert load_status.call_args.args[3]['repositories_fetched'] is False
+        assert load_status.call_args.args[3]['repositories_fetch_error'] == reason
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
         assert 'Container Registry Repository Catalog Lister' in warnings[0].getMessage()
@@ -147,10 +147,10 @@ def test_sync_registry_contents_skips_registry_without_data_plane_role(get_clien
 @patch(f'{MODULE}.load_registry_fetch_status')
 @patch(f'{MODULE}.get_registry_client')
 def test_sync_registry_contents_does_not_call_private_registries(get_client, load_status):
-    sync_registry_contents(Mock(), Mock(), {**REGISTRY, 'public_network_access': 'Disabled'}, 7)
+    sync_registry_contents(Mock(), Mock(), 'sub-123', {**REGISTRY, 'public_network_access': 'Disabled'}, 7)
 
     get_client.assert_not_called()
-    assert load_status.call_args.args[2]['repositories_fetch_error'] == 'public_network_access_disabled'
+    assert load_status.call_args.args[3]['repositories_fetch_error'] == 'public_network_access_disabled'
 
 
 @patch(f'{MODULE}.load_registry_fetch_status')
@@ -170,11 +170,11 @@ def test_sync_registry_contents_keeps_going_when_one_repository_fails(
     get_client.return_value = client
 
     with caplog.at_level(logging.WARNING, logger=MODULE):
-        sync_registry_contents(Mock(), Mock(), REGISTRY, 7)
+        sync_registry_contents(Mock(), Mock(), 'sub-123', REGISTRY, 7)
 
     assert load_images.call_count == 1
-    assert load_status.call_args.args[2]['repositories_fetched'] is True
-    assert load_status.call_args.args[2]['image_fetch_failures'] == 1
+    assert load_status.call_args.args[3]['repositories_fetched'] is True
+    assert load_status.call_args.args[3]['image_fetch_failures'] == 1
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
 
 
@@ -192,7 +192,7 @@ def test_sync(get_registries, load_registries, sync_contents, cleanup_registries
 
     get_registries.assert_called_once_with(credentials, 'sub-123', ['eastus'], params)
     load_registries.assert_called_once_with(session, 'sub-123', [REGISTRY], 7)
-    sync_contents.assert_called_once_with(session, credentials, REGISTRY, 7)
+    sync_contents.assert_called_once_with(session, credentials, 'sub-123', REGISTRY, 7)
     cleanup_registries.assert_called_once_with(session, params)
     cleanup_repos.assert_called_once_with(session, params)
     cleanup_images.assert_called_once_with(session, params)
@@ -245,16 +245,16 @@ def test_sync_registry_contents_bounds_repositories_and_manifests(
     get_client.return_value = client
 
     with caplog.at_level(logging.WARNING, logger=MODULE):
-        sync_registry_contents(Mock(), Mock(), REGISTRY, 7)
+        sync_registry_contents(Mock(), Mock(), 'sub-123', REGISTRY, 7)
 
-    repositories = [r for c in load_repos.call_args_list for r in c.args[1]]
+    repositories = [r for c in load_repos.call_args_list for r in c.args[2]]
     assert len(repositories) == 500
     assert catalog.pulled == 501
-    assert {len(c.args[1]) for c in load_images.call_args_list} == {50}
+    assert {len(c.args[2]) for c in load_images.call_args_list} == {50}
     assert len(pagers) == 500
     # One page per repository: the page holds exactly what we keep plus one to detect older manifests.
     assert {(p.pulled, kw['results_per_page'], kw['order_by']) for p, kw in pagers} == {(51, 51, 'timedesc')}
     assert repositories[0]['manifests_truncated'] is True
-    assert load_status.call_args.args[2]['repositories_truncated'] is True
+    assert load_status.call_args.args[3]['repositories_truncated'] is True
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and 'more than 500 repositories' in warnings[0]

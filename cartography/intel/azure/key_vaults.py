@@ -144,20 +144,22 @@ def _load_key_vaults_tx(
     )
     for key_vault in key_vaults_list:
         resource_group = get_azure_resource_group_name(key_vault.get('id'))
-        _attach_resource_group_key_vaults(tx, key_vault['id'], resource_group, update_tag)
+        _attach_resource_group_key_vaults(tx, subscription_id, key_vault['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_key_vaults(tx: neo4j.Transaction, key_vault_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_key_vaults(
+    tx: neo4j.Transaction, subscription_id: str, key_vault_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_vault = """
-    MATCH (k:AzureKeyVault{id: $key_vault_id})
-    WITH k
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(k:AzureKeyVault{id: $key_vault_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (k)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
     tx.run(
         ingest_vault,
+        subscription_id=subscription_id,
         key_vault_id=key_vault_id,
         resource_group=resource_group,
         update_tag=update_tag,
@@ -210,7 +212,7 @@ def _load_key_vaults_keys_tx(
     k.managed = key.managed
     SET k.consolelink = coalesce(key.consolelink, k.consolelink), k.lastupdated = $update_tag
     WITH k, key
-    MATCH (keyvault:AzureKeyVault{id: key.vault_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(keyvault:AzureKeyVault{id: key.vault_id})
     MERGE (keyvault)-[r:HAS_KEY]->(k)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -271,7 +273,7 @@ def _load_key_vault_secrets_tx(
     s.managed = s.managed
     SET s.consolelink = coalesce(sec.consolelink, s.consolelink), s.lasupdated = $update_tag
     WITH s, sec
-    MATCH (keyvault:AzureKeyVault{id: sec.vault_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(keyvault:AzureKeyVault{id: sec.vault_id})
     MERGE (keyvault)-[r:HAS_SECRET]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -342,7 +344,7 @@ def _load_key_vault_certificates_tx(
     c.secretId = cert.sid
     SET c.consolelink = coalesce(cert.consolelink, c.consolelink), c.lasupdated = $update_tag
     WITH c, cert
-    MATCH (keyvault:AzureKeyVault{id: cert.vault_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(keyvault:AzureKeyVault{id: cert.vault_id})
     MERGE (keyvault)-[r:HAS_CERTIFICATE]->(c)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag

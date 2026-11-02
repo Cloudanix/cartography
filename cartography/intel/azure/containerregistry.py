@@ -263,7 +263,7 @@ def _load_registries_tx(tx: neo4j.Transaction, subscription_id: str, data_list: 
     )
 
 
-def _load_repositories_tx(tx: neo4j.Transaction, data_list: List[Dict], update_tag: int) -> None:
+def _load_repositories_tx(tx: neo4j.Transaction, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
     ingest_query = """
     UNWIND $repositories as repo
     MERGE (r:AzureContainerRepository{id: repo.id})
@@ -283,16 +283,16 @@ def _load_repositories_tx(tx: neo4j.Transaction, data_list: List[Dict], update_t
         r.consolelink = coalesce(repo.console_link, r.consolelink)
 
     WITH r, repo
-    MATCH (reg:AzureContainerRegistry{id: repo.registry_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(reg:AzureContainerRegistry{id: repo.registry_id})
     MERGE (reg)-[rel:CONTAIN]->(r)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag
     """
 
-    tx.run(ingest_query, repositories=data_list, update_tag=update_tag)
+    tx.run(ingest_query, repositories=data_list, subscription_id=subscription_id, update_tag=update_tag)
 
 
-def _load_images_tx(tx: neo4j.Transaction, data_list: List[Dict], update_tag: int) -> None:
+def _load_images_tx(tx: neo4j.Transaction, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
     ingest_query = """
     UNWIND $images as image
     MERGE (i:AzureContainerImage{id: image.id})
@@ -319,18 +319,21 @@ def _load_images_tx(tx: neo4j.Transaction, data_list: List[Dict], update_tag: in
         i.consolelink = coalesce(image.console_link, i.consolelink)
 
     WITH i, image
-    MATCH (repo:AzureContainerRepository{id: image.repository_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureContainerRegistry)
+    -[:CONTAIN]->(repo:AzureContainerRepository{id: image.repository_id})
     MERGE (repo)-[rel:CONTAIN]->(i)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag
     """
 
-    tx.run(ingest_query, images=data_list, update_tag=update_tag)
+    tx.run(ingest_query, images=data_list, subscription_id=subscription_id, update_tag=update_tag)
 
 
-def _load_registry_fetch_status_tx(tx: neo4j.Transaction, registry_id: str, status: Dict) -> None:
+def _load_registry_fetch_status_tx(tx: neo4j.Transaction, subscription_id: str, registry_id: str, status: Dict) -> None:
     tx.run(
-        "MATCH (r:AzureContainerRegistry{id: $registry_id}) SET r += $status",
+        "MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(r:AzureContainerRegistry{id: $registry_id}) "
+        "SET r += $status",
+        subscription_id=subscription_id,
         registry_id=registry_id,
         status=status,
     )
@@ -340,20 +343,20 @@ def load_registries(session: neo4j.Session, subscription_id: str, data_list: Lis
     session.execute_write(_load_registries_tx, subscription_id, data_list, update_tag)
 
 
-def load_repositories(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_repositories_tx, data_list, update_tag)
+def load_repositories(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
+    session.execute_write(_load_repositories_tx, subscription_id, data_list, update_tag)
 
 
-def load_images(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_images_tx, data_list, update_tag)
+def load_images(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
+    session.execute_write(_load_images_tx, subscription_id, data_list, update_tag)
 
 
-def load_registry_fetch_status(session: neo4j.Session, registry_id: str, status: Dict) -> None:
+def load_registry_fetch_status(session: neo4j.Session, subscription_id: str, registry_id: str, status: Dict) -> None:
     """
     Record on the registry whether its repositories could be read this sync, so a registry
     without repositories can be told apart from one we were not allowed to read.
     """
-    session.execute_write(_load_registry_fetch_status_tx, registry_id, status)
+    session.execute_write(_load_registry_fetch_status_tx, subscription_id, registry_id, status)
 
 
 def _fetch_status(
@@ -400,7 +403,9 @@ def _log_image_outcome(registry: Dict, repositories: List[Dict], failures: Dict[
         )
 
 
-def _sync_repositories(session: neo4j.Session, client: Any, registry: Dict, update_tag: int) -> Dict:
+def _sync_repositories(
+    session: neo4j.Session, client: Any, subscription_id: str, registry: Dict, update_tag: int,
+) -> Dict:
     try:
         repositories, truncated = get_repository_list(client, registry)
     except AzureError as e:
@@ -417,31 +422,32 @@ def _sync_repositories(session: neo4j.Session, client: Any, registry: Dict, upda
         )
 
     images_by_repository, failures = _get_images(client, repositories)
-    load_repositories(session, repositories, update_tag)
+    load_repositories(session, subscription_id, repositories, update_tag)
     for images in images_by_repository.values():
-        load_images(session, images, update_tag)
+        load_images(session, subscription_id, images, update_tag)
     _log_image_outcome(registry, repositories, failures)
     return _fetch_status(True, repositories_truncated=truncated, image_fetch_failures=len(failures))
 
 
 def sync_registry_contents(
-    session: neo4j.Session, credentials: Credentials, registry: Dict, update_tag: int,
+    session: neo4j.Session, credentials: Credentials, subscription_id: str, registry: Dict, update_tag: int,
 ) -> None:
     """
     Ingest the registry's repositories and images from its data plane. A registry we cannot read
     (no data-plane role, network rules, private-only) is skipped with one WARNING, never an error.
+    subscription_id is the subscription being synced: everything is linked only under it.
     """
     reason = _registry_skip_reason(registry)
     if reason:
         logger.info("Skipping repositories of container registry %s: %s", registry["id"], reason)
-        load_registry_fetch_status(session, registry["id"], _fetch_status(False, reason))
+        load_registry_fetch_status(session, subscription_id, registry["id"], _fetch_status(False, reason))
         return
     client = get_registry_client(credentials, registry["login_server"])
     try:
-        status = _sync_repositories(session, client, registry, update_tag)
+        status = _sync_repositories(session, client, subscription_id, registry, update_tag)
     finally:
         client.close()
-    load_registry_fetch_status(session, registry["id"], status)
+    load_registry_fetch_status(session, subscription_id, registry["id"], status)
 
 
 def cleanup_container_registries(session: neo4j.Session, common_job_parameters: Dict) -> None:
@@ -473,7 +479,7 @@ def sync(
 
     for registry in registries:
         logger.info(f"Syncing repositories for registry '{registry['name']}'")
-        sync_registry_contents(session, credentials, registry, update_tag)
+        sync_registry_contents(session, credentials, subscription_id, registry, update_tag)
 
     # Children first: deleting a registry or repository detaches its children, and the
     # path-scoped statements could no longer reach them.

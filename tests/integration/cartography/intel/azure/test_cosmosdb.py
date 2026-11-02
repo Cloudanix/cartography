@@ -95,6 +95,7 @@ def test_load_database_account_write_locations(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_database_account_write_locations(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -128,6 +129,7 @@ def test_load_database_account_write_locations_relationships(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_database_account_write_locations(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -160,6 +162,7 @@ def test_load_database_account_read_locations(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_database_account_read_locations(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -193,6 +196,7 @@ def test_load_database_account_read_locations_relationships(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_database_account_read_locations(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -225,6 +229,7 @@ def test_load_database_account_associated_locations(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_database_account_associated_locations(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -262,6 +267,7 @@ def test_load_database_account_associated_iprules(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_database_account_associated_iprules(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -295,6 +301,7 @@ def test_load_database_account_associated_locations_relationships(neo4j_session)
     for database_account in accounts:
         cosmosdb._load_database_account_associated_locations(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -330,6 +337,7 @@ def test_load_cosmosdb_cors_policy(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_cosmosdb_cors_policy(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -362,6 +370,7 @@ def test_load_cosmosdb_cors_policy_relationships(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_cosmosdb_cors_policy(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -394,6 +403,7 @@ def test_load_cosmosdb_failover_policies(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_cosmosdb_failover_policies(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -427,6 +437,7 @@ def test_load_cosmosdb_failover_policies_relationships(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_cosmosdb_failover_policies(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -459,6 +470,7 @@ def test_load_cosmosdb_private_endpoint_connections(neo4j_session):
     for database_account in accounts:
         cosmosdb._load_cosmosdb_private_endpoint_connections(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -491,6 +503,7 @@ def test_load_cosmosdb_private_endpoint_connections_relationships(neo4j_session)
     for database_account in DESCRIBE_DATABASE_ACCOUNTS:
         cosmosdb._load_cosmosdb_private_endpoint_connections(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
         )
@@ -522,6 +535,7 @@ def test_load_cosmosdb_virtual_network_rules(neo4j_session):
     for database_account in DESCRIBE_DATABASE_ACCOUNTS:
         cosmosdb._load_cosmosdb_virtual_network_rules(
             neo4j_session=neo4j_session,
+            subscription_id=TEST_SUBSCRIPTION_ID,
             database_account=database_account,
             azure_update_tag=TEST_UPDATE_TAG,
             common_job_parameters={'Azure_Primary_AD_Domain_Name': 'cdx'},
@@ -555,6 +569,7 @@ def test_load_cosmosdb_virtual_network_rules_relationships(neo4j_session):
     for database_account in DESCRIBE_DATABASE_ACCOUNTS:
         cosmosdb._load_cosmosdb_virtual_network_rules(
             neo4j_session,
+            TEST_SUBSCRIPTION_ID,
             database_account,
             TEST_UPDATE_TAG,
             common_job_parameters={'Azure_Primary_AD_Domain_Name': '123'},
@@ -586,6 +601,7 @@ def test_load_cosmosdb_virtual_network_rules_relationships(neo4j_session):
 def test_load_sql_databases(neo4j_session):
     cosmosdb._load_sql_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_SQL_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -616,6 +632,7 @@ def test_load_sql_databases_relationships(neo4j_session):
 
     cosmosdb._load_sql_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_SQL_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -646,6 +663,7 @@ def test_load_sql_databases_relationships(neo4j_session):
 def test_load_cassandra_keyspaces(neo4j_session):
     cosmosdb._load_cassandra_keyspaces(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CASSANDRA_KEYSPACES,
         TEST_UPDATE_TAG,
     )
@@ -676,6 +694,7 @@ def test_load_cassandra_keyspaces_relationships(neo4j_session):
 
     cosmosdb._load_cassandra_keyspaces(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CASSANDRA_KEYSPACES,
         TEST_UPDATE_TAG,
     )
@@ -706,6 +725,7 @@ def test_load_cassandra_keyspaces_relationships(neo4j_session):
 def test_load_mongodb_databases(neo4j_session):
     cosmosdb._load_mongodb_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_MONGODB_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -736,6 +756,7 @@ def test_load_mongodb_databases_relationships(neo4j_session):
 
     cosmosdb._load_mongodb_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_MONGODB_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -766,6 +787,7 @@ def test_load_mongodb_databases_relationships(neo4j_session):
 def test_load_table_resources(neo4j_session):
     cosmosdb._load_table_resources(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TABLE_RESOURCES,
         TEST_UPDATE_TAG,
     )
@@ -796,6 +818,7 @@ def test_load_table_resources_relationships(neo4j_session):
 
     cosmosdb._load_table_resources(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TABLE_RESOURCES,
         TEST_UPDATE_TAG,
     )
@@ -826,6 +849,7 @@ def test_load_table_resources_relationships(neo4j_session):
 def test_load_sql_containers(neo4j_session):
     cosmosdb._load_sql_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_SQL_CONTAINERS,
         TEST_UPDATE_TAG,
     )
@@ -849,12 +873,14 @@ def test_load_sql_containers_relationships(neo4j_session):
     # Create Test SQL Database
     cosmosdb._load_sql_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_SQL_DATABASES,
         TEST_UPDATE_TAG,
     )
 
     cosmosdb._load_sql_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_SQL_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -885,6 +911,7 @@ def test_load_sql_containers_relationships(neo4j_session):
 def test_load_cassandra_tables(neo4j_session):
     cosmosdb._load_cassandra_tables(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CASSANDRA_TABLES,
         TEST_UPDATE_TAG,
     )
@@ -908,12 +935,14 @@ def test_load_cassandra_tables_relationships(neo4j_session):
     # Create Test Cassandra Keyspace
     cosmosdb._load_cassandra_keyspaces(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CASSANDRA_KEYSPACES,
         TEST_UPDATE_TAG,
     )
 
     cosmosdb._load_cassandra_tables(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CASSANDRA_TABLES,
         TEST_UPDATE_TAG,
     )
@@ -944,6 +973,7 @@ def test_load_cassandra_tables_relationships(neo4j_session):
 def test_load_collections(neo4j_session):
     cosmosdb._load_collections(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_MONGODB_COLLECTIONS,
         TEST_UPDATE_TAG,
     )
@@ -967,12 +997,14 @@ def test_load_collections_relationships(neo4j_session):
     # Create Test MongoDB Databases
     cosmosdb._load_mongodb_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_MONGODB_DATABASES,
         TEST_UPDATE_TAG,
     )
 
     cosmosdb._load_collections(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_MONGODB_COLLECTIONS,
         TEST_UPDATE_TAG,
     )
