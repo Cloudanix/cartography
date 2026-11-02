@@ -145,7 +145,7 @@ def _load_lb_resources(neo4j_session):
                 ('vm-mig', 'web-mig'), ('vm-mig-stopped', 'web-mig'), ('vm-internal', 'internal-mig'),
                 ('vm-orphan', 'orphan-mig'),
             )
-        ], TAG,
+        ], TAG, PROJECT,
     )
 
 

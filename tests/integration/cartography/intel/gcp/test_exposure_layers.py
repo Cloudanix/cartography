@@ -191,7 +191,7 @@ def _load_https_lb(session):
         session, [{'id': mig_id, 'name': 'web-mig', 'instance_group': f'{ZONE}/instanceGroups/web-mig'}], PROJECT, TAG,
     )
     ig._load_vm_to_mig_part_of_relationships(
-        session, [{'vm_self_link': f'{API}/{ZONE}/instances/lb-backend', 'mig_id': mig_id}], TAG,
+        session, [{'vm_self_link': f'{API}/{ZONE}/instances/lb-backend', 'mig_id': mig_id}], TAG, PROJECT,
     )
 
 
