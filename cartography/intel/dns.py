@@ -80,9 +80,9 @@ def _link_ip_to_A_record(neo4j_session: neo4j.Session, update_tag: int, ip_list:
     MATCH (parent:DNSRecord{id: $ParentId})
     WITH parent
     UNWIND $IP_LIST as current_ip
+    // One Ip node per address, shared by every tenant that resolves to it: only its creation is stamped.
     MERGE (ip_node:Ip{id: current_ip})
-    ON CREATE SET ip_node.firstseen = timestamp(), ip_node.ip = current_ip
-    SET ip_node.lastupdated = $update_tag
+    ON CREATE SET ip_node.firstseen = timestamp(), ip_node.ip = current_ip, ip_node.lastupdated = $update_tag
     WITH parent, ip_node
     MERGE (parent)-[r:DNS_POINTS_TO]->(ip_node)
     ON CREATE SET r.firstseen = timestamp()

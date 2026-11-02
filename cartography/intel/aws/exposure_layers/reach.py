@@ -314,7 +314,7 @@ def _flagged(rows: List[Dict], ports: PortSet, via: str, reason: str, entry_kind
 _APIGW_QUERY = f"""
 MATCH {ACCOUNT}-[:RESOURCE]->(api:APIGatewayRestAPI)
 WITH api, coalesce(api.endpoint_conf_types, []) AS types
-RETURN api.id AS id, api.id AS entry,
+RETURN api.id AS id, api.rest_api_id AS api_id, api.rest_api_id AS entry,
     ('REGIONAL' IN types OR 'EDGE' IN types)
     AND (NOT coalesce(api.disableexecuteapiendpoint, false) OR api.public_custom_domains IS NULL
          OR size(api.public_custom_domains) > 0) AS public
@@ -447,7 +447,10 @@ def compute(session: neo4j.Session, params: Dict) -> Results:
     add_lb_targets(q(_LB_TARGET_QUERY), lbv2, inst, sgs, {r["id"]: target_sgs(r) for r in inst_rows})
     rds_rows = q(_RDS_QUERY)
     rds = databases(rds_rows, subnets, sgs, "publicly_accessible")
-    apis = _flagged(q(_APIGW_QUERY), HTTPS, "apigateway_endpoint", "public_endpoint", ENTRY_APIGATEWAY)
+    api_rows = q(_APIGW_QUERY)
+    apis = _flagged(api_rows, HTTPS, "apigateway_endpoint", "public_endpoint", ENTRY_APIGATEWAY)
+    # A function's trigger names the short REST API id; the API node is keyed on its ARN.
+    apis_by_api_id = {r["api_id"]: apis[r["id"]] for r in api_rows}
     results: Results = {
         "NetworkInterface": addresses(q(_ENI_QUERY), subnets, sgs),
         "EC2Instance": inst,
@@ -459,7 +462,7 @@ def compute(session: neo4j.Session, params: Dict) -> Results:
         "EMRCluster": databases(q(_EMR_QUERY), subnets, sgs, "master_public_dns"),
         "ElasticacheCluster": {r["id"]: Reach() for r in q(_ELASTICACHE_QUERY)},
         "APIGatewayRestAPI": apis,
-        "AWSLambda": lambdas(q(_LAMBDA_QUERY), apis, lbv2_rows, lbv2),
+        "AWSLambda": lambdas(q(_LAMBDA_QUERY), apis_by_api_id, lbv2_rows, lbv2),
         "EKSCluster": eks_clusters(q(_EKS_QUERY)),
         "AWSCloudfrontDistribution": _flagged(
             q(_CLOUDFRONT_QUERY), HTTP_HTTPS, "cloudfront", "enabled_distribution", ENTRY_DNS,

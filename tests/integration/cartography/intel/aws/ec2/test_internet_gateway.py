@@ -5,6 +5,7 @@ import tests.integration.cartography.intel.aws.common
 TEST_ACCOUNT_ID = '012345678912'
 TEST_REGION = 'us-east-1'
 TEST_UPDATE_TAG = 123456789
+TEST_WORKSPACE_ID = 'ws-igw'
 
 
 def test_load_internet_gateways(neo4j_session):
@@ -15,6 +16,7 @@ def test_load_internet_gateways(neo4j_session):
         TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected_nodes = {
@@ -43,6 +45,7 @@ def test_load_internet_gateway_relationships(neo4j_session):
         TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected = {

@@ -3,16 +3,27 @@ from importlib.resources import read_text
 import cartography.intel.aws.ec2
 import tests.data.aws.ec2.vpc_peerings
 from cartography.graph.job import GraphJob
+from cartography.intel.aws.exposure_layers import blast_radius
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 
 TEST_ACCOUNT_ID = '000000000000'
+TEST_WORKSPACE_ID = 'ws-peering'
 TEST_REGION = 'eu-north-1'
 TEST_UPDATE_TAG = 123456789
 
 
 def _seed_account(neo4j_session):
-    # organizations.sync creates the account before any service sync; the loader requires it.
-    neo4j_session.run('MERGE (:AWSAccount{id: $id})', id=TEST_ACCOUNT_ID)
+    # organizations.sync creates the account before any service sync, and the VPC sync loads its VPCs.
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, f'{TEST_WORKSPACE_ID}/o-1', TEST_ACCOUNT_ID)
+    neo4j_session.run(
+        """
+        MATCH (a:AWSAccount{id: $id})
+        UNWIND ['vpc-0015dc961e537676a', 'vpc-055d355d6d2e498fa'] AS vpc_id
+        MERGE (a)-[:RESOURCE]->(:AWSVpc{id: vpc_id})
+        """,
+        id=TEST_ACCOUNT_ID,
+    )
 
 
 def test_load_vpc_peerings(neo4j_session):
@@ -24,6 +35,7 @@ def test_load_vpc_peerings(neo4j_session):
         TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected_nodes = {
@@ -32,8 +44,9 @@ def test_load_vpc_peerings(neo4j_session):
 
     nodes = neo4j_session.run(
         """
-        MATCH (pcx:AWSPeeringConnection) RETURN pcx.id;
+        MATCH (:AWSAccount{id: $id})-[:RESOURCE]->(pcx:AWSPeeringConnection) RETURN pcx.id;
         """,
+        id=TEST_ACCOUNT_ID,
     )
     actual_nodes = {n['pcx.id'] for n in nodes}
 
@@ -49,6 +62,7 @@ def test_vpc_peering_relationships_vpc(neo4j_session):
         TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected_nodes = {
@@ -83,6 +97,7 @@ def test_vpc_peering_relationships_cidr(neo4j_session):
         TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
     cartography.intel.aws.ec2.vpc_peerings.load_accepter_cidrs(
         neo4j_session,
@@ -90,6 +105,7 @@ def test_vpc_peering_relationships_cidr(neo4j_session):
         TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
     cartography.intel.aws.ec2.vpc_peerings.load_requester_cidrs(
         neo4j_session,
@@ -97,6 +113,7 @@ def test_vpc_peering_relationships_cidr(neo4j_session):
         TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected_nodes = {
@@ -141,90 +158,134 @@ def _peering(pcx_id, accepter, requester):
     }
 
 
-def _load_peerings(neo4j_session, rows, account_id, update_tag):
+def _load_peerings(neo4j_session, rows, account_id, update_tag, workspace_id):
     peerings = cartography.intel.aws.ec2.vpc_peerings
-    peerings.load_vpc_peerings(neo4j_session, rows, TEST_REGION, account_id, update_tag)
-    peerings.load_accepter_cidrs(neo4j_session, rows, TEST_REGION, account_id, update_tag)
-    peerings.load_requester_cidrs(neo4j_session, rows, TEST_REGION, account_id, update_tag)
+    peerings.load_vpc_peerings(neo4j_session, rows, TEST_REGION, account_id, update_tag, workspace_id)
+    peerings.load_accepter_cidrs(neo4j_session, rows, TEST_REGION, account_id, update_tag, workspace_id)
+    peerings.load_requester_cidrs(neo4j_session, rows, TEST_REGION, account_id, update_tag, workspace_id)
 
 
-def test_load_vpc_peerings_claims_only_the_synced_accounts_side(neo4j_session):
-    # The peer side of a peering belongs to another account: an unonboarded one (pl-ext) or an
-    # onboarded one (pl-b1, here with its real VPC already loaded). The synced account must not
-    # take ownership of it nor overwrite it, and the loader must never create account nodes.
+def _rows(neo4j_session, query, **kw):
+    return {tuple(r.values()) for r in neo4j_session.run(query, **kw)}
+
+
+def test_vpc_peerings_link_only_vpcs_of_the_workspace(neo4j_session):
+    # Workspace 1 holds pt-a1 (synced; VPCs pt-vpc-a and pt-vpc-a2) and pt-b1 (pt-vpc-b). Workspace 2 is
+    # another customer: pt-c1 owns pt-vpc-c (with its CIDR block) and synced its side of pt-pcx-ext first.
+    # pt-pcx-same peers two of pt-a1's VPCs, pt-pcx-ws peers with pt-b1, pt-pcx-ext with pt-c1.
+    old, tag = 1, TEST_UPDATE_TAG
+    create_test_org_account(neo4j_session, 'pt-w1', 'pt-w1/o-1', 'pt-a1')
+    create_test_org_account(neo4j_session, 'pt-w1', 'pt-w1/o-1', 'pt-b1')
+    create_test_org_account(neo4j_session, 'pt-w2', 'pt-w2/o-2', 'pt-c1')
     neo4j_session.run(
         """
-        MERGE (w:CloudanixWorkspace{id: 'pl-w1'})-[:OWNER]->(o:AWSOrganization{id: 'pl-w1/o-1'})
-        MERGE (o)-[:OWNER]->(a:AWSAccount{id: 'pl-a1'})
-        MERGE (o)-[:OWNER]->(b:AWSAccount{id: 'pl-b1'})
-        MERGE (a)-[:RESOURCE{lastupdated: 1}]->(:AWSVpc{
-            id: 'pl-vpc-own', arn: 'arn:aws:ec2:eu-north-1:pl-a1:vpc/pl-vpc-own', lastupdated: 1
-        })
-        MERGE (b)-[:RESOURCE{lastupdated: 1}]->(:AWSVpc{
-            id: 'pl-vpc-b', arn: 'arn:aws:ec2:eu-north-1:pl-b1:vpc/pl-vpc-b', name: 'b-vpc', lastupdated: 1
-        })
+        UNWIND [['pt-a1', 'pt-vpc-a'], ['pt-a1', 'pt-vpc-a2'], ['pt-b1', 'pt-vpc-b'], ['pt-c1', 'pt-vpc-c']] AS v
+        MATCH (a:AWSAccount{id: v[0]})
+        MERGE (a)-[:RESOURCE]->(vpc:AWSVpc{id: v[1], lastupdated: 1})
+        SET vpc.arn = 'arn:aws:ec2:eu-north-1:' + v[0] + ':vpc/' + v[1]
+        WITH 1 AS _
+        MATCH (vpc:AWSVpc{id: 'pt-vpc-c'})
+        MERGE (vpc)-[:BLOCK_ASSOCIATION]->(:AWSCidrBlock:AWSIpv4CidrBlock{id: 'pt-vpc-c|10.9.0.0/16', lastupdated: 1})
         """,
     )
+    ext = _peering('pt-pcx-ext', ('pt-a1', 'pt-vpc-a', ['10.0.0.0/16']), ('pt-c1', 'pt-vpc-c', ['10.9.0.0/16']))
     rows = [
-        _peering('pl-pcx-1', ('pl-a1', 'pl-vpc-own', ['10.0.0.0/16']), ('pl-ext', 'pl-vpc-ext', ['10.9.0.0/16'])),
-        _peering('pl-pcx-2', ('pl-b1', 'pl-vpc-b', ['10.2.0.0/16']), ('pl-a1', 'pl-vpc-own', ['10.0.0.0/16'])),
+        _peering('pt-pcx-same', ('pt-a1', 'pt-vpc-a', ['10.0.0.0/16']), ('pt-a1', 'pt-vpc-a2', ['10.1.0.0/16'])),
+        _peering('pt-pcx-ws', ('pt-b1', 'pt-vpc-b', ['10.2.0.0/16']), ('pt-a1', 'pt-vpc-a', ['10.0.0.0/16'])),
+        ext,
     ]
+    _load_peerings(neo4j_session, [ext], 'pt-c1', old, 'pt-w2')
+    _load_peerings(neo4j_session, rows, 'pt-a1', tag, 'pt-w1')
 
-    _load_peerings(neo4j_session, rows, 'pl-a1', TEST_UPDATE_TAG)
-    _load_peerings(neo4j_session, rows[:1], 'pl-missing', TEST_UPDATE_TAG)
-
-    owners = {
-        (r['a'], r['v'], r['t']) for r in neo4j_session.run(
-            """
-            MATCH (a:AWSAccount)-[r:RESOURCE]->(v:AWSVpc) WHERE v.id STARTS WITH 'pl-'
-            RETURN a.id AS a, v.id AS v, r.lastupdated AS t
-            """,
-        )
-    }
-    assert owners == {('pl-a1', 'pl-vpc-own', TEST_UPDATE_TAG), ('pl-b1', 'pl-vpc-b', 1)}
-
-    # VPCs the VPC sync loaded (they carry an arn) keep its stamp; only peer stubs get ours.
-    vpcs = {
-        r['id']: (r['lastupdated'], r['name']) for r in neo4j_session.run(
-            """
-            MATCH (v:AWSVpc) WHERE v.id STARTS WITH 'pl-'
-            RETURN v.id AS id, v.lastupdated AS lastupdated, v.name AS name
-            """,
-        )
-    }
-    assert vpcs == {
-        'pl-vpc-own': (1, None),
-        'pl-vpc-b': (1, 'b-vpc'),
-        'pl-vpc-ext': (TEST_UPDATE_TAG, None),
+    claims = _rows(
+        neo4j_session,
+        "MATCH (a:AWSAccount)-[:RESOURCE]->(p:AWSPeeringConnection) WHERE a.id STARTS WITH 'pt-' "
+        "RETURN a.id, p.id, p.lastupdated",
+    )
+    assert claims == {
+        ('pt-a1', 'pt-pcx-same', tag), ('pt-a1', 'pt-pcx-ws', tag), ('pt-a1', 'pt-pcx-ext', tag),
+        ('pt-c1', 'pt-pcx-ext', old),
     }
 
-    sides = {
-        (r['p'], r['t'], r['v']) for r in neo4j_session.run(
-            """
-            MATCH (p:AWSPeeringConnection)-[r:ACCEPTER_VPC|REQUESTER_VPC]->(v:AWSVpc) WHERE p.id STARTS WITH 'pl-'
-            RETURN p.id AS p, type(r) AS t, v.id AS v
-            """,
-        )
-    }
+    sides = _rows(
+        neo4j_session,
+        "MATCH (a:AWSAccount)-[:RESOURCE]->(p:AWSPeeringConnection)-[r:ACCEPTER_VPC|REQUESTER_VPC]->(v:AWSVpc) "
+        "WHERE a.id STARTS WITH 'pt-' RETURN a.id, p.id, type(r), v.id",
+    )
     assert sides == {
-        ('pl-pcx-1', 'ACCEPTER_VPC', 'pl-vpc-own'), ('pl-pcx-1', 'REQUESTER_VPC', 'pl-vpc-ext'),
-        ('pl-pcx-2', 'ACCEPTER_VPC', 'pl-vpc-b'), ('pl-pcx-2', 'REQUESTER_VPC', 'pl-vpc-own'),
+        ('pt-a1', 'pt-pcx-same', 'ACCEPTER_VPC', 'pt-vpc-a'), ('pt-a1', 'pt-pcx-same', 'REQUESTER_VPC', 'pt-vpc-a2'),
+        ('pt-a1', 'pt-pcx-ws', 'ACCEPTER_VPC', 'pt-vpc-b'), ('pt-a1', 'pt-pcx-ws', 'REQUESTER_VPC', 'pt-vpc-a'),
+        ('pt-a1', 'pt-pcx-ext', 'ACCEPTER_VPC', 'pt-vpc-a'),
+        ('pt-c1', 'pt-pcx-ext', 'REQUESTER_VPC', 'pt-vpc-c'),
     }
 
-    accounts = {
-        r['id'] for r in neo4j_session.run("MATCH (a:AWSAccount) WHERE a.id STARTS WITH 'pl-' RETURN a.id AS id")
+    cidrs = _rows(
+        neo4j_session,
+        "MATCH (a:AWSAccount)-[:RESOURCE]->(p:AWSPeeringConnection)-[r:ACCEPTER_CIDR|REQUESTER_CIDR]->(b) "
+        "WHERE a.id STARTS WITH 'pt-' RETURN a.id, p.id, type(r), b.id",
+    )
+    assert cidrs == {
+        ('pt-a1', 'pt-pcx-same', 'ACCEPTER_CIDR', 'pt-vpc-a|10.0.0.0/16'),
+        ('pt-a1', 'pt-pcx-same', 'REQUESTER_CIDR', 'pt-vpc-a2|10.1.0.0/16'),
+        ('pt-a1', 'pt-pcx-ws', 'ACCEPTER_CIDR', 'pt-vpc-b|10.2.0.0/16'),
+        ('pt-a1', 'pt-pcx-ws', 'REQUESTER_CIDR', 'pt-vpc-a|10.0.0.0/16'),
+        ('pt-a1', 'pt-pcx-ext', 'ACCEPTER_CIDR', 'pt-vpc-a|10.0.0.0/16'),
+        ('pt-c1', 'pt-pcx-ext', 'REQUESTER_CIDR', 'pt-vpc-c|10.9.0.0/16'),
     }
-    assert accounts == {'pl-a1', 'pl-b1'}
+
+    # The other customer's side is kept as facts on this tenant's peering only.
+    facts = neo4j_session.run(
+        "MATCH (:AWSAccount{id: 'pt-a1'})-[:RESOURCE]->(p:AWSPeeringConnection{id: 'pt-pcx-ext'}) "
+        "RETURN p.requester_vpc_id AS vpc, p.requester_owner_id AS owner, p.requester_cidr_blocks AS cidrs",
+    ).single()
+    assert (facts['vpc'], facts['owner'], facts['cidrs']) == ('pt-vpc-c', 'pt-c1', ['10.9.0.0/16'])
+
+    # Nothing of workspace 2 was written or reached by pt-a1's load.
+    tenant2 = _rows(
+        neo4j_session,
+        "MATCH (n) WHERE n.id IN ['pt-vpc-c', 'pt-vpc-c|10.9.0.0/16'] RETURN n.id, n.lastupdated, "
+        "COUNT { (n)--(:AWSPeeringConnection) } AS peerings",
+    )
+    assert tenant2 == {('pt-vpc-c', 1, 1), ('pt-vpc-c|10.9.0.0/16', 1, 1)}
+    assert _rows(
+        neo4j_session, "MATCH (v:AWSVpc) WHERE v.id STARTS WITH 'pt-' AND v.arn IS NULL RETURN v.id",
+    ) == set()
+
+    # The blast-radius read sees the same-workspace peering with both VPCs.
+    params = {'WORKSPACE_ID': 'pt-w1', 'ORGANIZATION_ID': 'pt-w1/o-1', 'AWS_ID': 'pt-a1'}
+    gateways = blast_radius.read_routes(neo4j_session, params).gateways
+    assert gateways['peering:pt-pcx-ws'].vpcs == frozenset({'pt-vpc-a', 'pt-vpc-b'})
+    assert gateways['peering:pt-pcx-same'].vpcs == frozenset({'pt-vpc-a', 'pt-vpc-a2'})
+
+    # pt-b1 (same workspace) synced pt-pcx-ws earlier into its own node; pt-a1 then drops pt-pcx-same
+    # and pt-pcx-ext. pt-a1's cleanup removes only its own stale peerings.
+    _load_peerings(neo4j_session, [rows[1]], 'pt-b1', old, 'pt-w1')
+    _load_peerings(neo4j_session, [rows[1]], 'pt-a1', tag + 1, 'pt-w1')
+    _run_peering_cleanup(neo4j_session, 'pt-w1', 'pt-w1/o-1', 'pt-a1', tag + 1)
+
+    claims = _rows(
+        neo4j_session,
+        "MATCH (a:AWSAccount)-[:RESOURCE]->(p:AWSPeeringConnection) WHERE a.id STARTS WITH 'pt-' RETURN a.id, p.id",
+    )
+    assert claims == {('pt-a1', 'pt-pcx-ws'), ('pt-b1', 'pt-pcx-ws'), ('pt-c1', 'pt-pcx-ext')}
+    assert _rows(
+        neo4j_session,
+        "MATCH (p:AWSPeeringConnection) WHERE p.id STARTS WITH 'pt-' AND NOT (p)<-[:RESOURCE]-() RETURN p.id",
+    ) == set()
+    assert _rows(
+        neo4j_session,
+        "MATCH (:AWSAccount{id: 'pt-c1'})-[:RESOURCE]->(p:AWSPeeringConnection)-[r]->(n) RETURN type(r), n.id",
+    ) == {('REQUESTER_VPC', 'pt-vpc-c'), ('REQUESTER_CIDR', 'pt-vpc-c|10.9.0.0/16')}
 
 
-def _run_peering_cleanup(neo4j_session, workspace_id, organization_id, account_id):
+def _run_peering_cleanup(neo4j_session, workspace_id, organization_id, account_id, update_tag=TEST_UPDATE_TAG):
     # GraphJob directly: run_cleanup_job logs and swallows query errors.
     GraphJob.run_from_json(
         neo4j_session,
         read_text('cartography.data.jobs.cleanup', 'aws_import_vpc_peering_cleanup.json'),
         {
             'WORKSPACE_ID': workspace_id, 'ORGANIZATION_ID': organization_id, 'AWS_ID': account_id,
-            'UPDATE_TAG': TEST_UPDATE_TAG, 'LIMIT_SIZE': 100,
+            'UPDATE_TAG': update_tag, 'LIMIT_SIZE': 100,
         },
     )
 
@@ -238,6 +299,7 @@ def _ids(neo4j_session, label):
 
 
 def test_vpc_peering_cleanup_removes_only_this_accounts_stale_peer_stubs(neo4j_session):
+    # Legacy graph shape: unclaimed peering nodes and peer VPC stubs, from before peerings were claimed.
     # pc-a1 is the synced account. It carries a leftover foreign flag, which must not matter.
     # Its peerings are fresh (pc-x-fresh) or stale. A stale peering's peer side is removed only
     # when it is a pure stub: no arn, no account owns it, nothing else hangs off it, and no other
@@ -319,7 +381,7 @@ def test_load_vpc_peerings_without_the_account_writes_nothing(neo4j_session):
     # the peering load must neither fail nor leave unowned peering, VPC or CIDR nodes behind.
     rows = [_peering('pm-pcx-1', ('pm-a1', 'pm-vpc-own', ['10.0.0.0/16']), ('pm-ext', 'pm-vpc-ext', ['10.9.0.0/16']))]
 
-    _load_peerings(neo4j_session, rows, 'pm-a1', TEST_UPDATE_TAG)
+    _load_peerings(neo4j_session, rows, 'pm-a1', TEST_UPDATE_TAG, 'pm-w1')
 
     left = neo4j_session.run(
         "MATCH (n) WHERE n.id STARTS WITH 'pm-' RETURN count(n) AS c",

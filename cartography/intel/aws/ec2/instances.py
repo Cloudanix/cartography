@@ -487,7 +487,8 @@ def load_ec2_roles(
 ) -> None:
     ingest_role_instance_relations = """
     UNWIND $DictList as role
-    MATCH (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.Arn})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(instance:EC2Instance {id: role.InstanceId})
+    MATCH (aa)-[:RESOURCE]->(roleNode:AWSRole {arn: role.Arn})
     MERGE (instance)-[r:USES]->(roleNode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -497,6 +498,7 @@ def load_ec2_roles(
         neo4j_session,
         ingest_role_instance_relations,
         role_data,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=update_tag,
     )
 

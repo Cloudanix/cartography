@@ -94,7 +94,7 @@ class TestLoadEc2SecurityGroupInfo:
     def test_batched_writes(self):
         session = MagicMock()
 
-        security_groups.load_ec2_security_groupinfo(session, [GROUP], TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        security_groups.load_ec2_security_groupinfo(session, [GROUP], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
 
         # 1 group batch + 2 rule-label batches + 1 rule-group-pair batch +
         # 2 range-label batches = 6 writes, independent of group count.
@@ -108,5 +108,5 @@ class TestLoadEc2SecurityGroupInfo:
 
     def test_empty_data_writes_nothing(self):
         session = MagicMock()
-        security_groups.load_ec2_security_groupinfo(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        security_groups.load_ec2_security_groupinfo(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
         session.execute_write.assert_not_called()

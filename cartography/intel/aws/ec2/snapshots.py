@@ -126,8 +126,8 @@ def load_snapshot_volume_relations(
     MERGE (aa)-[r:RESOURCE]->(v)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
-    WITH v, volume
-    MATCH (s:EBSSnapshot{id: volume.SnapshotId})
+    WITH aa, v, volume
+    MATCH (aa)-[:RESOURCE]->(s:EBSSnapshot{id: volume.SnapshotId})
     MERGE (s)-[r:CREATED_FROM]->(v)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag

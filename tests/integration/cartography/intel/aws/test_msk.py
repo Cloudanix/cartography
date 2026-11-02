@@ -5,6 +5,7 @@ from tests.integration.cartography.intel.aws.common import exposure_job_paramete
 
 TEST_UPDATE_TAG = 123456789
 ACCOUNT_ID = '777777777773'
+WORKSPACE_ID = 'ws-mski'
 
 
 def _cluster(name, **provisioned):
@@ -16,8 +17,11 @@ def _cluster(name, **provisioned):
 
 
 def test_load_msk_clusters_and_cleanup(neo4j_session):
-    create_test_org_account(neo4j_session, 'ws-mski', 'o-mski', ACCOUNT_ID)
-    neo4j_session.run("MERGE (:EC2Subnet{subnetid: 'mski-subnet-1'})")
+    create_test_org_account(neo4j_session, WORKSPACE_ID, 'o-mski', ACCOUNT_ID)
+    neo4j_session.run(
+        "MATCH (a:AWSAccount{id: $account}) MERGE (a)-[:RESOURCE]->(:EC2Subnet{subnetid: 'mski-subnet-1'})",
+        account=ACCOUNT_ID,
+    )
     clusters = cartography.intel.aws.msk.transform_msk_clusters(
         [
             _cluster(
@@ -28,9 +32,11 @@ def test_load_msk_clusters_and_cleanup(neo4j_session):
         ],
         'us-east-1',
     )
-    cartography.intel.aws.msk.load_msk_clusters(neo4j_session, clusters, ACCOUNT_ID, TEST_UPDATE_TAG)
+    cartography.intel.aws.msk.load_msk_clusters(neo4j_session, clusters, ACCOUNT_ID, TEST_UPDATE_TAG, WORKSPACE_ID)
     # Next sync: mski-gone was deleted in AWS.
-    cartography.intel.aws.msk.load_msk_clusters(neo4j_session, clusters[:1], ACCOUNT_ID, TEST_UPDATE_TAG + 1)
+    cartography.intel.aws.msk.load_msk_clusters(
+        neo4j_session, clusters[:1], ACCOUNT_ID, TEST_UPDATE_TAG + 1, WORKSPACE_ID,
+    )
     run_cleanup_job(
         'aws_import_msk_cleanup.json', neo4j_session,
         exposure_job_parameters('ws-mski', 'o-mski', ACCOUNT_ID, TEST_UPDATE_TAG + 1),

@@ -171,7 +171,12 @@ def _managed(session):
         SET lf.functionurl = 'https://x.lambda-url.us-east-1.on.aws/', lf.functionurl_auth_type = 'NONE',
             lf.runtime = 'python3.12'
         MERGE (a)-[:RESOURCE]->(api:APIGatewayRestAPI{id: 'api-open'})
-        SET api.endpoint_conf_types = ['REGIONAL'], api.disableexecuteapiendpoint = false
+        SET api.endpoint_conf_types = ['REGIONAL'], api.disableexecuteapiendpoint = false, api.rest_api_id = 'api-open'
+        // Keyed on its ARN like the loader writes it; the function's trigger names the short id.
+        MERGE (a)-[:RESOURCE]->(priv:APIGatewayRestAPI{id: 'arn:aws:apigateway:us-east-1::/restapis/api-priv'})
+        SET priv.endpoint_conf_types = ['PRIVATE'], priv.rest_api_id = 'api-priv'
+        MERGE (a)-[:RESOURCE]->(fn_priv:AWSLambda{id: 'fn-private-api'})
+        SET fn_priv.public_trigger_sources = ['apigateway'], fn_priv.apigateway_source_api_ids = ['api-priv']
         MERGE (api)-[:RESOURCE]->(:APIGatewayResource{id: 'res-1', unauthenticated_methods: ['GET']})
         // get_resources failed: no resources, or methods stored null next to an empty list.
         MERGE (a)-[:RESOURCE]->(:APIGatewayRestAPI{id: 'api-no-resources'})
@@ -214,7 +219,7 @@ def _build_alb_auth(session):
         instance = f'i-behind-{lb_id}'
         _instance(session, instance, 'subnet-private', ['sg-app'], private_ip=f'10.0.2.{n}')
         _lb(session, lb_id, 'subnet-public', ['sg-lb'], [443], [{'instance': instance, 'port': 8080}])
-        load_load_balancer_v2_listeners(session, lb_id, transform_listeners(listeners), TAG)
+        load_load_balancer_v2_listeners(session, lb_id, transform_listeners(listeners), ACCOUNT, TAG)
 
 
 def _vpc(session, vpc_id, cidr):
@@ -270,7 +275,7 @@ def _build_cross_vpc(session):
         _vpc(session, vpc_id, cidr)
     peerings = [_peering('pcx-ok', 'vpc-src', 'vpc-peer'), _peering('pcx-noroute', 'vpc-src', 'vpc-noroute')]
     for loader in (load_vpc_peerings, load_accepter_cidrs, load_requester_cidrs):
-        loader(session, peerings, 'us-east-1', ACCOUNT, TAG)
+        loader(session, peerings, 'us-east-1', ACCOUNT, TAG, WS)
     tgw = {
         'TransitGatewayId': 'tgw-xl', 'TransitGatewayArn': 'arn:aws:ec2:us-east-1:1:transit-gateway/tgw-xl',
         'OwnerId': ACCOUNT, 'State': 'available', 'Description': '',
@@ -416,6 +421,7 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
     assert reach('RDSInstance', 'db-public')[:2] == (True, ['tcp:5432-5432'])
     assert reach('AWSLambda', 'fn-url') == (True, ['tcp:443-443'], ['function_url'], ['function_url'])
     assert reach('APIGatewayRestAPI', 'api-open')[0] is True
+    assert reach('AWSLambda', 'fn-private-api')[0] is False
     assert reach('ElasticacheCluster', 'cache-1')[0] is False
     assert reach('S3Bucket', 'bucket-public')[3] == ['public_resource_policy']
 
@@ -655,7 +661,11 @@ def test_multi_eni_instance_is_evaluated_per_eni(neo4j_session):
 
 def test_nacl_loader_shape(neo4j_session):
     create_test_org_account(neo4j_session, 'ws-nacl', 'o-nacl', '999988887777')
-    _run(neo4j_session, "MERGE (:AWSVpc{id: $vpc})", vpc=VPC)
+    _run(
+        neo4j_session,
+        "MERGE (v:AWSVpc{id: $vpc}) WITH v MATCH (a:AWSAccount{id: '999988887777'}) MERGE (a)-[:RESOURCE]->(v)",
+        vpc=VPC,
+    )
     acls = [{
         'NetworkAclId': 'acl-shape', 'VpcId': VPC, 'IsDefault': True, 'OwnerId': '999988887777',
         'Entries': [{'RuleNumber': 100, 'Egress': False, **ALL}],

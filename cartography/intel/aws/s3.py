@@ -319,7 +319,7 @@ def _load_s3_acls(
     ON CREATE SET a.firstseen = timestamp(), a.owner = acl.owner, a.ownerid = acl.ownerid, a.type = acl.type,
     a.displayname = acl.displayname, a.granteeid = acl.granteeid, a.uri = acl.uri, a.permission = acl.permission
     SET a.lastupdated = $UpdateTag
-    WITH a,acl MATCH (s3:S3Bucket{id: acl.bucket})
+    WITH a,acl MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(s3:S3Bucket{id: acl.bucket})
     MERGE (a)-[r:APPLIES_TO]->(s3)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -329,6 +329,7 @@ def _load_s3_acls(
         neo4j_session,
         ingest_acls,
         acls,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -340,6 +341,7 @@ def _load_s3_acls(
 def _load_s3_policies(
     neo4j_session: neo4j.Session,
     policies: List[Dict],
+    aws_account_id: str,
     update_tag: int,
     boto3_session: boto3.session.Session,
 ) -> None:
@@ -354,8 +356,7 @@ def _load_s3_policies(
     # policy to AWS principals and the owner.
     ingest_policies = """
     UNWIND $DictList AS policy
-    MATCH (s:S3Bucket) where s.name = policy.bucket
-    OPTIONAL MATCH (a:AWSAccount)-[:RESOURCE]->(s)
+    MATCH (a:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(s:S3Bucket) where s.name = policy.bucket
     WITH s, policy, (
         policy.internet_accessible AND NOT coalesce(s.restrict_public_buckets, false)
         AND NOT coalesce(a.s3_restrict_public_buckets, false)
@@ -370,6 +371,7 @@ def _load_s3_policies(
         neo4j_session,
         ingest_policies,
         policies,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -395,6 +397,7 @@ def add_bucket_policy_documents(policies: List[Dict], boto3_session: boto3.sessi
 def _load_s3_policy_statuses(
     neo4j_session: neo4j.Session,
     policy_statuses: List[Dict],
+    aws_account_id: str,
     update_tag: int,
 ) -> None:
     """
@@ -402,7 +405,7 @@ def _load_s3_policy_statuses(
     """
     ingest_policy_statuses = """
     UNWIND $DictList as policy_status
-    MATCH (bucket:S3Bucket{name: policy_status.bucket})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(bucket:S3Bucket{name: policy_status.bucket})
     SET
         bucket.is_public = coalesce(policy_status.is_public, false),
         bucket.lastupdated = $UpdateTag
@@ -412,6 +415,7 @@ def _load_s3_policy_statuses(
         neo4j_session,
         ingest_policy_statuses,
         policy_statuses,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -420,6 +424,7 @@ def _load_s3_policy_statuses(
 def _load_s3_policy_statements(
     neo4j_session: neo4j.Session,
     statements: List[Dict],
+    aws_account_id: str,
     update_tag: int,
 ) -> None:
     ingest_policy_statement = """
@@ -438,7 +443,7 @@ def _load_s3_policy_statements(
         statement.condition = statement_data.Condition,
         statement.lastupdated = $UpdateTag
         WITH statement
-        MATCH (bucket:S3Bucket) where bucket.name = statement.bucket
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(bucket:S3Bucket) where bucket.name = statement.bucket
         MERGE (bucket)-[r:POLICY_STATEMENT]->(statement)
         SET r.lastupdated = $UpdateTag
         """
@@ -446,19 +451,22 @@ def _load_s3_policy_statements(
         neo4j_session,
         ingest_policy_statement,
         statements,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
-def _load_s3_encryption(neo4j_session: neo4j.Session, encryption_configs: List[Dict], update_tag: int) -> None:
+def _load_s3_encryption(
+    neo4j_session: neo4j.Session, encryption_configs: List[Dict], aws_account_id: str, update_tag: int,
+) -> None:
     """
     Ingest S3 default encryption results into neo4j.
     """
     # NOTE we use the coalesce function so appending works when the value is null initially
     ingest_encryption = """
     UNWIND $DictList AS encryption
-    MATCH (s:S3Bucket) where s.name = encryption.bucket
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(s:S3Bucket) where s.name = encryption.bucket
     SET s.default_encryption = (coalesce(s.default_encryption, false) OR encryption.default_encryption),
     s.encryption_algorithm = encryption.encryption_algorithm,
     s.encryption_key_id = encryption.encryption_key_id, s.bucket_key_enabled = encryption.bucket_key_enabled,
@@ -469,18 +477,21 @@ def _load_s3_encryption(neo4j_session: neo4j.Session, encryption_configs: List[D
         neo4j_session,
         ingest_encryption,
         encryption_configs,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
-def _load_s3_versioning(neo4j_session: neo4j.Session, versioning_configs: List[Dict], update_tag: int) -> None:
+def _load_s3_versioning(
+    neo4j_session: neo4j.Session, versioning_configs: List[Dict], aws_account_id: str, update_tag: int,
+) -> None:
     """
     Ingest S3 versioning results into neo4j.
     """
     ingest_versioning = """
     UNWIND $DictList AS versioning
-    MATCH (s:S3Bucket) where s.name = versioning.bucket
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(s:S3Bucket) where s.name = versioning.bucket
     SET s.versioning_status = versioning.status,
         s.mfa_delete = versioning.mfa_delete,
         s.lastupdated = $UpdateTag
@@ -490,6 +501,7 @@ def _load_s3_versioning(neo4j_session: neo4j.Session, versioning_configs: List[D
         neo4j_session,
         ingest_versioning,
         versioning_configs,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -498,6 +510,7 @@ def _load_s3_versioning(neo4j_session: neo4j.Session, versioning_configs: List[D
 def _load_s3_public_access_block(
     neo4j_session: neo4j.Session,
     public_access_block_configs: List[Dict],
+    aws_account_id: str,
     update_tag: int,
 ) -> None:
     """
@@ -505,7 +518,7 @@ def _load_s3_public_access_block(
     """
     ingest_public_access_block = """
     UNWIND $DictList AS public_access_block
-    MATCH (s:S3Bucket) where s.name = public_access_block.bucket
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(s:S3Bucket) where s.name = public_access_block.bucket
     SET s.block_public_acls = public_access_block.block_public_acls,
         s.ignore_public_acls = public_access_block.ignore_public_acls,
         s.block_public_policy = public_access_block.block_public_policy,
@@ -517,6 +530,7 @@ def _load_s3_public_access_block(
         neo4j_session,
         ingest_public_access_block,
         public_access_block_configs,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -592,12 +606,12 @@ def load_s3_details(
 
     _load_s3_acls(neo4j_session, acls, aws_account_id, update_tag, common_job_parameters)
     # Before the policies: their anonymous_access reads this sync's restrict_public_buckets.
-    _load_s3_public_access_block(neo4j_session, public_access_block_configs, update_tag)
-    _load_s3_policies(neo4j_session, policies, update_tag, boto3_session)
-    _load_s3_policy_statuses(neo4j_session, policy_statuses, update_tag)
-    _load_s3_policy_statements(neo4j_session, statements, update_tag)
-    _load_s3_encryption(neo4j_session, encryption_configs, update_tag)
-    _load_s3_versioning(neo4j_session, versioning_configs, update_tag)
+    _load_s3_public_access_block(neo4j_session, public_access_block_configs, aws_account_id, update_tag)
+    _load_s3_policies(neo4j_session, policies, aws_account_id, update_tag, boto3_session)
+    _load_s3_policy_statuses(neo4j_session, policy_statuses, aws_account_id, update_tag)
+    _load_s3_policy_statements(neo4j_session, statements, aws_account_id, update_tag)
+    _load_s3_encryption(neo4j_session, encryption_configs, aws_account_id, update_tag)
+    _load_s3_versioning(neo4j_session, versioning_configs, aws_account_id, update_tag)
     _set_default_values(neo4j_session, aws_account_id)
 
 

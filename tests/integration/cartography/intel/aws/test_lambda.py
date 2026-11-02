@@ -96,6 +96,7 @@ def test_load_lambda_function_aliases(neo4j_session):
     cartography.intel.aws.lambda_function._load_lambda_function_aliases(
         neo4j_session,
         data,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -132,6 +133,7 @@ def test_load_lambda_function_aliases_relationships(neo4j_session):
     cartography.intel.aws.lambda_function._load_lambda_function_aliases(
         neo4j_session,
         aliases,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -169,6 +171,7 @@ def test_load_lambda_event_source_mappings(neo4j_session):
     cartography.intel.aws.lambda_function._load_lambda_event_source_mappings(
         neo4j_session,
         data,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -200,6 +203,7 @@ def test_load_lambda_event_source_mappings_relationships(neo4j_session):
     cartography.intel.aws.lambda_function._load_lambda_event_source_mappings(
         neo4j_session,
         esm,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -232,6 +236,7 @@ def test_load_lambda_layers(neo4j_session):
     cartography.intel.aws.lambda_function._load_lambda_layers(
         neo4j_session,
         data,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -268,6 +273,7 @@ def test_load_lambda_layers_relationships(neo4j_session):
     cartography.intel.aws.lambda_function._load_lambda_layers(
         neo4j_session,
         layers,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -327,7 +333,8 @@ def _seed_rest_apis(neo4j_session, account_id, apis):
         """
         UNWIND $apis AS a
         MATCH (aa:AWSAccount{id: $account_id})
-        MERGE (aa)-[:RESOURCE]->(:APIGatewayRestAPI{id: a.id, endpoint_conf_types: a.types})
+        MERGE (aa)-[:RESOURCE]->(api:APIGatewayRestAPI{id: 'arn:aws:apigateway:us-east-1::/restapis/' + a.id})
+        SET api.rest_api_id = a.id, api.endpoint_conf_types = a.types
         """,
         account_id=account_id, apis=apis,
     )

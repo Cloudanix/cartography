@@ -113,7 +113,9 @@ def _build_rule_and_range_rows(groups: List[Dict]) -> tuple:
 
 
 @timeit
-def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dict], update_tag: int) -> None:
+def load_ec2_security_group_rules(
+    neo4j_session: neo4j.Session, groups: List[Dict], current_aws_account_id: str, update_tag: int,
+) -> None:
     INGEST_RULE_TEMPLATE = Template("""
     UNWIND $DictList AS item
     MERGE (rule:$rule_label{ruleid: item.ruleid})
@@ -122,16 +124,16 @@ def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dic
     rule.protocol = item.protocol
     SET rule.lastupdated = $update_tag, rule.prefix_list_ids = item.prefix_list_ids
     WITH rule, item
-    MATCH (group:EC2SecurityGroup{groupid: item.group_id})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:EC2SecurityGroup{groupid: item.group_id})
     MERGE (group)<-[r:MEMBER_OF_EC2_SECURITY_GROUP]-(rule)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag;
     """)
 
+    # The rule id embeds its group id (globally unique), and the rule was MERGEd just above for this group.
     ingest_rule_group_pair = """
     UNWIND $DictList AS item
-    MERGE (group:EC2SecurityGroup{id: item.group_id})
-    ON CREATE SET group.firstseen = timestamp(), group.groupid = item.group_id
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:EC2SecurityGroup{id: item.group_id})
     SET group.lastupdated = $update_tag
     WITH group, item
     MATCH (inbound:IpRule{ruleid: item.ruleid})
@@ -146,7 +148,8 @@ def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dic
     ON CREATE SET range.firstseen = timestamp(), range.range = item.range
     SET range.lastupdated = $update_tag, range.name = item.range_name
     WITH range, item
-    MATCH (rule:IpRule{ruleid: item.ruleid})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:EC2SecurityGroup)
+        <-[:MEMBER_OF_EC2_SECURITY_GROUP]-(rule:IpRule{ruleid: item.ruleid})
     MERGE (rule)<-[r:MEMBER_OF_IP_RULE]-(range)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -159,12 +162,14 @@ def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dic
             neo4j_session,
             INGEST_RULE_TEMPLATE.safe_substitute(rule_label=rule_label),
             rows,
+            AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
         )
     load_graph_data(
         neo4j_session,
         ingest_rule_group_pair,
         rule_rows["IpPermissionInbound"] + rule_rows["IpPermissionEgress"],
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
     for range_label, rows in range_rows.items():
@@ -172,6 +177,7 @@ def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dic
             neo4j_session,
             ingest_range.safe_substitute(range_label=range_label),
             rows,
+            AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
         )
 
@@ -179,8 +185,10 @@ def load_ec2_security_group_rules(neo4j_session: neo4j.Session, groups: List[Dic
 @timeit
 def load_ec2_security_groupinfo(
     neo4j_session: neo4j.Session, data: List[Dict],
-    current_aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
+    current_aws_account_id: str, update_tag: int, workspace_id: str, partition: str = DEFAULT_PARTITION,
 ) -> None:
+    # A group created in a VPC shared in through RAM sits in the owner's VPC: linked when an account of this
+    # workspace owns it, never another customer's.
     ingest_security_group = """
     UNWIND $DictList AS item
     MERGE (group:EC2SecurityGroup{id: item.group_id})
@@ -196,7 +204,8 @@ def load_ec2_security_groupinfo(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH group, item
-    MATCH (vpc:AWSVpc{id: item.vpc_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(vpc:AWSVpc{id: item.vpc_id})
     MERGE (vpc)-[rg:MEMBER_OF_EC2_SECURITY_GROUP]->(group)
     ON CREATE SET rg.firstseen = timestamp()
     """
@@ -229,9 +238,10 @@ def load_ec2_security_groupinfo(
         ingest_security_group,
         group_rows,
         AWS_ACCOUNT_ID=current_aws_account_id,
+        WORKSPACE_ID=workspace_id,
         update_tag=update_tag,
     )
-    load_ec2_security_group_rules(neo4j_session, data, update_tag)
+    load_ec2_security_group_rules(neo4j_session, data, current_aws_account_id, update_tag)
 
 
 @timeit
@@ -261,7 +271,7 @@ def sync_ec2_security_groupinfo(
     logger.info(f"Total EC2 Security Groups: {len(data)}")
 
     load_ec2_security_groupinfo(
-        neo4j_session, data, current_aws_account_id, update_tag,
+        neo4j_session, data, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'],
         partition=get_partition_from_params(common_job_parameters),
     )
     cleanup_ec2_security_groupinfo(neo4j_session, common_job_parameters)

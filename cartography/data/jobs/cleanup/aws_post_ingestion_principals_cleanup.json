@@ -1,7 +1,14 @@
 {
 	"statements": [
 		{
-			"query": "MATCH (n:AWSPrincipal) WHERE NOT (n)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) AND n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"__comment__": "This account's roles drop their stale trust edges to principals no AWS account owns (outside the known accounts). Another tenant's principals and trust edges are not touched.",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:AWSRole)-[r:TRUSTS_AWS_PRINCIPAL]->(n:AWSPrincipal) WHERE NOT (n)<-[:RESOURCE]-(:AWSAccount) AND r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		},
+		{
+			"__comment__": "Orphan sweep, independent of the tenant: an outside principal is shared by every role that trusts it, so it goes only once nothing links to it.",
+			"query": "MATCH (n:AWSPrincipal) WHERE NOT (n)--() WITH n LIMIT $LIMIT_SIZE DELETE (n) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100
 		}

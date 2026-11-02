@@ -141,12 +141,20 @@ def cleanup_sns_topic(neo4j_session: neo4j.Session, common_job_parameters: Dict)
 
 
 @timeit
-def load_sns_subscription_topic(session: neo4j.Session, subscriptions: List[Dict], topic_arn: str, aws_update_tag: int) -> None:
-    session.execute_write(_load_sns_topic_subscription_tx, subscriptions, topic_arn, aws_update_tag)
+def load_sns_subscription_topic(
+    session: neo4j.Session, subscriptions: List[Dict], topic_arn: str, current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    session.execute_write(
+        _load_sns_topic_subscription_tx, subscriptions, topic_arn, current_aws_account_id, aws_update_tag,
+    )
 
 
 @timeit
-def _load_sns_topic_subscription_tx(tx: neo4j.Transaction, subscriptions: List[Dict], topic_arn: str, aws_update_tag: int) -> None:
+def _load_sns_topic_subscription_tx(
+    tx: neo4j.Transaction, subscriptions: List[Dict], topic_arn: str, current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
     query: str = """
     UNWIND $Records as record
     MERGE (sub:AWSSNSTopicSubscription{id: record.SubscriptionArn})
@@ -160,7 +168,7 @@ def _load_sns_topic_subscription_tx(tx: neo4j.Transaction, subscriptions: List[D
         sub.Protocol = record.Protocol,
         sub.owner = record.Owner
     WITH sub
-    MATCH (owner:AWSSNSTopic{id: $Topic_ARN})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(owner:AWSSNSTopic{id: $Topic_ARN})
     MERGE (owner)-[r:RESOURCE]->(sub)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -170,6 +178,7 @@ def _load_sns_topic_subscription_tx(tx: neo4j.Transaction, subscriptions: List[D
         query,
         Records=subscriptions,
         Topic_ARN=topic_arn,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -200,7 +209,9 @@ def sync(
     load_sns_topic(neo4j_session, topics, current_aws_account_id, update_tag)
 
     for topic in topics:
-        load_sns_subscription_topic(neo4j_session, topic['subscriptions'], topic['TopicArn'], update_tag)
+        load_sns_subscription_topic(
+            neo4j_session, topic['subscriptions'], topic['TopicArn'], current_aws_account_id, update_tag,
+        )
 
     cleanup_sns_topic_subscription(neo4j_session, common_job_parameters)
     cleanup_sns_topic(neo4j_session, common_job_parameters)

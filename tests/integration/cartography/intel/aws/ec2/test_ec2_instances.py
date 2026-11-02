@@ -318,6 +318,7 @@ def test_ec2_asset_exposure(neo4j_session):
         data,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
     common_job_parameters = {
         **exposure_job_parameters(TEST_WORKSPACE_ID, TEST_ORG_ID, TEST_ACCOUNT_ID, TEST_UPDATE_TAG + 1),

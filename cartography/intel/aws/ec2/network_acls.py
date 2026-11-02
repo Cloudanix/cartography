@@ -95,8 +95,8 @@ def load_network_acls(
     account_id: str, update_tag: int,
 ) -> None:
     load_graph_data(neo4j_session, _ACL_QUERY, acl_rows, aws_account_id=account_id, update_tag=update_tag)
-    load_graph_data(neo4j_session, _RULE_QUERY, rule_rows, update_tag=update_tag)
-    load_graph_data(neo4j_session, _ASSOC_QUERY, assoc_rows, update_tag=update_tag)
+    load_graph_data(neo4j_session, _RULE_QUERY, rule_rows, aws_account_id=account_id, update_tag=update_tag)
+    load_graph_data(neo4j_session, _ASSOC_QUERY, assoc_rows, aws_account_id=account_id, update_tag=update_tag)
 
 
 _ACL_QUERY = """
@@ -110,8 +110,8 @@ MATCH (owner:AWSAccount{id: $aws_account_id})
 MERGE (owner)-[r:RESOURCE]->(acl)
 ON CREATE SET r.firstseen = timestamp()
 SET r.lastupdated = $update_tag
-WITH acl, row
-MATCH (vpc:AWSVpc{id: row.vpc_id})
+WITH acl, row, owner
+MATCH (owner)-[:RESOURCE]->(vpc:AWSVpc{id: row.vpc_id})
 MERGE (acl)-[v:MEMBER_OF_AWS_VPC]->(vpc)
 ON CREATE SET v.firstseen = timestamp()
 SET v.lastupdated = $update_tag
@@ -119,7 +119,7 @@ SET v.lastupdated = $update_tag
 
 _RULE_QUERY = """
 UNWIND $DictList AS row
-MATCH (acl:EC2NetworkAcl{id: row.acl_id})
+MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(acl:EC2NetworkAcl{id: row.acl_id})
 MERGE (rule:EC2NetworkAclRule{id: row.id})
 ON CREATE SET rule.firstseen = timestamp()
 SET rule.rule_number = row.rule_number, rule.protocol = row.protocol, rule.rule_action = row.rule_action,
@@ -133,7 +133,7 @@ SET r.lastupdated = $update_tag
 # Subnet MERGEd by subnetid like route_tables.py: syncs run in parallel, the subnet may not exist yet.
 _ASSOC_QUERY = """
 UNWIND $DictList AS row
-MATCH (acl:EC2NetworkAcl{id: row.acl_id})
+MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(acl:EC2NetworkAcl{id: row.acl_id})
 MERGE (subnet:EC2Subnet{subnetid: row.subnet_id})
 MERGE (acl)-[r:PART_OF_SUBNET]->(subnet)
 ON CREATE SET r.firstseen = timestamp()

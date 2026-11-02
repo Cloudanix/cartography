@@ -88,16 +88,18 @@ def load_neptune_clusters(
     load_graph_data(
         neo4j_session, query, clusters, aws_update_tag=update_tag, aws_account_id=current_aws_account_id,
     )
-    _attach_security_groups(neo4j_session, clusters, update_tag)
+    _attach_security_groups(neo4j_session, clusters, current_aws_account_id, update_tag)
     _attach_db_subnet_groups(neo4j_session, clusters, current_aws_account_id, update_tag, partition)
 
 
 @timeit
-def _attach_security_groups(neo4j_session: neo4j.Session, clusters: List[Dict], update_tag: int) -> None:
+def _attach_security_groups(
+    neo4j_session: neo4j.Session, clusters: List[Dict], current_aws_account_id: str, update_tag: int,
+) -> None:
     # The group node may not be synced yet (services run in parallel); MERGE it like the RDS cluster sync does.
     query = """
     UNWIND $DictList AS item
-        MATCH (cluster:NeptuneCluster{id: item.arn})
+        MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(cluster:NeptuneCluster{id: item.arn})
         MERGE (sg:EC2SecurityGroup{id: item.group_id})
         ON CREATE SET sg.firstseen = timestamp()
         MERGE (cluster)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
@@ -105,7 +107,7 @@ def _attach_security_groups(neo4j_session: neo4j.Session, clusters: List[Dict], 
         SET r.lastupdated = $aws_update_tag
     """
     rows = [{'arn': c['DBClusterArn'], 'group_id': group_id} for c in clusters for group_id in c['security_groups']]
-    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag)
+    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag, aws_account_id=current_aws_account_id)
 
 
 @timeit
@@ -117,7 +119,7 @@ def _attach_db_subnet_groups(
     # RDS instance sync fills in the group and its subnets.
     query = """
     UNWIND $DictList AS item
-        MATCH (cluster:NeptuneCluster{id: item.arn})
+        MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(cluster:NeptuneCluster{id: item.arn})
         MERGE (sng:DBSubnetGroup{id: item.subnet_group_arn})
         ON CREATE SET sng.firstseen = timestamp(), sng.arn = item.subnet_group_arn, sng.name = item.name
         MERGE (cluster)-[r:MEMBER_OF_DB_SUBNET_GROUP]->(sng)
@@ -130,7 +132,7 @@ def _attach_db_subnet_groups(
             continue
         subnet_group_arn = f"arn:{partition}:rds:{c['region']}:{current_aws_account_id}:subgrp:{c['DBSubnetGroup']}"
         rows.append({'arn': c['DBClusterArn'], 'name': c['DBSubnetGroup'], 'subnet_group_arn': subnet_group_arn})
-    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag)
+    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag, aws_account_id=current_aws_account_id)
 
 
 @timeit

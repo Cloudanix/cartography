@@ -67,7 +67,7 @@ def test_load_s3_encryption(neo4j_session, *args):
     Ensure that expected bucket gets loaded with their encryption fields.
     """
     data = tests.data.aws.s3.GET_ENCRYPTION
-    cartography.intel.aws.s3._load_s3_encryption(neo4j_session, data, TEST_UPDATE_TAG)
+    cartography.intel.aws.s3._load_s3_encryption(neo4j_session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
     expected_nodes = {
         (
@@ -104,7 +104,7 @@ def test_load_s3_policies(neo4j_session, *args):
     Ensure that expected bucket policy statements are loaded with their key fields.
     """
     data = cartography.intel.aws.s3.parse_policy_statements("bucket-1", tests.data.aws.s3.LIST_STATEMENTS)
-    cartography.intel.aws.s3._load_s3_policy_statements(neo4j_session, data, TEST_UPDATE_TAG)
+    cartography.intel.aws.s3._load_s3_policy_statements(neo4j_session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
     expected_nodes = [
         (
@@ -181,7 +181,9 @@ def test_load_s3_policies(neo4j_session, *args):
 
 
 def test_load_s3_policy_statuses(neo4j_session, *args):
-    cartography.intel.aws.s3._load_s3_policy_statuses(neo4j_session, tests.data.aws.s3.LIST_STATUSES, TEST_UPDATE_TAG)
+    cartography.intel.aws.s3._load_s3_policy_statuses(
+        neo4j_session, tests.data.aws.s3.LIST_STATUSES, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
+    )
 
     common_job_parameters = {
         'UPDATE_TAG': TEST_UPDATE_TAG + 1,  # Simulate a new sync run finished so the old update tag is obsolete now
