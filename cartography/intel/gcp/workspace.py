@@ -272,7 +272,14 @@ def _load_groups_tx(tx: neo4j.Transaction, groups: List[Dict], organization_id: 
 
 
 @timeit
-def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List[Dict], gsuite_update_tag: int) -> None:
+def load_groups_members(
+    neo4j_session: neo4j.Session, group: Dict, members: List[Dict], gsuite_update_tag: int,
+    common_job_parameters: Dict,
+) -> None:
+    """
+    Link a group's members to it. Groups are matched only under the syncing workspace's organization
+    (WORKSPACE_ID, GCP_ORGANIZATION_ID from common_job_parameters), where load_groups put them.
+    """
     ingestion_qry = """
         UNWIND $DictList as member
         MERGE (user:GCPUser {userId: member.id})
@@ -282,30 +289,37 @@ def load_groups_members(neo4j_session: neo4j.Session, group: Dict, members: List
         SET
         user.lastupdated = $UpdateTag
         WITH user
-        MATCH (group:GCPGroup {groupId: $GroupID })
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id: $GCP_ORGANIZATION_ID})
+            -[:RESOURCE]->(group:GCPGroup {groupId: $GroupID })
         MERGE (user)-[r:MEMBER_GROUP]->(group)
         ON CREATE SET
         r.firstseen = $UpdateTag
         SET
         r.lastupdated = $UpdateTag
     """
+    tenant = {key: common_job_parameters[key] for key in ('WORKSPACE_ID', 'GCP_ORGANIZATION_ID')}
     load_graph_data(
         neo4j_session,
         ingestion_qry,
         members,
         GroupID=group.get("id"),
         UpdateTag=gsuite_update_tag,
+        **tenant,
     )
     membership_qry = """
         UNWIND $DictList as member
-        MATCH(group_1: GCPGroup{groupId: member.id}), (group_2:GCPGroup {groupId: $GroupID})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(o:GCPOrganization{id: $GCP_ORGANIZATION_ID})
+        MATCH (o)-[:RESOURCE]->(group_1:GCPGroup{groupId: member.id})
+        MATCH (o)-[:RESOURCE]->(group_2:GCPGroup {groupId: $GroupID})
         MERGE (group_1)-[r:MEMBER_GROUP]->(group_2)
         ON CREATE SET
         r.firstseen = timestamp()
         SET
         r.lastupdated = $UpdateTag
     """
-    load_graph_data(neo4j_session, membership_qry, members, GroupID=group.get("id"), UpdateTag=gsuite_update_tag)
+    load_graph_data(
+        neo4j_session, membership_qry, members, GroupID=group.get("id"), UpdateTag=gsuite_update_tag, **tenant,
+    )
 
 
 @timeit
@@ -351,7 +365,7 @@ def sync(
 
         load_users(neo4j_session, users, gcp_organization_id, gcp_update_tag)
         for group in groups:
-            load_groups_members(neo4j_session, group, group.get("members", []), gcp_update_tag)
+            load_groups_members(neo4j_session, group, group.get("members", []), gcp_update_tag, common_job_parameters)
         cleanup_users(neo4j_session, common_job_parameters)
         cleanup_groups(neo4j_session, common_job_parameters)
         logger.info(
