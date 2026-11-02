@@ -568,7 +568,7 @@ def load_rds_clusters(
     """
     _attach_associate_roles(neo4j_session, data, aws_update_tag)
     for cluster in data:
-        _attach_db_subnet_group(neo4j_session, cluster, aws_update_tag)
+        _attach_db_subnet_group(neo4j_session, cluster, current_aws_account_id, aws_update_tag)
         _attach_ec2_security_groups_cluster(neo4j_session, cluster, aws_update_tag)
         # TODO: track read replicas
         # TODO: track associated roles
@@ -633,19 +633,30 @@ def _attach_ec2_security_groups_cluster(neo4j_session: neo4j.Session, cluster: D
 
 
 @timeit
-def _attach_db_subnet_group(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int) -> None:
-    attach_cluster_to_role = """
+def _attach_db_subnet_group(
+    neo4j_session: neo4j.Session, cluster: Dict, current_aws_account_id: str, aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
+) -> None:
+    # DescribeDBClusters only names the subnet group, and "default" exists in every account: key it by
+    # the ARN built from this account and the cluster's region (the id instance ingestion uses).
+    if not cluster.get('DBSubnetGroup'):
+        return
+    attach_cluster_to_subnet_group = """
     MATCH (c:RDSCluster{id:$DBClusterArn})
-    MERGE (p:DBSubnetGroup{name:$DBSubnetGroup})
+    MERGE (p:DBSubnetGroup{id:$SubnetGroupArn})
+    ON CREATE SET p.firstseen = timestamp(), p.name = $DBSubnetGroup
     MERGE (c)-[s:ATTACHED_TO]->(p)
     ON CREATE SET s.firstseen = timestamp()
     SET s.lastupdated = $aws_update_tag
     """
     run_write_query(
         neo4j_session,
-        attach_cluster_to_role,
+        attach_cluster_to_subnet_group,
         DBClusterArn=cluster['DBClusterArn'],
         DBSubnetGroup=cluster['DBSubnetGroup'],
+        SubnetGroupArn=_get_db_subnet_group_arn(
+            cluster['region'], current_aws_account_id, cluster['DBSubnetGroup'], partition,
+        ),
         aws_update_tag=aws_update_tag,
     )
 

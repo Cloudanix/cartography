@@ -108,3 +108,15 @@ def test_rds_read_replica_source_given_as_arn_resolves_in_the_account(neo4j_sess
     # The other tenant's ARN is not followed: links never leave the syncing account.
     assert west_db in _targets(neo4j_session, 'IS_READ_REPLICA_OF', own_replica)
     assert _arn(OTHER_ACCOUNT_ID, 'db', 'database-1') not in _targets(neo4j_session, 'IS_READ_REPLICA_OF', own_replica)
+
+
+def test_rds_cluster_subnet_group_is_the_accounts_own(neo4j_session):
+    _seed(neo4j_session)
+    cluster = _arn(ACCOUNT_ID, 'cluster', 'cluster-1')
+
+    rds._attach_db_subnet_group(
+        neo4j_session, {'DBClusterArn': cluster, 'DBSubnetGroup': 'default', 'region': REGION},
+        ACCOUNT_ID, TEST_UPDATE_TAG,
+    )
+
+    assert _targets(neo4j_session, 'ATTACHED_TO', cluster) == {_arn(ACCOUNT_ID, 'subgrp', 'default')}

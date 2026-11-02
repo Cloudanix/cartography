@@ -285,9 +285,11 @@ class TestRds:
 
     def test_subnet_group_attachment_is_managed(self):
         session = MagicMock()
-        cluster = {"DBClusterArn": "arn:aws:rds:us-east-1:1234:cluster:c1", "DBSubnetGroup": "sng-1"}
+        cluster = {
+            "DBClusterArn": "arn:aws:rds:us-east-1:1234:cluster:c1", "DBSubnetGroup": "sng-1", "region": "us-east-1",
+        }
 
-        rds._attach_db_subnet_group(session, cluster, TEST_UPDATE_TAG)
+        rds._attach_db_subnet_group(session, cluster, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         session.execute_write.assert_called_once()
