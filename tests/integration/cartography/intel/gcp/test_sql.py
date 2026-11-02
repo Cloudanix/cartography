@@ -179,6 +179,16 @@ def test_load_public_ip_address(neo4j_session):
 
 
 def test_load_sql_instances_vpc_network(neo4j_session):
+    # The instances' project and the VPC's project (project-abc) belong to the syncing organization: a network
+    # is only linked inside it.
+    vpc_params = {'WORKSPACE_ID': 'ws-sql-vpc', 'GCP_ORGANIZATION_ID': 'org-sql-vpc'}
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        FOREACH (p IN [$p, 'project-abc'] | MERGE (o)-[:OWNER]->(:GCPProject{id: p}))
+        """,
+        ws=vpc_params['WORKSPACE_ID'], org=vpc_params['GCP_ORGANIZATION_ID'], p=TEST_PROJECT_NUMBER,
+    )
     # Load test SQL Instances
     data = tests.data.gcp.sql.CLOUD_SQL_INSTANCES
     cartography.intel.gcp.sql.load_sql_instances(
@@ -187,13 +197,15 @@ def test_load_sql_instances_vpc_network(neo4j_session):
         TEST_PROJECT_NUMBER,
         TEST_UPDATE_TAG,
     )
- # vpc
+    # vpc
     vpc_res = tests.data.gcp.compute.VPC_RESPONSE
     vpc_list = cartography.intel.gcp.compute.transform_gcp_vpcs(vpc_res)
 
     cartography.intel.gcp.compute.load_gcp_vpcs(neo4j_session, vpc_list, TEST_UPDATE_TAG)
     for insta in data:
-        cartography.intel.gcp.sql.load_sql_instances_vpc_network(neo4j_session, insta, TEST_PROJECT_NUMBER, TEST_UPDATE_TAG)
+        cartography.intel.gcp.sql.load_sql_instances_vpc_network(
+            neo4j_session, insta, TEST_PROJECT_NUMBER, TEST_UPDATE_TAG, vpc_params,
+        )
     expected = {
         ('instance123', 'projects/project-abc/global/networks/default'),
         ('instance456', 'projects/project-abc/global/networks/default'),

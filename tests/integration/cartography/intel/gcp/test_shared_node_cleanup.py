@@ -183,3 +183,29 @@ def test_sql_cleanup_never_deletes_a_shared_vpc_host_network(neo4j_session):
     assert neo4j_session.run(
         "MATCH (:GCPProject{id: 'proj-snc-b'})-[:RESOURCE]->(v:GCPVpc{id: $v}) RETURN count(v) AS c", v=host_vpc,
     ).single()['c'] == 1
+
+
+def test_sql_instance_links_a_shared_vpc_host_only_inside_its_workspace(neo4j_session):
+    for tenant, tag in (('a', OWN_TAG), ('b', OTHER_TAG)):
+        _seed(neo4j_session, tenant, tag)
+    # Tenant a's own Shared VPC host: another project of the same organization.
+    neo4j_session.run(
+        """
+        MATCH (o:GCPOrganization{id: 'org-snc-a'})
+        MERGE (o)-[:OWNER]->(:GCPProject{id: 'proj-snc-a-host'})-[:RESOURCE]->(:GCPVpc{id: 'proj-snc-a-host/vpc'})
+        """,
+    )
+
+    def link(vpc_id):
+        # load_sql_instances stores the instance's network as vpcNetworkID; the link step reads it from the node.
+        neo4j_session.run("MATCH (i:GCPSQLInstance{id: 'proj-snc-a/sql'}) SET i.vpcNetworkID = $v", v=vpc_id)
+        sql.load_sql_instances_vpc_network(
+            neo4j_session, [{'id': 'proj-snc-a/sql'}], 'proj-snc-a', OWN_TAG, _params('a', OWN_TAG),
+        )
+        rows = neo4j_session.run("MATCH (:GCPSQLInstance{id: 'proj-snc-a/sql'})-[:VPC_NETWORK]->(v) RETURN v.id AS v")
+        return {r['v'] for r in rows}
+
+    # The instance names a host VPC in tenant b's onboarded project: no edge.
+    assert link('proj-snc-b/vpc') == set()
+    # A host project inside the same workspace and organization still links.
+    assert link('proj-snc-a-host/vpc') == {'proj-snc-a-host/vpc'}
