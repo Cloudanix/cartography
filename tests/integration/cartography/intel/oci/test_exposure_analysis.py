@@ -803,7 +803,7 @@ def test_bucket_exposed_by_unexpired_read_pre_authenticated_request(neo4j_sessio
             {name: {'public-access-type': 'NoPublicAccess'} for name in pars}, 'ns', REGION,
             {**pars, 'par-unknown': [{'access-type': 'ObjectRead', 'time-expires': future}]},
         ),
-        COMPARTMENT_ID, UPDATE_TAG,
+        TENANCY_ID, COMPARTMENT_ID, UPDATE_TAG,
     )
     # Next sync: ListPreauthenticatedRequests fails for par-unknown, so its last answer is kept.
     storage.load_buckets(
@@ -812,7 +812,7 @@ def test_bucket_exposed_by_unexpired_read_pre_authenticated_request(neo4j_sessio
             [{'name': name, 'id': name} for name in pars],
             {name: {'public-access-type': 'NoPublicAccess'} for name in pars}, 'ns', REGION, pars,
         ),
-        COMPARTMENT_ID, UPDATE_TAG + 1,
+        TENANCY_ID, COMPARTMENT_ID, UPDATE_TAG + 1,
     )
 
     run_analysis_job('oci_object_storage_asset_exposure.json', neo4j_session, JOB_PARAMETERS)

@@ -214,7 +214,7 @@ def _managed(session):
     storage.load_buckets(
         session,
         storage.transform_buckets([{'name': n, 'id': n} for n in details], details, 'ns', REGION, {}),
-        COMPARTMENT, TAG,
+        TENANCY, COMPARTMENT, TAG,
     )
     cluster = {
         'id': 'xl-oke', 'lifecycle-state': 'ACTIVE', 'kubernetes-version': 'v1.29.1',
