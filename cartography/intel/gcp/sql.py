@@ -225,8 +225,9 @@ def load_sql_instances_vpc_network(
     data_list: List[Dict],
     project_id: str,
     update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
-    session.execute_write(_load_sql_instances_vpc_network_tx, data_list, project_id, update_tag)
+    session.execute_write(_load_sql_instances_vpc_network_tx, data_list, project_id, update_tag, common_job_parameters)
 
 
 def _load_sql_instances_vpc_network_tx(
@@ -234,12 +235,16 @@ def _load_sql_instances_vpc_network_tx(
     instances: List[Dict],
     project_id: str,
     gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     ingest_sql_instances_vpc_network = """
     UNWIND $instances as instance
-    MATCH (i:GCPSQLInstance{id:instance.id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPSQLInstance{id:instance.id})
     WITH i
-        MATCH (vpc:GCPVpc {id: i.vpcNetworkID})
+        // A Shared VPC host project may be onboarded by another customer: only link a network of a project
+        // of the syncing workspace and organization (a host in the same organization still links).
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id: $GCP_ORGANIZATION_ID})
+            -[:OWNER]->(:GCPProject)-[:RESOURCE]->(vpc:GCPVpc {id: i.vpcNetworkID})
         MERGE (i)-[r:VPC_NETWORK]->(vpc)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $gcp_update_tag
@@ -248,6 +253,8 @@ def _load_sql_instances_vpc_network_tx(
         ingest_sql_instances_vpc_network,
         instances=instances,
         ProjectId=project_id,
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -348,7 +355,7 @@ def _load_sql_users_tx(tx: neo4j.Transaction, sql_users: List[Dict], project_id:
         u.consolelink = user.consolelink,
         u.lastupdated = $gcp_update_tag
     WITH u,user
-    MATCH (i:GCPSQLInstance{id:user.instance_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPSQLInstance{id:user.instance_id})
     MERGE (i)-[r:USED_BY]->(u)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -389,7 +396,7 @@ def _load_public_ip_address_tx(tx: neo4j.Transaction, instance: Dict, project_id
        p.resource='SQLInstance',
        p.lastupdated = $gcp_update_tag
     WITH p
-    MATCH (i:GCPSQLInstance{id:$instanceId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPSQLInstance{id:$instanceId})
     MERGE (i)-[r:MEMBER_OF_PUBLIC_IP_ADDRESS]->(p)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -442,7 +449,7 @@ def _load_sql_databases_tx(
         d.consolelink = database.consolelink,
         d.lastupdated = $gcp_update_tag
     WITH d,database
-    MATCH (i:GCPSQLInstance{id:database.instance_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPSQLInstance{id:database.instance_id})
     MERGE (i)-[r:HAS_DATABASE]->(d)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -559,7 +566,7 @@ def sync(
     # logger.info("Transformed Cloud SQL Instances for project %s.", sql_instances)
 
     load_sql_instances(neo4j_session, sql_instances, project_id, gcp_update_tag)
-    load_sql_instances_vpc_network(neo4j_session, sql_instances, project_id, gcp_update_tag)
+    load_sql_instances_vpc_network(neo4j_session, sql_instances, project_id, gcp_update_tag, common_job_parameters)
     logger.info("Load GCP Cloud SQL Instances completed for project %s.", project_id)
     label.sync_labels(
         neo4j_session,

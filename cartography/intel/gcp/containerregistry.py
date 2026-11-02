@@ -246,17 +246,17 @@ def transform_artifact_registry_docker_images(images: List[Dict], repository: Di
 
 @timeit
 def load_artifact_registry_docker_images(
-    session: neo4j.Session, data_list: List[Dict], repository_id: str, update_tag: int,
+    session: neo4j.Session, data_list: List[Dict], repository_id: str, update_tag: int, project_id: str,
 ) -> None:
-    session.execute_write(load_artifact_registry_docker_images_tx, data_list, repository_id, update_tag)
+    session.execute_write(load_artifact_registry_docker_images_tx, data_list, repository_id, update_tag, project_id)
 
 
 @timeit
 def load_artifact_registry_docker_images_tx(
-    tx: neo4j.Transaction, data: List[Dict], repository_id: str, gcp_update_tag: int,
+    tx: neo4j.Transaction, data: List[Dict], repository_id: str, gcp_update_tag: int, project_id: str,
 ) -> None:
     query = """
-    MATCH (repo:GCPArtifactRegistryRepository{id: $RepositoryId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(repo:GCPArtifactRegistryRepository{id: $RepositoryId})
     UNWIND $Records as record
     MERGE (image:GCPArtifactRegistryDockerImage{id: record.id})
     ON CREATE SET
@@ -282,12 +282,12 @@ def load_artifact_registry_docker_images_tx(
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    tx.run(query, Records=data, RepositoryId=repository_id, gcp_update_tag=gcp_update_tag)
+    tx.run(query, Records=data, RepositoryId=repository_id, ProjectId=project_id, gcp_update_tag=gcp_update_tag)
 
 
 @timeit
 def sync_artifact_registry_docker_images(
-    neo4j_session: neo4j.Session, artifacts: Resource, repositories: List[Dict], gcp_update_tag: int,
+    neo4j_session: neo4j.Session, artifacts: Resource, repositories: List[Dict], gcp_update_tag: int, project_id: str,
 ) -> None:
     for repository in repositories:
         if repository['format'] != 'DOCKER' or repository['mode'] in SKIP_IMAGE_REPOSITORY_MODES:
@@ -295,7 +295,7 @@ def sync_artifact_registry_docker_images(
         images = transform_artifact_registry_docker_images(
             get_artifact_registry_docker_images(artifacts, repository), repository,
         )
-        load_artifact_registry_docker_images(neo4j_session, images, repository['id'], gcp_update_tag)
+        load_artifact_registry_docker_images(neo4j_session, images, repository['id'], gcp_update_tag, project_id)
 
 
 @timeit
@@ -332,7 +332,7 @@ def sync(
         neo4j_session, repositories, gcp_update_tag, common_job_parameters,
         'artifact_registry_repositories', 'GCPArtifactRegistryRepository',
     )
-    sync_artifact_registry_docker_images(neo4j_session, artifacts, repositories, gcp_update_tag)
+    sync_artifact_registry_docker_images(neo4j_session, artifacts, repositories, gcp_update_tag, project_id)
 
     # Images first: their cleanup walks through the repository, which the repository cleanup may delete.
     cleanup_artifact_registry_docker_images(neo4j_session, common_job_parameters)

@@ -99,7 +99,7 @@ def test_bucket_exposure_honours_public_access_prevention_and_legacy_acls(neo4j_
                 [{'role': 'roles/storage.objectViewer', 'members': ['allUsers']}], project, b['id'],
             )
             cartography.intel.gcp.storage.load_bucket_iam_policy_bindings(
-                neo4j_session, bindings, b['id'], TEST_UPDATE_TAG,
+                neo4j_session, bindings, b['id'], TEST_UPDATE_TAG, project,
             )
 
     run_analysis_job('gcp_storage_bucket_policy_analysis.json', neo4j_session, BUCKET_PARAMS)

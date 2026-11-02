@@ -20,7 +20,10 @@ TEST_DATAFLOW_JOBS = [
         'consolelink': '',
         'satisfiesPzs': True,
         'bigTables': ['table123', 'table456'],
-        'bigQueries': ['table1', 'table2'],
+        'bigQueries': [
+            'projects/project-123/datasets/dataset1/tables/table1',
+            'projects/project-123/datasets/dataset2/tables/table2',
+        ],
         'pubSub': [{'topicId': 'projects/project123/topic/topic123', 'subscriptionId': 'projects/project123/subscriptions/sub123'}],
         'spannerDatabases': ['projects/project-123/instances/instance1/databases/database1', 'projects/project-123/instances/instance1/databases/database2'],
     },

@@ -217,19 +217,21 @@ def _load_vm_to_mig_part_of_relationships(
     session: neo4j.Session,
     relationships: List[Dict],
     gcp_update_tag: int,
+    project_id: str,
 ) -> None:
-    session.execute_write(_load_vm_to_mig_part_of_relationships_tx, relationships, gcp_update_tag)
+    session.execute_write(_load_vm_to_mig_part_of_relationships_tx, relationships, gcp_update_tag, project_id)
 
 
 def _load_vm_to_mig_part_of_relationships_tx(
     tx: neo4j.Transaction,
     relationships: List[Dict],
     gcp_update_tag: int,
+    project_id: str,
 ) -> None:
     query = """
     UNWIND $relationships AS rel
-    MATCH (vm:GCPComputeInstance {self_link: rel.vm_self_link})
-    MATCH (mig:GCPInstanceGroup {id: rel.mig_id})
+    MATCH (p:GCPProject{id: $ProjectId})-[:RESOURCE]->(mig:GCPInstanceGroup {id: rel.mig_id})
+    MATCH (p)-[:RESOURCE]->(vm:GCPComputeInstance {self_link: rel.vm_self_link})
     MERGE (vm)-[r:PART_OF]->(mig)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
@@ -237,6 +239,7 @@ def _load_vm_to_mig_part_of_relationships_tx(
     tx.run(
         query,
         relationships=relationships,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -271,7 +274,7 @@ def sync_managed_instance_groups(
         relationships.extend(_get_managed_instances_for_mig(compute, project_id, mig))
 
     if relationships:
-        _load_vm_to_mig_part_of_relationships(neo4j_session, relationships, gcp_update_tag)
+        _load_vm_to_mig_part_of_relationships(neo4j_session, relationships, gcp_update_tag, project_id)
 
     run_cleanup_job("gcp_instance_groups_cleanup.json", neo4j_session, common_job_parameters)
     toc = time.perf_counter()

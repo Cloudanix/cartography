@@ -16,6 +16,7 @@ common_job_parameters = {
     "UPDATE_TAG": TEST_UPDATE_TAG,
     "WORKSPACE_ID": '1223344',
     "GCP_PROJECT_ID": TEST_PROJECT_ID,
+    "GCP_ORGANIZATION_ID": 'organizations/1223344',
 }
 
 
@@ -24,6 +25,7 @@ def _ensure_local_neo4j_has_test_instance_data(neo4j_session):
         neo4j_session,
         tests.data.gcp.compute.TRANSFORMED_GCP_INSTANCES,
         TEST_UPDATE_TAG,
+        common_job_parameters,
     )
 
 
@@ -61,6 +63,7 @@ def _ensure_local_neo4j_has_test_firewall_data(neo4j_session):
         neo4j_session,
         tests.data.gcp.compute.TRANSFORMED_FW_LIST,
         TEST_UPDATE_TAG,
+        TEST_PROJECT_ID,
     )
 
 
@@ -132,7 +135,7 @@ def test_transform_and_load_gcp_forwarding_rules(neo4j_session):
     """
     fwd_res = tests.data.gcp.compute.LIST_FORWARDING_RULES_RESPONSE
     fwd_list = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(fwd_res)
-    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, fwd_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, fwd_list, TEST_UPDATE_TAG, TEST_PROJECT_ID)
 
     fwd_query = """
     MATCH(f:GCPForwardingRule)
@@ -202,7 +205,9 @@ def test_transform_and_load_gcp_instances_and_nics(neo4j_session):
     """
     instance_responses = tests.data.gcp.compute.GCP_LIST_INSTANCES_RESPONSE
     instance_list = cartography.intel.gcp.compute.transform_gcp_instances(instance_responses.get("items", []), compute=None)
-    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instance_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instance_list, TEST_UPDATE_TAG, common_job_parameters,
+    )
 
     instance_id1 = 'projects/project-abc/zones/europe-west2-b/instances/instance-1-test'
     instance_id2 = 'projects/project-abc/zones/europe-west2-b/instances/instance-1'
@@ -256,7 +261,7 @@ def test_transform_and_load_firewalls(neo4j_session):
     :return:
     """
     fw_list = cartography.intel.gcp.compute.transform_gcp_firewall(tests.data.gcp.compute.LIST_FIREWALLS_RESPONSE)
-    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, TEST_UPDATE_TAG, TEST_PROJECT_ID)
 
     query = """
     MATCH (vpc:GCPVpc)-[r:RESOURCE]->(fw:GCPFirewall)
@@ -504,7 +509,9 @@ def test_compute_network_interfaces(neo4j_session):
 
     instance_responses = tests.data.gcp.compute.GCP_LIST_INSTANCES_RESPONSE
     instance_list = cartography.intel.gcp.compute.transform_gcp_instances(instance_responses.get("items", []), compute=None)
-    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instance_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instance_list, TEST_UPDATE_TAG, common_job_parameters,
+    )
     instance_id1 = 'projects/project-abc/zones/europe-west2-b/instances/instance-1'
     instance_id2 = 'projects/project-abc/zones/europe-west2-b/instances/instance-1-test'
 
@@ -549,10 +556,12 @@ def test_compute_firewalls(neo4j_session):
     cloudanix_workspace_to_gcp_project(neo4j_session)
     fw_responses = tests.data.gcp.compute.LIST_FIREWALLS_RESPONSE
     fw_list = cartography.intel.gcp.compute.transform_gcp_firewall(fw_responses)
-    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, TEST_UPDATE_TAG, TEST_PROJECT_ID)
     instance_responses = tests.data.gcp.compute.GCP_LIST_INSTANCES_RESPONSE
     instance_list = cartography.intel.gcp.compute.transform_gcp_instances(instance_responses.get("items", []), compute=None)
-    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instance_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instance_list, TEST_UPDATE_TAG, common_job_parameters,
+    )
 
     firewall_query = """
     MATCH (rng:IpRange)-[m:MEMBER_OF_IP_RULE]->(rule:IpRule:IpPermissionInbound:GCPIpRule)-[r:ALLOWED_BY]->(fw:GCPFirewall)<-[:RESOURCE]-(vpc:GCPVpc)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE fw.direction='INGRESS' AND fw.disabled=FALSE AND rng.id='0.0.0.0/0' AND rule.protocol IN ['tcp','udp'] AND rule.fromport IN [80,443,23,3389,25,465,587,3306,5432,1521,1433,135,137,138,139,445,0,53,20,21,22] AND rule.toport IN [80,443,23,3389,25,465,587,3306,5432,1521,1433,135,137,138,139,445,53,20,21,22,65535]
@@ -635,7 +644,7 @@ def _load_firewall(neo4j_session, source_ranges, ports, target_tags, update_tag)
         }],
     }
     fw_list = cartography.intel.gcp.compute.transform_gcp_firewall(response)
-    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, update_tag)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, update_tag, CLEANUP_PROJECT_ID)
 
 
 def test_firewall_cleanup_removes_stale_rules_ranges_and_target_tags(neo4j_session):
@@ -978,10 +987,14 @@ def test_instances_join_the_vpc_of_their_nic_network(neo4j_session):
         _transformed_instance(SHARED_SVC_PROJECT, 'svc-vm-shared', SHARED_VPC_ID),
         _transformed_instance(SHARED_SVC_PROJECT, 'svc-vm-own', SHARED_OWN_VPC_ID),
     ]
-    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instances, 200)
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instances, 200, _shared_vpc_params(SHARED_SVC_PROJECT, 200),
+    )
     # The next service-project sync cleans VPCs before it reloads instances.
     run_cleanup_job('gcp_compute_vpc_cleanup.json', neo4j_session, _shared_vpc_params(SHARED_SVC_PROJECT, 300))
-    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instances, 300)
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instances, 300, _shared_vpc_params(SHARED_SVC_PROJECT, 300),
+    )
 
     members = neo4j_session.run(
         "MATCH (i:GCPInstance)-[:MEMBER_OF_GCP_VPC]->(v:GCPVpc) WHERE i.project_id = $svc "

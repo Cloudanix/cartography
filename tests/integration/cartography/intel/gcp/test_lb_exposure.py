@@ -62,7 +62,7 @@ def _load_forwarding_rules(neo4j_session):
     }
     rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
     cartography.intel.gcp.compute.resolve_external_lb_backends(client, rules)
-    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, TAG)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, TAG, PROJECT)
 
 
 def _load_lb_resources(neo4j_session):
@@ -145,7 +145,7 @@ def _load_lb_resources(neo4j_session):
                 ('vm-mig', 'web-mig'), ('vm-mig-stopped', 'web-mig'), ('vm-internal', 'internal-mig'),
                 ('vm-orphan', 'orphan-mig'),
             )
-        ], TAG,
+        ], TAG, PROJECT,
     )
 
 
@@ -282,7 +282,7 @@ def test_unmanaged_instance_group_members_behind_an_external_backend_service_are
                 project, 'ingress-fr', backend_services=[f'projects/{project}/global/backendServices/ingress'],
             ),
         ],
-        TAG,
+        TAG, project,
     )
     cartography.intel.gcp.cloudcdn.load_backend_services(
         neo4j_session, [
@@ -353,7 +353,7 @@ def test_network_endpoint_groups_behind_an_external_backend_service_expose_their
                 ],
             ),
         ],
-        TAG,
+        TAG, project,
     )
     cartography.intel.gcp.cloudcdn.load_backend_services(
         neo4j_session, [
@@ -481,7 +481,7 @@ def test_backend_services_referenced_from_another_project_of_this_workspace_are_
     _seed_project(neo4j_session, back)
     _seed_project(neo4j_session, foreign, workspace='ws-lb-other')
     cartography.intel.gcp.compute.load_gcp_forwarding_rules(
-        neo4j_session, [_external_rule(front, 'xp-fr', url_map=f'projects/{front}/global/urlMaps/xp')], TAG,
+        neo4j_session, [_external_rule(front, 'xp-fr', url_map=f'projects/{front}/global/urlMaps/xp')], TAG, front,
     )
     cartography.intel.gcp.compute.load_gcp_forwarding_rules(
         neo4j_session,
@@ -490,7 +490,7 @@ def test_backend_services_referenced_from_another_project_of_this_workspace_are_
                 foreign, 'foreign-fr', backend_services=[f'projects/{back}/global/backendServices/via-foreign'],
             ),
         ],
-        TAG,
+        TAG, foreign,
     )
     cartography.intel.gcp.loadbalancer.load_url_maps(
         neo4j_session, [{
@@ -550,7 +550,7 @@ def test_vm_behind_external_protocol_forwarding_is_exposed(neo4j_session):
     }
     rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
     cartography.intel.gcp.compute.resolve_external_lb_backends(client, rules)
-    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, TAG)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, TAG, project)
     _instances(neo4j_session, project, zone, ['vm-ti', 'vm-other'])
 
     _run_exposure_jobs(neo4j_session, project)
@@ -574,7 +574,7 @@ def test_regional_ssl_policy_of_an_external_regional_https_proxy_is_exposed(neo4
     }
     rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
     cartography.intel.gcp.compute.resolve_external_lb_backends(client, rules)
-    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, TAG)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, TAG, project)
     loadbalancer = cartography.intel.gcp.loadbalancer
     loadbalancer.load_ssl_policies(
         neo4j_session,

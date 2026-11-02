@@ -227,7 +227,7 @@ def _load_firestore_indexes_tx(
         ix.consolelink = index.consolelink
 
     WITH ix,index
-    MATCH (d:GCPFirestoreDatabase{id:index.database_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(d:GCPFirestoreDatabase{id:index.database_id})
     MERGE (d)-[r:HAS_INDEX]->(ix)
     ON CREATE SET
         r.firstseen = timestamp()

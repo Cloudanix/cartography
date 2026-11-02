@@ -22,7 +22,10 @@ from tests.data.gcp.gke import GKE_CLUSTERS
 TEST_PROJECT_ID = "test-cluster"
 TEST_UPDATE_TAG = 123456789
 TEST_UPDATE_TAG_2 = 999999999
-LINK_PARAMS = {"GCP_PROJECT_ID": TEST_PROJECT_ID, "UPDATE_TAG": TEST_UPDATE_TAG}
+LINK_PARAMS = {
+    "GCP_PROJECT_ID": TEST_PROJECT_ID, "UPDATE_TAG": TEST_UPDATE_TAG, "WORKSPACE_ID": "ws-gke",
+    "GCP_ORGANIZATION_ID": "organizations/gke",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +338,7 @@ def test_load_gcp_instances_links_gke_node_to_cluster(neo4j_session):
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
     load_gke_clusters(neo4j_session, GKE_CLUSTERS, TEST_PROJECT_ID, TEST_UPDATE_TAG)
 
-    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
     link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run(
@@ -353,7 +356,7 @@ def test_load_gcp_instances_links_gke_node_to_pool(neo4j_session):
     load_gke_clusters(neo4j_session, GKE_CLUSTERS, TEST_PROJECT_ID, TEST_UPDATE_TAG)
     load_gke_node_pools(neo4j_session, GKE_CLUSTERS, TEST_PROJECT_ID, TEST_UPDATE_TAG)
 
-    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
     link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run(
@@ -369,7 +372,7 @@ def test_load_gcp_instances_no_gke_links_for_plain_vms(neo4j_session):
     """Plain VMs must not produce any HAS_NODE relationships."""
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
 
-    load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
     link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run("MATCH ()-[r:HAS_NODE]->() RETURN r").data()
@@ -385,7 +388,7 @@ def test_load_gcp_instances_gke_link_skipped_when_cluster_missing(neo4j_session)
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
     # Deliberately do NOT call load_gke_clusters
 
-    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
     link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     instances = neo4j_session.run("MATCH (i:GCPInstance) RETURN i").data()
@@ -399,7 +402,7 @@ def test_load_gcp_instances_gke_properties_stored_on_node(neo4j_session):
     """gke_cluster_name and gke_node_pool_name must be persisted on the GCPInstance."""
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
 
-    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
 
     result = neo4j_session.run(
         "MATCH (i:GCPInstance) RETURN i.gke_cluster_name AS cn, i.gke_node_pool_name AS pn",
@@ -414,7 +417,7 @@ def test_load_gcp_instances_plain_vm_gke_properties_are_null(neo4j_session):
     """Plain VMs must have null gke_cluster_name and gke_node_pool_name on the node."""
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
 
-    load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
 
     result = neo4j_session.run(
         "MATCH (i:GCPInstance) RETURN i.gke_cluster_name AS cn, i.gke_node_pool_name AS pn",

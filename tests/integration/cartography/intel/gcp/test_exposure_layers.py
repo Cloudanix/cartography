@@ -72,7 +72,7 @@ def _firewall(project, name, network, priority=1000, ranges=('0.0.0.0/0',), allo
 def _load_firewalls(session, project, items):
     response = {'id': f'projects/{project}/global/firewalls', 'items': items}
     fws = cartography.intel.gcp.compute.transform_gcp_firewall(response)
-    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(session, fws, TAG)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(session, fws, TAG, project)
 
 
 def _load_routes(session, project):
@@ -118,7 +118,19 @@ def _load_instances(session, items):
     # Console links are not under test; older cloudconsolelink builds lack the compute_image kwargs.
     with patch.object(cartography.intel.gcp.compute.gcp_console_link, 'get_console_link', return_value='link'):
         instances = cartography.intel.gcp.compute.transform_gcp_instances(items, None)
-    cartography.intel.gcp.compute.load_gcp_instances(session, instances, TAG)
+    # One load per project, as each project's sync does.
+    for ws, org, project in ((WS, ORG, PROJECT), (OTHER_WS, OTHER_ORG, OTHER_PROJECT)):
+        own = [i for i in instances if i['project_id'] == project]
+        # The iam sync loads the project's service accounts; an instance links only to a loaded one.
+        _run(
+            session,
+            "MATCH (p:GCPProject{id: $p}) UNWIND $emails AS e "
+            "MERGE (p)-[:RESOURCE]->(:GCPServiceAccount{id: e, email: e})",
+            p=project, emails=[sa['email'] for i in own for sa in i.get('serviceAccounts', [])],
+        )
+        cartography.intel.gcp.compute.load_gcp_instances(
+            session, own, TAG, {**PARAMS, 'WORKSPACE_ID': ws, 'GCP_ORGANIZATION_ID': org, 'GCP_PROJECT_ID': project},
+        )
 
 
 def _load_https_lb(session):
@@ -136,7 +148,7 @@ def _load_https_lb(session):
     }
     rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
     cartography.intel.gcp.compute.resolve_external_lb_backends(client, rules)
-    cartography.intel.gcp.compute.load_gcp_forwarding_rules(session, rules, TAG)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(session, rules, TAG, PROJECT)
     cartography.intel.gcp.loadbalancer.load_url_maps(
         session, [{
             'id': f'projects/{PROJECT}/global/urlmaps/web', 'name': 'web',
@@ -179,7 +191,7 @@ def _load_https_lb(session):
         session, [{'id': mig_id, 'name': 'web-mig', 'instance_group': f'{ZONE}/instanceGroups/web-mig'}], PROJECT, TAG,
     )
     ig._load_vm_to_mig_part_of_relationships(
-        session, [{'vm_self_link': f'{API}/{ZONE}/instances/lb-backend', 'mig_id': mig_id}], TAG,
+        session, [{'vm_self_link': f'{API}/{ZONE}/instances/lb-backend', 'mig_id': mig_id}], TAG, PROJECT,
     )
 
 
