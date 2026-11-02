@@ -47,3 +47,43 @@ def test_post_ingestion_dns_cleanup_runs_and_spares_other_tenants(neo4j_session)
         )
     }
     assert 'pd-a2-ns' in sources
+
+
+def test_post_ingestion_principals_cleanup_spares_other_tenants_principals(neo4j_session):
+    create_test_org_account(neo4j_session, 'pp-ws1', 'pp-o1', 'pp-a1')
+    create_test_org_account(neo4j_session, 'pp-ws2', 'pp-o2', 'pp-b1')
+    neo4j_session.run(
+        """
+        MATCH (a:AWSAccount{id: 'pp-a1'}), (b:AWSAccount{id: 'pp-b1'})
+        MERGE (a)-[:RESOURCE]->(ra:AWSRole:AWSPrincipal{arn: 'pp-role-a'}) SET ra.lastupdated = $tag
+        MERGE (b)-[:RESOURCE]->(rb:AWSRole:AWSPrincipal{arn: 'pp-role-b'}) SET rb.lastupdated = 5
+        // the other tenant's own user, synced with its own tag
+        MERGE (b)-[:RESOURCE]->(:AWSUser:AWSPrincipal{arn: 'pp-user-b', lastupdated: 5})
+        // outside principals: one only this account trusted (stale), one also trusted by the other tenant,
+        // one this account still trusts
+        MERGE (gone:AWSPrincipal{arn: 'pp-outside-gone', lastupdated: 1})
+        MERGE (shared:AWSPrincipal{arn: 'pp-outside-shared', lastupdated: 5})
+        MERGE (kept:AWSPrincipal{arn: 'pp-outside-kept', lastupdated: $tag})
+        MERGE (ra)-[:TRUSTS_AWS_PRINCIPAL{lastupdated: 1}]->(gone)
+        MERGE (ra)-[:TRUSTS_AWS_PRINCIPAL{lastupdated: 1}]->(shared)
+        MERGE (rb)-[:TRUSTS_AWS_PRINCIPAL{lastupdated: 5}]->(shared)
+        MERGE (ra)-[:TRUSTS_AWS_PRINCIPAL{lastupdated: $tag}]->(kept)
+        """,
+        tag=TEST_UPDATE_TAG,
+    )
+
+    _run(neo4j_session, 'aws_post_ingestion_principals_cleanup.json', 'pp-ws1', 'pp-o1', 'pp-a1')
+
+    principals = {
+        r['arn'] for r in neo4j_session.run(
+            "MATCH (n:AWSPrincipal) WHERE n.arn STARTS WITH 'pp-' RETURN n.arn AS arn",
+        )
+    }
+    assert principals == {'pp-role-a', 'pp-role-b', 'pp-user-b', 'pp-outside-shared', 'pp-outside-kept'}
+    trusts = {
+        (r['role'], r['principal']) for r in neo4j_session.run(
+            "MATCH (r:AWSRole)-[:TRUSTS_AWS_PRINCIPAL]->(p) WHERE r.arn STARTS WITH 'pp-' "
+            "RETURN r.arn AS role, p.arn AS principal",
+        )
+    }
+    assert trusts == {('pp-role-b', 'pp-outside-shared'), ('pp-role-a', 'pp-outside-kept')}
