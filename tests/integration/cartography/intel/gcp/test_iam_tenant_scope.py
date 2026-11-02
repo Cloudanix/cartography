@@ -1,5 +1,6 @@
 from cartography.intel.gcp import apigateway
 from cartography.intel.gcp import iam
+from cartography.util import run_cleanup_job
 
 TEST_UPDATE_TAG = 123456789
 # Two customers, each a workspace -> organization -> project chain.
@@ -157,3 +158,34 @@ def test_policy_members_link_only_the_orgs_own_principals(neo4j_session):
     assert _rows(
         neo4j_session, "MATCH (p:GCPPrincipal)-[:USES]->(:GCPAPI{id: $id}) RETURN p.id", id=api_id,
     ) == {(_service_account(TENANT),)}
+
+
+def test_stale_trust_edges_are_cleaned_per_project_and_principals_swept(neo4j_session):
+    _seed(neo4j_session)
+    vendor = 'user:carol@vendor2-iamt.example'
+    for tenant in (TENANT, OTHER_TENANT):
+        _bind(neo4j_session, tenant, [vendor])
+
+    def trusting_roles():
+        return _rows(
+            neo4j_session,
+            "MATCH (role:GCPRole)-[:TRUSTS_GCP_PRINCIPAL]->(:GCPExternalPrincipal{principal: $p}) RETURN role.id",
+            p=vendor,
+        )
+
+    def clean(tenant):
+        # The next sync of the tenant no longer finds the grant.
+        run_cleanup_job(
+            'gcp_iam_policy_binding_cleanup.json', neo4j_session,
+            {**_params(tenant), 'UPDATE_TAG': TEST_UPDATE_TAG + 1},
+        )
+
+    clean(TENANT)
+    # Only this tenant's grant goes; the other tenant still trusts the shared principal.
+    assert trusting_roles() == {(f"{_params(OTHER_TENANT)['GCP_ORGANIZATION_ID']}/roles/viewer",)}
+
+    clean(OTHER_TENANT)
+    assert trusting_roles() == set()
+    assert _rows(
+        neo4j_session, "MATCH (ep:GCPExternalPrincipal{principal: $p}) RETURN ep.principal", p=vendor,
+    ) == set()
