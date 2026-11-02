@@ -59,7 +59,9 @@ def _client(repository_names: List[str]) -> MagicMock:
 def _sync_registry(neo4j_session, registry: Dict, repository_names: List[str], update_tag: int) -> None:
     containerregistry.load_registries(neo4j_session, registry['subscription_id'], [registry], update_tag)
     with patch.object(containerregistry, 'get_registry_client', return_value=_client(repository_names)):
-        containerregistry.sync_registry_contents(neo4j_session, MagicMock(), registry, update_tag)
+        containerregistry.sync_registry_contents(
+            neo4j_session, MagicMock(), registry['subscription_id'], registry, update_tag,
+        )
 
 
 def _ids_on_inventory_path(neo4j_session, label: str, subscription_id: str = SUB) -> set:
