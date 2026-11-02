@@ -90,18 +90,3 @@ def get_regions_in_tenancy(neo4j_session: neo4j.Session, tenancy_id: str) -> Lis
     query = "MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:OCI_REGION_SUBSCRIPTION]->(region:OCIRegion) " \
             "return DISTINCT region.name as name, region.key as key;"
     return neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=tenancy_id)
-
-
-# Grab list of all security groups in neo4j already populated by network. Need to handle regions for this one.
-def get_security_groups_in_tenancy(
-    neo4j_session: neo4j.Session,
-    tenancy_id: str, region: str,
-) -> List[Dict[str, Any]]:
-    # No callers. Was "(OCITenancy{...})-[*]->": an unlabeled start and an unbounded walk that could cross
-    # shared nodes into another tenancy; now the tenancy's own VCN -> NSG chain.
-    query = "MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)" \
-            "-[:OCI_NETWORK_SECURITY_GROUP]->(security_group:OCINetworkSecurityGroup)-[OCI_REGION]->" \
-            "(region:OCIRegion{name: $OCI_REGION})" \
-            "return DISTINCT security_group.name as name, security_group.ocid as ocid, security_group.compartmentid " \
-            "as compartmentid;"
-    return neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=tenancy_id, OCI_REGION=region)
