@@ -17,8 +17,11 @@ def create_test_org_account(neo4j_session, workspace_id, org_id, account_id):
     neo4j_session.run(
         """
         MERGE (w:CloudanixWorkspace{id: $workspace_id})
-        MERGE (w)-[:OWNER]->(o:AWSOrganization{id: $org_id})
-        MERGE (o)-[:OWNER]->(:AWSAccount{id: $account_id})
+        MERGE (o:AWSOrganization{id: $org_id})
+        MERGE (w)-[:OWNER]->(o)
+        // reuse an account node an earlier fixture made, never a second node with the same id
+        MERGE (a:AWSAccount{id: $account_id})
+        MERGE (o)-[:OWNER]->(a)
         """,
         workspace_id=workspace_id, org_id=org_id, account_id=account_id,
     )
