@@ -81,7 +81,7 @@ def load_audit_configuration(
         ac.consolelink = $CONSOLELINK,
         ac.lastupdated = $oci_update_tag
     WITH ac
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+    MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (cc)-[r:RESOURCE]->(ac)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -190,7 +190,7 @@ def load_log_groups(
             g.consolelink = lg.consolelink,
             g.lastupdated = $oci_update_tag
         WITH g, lg
-        MATCH (cc:OCICompartment{id: lg.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: lg.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(g)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -210,7 +210,7 @@ def load_log_groups(
     ]
     load_graph_data(
         neo4j_session, ingest_log_group, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -218,6 +218,7 @@ def load_logs(
     neo4j_session: neo4j.Session,
     logs: List[Dict[str, Any]],
     log_group_id: str,
+    tenancy_id: str,
     region: str,
     oci_update_tag: int,
 ) -> None:
@@ -245,7 +246,8 @@ def load_logs(
             l.consolelink = log.consolelink,
             l.lastupdated = $oci_update_tag
         WITH l
-        MATCH (lg:OCILogGroup{id: $LOG_GROUP_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(lg:OCILogGroup{id: $LOG_GROUP_ID})
         MERGE (lg)-[r:OCI_LOG]->(l)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -274,7 +276,7 @@ def load_logs(
 
     load_graph_data(
         neo4j_session, ingest_log, rows,
-        LOG_GROUP_ID=log_group_id, REGION=region, oci_update_tag=oci_update_tag,
+        LOG_GROUP_ID=log_group_id, TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -309,7 +311,7 @@ def sync_log_groups(
                 if lg_id:
                     logs = get_logs_for_log_group(logging_client, lg_id)
                     if logs:
-                        load_logs(neo4j_session, logs, lg_id, region, oci_update_tag)
+                        load_logs(neo4j_session, logs, lg_id, tenancy_id, region, oci_update_tag)
                         tags.sync_tags(
                             neo4j_session, logs, 'OCILog',
                             oci_update_tag, common_job_parameters,
@@ -364,7 +366,7 @@ def load_logging_services(
             ls.region = $REGION,
             ls.lastupdated = $oci_update_tag
         WITH ls
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(ls)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -391,7 +393,7 @@ def load_logging_services(
 
     load_graph_data(
         neo4j_session, ingest_service, rows,
-        COMPARTMENT_ID=compartment_id, REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -476,7 +478,7 @@ def load_logging_configuration(
         lc.has_enabled_logs = $HAS_ENABLED_LOGS,
         lc.lastupdated = $oci_update_tag
     WITH lc
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+    MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (cc)-[r:RESOURCE]->(lc)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -487,6 +489,7 @@ def load_logging_configuration(
         neo4j_session,
         ingest_config,
         CONFIG_ID=config_id,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=config["compartment_id"],
         REGION=config["region"],
         TOTAL_LOG_GROUPS=config["total_log_groups"],
@@ -551,7 +554,8 @@ def enrich_bucket_logging_status(
         # Update bucket nodes with logging status
         update_bucket_logging = """
         UNWIND $DictList AS bkt
-            MATCH (b:OCIStorageBucket)
+            MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
+                -[:RESOURCE]->(b:OCIStorageBucket)
             WHERE b.compartment_id = $COMPARTMENT_ID AND b.region = $REGION
               AND (b.ocid = bkt.bucket_id OR b.name = bkt.bucket_id)
             SET b.write_logging_enabled = bkt.write_logging_enabled,
@@ -571,12 +575,13 @@ def enrich_bucket_logging_status(
             })
         load_graph_data(
             neo4j_session, update_bucket_logging, rows,
-            COMPARTMENT_ID=compartment_id, REGION=region,
+            TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, REGION=region,
         )
 
         # Mark buckets without any logging as not enabled
         mark_unlogged_buckets = """
-        MATCH (b:OCIStorageBucket)
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
+            -[:RESOURCE]->(b:OCIStorageBucket)
         WHERE b.compartment_id = $COMPARTMENT_ID AND b.region = $REGION
           AND b.logging_enabled IS NULL
         SET b.write_logging_enabled = false,
@@ -587,6 +592,7 @@ def enrich_bucket_logging_status(
         run_write_query(
             neo4j_session,
             mark_unlogged_buckets,
+            TENANCY_ID=tenancy_id,
             COMPARTMENT_ID=compartment_id,
             REGION=region,
         )
