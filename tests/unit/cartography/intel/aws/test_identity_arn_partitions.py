@@ -90,7 +90,6 @@ def test_route53_arns(region, partition, prefix):
     # The API Id carries "/hostedzone/"; the ARN must hold only the bare zone id.
     assert zones[0][0]['arn'] == f'{prefix}route53:::hostedzone/Z1'
 
-    with patch.object(route53, 'load_zone'), patch.object(route53, 'load_a_records') as load_a, \
-            patch.object(route53, 'link_aws_resources'):
+    with patch.object(route53, 'load_zone'), patch.object(route53, 'load_a_records') as load_a:
         route53.load_dns_details(MagicMock(), zones, ACCOUNT, 1, **_kw(partition))
     assert load_a.call_args.args[1][0]['arn'] == f'{prefix}route53:::recordset//hostedzone/Z1/www.example.com/A'

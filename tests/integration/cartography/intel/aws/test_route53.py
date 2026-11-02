@@ -4,8 +4,11 @@ import cartography.intel.aws.route53
 import cartography.util
 import tests.data.aws.ec2.load_balancers
 import tests.data.aws.route53
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 TEST_UPDATE_TAG = 123456789
+TEST_WORKSPACE_ID = "route53-ws"
+TEST_ORG_ID = "route53-org"
 TEST_ZONE_ID = "TESTZONEID"
 TEST_ZONE_NAME = "TESTZONENAME"
 TEST_AWS_ACCOUNTID = "AWSID"
@@ -22,21 +25,17 @@ def _ensure_local_neo4j_has_test_route53_records(neo4j_session):
     (:AWSDNSZone)-[:SUBZONE]->(:AWSDNSZone)
     based on fake data.
     """
-    neo4j_session.run(
-        """
-        MERGE (a:AWSAccount{id:$AccountId})
-        SET a.lastupdated=$UpdateTag
-        """,
-        AccountId=TEST_AWS_ACCOUNTID,
-        UpdateTag=TEST_UPDATE_TAG,
-    )
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORG_ID, TEST_AWS_ACCOUNTID)
     cartography.intel.aws.route53.load_dns_details(
         neo4j_session,
         tests.data.aws.route53.GET_ZONES_SAMPLE_RESPONSE,
         TEST_AWS_ACCOUNTID,
         TEST_UPDATE_TAG,
     )
-    cartography.intel.aws.route53.link_sub_zones(neo4j_session, TEST_UPDATE_TAG)
+    cartography.intel.aws.route53.link_aws_resources(
+        neo4j_session, TEST_AWS_ACCOUNTID, TEST_WORKSPACE_ID, TEST_UPDATE_TAG,
+    )
+    cartography.intel.aws.route53.link_sub_zones(neo4j_session, TEST_AWS_ACCOUNTID, TEST_WORKSPACE_ID, TEST_UPDATE_TAG)
 
 
 def _ensure_local_neo4j_has_test_ec2_records(neo4j_session):
