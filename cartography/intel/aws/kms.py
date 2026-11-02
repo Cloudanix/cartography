@@ -188,14 +188,17 @@ def _load_kms_key_grants(
 
 
 @timeit
-def _load_kms_key_policies(neo4j_session: neo4j.Session, policies: List[Dict], update_tag: int) -> None:
+def _load_kms_key_policies(
+    neo4j_session: neo4j.Session, policies: List[Dict], aws_account_id: str, update_tag: int,
+) -> None:
     """
     Ingest KMS Key policy results into neo4j.
     """
-    # NOTE we use the coalesce function so appending works when the value is null initially
+    # NOTE we use the coalesce function so appending works when the value is null initially.
+    # policy.kms_key is the KeyId (the KMSKey node id); resolve it among this account's keys only.
     ingest_policies = """
     UNWIND $DictList AS policy
-    MATCH (k:KMSKey) where k.name = policy.kms_key
+    MATCH (:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(k:KMSKey{id: policy.kms_key})
     SET k.anonymous_access = (coalesce(k.anonymous_access, false) OR policy.internet_accessible),
     k.region=policy.region,
     k.anonymous_actions = coalesce(k.anonymous_actions, []) + policy.accessible_actions,
@@ -206,6 +209,7 @@ def _load_kms_key_policies(neo4j_session: neo4j.Session, policies: List[Dict], u
         neo4j_session,
         ingest_policies,
         policies,
+        AWS_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -256,7 +260,7 @@ def load_kms_key_details(
         common_job_parameters,
     )
 
-    _load_kms_key_policies(neo4j_session, policies, update_tag)
+    _load_kms_key_policies(neo4j_session, policies, aws_account_id, update_tag)
     _load_kms_key_aliases(neo4j_session, aliases, update_tag)
     _load_kms_key_grants(neo4j_session, grants, aws_account_id, update_tag)
     _set_default_values(neo4j_session, aws_account_id)
