@@ -141,12 +141,12 @@ def _load_ecr_repo_img_tx(
             ri.consolelink = repo_img.consolelink
         WITH ri, repo_img
 
+        // ECRImage is keyed by digest alone: every account that pushed the same image shares it,
+        // so only the digest goes on the node; region and console link stay on ri (this account's).
         MERGE (img:ECRImage{id: repo_img.imageDigest})
         ON CREATE SET img.firstseen = timestamp(),
             img.digest = repo_img.imageDigest
-        SET img.lastupdated = $aws_update_tag,
-            img.region = repo_img.region,
-            img.consolelink = repo_img.consolelink
+        SET img.lastupdated = $aws_update_tag
         WITH ri, img, repo_img
 
         MERGE (ri)-[r1:IMAGE]->(img)

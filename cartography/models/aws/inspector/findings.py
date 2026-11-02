@@ -94,22 +94,9 @@ class InspectorFindingToECRRepository(CartographyRelSchema):
     properties: InspectorFindingToECRRepositoryRelProperties = InspectorFindingToECRRepositoryRelProperties()
 
 
-@dataclass(frozen=True)
-class InspectorFindingToECRImageRelProperties(CartographyRelProperties):
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-
-
-@dataclass(frozen=True)
-class InspectorFindingToECRImage(CartographyRelSchema):
-    target_node_label: str = 'ECRImage'
-    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('ecrimageid')},
-    )
-    direction: LinkDirection = LinkDirection.OUTWARD
-    rel_label: str = "AFFECTS"
-    properties: InspectorFindingToECRImageRelProperties = InspectorFindingToECRImageRelProperties()
-
-
+# No AFFECTS edge to ECRImage: that node is keyed by digest and shared by every tenant that pushed
+# the same image, so an edge from this account's finding would be reachable from theirs. A container
+# image finding AFFECTS its ECRRepository (ARN) and keeps the digest in ecrimageid.
 @dataclass(frozen=True)
 class AWSInspectorFindingSchema(CartographyNodeSchema):
     label: str = 'AWSInspectorFinding'
@@ -120,6 +107,5 @@ class AWSInspectorFindingSchema(CartographyNodeSchema):
         [
             InspectorFindingToEC2Instance(),
             InspectorFindingToECRRepository(),
-            InspectorFindingToECRImage(),
         ],
     )

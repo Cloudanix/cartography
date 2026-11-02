@@ -89,7 +89,12 @@ def transform_inspector_findings(results: List[Dict[str, Any]]) -> Tuple[List[Di
         if f['resources'][0]['type'] == "AWS_EC2_INSTANCE":
             finding['instanceid'] = f['resources'][0]['id']
         if f['resources'][0]['type'] == "AWS_ECR_CONTAINER_IMAGE":
-            finding['ecrimageid'] = f['resources'][0]['id'].split('/')[2]
+            # id is "<repository arn>/<digest>". ECRImage is keyed by digest alone and shared by every
+            # tenant that pushed the same image, so the finding AFFECTS the account's repository
+            # (ARN) and keeps the digest as a property, never an edge onto the shared node.
+            repository_arn, digest = f['resources'][0]['id'].rsplit('/', 1)
+            finding['ecrimageid'] = digest
+            finding['ecrrepositoryid'] = repository_arn
         if f['resources'][0]['type'] == "AWS_ECR_REPOSITORY":
             finding['ecrrepositoryid'] = f['resources'][0]['id']
         if f.get('networkReachabilityDetails'):
@@ -128,7 +133,10 @@ def _process_packages(package_details: Dict[str, Any], aws_account_id: str, find
     packages: Dict[str, Any] = {}
     for package in package_details['vulnerablePackages']:
         new_package = {}
+        # Account first: the node carries this account's finding arn, file path and layer, so a
+        # package version found in two tenants must be two nodes.
         new_package['id'] = (
+            f"{aws_account_id}|"
             f"{package.get('name', '')}|"
             f"{package.get('arch', '')}|"
             f"{package.get('version', '')}|"

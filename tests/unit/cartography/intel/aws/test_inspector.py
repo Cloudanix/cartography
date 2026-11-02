@@ -63,8 +63,8 @@ def test_transform_inspector_findings_package():
             'status': 'ACTIVE',
 
             'vulnerablepackageids': [
-                'kernel-tools|X86_64|4.9.17|6.29.amzn1|0',
-                'kernel|X86_64|4.9.17|6.29.amzn1|0',
+                '123456789012|kernel-tools|X86_64|4.9.17|6.29.amzn1|0',
+                '123456789012|kernel|X86_64|4.9.17|6.29.amzn1|0',
             ],
         },
     ]
@@ -76,7 +76,7 @@ def test_transform_inspector_findings_package():
             'filepath': None,
             'findingarn': 'arn:aws:test456',
             'fixedinversion': None,
-            'id': 'kernel-tools|X86_64|4.9.17|6.29.amzn1|0',
+            'id': '123456789012|kernel-tools|X86_64|4.9.17|6.29.amzn1|0',
             'manager': 'OS',
             'name': 'kernel-tools',
             'release': '6.29.amzn1',
@@ -90,7 +90,7 @@ def test_transform_inspector_findings_package():
             'filepath': None,
             'findingarn': 'arn:aws:test456',
             'fixedinversion': None,
-            'id': 'kernel|X86_64|4.9.17|6.29.amzn1|0',
+            'id': '123456789012|kernel|X86_64|4.9.17|6.29.amzn1|0',
             'manager': 'OS',
             'name': 'kernel',
             'release': '6.29.amzn1',
