@@ -43,6 +43,12 @@ def _vpc_attachment(attachment_id, vpc_owner, vpc_id, subnet_id):
     ]
 
 
+VPN_ATTACHMENT = {
+    'TransitGatewayAttachmentId': 'tgw-attach-fr-vpn', 'TransitGatewayId': TGW_ID, 'State': 'available',
+    'ResourceType': 'vpn', 'TransitGatewayOwnerId': HUB, 'ResourceOwnerId': HUB, 'ResourceId': 'vpn-fr-1',
+}
+
+
 def _seed_tgw(neo4j_session):
     create_test_org_account(neo4j_session, 'fr-ws-hub', 'fr-ws-hub-org', HUB)
     create_test_org_account(neo4j_session, 'fr-ws-spoke', 'fr-ws-spoke-org', SPOKE)
@@ -55,13 +61,14 @@ def _seed_tgw(neo4j_session):
         hub=HUB, spoke=SPOKE,
     )
     hub_attachments = _vpc_attachment('tgw-attach-fr-hub', HUB, 'vpc-fr-hub', 'subnet-fr-hub') + \
-        _vpc_attachment('tgw-attach-fr-spoke', SPOKE, 'vpc-fr-spoke', 'subnet-fr-spoke')
+        _vpc_attachment('tgw-attach-fr-spoke', SPOKE, 'vpc-fr-spoke', 'subnet-fr-spoke') + [VPN_ATTACHMENT]
     tgw.load_transit_gateways(neo4j_session, [_gateway('hub network')], REGION, HUB, OWNER_TAG)
     tgw.load_tgw_attachments(neo4j_session, hub_attachments, REGION, HUB, OWNER_TAG)
-    # The spoke sees the shared gateway (without its description) and its own attachment.
+    # The spoke sees the shared gateway (without its description), its own attachment and the hub's VPN.
     tgw.load_transit_gateways(neo4j_session, [_gateway(None)], REGION, SPOKE, PARTICIPANT_TAG)
     tgw.load_tgw_attachments(
-        neo4j_session, _vpc_attachment('tgw-attach-fr-spoke', SPOKE, 'vpc-fr-spoke', 'subnet-fr-spoke'),
+        neo4j_session,
+        _vpc_attachment('tgw-attach-fr-spoke', SPOKE, 'vpc-fr-spoke', 'subnet-fr-spoke') + [VPN_ATTACHMENT],
         REGION, SPOKE, PARTICIPANT_TAG,
     )
 
@@ -91,6 +98,8 @@ def test_shared_transit_gateway_is_claimed_and_written_by_its_owner_only(neo4j_s
     # The spoke VPC's attachment is the spoke's: the hub neither claims it nor writes onto the spoke VPC.
     assert _claims(neo4j_session, 'tgw-attach-fr-spoke') == {SPOKE}
     assert _claims(neo4j_session, 'tgw-attach-fr-hub') == {HUB}
+    # A VPN attachment lives in the gateway owner's account, whoever lists it.
+    assert _claims(neo4j_session, 'tgw-attach-fr-vpn') == {HUB}
     assert neo4j_session.run(
         "MATCH (v:AWSVpc{id: 'vpc-fr-spoke'}) RETURN v.lastupdated AS tag",
     ).single()['tag'] == PARTICIPANT_TAG
@@ -110,7 +119,7 @@ def test_tgw_cleanup_never_deletes_the_other_tenants_gateway_or_attachment(neo4j
             arn=TGW_ARN,
         )
     }
-    assert attached == {'tgw-attach-fr-hub', 'tgw-attach-fr-spoke'}
+    assert attached == {'tgw-attach-fr-hub', 'tgw-attach-fr-spoke', 'tgw-attach-fr-vpn'}
 
 
 def test_cloudtrail_links_only_a_log_bucket_of_its_workspace(neo4j_session):

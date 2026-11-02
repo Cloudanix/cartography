@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import botocore.exceptions
@@ -147,18 +148,40 @@ def _attach_shared_transit_gateway(
     )
 
 
-def _is_foreign_vpc_attachment(tgwa: Dict, current_aws_account_id: str) -> bool:
+# Attachment types created by the account that owns the attached resource (ResourceOwnerId): a VPC, or the
+# VPC attachment a Connect attachment rides on.
+_RESOURCE_OWNED_ATTACHMENTS = frozenset({"vpc", "connect"})
+# Attachment types that live in the gateway owner's account (TransitGatewayOwnerId), whoever owns the far end
+# (a Direct Connect gateway can be another account's).
+_GATEWAY_OWNED_ATTACHMENTS = frozenset({"vpn", "vpn-concentrator", "direct-connect-gateway", "network-function"})
+
+
+def _attachment_owner(tgwa: Dict) -> Optional[str]:
     """
-    The gateway owner's account also lists the attachments of other accounts' VPCs to its gateway. Those belong
-    to the VPC owner (maybe another tenant), whose own sync loads them and links them to the gateway: this
-    account must not claim them nor write onto that VPC and its subnets.
-    describe_transit_gateway_attachments gives ResourceOwnerId (ResourceType 'vpc'),
-    describe_transit_gateway_vpc_attachments gives VpcOwnerId. Without either, the attachment is this account's.
+    The account an attachment belongs to, or None when the API gives no reliable owner. Peering attachments
+    (peering, tgw-peering) are one attachment shared by both gateways' owners, and client-vpn has no clear
+    owner field: those stay claimed by every account that lists them.
+    describe_transit_gateway_vpc_attachments gives VpcOwnerId and no ResourceType.
     """
-    vpc_owner = tgwa.get("VpcOwnerId")
-    if vpc_owner is None and tgwa.get("ResourceType") == "vpc":
-        vpc_owner = tgwa.get("ResourceOwnerId")
-    return vpc_owner is not None and vpc_owner != current_aws_account_id
+    if tgwa.get("VpcOwnerId"):
+        return tgwa["VpcOwnerId"]
+    resource_type = tgwa.get("ResourceType")
+    if resource_type in _RESOURCE_OWNED_ATTACHMENTS:
+        return tgwa.get("ResourceOwnerId")
+    if resource_type in _GATEWAY_OWNED_ATTACHMENTS:
+        return tgwa.get("TransitGatewayOwnerId")
+    return None
+
+
+def _is_foreign_attachment(tgwa: Dict, current_aws_account_id: str) -> bool:
+    """
+    Accounts also list attachments that belong to another account, maybe another tenant: the gateway owner
+    sees other accounts' VPC attachments to its gateway, an account a gateway is shared with may see the
+    owner's VPN or Direct Connect attachments. The owner's own sync loads those and links them to the
+    gateway, so this account must not claim them nor write onto the other account's VPC and subnets.
+    """
+    owner = _attachment_owner(tgwa)
+    return owner is not None and owner != current_aws_account_id
 
 
 @timeit
@@ -190,7 +213,7 @@ def load_tgw_attachments(
     """
 
     for tgwa in data:
-        if _is_foreign_vpc_attachment(tgwa, current_aws_account_id):
+        if _is_foreign_attachment(tgwa, current_aws_account_id):
             continue
         tgwa_id = tgwa["TransitGatewayAttachmentId"]
         tgwa_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:transit-gateway-attachment/{tgwa_id}"
