@@ -85,6 +85,7 @@ def test_load_network_subnets(neo4j_session):
     network.load_networks_subnets(
         neo4j_session,
         DESCRIBE_NETWORKSUBNETS,
+        TEST_SUBSCRIPTION_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -115,6 +116,7 @@ def test_load_network_subnet_relationships(neo4j_session):
     network.load_networks_subnets(
         neo4j_session,
         DESCRIBE_NETWORKSUBNETS,
+        TEST_SUBSCRIPTION_ID,
         TEST_UPDATE_TAG,
     )
 
