@@ -34,7 +34,7 @@ def _load_snapshot(neo4j_session, account_id, attributes, update_tag):
                     {'AttributeName': name, 'AttributeValues': values} for name, values in attributes.items()
                 ],
             },
-        ], update_tag,
+        ], account_id, update_tag,
     )
 
 

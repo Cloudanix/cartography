@@ -36,7 +36,7 @@ def _load_snapshots(neo4j_session, account_id, snapshots):
                 'DBSnapshotAttributes': [{'AttributeName': 'restore', 'AttributeValues': restore}],
             }
             for name, _, restore in snapshots if restore is not None
-        ], TEST_UPDATE_TAG,
+        ], account_id, TEST_UPDATE_TAG,
     )
 
 

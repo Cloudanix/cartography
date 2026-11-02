@@ -46,9 +46,11 @@ class TestRdsBatchedAttachments:
             {"DBSecurityGroupArn": "arn:dbsg/2", "EC2SecurityGroups": []},
         ]
 
-        rds.attach_db_security_groups_to_ec2_security_groups(session, db_sgs, TEST_UPDATE_TAG)
+        rds.attach_db_security_groups_to_ec2_security_groups(session, db_sgs, "1234", "ws-1", TEST_UPDATE_TAG)
 
         assert session.execute_write.call_count == 1
+        assert session.execute_write.call_args.kwargs["AWS_ACCOUNT_ID"] == "1234"
+        assert session.execute_write.call_args.kwargs["WORKSPACE_ID"] == "ws-1"
         rows = session.execute_write.call_args.kwargs["DictList"]
         assert rows == [
             {"db_sg_id": "arn:dbsg/1", "ec2_sg_id": "sg-1"},
@@ -62,9 +64,10 @@ class TestRdsBatchedAttachments:
             {"DBClusterArn": "arn:cluster/2", "AssociatedRoles": []},
         ]
 
-        rds._attach_associate_roles(session, clusters, TEST_UPDATE_TAG)
+        rds._attach_associate_roles(session, clusters, "1234", TEST_UPDATE_TAG)
 
         assert session.execute_write.call_count == 1
+        assert session.execute_write.call_args.kwargs["AWS_ACCOUNT_ID"] == "1234"
         rows = session.execute_write.call_args.kwargs["DictList"]
         assert rows == [{"cluster_arn": "arn:cluster/1", "role_arn": "arn:role/1"}]
 

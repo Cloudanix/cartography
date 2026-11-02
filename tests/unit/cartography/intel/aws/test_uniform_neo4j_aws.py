@@ -276,7 +276,7 @@ class TestRds:
             "VpcSecurityGroups": [{"VpcSecurityGroupId": "sg-1"}],
         }
 
-        rds._attach_ec2_security_groups_cluster(session, cluster, TEST_UPDATE_TAG)
+        rds._attach_ec2_security_groups_cluster(session, cluster, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         call = session.execute_write.call_args
