@@ -181,3 +181,37 @@ def test_route53_cleanup_drops_own_name_server_links_not_shared_name_servers(neo
     assert {
         r['id'] for r in neo4j_session.run("MATCH (ns:NameServer) WHERE ns.id STARTS WITH 'r53c-' RETURN ns.id AS id")
     } == {'r53c-shared'}
+
+
+def _record(kind, zone):
+    return {'id': f'{zone}-{kind}', 'name': f'{kind}.example.com', 'zoneid': zone, 'type': kind, 'value': 'v'}
+
+
+def test_route53_records_join_only_the_accounts_zones(neo4j_session):
+    create_test_org_account(neo4j_session, 'r53z-ws-own', 'r53z-org-own', 'r53z-own')
+    create_test_org_account(neo4j_session, 'r53z-ws-other', 'r53z-org-other', 'r53z-other')
+    neo4j_session.run(
+        """
+        MATCH (own:AWSAccount{id: 'r53z-own'}), (other:AWSAccount{id: 'r53z-other'})
+        MERGE (own)-[:RESOURCE]->(:AWSDNSZone{zoneid: 'Z-OWN'})
+        MERGE (other)-[:RESOURCE]->(:AWSDNSZone{zoneid: 'Z-OTHER'})
+        """,
+    )
+
+    for zone in ('Z-OWN', 'Z-OTHER'):
+        route53.load_a_records(neo4j_session, [_record('A', zone)], TEST_UPDATE_TAG, 'r53z-own')
+        route53.load_alias_records(neo4j_session, [_record('ALIAS', zone)], TEST_UPDATE_TAG, 'r53z-own')
+        route53.load_cname_records(neo4j_session, [_record('CNAME', zone)], TEST_UPDATE_TAG, 'r53z-own')
+        route53.load_ns_records(
+            neo4j_session, [{**_record('NS', zone), 'name': 'example.com', 'servers': ['ns-1.example.net']}],
+            'example.com', TEST_UPDATE_TAG, '', 'r53z-own',
+        )
+
+    linked = neo4j_session.run(
+        "MATCH (z:AWSDNSZone)-[r:NAMESERVER|MEMBER_OF_DNS_ZONE]-() WHERE z.zoneid STARTS WITH 'Z-' "
+        "RETURN z.zoneid AS z, type(r) AS r",
+    )
+    assert sorted((r['z'], r['r']) for r in linked) == [
+        ('Z-OWN', 'MEMBER_OF_DNS_ZONE'), ('Z-OWN', 'MEMBER_OF_DNS_ZONE'), ('Z-OWN', 'MEMBER_OF_DNS_ZONE'),
+        ('Z-OWN', 'MEMBER_OF_DNS_ZONE'), ('Z-OWN', 'NAMESERVER'),
+    ]

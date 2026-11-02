@@ -116,19 +116,21 @@ def cleanup_domains(neo4j_session: neo4j.Session, common_job_parameters: Dict) -
 _OWN_RECORDS = """
 MATCH (:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:AWSDNSZone)<-[:MEMBER_OF_DNS_ZONE]-(n:AWSDNSRecord)
 """
-_IN_WORKSPACE = (
-    "<-[:RESOURCE]-(:AWSAccount)<-[:OWNER]-(:AWSOrganization)<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})"
-)
-
-# Target pattern for each kind of node a record can point to, matched on the record's value.
+# Target pattern for each kind of node a record can point to, matched on the record's value and reached from
+# the workspace (each literal carries the whole chain so the tenant guard sees it).
 _DNS_TARGETS = [
     # another record, through the zone that holds it
-    "(t:AWSDNSRecord{name: n.value})-[:MEMBER_OF_DNS_ZONE]->(:AWSDNSZone)",
+    "(t:AWSDNSRecord{name: n.value})-[:MEMBER_OF_DNS_ZONE]->(:AWSDNSZone)"
+    "<-[:RESOURCE]-(:AWSAccount)<-[:OWNER]-(:AWSOrganization)<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})",
     # an Elasticsearch endpoint record (intel/dns.py), through its domain
-    "(t:AWSDNSRecord{name: n.value})-[:DNS_POINTS_TO]->(:ESDomain)",
-    "(t:LoadBalancer{dnsname: n.value})",
-    "(t:LoadBalancerV2{dnsname: n.value})",
-    "(t:EC2Instance{publicdnsname: n.value})",
+    "(t:AWSDNSRecord{name: n.value})-[:DNS_POINTS_TO]->(:ESDomain)"
+    "<-[:RESOURCE]-(:AWSAccount)<-[:OWNER]-(:AWSOrganization)<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})",
+    "(t:LoadBalancer{dnsname: n.value})"
+    "<-[:RESOURCE]-(:AWSAccount)<-[:OWNER]-(:AWSOrganization)<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})",
+    "(t:LoadBalancerV2{dnsname: n.value})"
+    "<-[:RESOURCE]-(:AWSAccount)<-[:OWNER]-(:AWSOrganization)<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})",
+    "(t:EC2Instance{publicdnsname: n.value})"
+    "<-[:RESOURCE]-(:AWSAccount)<-[:OWNER]-(:AWSOrganization)<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})",
 ]
 
 
@@ -136,7 +138,7 @@ _DNS_TARGETS = [
 def link_aws_resources(neo4j_session: neo4j.Session, current_aws_id: str, workspace_id: str, update_tag: int) -> None:
     for target in _DNS_TARGETS:
         query = _OWN_RECORDS + f"""
-        MATCH {target}{_IN_WORKSPACE}
+        MATCH {target}
         WHERE NOT n = t
         MERGE (n)-[p:DNS_POINTS_TO]->(t)
         ON CREATE SET p.firstseen = timestamp()
@@ -148,7 +150,9 @@ def link_aws_resources(neo4j_session: neo4j.Session, current_aws_id: str, worksp
 
 
 @timeit
-def load_a_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag: int) -> None:
+def load_a_records(
+    neo4j_session: neo4j.Session, records: List[Dict], update_tag: int, current_aws_account_id: str,
+) -> None:
     ingest_records = """
     UNWIND $DictList as record
     MERGE (a:DNSRecord:AWSDNSRecord{id: record.id})
@@ -158,7 +162,7 @@ def load_a_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag
     a.type = record.type
     SET a.lastupdated = $update_tag, a.value = record.value
     WITH a,record
-    MATCH (zone:AWSDNSZone{zoneid: record.zoneid})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(zone:AWSDNSZone{zoneid: record.zoneid})
     MERGE (a)-[r:MEMBER_OF_DNS_ZONE]->(zone)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -167,12 +171,15 @@ def load_a_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag
         neo4j_session,
         ingest_records,
         records,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
 
 @timeit
-def load_alias_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag: int) -> None:
+def load_alias_records(
+    neo4j_session: neo4j.Session, records: List[Dict], update_tag: int, current_aws_account_id: str,
+) -> None:
     # create the DNSRecord nodes and link them to matching DNSZone and S3Bucket nodes
     ingest_records = """
     UNWIND $DictList as record
@@ -183,7 +190,7 @@ def load_alias_records(neo4j_session: neo4j.Session, records: List[Dict], update
     a.type = record.type
     SET a.lastupdated = $update_tag, a.value = record.value
     WITH a,record
-    MATCH (zone:AWSDNSZone{zoneid: record.zoneid})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(zone:AWSDNSZone{zoneid: record.zoneid})
     MERGE (a)-[r:MEMBER_OF_DNS_ZONE]->(zone)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -192,12 +199,15 @@ def load_alias_records(neo4j_session: neo4j.Session, records: List[Dict], update
         neo4j_session,
         ingest_records,
         records,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
 
 @timeit
-def load_cname_records(neo4j_session: neo4j.Session, records: List[Dict], update_tag: int) -> None:
+def load_cname_records(
+    neo4j_session: neo4j.Session, records: List[Dict], update_tag: int, current_aws_account_id: str,
+) -> None:
     ingest_records = """
     UNWIND $DictList as record
     MERGE (a:DNSRecord:AWSDNSRecord{id: record.id})
@@ -207,7 +217,7 @@ def load_cname_records(neo4j_session: neo4j.Session, records: List[Dict], update
     a.type = record.type
     SET a.lastupdated = $update_tag, a.value = record.value
     WITH a,record
-    MATCH (zone:AWSDNSZone{zoneid: record.zoneid})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(zone:AWSDNSZone{zoneid: record.zoneid})
     MERGE (a)-[r:MEMBER_OF_DNS_ZONE]->(zone)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -216,6 +226,7 @@ def load_cname_records(neo4j_session: neo4j.Session, records: List[Dict], update
         neo4j_session,
         ingest_records,
         records,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
@@ -252,7 +263,10 @@ def load_zone(neo4j_session: neo4j.Session, zone: Dict, current_aws_id: str, upd
 
 
 @timeit
-def load_ns_records(neo4j_session: neo4j.Session, records: List[Dict], zone_name: str, update_tag: int, consolelink: str) -> None:
+def load_ns_records(
+    neo4j_session: neo4j.Session, records: List[Dict], zone_name: str, update_tag: int, consolelink: str,
+    current_aws_account_id: str,
+) -> None:
     ingest_records = """
     UNWIND $DictList as record
     MERGE (a:DNSRecord:AWSDNSRecord{id: record.id})
@@ -261,7 +275,7 @@ def load_ns_records(neo4j_session: neo4j.Session, records: List[Dict], zone_name
     a.type = record.type
     SET a.lastupdated = $update_tag, a.value = record.name, a.consolelink = $consolelink
     WITH a,record
-    MATCH (zone:AWSDNSZone{zoneid: record.zoneid})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(zone:AWSDNSZone{zoneid: record.zoneid})
     MERGE (a)-[r:MEMBER_OF_DNS_ZONE]->(zone)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -281,14 +295,16 @@ def load_ns_records(neo4j_session: neo4j.Session, records: List[Dict], zone_name
         ingest_records,
         records,
         consolelink=consolelink,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
     # Map the official name servers for a domain.
     map_ns_records = """
     UNWIND $DictList as server
+    // NameServer is one shared node per host name; the zone is this account's.
     MATCH (ns:NameServer{id:server})
-    MATCH (zone:AWSDNSZone{zoneid: $zoneid})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(zone:AWSDNSZone{zoneid: $zoneid})
     MERGE (ns)<-[r:NAMESERVER]-(zone)
     SET r.lastupdated = $update_tag
     """
@@ -299,6 +315,7 @@ def load_ns_records(neo4j_session: neo4j.Session, records: List[Dict], zone_name
                 map_ns_records,
                 record["servers"],
                 zoneid=record["zoneid"],
+                AWS_ACCOUNT_ID=current_aws_account_id,
                 update_tag=update_tag,
             )
 
@@ -475,16 +492,19 @@ def load_dns_details(
                 zone_ns_records.append(record)
 
         if zone_a_records:
-            load_a_records(neo4j_session, zone_a_records, update_tag)
+            load_a_records(neo4j_session, zone_a_records, update_tag, current_aws_id)
 
         if zone_alias_records:
-            load_alias_records(neo4j_session, zone_alias_records, update_tag)
+            load_alias_records(neo4j_session, zone_alias_records, update_tag, current_aws_id)
 
         if zone_cname_records:
-            load_cname_records(neo4j_session, zone_cname_records, update_tag)
+            load_cname_records(neo4j_session, zone_cname_records, update_tag, current_aws_id)
 
         if zone_ns_records:
-            load_ns_records(neo4j_session, zone_ns_records, parsed_zone['name'][:-1], update_tag, zone['consolelink'])
+            load_ns_records(
+                neo4j_session, zone_ns_records, parsed_zone['name'][:-1], update_tag, zone['consolelink'],
+                current_aws_id,
+            )
 
 
 @timeit
