@@ -134,10 +134,12 @@ python dev.py <gcp|aws|azure> <args>   # uses scripts/*.env.dev.yml
 
 Upstream never carries our secrets, but a merge can resurrect a deleted line or
 re-add a file. Before pushing a sync branch, re-run the audit guard from
-[step1-secret-audit.md](step1-secret-audit.md):
+[step1-secret-audit.md](step1-secret-audit.md). The patterns (one fragment of each
+live secret per line) live in `.secret-patterns` at the repo root, which is gitignored.
+Never commit it or paste its contents into a tracked file.
 
 ```bash
-git diff --cached | grep -iE 'gloas-|Piwbiv|fejboz|wHi8Q~|ypU8Q~|jFWcmGKL|774118602354|Cloudanix@123'
+git diff --cached | grep -iFf .secret-patterns
 ```
 
 Empty output = safe to push.
