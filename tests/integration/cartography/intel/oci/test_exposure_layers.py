@@ -155,9 +155,10 @@ def _instances(session):
     _run(
         session,
         "MATCH (i:OCIInstance{id: 'xl-i-open'}) SET i.image_id = 'xl-img', i.exposed_internet = $u "
-        "MERGE (:OCIImage{id: 'xl-img', display_name: 'Oracle-Linux-8.9-2024.01.26-0'}) "
+        "WITH i MATCH (c:OCICompartment{id: $compartment}) "
+        "MERGE (c)-[:RESOURCE]->(:OCIImage{id: 'xl-img', display_name: 'Oracle-Linux-8.9-2024.01.26-0'}) "
         "WITH i MATCH (s:OCIInstance{id: 'xl-i-rfc1918'}) SET s.internet_reachable = true",
-        u=UNTOUCHED,
+        u=UNTOUCHED, compartment=COMPARTMENT,
     )
 
 
