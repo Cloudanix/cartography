@@ -10,10 +10,13 @@ from tests.integration.cartography.intel.aws.common import exposure_job_paramete
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'us-east-1'
 TEST_UPDATE_TAG = 123456789
+TEST_WORKSPACE_ID = 'ws-ecs-load'
+TEST_ORGANIZATION_ID = 'o-ecs-load'
 CLUSTER_ARN = 'arn:aws:ecs:us-east-1:000000000000:cluster/test_cluster'
 
 
 def test_load_ecs_clusters(neo4j_session, *args):
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORGANIZATION_ID, TEST_ACCOUNT_ID)
     data = tests.data.aws.ecs.GET_ECS_CLUSTERS
     cartography.intel.aws.ecs.load_ecs_clusters(neo4j_session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
@@ -43,6 +46,7 @@ def test_load_ecs_clusters(neo4j_session, *args):
 
 
 def test_load_ecs_container_instances(neo4j_session, *args):
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORGANIZATION_ID, TEST_ACCOUNT_ID)
     cartography.intel.aws.ecs.load_ecs_clusters(
         neo4j_session,
         tests.data.aws.ecs.GET_ECS_CLUSTERS,
@@ -96,6 +100,7 @@ def test_load_ecs_container_instances(neo4j_session, *args):
 
 
 def test_load_ecs_services(neo4j_session, *args):
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORGANIZATION_ID, TEST_ACCOUNT_ID)
     cartography.intel.aws.ecs.load_ecs_clusters(
         neo4j_session,
         tests.data.aws.ecs.GET_ECS_CLUSTERS,
@@ -152,6 +157,7 @@ def test_load_ecs_services(neo4j_session, *args):
 
 
 def test_load_ecs_tasks(neo4j_session, *args):
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORGANIZATION_ID, TEST_ACCOUNT_ID)
     data = tests.data.aws.ecs.GET_ECS_TASKS
     cartography.intel.aws.ecs.load_ecs_tasks(
         neo4j_session,
@@ -227,6 +233,7 @@ def test_load_ecs_tasks(neo4j_session, *args):
 
 
 def test_load_ecs_task_definitions(neo4j_session, *args):
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORGANIZATION_ID, TEST_ACCOUNT_ID)
     data = tests.data.aws.ecs.GET_ECS_TASK_DEFINITIONS
     cartography.intel.aws.ecs.load_ecs_task_definitions(
         neo4j_session,

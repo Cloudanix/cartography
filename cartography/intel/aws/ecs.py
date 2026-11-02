@@ -211,7 +211,7 @@ def load_ecs_container_instances(
             i.consolelink = instance.consolelink,
             i.lastupdated = $aws_update_tag
         WITH i
-        MATCH (c:ECSCluster{id: $ClusterARN})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:ECSCluster{id: $ClusterARN})
         MERGE (c)-[r:HAS_CONTAINER_INSTANCE]->(i)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -272,12 +272,12 @@ def load_ecs_services(
             s.consolelink = service.consolelink,
             s.lastupdated = $aws_update_tag
         WITH s
-        MATCH (c:ECSCluster{id: $ClusterARN})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:ECSCluster{id: $ClusterARN})
         MERGE (c)-[r:HAS_SERVICE]->(s)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
         WITH s
-        MATCH (d:ECSTaskDefinition{id: s.task_definition})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(d:ECSTaskDefinition{id: s.task_definition})
         MERGE (s)-[r2:HAS_TASK_DEFINITION]->(d)
         ON CREATE SET r2.firstseen = timestamp()
         SET r2.lastupdated = $aws_update_tag
@@ -424,17 +424,18 @@ def load_ecs_tasks(
             t.consolelink = task.consolelink,
             t.lastupdated = $aws_update_tag
         WITH t
-        MATCH (c:ECSCluster{id: $ClusterARN})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:ECSCluster{id: $ClusterARN})
         MERGE (c)-[r:HAS_TASK]->(t)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
         WITH t
-        MATCH (td:ECSTaskDefinition{id: t.task_definition_arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(td:ECSTaskDefinition{id: t.task_definition_arn})
         MERGE (t)-[r2:HAS_TASK_DEFINITION]->(td)
         ON CREATE SET r2.firstseen = timestamp()
         SET r2.lastupdated = $aws_update_tag
         WITH t
-        MATCH (ci:ECSContainerInstance{id: t.container_instance_arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:ECSCluster)-[:HAS_CONTAINER_INSTANCE]->
+            (ci:ECSContainerInstance{id: t.container_instance_arn})
         MERGE (ci)-[r3:HAS_TASK]->(t)
         ON CREATE SET r3.firstseen = timestamp()
         SET r3.lastupdated = $aws_update_tag
@@ -510,7 +511,7 @@ def load_ecs_container_definitions(
             d.pseudo_terminal = def.pseudoTerminal,
             d.lastupdated = $aws_update_tag
         WITH d
-        MATCH (td:ECSTaskDefinition{id: d.task_definition_arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(td:ECSTaskDefinition{id: d.task_definition_arn})
         MERGE (td)-[r:HAS_CONTAINER_DEFINITION]->(d)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -553,7 +554,7 @@ def load_ecs_containers(
             c.gpu_ids = container.gpuIds,
             c.lastupdated = $aws_update_tag
         WITH c
-        MATCH (t:ECSTask{id: c.task_arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:ECSCluster)-[:HAS_TASK]->(t:ECSTask{id: c.task_arn})
         MERGE (t)-[r:HAS_CONTAINER]->(c)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
