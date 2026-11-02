@@ -22,7 +22,7 @@ def test_load_bindings_deleted_members_have_consolelink(mock_run_write_query):
         ],
     }]
 
-    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {})
+    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {'WORKSPACE_ID': 'ws1'})
 
     consolelinks = [call.kwargs['ConsoleLink'] for call in mock_run_write_query.call_args_list]
     assert len(consolelinks) == 3
@@ -100,7 +100,7 @@ def test_load_bindings_emits_external_principals(mock_run_write_query, mock_load
         ],
     }]
 
-    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {})
+    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {'WORKSPACE_ID': 'ws1'})
 
     emitted = [call.args[2]["principal"] for call in mock_load_ep.call_args_list]
     assert emitted == ['user:bob@vendor.com', 'serviceAccount:svc@other-project.iam.gserviceaccount.com', 'allUsers']

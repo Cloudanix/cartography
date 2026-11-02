@@ -56,3 +56,45 @@ def test_organization_domains_are_the_syncing_orgs_only(neo4j_session):
         "MATCH (:GCPRole{id: $role})-[:TRUSTS_GCP_PRINCIPAL]->(ep:GCPExternalPrincipal) RETURN ep.principal",
         role=f"{_params(TENANT)['GCP_ORGANIZATION_ID']}/roles/viewer",
     ) == {('user:bob@partner-iamt.example',)}
+
+
+def _service_account(tenant):
+    return f"svc@{_params(tenant)['GCP_PROJECT_ID']}.iam.gserviceaccount.com"
+
+
+def test_binding_to_another_tenants_service_account_writes_nothing_on_it(neo4j_session):
+    _seed(neo4j_session)
+    for tenant in (TENANT, OTHER_TENANT):
+        email = _service_account(tenant)
+        iam.load_service_accounts(
+            neo4j_session, [{'id': email, 'email': email, 'name': email, 'displayName': 'svc'}],
+            _params(tenant)['GCP_PROJECT_ID'], TEST_UPDATE_TAG,
+        )
+    project = _params(TENANT)['GCP_PROJECT_ID']
+    custom_role = f'projects/{project}/roles/custom'
+    neo4j_session.run(
+        "MATCH (p:GCPProject{id: $p}) MERGE (p)-[:RESOURCE]->(:GCPRole{id: $r})", p=project, r=custom_role,
+    )
+    members = [f'serviceAccount:{_service_account(TENANT)}', f'serviceAccount:{_service_account(OTHER_TENANT)}']
+
+    # This customer grants a predefined and a project custom role to its own and the other customer's SA.
+    _bind(neo4j_session, TENANT, members)
+    _bind(neo4j_session, TENANT, members, role=custom_role)
+
+    assert _rows(
+        neo4j_session,
+        "MATCH (sa:GCPServiceAccount)-[:ASSUME_ROLE]->(r:GCPRole) WHERE sa.id IN $sas RETURN sa.id, r.id",
+        sas=[_service_account(TENANT), _service_account(OTHER_TENANT)],
+    ) == {
+        (_service_account(TENANT), f"{_params(TENANT)['GCP_ORGANIZATION_ID']}/roles/viewer"),
+        (_service_account(TENANT), custom_role),
+    }
+    assert _rows(
+        neo4j_session, "MATCH (sa:GCPServiceAccount{id: $sa}) RETURN sa.isDeleted", sa=_service_account(OTHER_TENANT),
+    ) == {(None,)}
+    # The grant to the foreign SA is still visible to this customer, as an external principal.
+    assert (f'serviceAccount:{_service_account(OTHER_TENANT)}',) in _rows(
+        neo4j_session,
+        "MATCH (:GCPRole{id: $r})-[:TRUSTS_GCP_PRINCIPAL]->(ep:GCPExternalPrincipal) RETURN ep.principal",
+        r=custom_role,
+    )

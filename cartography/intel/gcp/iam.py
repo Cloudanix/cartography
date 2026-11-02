@@ -844,7 +844,9 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         neo4j_session,
                         role_id, serviceAccount,
                         project_id,
+                        organization_id,
                         gcp_update_tag,
+                        common_job_parameters['WORKSPACE_ID'],
                     )
                 else:
                     attach_sso_role_to_service_account(
@@ -853,6 +855,7 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         project_id,
                         organization_id,
                         gcp_update_tag,
+                        common_job_parameters['WORKSPACE_ID'],
                     )
 
             elif member.startswith('group:'):
@@ -954,7 +957,9 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                             neo4j_session,
                             role_id, serviceAccount,
                             project_id,
+                            organization_id,
                             gcp_update_tag,
+                            common_job_parameters['WORKSPACE_ID'],
                         )
                     else:
                         attach_sso_role_to_service_account(
@@ -963,6 +968,7 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                             project_id,
                             organization_id,
                             gcp_update_tag,
+                            common_job_parameters['WORKSPACE_ID'],
                         )
 
                 elif member.startswith('group:'):
@@ -1130,13 +1136,16 @@ def attach_sso_role_to_user(
 @timeit
 def attach_project_role_to_service_account(
     neo4j_session: neo4j.Session, role_id: str,
-    serviceAccount: Dict, project_id: str, gcp_update_tag: int,
+    serviceAccount: Dict, project_id: str, organization_id: str, gcp_update_tag: int, workspace_id: str,
 ) -> None:
     ingest_script = """
-    MATCH (sa:GCPServiceAccount{id: $saId})
+    // A binding may name a service account of another organization (another customer's): it gets no edge
+    // and no write here; the binding surfaces as a GCPExternalPrincipal instead.
+    MATCH (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(:GCPOrganization{id: $organization_id})
+        -[:OWNER]->(:GCPProject)-[:RESOURCE]->(sa:GCPServiceAccount{id: $saId})
     SET
     sa.isDeleted = $isDeleted
-    WITH sa
+    WITH DISTINCT sa
     MATCH (:GCPProject{id: $project_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
     MERGE (sa)-[r:ASSUME_ROLE]->(role)
     ON CREATE SET r.firstseen = timestamp()
@@ -1152,6 +1161,8 @@ def attach_project_role_to_service_account(
         ParentId=serviceAccount['parent_id'],
         saId=serviceAccount['id'],
         project_id=project_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -1159,13 +1170,16 @@ def attach_project_role_to_service_account(
 @timeit
 def attach_sso_role_to_service_account(
     neo4j_session: neo4j.Session, role_id: str,
-    serviceAccount: Dict, project_id: str, organization_id: str, gcp_update_tag: int,
+    serviceAccount: Dict, project_id: str, organization_id: str, gcp_update_tag: int, workspace_id: str,
 ) -> None:
     ingest_script = """
-    MATCH (sa:GCPServiceAccount{id: $saId})
+    // A binding may name a service account of another organization (another customer's): it gets no edge
+    // and no write here; the binding surfaces as a GCPExternalPrincipal instead.
+    MATCH (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(:GCPOrganization{id: $organization_id})
+        -[:OWNER]->(:GCPProject)-[:RESOURCE]->(sa:GCPServiceAccount{id: $saId})
     SET
     sa.isDeleted = $isDeleted
-    WITH sa
+    WITH DISTINCT sa
     MATCH (:GCPOrganization{id: $organization_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
     MATCH (:GCPOrganization{id: $organization_id})-[:OWNER]->(project:GCPProject{id: $project_id})
     MERGE (sa)-[r1:ASSUME_ROLE{project_id:$project_id}]->(role)-[r2:HAS_ACCESS_TO{email:$saId}]->(project)
@@ -1185,6 +1199,7 @@ def attach_sso_role_to_service_account(
         saId=serviceAccount['id'],
         project_id=project_id,
         organization_id=organization_id,
+        workspace_id=workspace_id,
         gcp_update_tag=gcp_update_tag,
     )
 
