@@ -758,16 +758,14 @@ def load_roles(
     SET r.lastupdated = $aws_update_tag
     """
 
-    # One AWSExternalPrincipal per principal, shared by every tenant whose roles trust it. access_type
-    # (CrossAccount when the principal's account is in the role's organization, else ThirdParty) depends on
-    # the tenant, so it belongs on the trust edge. The node copy is the last tenant's value, kept only until
-    # inventory-sync-aws (helpers/awsiamdeepdivehelper.py) reads the edge; then drop it.
+    # One AWSExternalPrincipal per principal, shared by every tenant whose roles trust it: it holds only
+    # global facts. access_type (CrossAccount when the principal's account is in the role's organization,
+    # else ThirdParty) depends on the tenant, so it is on the trust edge only; inventory-sync-aws reads it there.
     ingest_external_account_principals = """
     UNWIND $DictList AS item
     MERGE (epnode:AWSExternalPrincipal{principal: item.principal})
     ON CREATE SET epnode.firstseen = timestamp()
     SET epnode.lastupdated = $aws_update_tag,
-    epnode.access_type = item.access_type,
     epnode.account_id = item.account_id
     WITH epnode, item
     MATCH (role:AWSRole{arn: item.role_arn})

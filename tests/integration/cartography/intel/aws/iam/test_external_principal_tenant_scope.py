@@ -39,3 +39,10 @@ def test_external_principal_access_type_is_per_trusting_role(neo4j_session):
         ('arn:aws:iam::ep-a1:role/vendor-access', 'CrossAccount'),
         ('arn:aws:iam::ep-b1:role/vendor-access', 'ThirdParty'),
     }
+    # The shared node keeps only global facts, not the last tenant's verdict.
+    node = neo4j_session.run(
+        "MATCH (p:AWSExternalPrincipal{principal: $vendor}) "
+        "RETURN p.access_type AS access_type, p.account_id AS account",
+        vendor=VENDOR,
+    ).single()
+    assert (node['access_type'], node['account']) == (None, '999999999901')
