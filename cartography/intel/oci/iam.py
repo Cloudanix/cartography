@@ -496,10 +496,17 @@ def _oci_external_access_type(ocid: str, tenancy_id: str, known_tenancy_ids: set
     return "ThirdParty"
 
 
-def _get_known_tenancy_ids(neo4j_session: neo4j.Session) -> set:
-    """Return every OCITenancy OCID already loaded, used to split CrossAccount from ThirdParty."""
-    query = "MATCH (t:OCITenancy) WHERE t.id IS NOT NULL RETURN t.id AS ocid"
-    rows = neo4j_session.execute_read(read_list_of_dicts_tx, query)
+def _get_known_tenancy_ids(neo4j_session: neo4j.Session, workspace_id: str) -> set:
+    """
+    Return the OCIDs of the tenancies this workspace has onboarded, used to split CrossAccount from ThirdParty.
+    Only the workspace's own tenancies count: another customer's tenancy is a third party to this one.
+    """
+    query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(t:OCITenancy)
+    WHERE t.id IS NOT NULL
+    RETURN t.id AS ocid
+    """
+    rows = neo4j_session.execute_read(read_list_of_dicts_tx, query, WORKSPACE_ID=workspace_id)
     return {row["ocid"].lower() for row in rows if row.get("ocid")}
 
 
@@ -543,7 +550,7 @@ def sync_oci_policy_references(
     groups = list(utils.get_groups_in_tenancy(neo4j_session, tenancy_id))
     compartments = list(utils.get_compartments_in_tenancy(neo4j_session, tenancy_id))
     policies = list(utils.get_policies_in_tenancy(neo4j_session, tenancy_id))
-    known_tenancy_ids = _get_known_tenancy_ids(neo4j_session)
+    known_tenancy_ids = _get_known_tenancy_ids(neo4j_session, common_job_parameters.get("WORKSPACE_ID", ""))
     for policy in policies:
         check_compart = policy["compartmentid"]
         for statement in policy["statements"]:

@@ -1,5 +1,6 @@
 from cartography.intel.oci import audit_logging
 from cartography.intel.oci import database
+from cartography.intel.oci import iam
 from cartography.intel.oci import network
 from cartography.util import run_cleanup_job
 
@@ -155,3 +156,56 @@ def test_logging_cleanup_of_one_tenant_keeps_the_other_tenants_logging_services(
 
     assert len(_compartment_logging_services(neo4j_session, 'lsc-a-compartment')) == 1
     assert _compartment_logging_services(neo4j_session, 'lsc-b-compartment') == set()
+
+
+OWN_TENANCY = 'ocid1.tenancy.oc1..ownaaaa'
+OWN_SECOND_TENANCY = 'ocid1.tenancy.oc1..ownbbbb'
+OTHER_CUSTOMER_TENANCY = 'ocid1.tenancy.oc1..othercccc'
+
+
+def _seed_cross_tenancy_policy(neo4j_session):
+    """Workspace ws-iam owns two tenancies; another customer (ws-iam-other) owns a third one."""
+    neo4j_session.run(
+        """
+        MERGE (w:CloudanixWorkspace{id: 'ws-iam'})
+        MERGE (other:CloudanixWorkspace{id: 'ws-iam-other'})
+        MERGE (t:OCITenancy{id: $own})
+        MERGE (t2:OCITenancy{id: $own2})
+        MERGE (t3:OCITenancy{id: $other})
+        MERGE (w)-[:OWNER]->(t)
+        MERGE (w)-[:OWNER]->(t2)
+        MERGE (other)-[:OWNER]->(t3)
+        MERGE (t)-[:RESOURCE]->(p:OCIPolicy{id: 'iam-policy'})
+        SET p.ocid = 'iam-policy', p.name = 'cross-tenancy', p.compartmentid = $own,
+            p.statements = [
+                'Endorse group Admins to manage all-resources in tenancy ' + $own2,
+                'Endorse group Admins to manage all-resources in tenancy ' + $other
+            ]
+        """,
+        own=OWN_TENANCY, own2=OWN_SECOND_TENANCY, other=OTHER_CUSTOMER_TENANCY,
+    )
+
+
+def _trusted_principals(neo4j_session, policy_id):
+    rows = neo4j_session.run(
+        """
+        MATCH (:OCIPolicy{id: $policy_id})-[r:TRUSTS_OCI_PRINCIPAL]->(ep:OCIExternalPrincipal)
+        RETURN ep.principal AS principal, ep.access_type AS access_type
+        """,
+        policy_id=policy_id,
+    )
+    return {(row['principal'], row['access_type']) for row in rows}
+
+
+def test_cross_tenancy_classification_only_knows_the_workspaces_own_tenancies(neo4j_session):
+    _seed_cross_tenancy_policy(neo4j_session)
+
+    iam.sync_oci_policy_references(
+        neo4j_session, OWN_TENANCY, NEW_TAG,
+        {'WORKSPACE_ID': 'ws-iam', 'OCI_TENANCY_ID': OWN_TENANCY, 'UPDATE_TAG': NEW_TAG},
+    )
+
+    # Another Cloudanix customer's tenancy is a third party to this workspace, not "known".
+    assert _trusted_principals(neo4j_session, 'iam-policy') == {
+        (OWN_SECOND_TENANCY, 'CrossAccount'), (OTHER_CUSTOMER_TENANCY, 'ThirdParty'),
+    }
