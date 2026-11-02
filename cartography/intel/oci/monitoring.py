@@ -13,8 +13,8 @@ import oci.ons
 
 from . import tags
 from . import utils
-from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def load_alarms(
         a.consolelink = alarm.consolelink,
         a.lastupdated = $oci_update_tag
         WITH a, alarm
-        MATCH (cc:OCICompartment{id: alarm.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: alarm.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(a)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -98,7 +98,7 @@ def load_alarms(
     ]
     load_graph_data(
         neo4j_session, ingest_alarm, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -170,7 +170,7 @@ def load_cloud_guard(
     cg.consolelink = $CONSOLELINK,
     cg.lastupdated = $oci_update_tag
     WITH cg
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+    MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (cc)-[r:RESOURCE]->(cg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -180,6 +180,7 @@ def load_cloud_guard(
         neo4j_session,
         ingest_cg,
         CONFIG_ID=f"oci.cloudguard.{compartment_id}.{region}",
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         STATUS=config_data.get("status", "DISABLED"),
         REPORTING_REGION=config_data.get("reporting-region", ""),
@@ -263,7 +264,7 @@ def load_event_rules(
         er.consolelink = rule.consolelink,
         er.lastupdated = $oci_update_tag
         WITH er, rule
-        MATCH (cc:OCICompartment{id: rule.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: rule.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(er)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -285,7 +286,7 @@ def load_event_rules(
     ]
     load_graph_data(
         neo4j_session, ingest_rule, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -364,7 +365,7 @@ def load_notification_topics(
         t.consolelink = topic.consolelink,
         t.lastupdated = $oci_update_tag
         WITH t, topic
-        MATCH (cc:OCICompartment{id: topic.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: topic.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(t)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -388,7 +389,7 @@ def load_notification_topics(
     ]
     load_graph_data(
         neo4j_session, ingest_topic, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
