@@ -80,7 +80,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (elbv2:LoadBalancerV2)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE elbv2.exposed_internet = true WITH elbv2 OPTIONAL MATCH (elbv2)-[:ELBV2_LISTENER]->(listener:ELBV2Listener) WITH elbv2, collect(DISTINCT {port: toString(listener.port), protocol: listener.protocol, sslPolicy: listener.sslpolicy, exposureTypes: listener.exposed_internet_type}) as listeners SET elbv2.publicContext = apoc.convert.toJson([{resource: elbv2.id, resourceType: 'aws-networking-elb-loadbalancerv2', context: [{lbArn: elbv2.id, dnsName: elbv2.dnsname, scheme: elbv2.scheme, type: elbv2.type, exposureTypes: elbv2.exposed_internet_type, listeners: listeners}]}])",
+      "query": "MATCH (elbv2:LoadBalancerV2)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE elbv2.exposed_internet = true WITH elbv2 OPTIONAL MATCH (elbv2)-[:ELBV2_LISTENER]->(listener:ELBV2Listener) WITH elbv2, collect(DISTINCT {port: toString(listener.port), protocol: listener.protocol, sslPolicy: listener.ssl_policy, exposureTypes: listener.exposed_internet_type}) as listeners SET elbv2.publicContext = apoc.convert.toJson([{resource: elbv2.id, resourceType: 'aws-networking-elb-loadbalancerv2', context: [{lbArn: elbv2.id, dnsName: elbv2.dnsname, scheme: elbv2.scheme, type: elbv2.type, exposureTypes: elbv2.exposed_internet_type, listeners: listeners}]}])",
       "iterative": false
     },
     {
@@ -88,7 +88,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (listener:ELBV2Listener)<-[:ELBV2_LISTENER]-(elbv2:LoadBalancerV2)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE listener.exposed_internet = true WITH listener, elbv2 SET listener.publicContext = apoc.convert.toJson([{resource: listener.id, resourceType: 'aws-networking-elb-elbv2listener', context: [{listenerArn: listener.id, port: toString(listener.port), protocol: listener.protocol, sslPolicy: listener.sslpolicy, loadBalancerArn: elbv2.id, loadBalancerDns: elbv2.dnsname, loadBalancerScheme: elbv2.scheme, exposureTypes: listener.exposed_internet_type}]}])",
+      "query": "MATCH (listener:ELBV2Listener)<-[:ELBV2_LISTENER]-(elbv2:LoadBalancerV2)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE listener.exposed_internet = true WITH listener, elbv2 SET listener.publicContext = apoc.convert.toJson([{resource: listener.id, resourceType: 'aws-networking-elb-elbv2listener', context: [{listenerArn: listener.id, port: toString(listener.port), protocol: listener.protocol, sslPolicy: listener.ssl_policy, loadBalancerArn: elbv2.id, loadBalancerDns: elbv2.dnsname, loadBalancerScheme: elbv2.scheme, exposureTypes: listener.exposed_internet_type}]}])",
       "iterative": false
     },
     {
