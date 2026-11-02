@@ -10,9 +10,9 @@ from unittest.mock import patch
 from cartography.intel.aws import apigateway
 from cartography.intel.aws import config
 from cartography.intel.aws import ecr
+from cartography.intel.aws import ecs
 from cartography.intel.aws import eks
 from cartography.intel.aws import elasticache
-from cartography.intel.aws import ecs
 from cartography.intel.aws import elasticsearch
 from cartography.intel.aws import kms
 from cartography.intel.aws import lambda_function
@@ -297,8 +297,8 @@ class TestRds:
         replicas = [{"DBInstanceArn": "arn:instance", "ReadReplicaSourceDBInstanceIdentifier": "src"}]
         members = [{"DBInstanceArn": "arn:instance", "DBClusterIdentifier": "c1"}]
 
-        rds._attach_read_replicas(session, replicas, TEST_UPDATE_TAG)
-        rds._attach_clusters(session, members, TEST_UPDATE_TAG)
+        rds._attach_read_replicas(session, replicas, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        rds._attach_clusters(session, members, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2

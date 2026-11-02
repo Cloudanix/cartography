@@ -775,8 +775,8 @@ def load_rds_instances(
     )
     _attach_ec2_security_groups(neo4j_session, secgroups, aws_update_tag)
     _attach_ec2_subnet_groups(neo4j_session, subnets, current_aws_account_id, aws_update_tag, partition)
-    _attach_read_replicas(neo4j_session, read_replicas, aws_update_tag)
-    _attach_clusters(neo4j_session, clusters, aws_update_tag)
+    _attach_read_replicas(neo4j_session, read_replicas, current_aws_account_id, aws_update_tag)
+    _attach_clusters(neo4j_session, clusters, current_aws_account_id, aws_update_tag)
     neptune.attach_member_instances(neo4j_session, clusters, current_aws_account_id, aws_update_tag)
 
 
@@ -842,7 +842,7 @@ def load_rds_snapshots(
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
-    _attach_snapshots(neo4j_session, snapshots, aws_update_tag)
+    _attach_snapshots(neo4j_session, snapshots, current_aws_account_id, aws_update_tag)
 
 
 @timeit
@@ -889,14 +889,18 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict],
 
 
 @timeit
-def _attach_snapshots(neo4j_session: neo4j.Session, snapshots: List[Dict], aws_update_tag: int) -> None:
+def _attach_snapshots(
+    neo4j_session: neo4j.Session, snapshots: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
-    Attach snapshots to their source instance
+    Attach snapshots to their source instance. DBInstanceIdentifier is unique only per account and region
+    ("database-1" is the console default), so the source is looked up in this account only. Not by region:
+    a snapshot copied to another region keeps its source's identifier.
     """
     attach_member_to_source = """
     UNWIND $DictList as snapshot
-        MATCH (rdsInstance:RDSInstance {db_instance_identifier: snapshot.DBInstanceIdentifier}),
-        (rdsSnapshot:RDSSnapshot {arn: snapshot.DBSnapshotArn})
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rdsSnapshot:RDSSnapshot {arn: snapshot.DBSnapshotArn})
+        MATCH (aa)-[:RESOURCE]->(rdsInstance:RDSInstance {db_instance_identifier: snapshot.DBInstanceIdentifier})
         MERGE (rdsInstance)-[r:IS_SNAPSHOT_SOURCE]->(rdsSnapshot)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -905,6 +909,7 @@ def _attach_snapshots(neo4j_session: neo4j.Session, snapshots: List[Dict], aws_u
         neo4j_session,
         attach_member_to_source,
         snapshots,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -1024,14 +1029,20 @@ def _attach_ec2_security_groups(neo4j_session: neo4j.Session, instances: List[Di
 
 
 @timeit
-def _attach_read_replicas(neo4j_session: neo4j.Session, read_replicas: List[Dict], aws_update_tag: int) -> None:
+def _attach_read_replicas(
+    neo4j_session: neo4j.Session, read_replicas: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
-    Attach read replicas to their source instances
+    Attach read replicas to their source instances. The source is an identifier (same region) or an ARN
+    (cross-region / cross-account); either way it is resolved only among this account's instances.
     """
     attach_replica_to_source = """
     UNWIND $DictList as rds_replica
-        MATCH (replica:RDSInstance{id: rds_replica.DBInstanceArn}),
-        (source:RDSInstance{db_instance_identifier: rds_replica.ReadReplicaSourceDBInstanceIdentifier})
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(replica:RDSInstance{id: rds_replica.DBInstanceArn})
+        MATCH (aa)-[:RESOURCE]->(source:RDSInstance)
+        WHERE source.id = rds_replica.ReadReplicaSourceDBInstanceIdentifier
+            OR (source.db_instance_identifier = rds_replica.ReadReplicaSourceDBInstanceIdentifier
+                AND source.region = replica.region)
         MERGE (replica)-[r:IS_READ_REPLICA_OF]->(source)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -1040,19 +1051,24 @@ def _attach_read_replicas(neo4j_session: neo4j.Session, read_replicas: List[Dict
         neo4j_session,
         attach_replica_to_source,
         read_replicas,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
 
 @timeit
-def _attach_clusters(neo4j_session: neo4j.Session, cluster_members: List[Dict], aws_update_tag: int) -> None:
+def _attach_clusters(
+    neo4j_session: neo4j.Session, cluster_members: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
-    Attach cluster members to their source clusters
+    Attach cluster members to their clusters. DBClusterIdentifier is unique only per account and region.
     """
     attach_member_to_source = """
     UNWIND $DictList as rds_cluster_member
-    MATCH (member:RDSInstance{id: rds_cluster_member.DBInstanceArn}),
-    (source:RDSCluster{db_cluster_identifier: rds_cluster_member.DBClusterIdentifier})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(member:RDSInstance{id: rds_cluster_member.DBInstanceArn})
+    MATCH (aa)-[:RESOURCE]->(source:RDSCluster{
+        db_cluster_identifier: rds_cluster_member.DBClusterIdentifier, region: member.region
+    })
     MERGE (member)-[r:IS_CLUSTER_MEMBER_OF]->(source)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -1061,6 +1077,7 @@ def _attach_clusters(neo4j_session: neo4j.Session, cluster_members: List[Dict], 
         neo4j_session,
         attach_member_to_source,
         cluster_members,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
