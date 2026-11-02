@@ -15,6 +15,7 @@ TEST_UPDATE_TAG = 123456789
 
 def test_load_rds_clusters_basic(neo4j_session):
     """Test that we successfully load RDS cluster nodes to the graph"""
+    create_test_org_account(neo4j_session, 'ws-rds-basic', 'o-rds-basic', '1234')
     cartography.intel.aws.rds.load_rds_clusters(
         neo4j_session,
         DESCRIBE_DBCLUSTERS_RESPONSE['DBClusters'],
@@ -141,6 +142,7 @@ def _ensure_local_neo4j_has_test_rds_snapshots_data(neo4j_session):
 
 def test_load_rds_snapshots_basic(neo4j_session):
     """Test that we successfully load RDS snapshots to the graph"""
+    create_test_org_account(neo4j_session, 'ws-rds-basic', 'o-rds-basic', '1234')
     cartography.intel.aws.rds.load_rds_instances(
         neo4j_session=neo4j_session,
         data=DESCRIBE_DBINSTANCES_RESPONSE['DBInstances'],

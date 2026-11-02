@@ -97,10 +97,13 @@ def load_load_balancers(
     SET r.lastupdated = $update_tag
     """
 
+    # A group name is unique only within one VPC ("default" exists in every VPC of every tenant),
+    # so resolve it inside the load balancer's own account and VPC.
     ingest_load_balancersource_security_group = """
     UNWIND $DictList AS item
     MATCH (elb:LoadBalancer{id: item.load_balancer_id}),
-    (group:EC2SecurityGroup{name: item.group_name})
+    (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:EC2SecurityGroup{name: item.group_name})
+    <-[:MEMBER_OF_EC2_SECURITY_GROUP]-(:AWSVpc{id: item.vpc_id})
     MERGE (elb)-[r:SOURCE_SECURITY_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -128,7 +131,12 @@ def load_load_balancers(
     SET r.lastupdated = $update_tag
     """
 
-    lb_rows, subnet_rows, sg_rows, source_sg_rows, instance_rows, listener_rows = [], [], [], [], [], []
+    lb_rows: List[Dict] = []
+    subnet_rows: List[Dict] = []
+    sg_rows: List[Dict] = []
+    source_sg_rows: List[Dict] = []
+    instance_rows: List[Dict] = []
+    listener_rows: List[Dict] = []
     for lb in data:
         region = lb.get('region', '')
         load_balancer_id = lb["DNSName"]
@@ -156,10 +164,12 @@ def load_load_balancers(
             {"load_balancer_id": load_balancer_id, "group_id": str(group)}
             for group in lb["SecurityGroups"] or []
         )
-        if lb["SourceSecurityGroup"]:
+        # Without a VPC (EC2-Classic) the group name cannot be resolved to a single group.
+        if lb["SourceSecurityGroup"] and lb.get("VPCId"):
             source_sg_rows.append({
                 "load_balancer_id": load_balancer_id,
                 "group_name": lb["SourceSecurityGroup"]["GroupName"],
+                "vpc_id": lb["VPCId"],
             })
         instance_rows.extend(
             {"load_balancer_id": load_balancer_id, "instance_id": instance["InstanceId"]}
@@ -178,7 +188,10 @@ def load_load_balancers(
     )
     load_load_balancer_subnets(neo4j_session, subnet_rows, update_tag)
     load_graph_data(neo4j_session, ingest_load_balancer_security_group, sg_rows, update_tag=update_tag)
-    load_graph_data(neo4j_session, ingest_load_balancersource_security_group, source_sg_rows, update_tag=update_tag)
+    load_graph_data(
+        neo4j_session, ingest_load_balancersource_security_group, source_sg_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id, update_tag=update_tag,
+    )
     load_graph_data(
         neo4j_session, ingest_instances, instance_rows,
         AWS_ACCOUNT_ID=current_aws_account_id, update_tag=update_tag,
