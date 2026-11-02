@@ -567,6 +567,92 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
     assert 'internet_reachable' not in _props(neo4j_session, 'EC2Instance', 'i-other')
 
 
+ENI_WS, ENI_ORG, ENI_ACCOUNT = 'ws-eni', 'o-eni', '222233334444'
+
+
+def _multi_eni_instance(session, iid, private_ip, public_ip, enis):
+    """enis: (eni_id, private_ip, public_ip, subnet, sg); the instance's primary IP picks its primary ENI."""
+    _run(
+        session,
+        """
+        MATCH (a:AWSAccount{id: $account})
+        MERGE (a)-[:RESOURCE]->(i:EC2Instance{id: $iid})
+        SET i.privateipaddress = $private_ip, i.publicipaddress = $public_ip
+        WITH a, i
+        UNWIND $enis AS e
+            MERGE (a)-[:RESOURCE]->(eni:NetworkInterface{id: e.id})
+            SET eni.private_ip_address = e.private_ip, eni.public_ip = e.public_ip, eni.ipv6_addresses = []
+            MERGE (i)-[:NETWORK_INTERFACE]->(eni)
+            WITH eni, e
+            MATCH (s:EC2Subnet{subnetid: e.subnet}), (sg:EC2SecurityGroup{id: e.sg})
+            MERGE (eni)-[:PART_OF_SUBNET]->(s)
+            MERGE (eni)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
+        """,
+        account=ENI_ACCOUNT, iid=iid, private_ip=private_ip, public_ip=public_ip,
+        enis=[{'id': e, 'private_ip': p, 'public_ip': pub, 'subnet': s, 'sg': g} for e, p, pub, s, g in enis],
+    )
+
+
+def test_multi_eni_instance_is_evaluated_per_eni(neo4j_session):
+    """
+    Each ENI is walked with its own subnet, SGs and address: a private ENI's open SG must not lend its
+    ports to the public ENI, and an instance-type LB target only reaches the primary ENI.
+    """
+    s = neo4j_session
+    create_test_org_account(s, ENI_WS, ENI_ORG, ENI_ACCOUNT)
+    _subnet(s, 'subnet-eni-pub', igw_v4=True, account=ENI_ACCOUNT)
+    _subnet(s, 'subnet-eni-priv', account=ENI_ACCOUNT)
+    _sg(s, 'sg-eni-web', [('tcp', 443, 443, ['0.0.0.0/0'], [])], account=ENI_ACCOUNT)
+    _sg(s, 'sg-eni-ssh', [('tcp', 22, 22, ['0.0.0.0/0'], [])], account=ENI_ACCOUNT)
+    _sg(s, 'sg-eni-app', [('tcp', 8080, 8080, ['0.0.0.0/0'], [])], account=ENI_ACCOUNT)
+    _multi_eni_instance(
+        s, 'i-multi', '10.5.0.10', '54.1.1.1', [
+            ('eni-multi-0', '10.5.0.10', '54.1.1.1', 'subnet-eni-pub', 'sg-eni-web'),
+            ('eni-multi-1', '10.5.1.10', None, 'subnet-eni-priv', 'sg-eni-ssh'),
+        ],
+    )
+    # Secondary ENI admits 8080, the primary (where an instance target lands) does not.
+    _multi_eni_instance(
+        s, 'i-multi-lb', '10.5.1.20', None, [
+            ('eni-lb-0', '10.5.1.20', None, 'subnet-eni-priv', 'sg-eni-ssh'),
+            ('eni-lb-1', '10.5.1.21', None, 'subnet-eni-priv', 'sg-eni-app'),
+        ],
+    )
+    # No ENI ingested: the instance's own subnet / SG / public IP stand in.
+    _run(
+        s,
+        """
+        MATCH (a:AWSAccount{id: $account}), (sn:EC2Subnet{subnetid: 'subnet-eni-pub'}),
+              (sg:EC2SecurityGroup{id: 'sg-eni-web'})
+        MERGE (a)-[:RESOURCE]->(i:EC2Instance{id: 'i-no-eni'}) SET i.publicipaddress = '54.1.1.3'
+        MERGE (i)-[:PART_OF_SUBNET]->(sn)
+        MERGE (i)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
+        MERGE (a)-[:RESOURCE]->(lb:LoadBalancerV2{id: 'lb-eni'})
+        SET lb.scheme = 'internet-facing', lb.type = 'network', lb.arn = 'arn:lb-eni'
+        MERGE (lb)-[:SUBNET]->(sn)
+        MERGE (l:Endpoint:ELBV2Listener{id: 'lb-eni/443'}) SET l.port = 443, l.protocol = 'TCP'
+        MERGE (lb)-[:ELBV2_LISTENER]->(l)
+        WITH lb
+        MATCH (t:EC2Instance{id: 'i-multi-lb'})
+        MERGE (lb)-[e:EXPOSE]->(t) SET e.port = 8080, e.protocol = 'TCP', e.target_group_arn = 'tg-eni'
+        """,
+        account=ENI_ACCOUNT,
+    )
+    exposure_layers.run(s, exposure_job_parameters(ENI_WS, ENI_ORG, ENI_ACCOUNT, TAG))
+
+    def reach(node_id):
+        p = _props(s, 'EC2Instance', node_id)
+        return p['internet_reachable'], p['internet_reachable_ports'], p['internet_reachable_via']
+
+    assert reach('i-multi') == (True, ['tcp:443-443'], ['direct_ipv4'])
+    assert json.loads(_props(s, 'EC2Instance', 'i-multi')['exposure_paths'])[0]['hops'] == [
+        {'hop': 'route', 'id': 'rtb-subnet-eni-pub', 'rule': '0.0.0.0/0 -> igw-xl'},
+        {'hop': 'security_group', 'id': 'sg-eni-web'},
+    ]
+    assert reach('i-multi-lb') == (False, [], [])
+    assert reach('i-no-eni') == (True, ['tcp:443-443'], ['direct_ipv4'])
+
+
 def test_nacl_loader_shape(neo4j_session):
     create_test_org_account(neo4j_session, 'ws-nacl', 'o-nacl', '999988887777')
     _run(neo4j_session, "MERGE (:AWSVpc{id: $vpc})", vpc=VPC)
