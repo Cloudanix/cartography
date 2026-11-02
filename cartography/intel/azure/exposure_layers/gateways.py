@@ -14,6 +14,7 @@ A WAF in Prevention mode filters requests but closes no port: it is an L3 reason
 from collections import defaultdict
 from dataclasses import dataclass
 from dataclasses import field
+from typing import AbstractSet
 from typing import Callable
 from typing import Dict
 from typing import Iterable
@@ -68,6 +69,7 @@ class Backends:
     world_nsgs: Dict[str, PortSet]
     results: Results
     world_denies: Set[str] = field(default_factory=set)  # NSGs with a deny for internet sources
+    peers: Dict[str, Set[str]] = field(default_factory=dict)  # lowercased VNet id -> Connected peer ids
 
 
 def vnets_of(subnet_ids: Iterable[str]) -> Set[str]:
@@ -82,17 +84,26 @@ def nics_by_ip(nic_rows: List[Dict], label: str) -> Dict[str, List[Tuple[Target,
     return by_ip
 
 
-def resolve_ip(ip: Optional[str], backends: Backends, near_vnets: Set[str]) -> Optional[Target]:
+def peered_vnets(backends: Backends, vnets: Set[str]) -> Set[str]:
+    """VNets the front door's VNets peer with (Connected); empty when peerings were not read."""
+    return {peer for vnet in vnets for peer in backends.peers.get(vnet, ())}
+
+
+def resolve_ip(
+    ip: Optional[str], backends: Backends, near_vnets: Set[str], peered: AbstractSet[str] = frozenset(),
+) -> Optional[Target]:
     """
     The NIC holding a private IP. VNets reuse addresses (10.0.0.4 is the first host of every
-    default subnet), so on a clash keep the NIC in the front door's VNet; still ambiguous = None.
+    default subnet), so on a clash keep the NIC in the front door's VNet, else the one in a VNet
+    it peers with (Azure refuses peering two overlapping VNets, so that is at most one); still
+    ambiguous = None.
 
-    ponytail: VNet peerings are not ingested, so in hub-spoke a spoke NIC whose IP also exists in
-    another spoke stays unresolved. Ingest peerings to keep only peered candidates.
+    ponytail: a single candidate resolves even in an unpeered VNet: transit through a hub NVA /
+    UDR is not modelled, so the forward stays an upper bound.
     """
     candidates = backends.by_ip.get(ip or "", [])
     if len(candidates) > 1:
-        candidates = [c for c in candidates if c[1] & near_vnets]
+        candidates = [c for c in candidates if c[1] & near_vnets] or [c for c in candidates if c[1] & peered]
     return candidates[0][0] if len(candidates) == 1 else None
 
 
@@ -143,7 +154,8 @@ def appgw_targets(rule: Dict, backends: Backends, near_vnets: Set[str]) -> List[
     ipconfigs = rule.get("backend_ip_configuration_ids") or []
     found = [backends.by_ipconfig[c] for c in ipconfigs if c in backends.by_ipconfig]
     found += backends.by_pool.get(rule.get("backend_pool_id") or "", [])
-    resolved = (resolve_ip(ip, backends, near_vnets) for ip in rule.get("backend_ip_addresses") or [])
+    peered = peered_vnets(backends, near_vnets)
+    resolved = (resolve_ip(ip, backends, near_vnets, peered) for ip in rule.get("backend_ip_addresses") or [])
     found += [t for t in resolved if t]
     # ponytail: FQDN backends (App Service, external hosts) are not resolved.
     return sorted({t for t in found if t in backends.members})
@@ -222,7 +234,8 @@ def _dnat(fw: Dict, rule: Dict, nsgs_from: Dict[str, PortSet], backends: Backend
     ponytail: a translated address that is an internal load balancer frontend is not followed to
     the LB backends (the firewall still counts as reachable). Resolve ILB frontend IPs if needed.
     """
-    target = resolve_ip(rule.get("translated_address"), backends, vnets_of(fw["subnets"]))
+    near = vnets_of(fw["subnets"])
+    target = resolve_ip(rule.get("translated_address"), backends, near, peered_vnets(backends, near))
     backend = ports_of(rule.get("protocols"), [rule.get("translated_port")])
     rule_hop = hop(HOP_DNAT_RULE, rule.get("id"), dnat_text(rule))
     entry = {"type": ENTRY_FIREWALL, "id": fw["id"]}
@@ -278,6 +291,18 @@ RETURN n.id AS id, subnets, prefixes, public, public_ips, collect(r {{
     .translated_address, .translated_port
 }}) AS rules
 """
+
+
+# Read from the property, not PEERED_WITH edges: a peer in an unsynced subscription has no node.
+PEERING_QUERY = f"""
+MATCH {SUBSCRIPTION}-[:RESOURCE]->(n:AzureNetwork)
+WHERE n.peered_network_ids IS NOT NULL
+RETURN toLower(n.id) AS id, n.peered_network_ids AS peers
+"""
+
+
+def vnet_peers(rows: List[Dict]) -> Dict[str, Set[str]]:
+    return {r["id"]: set(r["peers"]) for r in rows}
 
 
 def compute(q: Callable[[str], List[Dict]], backends: Backends) -> Results:

@@ -12,6 +12,7 @@ from cartography.intel.azure.exposure_layers.gateways import Backends
 from cartography.intel.azure.exposure_layers.gateways import dnat_from_world
 from cartography.intel.azure.exposure_layers.gateways import firewalls
 from cartography.intel.azure.exposure_layers.gateways import nics_by_ip
+from cartography.intel.azure.exposure_layers.gateways import peered_vnets
 from cartography.intel.azure.exposure_layers.gateways import ports_of
 from cartography.intel.azure.exposure_layers.gateways import resolve_ip
 from cartography.intel.azure.exposure_layers.network import nsg_open
@@ -89,6 +90,26 @@ def test_resolve_ip_prefers_front_door_vnet_and_refuses_ambiguity():
     assert resolve_ip('10.0.0.4', backends, {'vnet-b'}) == (NIC, 'b')
     assert resolve_ip('10.0.0.4', backends, {'vnet-x'}) is None
     assert resolve_ip(None, backends, set()) is None
+
+
+def test_resolve_ip_breaks_ties_with_peered_vnets():
+    # Hub gateway, two spokes reusing 10.1.0.4; the hub peers with spoke-b only.
+    backends = _backends(
+        {}, [('a', '10.1.0.4', 'spoke-a/subnets/s', []), ('b', '10.1.0.4', 'spoke-b/subnets/s', [])],
+    )
+    assert resolve_ip('10.1.0.4', backends, {'hub'}) is None  # peerings unknown: still ambiguous
+    assert resolve_ip('10.1.0.4', backends, {'hub'}, {'spoke-b'}) == (NIC, 'b')
+    # The front door's own VNet wins over a peer.
+    assert resolve_ip('10.1.0.4', backends, {'spoke-a'}, {'spoke-b'}) == (NIC, 'a')
+    # A single candidate resolves even when unpeered: transit through a hub NVA is invisible (upper bound).
+    assert resolve_ip('10.1.0.4', _backends({}, [('a', '10.1.0.4', 'spoke-a/subnets/s', [])]), {'hub'}) == (NIC, 'a')
+
+
+def test_peered_vnets_of_front_door():
+    backends = _backends({})
+    backends.peers = {'hub': {'spoke-b', 'spoke-c'}, 'other': {'spoke-x'}}
+    assert peered_vnets(backends, {'hub'}) == {'spoke-b', 'spoke-c'}
+    assert peered_vnets(backends, {'unknown'}) == set()
 
 
 def _gateway(rules):

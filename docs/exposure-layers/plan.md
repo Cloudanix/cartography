@@ -519,6 +519,17 @@ Rollout (follow-up), read-only and covered by Reader: `application_gateways.list
 `config/list/Action`, returns secrets, and is never called). Until the next network sync no
 front-door paths appear.
 
+VNet peerings (follow-up): `network.get_networks_list` reads `virtual_network_peerings` from the
+`virtual_networks.list_all` response it already makes (no new API call). `AzureNetwork` gains
+`peered_network_ids` (lowercased remote VNet ids, Connected and VNet access not off; null = peering
+list not in the response, never "no peers") and `PEERED_WITH` edges to ingested remote VNets
+(peering id, state, allow VNet access / forwarded traffic / gateway transit, use remote gateways;
+stale edges cleaned by `azure_import_networks_cleanup.json`). A private IP repeated across VNets now
+resolves to the NIC in the front door's VNet, else to the one in a VNet it peers with (Azure refuses
+peering two overlapping VNets, so at most one); a single candidate still resolves unpeered (hub NVA
+transit is not modelled). Rollout: values appear after the next network sync; until then
+resolution behaves as before.
+
 Context (Azure): hops in traffic order. Direct: `public_ip`, `route` (table whose `0.0.0.0/0`
 goes to Internet), `nsg` (subnet, then NIC). LB: `public_ip` (frontend), `listener` (LB / NAT rule,
 `tcp 443 -> 8080`), backend NSGs. App Gateway: `listener` (routing rule, `https 443 -> http 8080`).
@@ -534,7 +545,7 @@ AzureSQLServer / AzureCosmosDBAccount. NSG and route table hop ids are lowercase
 Ceilings: NSG rules aimed at a single destination address are not matched per NIC (upper bound);
 `::/0` treated as IPv4 world; WAF policy mode, v2 TCP/TLS listeners, FQDN backends, IP-group DNAT
 sources, DNAT to an internal LB, cross-subscription or parent firewall policies, Virtual WAN hub
-firewalls not handled; VNet peerings not ingested; one excluded Easy Auth path makes the site
+firewalls not handled; hub NVA / UDR transit between unpeered VNets not modelled; one excluded Easy Auth path makes the site
 `unknown`; UDR `0.0.0.0/0` to an Azure Firewall stays `unknown:udr_default_route_virtualappliance`;
 VM power state ignored; L5 does not resolve SNAT / NAT gateway egress IPs, private
 endpoints or service endpoints.

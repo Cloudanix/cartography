@@ -457,12 +457,13 @@ RETURN n.id AS id, coalesce(n.enablePrivateCluster, false) AS private, coalesce(
 def front_door_backends(
     nic_rows: List[Dict], vmss_rows: List[Dict], index: BackendIndex,
     subnets: Dict[str, SubnetFacts], nsg_rules: Dict[str, List[Dict]], nsgs: Dict[str, PortSet], results: Results,
+    peers: Dict[str, Set[str]],
 ) -> gateways.Backends:
     members = {(NIC, r["id"]): (r["subnets"], r["nsgs"]) for r in nic_rows}
     members.update({(VMSS, r["id"]): (r["subnets"], r["nsgs"]) for r in vmss_rows})
     return gateways.Backends(
         index.by_ipconfig, index.by_pool, gateways.nics_by_ip(nic_rows, NIC), members,
-        subnets, nsg_rules, nsgs, results, world_denies(nsg_rules),
+        subnets, nsg_rules, nsgs, results, world_denies(nsg_rules), peers,
     )
 
 
@@ -475,7 +476,8 @@ def _compute_paths(q: Callable[[str], List[Dict]], subnets: Dict, nsg_rules: Dic
     results: Results = {NIC: nics, VMSS: vmss}
     index = backend_index(nic_rows, vmss_rows, q(_POOL_QUERY))
     results[LB] = load_balancers(q(_LB_QUERY), index, {**nic_gates, **vmss_gates}, results)
-    backends = front_door_backends(nic_rows, vmss_rows, index, subnets, nsg_rules, nsgs, results)
+    peers = gateways.vnet_peers(q(gateways.PEERING_QUERY))
+    backends = front_door_backends(nic_rows, vmss_rows, index, subnets, nsg_rules, nsgs, results, peers)
     results.update(gateways.compute(q, backends))
     results[VM] = union_of(q(_VM_QUERY), "nics", nics)
     return results
