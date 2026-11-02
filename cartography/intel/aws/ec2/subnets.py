@@ -80,11 +80,8 @@ def load_subnets(
     aws_update_tag: int,
 ) -> None:
 
-    ingest_subnets = """
-    UNWIND $DictList as subnet
-    MERGE (snet:EC2Subnet{subnetid: subnet.SubnetId})
-    ON CREATE SET snet.firstseen = timestamp()
-    SET snet.lastupdated = $aws_update_tag, snet.name = subnet.CidrBlock, snet.cidr_block = subnet.CidrBlock,
+    subnet_props = """snet.lastupdated = $aws_update_tag,
+    snet.name = subnet.CidrBlock, snet.cidr_block = subnet.CidrBlock,
     snet.available_ip_address_count = subnet.AvailableIpAddressCount, snet.default_for_az = subnet.DefaultForAz,
     snet.map_customer_owned_ip_on_launch = subnet.MapCustomerOwnedIpOnLaunch,snet.region = subnet.region,
     snet.state = subnet.State, snet.assignipv6addressoncreation = subnet.AssignIpv6AddressOnCreation,
@@ -93,6 +90,22 @@ def load_subnets(
     snet.subnetid = subnet.SubnetId, snet.arn = subnet.SubnetArn, snet.consolelink = subnet.consolelink,
     snet.is_default = subnet.isDefault
     """
+    ingest_subnets = """
+    UNWIND $DictList as subnet
+    MERGE (snet:EC2Subnet{subnetid: subnet.SubnetId})
+    ON CREATE SET snet.firstseen = timestamp()
+    SET """ + subnet_props
+
+    # A subnet shared into this account through RAM belongs to OwnerId, maybe another tenant: create a stub
+    # if the owner is not synced, but never claim it or overwrite the owner's facts (is_default is computed
+    # against this account's default VPC). It still joins its VPC, which this account's instances reach.
+    ingest_shared_subnets = """
+    UNWIND $DictList as subnet
+    MERGE (snet:EC2Subnet{subnetid: subnet.SubnetId})
+    ON CREATE SET snet.firstseen = timestamp(), """ + subnet_props
+
+    owned = [s for s in data if s.get('OwnerId', aws_account_id) == aws_account_id]
+    shared = [s for s in data if s.get('OwnerId', aws_account_id) != aws_account_id]
 
     ingest_subnet_vpc_relations = """
     UNWIND $DictList as subnet
@@ -110,27 +123,21 @@ def load_subnets(
     SET r.lastupdated = $aws_update_tag
     """
 
-    load_graph_data(
-        neo4j_session,
-        ingest_subnets,
-        data,
-        aws_update_tag=aws_update_tag,
-        aws_account_id=aws_account_id,
-    )
-    load_graph_data(
-        neo4j_session,
-        ingest_subnet_vpc_relations,
-        data,
-        aws_update_tag=aws_update_tag,
-        aws_account_id=aws_account_id,
-    )
-    load_graph_data(
-        neo4j_session,
-        ingest_subnet_aws_account_relations,
-        data,
-        aws_update_tag=aws_update_tag,
-        aws_account_id=aws_account_id,
-    )
+    for statement, rows in (
+        (ingest_subnets, owned),
+        (ingest_shared_subnets, shared),
+        (ingest_subnet_vpc_relations, data),
+        (ingest_subnet_aws_account_relations, owned),
+    ):
+        if not rows:
+            continue
+        load_graph_data(
+            neo4j_session,
+            statement,
+            rows,
+            aws_update_tag=aws_update_tag,
+            aws_account_id=aws_account_id,
+        )
 
 
 @timeit

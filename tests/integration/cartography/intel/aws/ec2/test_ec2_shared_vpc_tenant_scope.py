@@ -2,6 +2,7 @@ from importlib.resources import read_text
 
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2 import internet_gateways
+from cartography.intel.aws.ec2 import subnets
 from cartography.intel.aws.ec2 import vpc
 from tests.integration.cartography.intel.aws.common import create_test_org_account
 
@@ -99,3 +100,51 @@ def test_participant_sync_drops_its_old_claims_without_deleting_the_owners_nodes
 
     assert _claims(neo4j_session, 'vpc-sv-2') == {OWNER}
     assert _claims(neo4j_session, 'igw-sv-2') == {OWNER}
+
+
+def _subnet(is_default):
+    return {
+        'SubnetId': 'subnet-sv-1', 'OwnerId': OWNER, 'VpcId': 'vpc-sv-3', 'CidrBlock': '10.3.0.0/24',
+        'SubnetArn': f'arn:aws:ec2:{REGION}:{OWNER}:subnet/subnet-sv-1', 'region': REGION,
+        'isDefault': is_default, 'consolelink': '',
+    }
+
+
+def _subnet_claims(neo4j_session):
+    return {
+        r['id'] for r in neo4j_session.run(
+            "MATCH (a:AWSAccount)-[:RESOURCE]->(:EC2Subnet{subnetid: 'subnet-sv-1'}) RETURN a.id AS id",
+        )
+    }
+
+
+def test_shared_subnet_is_claimed_and_written_by_its_owner_only(neo4j_session):
+    _seed_accounts(neo4j_session)
+    neo4j_session.run(
+        """
+        MATCH (o:AWSAccount{id: $owner}), (p:AWSAccount{id: $participant})
+        MERGE (o)-[:RESOURCE]->(:AWSVpc{id: 'vpc-sv-3'})
+        // the participant's claim from the old loader
+        MERGE (s:EC2Subnet{subnetid: 'subnet-sv-1'})
+        MERGE (p)-[:RESOURCE{lastupdated: 1}]->(s)
+        """,
+        owner=OWNER, participant=PARTICIPANT,
+    )
+    subnets.load_subnets(neo4j_session, [_subnet(True)], OWNER, OWNER_TAG)
+    # The participant sees the subnet, not as part of its own default VPC.
+    subnets.load_subnets(neo4j_session, [_subnet(False)], PARTICIPANT, PARTICIPANT_TAG)
+    GraphJob.run_from_json(
+        neo4j_session, read_text('cartography.data.jobs.cleanup', 'aws_ingest_subnets_cleanup.json'), {
+            'WORKSPACE_ID': 'sv-ws-participant', 'ORGANIZATION_ID': 'sv-ws-participant-org', 'AWS_ID': PARTICIPANT,
+            'UPDATE_TAG': PARTICIPANT_TAG, 'LIMIT_SIZE': 100,
+        },
+    )
+
+    assert _subnet_claims(neo4j_session) == {OWNER}
+    subnet = neo4j_session.run(
+        """
+        MATCH (s:EC2Subnet{subnetid: 'subnet-sv-1'})-[:MEMBER_OF_AWS_VPC]->(:AWSVpc{id: 'vpc-sv-3'})
+        RETURN s.is_default AS is_default, s.lastupdated AS tag
+        """,
+    ).single()
+    assert (subnet['is_default'], subnet['tag']) == (True, OWNER_TAG)
