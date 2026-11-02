@@ -253,7 +253,7 @@ def _attach_tgw_vpc_attachment_to_vpc_subnets(
     SET vpc.lastupdated = $update_tag
 
     WITH vpc
-    MATCH (tgwa:AWSTransitGatewayAttachment {id: $TgwAttachmentId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(tgwa:AWSTransitGatewayAttachment {id: $TgwAttachmentId})
     MERGE (vpc)-[r:RESOURCE]->(tgwa)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -265,7 +265,7 @@ def _attach_tgw_vpc_attachment_to_vpc_subnets(
     SET sub.lastupdated = $update_tag
 
     WITH sub
-    MATCH (tgwa:AWSTransitGatewayAttachment {id: $TgwAttachmentId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(tgwa:AWSTransitGatewayAttachment {id: $TgwAttachmentId})
     MERGE (tgwa)-[p:PART_OF_SUBNET]->(sub)
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = $update_tag
@@ -276,6 +276,7 @@ def _attach_tgw_vpc_attachment_to_vpc_subnets(
         attach_vpc_tgw_attachment_to_vpc,
         VpcId=tgw_vpc_attachment["VpcId"],
         TgwAttachmentId=tgw_vpc_attachment["TransitGatewayAttachmentId"],
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
@@ -285,6 +286,7 @@ def _attach_tgw_vpc_attachment_to_vpc_subnets(
             attach_vpc_tgw_attachment_to_subnet,
             SubnetId=subnet_id,
             TgwAttachmentId=tgw_vpc_attachment["TransitGatewayAttachmentId"],
+            AWS_ACCOUNT_ID=current_aws_account_id,
             update_tag=update_tag,
         )
 
