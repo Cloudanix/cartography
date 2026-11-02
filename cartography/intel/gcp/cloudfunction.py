@@ -253,7 +253,7 @@ def load_function_entity_relation_tx(
     UNWIND $entities AS entity
     """ + ORG_PRINCIPAL_MATCH + """
     WITH DISTINCT principal
-    MATCH (function:GCPFunction{id: $function_id})
+    MATCH (:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(function:GCPFunction{id: $function_id})
     MERGE (principal)-[r:USES]->(function)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag    """
@@ -261,6 +261,7 @@ def load_function_entity_relation_tx(
         ingest_entities,
         function_id=function.get('id', None),
         entities=function.get('entities', []),
+        GCP_PROJECT_ID=common_job_parameters['GCP_PROJECT_ID'],
         WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
         GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
@@ -268,14 +269,16 @@ def load_function_entity_relation_tx(
 
 
 @timeit
-def attach_function_to_binding(session: neo4j.Session, function_id: str, bindings: List[Dict], gcp_update_tag: int) -> None:
-    session.execute_write(attach_function_to_bindings_tx, bindings, function_id, gcp_update_tag)
+def attach_function_to_binding(
+    session: neo4j.Session, function_id: str, bindings: List[Dict], gcp_update_tag: int, project_id: str,
+) -> None:
+    session.execute_write(attach_function_to_bindings_tx, bindings, function_id, gcp_update_tag, project_id)
 
 
 @timeit
 def attach_function_to_bindings_tx(
     tx: neo4j.Transaction, bindings: List[Dict],
-    function_id: str, gcp_update_tag: int,
+    function_id: str, gcp_update_tag: int, project_id: str,
 ) -> None:
 
     query = """
@@ -288,7 +291,7 @@ def attach_function_to_bindings_tx(
         binding.members = record.members,
         binding.role = record.role
     WITH binding
-    MATCH (function:GCPFunction{id: $FunctionId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(function:GCPFunction{id: $FunctionId})
     MERGE (function)-[a:ATTACHED_BINDING]->(binding)
     ON CREATE SET
         a.firstseen = timestamp()
@@ -298,6 +301,7 @@ def attach_function_to_bindings_tx(
         query,
         Records=bindings,
         FunctionId=function_id,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -380,7 +384,7 @@ def sync(
     load_functions(neo4j_session, functions, project_id, gcp_update_tag)
     for func in functions:
         load_function_entity_relation(neo4j_session, func, gcp_update_tag, common_job_parameters)
-        attach_function_to_binding(neo4j_session, func['id'], bindings[func['id']], gcp_update_tag)
+        attach_function_to_binding(neo4j_session, func['id'], bindings[func['id']], gcp_update_tag, project_id)
 
     cleanup_function_policy_bindings(neo4j_session, common_job_parameters)
     cleanup_gcp_functions(neo4j_session, common_job_parameters)
