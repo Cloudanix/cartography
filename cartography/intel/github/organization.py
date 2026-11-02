@@ -13,6 +13,7 @@ from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import fetch_page
 from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_org_node_id
 from cartography.intel.github.util import get_web_base_url
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
@@ -63,7 +64,7 @@ def load_organization(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     query = """
-    MERGE (org:GitHubOrganization{id: $OrgLogin})
+    MERGE (org:GitHubOrganization{id: $OrgNodeId})
     ON CREATE SET org.firstseen = timestamp()
     SET org.username = $OrgLogin,
     org.url = $OrgUrl,
@@ -88,6 +89,7 @@ def load_organization(
     run_write_query(
         neo4j_session,
         query,
+        OrgNodeId=org_data['node_id'],
         OrgLogin=org_data['login'],
         OrgUrl=org_data['url'],
         OrgEmail=org_data['email'],
@@ -126,8 +128,10 @@ def sync(
     # Cartography supports Organizations only. No individual accounts.
     # Handle non-org based ingestion
     if org_data:
+        web_base_url = get_web_base_url(github_url)
+        org_data['node_id'] = get_org_node_id(web_base_url, org_data['login'])
         org_data['consolelink'] = get_console_link(
-            'organization', base_url=get_web_base_url(github_url), owner=org_data.get('login'),
+            'organization', base_url=web_base_url, owner=org_data.get('login'),
         )
         load_organization(neo4j_session, org_data, common_job_parameters)
 

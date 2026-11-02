@@ -455,8 +455,9 @@ def _load_identity_center_account_assignments_tx(
     )
 
     ingest_assignment = """
-                MATCH (p:AWSPermissionSet{id: $permissions_set_id})
-                MATCH (pr:AWSPrincipal{id: $assignment.PrincipalId})
+                MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})
+                    -[:RESOURCE]->(p:AWSPermissionSet{id: $permissions_set_id})
+                MATCH (i)-[:RESOURCE]->(pr:AWSPrincipal{id: $assignment.PrincipalId})
                 WITH p,pr
                 MERGE (p)-[r:ASSIGNED_TO]->(pr)
                 ON CREATE SET
@@ -469,6 +470,7 @@ def _load_identity_center_account_assignments_tx(
         ingest_assignment,
         assignment=assignment,
         permissions_set_id=permissions_set_id,
+        INSTANCE_ARN=instance_arn,
         update_tag=update_tag,
     )
 
@@ -751,16 +753,19 @@ def load_identity_center_group_memberships(
     neo4j_session: neo4j.Session,
     memberships: List[Dict],
     update_tag: int,
+    instance_arn: str,
 ) -> None:
-    neo4j_session.execute_write(_load_identity_center_group_memberships_tx, memberships, update_tag)
+    neo4j_session.execute_write(_load_identity_center_group_memberships_tx, memberships, update_tag, instance_arn)
 
 
 @timeit
-def _load_identity_center_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], update_tag: int) -> None:
+def _load_identity_center_group_memberships_tx(
+    tx: neo4j.Transaction, memberships: List[Dict], update_tag: int, instance_arn: str,
+) -> None:
     ingest_memberships = """
     UNWIND $memberships AS membership
-        MATCH (p:AWSGroup{id: membership.GroupId})
-        MATCH (pr:AWSUser{id: membership.MemberId.UserId})
+        MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})-[:RESOURCE]->(p:AWSGroup{id: membership.GroupId})
+        MATCH (i)-[:RESOURCE]->(pr:AWSUser{id: membership.MemberId.UserId})
         WITH p,pr
         MERGE (pr)-[r:MEMBER_AWS_GROUP]->(p)
         ON CREATE SET
@@ -772,6 +777,7 @@ def _load_identity_center_group_memberships_tx(tx: neo4j.Transaction, membership
     tx.run(
         ingest_memberships,
         memberships=memberships,
+        INSTANCE_ARN=instance_arn,
         update_tag=update_tag,
     )
 
@@ -794,7 +800,7 @@ def sync_identity_center_groups(
         if memberships:
             all_memberships.extend(memberships)
     if all_memberships:
-        load_identity_center_group_memberships(neo4j_session, all_memberships, aws_update_tag)
+        load_identity_center_group_memberships(neo4j_session, all_memberships, aws_update_tag, instance["InstanceArn"])
 
 
 @timeit
@@ -933,7 +939,7 @@ def sync_scoped_groups(
     if scoped_users:
         load_identity_center_users(neo4j_session, instance["InstanceArn"], scoped_users, aws_update_tag)
     if all_memberships:
-        load_identity_center_group_memberships(neo4j_session, all_memberships, aws_update_tag)
+        load_identity_center_group_memberships(neo4j_session, all_memberships, aws_update_tag, instance["InstanceArn"])
 
     logger.info(
         f"IdentityStore: Neo4j write done in {time.perf_counter() - t0:.2f}s",

@@ -112,6 +112,7 @@ def get_instance_ip_addresses(
 def load_instance_ip_addresses(
     neo4j_session: neo4j.Session,
     instance_ips: Dict[str, Dict[str, str]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -119,7 +120,8 @@ def load_instance_ip_addresses(
     """
     update_ips = """
     UNWIND $DictList AS item
-        MATCH (inode:OCIInstance{id: item.instance_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(inode:OCIInstance{id: item.instance_id})
         SET inode.private_ip = item.private_ip,
         inode.public_ip = item.public_ip,
         inode.lastupdated = $oci_update_tag
@@ -136,7 +138,7 @@ def load_instance_ip_addresses(
     for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
             neo4j_session, update_ips, paginated_rows,
-            oci_update_tag=oci_update_tag,
+            TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
         )
 
 
@@ -189,7 +191,7 @@ def load_instances(
         inode.vm_os_version = instance.vm_os_version,
         inode.lastupdated = $oci_update_tag
         WITH inode, instance
-        MATCH (cc:OCICompartment{id: instance.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: instance.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(inode)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -226,7 +228,7 @@ def load_instances(
     for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
             neo4j_session, ingest_instance, paginated_rows,
-            REGION=region, oci_update_tag=oci_update_tag,
+            TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
         )
 
 
@@ -274,7 +276,8 @@ def load_vnic_attachments(
         vnic.nic_index = att.nic_index,
         vnic.lastupdated = $oci_update_tag
         WITH vnic, att
-        MATCH (inode:OCIInstance{id: att.instance_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(inode:OCIInstance{id: att.instance_id})
         MERGE (inode)-[r:OCI_VNIC_ATTACHMENT]->(vnic)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -299,7 +302,7 @@ def load_vnic_attachments(
     for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
             neo4j_session, ingest_vnic_attachment, paginated_rows,
-            oci_update_tag=oci_update_tag,
+            TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
         )
 
 
@@ -349,7 +352,7 @@ def load_images(
         img.consolelink = image.consolelink,
         img.lastupdated = $oci_update_tag
         WITH img, image
-        MATCH (cc:OCICompartment{id: image.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: image.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(img)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -373,7 +376,7 @@ def load_images(
     for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
             neo4j_session, ingest_image, paginated_rows,
-            oci_update_tag=oci_update_tag,
+            TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
         )
 
 
@@ -424,7 +427,8 @@ def load_boot_volume_attachments(
         bva.instance_id = att.instance_id,
         bva.lastupdated = $oci_update_tag
         WITH bva, att
-        MATCH (inode:OCIInstance{id: att.instance_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(inode:OCIInstance{id: att.instance_id})
         MERGE (inode)-[r:OCI_BOOT_VOLUME_ATTACHMENT]->(bva)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -456,7 +460,7 @@ def load_boot_volume_attachments(
     for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
             neo4j_session, ingest_boot_volume_attachment, paginated_rows,
-            oci_update_tag=oci_update_tag,
+            TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
         )
 
 
@@ -504,7 +508,8 @@ def load_volume_attachments(
         va.is_read_only = att.is_read_only,
         va.lastupdated = $oci_update_tag
         WITH va, att
-        MATCH (inode:OCIInstance{id: att.instance_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(inode:OCIInstance{id: att.instance_id})
         MERGE (inode)-[r:OCI_VOLUME_ATTACHMENT]->(va)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -529,7 +534,7 @@ def load_volume_attachments(
     for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
             neo4j_session, ingest_volume_attachment, paginated_rows,
-            oci_update_tag=oci_update_tag,
+            TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
         )
 
 
@@ -629,12 +634,13 @@ def load_boot_volumes(
         bv.consolelink = vol.consolelink,
         bv.lastupdated = $oci_update_tag
         WITH bv, vol
-        MATCH (cc:OCICompartment{id: vol.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: vol.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(bv)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
         WITH bv, vol
-        OPTIONAL MATCH (inode:OCIInstance)-[:OCI_BOOT_VOLUME_ATTACHMENT]->(:OCIBootVolumeAttachment{boot_volume_id: vol.ocid})
+        OPTIONAL MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inode:OCIInstance)
+            -[:OCI_BOOT_VOLUME_ATTACHMENT]->(:OCIBootVolumeAttachment{boot_volume_id: vol.ocid})
         FOREACH (_ IN CASE WHEN inode IS NULL THEN [] ELSE [1] END |
             MERGE (inode)-[ri:OCI_BOOT_VOLUME]->(bv)
             ON CREATE SET ri.firstseen = timestamp()
@@ -664,7 +670,7 @@ def load_boot_volumes(
     for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
             neo4j_session, ingest_boot_volume, paginated_rows,
-            REGION=region, oci_update_tag=oci_update_tag,
+            TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
         )
 
 
@@ -720,12 +726,13 @@ def load_block_volumes(
         bv.consolelink = vol.consolelink,
         bv.lastupdated = $oci_update_tag
         WITH bv, vol
-        MATCH (cc:OCICompartment{id: vol.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: vol.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(bv)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
         WITH bv, vol
-        OPTIONAL MATCH (inode:OCIInstance)-[:OCI_VOLUME_ATTACHMENT]->(:OCIVolumeAttachment{volume_id: vol.ocid})
+        OPTIONAL MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inode:OCIInstance)
+            -[:OCI_VOLUME_ATTACHMENT]->(:OCIVolumeAttachment{volume_id: vol.ocid})
         FOREACH (_ IN CASE WHEN inode IS NULL THEN [] ELSE [1] END |
             MERGE (bv)-[ri:ATTACHED_TO]->(inode)
             ON CREATE SET ri.firstseen = timestamp()
@@ -754,7 +761,7 @@ def load_block_volumes(
     for paginated_rows in batch(rows, size=OCI_COMPUTE_LOAD_BATCH_SIZE):
         load_graph_data(
             neo4j_session, ingest_block_volume, paginated_rows,
-            REGION=region, oci_update_tag=oci_update_tag,
+            TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
         )
 
 
@@ -885,7 +892,7 @@ def sync_vnic_attachments(
     if network_client and all_attachments:
         instance_ips = get_instance_ip_addresses(network_client, all_attachments)
         if instance_ips:
-            load_instance_ip_addresses(neo4j_session, instance_ips, oci_update_tag)
+            load_instance_ip_addresses(neo4j_session, instance_ips, tenancy_id, oci_update_tag)
             logger.info(
                 "Updated IP addresses for %d instances in tenancy '%s'.",
                 len(instance_ips), tenancy_id,
@@ -942,6 +949,7 @@ def sync_volume_attachments(
 
 def _enrich_instances_with_image_os(
     neo4j_session: neo4j.Session,
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -950,13 +958,17 @@ def _enrich_instances_with_image_os(
     Run after both instances and images are loaded.
     """
     enrich_query = """
-    MATCH (inode:OCIInstance)-[:RESOURCE]-(cc:OCICompartment{id: $compartment_id})
+    MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $compartment_id})
+        -[:RESOURCE]->(inode:OCIInstance)
     WHERE inode.image_id IS NOT NULL AND inode.lastupdated = $oci_update_tag
-    MATCH (img:OCIImage{id: inode.image_id})
+    // Platform images are listed by every compartment and linked RESOURCE from it (load_images).
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(img:OCIImage{id: inode.image_id})
     SET inode.vm_os = toLower(coalesce(img.operating_system, 'unknown')),
         inode.vm_os_version = img.operating_system_version
     """
-    neo4j_session.run(enrich_query, compartment_id=compartment_id, oci_update_tag=oci_update_tag)
+    neo4j_session.run(
+        enrich_query, TENANCY_ID=tenancy_id, compartment_id=compartment_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync(
@@ -1021,7 +1033,7 @@ def sync(
         sync_images(neo4j_session, compute, compartments, tenancy_id, oci_update_tag, common_job_parameters, region)
 
         # Enrich instances with OS info from their boot images
-        _enrich_instances_with_image_os(neo4j_session, compartment_ocid, oci_update_tag)
+        _enrich_instances_with_image_os(neo4j_session, tenancy_id, compartment_ocid, oci_update_tag)
 
         # Sync boot volume attachments (links instances to boot volumes)
         sync_boot_volume_attachments(

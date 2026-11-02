@@ -62,19 +62,22 @@ def get_bigquery_dataset(bigquery: Resource, project_id: str, common_job_paramet
 def transform_bigquery_dataset(bigquery: Resource, datasets: List[Dict], project_id: str) -> List[Resource]:
     list_dataset = []
     for dataset in datasets:
-        dataset['id'] = dataset.get('datasetReference', {}).get('datasetId', '')
-        dataset['uniqueId'] = f"projects/{project_id}/datasets/{dataset['id']}"
-        dataset['details'] = get_dataset_info(bigquery, dataset['id'], project_id)
+        # A datasetId is unique only inside its project ("billing_export" exists in many): the node id is the
+        # project-qualified name, the short id stays in `name` and is what the BigQuery API takes.
+        dataset['name'] = dataset.get('datasetReference', {}).get('datasetId', '')
+        dataset['id'] = f"projects/{project_id}/datasets/{dataset['name']}"
+        dataset['uniqueId'] = dataset['id']
+        dataset['details'] = get_dataset_info(bigquery, dataset['name'], project_id)
         dataset['consolelink'] = gcp_console_link.get_console_link(
-            project_id=project_id, resource_name='bigquery_dataset', dataset_id=dataset['id'],
-        ) if dataset['id'] else None
+            project_id=project_id, resource_name='bigquery_dataset', dataset_id=dataset['name'],
+        ) if dataset['name'] else None
         list_dataset.append(dataset)
 
     return list_dataset
 
 
 @timeit
-def get_dataset_info(bigquery, dataset_id, project_id):
+def get_dataset_info(bigquery: Resource, dataset_id: str, project_id: str) -> Dict:
     response = {}
     try:
         response = bigquery.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
@@ -145,14 +148,16 @@ DATASET_ACCESS_MEMBER_FIELDS = ('userByEmail', 'groupByEmail', 'domain', 'specia
 
 
 @timeit
-def attach_dataset_to_accesses(session: neo4j.Session, dataset_id: str, accesses: List[Dict], gcp_update_tag: int) -> None:
-    session.execute_write(attach_dataset_to_accesses_tx, accesses, dataset_id, gcp_update_tag)
+def attach_dataset_to_accesses(
+    session: neo4j.Session, dataset_id: str, accesses: List[Dict], gcp_update_tag: int, project_id: str,
+) -> None:
+    session.execute_write(attach_dataset_to_accesses_tx, accesses, dataset_id, gcp_update_tag, project_id)
 
 
 @timeit
 def attach_dataset_to_accesses_tx(
     tx: neo4j.Transaction, accesses: List[Dict],
-    dataset_id: str, gcp_update_tag: int,
+    dataset_id: str, gcp_update_tag: int, project_id: str,
 ) -> None:
 
     query = """
@@ -166,7 +171,7 @@ def attach_dataset_to_accesses_tx(
         access.iam_member = record.iamMember,
         access.role = record.role
     WITH access
-    MATCH (dataset:GCPBigqueryDataset{id:$DatasetId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(dataset:GCPBigqueryDataset{id:$DatasetId})
     MERGE (dataset)<-[a:APPLIES_TO]-(access)
     ON CREATE SET
         a.firstseen = timestamp()
@@ -176,6 +181,7 @@ def attach_dataset_to_accesses_tx(
         query,
         Records=accesses,
         DatasetId=dataset_id,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -196,7 +202,7 @@ def get_bigquery_tables(bigquery: Resource, dataset: Dict, project_id: str, comm
     """
     try:
         tables = []
-        request = bigquery.tables().list(projectId=project_id, datasetId=dataset['id'], maxResults=5000)
+        request = bigquery.tables().list(projectId=project_id, datasetId=dataset['name'], maxResults=5000)
         while request is not None:
             response = request.execute()
             if 'tables' in response:
@@ -220,20 +226,22 @@ def get_bigquery_tables(bigquery: Resource, dataset: Dict, project_id: str, comm
 def transform_bigquery_tables(bigquery: Resource, dataset: Dict, tables: List, project_id: str) -> List[Resource]:
     list_tables = []
     for table in tables:
-        table['id'] = table.get('tableReference', {}).get('tableId', '')
+        # Keyed under its dataset's node id (projects/{p}/datasets/{d}/tables/{t}); `name` keeps the tableId.
+        table['name'] = table.get('tableReference', {}).get('tableId', '')
         table['datasetId'] = dataset['id']
-        table['uniqueId'] = f"projects/{project_id}/datasets/{dataset['id']}/tables/{table['id']}"
-        table['details'] = get_table_info(bigquery, project_id, dataset['id'], table['id'])
+        table['id'] = f"{dataset['id']}/tables/{table['name']}"
+        table['uniqueId'] = table['id']
+        table['details'] = get_table_info(bigquery, project_id, dataset['name'], table['name'])
         table['consolelink'] = gcp_console_link.get_console_link(
-            project_id=project_id, resource_name='bigquery_table', dataset_id=dataset['id'], table_id=table['id'],
-        ) if dataset['id'] and table['id'] else None
+            project_id=project_id, resource_name='bigquery_table', dataset_id=dataset['name'], table_id=table['name'],
+        ) if dataset['name'] and table['name'] else None
         list_tables.append(table)
 
     return list_tables
 
 
 @timeit
-def get_table_info(bigquery, project_id, dataset_id, table_id):
+def get_table_info(bigquery: Resource, project_id: str, dataset_id: str, table_id: str) -> Dict:
     response = {}
     try:
         response = bigquery.tables().get(projectId=project_id, datasetId=dataset_id, tableId=table_id).execute()
@@ -270,7 +278,8 @@ def load_bigquery_datasets_tx(
         dataset.firstseen = timestamp()
     SET
         dataset.lastseen = $gcp_update_tag,
-        dataset.name = d.id,
+        dataset.lastupdated = $gcp_update_tag,
+        dataset.name = d.name,
         dataset.uniqueId = d.uniqueId,
         dataset.consolelink = d.consolelink,
         dataset.friendlyName = d.details.friendlyName,
@@ -312,7 +321,8 @@ def load_bigquery_tables_tx(
         table.firstseen = timestamp()
     SET
         table.lastseen = $gcp_update_tag,
-        table.name = t.id,
+        table.lastupdated = $gcp_update_tag,
+        table.name = t.name,
         table.uniqueId = t.uniqueId,
         table.consolelink = t.consolelink,
         table.friendlyName = t.details.friendlyName,
@@ -321,7 +331,7 @@ def load_bigquery_tables_tx(
         table.numLongTermBytes = t.details.numLongTermBytes,
         table.numRows = t.details.numRows
     WITH table, t
-    MATCH (dataset:GCPBigqueryDataset{id:t.datasetId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(dataset:GCPBigqueryDataset{id:t.datasetId})
     MERGE (dataset)-[r:HAS_TABLE]->(table)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -404,7 +414,7 @@ def sync(
     bigquery_datasets = transform_bigquery_dataset(bigquery, datasets, project_id)
     # Read access entries first so iam_policy_status lands with the dataset; the access cleanup keeps an
     # unresolved dataset's last-read entries.
-    accesses = {d['id']: get_dataset_access_info(bigquery, d['id'], project_id) for d in bigquery_datasets}
+    accesses = {d['id']: get_dataset_access_info(bigquery, d['name'], project_id) for d in bigquery_datasets}
     for dataset in bigquery_datasets:
         dataset['iam_policy_status'] = POLICY_UNRESOLVED if accesses[dataset['id']] is None else POLICY_RESOLVED
     load_bigquery_datasets(neo4j_session, bigquery_datasets, project_id, gcp_update_tag)
@@ -412,8 +422,9 @@ def sync(
 
     # BIGQUERY TABLES
     for dataset in bigquery_datasets:
-        accesses_list = transform_dataset_accesses(accesses[dataset['id']] or [], dataset['id'], project_id)
-        attach_dataset_to_accesses(neo4j_session, dataset['id'], accesses_list, gcp_update_tag)
+        # GCPAcl ids already carry the project (projects/{p}/bigquery/{d}/role/...): built from the short id, unchanged.
+        accesses_list = transform_dataset_accesses(accesses[dataset['id']] or [], dataset['name'], project_id)
+        attach_dataset_to_accesses(neo4j_session, dataset['id'], accesses_list, gcp_update_tag, project_id)
         tables = get_bigquery_tables(bigquery, dataset, project_id, common_job_parameters)
         bigquery_tables = transform_bigquery_tables(bigquery, dataset, tables, project_id)
         load_bigquery_tables(neo4j_session, bigquery_tables, project_id, gcp_update_tag)

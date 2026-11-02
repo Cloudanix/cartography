@@ -137,17 +137,20 @@ def load_sqs_queues(
         aws_update_tag=aws_update_tag,
     )
 
-    _attach_dead_letter_queues(neo4j_session, dead_letter_queues, aws_update_tag)
+    _attach_dead_letter_queues(neo4j_session, dead_letter_queues, current_aws_account_id, aws_update_tag)
 
 
 @timeit
-def _attach_dead_letter_queues(neo4j_session: neo4j.Session, data: List[Dict[str, str]], aws_update_tag: int) -> None:
+def _attach_dead_letter_queues(
+    neo4j_session: neo4j.Session, data: List[Dict[str, str]], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
-    Attach deadletter queues to their queues.
+    Attach deadletter queues to their queues. A dead-letter queue is in its source queue's account and region.
     """
     attach_deadletter_to_queue = """
     UNWIND $DictList as relation
-        MATCH (queue:SQSQueue{id: relation.arn}), (deadletter:SQSQueue{id: relation.dead_letter_arn})
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(queue:SQSQueue{id: relation.arn})
+        MATCH (aa)-[:RESOURCE]->(deadletter:SQSQueue{id: relation.dead_letter_arn})
         MERGE (queue)-[r:HAS_DEADLETTER_QUEUE]->(deadletter)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -156,6 +159,7 @@ def _attach_dead_letter_queues(neo4j_session: neo4j.Session, data: List[Dict[str
         neo4j_session,
         attach_deadletter_to_queue,
         data,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 

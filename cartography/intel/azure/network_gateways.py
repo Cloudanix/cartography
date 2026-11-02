@@ -283,7 +283,7 @@ SET r.lastupdated = $update_tag
 
 _RULES_QUERY = """
 UNWIND $rows AS row
-MATCH (n:{label}{{id: row.id}})
+MATCH (:AzureSubscription{{id: $subscription_id}})-[:RESOURCE]->(n:{label}{{id: row.id}})
 UNWIND row.rules AS rule
 MERGE (r:{rule_label}{{id: rule.id}})
 ON CREATE SET r.firstseen = timestamp()
@@ -295,19 +295,21 @@ SET rel.lastupdated = $update_tag
 
 _LINK_QUERY = """
 UNWIND $rows AS row
-MATCH (n:{label}{{id: row.id}})
+MATCH (:AzureSubscription{{id: $subscription_id}})-[:RESOURCE]->(n:{label}{{id: row.id}})
 UNWIND row.{key} AS target_id
-MATCH (t:{target}{{id: target_id}})
+MATCH {target}
 MERGE (n)-[r:{rel}]->(t)
 ON CREATE SET r.firstseen = timestamp()
 SET r.lastupdated = $update_tag
 """
 
+# A backend NIC may sit in a peered VNet of another subscription of the same customer: anchor it on the workspace.
 _BACKEND_NIC_QUERY = f"""
 UNWIND $rows AS row
-MATCH (n:{APP_GATEWAY}{{id: row.id}})
+MATCH (:AzureSubscription{{id: $subscription_id}})-[:RESOURCE]->(n:{APP_GATEWAY}{{id: row.id}})
 UNWIND row.backend_ip_configuration_ids AS ipc_id
-MATCH (:AzureNetworkInterfaceIPConfiguration{{id: ipc_id}})<-[:CONTAINS]-(nic:AzureNetworkInterface)
+MATCH (:CloudanixWorkspace{{id: $WORKSPACE_ID}})-[:OWNER]->(:AzureTenant)-[:RESOURCE]->(:AzureSubscription)
+    -[:RESOURCE]->(nic:AzureNetworkInterface)-[:CONTAINS]->(:AzureNetworkInterfaceIPConfiguration{{id: ipc_id}})
 MERGE (nic)-[r:CONNECTED_TO]->(n)
 ON CREATE SET r.firstseen = timestamp()
 SET r.lastupdated = $update_tag
@@ -315,31 +317,55 @@ SET r.lastupdated = $update_tag
 
 # Transform keys that become relationships, not node properties.
 _LINK_KEYS = ("rules", "subnet_ids", "public_ip_ids", "backend_ip_configuration_ids")
-# (transform key, relationship, target label) shared by gateways and firewalls.
+# (transform key, relationship, target pattern binding t) shared by gateways and firewalls. A gateway / firewall
+# lives in a subnet of its own subscription's VNet; its public IPs may belong to another subscription of the same
+# customer, so those anchor on the workspace.
 _LINKS = (
-    ("subnet_ids", "SUBNET", "AzureNetworkSubnet"),
-    ("public_ip_ids", "MEMBER_PUBLIC_IP_ADDRESS", "AzurePublicIPAddress"),
+    (
+        "subnet_ids", "SUBNET",
+        "(:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureNetwork)-[:CONTAIN]->"
+        "(t:AzureNetworkSubnet{id: target_id})",
+    ),
+    (
+        "public_ip_ids", "MEMBER_PUBLIC_IP_ADDRESS",
+        "(:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AzureTenant)-[:RESOURCE]->(:AzureSubscription)"
+        "-[:RESOURCE]->(t:AzurePublicIPAddress{id: target_id})",
+    ),
 )
 
 
 def _load_tx(
-    tx: neo4j.Transaction, label: str, rule_label: str, rows: List[Dict], subscription_id: str, update_tag: int,
+    tx: neo4j.Transaction, label: str, rule_label: str, rows: List[Dict], subscription_id: str, workspace_id: str,
+    update_tag: int,
 ) -> None:
-    """Labels are module constants, never input, so formatting them into Cypher is safe."""
+    """Labels and link patterns are module constants, never input, so formatting them into Cypher is safe."""
     node_rows = [{"id": r["id"], "props": {k: v for k, v in r.items() if k not in _LINK_KEYS}} for r in rows]
     tx.run(_NODE_QUERY.format(label=label), rows=node_rows, subscription_id=subscription_id, update_tag=update_tag)
-    tx.run(_RULES_QUERY.format(label=label, rule_label=rule_label), rows=rows, update_tag=update_tag)
+    tx.run(
+        _RULES_QUERY.format(label=label, rule_label=rule_label), rows=rows, subscription_id=subscription_id,
+        update_tag=update_tag,
+    )
     for key, rel, target in _LINKS:
-        tx.run(_LINK_QUERY.format(label=label, key=key, rel=rel, target=target), rows=rows, update_tag=update_tag)
+        tx.run(
+            _LINK_QUERY.format(label=label, key=key, rel=rel, target=target), rows=rows,
+            subscription_id=subscription_id, WORKSPACE_ID=workspace_id, update_tag=update_tag,
+        )
 
 
-def load_application_gateways(session: neo4j.Session, subscription_id: str, rows: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_tx, APP_GATEWAY, APP_GATEWAY_RULE, rows, subscription_id, update_tag)
-    session.run(_BACKEND_NIC_QUERY, rows=rows, update_tag=update_tag).consume()
+def load_application_gateways(
+    session: neo4j.Session, subscription_id: str, workspace_id: str, rows: List[Dict], update_tag: int,
+) -> None:
+    session.execute_write(_load_tx, APP_GATEWAY, APP_GATEWAY_RULE, rows, subscription_id, workspace_id, update_tag)
+    session.run(
+        _BACKEND_NIC_QUERY, rows=rows, subscription_id=subscription_id, WORKSPACE_ID=workspace_id,
+        update_tag=update_tag,
+    ).consume()
 
 
-def load_firewalls(session: neo4j.Session, subscription_id: str, rows: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_tx, FIREWALL, FIREWALL_NAT_RULE, rows, subscription_id, update_tag)
+def load_firewalls(
+    session: neo4j.Session, subscription_id: str, workspace_id: str, rows: List[Dict], update_tag: int,
+) -> None:
+    session.execute_write(_load_tx, FIREWALL, FIREWALL_NAT_RULE, rows, subscription_id, workspace_id, update_tag)
 
 
 @timeit
@@ -347,9 +373,10 @@ def sync(
     neo4j_session: neo4j.Session, client: NetworkManagementClient, subscription_id: str, update_tag: int,
     common_job_parameters: Dict, regions: Optional[list],
 ) -> None:
+    workspace_id = common_job_parameters['WORKSPACE_ID']
     gateways = get_application_gateways(client, regions, common_job_parameters)
-    load_application_gateways(neo4j_session, subscription_id, gateways, update_tag)
+    load_application_gateways(neo4j_session, subscription_id, workspace_id, gateways, update_tag)
     run_cleanup_job("azure_import_application_gateways_cleanup.json", neo4j_session, common_job_parameters)
     firewalls = get_firewalls(client, subscription_id, regions, common_job_parameters)
-    load_firewalls(neo4j_session, subscription_id, firewalls, update_tag)
+    load_firewalls(neo4j_session, subscription_id, workspace_id, firewalls, update_tag)
     run_cleanup_job("azure_import_azure_firewalls_cleanup.json", neo4j_session, common_job_parameters)

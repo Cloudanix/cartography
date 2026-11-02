@@ -373,8 +373,16 @@ service), `no_listener`. L5 summaries on every EC2Instance (`admitted_by` = stor
 on RDSInstance / RedshiftCluster / ElasticacheCluster. A blocker is recorded only when a stage stops
 every port that reached it.
 
-Known ceilings (each marked `ponytail:` in code): multi-ENI instances are unioned; LB target
-admission accepts any source, not only the LB; LB auth requires every listener to authenticate,
+EC2 instances are evaluated per ENI: each ENI is walked with its own subnet, SGs and addresses, and
+the instance gets the union of the per-ENI results. The instance's public IP belongs to the ENI
+holding its primary private IP, and instance-type LB targets are checked against that ENI's SGs.
+ENIs without subnet / SG rels fall back to the instance's own; an instance without ENIs is one
+attachment.
+
+Known ceilings (each marked `ponytail:` in code): when no ENI holds the instance's primary private
+IP (partial ENI data), every ENI is a primary candidate; two public ENIs share one `direct_*` path;
+IP-type LB targets are not modelled (no EXPOSE edge); LB target admission accepts any source, not
+only the LB; LB auth requires every listener to authenticate,
 even unreachable ones; Redis RBAC and classic-ELB targets are not evaluated; Redshift / EMR subnets
 are not ingested, so route and NACL checks are skipped for them (SG verdict kept). L5: IPv4 only;
 NACLs between subnets and longest-prefix route match not evaluated; TGW route tables not ingested
@@ -432,7 +440,7 @@ Runs in `start_gcp_ingestion` after `gcp_storage_bucket_policy_analysis.json`, p
 | L1/L2 | GCPInstance (external IPv4 / IPv6, default route to `default-internet-gateway`, firewall), instances behind external LBs, GCPForwardingRule, GCPBackendService, GKECluster, GCPSQLInstance, GCPFunction, GCPCloudRunService (ingress all, or a load-balancer ingress behind a serverless NEG of a reachable backend service; unresolved when no serverless NEG is ingested in the service's region; zonal NEGs survive a failed regional list), GCPBucket, GCPBigqueryDataset |
 | L3 | `allUsers` / `allAuthenticatedUsers` on buckets, datasets, invokers = none; IAP backends, Cloud SQL, GKE = required; instances, forwarding rules, unread Cloud Run policy = unknown |
 | L4 | GKE master, Cloud SQL `databaseVersion` (`mysql@8.0`), Functions runtime (`python@3.12`), instance OS from boot image / license name (`image_name`) |
-| L5 | GCPInstance -[:CAN_NETWORK_REACH]-> GCPSQLInstance (private IP, same VPC) and -> GCPInstance (firewall source tag / SA) |
+| L5 | GCPInstance -[:CAN_NETWORK_REACH]-> GCPSQLInstance (private IP, same VPC) and -> GCPInstance (firewall source tag / SA, or internal source range holding the source's NIC IP) |
 
 Firewall: first match by priority, deny wins a tie, implied deny last; targets match by tag or SA.
 Proxy LBs need the Google front-end ranges (130.211.0.0/22, 35.191.0.0/16) admitted on the backend's
@@ -450,7 +458,11 @@ GCPFirewallPolicyRule`; `GCPVpc.network_firewall_policy_enforcement_order` from 
 and L5 follow Cloud NGFW order: org policy, folder policies, then VPC rules and the network policy in
 the network's enforcement order (default AFTER_CLASSIC_FIREWALL), then implied deny; allow / deny end
 evaluation, `goto_next` or no match falls to the next level (core `rules.tiered_open`). GFE /
-health-check traffic is non-internet context. Policies only narrow L5 edges, never add them.
+health-check traffic is non-internet context. Policies only narrow L5 edges, never add them. An L5
+instance edge is evaluated with every source that holds the source instance (tags, SAs, its internal
+IP in a range, 0.0.0.0/0), so any higher-priority deny cuts it; it keeps only the ports a lateral VPC
+allow admits (identity rule: `via firewall_source_tag_or_sa`, wins; non-world source range holding
+the per-NIC internal IP: `via cidr`).
 Rollout: `compute.networks.getEffectiveFirewalls` (in `roles/viewer`, `roles/compute.viewer`,
 `roles/compute.networkViewer`; not in `roles/iam.securityReviewer`). A refused or failed call leaves
 the network on VPC rules only, never "unreachable". Not yet tested with a project-only credential
@@ -463,7 +475,8 @@ default-internet-gateway`), then the world-sourced allows overlapping the opened
 `target_group`; managed services one `service` hop with the deciding setting. Blockers:
 `no_internet_route` (route), `denied` (firewall_policy with detail = policy type, or firewall =
 VPC rule), `not_allowed` (firewall = implied deny; service = narrow authorized networks / internal
-ingress). L5 summaries on every GCPInstance (`admitted_by` = identity allow rule), reverse counts on
+ingress). L5 summaries on every GCPInstance list data stores only (GCPSQLInstance; instance -> instance
+edges stay edges, `admitted_by` on them = identity or source-range allow rule), reverse counts on
 GCPSQLInstance and GCPInstance. Admitting-rule hops are candidates (a shadowed allow is listed too).
 
 Ceilings: regional network firewall policies (need a per-region, per-network call); secure tag
@@ -471,8 +484,10 @@ bindings not ingested (tag-targeted allow / goto_next applies, deny does not); d
 threat-list and address-group sources never count as the whole internet; `apply_security_profile_group`
 counted as allow; hierarchy order taken from response order; only `/0` routes compared;
 unmanaged instance group members; regional external Application LBs (proxy-only subnet source) read
-as unreachable; multi-NIC unioned; L5 skips CIDR-sourced internal rules (`default-allow-internal`
-would link every pair).
+as unreachable; multi-NIC unioned. L5 instance edges are O(instances^2) per network with a lateral
+allow (`default-allow-internal` links every pair; prod max 273 instances = 74k pairs, 2026-11-02);
+world-sourced allows alone add no edge (L2 reports them); egress rules, peering and Shared VPC targets
+in other projects not walked.
 
 ### 10.5 Azure (done)
 
@@ -519,6 +534,26 @@ Rollout (follow-up), read-only and covered by Reader: `application_gateways.list
 `config/list/Action`, returns secrets, and is never called). Until the next network sync no
 front-door paths appear.
 
+VNet peerings (follow-up): `network.get_networks_list` reads `virtual_network_peerings` from the
+`virtual_networks.list_all` response it already makes (no new API call). `AzureNetwork` gains
+`peered_network_ids` (lowercased remote VNet ids, Connected and VNet access not off; null = peering
+list not in the response, never "no peers") and `PEERED_WITH` edges to ingested remote VNets
+(peering id, state, allow VNet access / forwarded traffic / gateway transit, use remote gateways;
+stale edges cleaned by `azure_import_networks_cleanup.json`). A private IP repeated across VNets now
+resolves to the NIC in the front door's VNet, else to the one in a VNet it peers with (Azure refuses
+peering two overlapping VNets, so at most one); a single candidate still resolves unpeered (hub NVA
+transit is not modelled). Rollout: values appear after the next network sync; until then
+resolution behaves as before.
+
+FQDN backends (follow-up): an App Gateway backend FQDN (`backend_fqdns`) or a DNAT
+`translated_fqdn` that equals a web / function app's `default_host_name` or one of its
+`enabled_host_names` (new property, same `web_apps.list` response; host names disabled = no
+match) gives that `AzureFunctionApp` a path via `appgw:<id>` / `azure_firewall_dnat:<id>` on the
+backend port, hops listener (or firewall + DNAT rule) then `service`. Match is case-insensitive,
+trailing dot ignored, no DNS lookups. The app's access restrictions are not checked against the
+front door's address (they usually admit it: upper bound); external hosts and apps in other
+subscriptions stay unresolved. A private-endpoint-only app behind a gateway now reads reachable.
+
 Context (Azure): hops in traffic order. Direct: `public_ip`, `route` (table whose `0.0.0.0/0`
 goes to Internet), `nsg` (subnet, then NIC). LB: `public_ip` (frontend), `listener` (LB / NAT rule,
 `tcp 443 -> 8080`), backend NSGs. App Gateway: `listener` (routing rule, `https 443 -> http 8080`).
@@ -532,9 +567,9 @@ Firewall: `firewall`, `dnat_rule` (`Any -> <dest>:<port> => <ip>:<port>`). PaaS:
 AzureSQLServer / AzureCosmosDBAccount. NSG and route table hop ids are lowercased.
 
 Ceilings: NSG rules aimed at a single destination address are not matched per NIC (upper bound);
-`::/0` treated as IPv4 world; WAF policy mode, v2 TCP/TLS listeners, FQDN backends, IP-group DNAT
+`::/0` treated as IPv4 world; WAF policy mode, v2 TCP/TLS listeners, external FQDN backends, IP-group DNAT
 sources, DNAT to an internal LB, cross-subscription or parent firewall policies, Virtual WAN hub
-firewalls not handled; VNet peerings not ingested; one excluded Easy Auth path makes the site
+firewalls not handled; hub NVA / UDR transit between unpeered VNets not modelled; one excluded Easy Auth path makes the site
 `unknown`; UDR `0.0.0.0/0` to an Azure Firewall stays `unknown:udr_default_route_virtualappliance`;
 VM power state ignored; L5 does not resolve SNAT / NAT gateway egress IPs, private
 endpoints or service endpoints.

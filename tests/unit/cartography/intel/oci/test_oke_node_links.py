@@ -18,7 +18,7 @@ def test_load_node_pools_stores_worker_ids_without_linking_instances():
     session = MagicMock()
     pools = [{"id": "pool-1", "ocid": "pool-1", "cluster_id": "cl-1", "nodes": [{"ocid": "inst-1"}]}]
 
-    oke.load_node_pools(session, pools, "comp-1", 42)
+    oke.load_node_pools(session, pools, "tenancy-1", "comp-1", 42)
 
     # one batched write for the pools; instance links wait for sync_oke_node_links
     session.execute_write.assert_called_once()
@@ -34,7 +34,8 @@ def test_link_oke_nodes_is_scoped_to_workspace_and_tenancy():
 
     call = _run_captured_write(session)
     query = call.args[0]
-    assert "(:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})" in query
+    assert "(:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(t:OCITenancy{id: $OCI_TENANCY_ID})" in query
+    assert "MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(i:OCIInstance{id: node_id})" in query
     assert "-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(np:OCIOKENodePool)" in query
     assert "MERGE (np)-[r:HAS_NODE]->(i)" in query
     assert "MATCH (cl:OCIOKECluster)-[:HAS_NODE_POOL]->(np)" in query

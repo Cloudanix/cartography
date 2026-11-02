@@ -72,7 +72,7 @@ def _firewall(project, name, network, priority=1000, ranges=('0.0.0.0/0',), allo
 def _load_firewalls(session, project, items):
     response = {'id': f'projects/{project}/global/firewalls', 'items': items}
     fws = cartography.intel.gcp.compute.transform_gcp_firewall(response)
-    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(session, fws, TAG)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(session, fws, TAG, project)
 
 
 def _load_routes(session, project):
@@ -118,7 +118,19 @@ def _load_instances(session, items):
     # Console links are not under test; older cloudconsolelink builds lack the compute_image kwargs.
     with patch.object(cartography.intel.gcp.compute.gcp_console_link, 'get_console_link', return_value='link'):
         instances = cartography.intel.gcp.compute.transform_gcp_instances(items, None)
-    cartography.intel.gcp.compute.load_gcp_instances(session, instances, TAG)
+    # One load per project, as each project's sync does.
+    for ws, org, project in ((WS, ORG, PROJECT), (OTHER_WS, OTHER_ORG, OTHER_PROJECT)):
+        own = [i for i in instances if i['project_id'] == project]
+        # The iam sync loads the project's service accounts; an instance links only to a loaded one.
+        _run(
+            session,
+            "MATCH (p:GCPProject{id: $p}) UNWIND $emails AS e "
+            "MERGE (p)-[:RESOURCE]->(:GCPServiceAccount{id: e, email: e})",
+            p=project, emails=[sa['email'] for i in own for sa in i.get('serviceAccounts', [])],
+        )
+        cartography.intel.gcp.compute.load_gcp_instances(
+            session, own, TAG, {**PARAMS, 'WORKSPACE_ID': ws, 'GCP_ORGANIZATION_ID': org, 'GCP_PROJECT_ID': project},
+        )
 
 
 def _load_https_lb(session):
@@ -136,7 +148,7 @@ def _load_https_lb(session):
     }
     rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
     cartography.intel.gcp.compute.resolve_external_lb_backends(client, rules)
-    cartography.intel.gcp.compute.load_gcp_forwarding_rules(session, rules, TAG)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(session, rules, TAG, PROJECT)
     cartography.intel.gcp.loadbalancer.load_url_maps(
         session, [{
             'id': f'projects/{PROJECT}/global/urlmaps/web', 'name': 'web',
@@ -179,7 +191,7 @@ def _load_https_lb(session):
         session, [{'id': mig_id, 'name': 'web-mig', 'instance_group': f'{ZONE}/instanceGroups/web-mig'}], PROJECT, TAG,
     )
     ig._load_vm_to_mig_part_of_relationships(
-        session, [{'vm_self_link': f'{API}/{ZONE}/instances/lb-backend', 'mig_id': mig_id}], TAG,
+        session, [{'vm_self_link': f'{API}/{ZONE}/instances/lb-backend', 'mig_id': mig_id}], TAG, PROJECT,
     )
 
 
@@ -371,7 +383,11 @@ def test_gcp_exposure_layers_end_to_end(neo4j_session):
     assert edges[('app', 'db')] == (['tcp:5432-5432'], 'firewall_source_tag_or_sa')
     main_vms = {'open', 'rfc1918', 'locked', 'tie', 'lb-backend', 'db', 'app'}
     assert {src for src, dst in edges if dst == 'sql-pg'} == main_vms
-    assert len(edges) == len(main_vms) + 1
+    # internal-ssh (10.0.0.0/8, tcp:22, target rfc1918) admits every main VM by its internal address.
+    to_rfc1918 = {src: edge for (src, dst), edge in edges.items() if dst == 'rfc1918'}
+    assert set(to_rfc1918) == main_vms - {'rfc1918'}
+    assert all(edge == (['tcp:22-22'], 'cidr') for edge in to_rfc1918.values())
+    assert len(edges) == len(main_vms) + 1 + len(to_rfc1918)
 
     other = _props(s, 'other-open')
     assert 'internet_reachable' not in other and 'access_auth' not in other
@@ -423,12 +439,9 @@ def test_gcp_exposure_context_paths_blockers_and_summaries(neo4j_session):
     assert _json(_props(s, FR_ID, 'GCPForwardingRule', 'id'), 'exposure_paths')[0]['hops'] == [listener]
 
     app = _props(s, 'app')
-    assert app['network_reachable_data_store_count'] == 2
+    # Data stores only: the app -> db and app -> rfc1918 VM edges exist but are not listed here.
+    assert app['network_reachable_data_store_count'] == 1
     assert _json(app, 'network_reachable_data_stores') == [
-        {
-            'id': f'{ZONE}/instances/db', 'type': 'GCPInstance', 'ports': ['tcp:5432-5432'],
-            'via': 'firewall_source_tag_or_sa', 'admitted_by': 'db-from-app',
-        },
         {'id': 'sql-pg', 'type': 'GCPSQLInstance', 'ports': ['tcp:5432-5432'], 'via': 'private_service_access'},
     ]
     assert _props(s, 'noroute')['network_reachable_data_store_count'] == 0

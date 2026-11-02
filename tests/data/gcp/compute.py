@@ -241,8 +241,8 @@ TRANSFORMED_GCP_VPCS = [{
 }]
 
 TRANSFORMED_GCP_SUBNETS = [{
-    'id': 'projects/project-abc/regions/europe-west2/subnetworks/default',
-    'partial_uri': 'projects/project-abc/regions/europe-west2/subnetworks/default',
+    'id': 'projects/project-abc/locations/europe-west2/subnetworks/default',
+    'partial_uri': 'projects/project-abc/locations/europe-west2/subnetworks/default',
     'name': 'default',
     'vpc_self_link': 'https://www.googleapis.com/compute/v1/projects/project-abc/global/networks/default',
     'vpc_partial_uri': 'projects/project-abc/global/networks/default',
@@ -305,7 +305,7 @@ TRANSFORMED_GCP_INSTANCES = [
             'vpc_partial_uri': 'projects/project-abc/global/networks/default',
             'networkIP': '10.0.0.2',
             'subnetwork': 'https://www.googleapis.com/compute/v1/projects/project-abc/regions/europe-west2/subnetworks/default',
-            'subnet_partial_uri': 'projects/project-abc/regions/europe-west2/subnetworks/default',
+            'subnet_partial_uri': 'projects/project-abc/locations/europe-west2/subnetworks/default',
         }],
         'scheduling': {
             'automaticRestart': True,
@@ -381,7 +381,7 @@ TRANSFORMED_GCP_INSTANCES = [
             'vpc_partial_uri': 'projects/project-abc/global/networks/default',
             'networkIP': '10.0.0.3',
             'subnetwork': 'https://www.googleapis.com/compute/v1/projects/project-abc/regions/europe-west2/subnetworks/default',
-            'subnet_partial_uri': 'projects/project-abc/regions/europe-west2/subnetworks/default',
+            'subnet_partial_uri': 'projects/project-abc/locations/europe-west2/subnetworks/default',
         }],
         'scheduling': {
             'automaticRestart': True,

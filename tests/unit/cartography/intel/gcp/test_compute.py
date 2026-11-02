@@ -48,6 +48,22 @@ def test_parse_compute_full_uri_to_partial_uri():
         'projects/project-abc/global/networks/default'
 
 
+def test_gcp_subnet_id_is_the_subnet_loader_key(mocker):
+    gcp_subnet_id = cartography.intel.gcp.compute._gcp_subnet_id
+    self_link = VPC_SUBNET_RESPONSE['items'][0]['selfLink']
+    mocker.patch.object(cartography.intel.gcp.compute, 'get_default_vpc', return_value=None)
+    loaded = cartography.intel.gcp.compute.transform_gcp_subnets(VPC_SUBNET_RESPONSE, 'project-abc', None)[0]
+
+    # A NIC / forwarding rule self-link resolves to the id the subnet loader writes.
+    assert gcp_subnet_id(self_link) == loaded['id'] == 'projects/project-abc/locations/europe-west2/subnetworks/default'
+    assert gcp_subnet_id('projects/host/regions/us-east1/subnetworks/shared') == \
+        'projects/host/locations/us-east1/subnetworks/shared'
+    # Already a subnet id, or not a regional subnetwork: the partial URI, unchanged.
+    assert gcp_subnet_id(loaded['id']) == loaded['id']
+    assert gcp_subnet_id('https://www.googleapis.com/compute/v1/projects/p/global/networks/n') == \
+        'projects/p/global/networks/n'
+
+
 def test_transform_gcp_firewall():
     fw_list = cartography.intel.gcp.compute.transform_gcp_firewall(LIST_FIREWALLS_RESPONSE)
 

@@ -21,6 +21,7 @@ from . import repos
 from .resources import RESOURCE_FUNCTIONS
 from .util import call_azure_devops_api
 from .util import get_access_token
+from .util import get_org_node_id
 from cartography.config import Config
 from cartography.graph.session import Session
 from cartography.util import timeit
@@ -278,13 +279,18 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
                 continue
 
             logger.info(f"Starting sync for organization: {org['name']}")
+            # Loaders and cleanups anchor on the org's graph id (host-qualified off dev.azure.com); a copy, so the
+            # account_id filter above still compares names for the next configured org.
+            org_job_parameters = {
+                **common_job_parameters, "ORGANIZATION_ID": get_org_node_id(org["url"], org["name"]),
+            }
             sync_organization(
                 neo4j_session,
                 config,
                 org["name"],
                 org["url"],
                 access_token,
-                common_job_parameters,
+                org_job_parameters,
             )
             synced = True
 

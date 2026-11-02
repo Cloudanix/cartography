@@ -323,7 +323,7 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
         rrs.consolelink = record.consolelink,
         rrs.lastupdated = $gcp_update_tag
     WITH rrs, record
-    MATCH (zone:GCPDNSZone{id:record.zone})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(zone:GCPDNSZone{id:record.zone})
     MERGE (zone)-[r:HAS_RECORD]->(rrs)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -334,6 +334,7 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
         ingest_records,
         dns_rrs,
         region="global",
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -422,7 +423,7 @@ def load_dns_keys(neo4j_session: neo4j.Session, dns_keys: List[Dict], project_id
         ky.isActive = key.isActive,
         ky.lastupdated = $gcp_update_tag
     WITH ky, key
-    MATCH (zone:GCPDNSZone{id:key.zone})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(zone:GCPDNSZone{id:key.zone})
     MERGE (zone)-[r:HAS_KEY]->(ky)
     ON CREATE SET
         r.firstseen = timestamp()

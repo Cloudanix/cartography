@@ -548,10 +548,15 @@ RETURN img.id AS image_id, collect(DISTINCT disk.zone) AS zones
 _SET_IMAGE_REGION_QUERY = """
 UNWIND $DictList AS row
 MATCH (img:GCPImage {id: row.image_id})
-WHERE img.region IS NULL
+WHERE img.region IS NULL AND (
+    EXISTS { MATCH (:GCPProject {id: $ProjectId})-[:RESOURCE]->(img) }
+    OR EXISTS { MATCH (:GCPProject {id: $ProjectId})-[:RESOURCE]->(:GCPInstance)-[:HAS]->(img) }
+    OR EXISTS { MATCH (:GCPProject {id: $ProjectId})-[:RESOURCE]->(:GCPComputeDisk)-[:CREATED_FROM]->(img) }
+)
 SET img.region = row.region
 """
 
+# Unanchored on purpose: the stub is deleted only when it has no relationship at all, so no tenant reaches it.
 _DELETE_FAMILY_STUBS_QUERY = """
 UNWIND $DictList AS row
 MATCH (stub:GCPImage {id: row.source_partial_uri})
@@ -579,7 +584,7 @@ def set_image_regions_from_disk_zones(neo4j_session: neo4j.Session, project_id: 
             records.append({"image_id": row["image_id"], "region": region})
     if not records:
         return
-    load_graph_data(neo4j_session, _SET_IMAGE_REGION_QUERY, records)
+    load_graph_data(neo4j_session, _SET_IMAGE_REGION_QUERY, records, ProjectId=project_id)
 
 
 _IMAGES_MISSING_REGION_QUERY = """
@@ -609,7 +614,7 @@ def set_image_region_fallbacks(neo4j_session: neo4j.Session, project_id: str) ->
             records.append({"image_id": row["image_id"], "region": region})
     if not records:
         return
-    load_graph_data(neo4j_session, _SET_IMAGE_REGION_QUERY, records)
+    load_graph_data(neo4j_session, _SET_IMAGE_REGION_QUERY, records, ProjectId=project_id)
 
 
 @timeit

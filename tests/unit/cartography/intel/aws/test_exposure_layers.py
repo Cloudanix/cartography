@@ -26,7 +26,9 @@ from cartography.intel.aws.exposure_layers.network import SgFacts
 from cartography.intel.aws.exposure_layers.network import subnet_facts
 from cartography.intel.aws.exposure_layers.network import V4
 from cartography.intel.aws.exposure_layers.network import V6
+from cartography.intel.aws.exposure_layers.reach import instance_enis
 from cartography.intel.aws.exposure_layers.reach import load_balancers
+from cartography.intel.aws.exposure_layers.reach import target_sgs
 from cartography.intel.aws.exposure_layers.software import lambda_runtime
 from cartography.intel.aws.exposure_layers.software import search_engine
 from cartography.intel.exposure.layers import Reach
@@ -338,4 +340,22 @@ def test_load_balancer_listener_hops_and_no_listener():
     silent = load_balancers([{**row, "listeners": []}], {}, WALK_SGS)["lb"]
     assert json.loads(silent.props()["exposure_blocked_by"]) == [
         {"hop": "listener", "id": None, "reason": "no_listener"},
+    ]
+
+
+def test_instance_enis_place_the_public_ip_on_the_primary_eni():
+    eni = {"private_ip": "10.0.0.1", "subnets": [], "sgs": ["sg-a"], "public_ips": [], "ipv6": []}
+    other = {**eni, "private_ip": "10.0.0.2", "sgs": ["sg-b"]}
+    row = {"private_ip": "10.0.0.1", "public_ip": "54.0.0.1", "subnets": ["subnet-i"], "sgs": ["sg-i"]}
+
+    split = instance_enis({**row, "enis": [eni, other]})
+    assert [e["public_ips"] for e in split] == [["54.0.0.1"], []]
+    # An ENI without subnet rels falls back to the instance's subnet.
+    assert split[0]["subnets"] == ["subnet-i"]
+    assert target_sgs({**row, "enis": [eni, other]}) == ["sg-a"]
+    # No ENI holds the primary IP (partial data): every ENI is a candidate.
+    assert target_sgs({**row, "private_ip": "10.9.9.9", "enis": [eni, other]}) == ["sg-a", "sg-b"]
+    # No ENI ingested: the instance itself is the one attachment.
+    assert instance_enis({**row, "enis": []}) == [
+        {"subnets": ["subnet-i"], "sgs": ["sg-i"], "public_ips": ["54.0.0.1"], "ipv6": []},
     ]

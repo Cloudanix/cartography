@@ -218,7 +218,7 @@ def test_redshift_exposure_requires_open_cidr_on_the_cluster_port(neo4j_session)
             _security_group('sg-rs-all', '-1', None, None, ipv4=['0.0.0.0/0']),
             _security_group('sg-rs-v6', 'tcp', 5000, 6000, ipv6=['::/0']),
             _security_group('sg-rs-office', 'tcp', 5439, 5439, ipv4=['203.0.113.0/24']),
-        ], EXPOSURE_ACCOUNT_ID, TEST_UPDATE_TAG,
+        ], EXPOSURE_ACCOUNT_ID, TEST_UPDATE_TAG, 'ws-redshift',
     )
     cartography.intel.aws.redshift.load_redshift_cluster_data(
         neo4j_session, [

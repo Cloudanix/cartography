@@ -93,7 +93,7 @@ def test_load_reserved_instances(load_graph_data, kwargs, region, prefix):
 @patch.object(security_groups, 'load_graph_data')
 def test_load_ec2_security_groupinfo(load_graph_data, _rules, kwargs, region, prefix):
     data = [{'GroupId': 'sg-1', 'region': region}]
-    security_groups.load_ec2_security_groupinfo(MagicMock(), data, ACCOUNT, 1, **kwargs)
+    security_groups.load_ec2_security_groupinfo(MagicMock(), data, ACCOUNT, 1, "ws", **kwargs)
     assert _rows(load_graph_data)[0]['group_arn'] == f'{prefix}ec2:{region}:{ACCOUNT}:security-group/sg-1'
 
 
@@ -101,7 +101,7 @@ def test_load_ec2_security_groupinfo(load_graph_data, _rules, kwargs, region, pr
 @patch.object(vpc_peerings, 'load_graph_data')
 def test_load_vpc_peerings(load_graph_data, kwargs, region, prefix):
     data = [{'VpcPeeringConnectionId': 'pcx-1'}]
-    vpc_peerings.load_vpc_peerings(MagicMock(), data, region, ACCOUNT, 1, **kwargs)
+    vpc_peerings.load_vpc_peerings(MagicMock(), data, region, ACCOUNT, 1, 'ws', **kwargs)
     assert _rows(load_graph_data)[0]['arn'] == f'{prefix}ec2:{region}:{ACCOUNT}:vpc-peering-connection/pcx-1'
 
 
@@ -173,7 +173,7 @@ def test_load_launch_templates_console_arn(console_link, _load, kwargs, region, 
 @patch.object(internet_gateways, 'load_graph_data')
 def test_load_internet_gateways_passes_partition_to_cypher(load_graph_data, kwargs, region, prefix):
     igw = {'InternetGatewayId': 'igw-1', 'OwnerId': ACCOUNT}
-    internet_gateways.load_internet_gateways(MagicMock(), [igw], region, ACCOUNT, 1, **kwargs)
+    internet_gateways.load_internet_gateways(MagicMock(), [igw], region, ACCOUNT, 1, "ws", **kwargs)
     # ig.arn is assembled in Cypher as "arn:" + $partition + ":ec2:" + ...
     assert load_graph_data.call_args.kwargs['partition'] == prefix[len('arn:'):-1]
 

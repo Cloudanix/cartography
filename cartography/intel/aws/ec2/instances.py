@@ -318,7 +318,9 @@ def transform_ec2_instances(
                             # Read by the ::/0 statement of aws_ec2_instance_asset_exposure.json
                             "Ipv6Addresses": [a["Ipv6Address"] for a in network_interface.get("Ipv6Addresses", [])],
                             "InstanceId": instance_id,
-                            "SubnetId": subnet_id,
+                            # An ENI lives in its own subnet; a secondary ENI can sit in a different
+                            # subnet from the instance's primary one.
+                            "SubnetId": network_interface.get("SubnetId"),
                             "GroupId": security_group["GroupId"],
                         },
                     )
@@ -485,7 +487,8 @@ def load_ec2_roles(
 ) -> None:
     ingest_role_instance_relations = """
     UNWIND $DictList as role
-    MATCH (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.Arn})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(instance:EC2Instance {id: role.InstanceId})
+    MATCH (aa)-[:RESOURCE]->(roleNode:AWSRole {arn: role.Arn})
     MERGE (instance)-[r:USES]->(roleNode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -495,6 +498,7 @@ def load_ec2_roles(
         neo4j_session,
         ingest_role_instance_relations,
         role_data,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=update_tag,
     )
 

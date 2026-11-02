@@ -147,7 +147,7 @@ def load_spanner_instance_configs(session: neo4j.Session, data_list: List[Dict],
         instance_config.reconciling = record.reconciling,
         instance_config.state = record.state
     WITH instance_config
-    MATCH (instance:GCPSpannerInstance{config:instance_config.id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(instance:GCPSpannerInstance{config:instance_config.id})
     MERGE (instance)-[rt:HAS]->(instance_config)
     ON CREATE SET
         rt.firstseen = timestamp()
@@ -186,7 +186,9 @@ def load_spanner_instance_configs_replicas(session: neo4j.Session, data_list: Li
         replica.location = record.location,
         replica.type = record.type
     WITH replica, record
-    MATCH (instance_config:GCPSpannerInstanceConfig{id: record.config})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(:GCPSpannerInstance)
+        -[:HAS]->(instance_config:GCPSpannerInstanceConfig{id: record.config})
+    WITH DISTINCT replica, instance_config
     MERGE (instance_config)-[rt:HAS]->(replica)
     ON CREATE SET
         rt.firstseen = timestamp()
@@ -263,13 +265,14 @@ def load_spanner_instances_databases(session: neo4j.Session, data_list: List[Dic
         database.version_retention_period = record.versionRetentionPeriod,
         database.consolelink = record.consolelink
     WITH database, record
-    MATCH (instance:GCPSpannerInstance{id: record.instance_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(instance:GCPSpannerInstance{id: record.instance_id})
     MERGE (instance)-[r:HAS_DATABASE]->(database)
     ON CREATE SET
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     WITH database
-    MATCH (backup:GCPSpannerInstanceBackup{id: database.backup})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(:GCPSpannerInstance)
+        -[:HAS_BACKUP]->(backup:GCPSpannerInstanceBackup{id: database.backup})
     MERGE (database)-[rt:HAS_BACKUP]->(backup)
     ON CREATE SET
         rt.firstseen = timestamp()
@@ -348,7 +351,7 @@ def load_spanner_instances_backups(session: neo4j.Session, data_list: List[Dict]
         backup.version_time = record.versionTime,
         backup.consolelink = record.consolelink
     WITH backup, record
-    MATCH (instance:GCPSpannerInstance{id: record.instance_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(instance:GCPSpannerInstance{id: record.instance_id})
     MERGE (instance)-[r:HAS_BACKUP]->(backup)
     ON CREATE SET
         r.firstseen = timestamp()

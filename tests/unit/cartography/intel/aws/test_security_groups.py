@@ -69,6 +69,21 @@ class TestBuildRuleAndRangeRows:
         ]
         assert len(range_rows["Ipv6Range"]) == 1
 
+    def test_prefix_list_sources_are_kept_on_the_rule(self):
+        group = {
+            "GroupId": "sg-2",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [], "Ipv6Ranges": [],
+                    "PrefixListIds": [{"PrefixListId": "pl-3b927c52"}, {"Description": "no id"}],
+                },
+                {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "IpRanges": [], "Ipv6Ranges": []},
+            ],
+        }
+        rule_rows, _ = security_groups._build_rule_and_range_rows([group])
+
+        assert [r["prefix_list_ids"] for r in rule_rows["IpPermissionInbound"]] == [["pl-3b927c52"], []]
+
     def test_empty_groups(self):
         rule_rows, range_rows = security_groups._build_rule_and_range_rows([])
         assert all(not rows for rows in rule_rows.values())
@@ -79,7 +94,7 @@ class TestLoadEc2SecurityGroupInfo:
     def test_batched_writes(self):
         session = MagicMock()
 
-        security_groups.load_ec2_security_groupinfo(session, [GROUP], TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        security_groups.load_ec2_security_groupinfo(session, [GROUP], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
 
         # 1 group batch + 2 rule-label batches + 1 rule-group-pair batch +
         # 2 range-label batches = 6 writes, independent of group count.
@@ -93,5 +108,5 @@ class TestLoadEc2SecurityGroupInfo:
 
     def test_empty_data_writes_nothing(self):
         session = MagicMock()
-        security_groups.load_ec2_security_groupinfo(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        security_groups.load_ec2_security_groupinfo(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
         session.execute_write.assert_not_called()

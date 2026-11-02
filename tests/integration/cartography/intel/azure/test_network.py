@@ -16,6 +16,11 @@ TEST_WORKSPACE_ID = '123'
 TEST_TENANT_ID = '123'
 
 
+def _seed_subscription(neo4j_session):
+    # Child loaders reach their parent (VNet, route table, NSG) only under the syncing subscription.
+    neo4j_session.run('MERGE (:AzureSubscription{id: $id})', id=TEST_SUBSCRIPTION_ID)
+
+
 def test_load_networks(neo4j_session):
     network.load_networks(
         neo4j_session,
@@ -85,6 +90,7 @@ def test_load_network_subnets(neo4j_session):
     network.load_networks_subnets(
         neo4j_session,
         DESCRIBE_NETWORKSUBNETS,
+        TEST_SUBSCRIPTION_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -105,6 +111,7 @@ def test_load_network_subnets(neo4j_session):
 
 
 def test_load_network_subnet_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
     network.load_networks(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -115,6 +122,7 @@ def test_load_network_subnet_relationships(neo4j_session):
     network.load_networks_subnets(
         neo4j_session,
         DESCRIBE_NETWORKSUBNETS,
+        TEST_SUBSCRIPTION_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -211,6 +219,7 @@ def test_load_routetable_relationships(neo4j_session):
 def test_load_network_routes(neo4j_session):
     network.load_network_routes(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_NETWORKROUTE,
         TEST_UPDATE_TAG,
     )
@@ -232,6 +241,7 @@ def test_load_network_routes(neo4j_session):
 
 
 def test_load_network_route_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
     network.load_network_routetables(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -241,6 +251,7 @@ def test_load_network_route_relationships(neo4j_session):
 
     network.load_network_routes(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_NETWORKROUTE,
         TEST_UPDATE_TAG,
     )
@@ -338,6 +349,7 @@ def test_load_network_security_group_relationships(neo4j_session):
 def test_load_network_security_rule(neo4j_session):
     network.load_network_security_rules(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_NETWORKSECURITYRULES,
         TEST_UPDATE_TAG,
     )
@@ -363,6 +375,7 @@ def test_load_network_security_rule(neo4j_session):
 
 
 def test_load_network_security_rule_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
     network.load_network_security_groups(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -372,6 +385,7 @@ def test_load_network_security_rule_relationships(neo4j_session):
 
     network.load_network_security_rules(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_NETWORKSECURITYRULES,
         TEST_UPDATE_TAG,
     )
@@ -482,6 +496,7 @@ def test_load_public_ip_address_relationships(neo4j_session):
 def test_load_network_usages(neo4j_session):
     network.load_usages(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_NETWORKUSAGES,
         TEST_UPDATE_TAG,
     )
@@ -503,6 +518,7 @@ def test_load_network_usages(neo4j_session):
 
 
 def test_load_network_usage_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
     network.load_networks(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -512,6 +528,7 @@ def test_load_network_usage_relationships(neo4j_session):
 
     network.load_usages(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_NETWORKUSAGES,
         TEST_UPDATE_TAG,
     )
@@ -563,6 +580,7 @@ def test_network_security_group_analysis(neo4j_session):
 
     network.load_network_security_rules(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_NETWORKSECURITYRULES,
         TEST_UPDATE_TAG,
     )
@@ -608,13 +626,13 @@ def test_edited_security_rule_is_updated_on_resync(neo4j_session):
         'source_address_prefix': '*', 'source_address_prefixes': [], 'source_port_range': '*',
         'destination_port_range': '22', 'destination_port_ranges': [], 'destination_address_prefix': '*',
     }
-    network.load_network_security_rules(neo4j_session, [rule], TEST_UPDATE_TAG)
+    network.load_network_security_rules(neo4j_session, TEST_SUBSCRIPTION_ID, [rule], TEST_UPDATE_TAG)
 
     edited = {
         **rule, 'access': 'Deny', 'protocol': 'Udp', 'priority': 200, 'source_address_prefix': None,
         'source_address_prefixes': ['10.0.0.0/8'], 'destination_port_range': '443',
     }
-    network.load_network_security_rules(neo4j_session, [edited], TEST_UPDATE_TAG + 1)
+    network.load_network_security_rules(neo4j_session, TEST_SUBSCRIPTION_ID, [edited], TEST_UPDATE_TAG + 1)
 
     node = neo4j_session.run(
         "MATCH (r:AzureNetworkSecurityRule{id: $id}) RETURN r", id=rule_id,

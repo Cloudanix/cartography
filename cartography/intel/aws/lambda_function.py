@@ -381,13 +381,15 @@ def load_lambda_function_details(
                 layer["region"] = region
             lambda_layers.extend(layers)
 
-    _load_lambda_function_aliases(neo4j_session, lambda_aliases, update_tag)
-    _load_lambda_event_source_mappings(neo4j_session, lambda_event_source_mappings, update_tag)
-    _load_lambda_layers(neo4j_session, lambda_layers, update_tag)
+    _load_lambda_function_aliases(neo4j_session, lambda_aliases, current_aws_account_id, update_tag)
+    _load_lambda_event_source_mappings(neo4j_session, lambda_event_source_mappings, current_aws_account_id, update_tag)
+    _load_lambda_layers(neo4j_session, lambda_layers, current_aws_account_id, update_tag)
 
 
 @timeit
-def _load_lambda_function_aliases(neo4j_session: neo4j.Session, lambda_aliases: List[Dict], update_tag: int) -> None:
+def _load_lambda_function_aliases(
+    neo4j_session: neo4j.Session, lambda_aliases: List[Dict], current_aws_account_id: str, update_tag: int,
+) -> None:
     ingest_aliases = """
     UNWIND $DictList AS alias
     MERGE (a:AWSLambdaFunctionAlias{id: alias.AliasArn})
@@ -401,7 +403,7 @@ def _load_lambda_function_aliases(neo4j_session: neo4j.Session, lambda_aliases: 
     a.lastupdated = $aws_update_tag,
     a.arn = alias.AliasArn
     WITH a, alias
-    MATCH (lambda:AWSLambda{id: alias.FunctionArn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(lambda:AWSLambda{id: alias.FunctionArn})
     MERGE (lambda)-[r:KNOWN_AS]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -411,6 +413,7 @@ def _load_lambda_function_aliases(neo4j_session: neo4j.Session, lambda_aliases: 
         neo4j_session,
         ingest_aliases,
         lambda_aliases,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=update_tag,
     )
 
@@ -419,6 +422,7 @@ def _load_lambda_function_aliases(neo4j_session: neo4j.Session, lambda_aliases: 
 def _load_lambda_event_source_mappings(
     neo4j_session: neo4j.Session,
     lambda_event_source_mappings: List[Dict],
+    current_aws_account_id: str,
     update_tag: int,
 ) -> None:
     ingest_esms = """
@@ -444,7 +448,7 @@ def _load_lambda_event_source_mappings(
     e.lastupdated = $aws_update_tag,
     e.arn = esm.EventSourceArn
     WITH e, esm
-    MATCH (lambda:AWSLambda{id: esm.FunctionArn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(lambda:AWSLambda{id: esm.FunctionArn})
     MERGE (lambda)-[r:RESOURCE]->(e)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -454,12 +458,15 @@ def _load_lambda_event_source_mappings(
         neo4j_session,
         ingest_esms,
         lambda_event_source_mappings,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=update_tag,
     )
 
 
 @timeit
-def _load_lambda_layers(neo4j_session: neo4j.Session, lambda_layers: List[Dict], update_tag: int) -> None:
+def _load_lambda_layers(
+    neo4j_session: neo4j.Session, lambda_layers: List[Dict], current_aws_account_id: str, update_tag: int,
+) -> None:
     ingest_layers = """
     UNWIND $DictList AS layer
     MERGE (l:AWSLambdaLayer{id: layer.Arn})
@@ -473,7 +480,7 @@ def _load_lambda_layers(neo4j_session: neo4j.Session, lambda_layers: List[Dict],
     l.lastupdated = $aws_update_tag,
     l.arn = layer.Arn
     WITH l, layer
-    MATCH (lambda:AWSLambda{id: layer.FunctionArn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(lambda:AWSLambda{id: layer.FunctionArn})
     MERGE (lambda)-[r:HAS]->(l)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -483,6 +490,7 @@ def _load_lambda_layers(neo4j_session: neo4j.Session, lambda_layers: List[Dict],
         neo4j_session,
         ingest_layers,
         lambda_layers,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=update_tag,
     )
 

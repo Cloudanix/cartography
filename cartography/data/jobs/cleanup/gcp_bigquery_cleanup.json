@@ -1,6 +1,12 @@
 {
 	"statements": [
 		{
+			"query": "MATCH (l:GCPLabel)<-[:LABELED]-(n:GCPBigqueryTable)<-[:HAS_TABLE]-(:GCPBigqueryDataset)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH l LIMIT $LIMIT_SIZE DETACH DELETE (l) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Delete the labels of GCP Bigquery Tables the next statement deletes (label ids embed the table id, so they are the table's own)."
+		},
+		{
 			"query": "MATCH (n:GCPBigqueryTable)<-[:HAS_TABLE]-(:GCPBigqueryDataset)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
@@ -23,6 +29,12 @@
 			"iterative": true,
 			"iterationsize": 100,
 			"__comment__": "Delete GCP Access that no longer exist and detach them from all previously connected nodes. A GCPBigqueryDataset whose grants could not be read this sync (iam_policy_status unresolved) keeps its last-read ones."
+		},
+		{
+			"query": "MATCH (l:GCPLabel)<-[:LABELED]-(n:GCPBigqueryDataset)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH l LIMIT $LIMIT_SIZE DETACH DELETE (l) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Delete the labels of GCP Bigquery Datasets a later statement deletes (label ids embed the dataset id, so they are the dataset's own)."
 		},
 		{
 			"query": "MATCH (n:GCPBigqueryDataset)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",

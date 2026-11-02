@@ -36,16 +36,25 @@ def get_vpc_peerings_data(boto3_session: boto3.session.Session, region: str) -> 
 @timeit
 def load_vpc_peerings(
     neo4j_session: neo4j.Session, data: List[Dict], region: str,
-    aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
+    aws_account_id: str, update_tag: int, workspace_id: str, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_vpc_peerings = """
     UNWIND $DictList AS vpc_peering
     // organizations.sync creates the account first; without it, write nothing.
     MATCH (account:AWSAccount{id: $aws_account_id})
 
-    MERGE (pcx:AWSPeeringConnection{id: vpc_peering.VpcPeeringConnectionId})
-    ON CREATE SET pcx.firstseen = timestamp()
-    SET pcx.lastupdated = $update_tag,
+    // Both sides' accounts report the same peering id, and the other side may be another customer:
+    // each account claims its own node, never one another tenant wrote.
+    MERGE (account)-[res:RESOURCE]->(pcx:AWSPeeringConnection{id: vpc_peering.VpcPeeringConnectionId})
+    ON CREATE SET pcx.firstseen = timestamp(), res.firstseen = timestamp()
+    SET res.lastupdated = $update_tag,
+    pcx.lastupdated = $update_tag,
+    pcx.accepter_vpc_id = vpc_peering.AccepterVpcInfo.VpcId,
+    pcx.accepter_owner_id = vpc_peering.AccepterVpcInfo.OwnerId,
+    pcx.accepter_cidr_blocks = [c IN coalesce(vpc_peering.AccepterVpcInfo.CidrBlockSet, []) | c.CidrBlock],
+    pcx.requester_vpc_id = vpc_peering.RequesterVpcInfo.VpcId,
+    pcx.requester_owner_id = vpc_peering.RequesterVpcInfo.OwnerId,
+    pcx.requester_cidr_blocks = [c IN coalesce(vpc_peering.RequesterVpcInfo.CidrBlockSet, []) | c.CidrBlock],
     pcx.allow_dns_resolution_from_remote_vpc =
         vpc_peering.RequesterVpcInfo.PeeringOptions.AllowDnsResolutionFromRemoteVpc,
     pcx.allow_egress_from_local_classic_link_to_remote_vpc =
@@ -59,34 +68,25 @@ def load_vpc_peerings(
     pcx.arn = vpc_peering.arn,
     pcx.consolelink = vpc_peering.consolelink
 
-    // A VPC with an arn was loaded by the VPC sync of the account that owns it, which may be
-    // another account or tenant: leave its stamp alone. Only stubs for peer VPCs get ours.
-    MERGE (avpc:AWSVpc{id: vpc_peering.AccepterVpcInfo.VpcId})
-    ON CREATE SET avpc.firstseen = timestamp(), avpc.vpcid = vpc_peering.AccepterVpcInfo.VpcId
-    SET avpc.lastupdated = CASE WHEN avpc.arn IS NULL THEN $update_tag ELSE avpc.lastupdated END
-
-    MERGE (rvpc:AWSVpc{id: vpc_peering.RequesterVpcInfo.VpcId})
-    ON CREATE SET rvpc.firstseen = timestamp(), rvpc.vpcid = vpc_peering.RequesterVpcInfo.VpcId
-    SET rvpc.lastupdated = CASE WHEN rvpc.arn IS NULL THEN $update_tag ELSE rvpc.lastupdated END
-
-    MERGE (pcx)-[rav:ACCEPTER_VPC]->(avpc)
-    ON CREATE SET rav.firstseen = timestamp()
-    SET rav.lastupdated = $update_tag
-
-    MERGE (pcx)-[rrv:REQUESTER_VPC]->(rvpc)
-    ON CREATE SET rrv.firstseen = timestamp()
-    SET rrv.lastupdated = $update_tag
-
-    // Only the side this account owns is its resource; the peer VPC belongs to OwnerId.
-    FOREACH (_ IN CASE WHEN vpc_peering.AccepterVpcInfo.OwnerId = $aws_account_id THEN [1] ELSE [] END |
-        MERGE (account)-[ra:RESOURCE]->(avpc)
-        ON CREATE SET ra.firstseen = timestamp()
-        SET ra.lastupdated = $update_tag
+    // A side's VPC is linked only when an account of this workspace owns it: this account's own VPC, or a
+    // peer account of the same customer. Another customer's VPC is never linked or written; its facts stay
+    // in the properties above.
+    WITH vpc_peering, pcx
+    OPTIONAL MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(avpc:AWSVpc{id: vpc_peering.AccepterVpcInfo.VpcId})
+    FOREACH (v IN CASE WHEN avpc IS NULL THEN [] ELSE [avpc] END |
+        MERGE (pcx)-[rav:ACCEPTER_VPC]->(v)
+        ON CREATE SET rav.firstseen = timestamp()
+        SET rav.lastupdated = $update_tag
     )
-    FOREACH (_ IN CASE WHEN vpc_peering.RequesterVpcInfo.OwnerId = $aws_account_id THEN [1] ELSE [] END |
-        MERGE (account)-[rr:RESOURCE]->(rvpc)
-        ON CREATE SET rr.firstseen = timestamp()
-        SET rr.lastupdated = $update_tag
+
+    WITH DISTINCT vpc_peering, pcx
+    OPTIONAL MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(rvpc:AWSVpc{id: vpc_peering.RequesterVpcInfo.VpcId})
+    FOREACH (v IN CASE WHEN rvpc IS NULL THEN [] ELSE [rvpc] END |
+        MERGE (pcx)-[rrv:REQUESTER_VPC]->(v)
+        ON CREATE SET rrv.firstseen = timestamp()
+        SET rrv.lastupdated = $update_tag
     )
     """
 
@@ -101,37 +101,38 @@ def load_vpc_peerings(
         ingest_vpc_peerings,
         data,
         update_tag=update_tag,
-        region=region, aws_account_id=aws_account_id,
+        region=region, aws_account_id=aws_account_id, WORKSPACE_ID=workspace_id,
     )
 
 
 @timeit
 def load_accepter_cidrs(
     neo4j_session: neo4j.Session, data: List[Dict], region: str,
-    aws_account_id: str, update_tag: int,
+    aws_account_id: str, update_tag: int, workspace_id: str,
 ) -> None:
 
+    # Blocks of a side whose VPC is in this workspace only (see load_vpc_peerings); the block id embeds
+    # the VPC id matched inside the workspace.
     ingest_accepter_cidr = """
     UNWIND $DictList AS vpc_peering
-    // organizations.sync creates the account first; without it, write nothing.
-    MATCH (:AWSAccount{id: $aws_account_id})
+    MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->
+        (pcx:AWSPeeringConnection{id: vpc_peering.VpcPeeringConnectionId})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(vpc:AWSVpc{id: vpc_peering.AccepterVpcInfo.VpcId})
+    WITH DISTINCT vpc_peering, pcx, vpc
     UNWIND vpc_peering.AccepterVpcInfo.CidrBlockSet AS c_b
 
-    MERGE (ac_b:AWSCidrBlock:AWSIpv4CidrBlock{id: vpc_peering.AccepterVpcInfo.VpcId + '|' + c_b.CidrBlock})
-    ON CREATE SET ac_b.firstseen = timestamp()
-    SET ac_b.lastupdated = $update_tag, ac_b.cidr_block  =  c_b.CidrBlock
+    MERGE (cb:AWSCidrBlock:AWSIpv4CidrBlock{id: vpc.id + '|' + c_b.CidrBlock})
+    ON CREATE SET cb.firstseen = timestamp()
+    SET cb.lastupdated = $update_tag, cb.cidr_block  =  c_b.CidrBlock
 
-    WITH vpc_peering, ac_b
-    MATCH (pcx:AWSPeeringConnection{id: vpc_peering.VpcPeeringConnectionId}), (cb:AWSCidrBlock{id: ac_b.id})
     MERGE (pcx)-[r:ACCEPTER_CIDR]->(cb)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
 
-    WITH vpc_peering, ac_b
-    MATCH (vpc:AWSVpc{id: vpc_peering.AccepterVpcInfo.VpcId}), (cb:AWSCidrBlock{id: ac_b.id})
-    MERGE (vpc)-[r:BLOCK_ASSOCIATION]->(cb)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    MERGE (vpc)-[b:BLOCK_ASSOCIATION]->(cb)
+    ON CREATE SET b.firstseen = timestamp()
+    SET b.lastupdated = $update_tag
     """
 
     load_graph_data(
@@ -139,37 +140,37 @@ def load_accepter_cidrs(
         ingest_accepter_cidr,
         data,
         update_tag=update_tag,
-        region=region, aws_account_id=aws_account_id,
+        aws_account_id=aws_account_id, WORKSPACE_ID=workspace_id,
     )
 
 
 @timeit
 def load_requester_cidrs(
     neo4j_session: neo4j.Session, data: List[Dict], region: str,
-    aws_account_id: str, update_tag: int,
+    aws_account_id: str, update_tag: int, workspace_id: str,
 ) -> None:
 
+    # Same as load_accepter_cidrs, for the requester side.
     ingest_requester_cidr = """
     UNWIND $DictList AS vpc_peering
-    // organizations.sync creates the account first; without it, write nothing.
-    MATCH (:AWSAccount{id: $aws_account_id})
+    MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->
+        (pcx:AWSPeeringConnection{id: vpc_peering.VpcPeeringConnectionId})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(vpc:AWSVpc{id: vpc_peering.RequesterVpcInfo.VpcId})
+    WITH DISTINCT vpc_peering, pcx, vpc
     UNWIND vpc_peering.RequesterVpcInfo.CidrBlockSet AS c_b
 
-    MERGE (rc_b:AWSCidrBlock:AWSIpv4CidrBlock{id: vpc_peering.RequesterVpcInfo.VpcId + '|' + c_b.CidrBlock})
-    ON CREATE SET rc_b.firstseen = timestamp()
-    SET rc_b.lastupdated = $update_tag, rc_b.cidr_block  =  c_b.CidrBlock
+    MERGE (cb:AWSCidrBlock:AWSIpv4CidrBlock{id: vpc.id + '|' + c_b.CidrBlock})
+    ON CREATE SET cb.firstseen = timestamp()
+    SET cb.lastupdated = $update_tag, cb.cidr_block  =  c_b.CidrBlock
 
-    WITH vpc_peering, rc_b
-    MATCH (pcx:AWSPeeringConnection{id: vpc_peering.VpcPeeringConnectionId}), (cb:AWSCidrBlock{id: rc_b.id})
     MERGE (pcx)-[r:REQUESTER_CIDR]->(cb)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
 
-    WITH vpc_peering, rc_b
-    MATCH (vpc:AWSVpc{id: vpc_peering.RequesterVpcInfo.VpcId}), (cb:AWSCidrBlock{id: rc_b.id})
-    MERGE (vpc)-[r:BLOCK_ASSOCIATION]->(cb)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    MERGE (vpc)-[b:BLOCK_ASSOCIATION]->(cb)
+    ON CREATE SET b.firstseen = timestamp()
+    SET b.lastupdated = $update_tag
     """
 
     load_graph_data(
@@ -177,7 +178,7 @@ def load_requester_cidrs(
         ingest_requester_cidr,
         data,
         update_tag=update_tag,
-        region=region, aws_account_id=aws_account_id,
+        aws_account_id=aws_account_id, WORKSPACE_ID=workspace_id,
     )
 
 
@@ -196,15 +197,18 @@ def sync_vpc_peerings(
     logger.info("Syncing EC2 VPC Peerings for account '%s', at %s.", current_aws_account_id, tic)
 
     partition = get_partition_from_params(common_job_parameters)
+    workspace_id = common_job_parameters['WORKSPACE_ID']
     for region in regions:
         logger.debug("Syncing EC2 VPC peering for region '%s' in account '%s'.", region, current_aws_account_id)
         data = get_vpc_peerings_data(boto3_session, region)
 
         logger.info(f"Total VPC Peering data: {len(data)} for {region}")
 
-        load_vpc_peerings(neo4j_session, data, region, current_aws_account_id, update_tag, partition=partition)
-        load_accepter_cidrs(neo4j_session, data, region, current_aws_account_id, update_tag)
-        load_requester_cidrs(neo4j_session, data, region, current_aws_account_id, update_tag)
+        load_vpc_peerings(
+            neo4j_session, data, region, current_aws_account_id, update_tag, workspace_id, partition=partition,
+        )
+        load_accepter_cidrs(neo4j_session, data, region, current_aws_account_id, update_tag, workspace_id)
+        load_requester_cidrs(neo4j_session, data, region, current_aws_account_id, update_tag, workspace_id)
     cleanup_vpc_peerings(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

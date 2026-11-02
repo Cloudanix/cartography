@@ -55,7 +55,7 @@ def test_vmss_exposure(neo4j_session):
         _lb(LEGACY_LB, None, public=True),
     ]
     network.load_load_balancers(neo4j_session, SUB, lbs, 1)
-    network.load_frontend_ip_configurations(neo4j_session, lbs, 1)
+    network.load_frontend_ip_configurations(neo4j_session, SUB, WORKSPACE, lbs, 1)
     sets = [
         _scale_set('instance-pip', public_ip=True),
         _scale_set('web', pools=[_pool(PUBLIC_LB, 'web')]),

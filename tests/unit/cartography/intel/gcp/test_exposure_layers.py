@@ -311,6 +311,68 @@ def test_identity_sourced_instance_edges():
     }]
 
 
+ALL_PORTS = ["tcp:0-65535", "udp:0-65535"]
+
+
+def _peer(name, ip, **kw):
+    return Instance(id=name, running=True, vpcs=("vpc",), internal_ips=(("vpc", ip),), **kw)
+
+
+def _pairs(rows):
+    return {(r["src"], r["dst"]): (r["ports"], r["via"], r["admitted_by"]) for r in rows}
+
+
+def test_cidr_sourced_instance_edges():
+    internal = _fw(True, ALL_PORTS, source_ranges=("10.128.0.0/9",), name="default-allow-internal")
+    app, db, outside = _peer("app", "10.128.0.9"), _peer("db", "10.128.0.5"), _peer("outside", "192.168.0.4")
+    everything = (["tcp:0-65535", "udp:0-65535"], "cidr", "default-allow-internal")
+    rows = instance_rows([app, db, outside], {"vpc": VpcFacts(visible=True, firewalls=[internal])})
+    # The range admits by source address: outside is still a target, never a source.
+    assert _pairs(rows) == {
+        ("app", "db"): everything, ("db", "app"): everything,
+        ("app", "outside"): everything, ("db", "outside"): everything,
+    }
+
+    # A higher-priority deny from app's address cuts its edges; db's stay.
+    deny = _fw(False, ALL_PORTS, priority=100, source_ranges=("10.128.0.9/32",), name="deny-app")
+    rows = instance_rows([app, db], {"vpc": VpcFacts(visible=True, firewalls=[internal, deny])})
+    assert set(_pairs(rows)) == {("db", "app")}
+
+    # World-sourced allows are internet exposure (L2), not lateral reach: no edge on their own.
+    world = _fw(True, ["tcp:22-22"], source_ranges=("0.0.0.0/0",), name="ssh-world")
+    assert instance_rows([app, db], {"vpc": VpcFacts(visible=True, firewalls=[world])}) == []
+    # ...but a world-sourced deny still closes what the range opens.
+    world_deny = _fw(False, ["tcp:5432-5432"], priority=10, name="no-pg")
+    rows = instance_rows([app, db], {"vpc": VpcFacts(visible=True, firewalls=[internal, world_deny])})
+    assert _pairs(rows)[("app", "db")][0] == ["tcp:0-5431", "tcp:5433-65535", "udp:0-65535"]
+
+    # No known internal address: the source is matched by identity only.
+    unknown = Instance(id="unknown", running=True, vpcs=("vpc",))
+    rows = instance_rows([unknown, db], {"vpc": VpcFacts(visible=True, firewalls=[internal])})
+    assert set(_pairs(rows)) == {("db", "unknown")}
+
+
+def test_identity_wins_over_cidr_for_via():
+    db = _peer("db", "10.0.0.5", tags=frozenset({"db"}))
+    app = _peer("app", "10.0.0.9", sas=frozenset({"app@p.iam"}))
+    by_sa = _fw(
+        True, ["tcp:5432-5432"], source_sas=frozenset({"app@p.iam"}), target_tags=frozenset({"db"}),
+        name="db-from-app",
+    )
+    by_range = _fw(True, ["tcp:22-22"], source_ranges=("10.0.0.0/8",), target_tags=frozenset({"db"}), name="ssh")
+    rows = instance_rows([app, db], {"vpc": VpcFacts(visible=True, firewalls=[by_sa, by_range])})
+    assert _pairs(rows) == {("app", "db"): (["tcp:22-22", "tcp:5432-5432"], "firewall_source_tag_or_sa", "db-from-app")}
+
+
+def test_instance_internal_ips_per_network_with_legacy_fallback():
+    row = {"id": "i", "vpcs": ["a", "b"], "networkIP": "10.0.0.9"}
+    nics = [{"vpc": "a", "ip": "10.0.0.1"}, {"vpc": "b", "ip": "10.1.0.1"}]
+    assert network.instance_from_row({**row, "nics": nics}).internal_ips == (("a", "10.0.0.1"), ("b", "10.1.0.1"))
+    # Synced before NICs carried their address: the instance's single networkIP stands in.
+    assert network.instance_from_row({**row, "nics": []}).internal_ips == (("a", "10.0.0.9"), ("b", "10.0.0.9"))
+    assert network.instance_from_row({"id": "i", "vpcs": ["a"]}).internal_ips == ()
+
+
 VPC_URI = "projects/p/global/networks/main"
 
 

@@ -44,7 +44,7 @@ def _load_dependencies_data(
     ingest_dependencies = """
     UNWIND $dependenciesData AS dependency
     MERGE (dep:GitLabDependency {id: dependency.name})
-    ON CREATE SET dep.firstseen = timestamp()
+    ON CREATE SET dep.firstseen = timestamp(),
     dep.created_at = dependency.created_at
 
     SET dep.name = dependency.name,
@@ -56,7 +56,7 @@ def _load_dependencies_data(
     dep.lastupdated = $UpdateTag
 
     WITH dep, dependency
-    MATCH (repo:GitLabProject {id: $ProjectID})
+    MATCH (:GitLabGroup{id: $GroupId})-[:RESOURCE]->(repo:GitLabProject {id: $ProjectID})
     MERGE (dep)-[r:HAS]->(repo)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -66,6 +66,7 @@ def _load_dependencies_data(
         ingest_dependencies,
         dependenciesData=dependencies_data,
         ProjectID=project_id,
+        GroupId=common_job_parameters["GITLAB_GROUP_NODE_ID"],
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 

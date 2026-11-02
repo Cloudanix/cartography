@@ -19,6 +19,7 @@ def test_load_gcp_projects(neo4j_session):
         neo4j_session,
         tests.data.gcp.crm.GCP_FOLDERS,
         TEST_UPDATE_TAG,
+        common_job_parameters={'WORKSPACE_ID': '', 'GCP_PROJECT_ID': ''},
     )
     cartography.intel.gcp.crm.load_gcp_projects(
         neo4j_session,

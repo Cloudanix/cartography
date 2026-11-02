@@ -236,6 +236,7 @@ def transform_buckets(
 def load_buckets(
     neo4j_session: neo4j.Session,
     buckets: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -273,7 +274,7 @@ def load_buckets(
             b.consolelink = bucket.consolelink,
             b.lastupdated = $oci_update_tag
         WITH b
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(b)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -282,6 +283,7 @@ def load_buckets(
         neo4j_session,
         ingest_buckets,
         buckets,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -328,7 +330,7 @@ def sync_buckets(
 
     buckets = transform_buckets(summaries, details_by_name, namespace, region, pars_by_name)
     if buckets:
-        load_buckets(neo4j_session, buckets, compartment_id, oci_update_tag)
+        load_buckets(neo4j_session, buckets, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, buckets, 'OCIStorageBucket', oci_update_tag, common_job_parameters)
 
@@ -394,6 +396,7 @@ def transform_block_volumes(
 def load_block_volumes(
     neo4j_session: neo4j.Session,
     volumes: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -427,7 +430,7 @@ def load_block_volumes(
             vol.consolelink = v.consolelink,
             vol.lastupdated = $oci_update_tag
         WITH vol
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(vol)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -436,6 +439,7 @@ def load_block_volumes(
         neo4j_session,
         ingest_volumes,
         volumes,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -444,16 +448,21 @@ def load_block_volumes(
     # active attachment record for it. We rely on the OCIVolumeAttachment
     # nodes that compute.py already ingested.
     link_instances = """
-    MATCH (vol:OCIBlockVolume)
+    MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
+        -[:RESOURCE]->(vol:OCIBlockVolume)
     WHERE vol.lastupdated = $oci_update_tag
-    MATCH (inst:OCIInstance)-[:OCI_VOLUME_ATTACHMENT]->(att:OCIVolumeAttachment)
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)
+        -[:OCI_VOLUME_ATTACHMENT]->(att:OCIVolumeAttachment)
     WHERE att.volume_id = vol.ocid
       AND att.lifecycle_state = 'ATTACHED'
     MERGE (inst)-[r:OCI_VOLUME_ATTACHMENT]->(vol)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
-    run_write_query(neo4j_session, link_instances, oci_update_tag=oci_update_tag)
+    run_write_query(
+        neo4j_session, link_instances,
+        TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_block_volumes(
@@ -471,7 +480,7 @@ def sync_block_volumes(
     raw = get_block_volume_list_data(blockstorage, compartment_id)["Volumes"]
     volumes = transform_block_volumes(raw, region)
     if volumes:
-        load_block_volumes(neo4j_session, volumes, compartment_id, oci_update_tag)
+        load_block_volumes(neo4j_session, volumes, tenancy_id, compartment_id, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +570,7 @@ def transform_boot_volumes(
 def load_boot_volumes(
     neo4j_session: neo4j.Session,
     boot_volumes: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -588,7 +598,7 @@ def load_boot_volumes(
             bv.consolelink = v.consolelink,
             bv.lastupdated = $oci_update_tag
         WITH bv
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(bv)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -597,6 +607,7 @@ def load_boot_volumes(
         neo4j_session,
         ingest_boot_volumes,
         boot_volumes,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -604,16 +615,21 @@ def load_boot_volumes(
     # Link instances to boot volumes via existing OCIBootVolumeAttachment
     # nodes already produced by compute.py.
     link_instances = """
-    MATCH (bv:OCIBootVolume)
+    MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
+        -[:RESOURCE]->(bv:OCIBootVolume)
     WHERE bv.lastupdated = $oci_update_tag
-    MATCH (inst:OCIInstance)-[:OCI_BOOT_VOLUME_ATTACHMENT]->(att:OCIBootVolumeAttachment)
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)
+        -[:OCI_BOOT_VOLUME_ATTACHMENT]->(att:OCIBootVolumeAttachment)
     WHERE att.boot_volume_id = bv.ocid
       AND att.lifecycle_state = 'ATTACHED'
     MERGE (inst)-[r:OCI_BOOT_VOLUME_ATTACHMENT]->(bv)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
-    run_write_query(neo4j_session, link_instances, oci_update_tag=oci_update_tag)
+    run_write_query(
+        neo4j_session, link_instances,
+        TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_boot_volumes(
@@ -635,7 +651,7 @@ def sync_boot_volumes(
         aggregated.extend(raw)
     boot_volumes = transform_boot_volumes(aggregated, region)
     if boot_volumes:
-        load_boot_volumes(neo4j_session, boot_volumes, compartment_id, oci_update_tag)
+        load_boot_volumes(neo4j_session, boot_volumes, tenancy_id, compartment_id, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
@@ -751,6 +767,7 @@ def transform_volume_backups(
 def load_volume_backups(
     neo4j_session: neo4j.Session,
     backups: List[Dict[str, Any]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -788,24 +805,30 @@ def load_volume_backups(
     link_block = """
     UNWIND $DictList AS bk
         WITH bk WHERE bk.source_kind = 'BLOCK' AND bk.parent_volume_id IS NOT NULL
-        MATCH (parent:OCIBlockVolume{id: bk.parent_volume_id})
-        MATCH (b:OCIVolumeBackup{id: bk.id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(parent:OCIBlockVolume{id: bk.parent_volume_id})
+        // The backup has no tenancy path of its own (its parent may be gone); it was MERGEd by its
+        // OCID (globally unique) just above, so MERGE on that key instead of looking it up.
+        MERGE (b:OCIVolumeBackup{id: bk.id})
         MERGE (parent)-[r:OCI_VOLUME_BACKUP]->(b)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, link_block, backups, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, link_block, backups, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
     link_boot = """
     UNWIND $DictList AS bk
         WITH bk WHERE bk.source_kind = 'BOOT' AND bk.parent_volume_id IS NOT NULL
-        MATCH (parent:OCIBootVolume{id: bk.parent_volume_id})
-        MATCH (b:OCIVolumeBackup{id: bk.id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(parent:OCIBootVolume{id: bk.parent_volume_id})
+        // The backup has no tenancy path of its own (its parent may be gone); it was MERGEd by its
+        // OCID (globally unique) just above, so MERGE on that key instead of looking it up.
+        MERGE (b:OCIVolumeBackup{id: bk.id})
         MERGE (parent)-[r:OCI_VOLUME_BACKUP]->(b)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, link_boot, backups, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, link_boot, backups, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
 
 def sync_volume_backups(
@@ -825,7 +848,7 @@ def sync_volume_backups(
     boot_backups = get_boot_volume_backup_list_data(blockstorage, compartment_id)["BootVolumeBackups"]
     backups = transform_volume_backups(block_backups, boot_backups, region)
     if backups:
-        load_volume_backups(neo4j_session, backups, oci_update_tag)
+        load_volume_backups(neo4j_session, backups, tenancy_id, oci_update_tag)
         tags.sync_tags(
             neo4j_session, block_backups + boot_backups, 'OCIVolumeBackup',
             oci_update_tag, common_job_parameters,
@@ -986,6 +1009,7 @@ def transform_exports(
 def load_file_systems(
     neo4j_session: neo4j.Session,
     file_systems: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -1010,7 +1034,7 @@ def load_file_systems(
             f.consolelink = fs.consolelink,
             f.lastupdated = $oci_update_tag
         WITH f
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(f)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -1019,6 +1043,7 @@ def load_file_systems(
         neo4j_session,
         ingest_fs,
         file_systems,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -1027,6 +1052,7 @@ def load_file_systems(
 def load_mount_targets(
     neo4j_session: neo4j.Session,
     mount_targets: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -1048,7 +1074,7 @@ def load_mount_targets(
             m.consolelink = mt.consolelink,
             m.lastupdated = $oci_update_tag
         WITH m
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(m)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -1057,6 +1083,7 @@ def load_mount_targets(
         neo4j_session,
         ingest_mt,
         mount_targets,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -1065,6 +1092,7 @@ def load_mount_targets(
 def load_exports(
     neo4j_session: neo4j.Session,
     exports: List[Dict[str, Any]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -1076,8 +1104,9 @@ def load_exports(
     ingest_exports = """
     UNWIND $DictList AS ex
         WITH ex WHERE ex.export_set_id IS NOT NULL AND ex.file_system_id IS NOT NULL
-        MATCH (mt:OCIMountTarget{export_set_id: ex.export_set_id})
-        MATCH (fs:OCIFileSystem{id: ex.file_system_id})
+        MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(mt:OCIMountTarget{export_set_id: ex.export_set_id})
+        MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(fs:OCIFileSystem{id: ex.file_system_id})
         MERGE (mt)-[r:OCI_EXPORT{ocid: ex.ocid}]->(fs)
         ON CREATE SET r.firstseen = timestamp()
         SET r.path = ex.path,
@@ -1085,11 +1114,12 @@ def load_exports(
             r.createdate = ex.time_created,
             r.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, ingest_exports, exports, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, ingest_exports, exports, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
 
 def link_instances_to_file_systems(
     neo4j_session: neo4j.Session,
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -1103,8 +1133,10 @@ def link_instances_to_file_systems(
     once that ingestion path lands.
     """
     link_query = """
-    MATCH (mt:OCIMountTarget)-[:OCI_EXPORT]->(fs:OCIFileSystem)
-    MATCH (inst:OCIInstance)-[:OCI_VNIC_ATTACHMENT]->(vnic:OCIVnicAttachment)
+    MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+        -[:RESOURCE]->(mt:OCIMountTarget)-[:OCI_EXPORT]->(fs:OCIFileSystem)
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)
+        -[:OCI_VNIC_ATTACHMENT]->(vnic:OCIVnicAttachment)
     WHERE vnic.subnet_id IS NOT NULL
       AND vnic.subnet_id = mt.subnet_id
     MERGE (inst)-[r:MOUNTS]->(fs)
@@ -1113,7 +1145,7 @@ def link_instances_to_file_systems(
                   r.inference_method = 'shared_subnet'
     SET r.lastupdated = $oci_update_tag
     """
-    run_write_query(neo4j_session, link_query, oci_update_tag=oci_update_tag)
+    run_write_query(neo4j_session, link_query, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
 
 def sync_file_storage(
@@ -1145,11 +1177,11 @@ def sync_file_storage(
     mount_targets = transform_mount_targets(mt_raw, region)
 
     if file_systems:
-        load_file_systems(neo4j_session, file_systems, compartment_id, oci_update_tag)
+        load_file_systems(neo4j_session, file_systems, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, fs_raw, 'OCIFileSystem', oci_update_tag, common_job_parameters)
     if mount_targets:
-        load_mount_targets(neo4j_session, mount_targets, compartment_id, oci_update_tag)
+        load_mount_targets(neo4j_session, mount_targets, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, mt_raw, 'OCIMountTarget', oci_update_tag, common_job_parameters)
 
@@ -1157,10 +1189,10 @@ def sync_file_storage(
     exports_raw = get_export_list_data(file_storage, compartment_id)["Exports"]
     exports = transform_exports(exports_raw)
     if exports:
-        load_exports(neo4j_session, exports, oci_update_tag)
+        load_exports(neo4j_session, exports, tenancy_id, oci_update_tag)
 
     # Best-effort instance → file system connectivity inference.
-    link_instances_to_file_systems(neo4j_session, oci_update_tag)
+    link_instances_to_file_systems(neo4j_session, tenancy_id, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------

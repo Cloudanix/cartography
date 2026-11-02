@@ -85,6 +85,7 @@ def transform_msk_clusters(clusters: List[Dict], region: str) -> List[Dict]:
 @timeit
 def load_msk_clusters(
     neo4j_session: neo4j.Session, clusters: List[Dict], current_aws_account_id: str, update_tag: int,
+    workspace_id: str,
 ) -> None:
     query = """
     UNWIND $DictList AS item
@@ -123,16 +124,18 @@ def load_msk_clusters(
     load_graph_data(
         neo4j_session, query, clusters, aws_update_tag=update_tag, aws_account_id=current_aws_account_id,
     )
-    _attach_security_groups(neo4j_session, clusters, update_tag)
-    _attach_subnets(neo4j_session, clusters, update_tag)
+    _attach_security_groups(neo4j_session, clusters, current_aws_account_id, update_tag)
+    _attach_subnets(neo4j_session, clusters, current_aws_account_id, workspace_id, update_tag)
 
 
 @timeit
-def _attach_security_groups(neo4j_session: neo4j.Session, clusters: List[Dict], update_tag: int) -> None:
+def _attach_security_groups(
+    neo4j_session: neo4j.Session, clusters: List[Dict], current_aws_account_id: str, update_tag: int,
+) -> None:
     # The group node may not be synced yet (services run in parallel); MERGE it like RDS and ElastiCache do.
     query = """
     UNWIND $DictList AS item
-        MATCH (cluster:MSKCluster{id: item.arn})
+        MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(cluster:MSKCluster{id: item.arn})
         MERGE (sg:EC2SecurityGroup{id: item.group_id})
         ON CREATE SET sg.firstseen = timestamp()
         MERGE (cluster)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
@@ -140,20 +143,28 @@ def _attach_security_groups(neo4j_session: neo4j.Session, clusters: List[Dict], 
         SET r.lastupdated = $aws_update_tag
     """
     rows = [{'arn': c['ClusterArn'], 'group_id': group_id} for c in clusters for group_id in c['SecurityGroups']]
-    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag)
+    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag, aws_account_id=current_aws_account_id)
 
 
 @timeit
-def _attach_subnets(neo4j_session: neo4j.Session, clusters: List[Dict], update_tag: int) -> None:
+def _attach_subnets(
+    neo4j_session: neo4j.Session, clusters: List[Dict], current_aws_account_id: str, workspace_id: str, update_tag: int,
+) -> None:
+    # A broker or cluster can sit in subnets shared in from another account of the workspace (VPC sharing).
     query = """
     UNWIND $DictList AS item
-        MATCH (cluster:MSKCluster{id: item.arn}), (subnet:EC2Subnet{subnetid: item.subnet_id})
+        MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(cluster:MSKCluster{id: item.arn})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+            -[:RESOURCE]->(subnet:EC2Subnet{subnetid: item.subnet_id})
         MERGE (cluster)-[r:PART_OF_SUBNET]->(subnet)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
     rows = [{'arn': c['ClusterArn'], 'subnet_id': subnet_id} for c in clusters for subnet_id in c['SubnetIds']]
-    load_graph_data(neo4j_session, query, rows, aws_update_tag=update_tag)
+    load_graph_data(
+        neo4j_session, query, rows, aws_update_tag=update_tag, aws_account_id=current_aws_account_id,
+        WORKSPACE_ID=workspace_id,
+    )
 
 
 @timeit
@@ -179,7 +190,9 @@ def sync(
         logger.info("Syncing MSK clusters for region '%s' in account '%s'.", region, current_aws_account_id)
         clusters.extend(transform_msk_clusters(get_msk_clusters(boto3_session, region), region))
 
-    load_msk_clusters(neo4j_session, clusters, current_aws_account_id, update_tag)
+    load_msk_clusters(
+        neo4j_session, clusters, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'],
+    )
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

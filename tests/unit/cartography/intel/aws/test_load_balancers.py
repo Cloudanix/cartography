@@ -101,7 +101,9 @@ class TestLoadLoadBalancerV2s:
     def test_batched_writes(self):
         session = MagicMock()
 
-        load_balancer_v2s.load_load_balancer_v2s(session, [ELBV2, ELBV2], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1")
+        load_balancer_v2s.load_load_balancer_v2s(
+            session, [ELBV2, ELBV2], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1", "ws",
+        )
 
         # lbs + subnets + security groups + listeners + target instances = 5 writes total
         assert session.execute_write.call_count == 5
@@ -124,7 +126,9 @@ class TestLoadLoadBalancerV2s:
     def test_per_lb_helpers_still_work(self):
         session = MagicMock()
 
-        load_balancer_v2s.load_load_balancer_v2_listeners(session, "lb-1", ELBV2["Listeners"], TEST_UPDATE_TAG)
+        load_balancer_v2s.load_load_balancer_v2_listeners(
+            session, "lb-1", ELBV2["Listeners"], TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
+        )
 
         assert session.execute_write.call_count == 1
         rows = session.execute_write.call_args.kwargs["DictList"]
@@ -132,5 +136,5 @@ class TestLoadLoadBalancerV2s:
 
     def test_empty_data_writes_nothing(self):
         session = MagicMock()
-        load_balancer_v2s.load_load_balancer_v2s(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1")
+        load_balancer_v2s.load_load_balancer_v2s(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1", "ws")
         session.execute_write.assert_not_called()

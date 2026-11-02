@@ -8,6 +8,7 @@ from tests.integration.cartography.intel.aws.common import exposure_job_paramete
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'eu-north-1'
 TEST_UPDATE_TAG = 123456789
+TEST_WORKSPACE_ID = 'ws-subnets'
 
 
 def test_load_subnets(neo4j_session):
@@ -15,9 +16,9 @@ def test_load_subnets(neo4j_session):
     cartography.intel.aws.ec2.subnets.load_subnets(
         neo4j_session,
         data,
-        TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected_nodes = {
@@ -52,9 +53,9 @@ def test_load_subnet_relationships(neo4j_session):
     cartography.intel.aws.ec2.subnets.load_subnets(
         neo4j_session,
         data,
-        TEST_REGION,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
 
     expected_nodes = {
@@ -83,7 +84,7 @@ def test_subnet_exposure_marks_map_public_ip_on_launch_through_the_organization(
         neo4j_session, [
             {'SubnetId': 'subnet-auto-public-ip', 'CidrBlock': '10.0.1.0/24', 'MapPublicIpOnLaunch': True},
             {'SubnetId': 'subnet-no-public-ip', 'CidrBlock': '10.0.2.0/24', 'MapPublicIpOnLaunch': False},
-        ], account_id, TEST_UPDATE_TAG,
+        ], account_id, TEST_UPDATE_TAG, TEST_WORKSPACE_ID,
     )
 
     run_analysis_job(

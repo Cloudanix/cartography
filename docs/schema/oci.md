@@ -384,7 +384,8 @@ Representation of an OCI NSG Security Rule.
 |-------|-------------|
 | firstseen | Timestamp of when a sync job first discovered this node |
 | lastupdated | Timestamp of the last time the node was updated |
-| **ocid** | OCI-unique identifier for this rule |
+| **id** | `<NSG OCID>/<rule id>`: the rule id is unique only within its NSG |
+| ocid | Oracle-assigned rule id (a short code such as `04ABEC`, not an OCID) |
 | direction | INGRESS or EGRESS |
 | protocol | The transport protocol (e.g., 6 for TCP, 17 for UDP) |
 | description | Description of the rule |

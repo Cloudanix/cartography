@@ -230,7 +230,9 @@ def test_cloudkms_function(neo4j_session):
     cartography.intel.gcp.cloudkms.load_kms_key_rings(neo4j_session, data, TEST_PROJECT_NUMBER, TEST_UPDATE_TAG)
     bindings_data = tests.data.gcp.cloudkms.FUNCTION_POLICY_BINDINGS
 
-    cartography.intel.gcp.cloudkms.attach_keyring_to_binding(neo4j_session, TEST_KEYRING_ID, bindings_data, TEST_UPDATE_TAG)
+    cartography.intel.gcp.cloudkms.attach_keyring_to_binding(
+        neo4j_session, TEST_KEYRING_ID, bindings_data, TEST_UPDATE_TAG, TEST_PROJECT_NUMBER,
+    )
 
     query1 = """
     MATCH (binding:GCPBinding)<-[a:ATTACHED_BINDING]-(keyring:GCPKMSKeyRing)<-[r:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE keyring.exposed_internet=true
@@ -301,11 +303,11 @@ def test_crypto_key_exposure_reads_key_level_iam(neo4j_session):
         rows = kms.transform_crypto_key_policy_bindings(
             [{'role': 'roles/cloudkms.cryptoKeyEncrypterDecrypter', 'members': members}], key_id, project,
         )
-        kms.attach_crypto_key_to_bindings(neo4j_session, key_id, rows, update_tag)
+        kms.attach_crypto_key_to_bindings(neo4j_session, key_id, rows, update_tag, project)
     kms.attach_keyring_to_binding(
         neo4j_session, rings[0]['id'], kms.transform_keryring_policy_bindings(
             [{'role': 'roles/cloudkms.viewer', 'members': ['allUsers']}], rings[0]['id'], project,
-        ), tag,
+        ), tag, project,
     )
     bind('closed-ring', 'own-all-users', ['allUsers', 'user:a@x.io'])
     bind('closed-ring', 'own-all-authenticated', ['allAuthenticatedUsers'])

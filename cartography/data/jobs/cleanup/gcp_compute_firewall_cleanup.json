@@ -19,16 +19,10 @@
 			"__comment__": "Remove GCP Firewall-to-IpRule relationships that are out of date."
 		},
 		{
-			"query": "MATCH (n:GCPPublicIpAddress)<-[:MEMBER_OF_PUBLIC_IP_ADDRESS]-(:GCPFirewall)<-[:RESOURCE]-(:GCPVpc)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100,
-			"__comment__": "Delete GCP Public IP Addresses associated with Firewalls that are out of date."
-		},
-		{
 			"query": "MATCH (:GCPPublicIpAddress)<-[r:MEMBER_OF_PUBLIC_IP_ADDRESS]-(:GCPFirewall)<-[:RESOURCE]-(:GCPVpc)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
-			"__comment__": "Remove GCP Firewall-to-PublicIpAddress relationships that are out of date."
+			"__comment__": "Remove GCP Firewall-to-PublicIpAddress relationships that are out of date. GCPPublicIpAddress nodes are keyed by the address or range (e.g. Google's health-check 35.191.0.0/16) and shared by every tenant and by Cloud SQL, and their lastupdated is the last writer's tag: only this project's edge is removed here."
 		},
 		{
 			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVpc)-[:RESOURCE]->(:GCPFirewall)-[r:TARGET_TAG]->(:GCPNetworkTag) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
@@ -47,6 +41,12 @@
 			"iterative": true,
 			"iterationsize": 100,
 			"__comment__": "Remove GCP VPC-to-Firewall relationships that are out of date."
+		},
+		{
+			"query": "MATCH (n:GCPPublicIpAddress) WHERE NOT (n)--() AND n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Orphan sweep, tenant-independent: delete a public address once no firewall or SQL instance of any tenant links it."
 		}
 	],
 	"name": "cleanup GCP Firewalls"

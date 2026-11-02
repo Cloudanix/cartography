@@ -102,7 +102,9 @@ def test_cloud_function(neo4j_session):
     cartography.intel.gcp.cloudfunction.load_functions(neo4j_session, data, TEST_PROJECT_NUMBER, TEST_UPDATE_TAG)
     bindings_data = tests.data.gcp.function.FUNCTION_POLICY_BINDINGS
 
-    cartography.intel.gcp.cloudfunction.attach_function_to_binding(neo4j_session, TEST_FUNCTION_ID, bindings_data, TEST_UPDATE_TAG)
+    cartography.intel.gcp.cloudfunction.attach_function_to_binding(
+        neo4j_session, TEST_FUNCTION_ID, bindings_data, TEST_UPDATE_TAG, TEST_PROJECT_NUMBER,
+    )
 
     query1 = """
     MATCH (function:GCPFunction)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE function.exposed_internet=true

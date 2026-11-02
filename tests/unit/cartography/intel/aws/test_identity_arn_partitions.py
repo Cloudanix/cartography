@@ -38,7 +38,7 @@ def test_apigateway_arns(region, partition, prefix):
 
     stages = [{'region': region, 'apiId': 'a1', 'stageName': 'prod', 'createdDate': 'd'}]
     with patch.object(apigateway, 'load_graph_data'):
-        apigateway._load_apigateway_stages(MagicMock(), stages, 1, **_kw(partition))
+        apigateway._load_apigateway_stages(MagicMock(), stages, ACCOUNT, 1, **_kw(partition))
     assert stages[0]['arn'] == f'{prefix}apigateway:{region}::/restapis/a1/stages/prod'
 
 
@@ -90,7 +90,6 @@ def test_route53_arns(region, partition, prefix):
     # The API Id carries "/hostedzone/"; the ARN must hold only the bare zone id.
     assert zones[0][0]['arn'] == f'{prefix}route53:::hostedzone/Z1'
 
-    with patch.object(route53, 'load_zone'), patch.object(route53, 'load_a_records') as load_a, \
-            patch.object(route53, 'link_aws_resources'):
+    with patch.object(route53, 'load_zone'), patch.object(route53, 'load_a_records') as load_a:
         route53.load_dns_details(MagicMock(), zones, ACCOUNT, 1, **_kw(partition))
     assert load_a.call_args.args[1][0]['arn'] == f'{prefix}route53:::recordset//hostedzone/Z1/www.example.com/A'

@@ -161,14 +161,18 @@ def get_auto_scaling_groups(boto3_session: boto3.session.Session, region: str, a
 
 
 @timeit
-def attact_autoscaling_groups_to_nodegroups(neo4j_session: neo4j.Session, nodegroup_arn: str, auto_scalin_groups: List[Dict], update_tag: int) -> None:
+def attact_autoscaling_groups_to_nodegroups(
+    neo4j_session: neo4j.Session, nodegroup_arn: str, auto_scalin_groups: List[Dict], current_aws_account_id: str,
+    update_tag: int,
+) -> None:
     attach_autoscaling = """
     UNWIND $DictList as agroup
     MERGE (g:AutoScalingGroup{arn: agroup.AutoScalingGroupARN})
     ON CREATE SET g.firstseen = timestamp()
     SET g.lastupdated = $update_tag
     WITH g
-    MATCH (ngroup:EKSClusterNodeGroup{arn: $GROUPARN})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:EKSCluster)
+        <-[:ASSOCIATED_WITH]-(ngroup:EKSClusterNodeGroup{arn: $GROUPARN})
     MERGE (g)-[r:ASSOCIATED_WITH]->(ngroup)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -178,6 +182,7 @@ def attact_autoscaling_groups_to_nodegroups(neo4j_session: neo4j.Session, nodegr
         attach_autoscaling,
         auto_scalin_groups,
         GROUPARN=nodegroup_arn,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
@@ -187,6 +192,7 @@ def sync_eks_cluster_nodegroups(
         neo4j_session: neo4j.Session,
         boto3_session: boto3.session.Session,
         clusters_data: List[Dict],
+        current_aws_account_id: str,
         update_tag: int,
 ) -> None:
     for cluster in clusters_data:
@@ -198,7 +204,9 @@ def sync_eks_cluster_nodegroups(
                 auto_scalin_groups.append(auto_scalin_group["name"])
             if auto_scalin_groups:
                 auto_scalin_groups = get_auto_scaling_groups(boto3_session, cluster['region'], auto_scalin_groups)
-                attact_autoscaling_groups_to_nodegroups(neo4j_session, nodegroup["nodegroupArn"], auto_scalin_groups, update_tag)
+                attact_autoscaling_groups_to_nodegroups(
+                    neo4j_session, nodegroup["nodegroupArn"], auto_scalin_groups, current_aws_account_id, update_tag,
+                )
 
 
 @timeit
@@ -230,7 +238,7 @@ def sync(
 
     load_eks_clusters(neo4j_session, cluster_data, current_aws_account_id, update_tag)
 
-    sync_eks_cluster_nodegroups(neo4j_session, boto3_session, cluster_data, update_tag)
+    sync_eks_cluster_nodegroups(neo4j_session, boto3_session, cluster_data, current_aws_account_id, update_tag)
 
     cleanup(neo4j_session, common_job_parameters)
 

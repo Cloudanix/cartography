@@ -10,9 +10,9 @@ from unittest.mock import patch
 from cartography.intel.aws import apigateway
 from cartography.intel.aws import config
 from cartography.intel.aws import ecr
+from cartography.intel.aws import ecs
 from cartography.intel.aws import eks
 from cartography.intel.aws import elasticache
-from cartography.intel.aws import ecs
 from cartography.intel.aws import elasticsearch
 from cartography.intel.aws import kms
 from cartography.intel.aws import lambda_function
@@ -76,7 +76,7 @@ class TestEks:
         session = MagicMock()
         asgs = [{"AutoScalingGroupARN": "arn:aws:autoscaling:us-east-1:1234:autoScalingGroup:g1"}]
 
-        eks.attact_autoscaling_groups_to_nodegroups(session, "arn:nodegroup", asgs, TEST_UPDATE_TAG)
+        eks.attact_autoscaling_groups_to_nodegroups(session, "arn:nodegroup", asgs, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         call = session.execute_write.call_args
@@ -122,7 +122,7 @@ class TestElasticache:
         clusters = [{"ARN": "arn:aws:elasticache:us-east-1:1234:cluster:c1", "SecurityGroups": []}]
 
         elasticache.load_elasticache_clusters(session, clusters, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-        elasticache.attach_elasticache_clusters_to_security_groups(session, clusters, TEST_UPDATE_TAG)
+        elasticache.attach_elasticache_clusters_to_security_groups(session, clusters, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2
@@ -157,7 +157,7 @@ class TestKms:
         session = MagicMock()
         aliases = [{"AliasArn": "arn:aws:kms:us-east-1:1234:alias/a1", "TargetKeyId": "k1"}]
 
-        kms._load_kms_key_aliases(session, aliases, TEST_UPDATE_TAG)
+        kms._load_kms_key_aliases(session, aliases, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert_batched(session.execute_write.call_args, aliases)
@@ -175,7 +175,7 @@ class TestElasticsearch:
     def test_access_policy_tag_write_is_managed(self):
         session = MagicMock()
 
-        elasticsearch._process_access_policy(session, "domain-1", {"Endpoint": None})
+        elasticsearch._process_access_policy(session, "domain-1", {"Endpoint": None}, TEST_ACCOUNT_ID)
 
         session.run.assert_not_called()
         session.execute_write.assert_called_once()
@@ -184,7 +184,7 @@ class TestElasticsearch:
         session = MagicMock()
         domain = {"VPCOptions": {"SubnetIds": ["subnet-1"], "SecurityGroupIds": []}}
 
-        elasticsearch._link_es_domain_vpc(session, "domain-1", domain, TEST_UPDATE_TAG)
+        elasticsearch._link_es_domain_vpc(session, "domain-1", domain, TEST_ACCOUNT_ID, "ws", TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         # subnets batch writes; the empty security-group list short-circuits
@@ -199,7 +199,7 @@ class TestApiGateway:
         stages = [{"apiId": "a1", "stageName": "prod", "region": TEST_REGION, "createdDate": "2024-01-01"}]
 
         apigateway.load_apigateway_rest_apis(session, apis, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-        apigateway._load_apigateway_stages(session, stages, TEST_UPDATE_TAG)
+        apigateway._load_apigateway_stages(session, stages, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2
@@ -241,7 +241,7 @@ class TestLambda:
         aliases = [{"AliasArn": "arn:aws:lambda:us-east-1:1234:function:f1:live", "FunctionArn": "f1"}]
 
         lambda_function.load_lambda_functions(session, functions, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-        lambda_function._load_lambda_function_aliases(session, aliases, TEST_UPDATE_TAG)
+        lambda_function._load_lambda_function_aliases(session, aliases, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2
@@ -285,9 +285,11 @@ class TestRds:
 
     def test_subnet_group_attachment_is_managed(self):
         session = MagicMock()
-        cluster = {"DBClusterArn": "arn:aws:rds:us-east-1:1234:cluster:c1", "DBSubnetGroup": "sng-1"}
+        cluster = {
+            "DBClusterArn": "arn:aws:rds:us-east-1:1234:cluster:c1", "DBSubnetGroup": "sng-1", "region": "us-east-1",
+        }
 
-        rds._attach_db_subnet_group(session, cluster, TEST_UPDATE_TAG)
+        rds._attach_db_subnet_group(session, cluster, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         session.execute_write.assert_called_once()
@@ -297,8 +299,8 @@ class TestRds:
         replicas = [{"DBInstanceArn": "arn:instance", "ReadReplicaSourceDBInstanceIdentifier": "src"}]
         members = [{"DBInstanceArn": "arn:instance", "DBClusterIdentifier": "c1"}]
 
-        rds._attach_read_replicas(session, replicas, TEST_UPDATE_TAG)
-        rds._attach_clusters(session, members, TEST_UPDATE_TAG)
+        rds._attach_read_replicas(session, replicas, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        rds._attach_clusters(session, members, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2

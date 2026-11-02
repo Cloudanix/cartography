@@ -88,7 +88,7 @@ def test_load_mq_brokers_is_batched_and_links_groups_and_subnets():
         'us-east-1',
     )
 
-    mq.load_mq_brokers(session, brokers, '111111111111', 42)
+    mq.load_mq_brokers(session, brokers, '111111111111', 42, 'ws')
 
     session.run.assert_not_called()
     queries = [c.args[1] for c in session.execute_write.call_args_list]
@@ -107,6 +107,9 @@ def test_sync_skips_regions_without_amazon_mq(mocker):
     mocker.patch.object(mq, 'load_mq_brokers')
     mocker.patch.object(mq, 'cleanup')
 
-    mq.sync(MagicMock(), session, ['us-east-1', 'xx-new-1'], '111111111111', 42, {'AWS_ID': '111111111111'})
+    mq.sync(
+        MagicMock(), session, ['us-east-1', 'xx-new-1'], '111111111111', 42,
+        {'AWS_ID': '111111111111', 'WORKSPACE_ID': 'ws'},
+    )
 
     assert [c.args[1] for c in get.call_args_list] == ['us-east-1']

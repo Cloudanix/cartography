@@ -388,14 +388,18 @@ def load_server_data(
     )
     for server in server_list:
         resource_group = get_azure_resource_group_name(server.get('id'))
-        _attach_resource_group_server(neo4j_session, server.get('id'), resource_group, azure_update_tag)
+        _attach_resource_group_server(
+            neo4j_session, subscription_id, server.get('id'), resource_group, azure_update_tag,
+        )
 
 
-def _attach_resource_group_server(neo4j_session: neo4j.Session, server_id: str, server_resource_group: str, azure_update_tag: int) -> None:
+def _attach_resource_group_server(
+    neo4j_session: neo4j.Session, subscription_id: str, server_id: str, server_resource_group: str,
+    azure_update_tag: int,
+) -> None:
     ingest_server = """
-    MATCH (s:AzureSQLServer{id: $server_id})
-    WITH s
-    MATCH (rg:AzureResourceGroup{name: $server_resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: $server_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $server_resource_group})
     MERGE (s)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -405,16 +409,19 @@ def _attach_resource_group_server(neo4j_session: neo4j.Session, server_id: str, 
         ingest_server,
         server_id=server_id,
         server_resource_group=server_resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=azure_update_tag,
     )
 
 
-def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server_list: List[Dict], azure_update_tag: int) -> None:
+def load_server_private_endpoint_connection(
+    neo4j_session: neo4j.Session, subscription_id: str, server_list: List[Dict], azure_update_tag: int,
+) -> None:
     """
     Ingest & attach server private endpoint connection
     """
     ingest_attach_private_endpoint_connection = """
-    MATCH (s:AzureSQLServer{id: $server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: $server_id})
     UNWIND $DictList as pec
     MERGE (aspec:AzureServerPrivateEndpointConnection{id: pec.id})
     ON CREATE SET aspec.firstseen = timestamp()
@@ -431,19 +438,25 @@ def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server
             neo4j_session,
             ingest_attach_private_endpoint_connection,
             server.get('private_endpoint_connections', []),
+            subscription_id=subscription_id,
             server_id=server.get('id'),
             azure_update_tag=azure_update_tag,
         )
         for private_endpoint_connection in server.get('private_endpoint_connections', []):
             resource_group = get_azure_resource_group_name(private_endpoint_connection.get('id'))
-            _attach_resource_group_server_private_endpoint_connections(neo4j_session, private_endpoint_connection['id'], resource_group, azure_update_tag)
+            _attach_resource_group_server_private_endpoint_connections(
+                neo4j_session, subscription_id, private_endpoint_connection['id'], resource_group, azure_update_tag,
+            )
 
 
-def _attach_resource_group_server_private_endpoint_connections(neo4j_session: neo4j.Session, private_endpoint_connection_id: str, resource_group: str, azure_update_tag: int) -> None:
+def _attach_resource_group_server_private_endpoint_connections(
+    neo4j_session: neo4j.Session, subscription_id: str, private_endpoint_connection_id: str, resource_group: str,
+    azure_update_tag: int,
+) -> None:
     ingest_attach_private_endpoint_connection = """
-    MATCH (aspec:AzureServerPrivateEndpointConnection{id: $aspec_id})
-    WITH aspec
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:HAS]->(aspec:AzureServerPrivateEndpointConnection{id: $aspec_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (aspec)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -453,6 +466,7 @@ def _attach_resource_group_server_private_endpoint_connections(neo4j_session: ne
         ingest_attach_private_endpoint_connection,
         aspec_id=private_endpoint_connection_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=azure_update_tag,
     )
 
@@ -758,16 +772,16 @@ def load_server_details(
             rules['consolelink'] = safe_console_link(rules['id'], common_job_parameters)
             fw_rules.append(rules)
 
-    _load_server_dns_aliases(neo4j_session, dns_aliases, update_tag)
-    _load_server_ad_admins(neo4j_session, ad_admins, update_tag)
-    _load_recoverable_databases(neo4j_session, recoverable_databases, update_tag)
-    _load_restorable_dropped_databases(neo4j_session, restorable_dropped_databases, update_tag)
-    _load_failover_groups(neo4j_session, failover_groups, update_tag)
-    _load_elastic_pools(neo4j_session, elastic_pools, update_tag)
-    _load_databases(neo4j_session, databases, update_tag)
+    _load_server_dns_aliases(neo4j_session, subscription_id, dns_aliases, update_tag)
+    _load_server_ad_admins(neo4j_session, subscription_id, ad_admins, update_tag)
+    _load_recoverable_databases(neo4j_session, subscription_id, recoverable_databases, update_tag)
+    _load_restorable_dropped_databases(neo4j_session, subscription_id, restorable_dropped_databases, update_tag)
+    _load_failover_groups(neo4j_session, subscription_id, failover_groups, update_tag)
+    _load_elastic_pools(neo4j_session, subscription_id, elastic_pools, update_tag)
+    _load_databases(neo4j_session, subscription_id, databases, update_tag)
     _load_database_tags(neo4j_session, databases, update_tag, common_job_parameters)
-    _load_firewall_rules(neo4j_session, fw_rules, update_tag)
-    _load_firewall_rules_fetched(neo4j_session, fw_rules_fetched)
+    _load_firewall_rules(neo4j_session, subscription_id, fw_rules, update_tag)
+    _load_firewall_rules_fetched(neo4j_session, subscription_id, fw_rules_fetched)
 
     network_client = network.get_network_client(credentials, subscription_id)
     public_ips = [ip.get('ip_address') for ip in network.get_public_ip_addresses_list(network_client, None, common_job_parameters) if ip.get('ip_address')]
@@ -807,7 +821,7 @@ def load_server_details(
 
 @timeit
 def _load_server_dns_aliases(
-        neo4j_session: neo4j.Session, dns_aliases: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, dns_aliases: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the DNS Alias details into neo4j.
@@ -823,7 +837,7 @@ def _load_server_dns_aliases(
     alias.dnsrecord = dns_alias.azure_dns_record,
     alias.lastupdated = $azure_update_tag
     WITH alias, dns_alias
-    MATCH (s:AzureSQLServer{id: dns_alias.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: dns_alias.server_id})
     MERGE (s)-[r:USED_BY]->(alias)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -833,18 +847,21 @@ def _load_server_dns_aliases(
         neo4j_session,
         ingest_dns_aliases,
         dns_aliases,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for dns_aliases in dns_aliases:
         resource_group = get_azure_resource_group_name(dns_aliases.get('id'))
-        _attach_resource_group_dns_alias(neo4j_session, dns_aliases['id'], resource_group, update_tag)
+        _attach_resource_group_dns_alias(neo4j_session, subscription_id, dns_aliases['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_dns_alias(
+    neo4j_session: neo4j.Session, subscription_id: str, dns_alias_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_dns_aliases = """
-    MATCH (alias:AzureServerDNSAlias{id: $dns_alias_id})
-    WITH alias
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:USED_BY]->(alias:AzureServerDNSAlias{id: $dns_alias_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (alias)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -854,6 +871,7 @@ def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id:
         ingest_dns_aliases,
         dns_alias_id=dns_alias_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -871,17 +889,17 @@ def _firewall_rule_address_count(fw_rule: Dict) -> Optional[int]:
     return int(end) - int(start) + 1
 
 
-def _load_firewall_rules_fetched(neo4j_session: neo4j.Session, servers: List[Dict]) -> None:
+def _load_firewall_rules_fetched(neo4j_session: neo4j.Session, subscription_id: str, servers: List[Dict]) -> None:
     """
     Record on each server whether its firewall rules were read this sync, so the exposure
     job can tell "no rules" (not public) from "rules unknown" (kept public).
     """
     query = """
     UNWIND $DictList as server
-    MATCH (s:AzureSQLServer{id: server.id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: server.id})
     SET s.firewall_rules_fetched = server.fetched
     """
-    load_graph_data(neo4j_session, query, servers)
+    load_graph_data(neo4j_session, query, servers, subscription_id=subscription_id)
 
 
 def _ip_in_range(ip: str, start_ip: str, end_ip: str) -> bool:
@@ -893,7 +911,9 @@ def _ip_in_range(ip: str, start_ip: str, end_ip: str) -> bool:
 
 
 @timeit
-def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], update_tag: int) -> None:
+def _load_firewall_rules(
+    neo4j_session: neo4j.Session, subscription_id: str, fw_rules: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest the firewall rules into neo4j.
     """
@@ -911,7 +931,7 @@ def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], upd
     rule.consolelink = coalesce(fw_rule.consolelink, rule.consolelink),
     rule.lastupdated = $azure_update_tag
     WITH rule, fw_rule
-    MATCH (s: AzureSQLServer{id: fw_rule.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: fw_rule.server_id})
     MERGE (s)-[r:HAS]->(rule)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -921,18 +941,21 @@ def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], upd
         neo4j_session,
         ingest_firewall_rules,
         fw_rules,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for fw_rule in fw_rules:
         resource_group = get_azure_resource_group_name(fw_rule.get('id'))
-        _attach_resource_group_fw_rule(neo4j_session, fw_rule['id'], resource_group, update_tag)
+        _attach_resource_group_fw_rule(neo4j_session, subscription_id, fw_rule['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_fw_rule(
+    neo4j_session: neo4j.Session, subscription_id: str, fw_rule_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_firewall_rules = """
-    MATCH (rule:AzureFirewallRule{id: $fw_rule_id})
-    WITH rule
-    MATCH (rg: AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:HAS]->(rule:AzureFirewallRule{id: $fw_rule_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (rule)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -942,6 +965,7 @@ def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id: str
         ingest_firewall_rules,
         fw_rule_id=fw_rule_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -968,15 +992,17 @@ def _attach_firewall_rule_to_public_ip_tx(
     """
     if type == "Internal":
         query = """
-        MATCH (fwr:AzureFirewallRule{id: $fw_rule})
-        MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(ip:AzurePublicIPAddress{ipAddress: $public_ip})
+        MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+        -[:HAS]->(fwr:AzureFirewallRule{id: $fw_rule})
+        MATCH (sub)-[:RESOURCE]->(ip:AzurePublicIPAddress{ipAddress: $public_ip})
         MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
         """
     else:
         query = """
-        MATCH (fwr:AzureFirewallRule{id: $fw_rule})
+        MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+        -[:HAS]->(fwr:AzureFirewallRule{id: $fw_rule})
         MERGE (ip:AzurePublicIPAddress{id: $ip_id})
         ON CREATE SET ip.firstseen = timestamp()
         SET ip.name = $public_ip,
@@ -1004,7 +1030,7 @@ def _attach_firewall_rule_to_public_ip_tx(
 
 @timeit
 def _load_server_ad_admins(
-        neo4j_session: neo4j.Session, ad_admins: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, ad_admins: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the Server AD Administrators details into neo4j.
@@ -1021,7 +1047,7 @@ def _load_server_ad_admins(
     a.region = ad_admin.location,
     a.lastupdated = $azure_update_tag
     WITH a, ad_admin
-    MATCH (s:AzureSQLServer{id: ad_admin.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: ad_admin.server_id})
     MERGE (s)-[r:ADMINISTERED_BY]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1031,18 +1057,21 @@ def _load_server_ad_admins(
         neo4j_session,
         ingest_ad_admins,
         ad_admins,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for ad_admin in ad_admins:
         resource_group = get_azure_resource_group_name(ad_admin.get('id'))
-        _attach_resource_group_ad_admin(neo4j_session, ad_admin['id'], resource_group, update_tag)
+        _attach_resource_group_ad_admin(neo4j_session, subscription_id, ad_admin['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_ad_admin(neo4j_session: neo4j.Session, ad_admin_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_ad_admin(
+    neo4j_session: neo4j.Session, subscription_id: str, ad_admin_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_ad_admins = """
-    MATCH (a:AzureServerADAdministrator{id: $ad_admin_id})
-    WITH a
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:ADMINISTERED_BY]->(a:AzureServerADAdministrator{id: $ad_admin_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1052,13 +1081,14 @@ def _attach_resource_group_ad_admin(neo4j_session: neo4j.Session, ad_admin_id: s
         ingest_ad_admins,
         ad_admin_id=ad_admin_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_recoverable_databases(
-        neo4j_session: neo4j.Session, recoverable_databases: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, recoverable_databases: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the recoverable database details into neo4j.
@@ -1075,7 +1105,7 @@ def _load_recoverable_databases(
     rd.lastbackupdate = rec_db.last_available_backup_date,
     rd.lastupdated = $azure_update_tag
     WITH rd, rec_db
-    MATCH (s:AzureSQLServer{id: rec_db.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: rec_db.server_id})
     MERGE (s)-[r:RESOURCE]->(rd)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1086,18 +1116,24 @@ def _load_recoverable_databases(
         ingest_recoverable_databases,
         recoverable_databases,
         region='global',
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for recoverable_database in recoverable_databases:
         resource_group = get_azure_resource_group_name(recoverable_database.get('id'))
-        _attach_resource_group_recoverable_database(neo4j_session, recoverable_database['id'], resource_group, update_tag)
+        _attach_resource_group_recoverable_database(
+            neo4j_session, subscription_id, recoverable_database['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_recoverable_database(neo4j_session: neo4j.Session, recoverable_database_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_recoverable_database(
+    neo4j_session: neo4j.Session, subscription_id: str, recoverable_database_id: str, resource_group: str,
+    update_tag: int,
+) -> None:
     ingest_recoverable_databases = """
-    MATCH (rd:AzureRecoverableDatabase{id: $rec_db_id})
-    WITH rd
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(rd:AzureRecoverableDatabase{id: $rec_db_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (rd)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1107,13 +1143,14 @@ def _attach_resource_group_recoverable_database(neo4j_session: neo4j.Session, re
         ingest_recoverable_databases,
         rec_db_id=recoverable_database_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_restorable_dropped_databases(
-        neo4j_session: neo4j.Session, restorable_dropped_databases: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, restorable_dropped_databases: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the restorable dropped database details into neo4j.
@@ -1134,7 +1171,7 @@ def _load_restorable_dropped_databases(
     rdd.maxsizebytes = res_dropped_db.max_size_bytes,
     rdd.lastupdated = $azure_update_tag
     WITH rdd, res_dropped_db
-    MATCH (s:AzureSQLServer{id: res_dropped_db.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: res_dropped_db.server_id})
     MERGE (s)-[r:RESOURCE]->(rdd)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1144,18 +1181,24 @@ def _load_restorable_dropped_databases(
         neo4j_session,
         ingest_restorable_dropped_databases,
         restorable_dropped_databases,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for restorable_dropped_database in restorable_dropped_databases:
         resource_group = get_azure_resource_group_name(restorable_dropped_database.get('id'))
-        _attach_resource_group_restorable_dropped_database(neo4j_session, restorable_dropped_database['id'], resource_group, update_tag)
+        _attach_resource_group_restorable_dropped_database(
+            neo4j_session, subscription_id, restorable_dropped_database['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restorable_dropped_database(neo4j_session: neo4j.Session, restorable_dropped_database_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restorable_dropped_database(
+    neo4j_session: neo4j.Session, subscription_id: str, restorable_dropped_database_id: str, resource_group: str,
+    update_tag: int,
+) -> None:
     ingest_restorable_dropped_databases = """
-    MATCH (rdd:AzureRestorableDroppedDatabase{id: $res_dropped_db_id})
-    WITH rdd
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(rdd:AzureRestorableDroppedDatabase{id: $res_dropped_db_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (rdd)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1165,13 +1208,14 @@ def _attach_resource_group_restorable_dropped_database(neo4j_session: neo4j.Sess
         ingest_restorable_dropped_databases,
         res_dropped_db_id=restorable_dropped_database_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_failover_groups(
-        neo4j_session: neo4j.Session, failover_groups: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, failover_groups: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the failover groups details into neo4j.
@@ -1186,7 +1230,7 @@ def _load_failover_groups(
     f.replicationstate = fg.replication_state,
     f.lastupdated = $azure_update_tag
     WITH f, fg
-    MATCH (s:AzureSQLServer{id: fg.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: fg.server_id})
     MERGE (s)-[r:RESOURCE]->(f)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1196,18 +1240,23 @@ def _load_failover_groups(
         neo4j_session,
         ingest_failover_groups,
         failover_groups,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for failover_group in failover_groups:
         resource_group = get_azure_resource_group_name(failover_group.get('id'))
-        _attach_resource_group_restorable_failover_group(neo4j_session, failover_group['id'], resource_group, update_tag)
+        _attach_resource_group_restorable_failover_group(
+            neo4j_session, subscription_id, failover_group['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restorable_failover_group(neo4j_session: neo4j.Session, failover_group_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restorable_failover_group(
+    neo4j_session: neo4j.Session, subscription_id: str, failover_group_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_failover_groups = """
-    MATCH (f:AzureFailoverGroup{id: $fg_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(f:AzureFailoverGroup{id: $fg_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1217,13 +1266,14 @@ def _attach_resource_group_restorable_failover_group(neo4j_session: neo4j.Sessio
         ingest_failover_groups,
         fg_id=failover_group_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_elastic_pools(
-        neo4j_session: neo4j.Session, elastic_pools: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, elastic_pools: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the elastic pool details into neo4j.
@@ -1243,7 +1293,7 @@ def _load_elastic_pools(
     e.zoneredundant = ep.zone_redundant,
     e.lastupdated = $azure_update_tag
     WITH e, ep
-    MATCH (s:AzureSQLServer{id: ep.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: ep.server_id})
     MERGE (s)-[r:RESOURCE]->(e)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1253,18 +1303,23 @@ def _load_elastic_pools(
         neo4j_session,
         ingest_elastic_pools,
         elastic_pools,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for elastic_pool in elastic_pools:
         resource_group = get_azure_resource_group_name(elastic_pool.get('id'))
-        _attach_resource_group_restorable_elastic_pool(neo4j_session, elastic_pool['id'], resource_group, update_tag)
+        _attach_resource_group_restorable_elastic_pool(
+            neo4j_session, subscription_id, elastic_pool['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restorable_elastic_pool(neo4j_session: neo4j.Session, elastic_pool_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restorable_elastic_pool(
+    neo4j_session: neo4j.Session, subscription_id: str, elastic_pool_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_elastic_pools = """
-    MATCH (e:AzureElasticPool{id: $ep_id})
-    WITH e
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(e:AzureElasticPool{id: $ep_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (e)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1274,13 +1329,14 @@ def _attach_resource_group_restorable_elastic_pool(neo4j_session: neo4j.Session,
         ingest_elastic_pools,
         ep_id=elastic_pool_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_databases(
-        neo4j_session: neo4j.Session, databases: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, databases: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the database details into neo4j.
@@ -1306,7 +1362,7 @@ def _load_databases(
     d.recoverabledbid = az_database.recoverable_database_id,
     d.lastupdated = $azure_update_tag
     WITH d, az_database
-    MATCH (s:AzureSQLServer{id: az_database.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: az_database.server_id})
     MERGE (s)-[r:RESOURCE]->(d)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1316,11 +1372,14 @@ def _load_databases(
         neo4j_session,
         ingest_databases,
         databases,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for database in databases:
         resource_group = get_azure_resource_group_name(database.get('id'))
-        _attach_resource_group_restorable_database(neo4j_session, database['id'], resource_group, update_tag)
+        _attach_resource_group_restorable_database(
+            neo4j_session, subscription_id, database['id'], resource_group, update_tag,
+        )
 
 
 @timeit
@@ -1346,11 +1405,13 @@ def _load_database_tags(
         azure_tag.load_tags(neo4j_session, tags_list, update_tag, common_job_parameters)
 
 
-def _attach_resource_group_restorable_database(neo4j_session: neo4j.Session, database_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restorable_database(
+    neo4j_session: neo4j.Session, subscription_id: str, database_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_databases = """
-    MATCH (d:AzureSQLDatabase{id: $database_id})
-    WITH d
-    MATCH (s:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: $database_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (d)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1360,6 +1421,7 @@ def _attach_resource_group_restorable_database(neo4j_session: neo4j.Session, dat
         ingest_databases,
         database_id=database_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -1370,7 +1432,7 @@ def sync_database_details(
         subscription_id: str, databases: List[Dict], update_tag: int, common_job_parameters: Dict,
 ) -> None:
     db_details = get_database_details(credentials, subscription_id, databases)
-    load_database_details(neo4j_session, db_details, update_tag, common_job_parameters)
+    load_database_details(neo4j_session, subscription_id, db_details, update_tag, common_job_parameters)
 
 
 @timeit
@@ -1551,7 +1613,8 @@ def get_firewall_rules(credentials: Credentials, subscription_id: str, server: D
 
 @timeit
 def load_database_details(
-        neo4j_session: neo4j.Session, details: List[Tuple[Any, Any, Any, Any, Any]], update_tag: int, common_job_parameters: Dict,
+        neo4j_session: neo4j.Session, subscription_id: str, details: List[Tuple[Any, Any, Any, Any, Any]],
+        update_tag: int, common_job_parameters: Dict,
 ) -> None:
     """
     Create dictionaries for every resource in a database so we can import them in a single query
@@ -1588,15 +1651,15 @@ def load_database_details(
             )
             encryptions_list.append(transparent_data_encryption)
 
-    _load_replication_links(neo4j_session, replication_links, update_tag)
-    _load_db_threat_detection_policies(neo4j_session, threat_detection_policies, update_tag)
-    _load_restore_points(neo4j_session, restore_points, update_tag)
-    _load_transparent_data_encryptions(neo4j_session, encryptions_list, update_tag)
+    _load_replication_links(neo4j_session, subscription_id, replication_links, update_tag)
+    _load_db_threat_detection_policies(neo4j_session, subscription_id, threat_detection_policies, update_tag)
+    _load_restore_points(neo4j_session, subscription_id, restore_points, update_tag)
+    _load_transparent_data_encryptions(neo4j_session, subscription_id, encryptions_list, update_tag)
 
 
 @timeit
 def _load_replication_links(
-        neo4j_session: neo4j.Session, replication_links: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, replication_links: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest replication links into neo4j.
@@ -1621,7 +1684,8 @@ def _load_replication_links(
     rl.terminationallowed = replication_link.is_termination_allowed,
     rl.lastupdated = $azure_update_tag
     WITH rl, replication_link
-    MATCH (d:AzureSQLDatabase{id: replication_link.database_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: replication_link.database_id})
     MERGE (d)-[r:CONTAINS]->(rl)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1631,18 +1695,24 @@ def _load_replication_links(
         neo4j_session,
         ingest_replication_links,
         replication_links,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for replication_link in replication_links:
         resource_group = get_azure_resource_group_name(replication_link.get('id'))
-        _attach_resource_group_replication_link(neo4j_session, replication_link['id'], resource_group, update_tag)
+        _attach_resource_group_replication_link(
+            neo4j_session, subscription_id, replication_link['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_replication_link(neo4j_session: neo4j.Session, replication_link_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_replication_link(
+    neo4j_session: neo4j.Session, subscription_id: str, replication_link_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_replication_links = """
-    MATCH (rl:AzureReplicationLink{id: $replication_link_id})
-    WITH rl
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(:AzureSQLDatabase)
+    -[:CONTAINS]->(rl:AzureReplicationLink{id: $replication_link_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (rl)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1652,13 +1722,14 @@ def _attach_resource_group_replication_link(neo4j_session: neo4j.Session, replic
         ingest_replication_links,
         replication_link_id=replication_link_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_db_threat_detection_policies(
-        neo4j_session: neo4j.Session, threat_detection_policies: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, threat_detection_policies: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest threat detection policy into neo4j.
@@ -1682,7 +1753,8 @@ def _load_db_threat_detection_policies(
     policy.disabledalerts = tdp.disabled_alerts,
     policy.lastupdated = $azure_update_tag
     WITH policy, tdp
-    MATCH (d:AzureSQLDatabase{id: tdp.database_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: tdp.database_id})
     MERGE (d)-[r:CONTAINS]->(policy)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1692,18 +1764,24 @@ def _load_db_threat_detection_policies(
         neo4j_session,
         ingest_threat_detection_policies,
         threat_detection_policies,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for threat_detection in threat_detection_policies:
         resource_group = get_azure_resource_group_name(threat_detection.get('id'))
-        _attach_resource_group_threat_detection(neo4j_session, threat_detection['id'], resource_group, update_tag)
+        _attach_resource_group_threat_detection(
+            neo4j_session, subscription_id, threat_detection['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_threat_detection(neo4j_session: neo4j.Session, threat_detection_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_threat_detection(
+    neo4j_session: neo4j.Session, subscription_id: str, threat_detection_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_threat_detection_policies = """
-    MATCH (policy:AzureDatabaseThreatDetectionPolicy{id: $threat_detection_id})
-    WITH policy
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(:AzureSQLDatabase)
+    -[:CONTAINS]->(policy:AzureDatabaseThreatDetectionPolicy{id: $threat_detection_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (policy)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1713,13 +1791,14 @@ def _attach_resource_group_threat_detection(neo4j_session: neo4j.Session, threat
         ingest_threat_detection_policies,
         threat_detection_id=threat_detection_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_restore_points(
-        neo4j_session: neo4j.Session, restore_points: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, restore_points: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest restore points into neo4j.
@@ -1737,7 +1816,8 @@ def _load_restore_points(
     point.creationdate = rp.restore_point_creation_date,
     point.lastupdated = $azure_update_tag
     WITH point, rp
-    MATCH (d:AzureSQLDatabase{id: rp.database_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: rp.database_id})
     MERGE (d)-[r:CONTAINS]->(point)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1747,18 +1827,24 @@ def _load_restore_points(
         neo4j_session,
         ingest_restore_points,
         restore_points,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for restore_point in restore_points:
         resource_group = get_azure_resource_group_name(restore_point.get('id'))
-        _attach_resource_group_restore_point(neo4j_session, restore_point['id'], resource_group, update_tag)
+        _attach_resource_group_restore_point(
+            neo4j_session, subscription_id, restore_point['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restore_point(neo4j_session: neo4j.Session, restore_point_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restore_point(
+    neo4j_session: neo4j.Session, subscription_id: str, restore_point_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_restore_points = """
-    MATCH (point:AzureRestorePoint{id: $restore_point_id})
-    WITH point
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(:AzureSQLDatabase)
+    -[:CONTAINS]->(point:AzureRestorePoint{id: $restore_point_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (point)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1768,13 +1854,14 @@ def _attach_resource_group_restore_point(neo4j_session: neo4j.Session, restore_p
         ingest_restore_points,
         restore_point_id=restore_point_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_transparent_data_encryptions(
-        neo4j_session: neo4j.Session, encryptions_list: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, encryptions_list: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest transparent data encryptions into neo4j.
@@ -1790,7 +1877,8 @@ def _load_transparent_data_encryptions(
     tae.consolelink = coalesce(e.consolelink, tae.consolelink),
     tae.lastupdated = $azure_update_tag
     WITH tae, e
-    MATCH (d:AzureSQLDatabase{id: e.database_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: e.database_id})
     MERGE (d)-[r:CONTAINS]->(tae)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1800,18 +1888,22 @@ def _load_transparent_data_encryptions(
         neo4j_session,
         ingest_data_encryptions,
         encryptions_list,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for encryption in encryptions_list:
         resource_group = get_azure_resource_group_name(encryption.get('id'))
-        _attach_resource_group_encryption(neo4j_session, encryption['id'], resource_group, update_tag)
+        _attach_resource_group_encryption(neo4j_session, subscription_id, encryption['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_encryption(neo4j_session: neo4j.Session, encryption_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_encryption(
+    neo4j_session: neo4j.Session, subscription_id: str, encryption_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_data_encryptions = """
-    MATCH (tae:AzureTransparentDataEncryption{id: $encryption_id})
-    WITH tae
-    MATCH (d:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(:AzureSQLDatabase)
+    -[:CONTAINS]->(tae:AzureTransparentDataEncryption{id: $encryption_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (tae)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1821,6 +1913,7 @@ def _attach_resource_group_encryption(neo4j_session: neo4j.Session, encryption_i
         ingest_data_encryptions,
         encryption_id=encryption_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -1843,7 +1936,7 @@ def sync(
     logger.info(f"sql sub={subscription_id}: server fetch done — {len(server_list)} servers in {time.perf_counter() - t0:.2f}s")
     t0 = time.perf_counter()
     load_server_data(neo4j_session, subscription_id, server_list, sync_tag)
-    load_server_private_endpoint_connection(neo4j_session, server_list, sync_tag)
+    load_server_private_endpoint_connection(neo4j_session, subscription_id, server_list, sync_tag)
     logger.info(f"sql sub={subscription_id}: server load done in {time.perf_counter() - t0:.2f}s")
     t0 = time.perf_counter()
     sync_server_details(neo4j_session, credentials, subscription_id, server_list, sync_tag, common_job_parameters)

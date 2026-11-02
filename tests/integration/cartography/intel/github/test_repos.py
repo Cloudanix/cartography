@@ -3,11 +3,23 @@ import tests.data.github.repos
 
 
 TEST_UPDATE_TAG = 123456789
-TEST_JOB_PARAMS = {'UPDATE_TAG': TEST_UPDATE_TAG}
+TEST_WORKSPACE_ID = 'ws-github-repos'
+TEST_JOB_PARAMS = {'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': TEST_WORKSPACE_ID}
 TEST_GITHUB_URL = "https://fake.github.net/graphql/"
+# The fixture repos are owned by github.com org "example_org" (bare login on the SaaS host).
+TEST_ORG_ID = 'example_org'
+
+
+def _seed_org(neo4j_session):
+    # organization.sync runs before repos.sync and creates the workspace-owned org the repo loaders anchor on.
+    neo4j_session.run(
+        'MERGE (w:CloudanixWorkspace{id: $ws}) MERGE (o:GitHubOrganization{id: $org}) MERGE (w)-[:OWNER]->(o)',
+        ws=TEST_WORKSPACE_ID, org=TEST_ORG_ID,
+    )
 
 
 def _ensure_local_neo4j_has_test_data(neo4j_session):
+    _seed_org(neo4j_session)
     repo_data = cartography.intel.github.repos.transform(tests.data.github.repos.GET_REPOS)
     cartography.intel.github.repos.load(
         neo4j_session,
@@ -43,19 +55,23 @@ def test_transform_and_load_repository_owners(neo4j_session):
     """
     Ensure we can transform and load GitHub repository owner nodes.
     """
+    _seed_org(neo4j_session)
     repositories_res = tests.data.github.repos.GET_REPOS
     repos_data = cartography.intel.github.repos.transform(repositories_res)
     cartography.intel.github.repos.load_github_owners(
         neo4j_session,
         TEST_UPDATE_TAG,
         repos_data['repo_owners'],
+        TEST_WORKSPACE_ID,
     )
     nodes = neo4j_session.run(
-        "MATCH(owner:GitHubOrganization) RETURN owner.id",
+        "MATCH (owner:GitHubOrganization)-[:RESOURCE]->(repo:GitHubRepository) RETURN owner.id, repo.id",
     )
-    actual_nodes = {n['owner.id'] for n in nodes}
+    actual_nodes = {(n['owner.id'], n['repo.id']) for n in nodes}
     expected_nodes = {
-        'https://github.com/example_org',
+        (TEST_ORG_ID, 'https://github.com/example_org/sample_repo'),
+        (TEST_ORG_ID, 'https://github.com/example_org/SampleRepo2'),
+        (TEST_ORG_ID, 'https://github.com/lyft/cartography'),
     }
     assert actual_nodes == expected_nodes
 
@@ -70,6 +86,7 @@ def test_transform_and_load_repository_languages(neo4j_session):
         neo4j_session,
         TEST_UPDATE_TAG,
         repos_data['repo_languages'],
+        TEST_WORKSPACE_ID,
     )
     nodes = neo4j_session.run(
         "MATCH(pl:ProgrammingLanguage) RETURN pl.id",
@@ -87,7 +104,7 @@ def test_repository_to_owners(neo4j_session):
     """
     _ensure_local_neo4j_has_test_data(neo4j_session)
     query = """
-    MATCH(owner:GitHubOrganization)<-[:OWNER]-(repo:GitHubRepository{id:$RepositoryId})
+    MATCH(owner:GitHubOrganization)-[:RESOURCE]->(repo:GitHubRepository{id:$RepositoryId})
     RETURN owner.username, repo.id, repo.name
     """
     expected_repository_id = 'https://github.com/example_org/SampleRepo2'

@@ -115,3 +115,23 @@ def test_transform_dataset_accesses_keeps_one_entry_per_member_of_a_role():
     assert len({r['id'] for r in result}) == 3
     assert result[1]['id'] == f"projects/{TEST_PROJECT_ID}/bigquery/{TEST_DATASET_ID}/role/READER/iamMember/allUsers"
     assert result[1]['iamMember'] == 'allUsers'
+
+
+def test_dataset_and_table_ids_are_project_qualified(mocker):
+    """datasetId / tableId are unique only inside a project: node ids carry the project, the API gets the short id."""
+    module = cartography.intel.gcp.bigquery
+    dataset_info = mocker.patch.object(module, 'get_dataset_info', return_value={})
+    table_info = mocker.patch.object(module, 'get_table_info', return_value={})
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+
+    datasets = module.transform_bigquery_dataset(None, [{'datasetReference': {'datasetId': 'billing_export'}}], 'p1')
+    tables = module.transform_bigquery_tables(None, datasets[0], [{'tableReference': {'tableId': 'events'}}], 'p1')
+
+    assert (datasets[0]['id'], datasets[0]['uniqueId'], datasets[0]['name']) == (
+        'projects/p1/datasets/billing_export', 'projects/p1/datasets/billing_export', 'billing_export',
+    )
+    assert (tables[0]['id'], tables[0]['datasetId'], tables[0]['name']) == (
+        'projects/p1/datasets/billing_export/tables/events', 'projects/p1/datasets/billing_export', 'events',
+    )
+    dataset_info.assert_called_once_with(None, 'billing_export', 'p1')
+    table_info.assert_called_once_with(None, 'p1', 'billing_export', 'events')

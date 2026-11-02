@@ -40,6 +40,11 @@ def build_apigateway_arn(region: str, path: str, partition: str = DEFAULT_PARTIT
     return f"arn:{partition}:apigateway:{region}::/{path}"
 
 
+def build_rest_api_arn(region: str, api_id: str, partition: str = DEFAULT_PARTITION) -> str:
+    """The REST API's ARN, which is also its node id (the short id is only unique within a region)."""
+    return build_apigateway_arn(region, f"restapis/{api_id}", partition)
+
+
 def get_apigateway_console_link(arn: str) -> str:
     # cloudconsolelink only deep-links the legacy slashless form (::restapis/...);
     # the documented form falls back to the service home page.
@@ -307,12 +312,15 @@ def load_apigateway_rest_apis(
     """
     Ingest the details of API Gateway REST APIs into neo4j.
     """
+    # Keyed on the ARN: the short REST API id is only unique within a region, so two accounts could
+    # share one node. The short id stays as rest_api_id for display and for Lambda trigger matching.
     ingest_rest_apis = """
     UNWIND $DictList AS r
-    MERGE (rest_api:APIGatewayRestAPI{id:r.id})
+    MERGE (rest_api:APIGatewayRestAPI{id: r.Arn})
     ON CREATE SET rest_api.firstseen = timestamp(),
     rest_api.createddate = r.createdDate
-    SET rest_api.version = r.version,
+    SET rest_api.rest_api_id = r.id,
+    rest_api.version = r.version,
     rest_api.minimumcompressionsize = r.minimumCompressionSize,
     rest_api.name = r.name,
     rest_api.disableexecuteapiendpoint = r.disableExecuteApiEndpoint,
@@ -332,9 +340,8 @@ def load_apigateway_rest_apis(
     # neo4j does not accept datetime objects and values. This loop is used to convert
     # these values to string.
     for api in rest_apis:
-        region = api['region']
         api['createdDate'] = str(api['createdDate']) if 'createdDate' in api else None
-        api['Arn'] = build_apigateway_arn(region, f"restapis/{api['id']}", partition)
+        api['Arn'] = build_rest_api_arn(api['region'], api['id'], partition)
         api['consolelink'] = get_apigateway_console_link(api['Arn'])
 
     load_graph_data(
@@ -359,7 +366,7 @@ def _load_apigateway_policies(
     """
     ingest_policies = """
     UNWIND $DictList as policy
-    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(r:APIGatewayRestAPI{id: policy.api_id})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(r:APIGatewayRestAPI{id: policy.api_arn})
     SET r.policy_internet_accessible = policy.internet_accessible,
     r.lastupdated = $UpdateTag
     """
@@ -389,7 +396,8 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
 
 @timeit
 def _load_apigateway_stages(
-        neo4j_session: neo4j.Session, stages: List, update_tag: int, partition: str = DEFAULT_PARTITION,
+        neo4j_session: neo4j.Session, stages: List, aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the Stage resource details into neo4j.
@@ -410,7 +418,7 @@ def _load_apigateway_stages(
     s.lastupdated = $UpdateTag,
     s.arn = stage.arn
     WITH s, stage
-    MATCH (rest_api:APIGatewayRestAPI{id: stage.apiId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rest_api:APIGatewayRestAPI{id: stage.apiArn})
     MERGE (rest_api)-[r:ASSOCIATED_WITH]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -420,22 +428,23 @@ def _load_apigateway_stages(
     # these values to string.
     for stage in stages:
         stage['createdDate'] = str(stage['createdDate'])
-        stage['arn'] = build_apigateway_arn(
-            stage['region'], f"restapis/{stage['apiId']}/stages/{stage['stageName']}", partition,
-        )
+        stage['apiArn'] = build_rest_api_arn(stage['region'], stage['apiId'], partition)
+        stage['arn'] = f"{stage['apiArn']}/stages/{stage['stageName']}"
         stage['consolelink'] = get_apigateway_console_link(stage['arn'])
 
     load_graph_data(
         neo4j_session,
         ingest_stages,
         stages,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
 def _load_apigateway_certificates(
-        neo4j_session: neo4j.Session, certificates: List, update_tag: int,
+        neo4j_session: neo4j.Session, certificates: List, aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the API Gateway Client Certificate details into neo4j.
@@ -450,32 +459,40 @@ def _load_apigateway_certificates(
     c.client_certificate_id = certificate.clientCertificateId,
     c.arn = certificate.arn
     WITH c, certificate
-    MATCH (stage:APIGatewayStage{clientcertificateid: certificate.clientCertificateId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:APIGatewayRestAPI{id: certificate.apiArn})
+    -[:ASSOCIATED_WITH]->(stage:APIGatewayStage{clientcertificateid: certificate.clientCertificateId})
     MERGE (stage)-[r:HAS_CERTIFICATE]->(c)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
 
+    for certificate in certificates:
+        certificate['apiArn'] = build_rest_api_arn(certificate['region'], certificate['apiId'], partition)
+
     load_graph_data(
         neo4j_session,
         ingest_certificates,
         certificates,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
 def _load_apigateway_resources(
-        neo4j_session: neo4j.Session, resources: List, update_tag: int, partition: str = DEFAULT_PARTITION,
+        neo4j_session: neo4j.Session, resources: List, aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the API Gateway Resource details into neo4j.
     """
+    # Keyed on the ARN (<rest api arn>/resources/<id>): the short resource id is only unique within its API.
     ingest_resources = """
     UNWIND $DictList AS res
-    MERGE (s:APIGatewayResource{id: res.id})
+    MERGE (s:APIGatewayResource{id: res.arn})
     ON CREATE SET s.firstseen = timestamp()
-    SET s.path = res.path,
+    SET s.resource_id = res.id,
+    s.path = res.path,
     s.pathpart = res.pathPart,
     s.parentid = res.parentId,
     s.consolelink = res.consolelink,
@@ -485,16 +502,15 @@ def _load_apigateway_resources(
     s.method_authorization_types = res.method_authorization_types,
     s.unauthenticated_methods = res.unauthenticated_methods
     WITH s, res
-    MATCH (rest_api:APIGatewayRestAPI{id: res.apiId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rest_api:APIGatewayRestAPI{id: res.apiArn})
     MERGE (rest_api)-[r:RESOURCE]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
 
     for resource in resources:
-        resource['arn'] = build_apigateway_arn(
-            resource['region'], f"restapis/{resource['apiId']}/resources/{resource['id']}", partition,
-        )
+        resource['apiArn'] = build_rest_api_arn(resource['region'], resource['apiId'], partition)
+        resource['arn'] = f"{resource['apiArn']}/resources/{resource['id']}"
         resource['consolelink'] = get_apigateway_console_link(resource['arn'])
         # Resources are always fetched with embed=methods, so a missing key means "no methods".
         resource.update(transform_resource_methods(resource.get('resourceMethods', {})))
@@ -503,6 +519,7 @@ def _load_apigateway_resources(
         neo4j_session,
         ingest_resources,
         resources,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -542,9 +559,10 @@ def load_rest_api_details(
     certificates: List[Dict] = []
     resources: List[Dict] = []
     policies: List = []
+    partition = get_partition_from_params(common_job_parameters)
     for api_id, stage, certificate, resource, policy, region in stages_certificate_resources:
         # One row per API, policy or not, so a deleted policy clears the previous sync's value.
-        policies.append(parse_policy(api_id, policy))
+        policies.append({**parse_policy(api_id, policy), 'api_arn': build_rest_api_arn(region, api_id, partition)})
 
         if len(stage) > 0:
             for s in stage:
@@ -574,11 +592,10 @@ def load_rest_api_details(
         common_job_parameters,
     )
 
-    partition = get_partition_from_params(common_job_parameters)
     _load_apigateway_policies(neo4j_session, policies, aws_account_id, update_tag)
-    _load_apigateway_stages(neo4j_session, stages, update_tag, partition)
-    _load_apigateway_certificates(neo4j_session, certificates, update_tag)
-    _load_apigateway_resources(neo4j_session, resources, update_tag, partition)
+    _load_apigateway_stages(neo4j_session, stages, aws_account_id, update_tag, partition)
+    _load_apigateway_certificates(neo4j_session, certificates, aws_account_id, update_tag, partition)
+    _load_apigateway_resources(neo4j_session, resources, aws_account_id, update_tag, partition)
     _set_default_values(neo4j_session, aws_account_id)
 
 

@@ -83,25 +83,78 @@ RETURN eni.id AS id, subnets, sgs, [ip IN pip_ips + [eni.public_ip] WHERE ip IS 
     coalesce(eni.ipv6_addresses, []) AS ipv6
 """
 
-# ponytail: one instance = union of its ENIs' subnets/SGs/addresses; multi-ENI instances with
-# different SGs per ENI are over-approximated. Per-ENI truth is on the NetworkInterface nodes.
+# One row per instance with its ENIs as maps, so each ENI is walked with its own subnet, SGs and
+# addresses. The instance's own subnet / SGs are the fallback for ENIs (or instances) without them.
 _INSTANCE_QUERY = f"""
 MATCH {ACCOUNT}-[:RESOURCE]->(i:EC2Instance)
 OPTIONAL MATCH (i)-[:NETWORK_INTERFACE]->(eni:NetworkInterface)
 OPTIONAL MATCH (eni)-[:PART_OF_SUBNET]->(es:EC2Subnet)
 OPTIONAL MATCH (eni)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(esg:EC2SecurityGroup)
+OPTIONAL MATCH (eni)-[:PRIVATE_IP_ADDRESS]->(pip:EC2PrivateIp)
+WITH i, eni, collect(DISTINCT es.subnetid) AS eni_subnets, collect(DISTINCT esg.id) AS eni_sgs,
+    collect(DISTINCT pip.public_ip) AS pip_ips
+WITH i, collect(CASE WHEN eni IS NULL THEN null ELSE {{
+    private_ip: eni.private_ip_address, subnets: eni_subnets, sgs: eni_sgs,
+    public_ips: [ip IN pip_ips + [eni.public_ip] WHERE ip IS NOT NULL], ipv6: coalesce(eni.ipv6_addresses, [])
+}} END) AS enis
 OPTIONAL MATCH (i)-[:PART_OF_SUBNET]->(s:EC2Subnet)
 OPTIONAL MATCH (i)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)
-WITH i, collect(DISTINCT es.subnetid) + collect(DISTINCT s.subnetid) AS subnets,
-    collect(DISTINCT esg.id) + collect(DISTINCT sg.id) AS sgs,
-    collect(DISTINCT eni.public_ip) AS eni_ips, reduce(a = [], x IN collect(eni.ipv6_addresses) | a + x) AS ipv6
-RETURN i.id AS id, subnets, sgs, [ip IN eni_ips + [i.publicipaddress] WHERE ip IS NOT NULL] AS public_ips, ipv6
+RETURN i.id AS id, i.privateipaddress AS private_ip, i.publicipaddress AS public_ip, enis,
+    collect(DISTINCT s.subnetid) AS subnets, collect(DISTINCT sg.id) AS sgs
 """
 
 
 def addresses(rows: List[Dict], subnets: Dict, sgs: Dict) -> Dict[str, Reach]:
-    """ENIs and instances: reachable through their own public / IPv6 addresses."""
+    """ENIs: reachable through their own public / IPv6 addresses."""
     return {r["id"]: _address_reach(r, subnets, sgs) for r in rows}
+
+
+def _primary_enis(row: Dict) -> List[Dict]:
+    """
+    The ENI holding the instance's primary private IP: where its public IP and instance-type LB
+    targets land. ponytail: no ENI matches (partial ENI data), so every ENI is a candidate.
+    """
+    enis = row["enis"]
+    return [e for e in enis if row.get("private_ip") and e["private_ip"] == row["private_ip"]] or enis
+
+
+def instance_enis(row: Dict) -> List[Dict]:
+    """Per-ENI address rows; an instance without ENIs is one row from its own subnet / SGs / IP."""
+    own_ip = [row["public_ip"]] if row.get("public_ip") else []
+    if not row["enis"]:
+        return [{"subnets": row["subnets"], "sgs": row["sgs"], "public_ips": own_ip, "ipv6": []}]
+    primary = _primary_enis(row)
+    return [{
+        **e,
+        "subnets": e["subnets"] or row["subnets"],
+        "sgs": e["sgs"] or row["sgs"],
+        "public_ips": sorted(set(e["public_ips"] + (own_ip if e in primary else []))),
+    } for e in row["enis"]]
+
+
+def target_sgs(row: Dict) -> List[str]:
+    """SGs an instance-type LB target is checked against: the primary ENI's (AWS forwards there)."""
+    found = sorted({sg for e in _primary_enis(row) for sg in e["sgs"]})
+    return found or list(row["sgs"])
+
+
+def merge_reach(into: Reach, part: Reach) -> None:
+    """Union one ENI's result onto its instance; paths keyed by via, so two public ENIs share one."""
+    into.public_reasons |= part.public_reasons
+    for path in part.paths.values():
+        into.add_path(path["ports"], path["via"], path["hops"], path["entry"])
+    into.blocked += [b for b in part.blocked if b not in into.blocked]
+
+
+def instances(rows: List[Dict], subnets: Dict, sgs: Dict) -> Dict[str, Reach]:
+    """Instances: the union of their ENIs' results, each ENI evaluated alone."""
+    out = {}
+    for row in rows:
+        reach = Reach()
+        for eni in instance_enis(row):
+            merge_reach(reach, _address_reach(eni, subnets, sgs))
+        out[row["id"]] = reach
+    return out
 
 
 _LBV2_QUERY = f"""
@@ -161,19 +214,19 @@ def _elbv2_entry(arn: Optional[str], lb: Reach) -> Dict:
 
 _LB_TARGET_QUERY = f"""
 MATCH {ACCOUNT}-[:RESOURCE]->(lb:LoadBalancerV2)-[e:EXPOSE]->(i:EC2Instance)
-OPTIONAL MATCH (i)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)
-OPTIONAL MATCH (i)-[:NETWORK_INTERFACE]->(:NetworkInterface)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(esg:EC2SecurityGroup)
 RETURN lb.id AS lb, coalesce(lb.arn, lb.id) AS arn, i.id AS instance, e.port AS port, e.protocol AS protocol,
-    e.target_group_arn AS target_group, collect(DISTINCT sg.id) + collect(DISTINCT esg.id) AS sgs
+    e.target_group_arn AS target_group
 """
 
 
 def add_lb_targets(
     rows: List[Dict], lbs: Dict[str, Reach], instance_reach: Dict[str, Reach], sgs: Dict[str, SgFacts],
+    instance_sgs: Dict[str, List[str]],
 ) -> None:
     """
-    An instance behind a reachable ELBv2 is reachable on its target port when its SGs admit
-    that port. ponytail: any source counts, not only the LB's SG or subnet CIDRs.
+    An instance behind a reachable ELBv2 is reachable on its target port when its primary ENI's SGs
+    admit that port (EXPOSE edges are instance-type targets only; IP targets are not modelled).
+    ponytail: any source counts, not only the LB's SG or subnet CIDRs.
     """
     for row in rows:
         lb = lbs.get(row["lb"])
@@ -182,7 +235,8 @@ def add_lb_targets(
         proto = "udp" if str(row.get("protocol") or "").upper() == "UDP" else "tcp"
         target = port_set(row.get("port")) if proto == "tcp" else PortSet.of("udp", row["port"], row["port"])
         target = target or PortSet.everything()
-        admitting = [s for s in row["sgs"] if s in sgs and not (sgs[s].any_source & target).is_empty()]
+        candidates = instance_sgs.get(row["instance"], [])
+        admitting = [s for s in candidates if s in sgs and not (sgs[s].any_source & target).is_empty()]
         tg_rule = f"{row.get('protocol')} {row.get('port')}"
         hops = _lb_hops(lb) + [hop(HOP_TARGET_GROUP, row.get("target_group"), tg_rule)]
         instance_reach[row["instance"]].add_path(
@@ -260,7 +314,7 @@ def _flagged(rows: List[Dict], ports: PortSet, via: str, reason: str, entry_kind
 _APIGW_QUERY = f"""
 MATCH {ACCOUNT}-[:RESOURCE]->(api:APIGatewayRestAPI)
 WITH api, coalesce(api.endpoint_conf_types, []) AS types
-RETURN api.id AS id, api.id AS entry,
+RETURN api.id AS id, api.rest_api_id AS api_id, api.rest_api_id AS entry,
     ('REGIONAL' IN types OR 'EDGE' IN types)
     AND (NOT coalesce(api.disableexecuteapiendpoint, false) OR api.public_custom_domains IS NULL
          OR size(api.public_custom_domains) > 0) AS public
@@ -388,11 +442,15 @@ def compute(session: neo4j.Session, params: Dict) -> Results:
 
     lbv2_rows = q(_LBV2_QUERY)
     lbv2 = load_balancers(lbv2_rows, subnets, sgs)
-    inst = addresses(q(_INSTANCE_QUERY), subnets, sgs)
-    add_lb_targets(q(_LB_TARGET_QUERY), lbv2, inst, sgs)
+    inst_rows = q(_INSTANCE_QUERY)
+    inst = instances(inst_rows, subnets, sgs)
+    add_lb_targets(q(_LB_TARGET_QUERY), lbv2, inst, sgs, {r["id"]: target_sgs(r) for r in inst_rows})
     rds_rows = q(_RDS_QUERY)
     rds = databases(rds_rows, subnets, sgs, "publicly_accessible")
-    apis = _flagged(q(_APIGW_QUERY), HTTPS, "apigateway_endpoint", "public_endpoint", ENTRY_APIGATEWAY)
+    api_rows = q(_APIGW_QUERY)
+    apis = _flagged(api_rows, HTTPS, "apigateway_endpoint", "public_endpoint", ENTRY_APIGATEWAY)
+    # A function's trigger names the short REST API id; the API node is keyed on its ARN.
+    apis_by_api_id = {r["api_id"]: apis[r["id"]] for r in api_rows}
     results: Results = {
         "NetworkInterface": addresses(q(_ENI_QUERY), subnets, sgs),
         "EC2Instance": inst,
@@ -404,7 +462,7 @@ def compute(session: neo4j.Session, params: Dict) -> Results:
         "EMRCluster": databases(q(_EMR_QUERY), subnets, sgs, "master_public_dns"),
         "ElasticacheCluster": {r["id"]: Reach() for r in q(_ELASTICACHE_QUERY)},
         "APIGatewayRestAPI": apis,
-        "AWSLambda": lambdas(q(_LAMBDA_QUERY), apis, lbv2_rows, lbv2),
+        "AWSLambda": lambdas(q(_LAMBDA_QUERY), apis_by_api_id, lbv2_rows, lbv2),
         "EKSCluster": eks_clusters(q(_EKS_QUERY)),
         "AWSCloudfrontDistribution": _flagged(
             q(_CLOUDFRONT_QUERY), HTTP_HTTPS, "cloudfront", "enabled_distribution", ENTRY_DNS,

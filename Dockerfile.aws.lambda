@@ -1,0 +1,75 @@
+# https://gallery.ecr.aws/lambda/python
+# https://docs.aws.amazon.com/lambda/latest/dg/images-create.html#images-create-1
+# https://docs.aws.amazon.com/lambda/latest/dg/python-image.html
+# Testing - https://docs.aws.amazon.com/lambda/latest/dg/python-image.html#python-image-instructions
+
+FROM public.ecr.aws/lambda/python:3.14
+
+# Update and install dependencies in a single RUN command to reduce layers
+# Install system packages
+RUN dnf update -y && \
+    dnf upgrade -y && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf && \
+    pip install --upgrade pip --root-user-action=ignore
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+
+# Install uv for faster dependency resolution
+RUN pip install uv --root-user-action=ignore
+
+RUN uv pip install --upgrade pip --system && \
+    uv pip install --no-cache-dir -r requirements.txt --system
+
+# Copy application code
+COPY cartography ./cartography/
+COPY cloudanix ./cloudanix/
+COPY config ./config/
+COPY libraries ./libraries/
+COPY utils ./utils/
+COPY app.py .
+COPY .lambdaignore .
+
+RUN python -m compileall .
+
+# Create a non-root user and switch to it
+USER cdx
+
+# Set environment variables
+ARG ARG_CDX_APP_ENV=""
+ENV CDX_APP_ENV=$ARG_CDX_APP_ENV
+ARG ARG_CDX_LOG_LEVEL=""
+ENV CDX_LOG_LEVEL=$ARG_CDX_LOG_LEVEL
+ARG ARG_CDX_SENTRY_DSN=""
+ENV CDX_SENTRY_DSN=$ARG_CDX_SENTRY_DSN
+ARG ARG_AWS_STS_REGIONAL_ENDPOINTS=""
+ENV AWS_STS_REGIONAL_ENDPOINTS=$ARG_AWS_STS_REGIONAL_ENDPOINTS
+ARG ARG_CDX_APP_NEO4J_URI=""
+ENV CDX_APP_NEO4J_URI=$ARG_CDX_APP_NEO4J_URI
+ARG ARG_CDX_APP_NEO4J_USER=""
+ENV CDX_APP_NEO4J_USER=$ARG_CDX_APP_NEO4J_USER
+ARG ARG_CDX_APP_NEO4J_PWD=""
+ENV CDX_APP_NEO4J_PWD=$ARG_CDX_APP_NEO4J_PWD
+ARG ARG_CDX_IN_APP_NEO4J_URI=""
+ENV CDX_IN_APP_NEO4J_URI=$ARG_CDX_IN_APP_NEO4J_URI
+ARG ARG_CDX_IN_APP_NEO4J_USER=""
+ENV CDX_IN_APP_NEO4J_USER=$ARG_CDX_IN_APP_NEO4J_USER
+ARG ARG_CDX_IN_APP_NEO4J_PWD=""
+ENV CDX_IN_APP_NEO4J_PWD=$ARG_CDX_IN_APP_NEO4J_PWD
+ARG ARG_CDX_APP_NEO4J_CONNECTION_LIFETIME=""
+ENV CDX_APP_NEO4J_CONNECTION_LIFETIME=$ARG_CDX_APP_NEO4J_CONNECTION_LIFETIME
+ARG ARG_CDX_DEFAULT_REGION=""
+ENV CDX_DEFAULT_REGION=$ARG_CDX_DEFAULT_REGION
+ARG ARG_CDX_CROSS_ACCOUNT_ROLE_ARN=""
+ENV CDX_CROSS_ACCOUNT_ROLE_ARN=$ARG_CDX_CROSS_ACCOUNT_ROLE_ARN
+
+# Set the entry point
+ARG CDX_APP_VERSION=unknown
+ARG CDX_SHORT_SHA=unknown
+ARG CDX_BUILD_TIME=unknown
+ENV CDX_APP_VERSION=${CDX_APP_VERSION} CDX_SHORT_SHA=${CDX_SHORT_SHA} CDX_BUILD_TIME=${CDX_BUILD_TIME}
+
+CMD [ "app.aws_process_cartography" ]

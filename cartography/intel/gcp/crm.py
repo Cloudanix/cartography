@@ -126,12 +126,15 @@ def load_gcp_organizations(neo4j_session: neo4j.Session, data: List[Dict], gcp_u
 
 
 @timeit
-def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_tag: int) -> None:
+def load_gcp_folders(
+    neo4j_session: neo4j.Session, data: List[Dict], gcp_update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
     Ingest the GCP folders to Neo4j
     :param neo4j_session: The Neo4j session
     :param data: List of folders; output from crm.get_gcp_folders()
     :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :param common_job_parameters: The sync's WORKSPACE_ID; a folder hangs only off an organization it owns
     :return: Nothing
     """
     for folder in data:
@@ -139,7 +142,8 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
         # Parents of folders can only be GCPOrganizations or other folders, see
         # https://cloud.google.com/resource-manager/docs/cloud-platform-resource-hierarchy
         if folder['parent'].startswith("organizations"):
-            query = "MATCH (parent:GCPOrganization{id: $ParentId})"
+            # The parent id is API data: reach the organization from the syncing workspace.
+            query = "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(parent:GCPOrganization{id: $ParentId})"
         elif folder['parent'].startswith("folders"):
             query = """
             MERGE (parent:GCPFolder{id: $ParentId})
@@ -165,6 +169,7 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
             neo4j_session,
             query,
             ParentId=folder['parent'],
+            WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
             FolderName=folder['name'],
             DisplayName=folder.get('displayName', None),
             region="global",
@@ -355,7 +360,7 @@ def sync_gcp_folders(
     tic = time.perf_counter()
     logger.debug("Syncing GCP folders")
     folders = get_gcp_folders(crm_v2)
-    load_gcp_folders(neo4j_session, folders, gcp_update_tag)
+    load_gcp_folders(neo4j_session, folders, gcp_update_tag, common_job_parameters)
     cleanup_gcp_folders(neo4j_session, common_job_parameters)
     logger.info(f"Time to process GCP CRM folders ({len(folders)} folders): {time.perf_counter() - tic:0.4f} seconds")
 
