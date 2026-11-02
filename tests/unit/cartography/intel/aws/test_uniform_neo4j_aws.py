@@ -157,7 +157,7 @@ class TestKms:
         session = MagicMock()
         aliases = [{"AliasArn": "arn:aws:kms:us-east-1:1234:alias/a1", "TargetKeyId": "k1"}]
 
-        kms._load_kms_key_aliases(session, aliases, TEST_UPDATE_TAG)
+        kms._load_kms_key_aliases(session, aliases, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert_batched(session.execute_write.call_args, aliases)
