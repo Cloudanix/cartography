@@ -332,7 +332,7 @@ def test_vpc_to_subnets(neo4j_session):
     expected_nodes = {
         (
             'projects/project-abc/global/networks/default',
-            'projects/project-abc/regions/europe-west2/subnetworks/default',
+            'projects/project-abc/locations/europe-west2/subnetworks/default',
             'europe-west2',
             '10.0.0.1',
             '10.0.0.0/20',
@@ -394,7 +394,7 @@ def test_nic_to_subnets(neo4j_session):
     expected_nodes = {(
         'projects/project-abc/zones/europe-west2-b/instances/instance-1-test/networkinterfaces/nic0',
         '10.0.0.3',
-        'projects/project-abc/regions/europe-west2/subnetworks/default',
+        'projects/project-abc/locations/europe-west2/subnetworks/default',
         '10.0.0.1',
         '10.0.0.0/20',
     )}
@@ -947,7 +947,7 @@ def _shared_vpc_params(project_id, update_tag):
 def _transformed_instance(project_id, name, vpc_id, region='us-central1'):
     """The fields load_gcp_instances reads, shaped as transform_gcp_instances returns them."""
     network = f'https://www.googleapis.com/compute/v1/{vpc_id}'
-    subnet = f'projects/{vpc_id.split("/")[1]}/regions/{region}/subnetworks/default'
+    subnet = f'projects/{vpc_id.split("/")[1]}/locations/{region}/subnetworks/default'
     return {
         'name': name, 'status': 'RUNNING', 'natIP': '34.9.9.9', 'project_id': project_id,
         'partial_uri': f'projects/{project_id}/zones/{region}-a/instances/{name}',
@@ -1337,3 +1337,237 @@ def test_vm_with_external_ip_on_a_network_whose_firewalls_we_cannot_see_is_publi
         'unres-other-workspace': ['public_ip_unresolved_firewall'],
         'unres-unsynced-ipv6': ['public_ip_unresolved_firewall'],
     }
+
+
+# NIC -> subnet keys. The subnet loader keys GCPSubnet as projects/<p>/locations/<r>/subnetworks/<s>; NICs and
+# forwarding rules name their subnet by self-link (.../projects/<p>/regions/<r>/subnetworks/<s>).
+NIC_WORKSPACE_ID = 'ws-nic-subnet'
+NIC_ORG_ID = 'org-nic-subnet'
+NIC_HOST_PROJECT = 'proj-nic-host'
+NIC_SVC_PROJECT = 'proj-nic-svc'
+NIC_REGION = 'us-central1'
+COMPUTE_API = 'https://www.googleapis.com/compute/v1'
+
+
+def _nic_params(project_id, update_tag):
+    return {
+        'UPDATE_TAG': update_tag, 'WORKSPACE_ID': NIC_WORKSPACE_ID,
+        'GCP_ORGANIZATION_ID': NIC_ORG_ID, 'GCP_PROJECT_ID': project_id, 'LIMIT_SIZE': 1000,
+    }
+
+
+def _vpc_self_link(project_id):
+    return f'{COMPUTE_API}/projects/{project_id}/global/networks/main'
+
+
+def _subnet_self_link(project_id):
+    return f'{COMPUTE_API}/projects/{project_id}/regions/{NIC_REGION}/subnetworks/app'
+
+
+def _real_subnet_id(project_id):
+    return f'projects/{project_id}/locations/{NIC_REGION}/subnetworks/app'
+
+
+def _seed_nic_org(neo4j_session):
+    # The session is module scoped: start each test from a graph without the previous test's nodes.
+    neo4j_session.run("MATCH (n) WHERE n.id CONTAINS 'proj-nic-' DETACH DELETE n")
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(:GCPProject{id: $host})
+        MERGE (o)-[:OWNER]->(:GCPProject{id: $svc})
+        """,
+        ws=NIC_WORKSPACE_ID, org=NIC_ORG_ID, host=NIC_HOST_PROJECT, svc=NIC_SVC_PROJECT,
+    )
+
+
+def _sync_vpc_and_subnet(neo4j_session, project_id, update_tag):
+    """The project's VPC + subnet sync, from list API responses through the real transforms."""
+    vpc_res = {
+        'id': f'projects/{project_id}/global/networks',
+        'items': [{'name': 'main', 'selfLink': _vpc_self_link(project_id), 'autoCreateSubnetworks': False}],
+    }
+    subnet_res = {
+        'id': f'projects/{project_id}/regions/{NIC_REGION}/subnetworks',
+        'items': [{
+            'name': 'app', 'region': f'{COMPUTE_API}/projects/{project_id}/regions/{NIC_REGION}',
+            'network': _vpc_self_link(project_id), 'ipCidrRange': '10.8.0.0/24', 'gatewayAddress': '10.8.0.1',
+            'selfLink': _subnet_self_link(project_id),
+        }],
+    }
+    compute = cartography.intel.gcp.compute
+    compute.load_gcp_vpcs(neo4j_session, compute.transform_gcp_vpcs(vpc_res), update_tag)
+    with patch.object(compute, 'get_default_vpc', return_value=None):
+        subnets = compute.transform_gcp_subnets(subnet_res, project_id, None)
+    compute.load_gcp_subnets(neo4j_session, subnets, update_tag)
+
+
+def _sync_instance(neo4j_session, project_id, name, network_project, update_tag):
+    """The project's instance sync of one VM whose NIC is on network_project's subnet, as the list API returns it."""
+    raw = {
+        'id': f'{name}-id', 'name': name, 'status': 'RUNNING', 'disks': [],
+        'zone': f'{COMPUTE_API}/projects/{project_id}/zones/{NIC_REGION}-a',
+        'networkInterfaces': [{
+            'name': 'nic0', 'networkIP': '10.8.0.5', 'accessConfigs': [],
+            'network': _vpc_self_link(network_project), 'subnetwork': _subnet_self_link(network_project),
+        }],
+    }
+    instances = cartography.intel.gcp.compute.transform_gcp_instances([raw], compute=None)
+    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instances, update_tag)
+
+
+def _nic_subnets(neo4j_session, name):
+    """(subnet id, the subnet's VPC id or None) for each subnet the VM's NICs are part of."""
+    return neo4j_session.run(
+        """
+        MATCH (:GCPInstance{instancename: $name})-[:NETWORK_INTERFACE]->(:GCPNetworkInterface)
+            -[:PART_OF_SUBNET]->(s:GCPSubnet)
+        OPTIONAL MATCH (vpc:GCPVpc)-[:RESOURCE]->(s)
+        RETURN s.id AS subnet, vpc.id AS vpc, s.ip_cidr_range AS cidr
+        """,
+        name=name,
+    ).data()
+
+
+def _stub_subnet_ids(neo4j_session):
+    return sorted(
+        r['id'] for r in neo4j_session.run(
+            "MATCH (s:GCPSubnet) WHERE s.id CONTAINS '/proj-nic-' AND NOT (:GCPVpc)-[:RESOURCE]->(s) RETURN s.id AS id",
+        )
+    )
+
+
+def test_instance_nic_links_to_the_real_subnet_not_a_stub(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_SVC_PROJECT, 100)
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-own-vm', NIC_SVC_PROJECT, 100)
+
+    assert _nic_subnets(neo4j_session, 'nic-own-vm') == [{
+        'subnet': _real_subnet_id(NIC_SVC_PROJECT),
+        'vpc': f'projects/{NIC_SVC_PROJECT}/global/networks/main',
+        'cidr': '10.8.0.0/24',
+    }]
+    assert _stub_subnet_ids(neo4j_session) == []
+
+
+def test_shared_vpc_nic_links_to_the_host_project_subnet_once_the_host_is_synced(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    # The service project syncs first: the host's subnet is not in the graph yet, so a stub is merged under the
+    # host subnet's own key ...
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-shared-vm', NIC_HOST_PROJECT, 100)
+    assert _nic_subnets(neo4j_session, 'nic-shared-vm') == [
+        {'subnet': _real_subnet_id(NIC_HOST_PROJECT), 'vpc': None, 'cidr': None},
+    ]
+    # ... which the host project's subnet sync then completes in place: one node, with its VPC and CIDR.
+    _sync_vpc_and_subnet(neo4j_session, NIC_HOST_PROJECT, 100)
+    assert _nic_subnets(neo4j_session, 'nic-shared-vm') == [{
+        'subnet': _real_subnet_id(NIC_HOST_PROJECT),
+        'vpc': f'projects/{NIC_HOST_PROJECT}/global/networks/main',
+        'cidr': '10.8.0.0/24',
+    }]
+    assert _stub_subnet_ids(neo4j_session) == []
+
+
+def test_host_project_subnet_cleanup_keeps_service_project_nics(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_HOST_PROJECT, 100)
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-shared-vm', NIC_HOST_PROJECT, 100)
+    neo4j_session.run(
+        "MATCH (:GCPInstance{instancename: 'nic-shared-vm'})-[:NETWORK_INTERFACE]->(nic) "
+        "MERGE (nic)-[r:RESOURCE]->(ac:GCPNicAccessConfig{id: nic.id + '/accessconfigs/ONE_TO_ONE_NAT'}) "
+        "SET ac.public_ip = '34.1.2.3', ac.lastupdated = 100, r.lastupdated = 100",
+    )
+
+    # A later host project sync (subnets reloaded, then the subnet cleanup) must leave the service project's
+    # NIC, its access config and its subnet edge alone: they belong to the service project's instance sync.
+    _sync_vpc_and_subnet(neo4j_session, NIC_HOST_PROJECT, 200)
+    run_cleanup_job('gcp_compute_vpc_subnet_cleanup.json', neo4j_session, _nic_params(NIC_HOST_PROJECT, 200))
+
+    assert [s['subnet'] for s in _nic_subnets(neo4j_session, 'nic-shared-vm')] == [_real_subnet_id(NIC_HOST_PROJECT)]
+    public_ips = neo4j_session.run(
+        "MATCH (:GCPInstance{instancename: 'nic-shared-vm'})-[:NETWORK_INTERFACE]->()-[:RESOURCE]->(ac) "
+        "RETURN collect(ac.public_ip) AS ips",
+    ).single()['ips']
+    assert public_ips == ['34.1.2.3']
+
+
+def test_instance_cleanup_drops_stale_stub_subnet_edges_and_access_configs(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_SVC_PROJECT, 100)
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-legacy-vm', NIC_SVC_PROJECT, 100)
+    # Written by the previous release: the NIC hangs off a parentless stub keyed by its .../regions/... self-link,
+    # and has an access config for an external IP since removed from the VM.
+    legacy_stub = f'projects/{NIC_SVC_PROJECT}/regions/{NIC_REGION}/subnetworks/app'
+    neo4j_session.run(
+        "MATCH (:GCPInstance{instancename: 'nic-legacy-vm'})-[:NETWORK_INTERFACE]->(nic)-[real:PART_OF_SUBNET]->() "
+        "DELETE real "
+        "MERGE (nic)-[p:PART_OF_SUBNET]->(:GCPSubnet{id: $stub}) SET p.lastupdated = 100 "
+        "MERGE (nic)-[r:RESOURCE]->(ac:GCPNicAccessConfig{id: nic.id + '/accessconfigs/ONE_TO_ONE_NAT'}) "
+        "SET ac.public_ip = '34.1.2.3', ac.lastupdated = 100, r.lastupdated = 100",
+        stub=legacy_stub,
+    )
+
+    _sync_vpc_and_subnet(neo4j_session, NIC_SVC_PROJECT, 200)
+    run_cleanup_job('gcp_compute_vpc_subnet_cleanup.json', neo4j_session, _nic_params(NIC_SVC_PROJECT, 200))
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-legacy-vm', NIC_SVC_PROJECT, 200)
+    run_cleanup_job('gcp_compute_instance_cleanup.json', neo4j_session, _nic_params(NIC_SVC_PROJECT, 200))
+
+    assert [s['subnet'] for s in _nic_subnets(neo4j_session, 'nic-legacy-vm')] == [_real_subnet_id(NIC_SVC_PROJECT)]
+    stale_configs = neo4j_session.run("MATCH (ac:GCPNicAccessConfig{public_ip: '34.1.2.3'}) RETURN count(ac) AS n")
+    assert stale_configs.single()['n'] == 0
+    # The stub is left with no edges: the rollout's batched delete removes exactly such nodes.
+    assert _stub_subnet_ids(neo4j_session) == [legacy_stub]
+    deleted = neo4j_session.run(
+        "MATCH (s:GCPSubnet) WHERE NOT (s)--() WITH s LIMIT 10000 DETACH DELETE s RETURN count(*) AS n",
+    ).single()['n']
+    assert deleted >= 1
+    assert _stub_subnet_ids(neo4j_session) == []
+
+
+def _sync_internal_forwarding_rule(neo4j_session, project_id, network_project, update_tag):
+    response = {
+        'id': f'projects/{project_id}/regions/{NIC_REGION}/forwardingRules',
+        'items': [{
+            'name': 'ilb', 'region': f'{COMPUTE_API}/projects/{project_id}/regions/{NIC_REGION}',
+            'IPAddress': '10.8.0.9', 'IPProtocol': 'TCP', 'loadBalancingScheme': 'INTERNAL',
+            'selfLink': f'{COMPUTE_API}/projects/{project_id}/regions/{NIC_REGION}/forwardingRules/ilb',
+            'network': _vpc_self_link(network_project), 'subnetwork': _subnet_self_link(network_project),
+        }],
+    }
+    rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, update_tag)
+
+
+def _rule_subnets(neo4j_session, project_id):
+    return neo4j_session.run(
+        """
+        MATCH (s:GCPSubnet)-[:RESOURCE]->(f:GCPForwardingRule{project_id: $project})
+        OPTIONAL MATCH (vpc:GCPVpc)-[:RESOURCE]->(s)
+        RETURN s.id AS subnet, vpc.id AS vpc, f.subnetwork AS subnetwork
+        """,
+        project=project_id,
+    ).data()
+
+
+def test_internal_forwarding_rule_links_to_the_real_subnet(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_SVC_PROJECT, 100)
+    _sync_internal_forwarding_rule(neo4j_session, NIC_SVC_PROJECT, NIC_SVC_PROJECT, 100)
+
+    assert _rule_subnets(neo4j_session, NIC_SVC_PROJECT) == [{
+        'subnet': _real_subnet_id(NIC_SVC_PROJECT),
+        'vpc': f'projects/{NIC_SVC_PROJECT}/global/networks/main',
+        'subnetwork': _real_subnet_id(NIC_SVC_PROJECT),
+    }]
+    assert _stub_subnet_ids(neo4j_session) == []
+
+
+def test_host_project_forwarding_rule_cleanup_keeps_service_project_rules(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_HOST_PROJECT, 100)
+    # An internal load balancer of the service project, on the host project's shared subnet.
+    _sync_internal_forwarding_rule(neo4j_session, NIC_SVC_PROJECT, NIC_HOST_PROJECT, 100)
+
+    run_cleanup_job('gcp_compute_forwarding_rules_cleanup.json', neo4j_session, _nic_params(NIC_HOST_PROJECT, 200))
+
+    assert [r['subnet'] for r in _rule_subnets(neo4j_session, NIC_SVC_PROJECT)] == [_real_subnet_id(NIC_HOST_PROJECT)]

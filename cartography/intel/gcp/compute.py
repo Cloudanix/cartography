@@ -580,7 +580,7 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
 
         for nic in res.get("networkInterfaces", []):
             res["networkIP"] = nic.get("networkIP", None)
-            nic["subnet_partial_uri"] = _parse_compute_full_uri_to_partial_uri(nic["subnetwork"])
+            nic["subnet_partial_uri"] = _gcp_subnet_id(nic["subnetwork"])
             nic["vpc_partial_uri"] = _parse_compute_full_uri_to_partial_uri(nic["network"])
             # nic["network"] is a full self-link; the console wants only the network name.
             network_name = nic["network"].split("/")[-1]
@@ -662,6 +662,25 @@ def _parse_compute_full_uri_to_partial_uri(full_uri: str, version: str = "v1") -
         return full_uri.split(f"compute/{version}/")[1]
     else:
         return full_uri
+
+
+def _gcp_subnet_id(subnetwork_uri: str) -> str:
+    """
+    The GCPSubnet node id for a subnetwork reference, keyed exactly as the subnet loader keys it
+    (transform_gcp_subnets): `projects/{project}/locations/{region}/subnetworks/{name}`.
+    NICs and forwarding rules name their subnet by self-link,
+    `.../projects/{project}/regions/{region}/subnetworks/{name}`, whose partial URI never matched that id, so they
+    MERGEd a parentless stub instead of the real subnet.
+    The project stays the subnet's own (a Shared VPC host project), so the key is the same globally unique one the
+    host project's subnet sync writes.
+    :param subnetwork_uri: The subnetwork self-link or partial URI
+    :return: The GCPSubnet id; the partial URI unchanged if it does not name a regional subnetwork
+    """
+    partial = _parse_compute_full_uri_to_partial_uri(subnetwork_uri)
+    parts = partial.split("/")
+    if len(parts) != 6 or parts[0] != "projects" or parts[2] != "regions" or parts[4] != "subnetworks":
+        return partial
+    return f"projects/{parts[1]}/locations/{parts[3]}/subnetworks/{parts[5]}"
 
 
 def _create_gcp_network_tag_id(vpc_partial_uri: str, tag: str) -> str:
@@ -833,7 +852,8 @@ def transform_gcp_forwarding_rules(fwd_response: Resource) -> List[Dict]:
         subnetwork = fwd.get("subnetwork", None)
         if subnetwork:
             forwarding_rule["subnetwork"] = subnetwork
-            forwarding_rule["subnetwork_partial_uri"] = _parse_compute_full_uri_to_partial_uri(subnetwork)
+            # The GCPSubnet id (also stored as fwd.subnetwork), like fwd.network holds the GCPVpc id.
+            forwarding_rule["subnetwork_partial_uri"] = _gcp_subnet_id(subnetwork)
 
         # Backend-service based passthrough network load balancers have no target, only a backend service.
         backend_service = fwd.get("backendService", None)
