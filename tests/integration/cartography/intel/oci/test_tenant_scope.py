@@ -109,7 +109,7 @@ def test_nsg_rule_ids_are_scoped_to_their_nsg(neo4j_session):
             'id': '04ABEC', 'direction': 'INGRESS', 'protocol': '6', 'source': '0.0.0.0/0',
             'tcp-options': {'destination-port-range': {'min': port, 'max': port}},
         }
-        network.load_nsg_security_rules(neo4j_session, [rule], nsg_id, NEW_TAG)
+        network.load_nsg_security_rules(neo4j_session, [rule], nsg_id, f'{prefix}-tenancy', NEW_TAG)
         nsgs[nsg_id] = port
 
     for nsg_id, port in nsgs.items():

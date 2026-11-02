@@ -177,6 +177,7 @@ def load_load_balancers(
     neo4j_session: neo4j.Session,
     rows: List[Dict[str, Any]],
     label: str,
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -211,12 +212,15 @@ def load_load_balancers(
             lb.consolelink = row.consolelink,
             lb.lastupdated = $oci_update_tag
         WITH lb
-        MATCH (cc:OCICompartment{{id: $COMPARTMENT_ID}})
+        MATCH (:OCITenancy{{id: $TENANCY_ID}})-[:OWNER]->(cc:OCICompartment{{id: $COMPARTMENT_ID}})
         MERGE (cc)-[r:RESOURCE]->(lb)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, ingest, rows, COMPARTMENT_ID=compartment_id, oci_update_tag=oci_update_tag)
+    load_graph_data(
+        neo4j_session, ingest, rows,
+        TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, oci_update_tag=oci_update_tag,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +231,7 @@ def sync_load_balancers(
     neo4j_session: neo4j.Session,
     lb_client: oci.load_balancer.LoadBalancerClient,
     nlb_client: oci.network_load_balancer.NetworkLoadBalancerClient,
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
@@ -247,5 +252,5 @@ def sync_load_balancers(
         rows = transform(raw, region)
         if not rows:
             continue
-        load_load_balancers(neo4j_session, rows, label, compartment_id, oci_update_tag)
+        load_load_balancers(neo4j_session, rows, label, tenancy_id, compartment_id, oci_update_tag)
         tags.sync_tags(neo4j_session, raw, label, oci_update_tag, common_job_parameters)

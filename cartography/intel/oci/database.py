@@ -739,6 +739,7 @@ def get_db_node_vnics(
 def load_db_node_vnics(
     neo4j_session: neo4j.Session,
     vnics: List[Dict[str, Any]],
+    tenancy_id: str,
     region: str,
     oci_update_tag: int,
 ) -> None:
@@ -746,7 +747,7 @@ def load_db_node_vnics(
     Load DB node VNICs with the network loader (public IP, NSG ids, subnet edge)
     and link each OCIDbNode to its client and backup VNICs via OCI_VNIC.
     """
-    network.load_vnics(neo4j_session, vnics, region, oci_update_tag)
+    network.load_vnics(neo4j_session, vnics, tenancy_id, region, oci_update_tag)
     link_db_node_vnic = """
     UNWIND $DictList AS vnic
         MATCH (dn:OCIDbNode) WHERE dn.vnic_id = vnic.id OR dn.backup_vnic_id = vnic.id
@@ -853,6 +854,7 @@ def _link_kms_key(
 def sync_db_systems(
     neo4j_session: neo4j.Session,
     database_client: oci.database.DatabaseClient,
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
@@ -895,7 +897,7 @@ def sync_db_systems(
         load_db_nodes(neo4j_session, all_nodes, oci_update_tag)
         db_node_vnics = get_db_node_vnics(_network_client_for(database_client, region), all_nodes)
         if db_node_vnics:
-            load_db_node_vnics(neo4j_session, db_node_vnics, region, oci_update_tag)
+            load_db_node_vnics(neo4j_session, db_node_vnics, tenancy_id, region, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
@@ -949,7 +951,7 @@ def sync(
 
         try:
             sync_db_systems(
-                neo4j_session, database_client, compartment_id, region, oci_update_tag,
+                neo4j_session, database_client, tenancy_id, compartment_id, region, oci_update_tag,
                 common_job_parameters,
             )
         except Exception as e:

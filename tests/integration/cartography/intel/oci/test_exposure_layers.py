@@ -89,7 +89,8 @@ def _network(session):
     for nsg_id, rules in NSGS.items():
         network.load_network_security_groups(session, [{'id': nsg_id, 'vcn-id': VCN}], *args)
         network.load_nsg_security_rules(
-            session, [{'id': f'{nsg_id}.r{i}', 'direction': 'INGRESS', **r} for i, r in enumerate(rules)], nsg_id, TAG,
+            session, [{'id': f'{nsg_id}.r{i}', 'direction': 'INGRESS', **r} for i, r in enumerate(rules)],
+            nsg_id, TENANCY, TAG,
         )
     for subnet_id, (sl_id, target, prohibit) in SUBNETS.items():
         worlds = [WORLD, V6_WORLD] if subnet_id in V6_ROUTED else [WORLD]
@@ -120,7 +121,10 @@ def _instance(
         """
         MATCH (c:OCICompartment{id: $compartment})
         MERGE (c)-[:RESOURCE]->(i:OCIInstance{id: $instance_id})
-        MERGE (i)-[:OCI_VNIC_ATTACHMENT]->(:OCIVnicAttachment{id: $vnic_id + '.att', vnic_id: $vnic_id})
+        MERGE (i)-[:OCI_VNIC_ATTACHMENT]->(a:OCIVnicAttachment{id: $vnic_id + '.att', vnic_id: $vnic_id})
+        // Linked here, not by load_vnics, so another workspace's VM can still reach this tenancy's subnet
+        // (a pre-anchoring cross-tenant edge) and the walker's own scoping stays under test.
+        MERGE (a)-[:OCI_VNIC]->(:OCIVnic{id: $vnic_id})
         """,
         compartment=compartment, instance_id=instance_id, vnic_id=vnic_id,
     )
@@ -130,7 +134,7 @@ def _instance(
             'id': vnic_id, 'subnet-id': subnet_id, 'public-ip': public_ip, 'private-ip': private_ip,
             'nsg-ids': list(nsgs), 'ipv6-addresses': list(ipv6),
         }],
-        REGION, TAG,
+        TENANCY, REGION, TAG,
     )
 
 
@@ -164,7 +168,7 @@ def _load_balancer(session):
         'backend-sets': {'web': {'backends': [{'ip-address': '10.0.5.5', 'port': 8080}]}},
     }
     rows = load_balancer.transform_load_balancers([lb], REGION)
-    load_balancer.load_load_balancers(session, rows, load_balancer.LOAD_BALANCER_LABEL, COMPARTMENT, TAG)
+    load_balancer.load_load_balancers(session, rows, load_balancer.LOAD_BALANCER_LABEL, TENANCY, COMPARTMENT, TAG)
 
 
 def _databases(session):
@@ -221,7 +225,7 @@ def _managed(session):
         [{'id': 'xl-gw', 'endpoint-type': 'PUBLIC', 'subnet-id': 'xl-lb'}], REGION,
         [{'id': 'xl-dep', 'gateway-id': 'xl-gw', 'specification': {'routes': [{}]}}],
     )
-    api_gateway.load_gateways(session, gateways, COMPARTMENT, TAG)
+    api_gateway.load_gateways(session, gateways, TENANCY, COMPARTMENT, TAG)
 
 
 def _other_workspace(session):

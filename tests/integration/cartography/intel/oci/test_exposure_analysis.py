@@ -71,7 +71,7 @@ def _load_vcn(neo4j_session, vcn_id, compartment_id=COMPARTMENT_ID, security_lis
         network.load_nsg_security_rules(
             neo4j_session,
             [{'id': f'{nsg_id}.rule{i}', 'direction': 'INGRESS', **rule} for i, rule in enumerate(rules)],
-            nsg_id, UPDATE_TAG,
+            nsg_id, TENANCY_ID, UPDATE_TAG,
         )
 
 
@@ -114,14 +114,17 @@ def _load_instance(neo4j_session, instance_id, subnet_id, public_ip, nsg_ids=(),
         MATCH (c:OCICompartment{id: $compartment_id})
         MERGE (c)-[:RESOURCE]->(i:OCIInstance{id: $instance_id})
         SET i.ocid = $instance_id
-        MERGE (i)-[:OCI_VNIC_ATTACHMENT]->(:OCIVnicAttachment{id: $vnic_id + '.att', vnic_id: $vnic_id})
+        MERGE (i)-[:OCI_VNIC_ATTACHMENT]->(a:OCIVnicAttachment{id: $vnic_id + '.att', vnic_id: $vnic_id})
+        // Linked here, not by load_vnics, so another tenancy's VM can still reach this tenancy's subnet
+        // (a pre-anchoring cross-tenant edge) and the exposure job's own scoping stays under test.
+        MERGE (a)-[:OCI_VNIC]->(:OCIVnic{id: $vnic_id})
         """,
         compartment_id=compartment_id, instance_id=instance_id, vnic_id=vnic_id,
     )
     network.load_vnics(
         neo4j_session,
         [{'id': vnic_id, 'subnet-id': subnet_id, 'public-ip': public_ip, 'nsg-ids': list(nsg_ids)}],
-        REGION, UPDATE_TAG,
+        TENANCY_ID, REGION, UPDATE_TAG,
     )
 
 
@@ -393,7 +396,7 @@ def test_load_db_node_vnics_links_db_nodes_to_their_vnics(neo4j_session):
     database.load_db_node_vnics(
         neo4j_session,
         [{'id': 'dbv-vnic', 'subnet-id': 'dbv-subnet', 'public-ip': '203.0.113.20', 'nsg-ids': ['dbv-nsg']}],
-        REGION, UPDATE_TAG,
+        TENANCY_ID, REGION, UPDATE_TAG,
     )
 
     row = neo4j_session.run(
@@ -419,7 +422,9 @@ def test_database_cleanup_removes_stale_db_node_vnics(neo4j_session):
     database.load_db_nodes(
         neo4j_session, [{'id': 'dbc-node', 'db_system_id': 'dbc-system', 'vnic_id': 'dbc-vnic'}], UPDATE_TAG,
     )
-    database.load_db_node_vnics(neo4j_session, [{'id': 'dbc-vnic', 'subnet-id': 'dbc-subnet'}], REGION, UPDATE_TAG)
+    database.load_db_node_vnics(
+        neo4j_session, [{'id': 'dbc-vnic', 'subnet-id': 'dbc-subnet'}], TENANCY_ID, REGION, UPDATE_TAG,
+    )
 
     database.cleanup(neo4j_session, {**JOB_PARAMETERS, 'UPDATE_TAG': UPDATE_TAG + 1})
 
@@ -448,7 +453,7 @@ def _load_db_system(neo4j_session, system_id, subnet_id, nodes):
         UPDATE_TAG,
     )
     vnics = [{'id': f'{node_id}.vnic', 'subnet-id': subnet_id, **vnic} for node_id, vnic in nodes if vnic is not None]
-    database.load_db_node_vnics(neo4j_session, vnics, REGION, UPDATE_TAG)
+    database.load_db_node_vnics(neo4j_session, vnics, TENANCY_ID, REGION, UPDATE_TAG)
 
 
 def test_db_system_exposure_needs_node_public_ip_and_own_open_rules(neo4j_session):
@@ -627,7 +632,7 @@ def test_load_balancer_exposed_when_public_and_a_listener_port_is_open(neo4j_ses
             ],
             REGION,
         ),
-        'OCILoadBalancer', COMPARTMENT_ID, UPDATE_TAG,
+        'OCILoadBalancer', TENANCY_ID, COMPARTMENT_ID, UPDATE_TAG,
     )
     load_balancer.load_load_balancers(
         neo4j_session,
@@ -646,7 +651,7 @@ def test_load_balancer_exposed_when_public_and_a_listener_port_is_open(neo4j_ses
             ],
             REGION,
         ),
-        'OCINetworkLoadBalancer', COMPARTMENT_ID, UPDATE_TAG,
+        'OCINetworkLoadBalancer', TENANCY_ID, COMPARTMENT_ID, UPDATE_TAG,
     )
 
     run_analysis_job('oci_load_balancer_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
@@ -710,7 +715,8 @@ def test_instance_exposed_as_backend_of_exposed_load_balancer(neo4j_session):
                 'id': lb_id, 'subnet_ids': ['lbb-subnet'], 'backend_ips': backend_ips,
                 'backend_target_ids': backend_target_ids,
             }],
-            'OCILoadBalancer', compartment_id, UPDATE_TAG,
+            'OCILoadBalancer', OTHER_TENANCY_ID if compartment_id == OTHER_COMPARTMENT_ID else TENANCY_ID,
+            compartment_id, UPDATE_TAG,
         )
         # As written by oci_load_balancer_asset_exposure.json, which runs before the instance job.
         neo4j_session.run(
@@ -761,7 +767,7 @@ def test_api_gateway_exposed_when_public_and_https_is_open(neo4j_session):
             ],
             REGION,
         ),
-        COMPARTMENT_ID, UPDATE_TAG,
+        TENANCY_ID, COMPARTMENT_ID, UPDATE_TAG,
     )
 
     run_analysis_job('oci_api_gateway_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
@@ -860,7 +866,7 @@ def test_db_node_backup_vnic_counts_for_exposure(neo4j_session):
         vnics = [{'id': f'{node_id}.vnic', 'subnet-id': 'dbb-subnet-closed', 'public-ip': None}]
         if backup_vnic is not None:
             vnics.append({'id': f'{node_id}.backup-vnic', 'subnet-id': backup_subnet_id, **backup_vnic})
-        database.load_db_node_vnics(neo4j_session, vnics, REGION, UPDATE_TAG)
+        database.load_db_node_vnics(neo4j_session, vnics, TENANCY_ID, REGION, UPDATE_TAG)
 
     run_analysis_job('oci_db_system_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
 
