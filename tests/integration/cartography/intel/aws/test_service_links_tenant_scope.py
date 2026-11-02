@@ -46,10 +46,15 @@ def _links(neo4j_session, node_id):
 
 def test_es_domain_links_stay_in_the_workspace(neo4j_session):
     _seed(neo4j_session, 'ESDomain', 'es-own', 'es-other')
-    vpc = {'VPCOptions': {
-        'SubnetIds': ['subnet-sl-sibling', 'subnet-sl-other'], 'SecurityGroupIds': ['sg-sl-sibling', 'sg-sl-other'],
-    }}
-    public = {'Endpoint': 'e', 'AccessPolicies': '{"Statement": [{"Effect": "Allow", "Principal": "*", "Action": "es:*"}]}'}
+    vpc = {
+        'VPCOptions': {
+            'SubnetIds': ['subnet-sl-sibling', 'subnet-sl-other'], 'SecurityGroupIds': ['sg-sl-sibling', 'sg-sl-other'],
+        },
+    }
+    public = {
+        'Endpoint': 'e',
+        'AccessPolicies': '{"Statement": [{"Effect": "Allow", "Principal": "*", "Action": "es:*"}]}',
+    }
 
     for domain in ('es-own', 'es-other'):
         elasticsearch._link_es_domain_vpc(neo4j_session, domain, vpc, OWN, WORKSPACE, TAG)

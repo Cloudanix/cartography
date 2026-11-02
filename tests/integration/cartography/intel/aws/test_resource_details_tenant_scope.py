@@ -78,7 +78,10 @@ def test_s3_details_are_written_only_on_the_accounts_buckets(neo4j_session):
     with patch.object(s3, 'add_bucket_policy_documents', side_effect=lambda policies, _: policies):
         s3._load_s3_policies(
             neo4j_session,
-            [{'bucket': b, 'internet_accessible': True, 'accessible_actions': [], 'policyDocument': ''} for b in buckets],
+            [
+                {'bucket': b, 'internet_accessible': True, 'accessible_actions': [], 'policyDocument': ''}
+                for b in buckets
+            ],
             OWN, TAG, None,
         )
     s3._load_s3_policy_statuses(neo4j_session, [{'bucket': b, 'is_public': True} for b in buckets], OWN, TAG)

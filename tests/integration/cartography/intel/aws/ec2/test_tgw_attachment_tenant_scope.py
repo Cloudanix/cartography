@@ -22,7 +22,10 @@ def test_vpc_attachment_links_stay_in_the_account(neo4j_session):
     for attachment in ('tgw-attach-ta-own', 'tgw-attach-ta-other'):
         tgw._attach_tgw_vpc_attachment_to_vpc_subnets(
             neo4j_session,
-            {'TransitGatewayAttachmentId': attachment, 'VpcId': f'vpc-{attachment}', 'SubnetIds': [f'subnet-{attachment}']},
+            {
+                'TransitGatewayAttachmentId': attachment, 'VpcId': f'vpc-{attachment}',
+                'SubnetIds': [f'subnet-{attachment}'],
+            },
             REGION, OWN, TAG,
         )
 

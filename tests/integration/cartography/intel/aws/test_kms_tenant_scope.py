@@ -26,7 +26,10 @@ def test_kms_details_stay_in_the_account(neo4j_session):
     )
     kms._load_kms_key_grants(
         neo4j_session,
-        [{'GrantId': f'grant-{key}', 'KeyId': key, 'CreationDate': 'd', 'region': REGION} for key in ('key-own', 'key-other')],
+        [
+            {'GrantId': f'grant-{key}', 'KeyId': key, 'CreationDate': 'd', 'region': REGION}
+            for key in ('key-own', 'key-other')
+        ],
         OWN, TAG,
     )
     kms._load_kms_key_policies(

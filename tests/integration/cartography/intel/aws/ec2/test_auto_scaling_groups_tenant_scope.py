@@ -69,7 +69,8 @@ def test_asg_launch_template_is_resolved_in_its_own_account(neo4j_session):
     )
     groups = [
         {
-            'AutoScalingGroupARN': f'arn:aws:autoscaling:{REGION}:{ACCOUNT_ID}:autoScalingGroup:2:autoScalingGroupName/{lt}',
+            'AutoScalingGroupARN':
+                f'arn:aws:autoscaling:{REGION}:{ACCOUNT_ID}:autoScalingGroup:2:autoScalingGroupName/{lt}',
             'AutoScalingGroupName': lt, 'LaunchTemplate': {'LaunchTemplateId': lt},
             'CreatedTime': datetime.datetime(2021, 9, 21, 10, 55, 34), 'MaxSize': 1, 'MinSize': 1,
         }

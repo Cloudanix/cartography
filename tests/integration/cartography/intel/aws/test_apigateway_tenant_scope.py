@@ -34,7 +34,10 @@ def test_stages_resources_and_certificates_stay_in_the_account(neo4j_session):
     )
     apigateway._load_apigateway_resources(
         neo4j_session,
-        [{'id': 'res-own', 'apiId': 'api-own', 'region': REGION}, {'id': 'res-stray', 'apiId': 'api-other', 'region': REGION}],
+        [
+            {'id': 'res-own', 'apiId': 'api-own', 'region': REGION},
+            {'id': 'res-stray', 'apiId': 'api-other', 'region': REGION},
+        ],
         OWN, TAG,
     )
     apigateway._load_apigateway_certificates(

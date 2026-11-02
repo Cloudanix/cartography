@@ -47,7 +47,9 @@ def test_load_balancer_links_stay_in_the_workspace(neo4j_session):
     load_balancer_v2s.load_load_balancer_v2_listeners(
         neo4j_session, OTHER_LB, [{'ListenerArn': 'arn:listener/stray', 'Port': 443}], OWN, TAG,
     )
-    load_balancer_v2s.load_load_balancer_v2_subnets(neo4j_session, OTHER_LB, [{'SubnetId': 'subnet-x'}], REGION, OWN, TAG)
+    load_balancer_v2s.load_load_balancer_v2_subnets(
+        neo4j_session, OTHER_LB, [{'SubnetId': 'subnet-x'}], REGION, OWN, TAG,
+    )
 
     groups = neo4j_session.run(
         "MATCH (:LoadBalancerV2)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(g:EC2SecurityGroup) RETURN g.groupid AS g",

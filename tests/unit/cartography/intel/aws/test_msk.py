@@ -78,7 +78,10 @@ def test_sync_skips_regions_without_msk(mocker):
     mocker.patch.object(msk, 'load_msk_clusters')
     mocker.patch.object(msk, 'cleanup')
 
-    msk.sync(MagicMock(), session, ['us-east-1', 'xx-new-1'], '111111111111', 42, {'AWS_ID': '111111111111', 'WORKSPACE_ID': 'ws'})
+    msk.sync(
+        MagicMock(), session, ['us-east-1', 'xx-new-1'], '111111111111', 42,
+        {'AWS_ID': '111111111111', 'WORKSPACE_ID': 'ws'},
+    )
 
     session.get_available_regions.assert_called_once_with('kafka', partition_name='aws')
     assert [c.args[1] for c in get.call_args_list] == ['us-east-1']
