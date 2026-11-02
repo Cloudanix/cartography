@@ -13,6 +13,7 @@ from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
+from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -156,7 +157,8 @@ def _attach_resource_group_aks(tx: neo4j.Transaction, aks_id: str, resource_grou
     ingest_aks_resource = """
     MATCH (a:AzureCluster{id: $aks_id})
     WITH a
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[res:RESOURCE_GROUP]->(rg)
     ON CREATE SET res.firstseen = timestamp()
     SET res.lastupdated = $update_tag
@@ -165,6 +167,7 @@ def _attach_resource_group_aks(tx: neo4j.Transaction, aks_id: str, resource_grou
         ingest_aks_resource,
         aks_id=aks_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(aks_id),
         update_tag=update_tag,
     )
 
@@ -324,12 +327,13 @@ def _load_container_registries_tx(
 
 
 def _attach_resource_group_container_registry(
-    tx: neo4j.Transaction, container_registry_id: List[Dict], resource_group: str, update_tag: int,
+    tx: neo4j.Transaction, container_registry_id: str, resource_group: str, update_tag: int,
 ) -> None:
     ingest_container_registry = """
     MATCH (a:AzureContainerRegistry{id: $container_registry_id})
     WITH a
-    MATCH (rg:AzureResourceGroup{name:$resource_group })
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -338,6 +342,7 @@ def _attach_resource_group_container_registry(
         ingest_container_registry,
         container_registry_id=container_registry_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(container_registry_id),
         update_tag=update_tag,
     )
 
@@ -460,7 +465,8 @@ def _attach_resource_group_container_replication(
     ingest_container_replication = """
         MATCH (a:AzureContainerRegistryReplication{id: $container_registry_replication_id})
         WITH a
-        MATCH (rg:AzureResourceGroup{name:$resource_group})
+        MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+        MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (a)-[r:RESOURCE_GROUP]->(rg)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
@@ -469,6 +475,7 @@ def _attach_resource_group_container_replication(
         ingest_container_replication,
         container_registry_replication_id=container_registry_replication_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(container_registry_replication_id),
         update_tag=update_tag,
     )
 
@@ -563,7 +570,8 @@ def _attach_resource_group_container_registry_runs(
     ingest_container_run = """
     MATCH (a:AzureContainerRegistryRun{id: $run_id})
     WITH a
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -572,6 +580,7 @@ def _attach_resource_group_container_registry_runs(
         ingest_container_run,
         run_id=container_registry_run_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(container_registry_run_id),
         update_tag=update_tag,
     )
 
@@ -668,7 +677,8 @@ def _attach_resource_group_container_task(
     ingest_container_task = """
     MATCH (a:AzureContainerRegistryTask{id:$container_registry_task_id})
     WITH a
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -677,6 +687,7 @@ def _attach_resource_group_container_task(
         ingest_container_task,
         container_registry_task_id=container_registry_task_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(container_registry_task_id),
         update_tag=update_tag,
     )
 
@@ -772,7 +783,8 @@ def _attach_resource_group_container_registry_webhooks(
     ingest_container_webhook = """
     MATCH (a:AzureContainerRegistryWebhook{id:$container_registry_webhook_id})
     WITH a
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -781,6 +793,7 @@ def _attach_resource_group_container_registry_webhooks(
         ingest_container_webhook,
         container_registry_webhook_id=container_registry_webhook_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(container_registry_webhook_id),
         update_tag=update_tag,
     )
 
@@ -871,7 +884,8 @@ def _attach_resource_group_aks_container_group(
     ingest_container_group = """
     MATCH (a:AzureContainerGroup{id: $group_id})
     WITH a
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -880,6 +894,7 @@ def _attach_resource_group_aks_container_group(
         ingest_container_group,
         group_id=container_group_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(container_group_id),
         update_tag=update_tag,
     )
 
@@ -959,7 +974,8 @@ def _attach_resource_group_container(
     ingest_container = """
     MATCH (a:AzureContainer{id: $container_id})
     WITH a
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -968,6 +984,7 @@ def _attach_resource_group_container(
         ingest_container,
         container_id=container_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(container_id),
         update_tag=update_tag,
     )
 

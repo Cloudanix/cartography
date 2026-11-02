@@ -823,7 +823,8 @@ def test_sql_server_analysis_public_exposure(neo4j_session):
 def test_load_server_private_endpoint_connection(neo4j_session):
     server_id = '/subscriptions/00-00/resourceGroups/pe-rg/providers/Microsoft.Sql/servers/pe-server'
     pec_id = f'{server_id}/privateEndpointConnections/pec1'
-    neo4j_session.run("MERGE (:AzureResourceGroup{name: 'pe-rg'})")
+    # A resource group is resolved by name only under the subscription in the resource's id.
+    neo4j_session.run("MERGE (:AzureSubscription{id: '00-00'})-[:RESOURCE]->(:AzureResourceGroup{name: 'pe-rg'})")
     sql.load_server_data(neo4j_session, TEST_SUBSCRIPTION_ID, [{'id': server_id, 'name': 'pe-server'}], TEST_UPDATE_TAG)
     server = {
         'id': server_id,

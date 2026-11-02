@@ -15,6 +15,7 @@ from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
+from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -244,7 +245,8 @@ def _attach_resource_group_networks(tx: neo4j.Transaction, network_id: str, reso
     ingest_net = """
     MATCH (n:AzureNetwork{id: $network_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name:$resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -253,6 +255,7 @@ def _attach_resource_group_networks(tx: neo4j.Transaction, network_id: str, reso
         ingest_net,
         network_id=network_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(network_id),
         update_tag=update_tag,
     )
 
@@ -364,7 +367,8 @@ def _attach_resource_group_networks_subnets(tx: neo4j.Transaction, network_subne
     ingest_network_subnet = """
     MATCH (n:AzureNetworkSubnet{id: $network_subnet_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[rel:RESOURCE_GROUP]->(rg)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag
@@ -374,6 +378,7 @@ def _attach_resource_group_networks_subnets(tx: neo4j.Transaction, network_subne
         ingest_network_subnet,
         network_subnet_id=network_subnet_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(network_subnet_id),
         update_tag=update_tag,
     )
 
@@ -449,7 +454,8 @@ def _attach_resource_group_network_routetables(tx: neo4j.Transaction, network_ro
     ingest_routetables = """
     MATCH (n:AzureRouteTable{id: $network_routetable_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -458,6 +464,7 @@ def _attach_resource_group_network_routetables(tx: neo4j.Transaction, network_ro
         ingest_routetables,
         network_routetable_id=network_routetable_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(network_routetable_id),
         update_tag=update_tag,
     )
 
@@ -652,7 +659,8 @@ def _attach_resource_group_network_routes(tx: neo4j.Transaction, network_routes_
     ingest_network_route = """
     MATCH (n:AzureNetworkRoute{id: $network_routes_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -661,6 +669,7 @@ def _attach_resource_group_network_routes(tx: neo4j.Transaction, network_routes_
         ingest_network_route,
         network_routes_id=network_routes_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(network_routes_id),
         azure_update_tag=update_tag,
     )
 
@@ -736,7 +745,8 @@ def _attach_resource_group_network_security_groups(tx: neo4j.Transaction, networ
     ingest_network = """
     MATCH (n:AzureNetworkSecurityGroup{id: $network_security_group_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -745,6 +755,7 @@ def _attach_resource_group_network_security_groups(tx: neo4j.Transaction, networ
         ingest_network,
         network_security_group_id=network_security_group_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(network_security_group_id),
         update_tag=update_tag,
     )
 
@@ -835,7 +846,8 @@ def _attack_resource_group_network_nat_gateway(tx: neo4j.Transaction, nat_gatewa
     ingest_network = """
     MATCH (n:AzureNatGateway{id: $nat_gateway_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -844,6 +856,7 @@ def _attack_resource_group_network_nat_gateway(tx: neo4j.Transaction, nat_gatewa
         ingest_network,
         nat_gateway_id=nat_gateway_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(nat_gateway_id),
         update_tag=update_tag,
     )
 
@@ -1072,7 +1085,8 @@ def _attack_resource_group_network_security_rules(tx: neo4j.Transaction, network
     ingest_network_rule = """
     MATCH (n:AzureNetworkSecurityRule{id: $network_security_rule_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1081,6 +1095,7 @@ def _attack_resource_group_network_security_rules(tx: neo4j.Transaction, network
         ingest_network_rule,
         network_security_rule_id=network_security_rule_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(network_security_rule_id),
         azure_update_tag=update_tag,
     )
 
@@ -1333,7 +1348,8 @@ def _attach_resource_group_network_interfaces(tx: neo4j.Transaction, network_int
     ingest_interface = """
     MATCH (n:AzureNetworkInterface{id: $network_interface_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -1342,6 +1358,7 @@ def _attach_resource_group_network_interfaces(tx: neo4j.Transaction, network_int
         ingest_interface,
         network_interface_id=network_interface_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(network_interface_id),
         update_tag=update_tag,
     )
 
@@ -1381,7 +1398,8 @@ def _attach_resource_group_load_balancers(tx: neo4j.Transaction, load_balancer_i
     ingest_load_balancer = """
     MATCH (n:AzureNetworkLoadBalancer{id: $load_balancer_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -1390,6 +1408,7 @@ def _attach_resource_group_load_balancers(tx: neo4j.Transaction, load_balancer_i
         ingest_load_balancer,
         load_balancer_id=load_balancer_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(load_balancer_id),
         update_tag=update_tag,
     )
 
@@ -1714,7 +1733,8 @@ def _attach_resource_network_usages(tx: neo4j.Transaction, usages_id: str, resou
     ingest_usages = """
     MATCH (n:AzureNetworkUsage{id: $usages_id})
     WITH n
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (n)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1723,6 +1743,7 @@ def _attach_resource_network_usages(tx: neo4j.Transaction, usages_id: str, resou
         ingest_usages,
         usages_id=usages_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(usages_id),
         azure_update_tag=update_tag,
     )
 

@@ -20,6 +20,7 @@ from .util.timing import get_timing_policy
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
+from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -124,7 +125,8 @@ def _attach_resource_group_storage_account(neo4j_session: neo4j.Session, storage
     ingest_storage_account = """
     MATCH (s:AzureStorageAccount{id: $account_id})
     WITH s
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (s)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -134,6 +136,7 @@ def _attach_resource_group_storage_account(neo4j_session: neo4j.Session, storage
         ingest_storage_account,
         account_id=storage_account_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(storage_account_id),
         azure_update_tag=azure_update_tag,
     )
 
@@ -361,7 +364,8 @@ def _attach_resource_queue_service(neo4j_session: neo4j.Session, queue_service_i
     ingest_queue_services = """
     MATCH (qs:AzureStorageQueueService{id: $queue_service_id})
     WITH qs
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (qs)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -371,6 +375,7 @@ def _attach_resource_queue_service(neo4j_session: neo4j.Session, queue_service_i
         ingest_queue_services,
         queue_service_id=queue_service_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(queue_service_id),
         azure_update_tag=update_tag,
     )
 
@@ -413,7 +418,8 @@ def _attach_resource_storage_table_service(neo4j_session: neo4j.Session, table_s
     ingest_table_services = """
     MATCH (ts:AzureStorageTableService{id: $tservice_id})
     WITH ts
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (ts)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -424,6 +430,7 @@ def _attach_resource_storage_table_service(neo4j_session: neo4j.Session, table_s
         ingest_table_services,
         tservice_id=table_service_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(table_service_id),
         azure_update_tag=update_tag,
     )
 
@@ -466,7 +473,8 @@ def _attach_resource_storage_file_service(neo4j_session: neo4j.Session, file_ser
     ingest_file_services = """
     MATCH (fs:AzureStorageFileService{id: $fservice_id})
     WITH fs
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (fs)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -476,6 +484,7 @@ def _attach_resource_storage_file_service(neo4j_session: neo4j.Session, file_ser
         ingest_file_services,
         fservice_id=file_service_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(file_service_id),
         azure_update_tag=update_tag,
     )
 
@@ -518,7 +527,8 @@ def _attach_resource_storage_blob_service(neo4j_session: neo4j.Session, blob_ser
     ingest_blob_services = """
     MATCH (bs:AzureStorageBlobService{id: $bservice_id})
     WITH bs
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (bs)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -528,6 +538,7 @@ def _attach_resource_storage_blob_service(neo4j_session: neo4j.Session, blob_ser
         ingest_blob_services,
         bservice_id=blob_service_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(blob_service_id),
         azure_update_tag=update_tag,
     )
 
@@ -637,7 +648,8 @@ def _attach_resource_storage_queue(neo4j_session: neo4j.Session, queue_id: str, 
     ingest_queues = """
     MATCH (q:AzureStorageQueue{id: $queue_id})
     WITH q
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (q)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -648,6 +660,7 @@ def _attach_resource_storage_queue(neo4j_session: neo4j.Session, queue_id: str, 
         ingest_queues,
         queue_id=queue_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(queue_id),
         azure_update_tag=update_tag,
     )
 
@@ -761,7 +774,8 @@ def _attach_resource_storage_table(neo4j_session: neo4j.Session, table_id: str, 
     ingest_tables = """
     MATCH (t:AzureStorageTable{id: $table_id})
     WITH t
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (t)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -772,6 +786,7 @@ def _attach_resource_storage_table(neo4j_session: neo4j.Session, table_id: str, 
         ingest_tables,
         table_id=table_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(table_id),
         azure_update_tag=update_tag,
     )
 
@@ -892,7 +907,8 @@ def _attach_resource_storage_share(neo4j_session: neo4j.Session, share_id: str, 
     ingest_shares = """
     MATCH (share:AzureStorageFileShare{id: $share_id})
     WITH share
-    MATCH (rg:AzureResourceGroup{name:$resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (share)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -902,6 +918,7 @@ def _attach_resource_storage_share(neo4j_session: neo4j.Session, share_id: str, 
         ingest_shares,
         share_id=share_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(share_id),
         azure_update_tag=update_tag,
     )
 
@@ -1027,7 +1044,8 @@ def _attach_resource_storage_blob_container(neo4j_session: neo4j.Session, blob_c
     ingest_blob_containers = """
     MATCH (bc:AzureStorageBlobContainer{id: $blob_id})
     WITH bc
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (bc)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1037,6 +1055,7 @@ def _attach_resource_storage_blob_container(neo4j_session: neo4j.Session, blob_c
         ingest_blob_containers,
         blob_id=blob_container_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(blob_container_id),
         azure_update_tag=update_tag,
     )
 

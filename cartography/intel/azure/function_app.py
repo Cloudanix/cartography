@@ -14,6 +14,7 @@ from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
+from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -274,7 +275,8 @@ def _attach_resource_group_function_apps(tx: neo4j.Transaction, function_app_id:
     ingest_function_apps = """
     MATCH (f:AzureFunctionApp{id: $function_app_id})
     WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -283,6 +285,7 @@ def _attach_resource_group_function_apps(tx: neo4j.Transaction, function_app_id:
         ingest_function_apps,
         function_app_id=function_app_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(function_app_id),
         update_tag=update_tag,
     )
 
@@ -438,7 +441,8 @@ def _attach_resource_group_function_apps_conf(tx: neo4j.Transaction, function_ap
     ingest_function_apps_conf = """
     MATCH (fc:AzureFunctionAppConfiguration{id: $function_conf_id})
     WITH fc
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (fc)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -447,6 +451,7 @@ def _attach_resource_group_function_apps_conf(tx: neo4j.Transaction, function_ap
         ingest_function_apps_conf,
         function_conf_id=function_apps_conf_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(function_apps_conf_id),
         azure_update_tag=update_tag,
     )
 
@@ -556,7 +561,8 @@ def _attach_resource_group_unction_apps_function(tx: neo4j.Transaction, function
     ingest_function = """
     MATCH (f:AzureFunctionAppFunction{id: $function_id})
     WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -565,6 +571,7 @@ def _attach_resource_group_unction_apps_function(tx: neo4j.Transaction, function
         ingest_function,
         function_id=function_apps_function_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(function_apps_function_id),
         azure_update_tag=update_tag,
     )
 
@@ -670,7 +677,8 @@ def _attach_resource_group_function_apps_deployments(tx: neo4j.Transaction, func
     ingest_function_apps_deploy = """
     MATCH (f:AzureFunctionAppDeployment{id: $function_deploy_id})
     WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -679,6 +687,7 @@ def _attach_resource_group_function_apps_deployments(tx: neo4j.Transaction, func
         ingest_function_apps_deploy,
         function_deploy_id=function_apps_deployment_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(function_apps_deployment_id),
         azure_update_tag=update_tag,
     )
 
@@ -785,7 +794,8 @@ def _attach_resource_group_function_apps_backups(tx: neo4j.Transaction, function
     ingest_function_apps_backup = """
     MATCH (f:AzureFunctionAppBackup{id: $function_backup_id})
     WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -794,6 +804,7 @@ def _attach_resource_group_function_apps_backups(tx: neo4j.Transaction, function
         ingest_function_apps_backup,
         function_backup_id=function_apps_backup_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(function_apps_backup_id),
         azure_update_tag=update_tag,
     )
 
@@ -902,7 +913,8 @@ def _attach_resource_group_function_apps_processes(tx: neo4j.Transaction, functi
     ingest_function_apps_process = """
     MATCH (f:AzureFunctionAppProcess{id: $function_process_id})
     WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -911,6 +923,7 @@ def _attach_resource_group_function_apps_processes(tx: neo4j.Transaction, functi
         ingest_function_apps_process,
         function_process_id=function_apps_process_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(function_apps_process_id),
         azure_update_tag=update_tag,
     )
 
@@ -1018,7 +1031,8 @@ def _attach_resource_group_function_apps_snapshot(tx: neo4j.Transaction, functio
     ingest_function_apps_snapshot = """
     MATCH (f:AzureFunctionAppSnapshot{id: $function_snapshot_id})
     WITH f
-    MATCH (rg:AzureResourceGroup{name:$resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1027,6 +1041,7 @@ def _attach_resource_group_function_apps_snapshot(tx: neo4j.Transaction, functio
         ingest_function_apps_snapshot,
         function_snapshot_id=function_apps_snapshot_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(function_apps_snapshot_id),
         azure_update_tag=update_tag,
     )
 
@@ -1133,7 +1148,8 @@ def _attach_resource_group_function_apps_webjobs(tx: neo4j.Transaction, function
     ingest_function_apps_webjob = """
     MERGE (f:AzureFunctionAppWebJob{id: $function_webjob_id})
     WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1142,6 +1158,7 @@ def _attach_resource_group_function_apps_webjobs(tx: neo4j.Transaction, function
         ingest_function_apps_webjob,
         function_webjob_id=function_apps_webjob_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(function_apps_webjob_id),
         azure_update_tag=update_tag,
     )
 

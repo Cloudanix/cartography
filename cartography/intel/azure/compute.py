@@ -15,6 +15,7 @@ from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.util import get_azure_resource_group_name
+from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
@@ -325,7 +326,8 @@ def _attach_vm_resource_group(tx: neo4j.Transaction, vm_id: str, resource_group:
     ingest_vm = """
     match (vm:AzureVirtualMachine{id: $vm_id})
     with vm
-    MATCH (res:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(res:AzureResourceGroup{name: $resource_group})
     MERGE (vm)-[r:RESOURCE_GROUP]->(res)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -333,6 +335,7 @@ def _attach_vm_resource_group(tx: neo4j.Transaction, vm_id: str, resource_group:
     tx.run(
         ingest_vm,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(vm_id),
         vm_id=vm_id,
         update_tag=update_tag,
     )
@@ -395,7 +398,8 @@ def _attach_resource_group_vm_extensions(tx: neo4j.Transaction, vm_extension_id:
     ingest_resource_group = """
     MATCH (v:AzureVirtualMachineExtension{id: $vm_extension_id})
     WITH v
-    MATCH(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (v)-[res:RESOURCE_GROUP]->(rg)
         ON CREATE SET res.firstseen = timestamp()
         SET res.lastupdated = $update_tag
@@ -404,6 +408,7 @@ def _attach_resource_group_vm_extensions(tx: neo4j.Transaction, vm_extension_id:
         ingest_resource_group,
         vm_extension_id=vm_extension_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(vm_extension_id),
         update_tag=update_tag,
     )
 
@@ -479,7 +484,8 @@ def _attach_resource_group_vm_available_size(tx: neo4j.Transaction, vm_available
     ingest_vm_size = """
     MATCH (v:AzureVirtualMachineAvailableSize{id: $size_id})
     WITH v
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (v)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -489,6 +495,7 @@ def _attach_resource_group_vm_available_size(tx: neo4j.Transaction, vm_available
         ingest_vm_size,
         size_id=vm_available_size_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(vm_available_size_id),
         update_tag=update_tag,
     )
 
@@ -632,7 +639,8 @@ def _attach_resource_group_vm_scale_sets(tx: neo4j.Transaction, vm_scale_set_id:
     ingest_resource_group = """
         MATCH (a:AzureVirtualMachineScaleSet{id: $set_id})
         with a
-        MATCH(rg:AzureResourceGroup{name:$resource_group})
+        MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+        MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (a)-[res:RESOURCE_GROUP]->(rg)
         ON CREATE SET res.firstseen = timestamp()
         SET res.lastupdated = $update_tag
@@ -641,6 +649,7 @@ def _attach_resource_group_vm_scale_sets(tx: neo4j.Transaction, vm_scale_set_id:
         ingest_resource_group,
         set_id=vm_scale_set_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(vm_scale_set_id),
         update_tag=update_tag,
     )
 
@@ -733,7 +742,8 @@ def _attach_resource_group_vm_scale_sets_extension(tx: neo4j.Transaction, vm_sca
     ingest_vm_scale_sets_extension_resource_group = """
     MATCH (v:AzureVirtualMachineScaleSetExtension{id: $extension_id})
     WITH v
-    MATCH(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (v)-[res:RESOURCE_GROUP]->(rg)
         ON CREATE SET res.firstseen = timestamp()
         SET res.lastupdated = $update_tag
@@ -742,6 +752,7 @@ def _attach_resource_group_vm_scale_sets_extension(tx: neo4j.Transaction, vm_sca
         ingest_vm_scale_sets_extension_resource_group,
         extension_id=vm_scale_sets_extension_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(vm_scale_sets_extension_id),
         update_tag=update_tag,
 
     )
@@ -920,7 +931,8 @@ def _attach_resource_group_disk(neo4j_session: neo4j.Session, disk_id: str, reso
     ingest_disks = """
     MATCH (d:AzureDisk{id: $disk_id})
     WITH d
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (d)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -930,6 +942,7 @@ def _attach_resource_group_disk(neo4j_session: neo4j.Session, disk_id: str, reso
         ingest_disks,
         disk_id=disk_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(disk_id),
         update_tag=update_tag,
     )
 
@@ -995,7 +1008,8 @@ def _attach_resource_group_disk_snapshot(neo4j_session: neo4j.Session, snapshot_
     ingest_snapshots = """
     MATCH (s:AzureSnapshot{id: $snapshot_id})
     WITH s
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
+    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (s)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -1005,6 +1019,7 @@ def _attach_resource_group_disk_snapshot(neo4j_session: neo4j.Session, snapshot_
         ingest_snapshots,
         snapshot_id=snapshot_id,
         resource_group=resource_group,
+        resource_group_subscription_id=get_azure_subscription_id(snapshot_id),
         update_tag=update_tag,
     )
 
