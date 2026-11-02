@@ -2,8 +2,8 @@
 	"name": "Lambda functions with ECR images",
 	"statements": [
 		{
-			"__comment": "Create HAS relationship from lambda functions to the associated ECR image. Accounts are owned through the AWSOrganization; ECRImage.id is the image digest (indexed).",
-			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(aa:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(l:AWSLambda) \n WITH COLLECT(l) as lambda_list \n UNWIND lambda_list as lambda \n MATCH (e:ECRImage{id: 'sha256:' + lambda.codesha256}) \n MERGE (lambda)-[r:HAS]->(e) \n SET r.lastupdated = $UPDATE_TAG",
+			"__comment": "Create HAS relationship from lambda functions to the associated ECR image. Accounts are owned through the AWSOrganization; ECRImage.id is the image digest (indexed). ECRImage is shared by every account that pushed the same digest, so the image must be in one of this account's repositories: a digest seen only in another tenant's repository is never linked.",
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(aa:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(lambda:AWSLambda) \n WHERE lambda.codesha256 IS NOT NULL \n MATCH (aa)-[:RESOURCE]->(:ECRRepository)-[:REPO_IMAGE]->(:ECRRepositoryImage)-[:IMAGE]->(e:ECRImage{id: 'sha256:' + lambda.codesha256}) \n WITH DISTINCT lambda, e \n MERGE (lambda)-[r:HAS]->(e) \n SET r.lastupdated = $UPDATE_TAG",
 			"iterative": false
 		},
 		{
