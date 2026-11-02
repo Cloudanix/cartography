@@ -15,16 +15,18 @@ def test_load_github_organization_users(neo4j_session):
     # Ensure users got loaded
     nodes = neo4j_session.run(
         """
-        MATCH (g:GitHubUser) RETURN g.id, g.role;
+        MATCH (g:GitHubUser)-[r:MEMBER_OF]->(:GitHubOrganization) RETURN g.id, r.role, g.role;
         """,
     )
+    # The org role lives on the org's MEMBER_OF edge; the shared user node carries none.
     expected_nodes = {
-        ("https://example.com/hjsimpson", 'MEMBER'),
-        ("https://example.com/mbsimpson", 'ADMIN'),
+        ("https://example.com/hjsimpson", 'MEMBER', None),
+        ("https://example.com/mbsimpson", 'ADMIN', None),
     }
     actual_nodes = {
         (
             n['g.id'],
+            n['r.role'],
             n['g.role'],
         ) for n in nodes
     }
@@ -43,13 +45,9 @@ def test_load_github_organization_users(neo4j_session):
             n['org.id'],
         ) for n in nodes
     }
+    # GitHubOrganization is keyed by login.
     expected_nodes = {
-        (
-            'https://example.com/hjsimpson',
-            'https://example.com/my_org',
-        ), (
-            'https://example.com/mbsimpson',
-            'https://example.com/my_org',
-        ),
+        ('https://example.com/hjsimpson', 'my_org'),
+        ('https://example.com/mbsimpson', 'my_org'),
     }
     assert actual_nodes == expected_nodes

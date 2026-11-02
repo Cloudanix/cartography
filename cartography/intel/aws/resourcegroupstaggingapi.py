@@ -103,7 +103,7 @@ TAG_RESOURCE_TYPE_MAPPINGS: Dict = {
     'ec2:security-group': {'label': 'EC2SecurityGroup', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ec2:subnet': {'label': 'EC2Subnet', 'property': 'subnetid', 'id_func': get_short_id_from_ec2_arn},
     'ec2:transit-gateway': {'label': 'AWSTransitGateway', 'property': 'id'},
-    'ec2:transit-gateway-attachment': {'label': 'AWSTransitGatewayAttachment', 'property': 'id'},
+    'ec2:transit-gateway-attachment': {'label': 'AWSTransitGatewayAttachment', 'property': 'attachment_id'},
     'ec2:vpc': {'label': 'AWSVpc', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},
     'ecr:repository': {'label': 'ECRRepository', 'property': 'id'},
     'ec2:volume': {'label': 'EBSVolume', 'property': 'id', 'id_func': get_short_id_from_ec2_arn},

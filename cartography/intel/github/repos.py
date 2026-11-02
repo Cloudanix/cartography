@@ -818,17 +818,18 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
     ON CREATE SET u.firstseen = timestamp()
     SET u.fullname = user.name,
     u.username = user.login,
-    u.permission = user.permission,
     u.email = user.email,
     u.company = user.company,
     u.lastupdated = $UpdateTag
+    // The user node is shared across repos and tenants: the per-repo permission goes on the collaborator edge.
+    REMOVE u.permission
 
     WITH u, user
     MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
         -[:RESOURCE]->(repo:GitHubRepository{id: user.repo_url})
     MERGE (repo)<-[o:$rel_label]-(u)
     ON CREATE SET o.firstseen = timestamp()
-    SET o.lastupdated = $UpdateTag
+    SET o.lastupdated = $UpdateTag, o.permission = user.permission
     """)
     for collab_type in collaborators.keys():
         relationship_label = f"OUTSIDE_COLLAB_{collab_type}"

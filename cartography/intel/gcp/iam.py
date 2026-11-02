@@ -77,6 +77,7 @@ def classify_external_member(
     member: str,
     project_id: str,
     organization_domains: frozenset,
+    organization_projects: frozenset = frozenset(),
 ) -> Dict[str, str] | None:
     """Classify a binding member as an external principal, or None if internal.
 
@@ -86,8 +87,8 @@ def classify_external_member(
       not a Google-managed agent,
     * a user/group/domain whose domain is outside the org's verified domains.
 
-    access_type is "CrossAccount" when the principal still belongs to the
-    customer org (e.g. a sibling project / verified domain), "ThirdParty"
+    access_type is "CrossAccount" for a service account of a sibling project
+    (one of organization_projects, the org's synced project ids), "ThirdParty"
     otherwise. Returns a record with the raw member string as the principal.
     """
     raw = (member or "").strip()
@@ -112,7 +113,8 @@ def classify_external_member(
         owning_project = _gcp_service_account_project(value)
         if not owning_project or owning_project == (project_id or "").lower():
             return None  # customer's own project
-        return {"principal": raw, "member_type": "serviceaccount", "access_type": "ThirdParty"}
+        access_type = "CrossAccount" if owning_project in organization_projects else "ThirdParty"
+        return {"principal": raw, "member_type": "serviceaccount", "access_type": access_type}
 
     if member_type == "domain":
         if value in organization_domains:
@@ -151,6 +153,19 @@ def _get_organization_domains(neo4j_session: neo4j.Session, common_job_parameter
     except Exception:
         return frozenset()
     return frozenset(row["name"].lower() for row in rows if row.get("name"))
+
+
+def _get_organization_project_ids(neo4j_session: neo4j.Session, organization_id: str, workspace_id: str) -> frozenset:
+    """Return the lowercased ids of the projects synced under this workspace's organization."""
+    query = """
+    MATCH (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(:GCPOrganization{id: $organization_id})
+        -[:OWNER]->(p:GCPProject)
+    RETURN DISTINCT p.id AS id
+    """
+    rows = neo4j_session.execute_read(
+        read_list_of_dicts_tx, query, organization_id=organization_id, workspace_id=workspace_id,
+    )
+    return frozenset(row["id"].lower() for row in rows if row.get("id"))
 
 
 def load_gcp_external_principal(
@@ -801,6 +816,9 @@ def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 @timeit
 def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id: str, organization_id: str, gcp_update_tag: int, common_job_parameters: Dict) -> None:
     organization_domains = _get_organization_domains(neo4j_session, common_job_parameters)
+    organization_projects = _get_organization_project_ids(
+        neo4j_session, organization_id, common_job_parameters['WORKSPACE_ID'],
+    )
     for binding in bindings:
         role_id = get_role_id(binding['role'], project_id, common_job_parameters)
 
@@ -808,7 +826,9 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
         # (public, foreign service accounts, out-of-org users/groups/domains), so
         # the IAM Deep Dive can surface third-party access with a vendor label.
         for member in binding['members']:
-            external_principal = classify_external_member(member, project_id, organization_domains)
+            external_principal = classify_external_member(
+                member, project_id, organization_domains, organization_projects,
+            )
             if external_principal and role_id:
                 load_gcp_external_principal(
                     neo4j_session, role_id, external_principal, project_id, gcp_update_tag,

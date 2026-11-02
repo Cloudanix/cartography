@@ -22,7 +22,7 @@ def test_load_bindings_deleted_members_have_consolelink(mock_run_write_query):
         ],
     }]
 
-    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {'WORKSPACE_ID': 'ws1'})
+    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {'WORKSPACE_ID': 'ws-1'})
 
     consolelinks = [call.kwargs['ConsoleLink'] for call in mock_run_write_query.call_args_list]
     assert len(consolelinks) == 3
@@ -66,6 +66,34 @@ def test_classify_external_member_service_accounts():
     ) is None
 
 
+def test_classify_external_member_sibling_project_service_account_is_cross_account():
+    org_projects = frozenset({"my-project", "shared-svc"})
+    sibling = "serviceAccount:svc@shared-svc.iam.gserviceaccount.com"
+    assert iam.classify_external_member(sibling, "my-project", frozenset(), org_projects) == {
+        "principal": sibling, "member_type": "serviceaccount", "access_type": "CrossAccount",
+    }
+    # A project outside the customer's org stays third party.
+    foreign = "serviceAccount:svc@vendor-project.iam.gserviceaccount.com"
+    assert iam.classify_external_member(foreign, "my-project", frozenset(), org_projects)["access_type"] == \
+        "ThirdParty"
+
+
+def test_load_bindings_labels_a_sibling_project_service_account_cross_account():
+    neo4j_session = MagicMock()
+    bindings = [{
+        'role': 'projects/p1/roles/custom1', 'parent': 'project', 'parent_id': 'p1',
+        'members': ['serviceAccount:svc@p2.iam.gserviceaccount.com'],
+    }]
+    with patch.object(iam, '_get_organization_domains', return_value=frozenset()), \
+            patch.object(iam, '_get_organization_project_ids', return_value=frozenset({'p1', 'p2'})) as projects, \
+            patch.object(iam, 'load_gcp_external_principal') as load_principal, \
+            patch.object(iam, 'attach_project_role_to_service_account'):
+        iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {'WORKSPACE_ID': 'ws-1'})
+
+    projects.assert_called_once_with(neo4j_session, 'organizations/1', 'ws-1')
+    assert load_principal.call_args.args[2]['access_type'] == 'CrossAccount'
+
+
 def test_classify_external_member_users_groups_domains():
     domains = frozenset({"customer.com"})
     # In-org user/group/domain are internal.
@@ -100,7 +128,7 @@ def test_load_bindings_emits_external_principals(mock_run_write_query, mock_load
         ],
     }]
 
-    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {'WORKSPACE_ID': 'ws1'})
+    iam.load_bindings(neo4j_session, bindings, 'p1', 'organizations/1', 12345, {'WORKSPACE_ID': 'ws-1'})
 
     emitted = [call.args[2]["principal"] for call in mock_load_ep.call_args_list]
     assert emitted == ['user:bob@vendor.com', 'serviceAccount:svc@other-project.iam.gserviceaccount.com', 'allUsers']

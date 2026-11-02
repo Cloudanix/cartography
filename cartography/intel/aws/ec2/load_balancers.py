@@ -140,10 +140,13 @@ def load_load_balancers(
     for lb in data:
         region = lb.get('region', '')
         load_balancer_id = lb["DNSName"]
-        arn_prefix = f"arn:{partition}:elasticloadbalancing:{region}:{current_aws_account_id}:loadbalancer"
-        load_balancer_arn = f"{arn_prefix}/{load_balancer_id}"
-        console_arn = f"{arn_prefix}/{lb['LoadBalancerName']}"
-        consolelink = aws_console_link.get_console_link(arn=console_arn)
+        # The node keeps the DNS name as its id; the arn is AWS's real classic ELB ARN (by name), the same
+        # key the misconfiguration evaluator reports findings under, so findings land on the inventory asset.
+        load_balancer_arn = (
+            f"arn:{partition}:elasticloadbalancing:{region}:{current_aws_account_id}"
+            f":loadbalancer/{lb['LoadBalancerName']}"
+        )
+        consolelink = aws_console_link.get_console_link(arn=load_balancer_arn)
 
         lb_rows.append({
             "id": load_balancer_id,

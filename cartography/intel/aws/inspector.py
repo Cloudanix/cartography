@@ -33,37 +33,29 @@ def get_inspector_findings(
     We must list_findings by filtering the request, otherwise the request could tiemout.
     First, we filter by account_id. And since there may be millions of CLOSED findings that may never go away,
     we will only fetch those in ACTIVE or SUPPRESSED statuses.
-    list_members will get us all the accounts that
-    have delegated access to the account specified by current_aws_account_id.
+
+    Only the syncing account's own findings are fetched. A delegated administrator can also list its member
+    accounts' findings, but those belong to the members (maybe onboarded in another workspace, maybe not at
+    all): each member account's own sync claims its findings.
     """
     client = session.client('inspector2', region_name=region)
-
-    members = aws_paginate(client, 'list_members', 'members')
-    # the current host account may not be considered a "member", but we still fetch its findings
-    accounts = [current_aws_account_id] + [m['accountId'] for m in members]
-
-    findings = []
-    for account in accounts:
-        logger.info(f'Getting findings for member account {account} in region {region}')
-        findings.extend(
-            aws_paginate(
-                client, 'list_findings', 'findings', filterCriteria={
-                    'awsAccountId': [
-                        {
-                            'comparison': 'EQUALS',
-                            'value': account,
-                        },
-                    ],
-                    'findingStatus': [
-                        {
-                            'comparison': 'NOT_EQUALS',
-                            'value': 'CLOSED',
-                        },
-                    ],
+    logger.info(f'Getting findings for account {current_aws_account_id} in region {region}')
+    return aws_paginate(
+        client, 'list_findings', 'findings', filterCriteria={
+            'awsAccountId': [
+                {
+                    'comparison': 'EQUALS',
+                    'value': current_aws_account_id,
                 },
-            ),
-        )
-    return findings
+            ],
+            'findingStatus': [
+                {
+                    'comparison': 'NOT_EQUALS',
+                    'value': 'CLOSED',
+                },
+            ],
+        },
+    )
 
 
 def transform_inspector_findings(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
