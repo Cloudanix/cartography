@@ -1,4 +1,6 @@
-"""EventBridge rule, Elastic IP and EBS snapshot links reach only the syncing account's nodes."""
+"""EventBridge rule, Elastic IP and EBS snapshot links reach only the syncing account's nodes; CloudFront
+origin buckets only the workspace's."""
+from cartography.intel.aws import cloudfront
 from cartography.intel.aws import cloudwatch
 from cartography.intel.aws.ec2 import elastic_ip_addresses
 from cartography.intel.aws.ec2 import snapshots
@@ -68,3 +70,30 @@ def test_snapshot_volume_links_reach_only_the_accounts_snapshot(neo4j_session):
     )
 
     assert _pairs(neo4j_session, 'CREATED_FROM') == {('snap-own', 'vol-snap-own')}
+
+
+def test_cloudfront_origin_buckets_link_only_inside_the_workspace(neo4j_session):
+    _seed(neo4j_session)
+    create_test_org_account(neo4j_session, 'ml-ws-own', 'ml-org-own', 'ml-sibling')
+    neo4j_session.run(
+        """
+        MATCH (own:AWSAccount{id: $own}), (sibling:AWSAccount{id: 'ml-sibling'}), (other:AWSAccount{id: $other})
+        MERGE (own)-[:RESOURCE]->(:S3Bucket{id: 'b-own', name: 'b-own'})
+        MERGE (sibling)-[:RESOURCE]->(:S3Bucket{id: 'b-sibling', name: 'b-sibling'})
+        MERGE (other)-[:RESOURCE]->(:S3Bucket{id: 'b-other', name: 'b-other'})
+        """,
+        own=OWN, other=OTHER,
+    )
+
+    cloudfront.load_cloudfront_distributions(
+        neo4j_session,
+        [{
+            'ARN': 'arn:aws:cloudfront::ml-own:distribution/D1', 'Id': 'D1', 'Enabled': True,
+            'DefaultCacheBehavior': {'ViewerProtocolPolicy': 'https-only'},
+            's3BucketNames': ['b-own', 'b-sibling', 'b-other'],
+        }],
+        OWN, TAG, 'ml-ws-own',
+    )
+
+    linked = neo4j_session.run("MATCH (:AWSCloudfrontDistribution)-[:LINKED_TO]->(b:S3Bucket) RETURN b.id AS b")
+    assert {r['b'] for r in linked} == {'b-own', 'b-sibling'}

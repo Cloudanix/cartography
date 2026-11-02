@@ -52,10 +52,11 @@ def test_cloudfront_exposure_marks_enabled_distributions_public(neo4j_session):
             _distribution('cf-https', True, 'redirect-to-https'),
             _distribution('cf-allow-all', True, 'allow-all'),
             _distribution('cf-disabled', False, 'allow-all'),
-        ], '111111111111', TEST_UPDATE_TAG,
+        ], '111111111111', TEST_UPDATE_TAG, 'ws-cf',
     )
     load_cloudfront_distributions(
         neo4j_session, [_distribution('cf-other-ws', True, 'https-only')], '222222222222', TEST_UPDATE_TAG,
+        'ws-cf-other',
     )
     # Left over from an earlier sync: the clean-up must clear it now that the distribution is disabled.
     neo4j_session.run(
@@ -81,4 +82,5 @@ def _ensure_local_neo4j_has_test_cloudfront_distributions_data(neo4j_session):
         DESCRIBE_DISTRIBUTION_RESPONSE,
         '123456789012',
         TEST_UPDATE_TAG,
+        'ws-cf-data',
     )
