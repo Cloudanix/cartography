@@ -42,6 +42,7 @@ def _load_resources(neo4j_session, sub):
     sql.load_server_data(neo4j_session, sub, [{'id': server_id, 'name': 'sql1'}], TEST_UPDATE_TAG)
     sql.load_server_private_endpoint_connection(
         neo4j_session,
+        sub,
         [{
             'id': server_id,
             'private_endpoint_connections': [{
