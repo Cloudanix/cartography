@@ -76,7 +76,9 @@ def _load_security_contacts_tx(
     )
     for security_contact in security_contacts:
         resource_group=get_azure_resource_group_name(security_contact.get('id'))
-        _attach_resource_group_security_contacts(tx, subscription_id, security_contact['id'], resource_group, update_tag)
+        _attach_resource_group_security_contacts(
+            tx, subscription_id, security_contact['id'], resource_group, update_tag,
+        )
 
 
 def _attach_resource_group_security_contacts(
