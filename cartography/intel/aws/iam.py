@@ -752,7 +752,7 @@ def load_roles(
     ON CREATE SET spnnode.firstseen = timestamp()
     SET spnnode.lastupdated = $aws_update_tag, spnnode.type = item.spn_type
     WITH spnnode, item
-    MATCH (role:AWSRole{arn: item.role_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(role:AWSRole{arn: item.role_arn})
     MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(spnnode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -768,7 +768,7 @@ def load_roles(
     SET epnode.lastupdated = $aws_update_tag,
     epnode.account_id = item.account_id
     WITH epnode, item
-    MATCH (role:AWSRole{arn: item.role_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(role:AWSRole{arn: item.role_arn})
     MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(epnode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag, r.access_type = item.access_type
@@ -816,6 +816,7 @@ def load_roles(
         neo4j_session,
         ingest_external_account_principals,
         external_principal_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -833,17 +834,21 @@ def load_roles(
         neo4j_session,
         ingest_policy_statement,
         trust_principal_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
 
 @timeit
-def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict, aws_update_tag: int) -> None:
+def load_group_memberships(
+    neo4j_session: neo4j.Session, group_memberships: Dict, current_aws_account_id: str, aws_update_tag: int,
+) -> None:
+    # A group's members are users of the group's own account.
     ingest_membership = """
     UNWIND $DictList AS item
-    MATCH (group:AWSGroup{arn: item.group_arn})
-    WITH group, item
-    MATCH (user:AWSPrincipal{arn: item.principal_arn})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AWSGroup{arn: item.group_arn})
+    WITH aa, group, item
+    MATCH (aa)-[:RESOURCE]->(user:AWSPrincipal{arn: item.principal_arn})
     WHERE user:AWSUser OR user:AWSServiceAccount
     MERGE (user)-[r:MEMBER_AWS_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
@@ -859,7 +864,10 @@ def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict
         for group_arn, membership_data in group_memberships.items()
         for info in membership_data.get("Users", [])
     ]
-    load_graph_data(neo4j_session, ingest_membership, membership_rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, ingest_membership, membership_rows, aws_update_tag=aws_update_tag,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+    )
 
 
 @timeit
@@ -905,7 +913,7 @@ def sync_assumerole_relationships(
     UNWIND $DictList AS item
     MATCH (source:AWSPrincipal{arn: item.source_arn})
     WITH source, item
-    MATCH (role:AWSRole{arn: item.target_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(role:AWSRole{arn: item.target_arn})
     WITH role, source
     MERGE (source)-[r:STS_ASSUMEROLE_ALLOW]->(role)
     ON CREATE SET r.firstseen = timestamp()
@@ -925,7 +933,10 @@ def sync_assumerole_relationships(
             get_policies_for_principal(neo4j_session, source_arn), target_arn, ["sts:AssumeRole"],
         )
     ]
-    load_graph_data(neo4j_session, ingest_policies_assume_role, allowed_rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, ingest_policies_assume_role, allowed_rows, aws_update_tag=aws_update_tag,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+    )
     run_cleanup_job(
         "aws_import_roles_policy_cleanup.json",
         neo4j_session,
@@ -1158,9 +1169,15 @@ def load_policy_statements(
     statements: Any,
     aws_update_tag: int,
     consolelink: str,
+    aws_account_id: str,
 ) -> None:
     ingest_policy_statement = """
         MATCH (policy:AWSPolicy{id: $PolicyId})
+        WHERE EXISTS { (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:AWSPrincipal)-[:POLICY]->(policy) }
+        OR EXISTS {
+            (:AWSAccount{id: $AWS_ACCOUNT_ID})<-[:OWNER]-(:AWSOrganization)-[:RESOURCE]->(:AWSPrincipal)
+            -[:POLICY]->(policy)
+        }
         WITH policy
         UNWIND $Statements as statement_data
         MERGE (statement:AWSPolicyStatement{id: statement_data.id})
@@ -1187,6 +1204,7 @@ def load_policy_statements(
         PolicyName=policy_name,
         Statements=statements,
         region="global",
+        AWS_ACCOUNT_ID=aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -1254,15 +1272,25 @@ def _batch_load_policies(
 def _batch_load_policy_statements(
     neo4j_session: neo4j.Session,
     statement_rows: List[Dict],
+    aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
     """
     Batched equivalent of load_policy_statements: one write for all policies. A statement has no console
     page of its own, so it carries its policy's link.
+
+    A policy has no tenant root of its own (AWS-managed ones are one node for every tenant): statements are
+    written only for a policy a principal of this account, or an Identity Center principal of its
+    organization, is attached to (_batch_load_policies attaches them just before).
     """
     ingest_policy_statement = """
         UNWIND $DictList AS item
         MATCH (policy:AWSPolicy{id: item.policy_id})
+        WHERE EXISTS { (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:AWSPrincipal)-[:POLICY]->(policy) }
+        OR EXISTS {
+            (:AWSAccount{id: $AWS_ACCOUNT_ID})<-[:OWNER]-(:AWSOrganization)-[:RESOURCE]->(:AWSPrincipal)
+            -[:POLICY]->(policy)
+        }
         WITH policy, item
         UNWIND item.statements as statement_data
         MERGE (statement:AWSPolicyStatement{id: statement_data.id})
@@ -1282,7 +1310,8 @@ def _batch_load_policy_statements(
         SET r.lastupdated = $aws_update_tag
         """
     load_graph_data(
-        neo4j_session, ingest_policy_statement, statement_rows, aws_update_tag=aws_update_tag,
+        neo4j_session, ingest_policy_statement, statement_rows, AWS_ACCOUNT_ID=aws_account_id,
+        aws_update_tag=aws_update_tag,
     )
 
 
@@ -1317,7 +1346,7 @@ def load_policy_data(
             statement_rows.append({"policy_id": policy_id, "statements": statements})
 
     _batch_load_policies(neo4j_session, policy_rows, policy_type, aws_update_tag)
-    _batch_load_policy_statements(neo4j_session, statement_rows, aws_update_tag)
+    _batch_load_policy_statements(neo4j_session, statement_rows, current_aws_account_id, aws_update_tag)
 
 
 @timeit
@@ -1544,7 +1573,7 @@ def sync_group_memberships(
     )
     groups = neo4j_session.execute_read(read_list_of_dicts_tx, query, AWS_ACCOUNT_ID=current_aws_account_id)
     groups_membership = {group["arn"]: get_group_membership_data(boto3_session, group["name"]) for group in groups}
-    load_group_memberships(neo4j_session, groups_membership, aws_update_tag)
+    load_group_memberships(neo4j_session, groups_membership, current_aws_account_id, aws_update_tag)
     run_cleanup_job(
         "aws_import_groups_membership_cleanup.json",
         neo4j_session,

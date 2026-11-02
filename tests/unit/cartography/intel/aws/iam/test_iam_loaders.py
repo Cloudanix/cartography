@@ -153,7 +153,7 @@ class TestLoadGroupMemberships:
             },
         }
 
-        iam.load_group_memberships(session, memberships, TEST_UPDATE_TAG)
+        iam.load_group_memberships(session, memberships, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         assert session.execute_write.call_count == 1
         rows = session.execute_write.call_args.kwargs["DictList"]
@@ -162,7 +162,7 @@ class TestLoadGroupMemberships:
 
     def test_empty_memberships_write_nothing(self):
         session = MagicMock()
-        iam.load_group_memberships(session, {}, TEST_UPDATE_TAG)
+        iam.load_group_memberships(session, {}, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
         session.execute_write.assert_not_called()
 
 
