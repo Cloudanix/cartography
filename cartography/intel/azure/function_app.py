@@ -216,6 +216,7 @@ def _load_function_apps_tx(
     f.unauthenticated_client_action = function_app.unauthenticated_client_action,
     f.container_size = function_app.container_size,
     f.default_host_name=function_app.default_host_name,
+    f.enabled_host_names=function_app.enabled_host_names,
     f.last_modified_time_utc=function_app.last_modified_time_utc,
     f.state=function_app.state,
     f.repository_site_name=function_app.repository_site_name,
