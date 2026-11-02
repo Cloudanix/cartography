@@ -292,7 +292,7 @@ def sync_group_memberships(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     logger.debug("Syncing IAM group membership for account '%s'.", current_tenancy_id)
-    query = "MATCH (group:OCIGroup)<-[:RESOURCE]-(OCITenancy{id: $OCI_TENANCY_ID}) " \
+    query = "MATCH (group:OCIGroup)<-[:RESOURCE]-(:OCITenancy{id: $OCI_TENANCY_ID}) " \
             "return group.name as name, group.ocid as ocid;"
     groups = neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=current_tenancy_id)
     groups_membership = {

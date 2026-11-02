@@ -2,6 +2,7 @@ from cartography.intel.oci import audit_logging
 from cartography.intel.oci import database
 from cartography.intel.oci import iam
 from cartography.intel.oci import network
+from cartography.intel.oci import utils
 from cartography.util import run_cleanup_job
 
 OLD_TAG = 1
@@ -235,3 +236,39 @@ def test_trust_classification_lives_on_each_policys_edge(neo4j_session):
     # Both policies trust the same OCIExternalPrincipal node; the last sync must not rewrite ws-iam's view.
     assert (OWN_SECOND_TENANCY, 'CrossAccount', 'endorse') in _trusted_principals(neo4j_session, 'iam-policy')
     assert _trusted_principals(neo4j_session, 'iam-policy-other') == {(OWN_SECOND_TENANCY, 'ThirdParty', 'admit')}
+
+
+def test_tenancy_lookups_return_only_the_tenancys_own_iam_objects(neo4j_session):
+    tenancies = {'lk-a': 'ocid1.tenancy.oc1..lookupaaaa', 'lk-b': 'ocid1.tenancy.oc1..lookupbbbb'}
+    for prefix, tenancy_id in tenancies.items():
+        neo4j_session.run(
+            """
+            MERGE (w:CloudanixWorkspace{id: $prefix + '-ws'})
+            MERGE (t:OCITenancy{id: $tenancy_id})
+            MERGE (w)-[:OWNER]->(t)
+            MERGE (t)-[:OWNER]->(c:OCICompartment{id: $prefix + '-compartment'})
+            SET c.ocid = c.id, c.name = $prefix + '-compartment'
+            MERGE (t)-[:RESOURCE]->(g:OCIGroup{id: $prefix + '-group'}) SET g.ocid = g.id, g.name = 'Administrators'
+            MERGE (t)-[:RESOURCE]->(p:OCIPolicy{id: $prefix + '-policy'}) SET p.ocid = p.id, p.name = 'admins'
+            MERGE (region:OCIRegion{id: 'IAD'}) SET region.key = 'IAD', region.name = 'us-ashburn-1'
+            MERGE (t)-[:OCI_REGION_SUBSCRIPTION]->(region)
+            """,
+            prefix=prefix, tenancy_id=tenancy_id,
+        )
+    # Both tenancies reach the shared region node. The current model has no edge out of a shared node into a
+    # tenancy, so this one is synthetic: it stands for any such link and must not pull B's IAM objects into A.
+    neo4j_session.run(
+        "MATCH (r:OCIRegion{id: 'IAD'}), (t:OCITenancy{id: $b}) MERGE (r)-[:SYNTHETIC_SHARED_LINK]->(t)",
+        b=tenancies['lk-b'],
+    )
+    # A node of another label carrying tenancy A's OCID must not act as the anchor either.
+    neo4j_session.run(
+        "MERGE (x:OCICompartment{id: $a}) MERGE (x)-[:RESOURCE]->(:OCIGroup{id: 'lk-x-group', name: 'x'})",
+        a=tenancies['lk-a'],
+    )
+
+    tenancy_a = tenancies['lk-a']
+    assert {g['ocid'] for g in utils.get_groups_in_tenancy(neo4j_session, tenancy_a)} == {'lk-a-group'}
+    assert {p['ocid'] for p in utils.get_policies_in_tenancy(neo4j_session, tenancy_a)} == {'lk-a-policy'}
+    assert {c['ocid'] for c in utils.get_compartments_in_tenancy(neo4j_session, tenancy_a)} == {'lk-a-compartment'}
+    assert {r['key'] for r in utils.get_regions_in_tenancy(neo4j_session, tenancy_a)} == {'IAD'}
