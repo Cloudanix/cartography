@@ -133,7 +133,8 @@ def test_rds_cleanup_removes_links_the_sync_no_longer_writes(neo4j_session):
     # Edges the old name-only matching left behind, plus a link this sync just wrote and another tenant's own link.
     neo4j_session.run(
         """
-        MATCH (od:RDSInstance{id: $other_db}), (s:RDSSnapshot{id: $own_snapshot}), (os:RDSSnapshot{id: $other_snapshot}),
+        MATCH (od:RDSInstance{id: $other_db}), (s:RDSSnapshot{id: $own_snapshot}),
+              (os:RDSSnapshot{id: $other_snapshot}),
               (c:RDSCluster{id: $own_cluster}), (og:DBSubnetGroup{id: $other_group}), (g:DBSubnetGroup{id: $own_group}),
               (d:RDSInstance{id: $own_db})
         MERGE (od)-[r1:IS_SNAPSHOT_SOURCE]->(s) SET r1.lastupdated = $stale
@@ -148,7 +149,8 @@ def test_rds_cleanup_removes_links_the_sync_no_longer_writes(neo4j_session):
         stale=stale, fresh=fresh,
     )
     params = {
-        'UPDATE_TAG': fresh, 'AWS_ID': ACCOUNT_ID, 'ORGANIZATION_ID': 'o-rds', 'WORKSPACE_ID': 'ws-rds', 'LIMIT_SIZE': 100,
+        'UPDATE_TAG': fresh, 'AWS_ID': ACCOUNT_ID, 'ORGANIZATION_ID': 'o-rds', 'WORKSPACE_ID': 'ws-rds',
+        'LIMIT_SIZE': 100,
     }
 
     run_cleanup_job('aws_import_rds_snapshots_cleanup.json', neo4j_session, params)
