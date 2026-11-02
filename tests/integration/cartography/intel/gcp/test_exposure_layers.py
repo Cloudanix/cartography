@@ -371,7 +371,11 @@ def test_gcp_exposure_layers_end_to_end(neo4j_session):
     assert edges[('app', 'db')] == (['tcp:5432-5432'], 'firewall_source_tag_or_sa')
     main_vms = {'open', 'rfc1918', 'locked', 'tie', 'lb-backend', 'db', 'app'}
     assert {src for src, dst in edges if dst == 'sql-pg'} == main_vms
-    assert len(edges) == len(main_vms) + 1
+    # internal-ssh (10.0.0.0/8, tcp:22, target rfc1918) admits every main VM by its internal address.
+    to_rfc1918 = {src: edge for (src, dst), edge in edges.items() if dst == 'rfc1918'}
+    assert set(to_rfc1918) == main_vms - {'rfc1918'}
+    assert all(edge == (['tcp:22-22'], 'cidr') for edge in to_rfc1918.values())
+    assert len(edges) == len(main_vms) + 1 + len(to_rfc1918)
 
     other = _props(s, 'other-open')
     assert 'internet_reachable' not in other and 'access_auth' not in other
@@ -423,11 +427,15 @@ def test_gcp_exposure_context_paths_blockers_and_summaries(neo4j_session):
     assert _json(_props(s, FR_ID, 'GCPForwardingRule', 'id'), 'exposure_paths')[0]['hops'] == [listener]
 
     app = _props(s, 'app')
-    assert app['network_reachable_data_store_count'] == 2
+    assert app['network_reachable_data_store_count'] == 3
     assert _json(app, 'network_reachable_data_stores') == [
         {
             'id': f'{ZONE}/instances/db', 'type': 'GCPInstance', 'ports': ['tcp:5432-5432'],
             'via': 'firewall_source_tag_or_sa', 'admitted_by': 'db-from-app',
+        },
+        {
+            'id': f'{ZONE}/instances/rfc1918', 'type': 'GCPInstance', 'ports': ['tcp:22-22'],
+            'via': 'cidr', 'admitted_by': 'internal-ssh',
         },
         {'id': 'sql-pg', 'type': 'GCPSQLInstance', 'ports': ['tcp:5432-5432'], 'via': 'private_service_access'},
     ]

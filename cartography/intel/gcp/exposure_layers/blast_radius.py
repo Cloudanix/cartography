@@ -5,17 +5,26 @@ GCP L5 (network half): where an instance can open connections to if it is compro
         Cloud SQL private IP on a network the instance is in (private services access; VPC ingress
         firewall rules do not filter traffic to Cloud SQL).
     (:GCPInstance)-[:CAN_NETWORK_REACH {ports, via}]->(:GCPInstance)
-        target's ingress firewall admits the source by source tag or source service account,
-        evaluated first-match over the target's rules in the shared network, then narrowed by the
-        firewall policies in force on it (an org "deny all ingress" removes the edge).
+        target's ingress firewall admits the source, evaluated over every rule level in force on
+        the target (policies, VPC rules by priority, deny wins ties) with every rule source that
+        holds the source instance: its network tags, service accounts, its internal address in a
+        source range, or 0.0.0.0/0. So any higher-priority deny (tag, range or world) cuts the
+        edge. The edge keeps only ports some lateral VPC allow admits:
+            via firewall_source_tag_or_sa   source tag / service account rule
+            via cidr                         non-world source range holding the source's internal
+                                             IP (default-allow-internal 10.128.0.0/9)
+        An identity rule wins `via` over a range rule, as an SG reference does on AWS.
+        World-sourced allows alone make no edge: they would link every pair, and L2 already
+        reports them as internet exposure.
 
 The identity half (instance -> service account -> roles) already exists in the graph.
 
-ponytail: CIDR-sourced internal rules (default-allow-internal 10.128.0.0/9) are not turned into
-edges: they would link every instance pair (N^2 edges); for the same reason a CIDR-sourced deny
-does not cancel an identity allow here. Egress firewall rules, peering and Shared VPC stores in
-other projects are not walked. O(instances^2) per network that has identity-sourced allows.
+ponytail: O(instances^2) rule evaluations per network with a lateral allow; default-allow-internal
+links every pair, so the largest network sets the cost (prod max 273 instances = 74k pairs,
+2026-11-02). Cap per network or index rules by source if one passes ~1000 instances. Egress
+firewall rules, peering and Shared VPC targets in other projects are not walked; IPv4 only.
 """
+import ipaddress
 from typing import Callable
 from typing import Dict
 from typing import List
@@ -30,14 +39,15 @@ from cartography.intel.exposure.layers import set_node_properties
 from cartography.intel.exposure.layers import write_reach_counts
 from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
+from cartography.intel.exposure.ports import union_all
 from cartography.intel.gcp.exposure_layers.network import admitting_rules
+from cartography.intel.gcp.exposure_layers.network import applies_to
 from cartography.intel.gcp.exposure_layers.network import Firewall
 from cartography.intel.gcp.exposure_layers.network import from_cidr
 from cartography.intel.gcp.exposure_layers.network import Instance
 from cartography.intel.gcp.exposure_layers.network import INTRA_VPC
 from cartography.intel.gcp.exposure_layers.network import levels_open
 from cartography.intel.gcp.exposure_layers.network import NON_INTERNET
-from cartography.intel.gcp.exposure_layers.network import open_ports
 from cartography.intel.gcp.exposure_layers.network import PROJECT
 from cartography.intel.gcp.exposure_layers.network import V4
 from cartography.intel.gcp.exposure_layers.network import VpcFacts
@@ -46,6 +56,7 @@ from cartography.intel.gcp.exposure_layers.network import WORLD_CIDR
 COMPUTE, SQL = "GCPInstance", "GCPSQLInstance"
 VIA_PRIVATE_SERVICE_ACCESS = "private_service_access"
 VIA_FIREWALL_IDENTITY = "firewall_source_tag_or_sa"
+VIA_FIREWALL_CIDR = "cidr"
 # Instance-to-instance traffic in one network, as a firewall policy source: any address, internal contexts.
 _INTERNAL_WORLD = from_cidr(WORLD_CIDR[V4], frozenset({NON_INTERNET, INTRA_VPC}))
 
@@ -89,41 +100,81 @@ def from_identity(src: Instance) -> Callable[[Firewall], bool]:
     return match
 
 
-def _identity_sourced(firewalls: List[Firewall]) -> bool:
-    return any(fw.allow and (fw.source_tags or fw.source_sas) for fw in firewalls)
+def _holds(cidr: str, ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip) in ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
 
 
-def pair_ports(vpc: VpcFacts, src: Instance, dst: Instance) -> PortSet:
-    """Ports the VPC identity rules open from src to dst, narrowed by the firewall policies."""
-    source = from_identity(src)
-    ports = open_ports(vpc.firewalls, dst.tags, dst.sas, source)
+def _is_world(cidr: str) -> bool:
+    return cidr.endswith("/0")
+
+
+def from_range(ip: Optional[str]) -> Callable[[Firewall], bool]:
+    """VPC rule with a non-world source range holding `ip` (lateral traffic by address)."""
+    def match(fw: Firewall) -> bool:
+        if fw.in_policy or ip is None:
+            return False
+        return any(not _is_world(r) and _holds(r, ip) for r in fw.source_ranges)
+    return match
+
+
+def from_peer(src: Instance, ip: Optional[str]) -> Callable[[Firewall], bool]:
+    """Every rule source holding src: policy rules as from_identity; VPC rules by identity, a range
+    holding its address (0.0.0.0/0 included) or no source at all (GCP's 0.0.0.0/0 default)."""
+    identity = from_identity(src)
+
+    def match(fw: Firewall) -> bool:
+        if fw.in_policy:
+            return identity(fw)
+        if identity(fw) or not fw.has_source:
+            return True
+        return ip is not None and any(_holds(r, ip) for r in fw.source_ranges)
+    return match
+
+
+def _lateral(fw: Firewall) -> bool:
+    return fw.allow and bool(fw.source_tags or fw.source_sas or any(not _is_world(r) for r in fw.source_ranges))
+
+
+def pair_edge(vpc: VpcFacts, src: Instance, ip: Optional[str], dst: Instance) -> Optional[Dict]:
+    """
+    Edge row src -> dst in one network, None when no lateral allow admits it. Ports: those every
+    level opens to src, cut to the ports the lateral VPC allows (identity, then range) admit.
+    """
+    opened = levels_open(vpc.levels, dst.tags, dst.sas, from_peer(src, ip))
+    if opened.is_empty():
+        return None
+    admitted, via, rule = PortSet.empty(), None, None
+    for kind, matcher in ((VIA_FIREWALL_IDENTITY, from_identity(src)), (VIA_FIREWALL_CIDR, from_range(ip))):
+        rules = admitting_rules([vpc.firewalls], dst, [matcher], opened)
+        if rules:
+            admitted = admitted | union_all(fw.ports for fw in rules)
+            via, rule = via or kind, rule or rules[0].name
+    ports = admitted & opened
     if ports.is_empty():
-        return ports
-    # Policies only narrow identity edges: their world-sourced allows would link every pair.
-    return ports & levels_open(vpc.levels, dst.tags, dst.sas, source)
+        return None
+    return {"src": src.id, "dst": dst.id, "ports": ports.to_strings(), "via": via, "admitted_by": rule}
 
 
-def admitted_by(vpc: VpcFacts, src: Instance, dst: Instance, ports: PortSet) -> Optional[str]:
-    """First VPC identity allow rule admitting src to dst on these ports (a candidate, see admitting_rules)."""
-    rules = admitting_rules([vpc.firewalls], dst, [from_identity(src)], ports)
-    return rules[0].name if rules else None
+def _ip_in(inst: Instance, vpc_id: str) -> Optional[str]:
+    return next((ip for v, ip in inst.internal_ips if v == vpc_id), None)
 
 
 def instance_rows(instances: List[Instance], vpcs: Dict[str, VpcFacts]) -> List[Dict]:
-    rows = []
+    rows: List[Dict] = []
     for vpc_id, vpc in vpcs.items():
-        if not vpc.visible or not _identity_sourced(vpc.firewalls):
+        lateral = [fw for fw in vpc.firewalls if _lateral(fw)] if vpc.visible else []
+        if not lateral:
             continue
-        members = [i for i in instances if vpc_id in i.vpcs]
-        for dst in members:
-            for src in members:
-                ports = pair_ports(vpc, src, dst) if src.id != dst.id else PortSet.empty()
-                if ports.is_empty():
-                    continue
-                rows.append({
-                    "src": src.id, "dst": dst.id, "ports": ports.to_strings(), "via": VIA_FIREWALL_IDENTITY,
-                    "admitted_by": admitted_by(vpc, src, dst, ports),
-                })
+        members = [(i, _ip_in(i, vpc_id)) for i in instances if vpc_id in i.vpcs]
+        for dst, _ in members:
+            # Prefilter: a target no lateral allow applies to gets no edge, skip its N evaluations.
+            if not any(applies_to(fw, dst.tags, dst.sas) for fw in lateral):
+                continue
+            edges = (pair_edge(vpc, src, ip, dst) for src, ip in members if src.id != dst.id)
+            rows.extend(e for e in edges if e is not None)
     return rows
 
 

@@ -432,7 +432,7 @@ Runs in `start_gcp_ingestion` after `gcp_storage_bucket_policy_analysis.json`, p
 | L1/L2 | GCPInstance (external IPv4 / IPv6, default route to `default-internet-gateway`, firewall), instances behind external LBs, GCPForwardingRule, GCPBackendService, GKECluster, GCPSQLInstance, GCPFunction, GCPCloudRunService (ingress all, or a load-balancer ingress behind a serverless NEG of a reachable backend service; unresolved when no serverless NEG is ingested in the service's region; zonal NEGs survive a failed regional list), GCPBucket, GCPBigqueryDataset |
 | L3 | `allUsers` / `allAuthenticatedUsers` on buckets, datasets, invokers = none; IAP backends, Cloud SQL, GKE = required; instances, forwarding rules, unread Cloud Run policy = unknown |
 | L4 | GKE master, Cloud SQL `databaseVersion` (`mysql@8.0`), Functions runtime (`python@3.12`), instance OS from boot image / license name (`image_name`) |
-| L5 | GCPInstance -[:CAN_NETWORK_REACH]-> GCPSQLInstance (private IP, same VPC) and -> GCPInstance (firewall source tag / SA) |
+| L5 | GCPInstance -[:CAN_NETWORK_REACH]-> GCPSQLInstance (private IP, same VPC) and -> GCPInstance (firewall source tag / SA, or internal source range holding the source's NIC IP) |
 
 Firewall: first match by priority, deny wins a tie, implied deny last; targets match by tag or SA.
 Proxy LBs need the Google front-end ranges (130.211.0.0/22, 35.191.0.0/16) admitted on the backend's
@@ -450,7 +450,11 @@ GCPFirewallPolicyRule`; `GCPVpc.network_firewall_policy_enforcement_order` from 
 and L5 follow Cloud NGFW order: org policy, folder policies, then VPC rules and the network policy in
 the network's enforcement order (default AFTER_CLASSIC_FIREWALL), then implied deny; allow / deny end
 evaluation, `goto_next` or no match falls to the next level (core `rules.tiered_open`). GFE /
-health-check traffic is non-internet context. Policies only narrow L5 edges, never add them.
+health-check traffic is non-internet context. Policies only narrow L5 edges, never add them. An L5
+instance edge is evaluated with every source that holds the source instance (tags, SAs, its internal
+IP in a range, 0.0.0.0/0), so any higher-priority deny cuts it; it keeps only the ports a lateral VPC
+allow admits (identity rule: `via firewall_source_tag_or_sa`, wins; non-world source range holding
+the per-NIC internal IP: `via cidr`).
 Rollout: `compute.networks.getEffectiveFirewalls` (in `roles/viewer`, `roles/compute.viewer`,
 `roles/compute.networkViewer`; not in `roles/iam.securityReviewer`). A refused or failed call leaves
 the network on VPC rules only, never "unreachable". Not yet tested with a project-only credential
@@ -463,7 +467,7 @@ default-internet-gateway`), then the world-sourced allows overlapping the opened
 `target_group`; managed services one `service` hop with the deciding setting. Blockers:
 `no_internet_route` (route), `denied` (firewall_policy with detail = policy type, or firewall =
 VPC rule), `not_allowed` (firewall = implied deny; service = narrow authorized networks / internal
-ingress). L5 summaries on every GCPInstance (`admitted_by` = identity allow rule), reverse counts on
+ingress). L5 summaries on every GCPInstance (`admitted_by` = identity or source-range allow rule), reverse counts on
 GCPSQLInstance and GCPInstance. Admitting-rule hops are candidates (a shadowed allow is listed too).
 
 Ceilings: regional network firewall policies (need a per-region, per-network call); secure tag
@@ -471,8 +475,10 @@ bindings not ingested (tag-targeted allow / goto_next applies, deny does not); d
 threat-list and address-group sources never count as the whole internet; `apply_security_profile_group`
 counted as allow; hierarchy order taken from response order; only `/0` routes compared;
 unmanaged instance group members; regional external Application LBs (proxy-only subnet source) read
-as unreachable; multi-NIC unioned; L5 skips CIDR-sourced internal rules (`default-allow-internal`
-would link every pair).
+as unreachable; multi-NIC unioned. L5 instance edges are O(instances^2) per network with a lateral
+allow (`default-allow-internal` links every pair; prod max 273 instances = 74k pairs, 2026-11-02);
+world-sourced allows alone add no edge (L2 reports them); egress rules, peering and Shared VPC targets
+in other projects not walked.
 
 ### 10.5 Azure (done)
 
