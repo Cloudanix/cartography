@@ -41,7 +41,7 @@ def _ensure_local_neo4j_has_test_route53_records(neo4j_session):
 def _ensure_local_neo4j_has_test_ec2_records(neo4j_session):
     cartography.intel.aws.ec2.load_balancer_v2s.load_load_balancer_v2s(
         neo4j_session, tests.data.aws.ec2.load_balancers.LOAD_BALANCER_DATA,
-        TEST_AWS_ACCOUNTID, TEST_UPDATE_TAG, TEST_AWS_REGION,
+        TEST_AWS_ACCOUNTID, TEST_UPDATE_TAG, TEST_AWS_REGION, TEST_WORKSPACE_ID,
     )
 
 
