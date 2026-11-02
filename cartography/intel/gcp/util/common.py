@@ -1,5 +1,6 @@
 from typing import List
 
+from cartography.intel.exposure.step import EXPOSURE_LAYERS_SYNC
 from cartography.intel.gcp.resources import RESOURCE_FUNCTIONS
 
 
@@ -8,7 +9,7 @@ def parse_and_validate_gcp_requested_syncs(gcp_requested_syncs: str) -> List[str
     for resource in gcp_requested_syncs.split(','):
         resource = resource.strip()
 
-        if resource in RESOURCE_FUNCTIONS:
+        if resource in RESOURCE_FUNCTIONS or resource == EXPOSURE_LAYERS_SYNC:
             validated_resources.append(resource)
         else:
             valid_syncs: str = ', '.join(RESOURCE_FUNCTIONS.keys())

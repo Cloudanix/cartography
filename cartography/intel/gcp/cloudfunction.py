@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -11,6 +12,8 @@ from googleapiclient.discovery import Resource
 
 from . import iam
 from . import label
+from cartography.intel.gcp.util.errors import POLICY_RESOLVED
+from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -102,7 +105,7 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
             raise
 
 
-def get_function_policy_bindings(function: Resource, fns: Dict, project_id: str) -> List[Dict]:
+def get_function_policy_bindings(function: Resource, fns: Dict, project_id: str) -> Optional[List[Dict]]:
     """
         Returns a list of bindings attached to IAM policy of a Function within the given project.
 
@@ -116,7 +119,7 @@ def get_function_policy_bindings(function: Resource, fns: Dict, project_id: str)
         :param project_id: Current Google Project Id
 
         :rtype: list
-        :return: List of gcp function iam policy bindings
+        :return: List of gcp function iam policy bindings; None when the policy could not be read
     """
     try:
         iam_policy = function.projects().locations().functions().getIamPolicy(resource=fns['name']).execute()
@@ -130,7 +133,7 @@ def get_function_policy_bindings(function: Resource, fns: Dict, project_id: str)
                     "Could not retrieve iam policy of function on project %s due to permissions issues. Code: %s, Message: %s"
                 ), project_id, err['code'], err['message'],
             )
-            return []
+            return None
         else:
             raise
 
@@ -201,6 +204,7 @@ def _load_functions_tx(tx: neo4j.Transaction, functions: List[Resource], project
         function.sourceToken = func.sourceToken,
         function.sourceArchiveUrl = func.sourceArchiveUrl,
         function.consolelink = func.consolelink,
+        function.iam_policy_status = func.iam_policy_status,
         function.lastupdated = $gcp_update_tag
     WITH function
     MATCH (owner:GCPProject{id: $ProjectId})
@@ -358,12 +362,18 @@ def sync(
     # FUNCTIONS
     functions = get_gcp_functions(function, project_id, regions, common_job_parameters)
 
+    # Read policies first so iam_policy_status lands with the function; the bindings cleanup keeps an
+    # unresolved function's last-read bindings.
+    bindings: Dict[str, List[Dict]] = {}
+    for func in functions:
+        policy = get_function_policy_bindings(function, func, project_id)
+        func['iam_policy_status'] = POLICY_UNRESOLVED if policy is None else POLICY_RESOLVED
+        bindings[func['id']] = transform_function_policy_bindings(policy or [], func['id'], project_id)
+
     load_functions(neo4j_session, functions, project_id, gcp_update_tag)
     for func in functions:
         load_function_entity_relation(neo4j_session, func, gcp_update_tag)
-        bindings = get_function_policy_bindings(function, func, project_id)
-        bindings_list = transform_function_policy_bindings(bindings, func['id'], project_id)
-        attach_function_to_binding(neo4j_session, func['id'], bindings_list, gcp_update_tag)
+        attach_function_to_binding(neo4j_session, func['id'], bindings[func['id']], gcp_update_tag)
 
     cleanup_function_policy_bindings(neo4j_session, common_job_parameters)
     cleanup_gcp_functions(neo4j_session, common_job_parameters)

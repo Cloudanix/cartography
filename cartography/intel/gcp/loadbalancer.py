@@ -302,6 +302,9 @@ def transform_regional_instance_groups(instance_groups: List, project_id: str, r
 
 @timeit
 def load_instance_groups(session: neo4j.Session, instance_groups: List[Dict], project_id: str, update_tag: int) -> None:
+    for group in instance_groups:
+        # "http:80" strings: a backend service names the port its backends listen on by portName.
+        group['named_ports'] = [f"{p.get('name')}:{p.get('port')}" for p in group.get('namedPorts', [])]
     session.execute_write(load_instance_groups_tx, instance_groups, project_id, update_tag)
 
 
@@ -324,6 +327,7 @@ def load_instance_groups_tx(
         instancegroup.consolelink = ig.consolelink,
         instancegroup.network = ig.network,
         instancegroup.subnetwork = ig.subnetwork,
+        instancegroup.named_ports = ig.named_ports,
         instancegroup.lastupdated = $gcp_update_tag
     WITH instancegroup
     MATCH (owner:GCPProject{id: $ProjectId})

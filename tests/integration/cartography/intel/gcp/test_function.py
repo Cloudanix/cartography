@@ -1,5 +1,6 @@
 import cartography.intel.gcp.cloudfunction
 import tests.data.gcp.function
+from cartography.intel.gcp.exposure_layers import access
 from cartography.util import run_analysis_job
 
 TEST_PROJECT_NUMBER = 'abcd12345'
@@ -222,3 +223,42 @@ def test_function_public_only_when_reachable_and_invokable_by_anyone(neo4j_sessi
         'fn-custom-role': ['allUsers'],
         'fn-legacy': ['allUsers'],
     }
+
+
+def test_unread_function_policy_keeps_bindings_and_reads_unknown(neo4j_session, mocker):
+    neo4j_session.run('MATCH (n) DETACH DELETE n').consume()
+    _seed_functions(neo4j_session, [])
+    module = cartography.intel.gcp.cloudfunction
+    mocker.patch.object(
+        module, 'get_gcp_functions',
+        return_value=[{'id': f, 'name': f, 'function_name': f, 'region': 'us-east1'} for f in ('fn-read', 'fn-unread')],
+    )
+
+    def sync(tag, policies):
+        mocker.patch.object(module, 'get_function_policy_bindings', side_effect=lambda _c, fn, _p: policies[fn['id']]())
+        params = {**EXPOSURE_JOB_PARAMETERS, 'UPDATE_TAG': tag, 'service_labels': []}
+        module.sync(neo4j_session, None, EXPOSURE_PROJECT_ID, tag, params, [])
+
+    def open_policy():
+        return [{'role': INVOKER, 'members': ['allUsers']}]
+
+    sync(TEST_UPDATE_TAG, {'fn-read': open_policy, 'fn-unread': open_policy})
+    # Next sync: fn-read's policy no longer grants allUsers; fn-unread's getIamPolicy is denied.
+    sync(TEST_UPDATE_TAG + 1, {'fn-read': list, 'fn-unread': lambda: None})
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $project_id})-[:RESOURCE]->(fn:GCPFunction)
+        OPTIONAL MATCH (fn)-[:ATTACHED_BINDING]->(b:GCPBinding)
+        RETURN fn.id AS id, fn.iam_policy_status AS status, collect(b.members) AS members
+        """,
+        project_id=EXPOSURE_PROJECT_ID,
+    )
+    assert {r['id']: (r['status'], r['members']) for r in rows} == {
+        'fn-read': ('resolved', []),
+        'fn-unread': ('unresolved', [['allUsers']]),
+    }
+    auth = access.compute(neo4j_session, EXPOSURE_JOB_PARAMETERS)['GCPFunction']
+    assert auth['fn-read']['access_auth'] == 'required'
+    assert auth['fn-unread']['access_auth'] == 'unknown'
+    assert auth['fn-unread']['access_auth_reasons'] == ['invoker_policy_not_read']

@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -11,6 +12,8 @@ from googleapiclient.discovery import Resource
 from . import label
 from cartography.client.core.tx import run_write_query
 from cartography.intel.gcp import compute
+from cartography.intel.gcp.util.errors import POLICY_RESOLVED
+from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -199,6 +202,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
     bucket.requester_pays = $RequesterPays,
     bucket.default_kms_key_name = $DefaultKmsKeyName,
     bucket.consolelink = $consolelink,
+    bucket.iam_policy_status = $IamPolicyStatus,
     bucket.lastupdated = $gcp_update_tag
 
     MERGE (p)-[r:RESOURCE]->(bucket)
@@ -234,6 +238,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
             RequesterPays=bucket['requester_pays'],
             DefaultKmsKeyName=bucket['default_kms_key_name'],
             consolelink=bucket['consolelink'],
+            IamPolicyStatus=bucket.get('iam_policy_status'),
             name=bucket['name'],
             gcp_update_tag=gcp_update_tag,
         )
@@ -257,7 +262,8 @@ def cleanup_gcp_buckets(neo4j_session: neo4j.Session, common_job_parameters: Dic
 
 
 @timeit
-def get_gcp_bucket_iam_policy(storage: Resource, bucket: str) -> Dict:
+def get_gcp_bucket_iam_policy(storage: Resource, bucket: str) -> Optional[Dict]:
+    """The bucket's IAM policy; None when it could not be read (no access, or the bucket is invalid)."""
     try:
         req = storage.buckets().getIamPolicy(bucket=bucket)
         res = req.execute()
@@ -273,14 +279,14 @@ def get_gcp_bucket_iam_policy(storage: Resource, bucket: str) -> Dict:
                 bucket,
                 e,
             )
-            return {}
+            return None
         elif reason == 'forbidden':
             logger.warning(
                 (
                     "You do not have storage.bucket.getIamPolicy access to the bucket %s. "
                     "Full details: %s"
                 ), bucket, e, )
-            return {}
+            return None
         else:
             raise
 
@@ -358,11 +364,16 @@ def sync(
     logger.info("Syncing Storage objects for project %s.", project_id)
     storage_res = get_gcp_buckets(storage, project_id, common_job_parameters)
     bucket_list = transform_gcp_buckets(storage_res, project_id, regions)
+    # Read policies first so iam_policy_status lands with the bucket; the bindings cleanup keeps an
+    # unresolved bucket's last-read bindings.
+    policies = {bucket['id']: get_gcp_bucket_iam_policy(storage, bucket['name']) for bucket in bucket_list}
+    for bucket in bucket_list:
+        bucket['iam_policy_status'] = POLICY_UNRESOLVED if policies[bucket['id']] is None else POLICY_RESOLVED
     load_gcp_buckets(neo4j_session, bucket_list, project_id, gcp_update_tag)
 
     for bucket in bucket_list:
-        bucket_iam_policy = get_gcp_bucket_iam_policy(storage, bucket['name'])
-        bindings = transform_gcp_bucket_iam_policy_bindings(bucket_iam_policy['bindings'], project_id, bucket['id'])
+        policy = policies[bucket['id']] or {}
+        bindings = transform_gcp_bucket_iam_policy_bindings(policy.get('bindings', []), project_id, bucket['id'])
         load_bucket_iam_policy_bindings(neo4j_session, bindings, bucket['id'], gcp_update_tag)
 
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381

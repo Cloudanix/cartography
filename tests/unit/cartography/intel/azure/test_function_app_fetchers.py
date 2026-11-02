@@ -25,6 +25,7 @@ def test_site_and_config_network_fields_arrive():
         models.SiteConfigResource({'id': f'{SITE_ID}/config/web', 'properties': {'publicNetworkAccess': 'Enabled'}}),
     ]
     client.web_apps.get_configuration.return_value = models.SiteConfigResource({'properties': {}})
+    client.web_apps.get_auth_settings_v2_without_secrets.return_value = models.SiteAuthSettingsV2({'properties': {}})
 
     [site] = function_app.get_function_apps_list(client, None, PARAMS)
     [conf] = function_app.get_function_apps_configuration_list([site], client, PARAMS)
@@ -77,6 +78,7 @@ def test_site_access_restrictions_arrive():
         return configs[name]
 
     client.web_apps.get_configuration.side_effect = get_configuration
+    client.web_apps.get_auth_settings_v2_without_secrets.return_value = models.SiteAuthSettingsV2({'properties': {}})
 
     sites = {s['name']: s for s in function_app.get_function_apps_list(client, None, PARAMS)}
 
@@ -95,3 +97,45 @@ def test_site_access_restrictions_arrive():
     }
     # Unknown, not assumed disabled.
     assert sites['no-config']['hostNamesDisabled'] is None
+
+
+def _auth(enabled, action=None, require=True, excluded=None):
+    validation = {'requireAuthentication': require, 'unauthenticatedClientAction': action}
+    if excluded:
+        validation['excludedPaths'] = excluded
+    return models.SiteAuthSettingsV2({'properties': {'platform': {'enabled': enabled}, 'globalValidation': validation}})
+
+
+def test_easy_auth_settings_arrive():
+    client = MagicMock()
+    client.web_apps.list.return_value = [
+        _site(name) for name in ('on', 'anonymous', 'not-required', 'excluded', 'off', 'unreadable')
+    ]
+    client.web_apps.get_configuration.return_value = _config()
+    settings = {
+        'on': _auth(True, 'Return401'),
+        'anonymous': _auth(True, 'AllowAnonymous'),
+        'not-required': _auth(True, 'Return401', require=False),
+        'excluded': _auth(True, 'RedirectToLoginPage', excluded=['/health']),
+        'off': _auth(False, 'Return401'),
+    }
+
+    def get_auth(resource_group, name):
+        if name not in settings:
+            raise HttpResponseError('forbidden')
+        return settings[name]
+
+    client.web_apps.get_auth_settings_v2_without_secrets.side_effect = get_auth
+
+    sites = {s['name']: s for s in function_app.get_function_apps_list(client, None, PARAMS)}
+
+    assert {name: (s['auth_enabled'], s['unauthenticated_client_action']) for name, s in sites.items()} == {
+        'on': (True, 'Return401'),
+        'anonymous': (True, 'AllowAnonymous'),
+        'not-required': (True, 'AllowAnonymous'),
+        'excluded': (True, 'AllowAnonymous'),
+        'off': (False, 'Return401'),
+        'unreadable': (None, None),
+    }
+    # The secrets-returning /list variant needs list/Action, which Reader lacks.
+    client.web_apps.get_auth_settings_v2.assert_not_called()

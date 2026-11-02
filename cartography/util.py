@@ -133,19 +133,31 @@ def run_analysis_job_logged(
     set).
     Integration tests call run_analysis_job directly, so they still see failures.
     """
+    run_analysis_step_logged(
+        filename, lambda: run_analysis_job(filename, neo4j_session, common_job_parameters, package),
+        common_job_parameters,
+    )
+
+
+def run_analysis_step_logged(name: str, step: Callable[[], Any], common_job_parameters: Dict) -> None:
+    """
+    Run one post-sync analysis step (a job file or Python code such as the exposure layers). A failure is logged at
+    error level and recorded for collect_failed_analysis_jobs under `name` instead of raised, so the sync response
+    tells the caller which step failed for which account and later steps still run.
+    """
     try:
-        run_analysis_job(filename, neo4j_session, common_job_parameters, package)
+        step()
     except Exception:
         scope = {key: common_job_parameters[key] for key in ANALYSIS_SCOPE_KEYS if key in common_job_parameters}
         logger.error(
             "Analysis job '%s' failed for %s; continuing with the remaining analysis jobs.",
-            filename,
+            name,
             scope,
             exc_info=True,
         )
         failed = _failed_analysis_jobs.get()
         if failed is not None:
-            failed.append({"job": filename, "scope": scope})
+            failed.append({"job": name, "scope": scope})
 
 
 def run_analysis_and_ensure_deps(

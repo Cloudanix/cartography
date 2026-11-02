@@ -15,7 +15,8 @@
       "iterative": false
     },
     {
-      "query": "MATCH (sql:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sql.publicNetworkAccess, '') <> 'Disabled' AND coalesce(sql.engine, 'sqlserver') <> 'sqlserver' AND coalesce(sql.vnetIntegrated, false) = false AND coalesce(sql.firewall_rules_fetched, false) = false SET sql.exposed_internet = true, (CASE WHEN NOT 'firewall_not_evaluated' IN coalesce(sql.exposed_internet_type, []) THEN sql END).exposed_internet_type = coalesce(sql.exposed_internet_type, []) + 'firewall_not_evaluated';",
+      "__comment": "Firewall rules not read this sync (sql.py records firewall_rules_fetched for every engine): kept public, fail-safe, instead of reading as no rules.",
+      "query": "MATCH (sql:AzureSQLServer)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sql.publicNetworkAccess, '') <> 'Disabled' AND coalesce(sql.vnetIntegrated, false) = false AND coalesce(sql.firewall_rules_fetched, false) = false SET sql.exposed_internet = true, (CASE WHEN NOT 'firewall_not_evaluated' IN coalesce(sql.exposed_internet_type, []) THEN sql END).exposed_internet_type = coalesce(sql.exposed_internet_type, []) + 'firewall_not_evaluated';",
       "iterative": false
     },
     {

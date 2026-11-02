@@ -16,6 +16,7 @@ import neo4j
 from neo4j import GraphDatabase
 
 from . import ec2
+from . import exposure_layers
 from . import organizations
 from .ec2.util import get_botocore_config
 from .resources import parse_and_validate_aws_requested_syncs
@@ -29,6 +30,7 @@ from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.elasticbeanstalk import link_environment_resources
 from cartography.intel.aws.util.arns import get_partition
 from cartography.intel.aws.util.arns import PARTITION_PARAM
+from cartography.intel.exposure import step as exposure_step
 from cartography.stats import get_stats_client
 from cartography.util import is_aws_access_denied
 from cartography.util import merge_module_sync_metadata
@@ -254,7 +256,8 @@ def _sync_one_account(
         ]
         try:
             with ThreadPoolExecutor(
-                max_workers=min(8, len(parallel_services)),
+                # max(1, ...): an exposure_layers-only subrun has no services, and 0 workers raises.
+                max_workers=max(1, min(8, len(parallel_services))),
             ) as executor:
                 futures: Dict = {}
 
@@ -495,6 +498,11 @@ def _sync_one_account(
         "aws_internetgateway_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
+    )
+
+    # Reads what the jobs above and every sync wrote; runs only when requested (see exposure/step.py).
+    exposure_step.run_if_requested(
+        exposure_layers.run, neo4j_session, common_job_parameters, aws_requested_syncs, RESOURCE_FUNCTIONS.keys(),
     )
 
     run_analysis_job(

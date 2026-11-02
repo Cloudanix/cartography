@@ -11,6 +11,12 @@ TRANSIENT_403_REASONS = {
     "quotaExceeded",
 }
 
+# iam_policy_status on a node whose who-can-access grants are read separately (GCPFunction, GCPBucket,
+# GCPBigqueryDataset; GCPCloudRunService uses the same values). Unresolved: the read was refused, the
+# last-read grants are kept and the exposure layers treat access as unknown.
+POLICY_RESOLVED = "resolved"
+POLICY_UNRESOLVED = "unresolved"
+
 
 def is_permission_error(e: HttpError, err: Dict) -> bool:
     """

@@ -49,8 +49,17 @@ def test_sql_server_exposure(neo4j_session):
     no_rules = _server('no-rules')
     flexible = _server('flexible', engine='postgres')
     stale = _server('stale', access='Disabled')
-    servers = [closed, open_all, azure_services, office_ip, wide, slash8, unknown_access, no_rules, flexible, stale]
+    mssql_unread = _server('mssql-unread')
+    servers = [
+        closed, open_all, azure_services, office_ip, wide, slash8, unknown_access, no_rules, flexible, stale,
+        mssql_unread,
+    ]
     sql.load_server_data(neo4j_session, SUB, servers, 1)
+    # As load_server_details records it: flexible's and mssql-unread's firewall list failed.
+    unread = {flexible['id'], mssql_unread['id']}
+    sql._load_firewall_rules_fetched(
+        neo4j_session, [{'id': s['id'], 'fetched': s['id'] not in unread} for s in servers],
+    )
     sql._load_firewall_rules(
         neo4j_session,
         [
@@ -89,6 +98,7 @@ def test_sql_server_exposure(neo4j_session):
         'no-rules': (None, []),
         'flexible': (True, ['firewall_not_evaluated']),
         'stale': (None, []),
+        'mssql-unread': (True, ['firewall_not_evaluated']),
     }
 
 

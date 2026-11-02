@@ -156,6 +156,7 @@ def load_database_account_data(
     d.multiplewritelocations = da.enable_multiple_write_locations,
     d.accountoffertype = da.database_account_offer_type,
     d.publicnetworkaccess = da.public_network_access,
+    d.disableLocalAuth = da.disable_local_auth,
     d.enablecassandraconnector = da.enable_cassandra_connector,
     d.connectoroffer = da.connector_offer,
     d.consolelink = coalesce(da.consolelink, d.consolelink),

@@ -275,7 +275,10 @@ def load_backend_services_tx(
         service.loadBalancingScheme = s.loadBalancingScheme,
         service.defaultTtl = s.defaultTtl,
         service.negativeCaching = s.cdnPolicy.negativeCaching,
-        service.backend_groups = s.backend_groups
+        service.backend_groups = s.backend_groups,
+        service.port_name = s.portName,
+        service.protocol = s.protocol,
+        service.iap_enabled = coalesce(s.iap.enabled, false)
     WITH service
     MATCH (owner:GCPProject{id:$ProjectId})
     MERGE (owner)-[r:RESOURCE]->(service)

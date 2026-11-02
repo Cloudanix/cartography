@@ -1,6 +1,7 @@
 from typing import List
 
 from cartography.intel.azure.resources import RESOURCE_FUNCTIONS
+from cartography.intel.exposure.step import EXPOSURE_LAYERS_SYNC
 
 
 def parse_and_validate_azure_requested_syncs(azure_requested_syncs: str) -> List[str]:
@@ -8,7 +9,7 @@ def parse_and_validate_azure_requested_syncs(azure_requested_syncs: str) -> List
     for resource in azure_requested_syncs.split(','):
         resource = resource.strip()
 
-        if resource in RESOURCE_FUNCTIONS:
+        if resource in RESOURCE_FUNCTIONS or resource == EXPOSURE_LAYERS_SYNC:
             validated_resources.append(resource)
         else:
             valid_syncs: str = ', '.join(RESOURCE_FUNCTIONS.keys())
