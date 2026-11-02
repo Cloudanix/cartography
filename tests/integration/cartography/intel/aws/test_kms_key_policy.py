@@ -84,6 +84,9 @@ def test_key_policy_exposure_is_applied_to_the_accounts_own_keys_only(neo4j_sess
 
 def test_key_policy_exposure_does_not_accumulate_across_syncs(neo4j_session):
     create_test_org_account(neo4j_session, 'ws-kmspol', 'o-kmspol', ACCOUNT_ID)
+    cartography.intel.aws.kms.load_kms_keys(
+        neo4j_session, [_key(PUBLIC_KEY_ID, ACCOUNT_ID)], ACCOUNT_ID, TEST_UPDATE_TAG,
+    )
     for _ in range(2):
         _sync_details(neo4j_session, ACCOUNT_ID, 'ws-kmspol', 'o-kmspol', [(PUBLIC_KEY_ID, PUBLIC_POLICY)])
 
