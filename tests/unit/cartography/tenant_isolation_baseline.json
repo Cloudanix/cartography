@@ -116,7 +116,7 @@
  "cartography/intel/azure/monitor.py|AzureMonitorLogProfile.id": 1,
  "cartography/intel/azure/monitor.py|AzureResourceGroup.name": 1,
  "cartography/intel/azure/network.py|AzureNatGateway.id": 2,
- "cartography/intel/azure/network.py|AzureNetwork.id": 2,
+ "cartography/intel/azure/network.py|AzureNetwork.id": 4,
  "cartography/intel/azure/network.py|AzureNetworkBastionHost.id": 2,
  "cartography/intel/azure/network.py|AzureNetworkInterface.id": 4,
  "cartography/intel/azure/network.py|AzureNetworkInterfaceIPConfiguration.id": 1,
