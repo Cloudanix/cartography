@@ -289,7 +289,7 @@ def test_autonomous_database_exposed_only_with_public_endpoint_and_open_acl(neo4
     database.load_autonomous_databases(
         neo4j_session,
         database.transform_autonomous_databases([{'lifecycle-state': 'AVAILABLE', **adb} for adb in raw], REGION),
-        COMPARTMENT_ID, UPDATE_TAG,
+        TENANCY_ID, COMPARTMENT_ID, UPDATE_TAG,
     )
 
     run_analysis_job('oci_autonomous_database_asset_exposure.json', neo4j_session, JOB_PARAMETERS)
@@ -390,7 +390,7 @@ def test_load_db_node_vnics_links_db_nodes_to_their_vnics(neo4j_session):
     database.load_db_nodes(
         neo4j_session,
         [{'id': 'dbv-node', 'db_system_id': 'dbv-system', 'vnic_id': 'dbv-vnic'}],
-        UPDATE_TAG,
+        TENANCY_ID, UPDATE_TAG,
     )
 
     database.load_db_node_vnics(
@@ -420,7 +420,8 @@ def test_database_cleanup_removes_stale_db_node_vnics(neo4j_session):
         compartment_id=COMPARTMENT_ID, tag=UPDATE_TAG + 1,
     )
     database.load_db_nodes(
-        neo4j_session, [{'id': 'dbc-node', 'db_system_id': 'dbc-system', 'vnic_id': 'dbc-vnic'}], UPDATE_TAG,
+        neo4j_session, [{'id': 'dbc-node', 'db_system_id': 'dbc-system', 'vnic_id': 'dbc-vnic'}],
+        TENANCY_ID, UPDATE_TAG,
     )
     database.load_db_node_vnics(
         neo4j_session, [{'id': 'dbc-vnic', 'subnet-id': 'dbc-subnet'}], TENANCY_ID, REGION, UPDATE_TAG,
@@ -450,7 +451,7 @@ def _load_db_system(neo4j_session, system_id, subnet_id, nodes):
     database.load_db_nodes(
         neo4j_session,
         [{'id': node_id, 'db_system_id': system_id, 'vnic_id': f'{node_id}.vnic'} for node_id, _ in nodes],
-        UPDATE_TAG,
+        TENANCY_ID, UPDATE_TAG,
     )
     vnics = [{'id': f'{node_id}.vnic', 'subnet-id': subnet_id, **vnic} for node_id, vnic in nodes if vnic is not None]
     database.load_db_node_vnics(neo4j_session, vnics, TENANCY_ID, REGION, UPDATE_TAG)
@@ -861,7 +862,7 @@ def test_db_node_backup_vnic_counts_for_exposure(neo4j_session):
                 'id': node_id, 'db_system_id': system_id,
                 'vnic_id': f'{node_id}.vnic', 'backup_vnic_id': f'{node_id}.backup-vnic',
             }],
-            UPDATE_TAG,
+            TENANCY_ID, UPDATE_TAG,
         )
         vnics = [{'id': f'{node_id}.vnic', 'subnet-id': 'dbb-subnet-closed', 'public-ip': None}]
         if backup_vnic is not None:

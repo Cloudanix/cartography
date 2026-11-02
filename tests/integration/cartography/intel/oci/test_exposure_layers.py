@@ -181,7 +181,7 @@ def _databases(session):
             }],
             REGION,
         ),
-        COMPARTMENT, TAG,
+        TENANCY, COMPARTMENT, TAG,
     )
     database.load_db_homes(
         session,
@@ -189,13 +189,13 @@ def _databases(session):
             [{'id': 'xl-db-home', 'lifecycle-state': 'AVAILABLE', 'db-system-id': 'xl-db', 'db-version': '19.22.0.0'}],
             REGION,
         ),
-        TAG,
+        TENANCY, TAG,
     )
     adbs = [{'id': 'xl-adb-open'}, {'id': 'xl-adb-acl', 'whitelisted-ips': ['198.51.100.7']}]
     database.load_autonomous_databases(
         session,
         database.transform_autonomous_databases([{'lifecycle-state': 'AVAILABLE', **a} for a in adbs], REGION),
-        COMPARTMENT, TAG,
+        TENANCY, COMPARTMENT, TAG,
     )
     # Left over from an earlier sync: the DB no longer admits this instance.
     _run(
