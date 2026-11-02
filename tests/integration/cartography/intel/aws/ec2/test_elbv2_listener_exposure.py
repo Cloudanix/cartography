@@ -96,3 +96,30 @@ def test_elbv2_public_context_carries_the_listener_ssl_policy(neo4j_session):
 
     listener_context = json.loads(_listeners(neo4j_session)[('lsn-nlb-sg', 443)]['context'])[0]['context'][0]
     assert listener_context['sslPolicy'] == TLS_POLICY
+
+
+def test_elbv2_listener_behind_a_security_group_is_exposed_only_by_a_matching_open_rule(neo4j_session):
+    _setup(neo4j_session)
+    listeners = _listeners(neo4j_session)
+
+    tls = listeners[('lsn-nlb-sg', 443)]
+    assert tls['exposed'] is True
+    assert tls['types'] == ['loadbalancer_unrestricted_inbound_traffic_ipv4']
+
+    # Allowed from a single /32 only: the load balancer's scheme alone does not make it exposed.
+    admin = listeners[('lsn-nlb-sg', 9122)]
+    assert admin['exposed'] is None
+    assert admin['context'] is None
+
+    # The load balancer itself stays exposed through its open 443 listener.
+    lb = _lb_context(neo4j_session, 'lsn-nlb-sg')
+    assert 'unrestricted_inbound_traffic_ipv4' in lb['exposureTypes']
+
+
+def test_elbv2_listener_without_security_groups_is_exposed_by_scheme(neo4j_session):
+    _setup(neo4j_session)
+    listeners = _listeners(neo4j_session)
+
+    assert listeners[('lsn-nlb-nosg', 8080)]['exposed'] is True
+    assert listeners[('lsn-nlb-nosg', 8080)]['types'] == ['loadbalancer_scheme']
+    assert listeners[('lsn-nlb-internal', 8080)]['exposed'] is None

@@ -56,7 +56,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (elbv2_listener:ELBV2Listener)<-[:ELBV2_LISTENER]-(:LoadBalancerV2{scheme: 'internet-facing'})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET elbv2_listener.exposed_internet = true,(CASE WHEN NOT 'loadbalancer_scheme' IN coalesce(elbv2_listener.exposed_internet_type , []) THEN elbv2_listener END).exposed_internet_type = coalesce(elbv2_listener.exposed_internet_type , []) + 'loadbalancer_scheme';",
+      "query": "MATCH (elbv2_listener:ELBV2Listener)<-[:ELBV2_LISTENER]-(elbv2:LoadBalancerV2{scheme: 'internet-facing'})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE NOT EXISTS { (elbv2)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(:EC2SecurityGroup) } SET elbv2_listener.exposed_internet = true,(CASE WHEN NOT 'loadbalancer_scheme' IN coalesce(elbv2_listener.exposed_internet_type , []) THEN elbv2_listener END).exposed_internet_type = coalesce(elbv2_listener.exposed_internet_type , []) + 'loadbalancer_scheme';",
       "iterative": false
     },
     {
