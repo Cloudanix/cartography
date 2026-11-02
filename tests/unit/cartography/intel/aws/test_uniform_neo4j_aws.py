@@ -122,7 +122,7 @@ class TestElasticache:
         clusters = [{"ARN": "arn:aws:elasticache:us-east-1:1234:cluster:c1", "SecurityGroups": []}]
 
         elasticache.load_elasticache_clusters(session, clusters, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-        elasticache.attach_elasticache_clusters_to_security_groups(session, clusters, TEST_UPDATE_TAG)
+        elasticache.attach_elasticache_clusters_to_security_groups(session, clusters, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2

@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 from cartography.intel.aws.cloudtrail import load_trails
 from cartography.intel.aws.s3 import _load_s3_policies
 from cartography.intel.aws.s3 import load_s3_buckets
@@ -42,7 +44,7 @@ def test_load_cloudtrails(neo4j_session):
 def test_cloudtrails_analysis(neo4j_session):
     load_s3_buckets(neo4j_session, LIST_BUCKETS, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
     policy = parse_policy('bucket-1', LIST_STATEMENTS)
-    _load_s3_policies(neo4j_session, [policy], TEST_UPDATE_TAG)
+    _load_s3_policies(neo4j_session, [policy], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, MagicMock())
     load_trails(neo4j_session, DESCRIBE_TRAILS, TEST_ACCOUNT_ID, TEST_WORKSPACE_ID, TEST_UPDATE_TAG)
 
     nodes = neo4j_session.run(

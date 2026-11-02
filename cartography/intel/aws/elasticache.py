@@ -129,10 +129,12 @@ def load_elasticache_clusters(
 
 
 @timeit
-def attach_elasticache_clusters_to_security_groups(neo4j_session: neo4j.Session, clusters: List[Dict], update_tag: int) -> None:
+def attach_elasticache_clusters_to_security_groups(
+    neo4j_session: neo4j.Session, clusters: List[Dict], current_aws_account_id: str, update_tag: int,
+) -> None:
     query = """
     UNWIND $DictList as elasticache_cluster
-        MATCH (cluster:ElasticacheCluster{id:elasticache_cluster.ARN})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(cluster:ElasticacheCluster{id:elasticache_cluster.ARN})
         UNWIND elasticache_cluster.SecurityGroups as sg
             MERGE (security_group:EC2SecurityGroup{id: sg.SecurityGroupId})
             ON CREATE SET security_group.firstseen = timestamp()
@@ -146,6 +148,7 @@ def attach_elasticache_clusters_to_security_groups(neo4j_session: neo4j.Session,
         neo4j_session,
         query,
         clusters,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=update_tag,
     )
 
@@ -176,7 +179,7 @@ def sync(
     logger.info(f"Total Elasticache Clusters: {len(clusters)}")
 
     load_elasticache_clusters(neo4j_session, clusters, current_aws_account_id, update_tag)
-    attach_elasticache_clusters_to_security_groups(neo4j_session, clusters, update_tag)
+    attach_elasticache_clusters_to_security_groups(neo4j_session, clusters, current_aws_account_id, update_tag)
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
