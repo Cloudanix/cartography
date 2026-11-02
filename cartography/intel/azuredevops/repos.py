@@ -128,7 +128,7 @@ def load_repositories(
         r.lastupdated = $UpdateTag
     WITH r
 
-    MATCH (p:AzureDevOpsProject{id: $ProjectId})
+    MATCH (:AzureDevOpsOrganization{id: $ORGANIZATION_ID})-[:HAS_PROJECT]->(p:AzureDevOpsProject{id: $ProjectId})
     MERGE (p)-[rel:HAS_REPO]->(r)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $UpdateTag
@@ -139,6 +139,7 @@ def load_repositories(
         repo_data,
         ProjectId=project_id,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
+        ORGANIZATION_ID=common_job_parameters["ORGANIZATION_ID"],
     )
 
 
@@ -223,7 +224,8 @@ def load_branches_data(
         b.lastupdated = $UpdateTag
     WITH b, branch
 
-    MATCH (r:AzureDevOpsRepo{id: branch.repo_id})
+    MATCH (:AzureDevOpsOrganization{id: $ORGANIZATION_ID})-[:HAS_PROJECT]->(:AzureDevOpsProject)
+        -[:HAS_REPO]->(r:AzureDevOpsRepo{id: branch.repo_id})
     MERGE (r)-[rel:BRANCH]->(b)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $UpdateTag
@@ -233,6 +235,7 @@ def load_branches_data(
         query,
         branches_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
+        ORGANIZATION_ID=common_job_parameters["ORGANIZATION_ID"],
     )
 
 
@@ -249,11 +252,13 @@ def _update_repo_last_activity(
     neo4j_session: neo4j.Session,
     repo_id: str,
     branches: List[Dict],
-    default_branch: str = None,
+    default_branch: Optional[str],
+    organization_id: str,
 ) -> None:
     """
     Compute and store last_activity_at for an Azure DevOps repository from its branch commit dates.
     Priority: (1) default branch commit date, (2) max commit date across all branches.
+    :param organization_id: the syncing organization's graph id; only a repo of its projects is updated
     """
     last_activity_at = None
     # Priority 1: default branch commit date
@@ -272,8 +277,13 @@ def _update_repo_last_activity(
         iso_str, ts_ms = normalize_datetime(last_activity_at)
         run_write_query(
             neo4j_session,
-            "MATCH (r:AzureDevOpsRepo{id: $RepoId}) SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs",  # noqa: E501
+            """
+            MATCH (:AzureDevOpsOrganization{id: $ORGANIZATION_ID})-[:HAS_PROJECT]->(:AzureDevOpsProject)
+                -[:HAS_REPO]->(r:AzureDevOpsRepo{id: $RepoId})
+            SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs
+            """,
             RepoId=repo_id,
+            ORGANIZATION_ID=organization_id,
             LastActivity=iso_str,
             LastActivityTs=ts_ms,
         )
@@ -345,7 +355,10 @@ def sync(
                         repo.get("name"),
                     )
                     load_branches_data(neo4j_session, transformed_branches, common_job_parameters)
-                    _update_repo_last_activity(neo4j_session, repo["id"], transformed_branches, default_branch)
+                    _update_repo_last_activity(
+                        neo4j_session, repo["id"], transformed_branches, default_branch,
+                        common_job_parameters["ORGANIZATION_ID"],
+                    )
 
     cleanup(neo4j_session, common_job_parameters)
     logger.info(f"Processed repos for {len(projects)} projects in org '{organization_name}'")

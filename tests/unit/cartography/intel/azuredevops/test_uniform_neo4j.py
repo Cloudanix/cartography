@@ -9,7 +9,7 @@ from cartography.intel.azuredevops import organization
 from cartography.intel.azuredevops import projects
 from cartography.intel.azuredevops import repos
 
-COMMON_JOB_PARAMS = {"UPDATE_TAG": 123456789, "WORKSPACE_ID": "ws-1"}
+COMMON_JOB_PARAMS = {"UPDATE_TAG": 123456789, "WORKSPACE_ID": "ws-1", "ORGANIZATION_ID": "org-1"}
 
 
 class TestLoadUsers:
@@ -66,7 +66,7 @@ class TestRepos:
         session = MagicMock()
         branches = [{"name": "main", "commitDate": "2024-01-01T00:00:00+00:00"}]
 
-        repos._update_repo_last_activity(session, "r1", branches, "main")
+        repos._update_repo_last_activity(session, "r1", branches, "main", "org-1")
 
         session.run.assert_not_called()
         session.execute_write.assert_called_once()
