@@ -62,22 +62,6 @@ def get_azure_resource_group_name(id: str) -> str:
     return resource_group
 
 
-def get_azure_subscription_id(id: str) -> str:
-    """
-    Return the subscription GUID of an Azure ARM id ("/subscriptions/<guid>/..."), lowercased, or "" if it has none.
-
-    Resource group names repeat across subscriptions and tenants (NetworkWatcherRG, DefaultResourceGroup-EUS, ...),
-    so a resource is linked to its group by name only under the subscription in its own id:
-        MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-        MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
-    """
-    parts = (id or "").lower().split("/")
-    if "subscriptions" not in parts:
-        return ""
-    index = parts.index("subscriptions") + 1
-    return parts[index] if index < len(parts) else ""
-
-
 def run_analysis_job(
     filename: str,
     neo4j_session: neo4j.Session,

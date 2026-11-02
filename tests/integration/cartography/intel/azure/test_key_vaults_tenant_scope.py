@@ -31,7 +31,10 @@ def test_key_vault_links_stay_in_the_syncing_subscription(neo4j_session):
     for load, label, _ in children:
         load(
             neo4j_session, SUB_A,
-            [{'id': f'{VAULT_A}/{label}/own', 'vault_id': VAULT_A}, {'id': f'{VAULT_A}/{label}/x', 'vault_id': VAULT_B}],
+            [
+                {'id': f'{VAULT_A}/{label}/own', 'vault_id': VAULT_A},
+                {'id': f'{VAULT_A}/{label}/x', 'vault_id': VAULT_B},
+            ],
             UPDATE_TAG,
         )
 
