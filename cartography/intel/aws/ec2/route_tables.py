@@ -93,8 +93,8 @@ def load_route_tables(
             route['id'] = f"route_table/{route_table['RouteTableId']}/destination_cidr/{route.get('DestinationCidrBlock', route.get('DestinationIpv6CidrBlock'))}"
             routes.append(route)
     neo4j_session.execute_write(load_route_tables_tx, data, aws_account_id, aws_update_tag)
-    neo4j_session.execute_write(load_routes_tx, routes, aws_update_tag)
-    neo4j_session.execute_write(load_associations_tx, associations, aws_update_tag)
+    neo4j_session.execute_write(load_routes_tx, routes, aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(load_associations_tx, associations, aws_account_id, aws_update_tag)
 
 
 @timeit
@@ -112,7 +112,7 @@ def load_route_tables_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id
         rtab.is_default = route_table.isDefault
 
     WITH route_table, rtab
-    MATCH (vpc:AWSVpc{id: route_table.VpcId})
+    MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(vpc:AWSVpc{id: route_table.VpcId})
     MERGE (rtab)-[r:MEMBER_OF_AWS_VPC]->(vpc)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -132,7 +132,7 @@ def load_route_tables_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id
 
 
 @timeit
-def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int):
+def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id: str, aws_update_tag: int):
     ingest_routes = """
     UNWIND $routes as route
     MERGE (rt: EC2Route{id: route.id})
@@ -148,7 +148,7 @@ def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int)
         rt.vpc_peering_connection_id = route.VpcPeeringConnectionId,
         rt.transit_gateway_id = route.TransitGatewayId
     WITH route, rt
-    MATCH (rtab:EC2RouteTable{id: route.RouteTableId})
+    MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(rtab:EC2RouteTable{id: route.RouteTableId})
     MERGE (rtab)-[r:MEMBER_OF_ROUTE_TABLE]->(rt)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -158,12 +158,13 @@ def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int)
     tx.run(
         ingest_routes,
         routes=data,
+        aws_account_id=aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
 
 @timeit
-def load_associations_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int):
+def load_associations_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id: str, aws_update_tag: int):
     ingest_associations = """
     UNWIND $associations as assoc
     MERGE (asc:EC2RouteTableAssociation{id: assoc.RouteTableAssociationId})
@@ -174,7 +175,7 @@ def load_associations_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag
         asc.main = assoc.Main,
         asc.Gateway_id = assoc.GatewayId
     WITH assoc, asc
-    MATCH (rtab:EC2RouteTable{id: assoc.RouteTableId})
+    MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(rtab:EC2RouteTable{id: assoc.RouteTableId})
     MERGE (rtab)-[rel:HAS_ASSOCIATION]->(asc)
     ON CREATE SET
         rel.firstseen = timestamp()
@@ -197,6 +198,7 @@ def load_associations_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag
     tx.run(
         ingest_associations,
         associations=data,
+        aws_account_id=aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 

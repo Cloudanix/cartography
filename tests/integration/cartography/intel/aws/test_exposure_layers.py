@@ -569,7 +569,11 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
 
 def test_nacl_loader_shape(neo4j_session):
     create_test_org_account(neo4j_session, 'ws-nacl', 'o-nacl', '999988887777')
-    _run(neo4j_session, "MERGE (:AWSVpc{id: $vpc})", vpc=VPC)
+    _run(
+        neo4j_session,
+        "MERGE (v:AWSVpc{id: $vpc}) WITH v MATCH (a:AWSAccount{id: '999988887777'}) MERGE (a)-[:RESOURCE]->(v)",
+        vpc=VPC,
+    )
     acls = [{
         'NetworkAclId': 'acl-shape', 'VpcId': VPC, 'IsDefault': True, 'OwnerId': '999988887777',
         'Entries': [{'RuleNumber': 100, 'Egress': False, **ALL}],
