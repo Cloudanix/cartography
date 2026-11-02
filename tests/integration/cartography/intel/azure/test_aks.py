@@ -14,6 +14,10 @@ TEST_RESOURCE_GROUP = 'TestRG'
 TEST_UPDATE_TAG = 123456789
 
 
+def _seed_subscription(neo4j_session):
+    neo4j_session.run('MERGE (:AzureSubscription{id: $id})', id=TEST_SUBSCRIPTION_ID)
+
+
 def test_load_clusters(neo4j_session):
     aks.load_aks(
         neo4j_session,
@@ -147,6 +151,7 @@ def test_load_container_registry_relationships(neo4j_session):
 def test_load_container_registry_replications(neo4j_session):
     aks.load_container_registry_replications(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYREPLICATIONS,
         TEST_UPDATE_TAG,
     )
@@ -168,6 +173,8 @@ def test_load_container_registry_replications(neo4j_session):
 
 
 def test_load_container_registry_replication_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_registries(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -177,6 +184,7 @@ def test_load_container_registry_replication_relationships(neo4j_session):
 
     aks.load_container_registry_replications(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYREPLICATIONS,
         TEST_UPDATE_TAG,
     )
@@ -209,6 +217,7 @@ def test_load_container_registry_replication_relationships(neo4j_session):
 def test_load_container_registry_runs(neo4j_session):
     aks.load_container_registry_runs(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYRUNS,
         TEST_UPDATE_TAG,
     )
@@ -230,6 +239,8 @@ def test_load_container_registry_runs(neo4j_session):
 
 
 def test_load_container_registry_run_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_registries(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -239,6 +250,7 @@ def test_load_container_registry_run_relationships(neo4j_session):
 
     aks.load_container_registry_runs(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYRUNS,
         TEST_UPDATE_TAG,
     )
@@ -271,6 +283,7 @@ def test_load_container_registry_run_relationships(neo4j_session):
 def test_load_container_registry_tasks(neo4j_session):
     aks.load_container_registry_tasks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYTASKS,
         TEST_UPDATE_TAG,
     )
@@ -292,6 +305,8 @@ def test_load_container_registry_tasks(neo4j_session):
 
 
 def test_load_container_registry_task_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_registries(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -301,6 +316,7 @@ def test_load_container_registry_task_relationships(neo4j_session):
 
     aks.load_container_registry_tasks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYTASKS,
         TEST_UPDATE_TAG,
     )
@@ -333,6 +349,7 @@ def test_load_container_registry_task_relationships(neo4j_session):
 def test_load_container_registry_webhooks(neo4j_session):
     aks.load_container_registry_webhooks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYWEBHOOKS,
         TEST_UPDATE_TAG,
     )
@@ -354,6 +371,8 @@ def test_load_container_registry_webhooks(neo4j_session):
 
 
 def test_load_container_registry_webhook_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_registries(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -363,6 +382,7 @@ def test_load_container_registry_webhook_relationships(neo4j_session):
 
     aks.load_container_registry_webhooks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYWEBHOOKS,
         TEST_UPDATE_TAG,
     )
@@ -460,6 +480,7 @@ def test_load_container_group_relationships(neo4j_session):
 def test_load_containers(neo4j_session):
     aks.load_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERS,
         TEST_UPDATE_TAG,
     )
@@ -479,6 +500,8 @@ def test_load_containers(neo4j_session):
 
 
 def test_load_container_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_groups(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -488,6 +511,7 @@ def test_load_container_relationships(neo4j_session):
 
     aks.load_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERS,
         TEST_UPDATE_TAG,
     )

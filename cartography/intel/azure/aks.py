@@ -13,7 +13,6 @@ from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
-from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -27,9 +26,9 @@ def load_aks_managed_clusters(
 
 
 def load_aks_managed_cluster_agentpools(
-    session: neo4j.Session, cluster_id: str, data_list: List[Dict], update_tag: int,
+    session: neo4j.Session, subscription_id: str, cluster_id: str, data_list: List[Dict], update_tag: int,
 ) -> None:
-    session.execute_write(_load_aks_managed_cluster_agentpools_tx, cluster_id, data_list, update_tag)
+    session.execute_write(_load_aks_managed_cluster_agentpools_tx, subscription_id, cluster_id, data_list, update_tag)
 
 
 def load_container_registries(
@@ -41,28 +40,36 @@ def load_container_registries(
     session.execute_write(_load_container_registries_tx, subscription_id, data_list, update_tag)
 
 
-def load_container_registry_replications(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_container_registry_replications_tx, data_list, update_tag)
+def load_container_registry_replications(
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
+) -> None:
+    session.execute_write(_load_container_registry_replications_tx, subscription_id, data_list, update_tag)
 
 
-def load_container_registry_runs(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_container_registry_runs_tx, data_list, update_tag)
+def load_container_registry_runs(
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
+) -> None:
+    session.execute_write(_load_container_registry_runs_tx, subscription_id, data_list, update_tag)
 
 
-def load_container_registry_tasks(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_container_registry_tasks_tx, data_list, update_tag)
+def load_container_registry_tasks(
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
+) -> None:
+    session.execute_write(_load_container_registry_tasks_tx, subscription_id, data_list, update_tag)
 
 
-def load_container_registry_webhooks(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_container_registry_webhooks_tx, data_list, update_tag)
+def load_container_registry_webhooks(
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
+) -> None:
+    session.execute_write(_load_container_registry_webhooks_tx, subscription_id, data_list, update_tag)
 
 
 def load_container_groups(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.execute_write(_load_container_groups_tx, subscription_id, data_list, update_tag)
 
 
-def load_containers(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_containers_tx, data_list, update_tag)
+def load_containers(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
+    session.execute_write(_load_containers_tx, subscription_id, data_list, update_tag)
 
 
 @timeit
@@ -150,15 +157,15 @@ def _load_aks_managed_clusters_tx(
     )
     for aks in aks_managed_clusters_list:
         resource_group = get_azure_resource_group_name(aks.get("id"))
-        _attach_resource_group_aks(tx, aks["id"], resource_group, update_tag)
+        _attach_resource_group_aks(tx, subscription_id, aks["id"], resource_group, update_tag)
 
 
-def _attach_resource_group_aks(tx: neo4j.Transaction, aks_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_aks(
+    tx: neo4j.Transaction, subscription_id: str, aks_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_aks_resource = """
-    MATCH (a:AzureCluster{id: $aks_id})
-    WITH a
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(a:AzureCluster{id: $aks_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[res:RESOURCE_GROUP]->(rg)
     ON CREATE SET res.firstseen = timestamp()
     SET res.lastupdated = $update_tag
@@ -167,7 +174,7 @@ def _attach_resource_group_aks(tx: neo4j.Transaction, aks_id: str, resource_grou
         ingest_aks_resource,
         aks_id=aks_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(aks_id),
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -201,7 +208,7 @@ def get_aks_managed_cluster_agentpools_list(
 
 
 def _load_aks_managed_cluster_agentpools_tx(
-    tx: neo4j.Transaction, cluster_id: str, agentpools_list: List[Dict], update_tag: int,
+    tx: neo4j.Transaction, subscription_id: str, cluster_id: str, agentpools_list: List[Dict], update_tag: int,
 ) -> None:
     ingest_aks_agentpools = """
     UNWIND $agentpools_list AS pool
@@ -215,7 +222,7 @@ def _load_aks_managed_cluster_agentpools_tx(
     SET a.consolelink = coalesce(pool.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = pool.name
     WITH a
-    MATCH (c:AzureCluster{id: $cluster_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(c:AzureCluster{id: $cluster_id})
     MERGE (c)-[r:HAS]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -225,6 +232,7 @@ def _load_aks_managed_cluster_agentpools_tx(
         ingest_aks_agentpools,
         agentpools_list=agentpools_list,
         cluster_id=cluster_id,
+        SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
 
@@ -259,7 +267,13 @@ def sync_aks(
     t0 = time.perf_counter()
     load_aks_managed_clusters(neo4j_session, subscription_id, aks_managed_clusters_list, update_tag)
     for cluster in aks_managed_clusters_list:
-        load_aks_managed_cluster_agentpools(neo4j_session, cluster["id"], cluster.pop("_agent_pools"), update_tag)
+        load_aks_managed_cluster_agentpools(
+            neo4j_session,
+            subscription_id,
+            cluster["id"],
+            cluster.pop("_agent_pools"),
+            update_tag,
+        )
     cleanup_aks(neo4j_session, common_job_parameters)
     logger.info(f"aks sub={subscription_id}: Neo4j write done in {time.perf_counter() - t0:.2f}s")
 
@@ -323,17 +337,22 @@ def _load_container_registries_tx(
     )
     for container_registries in container_registries_list:
         resource_group = get_azure_resource_group_name(container_registries.get("id"))
-        _attach_resource_group_container_registry(tx, container_registries["id"], resource_group, update_tag)
+        _attach_resource_group_container_registry(
+            tx,
+            subscription_id,
+            container_registries["id"],
+            resource_group,
+            update_tag,
+        )
 
 
 def _attach_resource_group_container_registry(
-    tx: neo4j.Transaction, container_registry_id: str, resource_group: str, update_tag: int,
+    tx: neo4j.Transaction, subscription_id: str, container_registry_id: str, resource_group: str, update_tag: int,
 ) -> None:
     ingest_container_registry = """
-    MATCH (a:AzureContainerRegistry{id: $container_registry_id})
-    WITH a
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})
+    -[:RESOURCE]->(a:AzureContainerRegistry{id: $container_registry_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -342,7 +361,7 @@ def _attach_resource_group_container_registry(
         ingest_container_registry,
         container_registry_id=container_registry_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(container_registry_id),
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -427,6 +446,7 @@ def get_container_registry_replications_list(
 
 def _load_container_registry_replications_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     container_registry_replications_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -441,7 +461,8 @@ def _load_container_registry_replications_tx(
     SET a.consolelink = coalesce(replication.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = replication.name
     WITH a,replication
-    MATCH (owner:AzureContainerRegistry{id: replication.container_registry_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(owner:AzureContainerRegistry{id: replication.container_registry_id})
     MERGE (owner)-[r:CONTAIN]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -450,23 +471,27 @@ def _load_container_registry_replications_tx(
     tx.run(
         ingest_container_replication,
         container_registry_replications_list=container_registry_replications_list,
+        SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
     for container_registry_replication in container_registry_replications_list:
         resource_group = get_azure_resource_group_name(container_registry_replication.get("id"))
         _attach_resource_group_container_replication(
-            tx, container_registry_replication["id"], resource_group, update_tag=update_tag,
+            tx, subscription_id, container_registry_replication["id"], resource_group, update_tag=update_tag,
         )
 
 
 def _attach_resource_group_container_replication(
-    tx: neo4j.Transaction, container_registry_replication_id: str, resource_group: str, update_tag: int,
+    tx: neo4j.Transaction,
+    subscription_id: str,
+    container_registry_replication_id: str,
+    resource_group: str,
+    update_tag: int,
 ) -> None:
     ingest_container_replication = """
-        MATCH (a:AzureContainerRegistryReplication{id: $container_registry_replication_id})
-        WITH a
-        MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-        MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+        MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureContainerRegistry)
+        -[:CONTAIN]->(a:AzureContainerRegistryReplication{id: $container_registry_replication_id})
+        MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (a)-[r:RESOURCE_GROUP]->(rg)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
@@ -475,7 +500,7 @@ def _attach_resource_group_container_replication(
         ingest_container_replication,
         container_registry_replication_id=container_registry_replication_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(container_registry_replication_id),
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -496,7 +521,12 @@ def sync_container_registry_replications(
         container_registries_list,
         common_job_parameters,
     )
-    load_container_registry_replications(neo4j_session, container_registry_replications_list, update_tag)
+    load_container_registry_replications(
+        neo4j_session,
+        common_job_parameters['AZURE_SUBSCRIPTION_ID'],
+        container_registry_replications_list,
+        update_tag,
+    )
     cleanup_container_registry_replications(neo4j_session, common_job_parameters)
 
 
@@ -534,6 +564,7 @@ def get_container_registry_runs_list(
 
 def _load_container_registry_runs_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     container_registry_runs_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -548,7 +579,8 @@ def _load_container_registry_runs_tx(
     SET a.consolelink = coalesce(run.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = run.name
     WITH a,run
-    MATCH (owner:AzureContainerRegistry{id: run.container_registry_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(owner:AzureContainerRegistry{id: run.container_registry_id})
     MERGE (owner)-[r:CONTAIN]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -557,21 +589,27 @@ def _load_container_registry_runs_tx(
     tx.run(
         ingest_container_run,
         container_registry_runs_list=container_registry_runs_list,
+        SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
     for container_registry_run in container_registry_runs_list:
         resource_group = get_azure_resource_group_name(container_registry_run.get("id"))
-        _attach_resource_group_container_registry_runs(tx, container_registry_run["id"], resource_group, update_tag)
+        _attach_resource_group_container_registry_runs(
+            tx,
+            subscription_id,
+            container_registry_run["id"],
+            resource_group,
+            update_tag,
+        )
 
 
 def _attach_resource_group_container_registry_runs(
-    tx: neo4j.Transaction, container_registry_run_id: str, resource_group: str, update_tag: int,
+    tx: neo4j.Transaction, subscription_id: str, container_registry_run_id: str, resource_group: str, update_tag: int,
 ) -> None:
     ingest_container_run = """
-    MATCH (a:AzureContainerRegistryRun{id: $run_id})
-    WITH a
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureContainerRegistry)
+    -[:CONTAIN]->(a:AzureContainerRegistryRun{id: $run_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -580,7 +618,7 @@ def _attach_resource_group_container_registry_runs(
         ingest_container_run,
         run_id=container_registry_run_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(container_registry_run_id),
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -601,7 +639,12 @@ def sync_container_registry_runs(
         container_registries_list,
         common_job_parameters,
     )
-    load_container_registry_runs(neo4j_session, container_registry_runs_list, update_tag)
+    load_container_registry_runs(
+        neo4j_session,
+        common_job_parameters['AZURE_SUBSCRIPTION_ID'],
+        container_registry_runs_list,
+        update_tag,
+    )
     cleanup_container_registry_runs(neo4j_session, common_job_parameters)
 
 
@@ -638,6 +681,7 @@ def get_container_registry_tasks_list(
 
 def _load_container_registry_tasks_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     container_registry_tasks_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -652,7 +696,8 @@ def _load_container_registry_tasks_tx(
     SET a.consolelink = coalesce(task.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = task.name
     WITH a,task
-    MATCH (owner:AzureContainerRegistry{id: task.container_registry_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(owner:AzureContainerRegistry{id: task.container_registry_id})
     MERGE (owner)-[r:CONTAIN]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -661,24 +706,31 @@ def _load_container_registry_tasks_tx(
     tx.run(
         ingest_container_task,
         container_registry_tasks_list=container_registry_tasks_list,
+        SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
     for container_registry_task in container_registry_tasks_list:
         resource_group = get_azure_resource_group_name(container_registry_task.get("id"))
-        _attach_resource_group_container_task(tx, container_registry_task["id"], resource_group, update_tag)
+        _attach_resource_group_container_task(
+            tx,
+            subscription_id,
+            container_registry_task["id"],
+            resource_group,
+            update_tag,
+        )
 
 
 def _attach_resource_group_container_task(
     tx: neo4j.Transaction,
+    subscription_id: str,
     container_registry_task_id: str,
     resource_group: str,
     update_tag: int,
 ) -> None:
     ingest_container_task = """
-    MATCH (a:AzureContainerRegistryTask{id:$container_registry_task_id})
-    WITH a
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureContainerRegistry)
+    -[:CONTAIN]->(a:AzureContainerRegistryTask{id: $container_registry_task_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -687,7 +739,7 @@ def _attach_resource_group_container_task(
         ingest_container_task,
         container_registry_task_id=container_registry_task_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(container_registry_task_id),
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -708,7 +760,12 @@ def sync_container_registry_tasks(
         container_registries_list,
         common_job_parameters,
     )
-    load_container_registry_tasks(neo4j_session, container_registry_tasks_list, update_tag)
+    load_container_registry_tasks(
+        neo4j_session,
+        common_job_parameters['AZURE_SUBSCRIPTION_ID'],
+        container_registry_tasks_list,
+        update_tag,
+    )
     cleanup_container_registry_tasks(neo4j_session, common_job_parameters)
 
 
@@ -745,6 +802,7 @@ def get_container_registry_webhooks_list(
 
 def _load_container_registry_webhooks_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     container_registry_webhooks_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -759,7 +817,8 @@ def _load_container_registry_webhooks_tx(
     SET a.consolelink = coalesce(webhook.consolelink, a.consolelink), a.lastupdated = $update_tag,
     a.name = webhook.name
     WITH a,webhook
-    MATCH (owner:AzureContainerRegistry{id: webhook.container_registry_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(owner:AzureContainerRegistry{id: webhook.container_registry_id})
     MERGE (owner)-[r:CONTAIN]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -768,23 +827,27 @@ def _load_container_registry_webhooks_tx(
     tx.run(
         ingest_container_webhook,
         container_registry_webhooks_list=container_registry_webhooks_list,
+        SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
     for container_registry_webhook in container_registry_webhooks_list:
         resource_group = get_azure_resource_group_name(container_registry_webhook.get("id"))
         _attach_resource_group_container_registry_webhooks(
-            tx, container_registry_webhook["id"], resource_group, update_tag,
+            tx, subscription_id, container_registry_webhook["id"], resource_group, update_tag,
         )
 
 
 def _attach_resource_group_container_registry_webhooks(
-    tx: neo4j.Transaction, container_registry_webhook_id: str, resource_group: str, update_tag: int,
+    tx: neo4j.Transaction,
+    subscription_id: str,
+    container_registry_webhook_id: str,
+    resource_group: str,
+    update_tag: int,
 ) -> None:
     ingest_container_webhook = """
-    MATCH (a:AzureContainerRegistryWebhook{id:$container_registry_webhook_id})
-    WITH a
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureContainerRegistry)
+    -[:CONTAIN]->(a:AzureContainerRegistryWebhook{id: $container_registry_webhook_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -793,7 +856,7 @@ def _attach_resource_group_container_registry_webhooks(
         ingest_container_webhook,
         container_registry_webhook_id=container_registry_webhook_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(container_registry_webhook_id),
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -814,7 +877,12 @@ def sync_container_registry_webhooks(
         container_registries_list,
         common_job_parameters,
     )
-    load_container_registry_webhooks(neo4j_session, container_registry_webhooks_list, update_tag)
+    load_container_registry_webhooks(
+        neo4j_session,
+        common_job_parameters['AZURE_SUBSCRIPTION_ID'],
+        container_registry_webhooks_list,
+        update_tag,
+    )
     cleanup_container_registry_webhooks(neo4j_session, common_job_parameters)
 
 
@@ -872,20 +940,25 @@ def _load_container_groups_tx(
     )
     for container_group in container_groups_list:
         resource_group = get_azure_resource_group_name(container_group.get("id"))
-        _attach_resource_group_aks_container_group(tx, container_group["id"], resource_group, update_tag)
+        _attach_resource_group_aks_container_group(
+            tx,
+            subscription_id,
+            container_group["id"],
+            resource_group,
+            update_tag,
+        )
 
 
 def _attach_resource_group_aks_container_group(
     tx: neo4j.Transaction,
+    subscription_id: str,
     container_group_id: str,
     resource_group: str,
     update_tag: int,
 ) -> None:
     ingest_container_group = """
-    MATCH (a:AzureContainerGroup{id: $group_id})
-    WITH a
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(a:AzureContainerGroup{id: $group_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -894,7 +967,7 @@ def _attach_resource_group_aks_container_group(
         ingest_container_group,
         group_id=container_group_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(container_group_id),
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -940,7 +1013,9 @@ def get_containers_list(container_groups_list: List[Dict]) -> List[Dict]:
         return []
 
 
-def _load_containers_tx(tx: neo4j.Transaction, containers_list: List[Dict], update_tag: int) -> None:
+def _load_containers_tx(
+    tx: neo4j.Transaction, subscription_id: str, containers_list: List[Dict], update_tag: int,
+) -> None:
     ingest_container = """
     UNWIND $containers_list AS container
     MERGE (a:AzureContainer{id: container.id})
@@ -952,7 +1027,8 @@ def _load_containers_tx(tx: neo4j.Transaction, containers_list: List[Dict], upda
     a.resourcegroup = container.resource_group
     SET a.lastupdated = $update_tag
     WITH a,container
-    MATCH (owner:AzureContainerGroup{id: container.container_group_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(owner:AzureContainerGroup{id: container.container_group_id})
     MERGE (owner)-[r:CONTAIN]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -961,21 +1037,21 @@ def _load_containers_tx(tx: neo4j.Transaction, containers_list: List[Dict], upda
     tx.run(
         ingest_container,
         containers_list=containers_list,
+        SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
     for container in containers_list:
         resource_group = get_azure_resource_group_name(container.get("id"))
-        _attach_resource_group_container(tx, container["id"], resource_group, update_tag)
+        _attach_resource_group_container(tx, subscription_id, container["id"], resource_group, update_tag)
 
 
 def _attach_resource_group_container(
-    tx: neo4j.Transaction, container_id: str, resource_group: str, update_tag: int,
+    tx: neo4j.Transaction, subscription_id: str, container_id: str, resource_group: str, update_tag: int,
 ) -> None:
     ingest_container = """
-    MATCH (a:AzureContainer{id: $container_id})
-    WITH a
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureContainerGroup)
+    -[:CONTAIN]->(a:AzureContainer{id: $container_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -984,7 +1060,7 @@ def _attach_resource_group_container(
         ingest_container,
         container_id=container_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(container_id),
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -1000,7 +1076,7 @@ def sync_containers(
     common_job_parameters: Dict,
 ) -> None:
     containers_list = get_containers_list(container_groups_list)
-    load_containers(neo4j_session, containers_list, update_tag)
+    load_containers(neo4j_session, common_job_parameters['AZURE_SUBSCRIPTION_ID'], containers_list, update_tag)
     cleanup_containers(neo4j_session, common_job_parameters)
 
 
