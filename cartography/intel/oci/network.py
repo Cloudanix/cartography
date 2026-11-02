@@ -518,7 +518,7 @@ def load_nsg_security_rules(
     """
     ingest_rule = """
     UNWIND $DictList AS rule
-        MERGE (rl:OCINsgSecurityRule{id: rule.ocid})
+        MERGE (rl:OCINsgSecurityRule{id: rule.id})
         ON CREATE SET rl.firstseen = timestamp()
         SET rl.ocid = rule.ocid,
         rl.direction = rule.direction,
@@ -550,6 +550,8 @@ def load_nsg_security_rules(
 
     rows = []
     for rule in rules:
+        if not rule.get("id"):
+            continue
         # Extract TCP options
         tcp_options = rule.get("tcp-options", {}) or {}
         tcp_dest_range = tcp_options.get("destination-port-range", {}) or {}
@@ -563,6 +565,8 @@ def load_nsg_security_rules(
         icmp_options = rule.get("icmp-options", {}) or {}
 
         rows.append({
+            # The rule id is a short code ("04ABEC") unique only within its NSG, so key the node by NSG OCID + rule id.
+            "id": f"{nsg_id}/{rule.get('id')}",
             "ocid": rule.get("id"),
             "direction": rule.get("direction", ""),
             "protocol": rule.get("protocol", ""),

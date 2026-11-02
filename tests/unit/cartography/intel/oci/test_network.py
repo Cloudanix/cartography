@@ -79,6 +79,12 @@ def test_load_nsg_security_rules_records_internet_ingress_port_range():
     }
 
 
+def test_load_nsg_security_rules_keys_rules_by_nsg_and_rule_id():
+    session = _RecordingSession()
+    network.load_nsg_security_rules(session, [{'id': '04ABEC'}, {'direction': 'INGRESS'}], 'ocid1.nsg', 1)
+    assert [(r['id'], r['ocid']) for r in session.rows] == [('ocid1.nsg/04ABEC', '04ABEC')]
+
+
 def test_load_security_lists_flags_internet_ingress():
     session = _RecordingSession()
     network.load_security_lists(

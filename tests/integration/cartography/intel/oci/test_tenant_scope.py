@@ -1,4 +1,5 @@
 from cartography.intel.oci import database
+from cartography.intel.oci import network
 
 OLD_TAG = 1
 NEW_TAG = 2
@@ -73,3 +74,39 @@ def test_database_cleanup_deletes_only_the_syncing_compartments_edges(neo4j_sess
     assert _db_links(neo4j_session, 'db-a') == set()
     expected_b = {(source, rel) for source in ('db-b-adb', 'db-b-dbsys') for rel in DB_LINK_TYPES}
     assert _db_links(neo4j_session, 'db-b') == expected_b | {('db-b-dbhome', 'OCI_KMS_KEY')}
+
+
+def _nsg_rules(neo4j_session, nsg_id):
+    rows = neo4j_session.run(
+        """
+        MATCH (:OCINetworkSecurityGroup{id: $nsg_id})-[:OCI_NSG_RULE]->(r:OCINsgSecurityRule)
+        RETURN r.id AS id, r.ocid AS ocid, r.tcp_dest_port_min AS port
+        """,
+        nsg_id=nsg_id,
+    )
+    return {(row['id'], row['ocid'], row['port']) for row in rows}
+
+
+def test_nsg_rule_ids_are_scoped_to_their_nsg(neo4j_session):
+    # OCI security rule ids are short codes ("04ABEC") unique only within one NSG.
+    nsgs = {}
+    for prefix, port in (('nsg-a', 22), ('nsg-b', 443)):
+        _seed_tenant(neo4j_session, prefix)
+        nsg_id = f'ocid1.networksecuritygroup.oc1.phx.{prefix}'
+        neo4j_session.run(
+            """
+            MATCH (c:OCICompartment{id: $prefix + '-compartment'})
+            MERGE (c)-[:RESOURCE]->(v:OCIVcn{id: $prefix + '-vcn'})
+            MERGE (v)-[:OCI_NETWORK_SECURITY_GROUP]->(:OCINetworkSecurityGroup{id: $nsg_id})
+            """,
+            prefix=prefix, nsg_id=nsg_id,
+        )
+        rule = {
+            'id': '04ABEC', 'direction': 'INGRESS', 'protocol': '6', 'source': '0.0.0.0/0',
+            'tcp-options': {'destination-port-range': {'min': port, 'max': port}},
+        }
+        network.load_nsg_security_rules(neo4j_session, [rule], nsg_id, NEW_TAG)
+        nsgs[nsg_id] = port
+
+    for nsg_id, port in nsgs.items():
+        assert _nsg_rules(neo4j_session, nsg_id) == {(f'{nsg_id}/04ABEC', '04ABEC', port)}

@@ -76,9 +76,9 @@ def test_load_nsgs_and_rules(neo4j_session):
         neo4j_session, test_data.NSG_SECURITY_RULES, test_data.NSG_ID, TEST_UPDATE_TAG,
     )
     assert check_nodes(neo4j_session, "OCINsgSecurityRule", ["id", "tcp_dest_port_min"]) == {
-        ("oci.nsgrule.0", 22),
+        (f"{test_data.NSG_ID}/oci.nsgrule.0", 22),
     }
-    assert (test_data.NSG_ID, "oci.nsgrule.0") in check_rels(
+    assert (test_data.NSG_ID, f"{test_data.NSG_ID}/oci.nsgrule.0") in check_rels(
         neo4j_session, "OCINetworkSecurityGroup", "id", "OCINsgSecurityRule", "id",
         "OCI_NSG_RULE",
     )
