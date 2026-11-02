@@ -37,7 +37,7 @@ def _sync(neo4j_session, tenant, tag, ranges, sql_addresses):
     _seed(neo4j_session, tenant, tag)
     project = _params(tenant, tag)['GCP_PROJECT_ID']
     compute._attach_firewall_public_ip_address(
-        neo4j_session, [{'id': f'{project}/fw', 'sourceRanges': ranges}], tag,
+        neo4j_session, [{'id': f'{project}/fw', 'sourceRanges': ranges}], tag, project,
     )
     sql.load_public_ip_address(
         neo4j_session,
