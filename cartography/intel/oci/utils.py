@@ -97,7 +97,10 @@ def get_security_groups_in_tenancy(
     neo4j_session: neo4j.Session,
     tenancy_id: str, region: str,
 ) -> List[Dict[str, Any]]:
-    query = "MATCH (OCITenancy{id: $OCI_TENANCY_ID})-[*]->(security_group:OCINetworkSecurityGroup)-[OCI_REGION]->" \
+    # No callers. Was "(OCITenancy{...})-[*]->": an unlabeled start and an unbounded walk that could cross
+    # shared nodes into another tenancy; now the tenancy's own VCN -> NSG chain.
+    query = "MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)" \
+            "-[:OCI_NETWORK_SECURITY_GROUP]->(security_group:OCINetworkSecurityGroup)-[OCI_REGION]->" \
             "(region:OCIRegion{name: $OCI_REGION})" \
             "return DISTINCT security_group.name as name, security_group.ocid as ocid, security_group.compartmentid " \
             "as compartmentid;"
