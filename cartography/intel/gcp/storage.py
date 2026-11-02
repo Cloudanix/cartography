@@ -301,12 +301,16 @@ def transform_gcp_bucket_iam_policy_bindings(
 
 
 @timeit
-def load_bucket_iam_policy_bindings(session: neo4j.Session, data_list: List[Dict], bucket_id: str, update_tag: int) -> None:
-    session.execute_write(_load_bucket_iam_policy_bindings_tx, data_list, bucket_id, update_tag)
+def load_bucket_iam_policy_bindings(
+    session: neo4j.Session, data_list: List[Dict], bucket_id: str, update_tag: int, project_id: str,
+) -> None:
+    session.execute_write(_load_bucket_iam_policy_bindings_tx, data_list, bucket_id, update_tag, project_id)
 
 
 @timeit
-def _load_bucket_iam_policy_bindings_tx(tx: neo4j.Transaction, data_list: List[Dict], bucket_id: str, gcp_update_tag: int) -> None:
+def _load_bucket_iam_policy_bindings_tx(
+    tx: neo4j.Transaction, data_list: List[Dict], bucket_id: str, gcp_update_tag: int, project_id: str,
+) -> None:
     ingest_bucket_iam_policy_bindings = """
     UNWIND $policy_bindings as binding
     MERGE (u:GCPBucketPolicyBinding{id:binding.id})
@@ -317,7 +321,7 @@ def _load_bucket_iam_policy_bindings_tx(tx: neo4j.Transaction, data_list: List[D
         u.role = binding.role,
         u.lastupdated = $gcp_update_tag
     WITH u
-    MATCH (i:GCPBucket{id:$bucket_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPBucket{id:$bucket_id})
     MERGE (i)-[r:ATTACHED_BINDING]->(u)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -327,6 +331,7 @@ def _load_bucket_iam_policy_bindings_tx(tx: neo4j.Transaction, data_list: List[D
         ingest_bucket_iam_policy_bindings,
         policy_bindings=data_list,
         bucket_id=bucket_id,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -374,7 +379,7 @@ def sync(
     for bucket in bucket_list:
         policy = policies[bucket['id']] or {}
         bindings = transform_gcp_bucket_iam_policy_bindings(policy.get('bindings', []), project_id, bucket['id'])
-        load_bucket_iam_policy_bindings(neo4j_session, bindings, bucket['id'], gcp_update_tag)
+        load_bucket_iam_policy_bindings(neo4j_session, bindings, bucket['id'], gcp_update_tag, project_id)
 
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_buckets(neo4j_session, common_job_parameters)
