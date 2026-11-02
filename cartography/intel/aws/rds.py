@@ -234,12 +234,16 @@ def cleanup_rds_security_groups(neo4j_session: neo4j.Session, common_job_paramet
 
 @timeit
 def attach_db_security_groups_to_ec2_security_groups(
-    session: neo4j.Session, db_sgs: List[Dict], aws_update_tag: int,
-):
+    session: neo4j.Session, db_sgs: List[Dict], current_aws_account_id: str, workspace_id: str,
+    aws_update_tag: int,
+) -> None:
+    # An authorized EC2 group can belong to another account (EC2SecurityGroupOwnerId): it is linked only when
+    # that account is in this workspace; another customer's group is never linked.
     ingest_script = """
     UNWIND $DictList AS item
-    MATCH (dbsg:RDSSecurityGroup{id:item.db_sg_id})
-    MATCH (sg:EC2SecurityGroup{id:item.ec2_sg_id})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(dbsg:RDSSecurityGroup{id:item.db_sg_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(sg:EC2SecurityGroup{id:item.ec2_sg_id})
     MERGE (dbsg)-[r:USING]->(sg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -249,7 +253,10 @@ def attach_db_security_groups_to_ec2_security_groups(
         for db_sg in db_sgs
         for sg in db_sg.get('EC2SecurityGroups', [])
     ]
-    load_graph_data(session, ingest_script, rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        session, ingest_script, rows,
+        AWS_ACCOUNT_ID=current_aws_account_id, WORKSPACE_ID=workspace_id, aws_update_tag=aws_update_tag,
+    )
 
 
 @timeit
@@ -267,7 +274,9 @@ def sync_rds_security_groups(
     logger.info(f"Total RDS Security Groups: {len(data)}")
 
     load_rds_security_groups(neo4j_session, data, current_aws_account_id, update_tag)
-    attach_db_security_groups_to_ec2_security_groups(neo4j_session, data, update_tag)
+    attach_db_security_groups_to_ec2_security_groups(
+        neo4j_session, data, current_aws_account_id, common_job_parameters['WORKSPACE_ID'], update_tag,
+    )
     cleanup_rds_security_groups(neo4j_session, common_job_parameters)
 
 
@@ -341,7 +350,7 @@ def sync_rds_snapshots(
     logger.info(f"Total RDS Snapshots: {len(data)}")
 
     load_rds_snapshots(neo4j_session, data, current_aws_account_id, update_tag)
-    load_rds_snapshot_attributes(neo4j_session, attributes, update_tag)
+    load_rds_snapshot_attributes(neo4j_session, attributes, current_aws_account_id, update_tag)
     cleanup_rds_snapshots(neo4j_session, common_job_parameters)
 
 
@@ -566,10 +575,7 @@ def load_rds_clusters(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
-    _attach_associate_roles(neo4j_session, data, aws_update_tag)
     for cluster in data:
-        _attach_db_subnet_group(neo4j_session, cluster, current_aws_account_id, aws_update_tag)
-        _attach_ec2_security_groups_cluster(neo4j_session, cluster, aws_update_tag)
         # TODO: track read replicas
         # TODO: track associated roles
         # TODO: track security groups
@@ -590,13 +596,20 @@ def load_rds_clusters(
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
+    # After the clusters load: the links reach each cluster from this account, so it must exist first.
+    _attach_associate_roles(neo4j_session, data, current_aws_account_id, aws_update_tag)
+    for cluster in data:
+        _attach_db_subnet_group(neo4j_session, cluster, current_aws_account_id, aws_update_tag)
+        _attach_ec2_security_groups_cluster(neo4j_session, cluster, current_aws_account_id, aws_update_tag)
 
 
 @timeit
-def _attach_associate_roles(neo4j_session: neo4j.Session, clusters: List[Dict], aws_update_tag: int) -> None:
+def _attach_associate_roles(
+    neo4j_session: neo4j.Session, clusters: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     attach_cluster_to_role = """
     UNWIND $DictList AS item
-    MATCH (c:RDSCluster{id:item.cluster_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:RDSCluster{id:item.cluster_arn})
     MERGE (p:AWSPrincipal{arn:item.role_arn})
     MERGE (c)-[s:RDS_ASSUMEROLE_ALLOW]->(p)
     ON CREATE SET s.firstseen = timestamp()
@@ -607,17 +620,23 @@ def _attach_associate_roles(neo4j_session: neo4j.Session, clusters: List[Dict], 
         for cluster in clusters
         for role in cluster.get('AssociatedRoles', [])
     ]
-    load_graph_data(neo4j_session, attach_cluster_to_role, rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, attach_cluster_to_role, rows,
+        AWS_ACCOUNT_ID=current_aws_account_id, aws_update_tag=aws_update_tag,
+    )
 
 
 @timeit
-def _attach_ec2_security_groups_cluster(neo4j_session: neo4j.Session, cluster: Dict, aws_update_tag: int) -> None:
+def _attach_ec2_security_groups_cluster(
+    neo4j_session: neo4j.Session, cluster: Dict, current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
-    Attach an RDS instance to its EC2SecurityGroups
+    Attach an RDS cluster to its EC2SecurityGroups
     """
+    # Group ids are globally unique; MERGE leaves a stub when the group is not synced yet (as Neptune does).
     attach_rds_to_group = """
     UNWIND $DictList as rds_sg
-        MATCH (rds:RDSCluster{id: $DBClusterArn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rds:RDSCluster{id: $DBClusterArn})
         MERGE (sg:EC2SecurityGroup{id: rds_sg.VpcSecurityGroupId})
         MERGE (rds)-[m:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
         ON CREATE SET m.firstseen = timestamp()
@@ -628,6 +647,7 @@ def _attach_ec2_security_groups_cluster(neo4j_session: neo4j.Session, cluster: D
         attach_rds_to_group,
         cluster['VpcSecurityGroups'],
         DBClusterArn=cluster['DBClusterArn'],
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -642,7 +662,7 @@ def _attach_db_subnet_group(
     if not cluster.get('DBSubnetGroup'):
         return
     attach_cluster_to_subnet_group = """
-    MATCH (c:RDSCluster{id:$DBClusterArn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(c:RDSCluster{id:$DBClusterArn})
     MERGE (p:DBSubnetGroup{id:$SubnetGroupArn})
     ON CREATE SET p.firstseen = timestamp(), p.name = $DBSubnetGroup
     MERGE (c)-[s:ATTACHED_TO]->(p)
@@ -653,6 +673,7 @@ def _attach_db_subnet_group(
         neo4j_session,
         attach_cluster_to_subnet_group,
         DBClusterArn=cluster['DBClusterArn'],
+        AWS_ACCOUNT_ID=current_aws_account_id,
         DBSubnetGroup=cluster['DBSubnetGroup'],
         SubnetGroupArn=_get_db_subnet_group_arn(
             cluster['region'], current_aws_account_id, cluster['DBSubnetGroup'], partition,
@@ -784,7 +805,7 @@ def load_rds_instances(
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
-    _attach_ec2_security_groups(neo4j_session, secgroups, aws_update_tag)
+    _attach_ec2_security_groups(neo4j_session, secgroups, current_aws_account_id, aws_update_tag)
     _attach_ec2_subnet_groups(neo4j_session, subnets, current_aws_account_id, aws_update_tag, partition)
     _attach_read_replicas(neo4j_session, read_replicas, current_aws_account_id, aws_update_tag)
     _attach_clusters(neo4j_session, clusters, current_aws_account_id, aws_update_tag)
@@ -857,7 +878,9 @@ def load_rds_snapshots(
 
 
 @timeit
-def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict], aws_update_tag: int) -> None:
+def load_rds_snapshot_attributes(
+    neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
     Ingest the RDS snapshot attributes to neo4j and link them to RDS snapshot.
 
@@ -866,7 +889,7 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict],
     """
     ingest_rds_snapshot_attributes = """
     UNWIND $DictList as result
-        MATCH (rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})
         WITH result, rdsSnapshot
         UNWIND result.DBSnapshotAttributes as attribute
             MERGE (attrib:RDSSnapshotAttribute{id: result.DBSnapshotArn + '/' + attribute.AttributeName})
@@ -883,7 +906,7 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict],
     # The snapshot's own restore values (account ids, or 'all' when public); aws_rds_asset_exposure.json reads them.
     ingest_restore_values = """
     UNWIND $DictList as result
-        MATCH (rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rdsSnapshot:RDSSnapshot{id: result.DBSnapshotArn})
         SET rdsSnapshot.restore_attribute_values = [
             attribute IN result.DBSnapshotAttributes WHERE attribute.AttributeName = 'restore'
             | attribute.AttributeValues
@@ -894,9 +917,10 @@ def load_rds_snapshot_attributes(neo4j_session: neo4j.Session, data: List[Dict],
         neo4j_session,
         ingest_rds_snapshot_attributes,
         data,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
-    load_graph_data(neo4j_session, ingest_restore_values, data)
+    load_graph_data(neo4j_session, ingest_restore_values, data, AWS_ACCOUNT_ID=current_aws_account_id)
 
 
 @timeit
@@ -945,7 +969,7 @@ def _attach_ec2_subnet_groups(
             sng.arn = rds_sng.arn,
             sng.consolelink = rds_sng.consolelink
         WITH sng, rds_sng.instance_arn AS instance_arn
-        MATCH (rds:RDSInstance{id: instance_arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rds:RDSInstance{id: instance_arn})
         MERGE (rds)-[r:MEMBER_OF_DB_SUBNET_GROUP]->(sng)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -963,6 +987,7 @@ def _attach_ec2_subnet_groups(
         neo4j_session,
         attach_rds_to_subnet_group,
         db_sngs,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
     _attach_ec2_subnets_to_subnetgroup(neo4j_session, db_sngs, current_aws_account_id, aws_update_tag)
@@ -983,7 +1008,8 @@ def _attach_ec2_subnets_to_subnetgroup(
     """
     attach_subnets_to_sng = """
     UNWIND $DictList as rds_sn
-        MATCH (sng:DBSubnetGroup{id: rds_sn.sng_arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:RDSInstance{id: rds_sn.instance_arn})
+            -[:MEMBER_OF_DB_SUBNET_GROUP]->(sng:DBSubnetGroup{id: rds_sn.sng_arn})
         MERGE (subnet:EC2Subnet{subnetid: rds_sn.sn_id})
         ON CREATE SET subnet.firstseen = timestamp()
         MERGE (sng)-[r:CONNECTED_TO]->(subnet)
@@ -1001,24 +1027,28 @@ def _attach_ec2_subnets_to_subnetgroup(
             subnets.append({
                 'sn_id': sn_id,
                 'sng_arn': sng_arn,
+                'instance_arn': subnet_group['instance_arn'],
                 'az': az,
             })
     load_graph_data(
         neo4j_session,
         attach_subnets_to_sng,
         subnets,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
 
 @timeit
-def _attach_ec2_security_groups(neo4j_session: neo4j.Session, instances: List[Dict], aws_update_tag: int) -> None:
+def _attach_ec2_security_groups(
+    neo4j_session: neo4j.Session, instances: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
     Attach an RDS instance to its EC2SecurityGroups
     """
     attach_rds_to_group = """
     UNWIND $DictList as rds_sg
-        MATCH (rds:RDSInstance{id: rds_sg.arn})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rds:RDSInstance{id: rds_sg.arn})
         MERGE (sg:EC2SecurityGroup{id: rds_sg.group_id})
         MERGE (rds)-[m:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
         ON CREATE SET m.firstseen = timestamp()
@@ -1035,6 +1065,7 @@ def _attach_ec2_security_groups(neo4j_session: neo4j.Session, instances: List[Di
         neo4j_session,
         attach_rds_to_group,
         groups,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 

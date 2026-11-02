@@ -5,6 +5,7 @@ from tests.integration.cartography.intel.aws.common import create_test_org_accou
 TEST_UPDATE_TAG = 123456789
 ACCOUNT_ID = '777777777801'
 OTHER_ACCOUNT_ID = '888888888801'
+SIBLING_ACCOUNT_ID = '777777777802'  # same workspace as ACCOUNT_ID
 REGION = 'us-east-1'
 
 
@@ -162,3 +163,120 @@ def test_rds_cleanup_removes_links_the_sync_no_longer_writes(neo4j_session):
     assert _targets(neo4j_session, 'ATTACHED_TO', own_cluster) == {_arn(ACCOUNT_ID, 'subgrp', 'default')}
     # The other tenant's own snapshot link belongs to its sync and cleanup, not this one.
     assert _sources(neo4j_session, 'IS_SNAPSHOT_SOURCE', other_snapshot) == {other_db}
+
+
+def _seed_link_targets(neo4j_session):
+    # SIBLING is another account of this customer's workspace; OTHER belongs to another customer.
+    create_test_org_account(neo4j_session, 'ws-rds', 'o-rds', SIBLING_ACCOUNT_ID)
+    for account_id in (ACCOUNT_ID, SIBLING_ACCOUNT_ID, OTHER_ACCOUNT_ID):
+        neo4j_session.run(
+            """
+            MATCH (aa:AWSAccount{id: $account_id})
+            MERGE (aa)-[:RESOURCE]->(:EC2SecurityGroup{id: 'sg-' + $account_id})
+            MERGE (aa)-[:RESOURCE]->(:RDSSecurityGroup{id: $dbsg})
+            """,
+            account_id=account_id, dbsg=_arn(account_id, 'secgrp', 'legacy'),
+        )
+
+
+def test_rds_links_from_another_tenants_nodes_are_never_written(neo4j_session):
+    _seed(neo4j_session)
+    _seed_link_targets(neo4j_session)
+    own_cluster, other_cluster = (_arn(a, 'cluster', 'cluster-1') for a in (ACCOUNT_ID, OTHER_ACCOUNT_ID))
+    own_db, other_db = (_arn(a, 'db', 'database-1') for a in (ACCOUNT_ID, OTHER_ACCOUNT_ID))
+    own_snapshot, other_snapshot = (_arn(a, 'snapshot', 'snap-1') for a in (ACCOUNT_ID, OTHER_ACCOUNT_ID))
+    own_dbsg, other_dbsg = (_arn(a, 'secgrp', 'legacy') for a in (ACCOUNT_ID, OTHER_ACCOUNT_ID))
+    clusters = [
+        {
+            'DBClusterArn': arn, 'DBSubnetGroup': 'cluster-sng', 'region': REGION,
+            'AssociatedRoles': [{'RoleArn': 'arn:aws:iam::777777777801:role/rds-s3'}],
+            'VpcSecurityGroups': [{'VpcSecurityGroupId': 'sg-cluster'}],
+        }
+        for arn in (own_cluster, other_cluster)
+    ]
+    instances = [
+        {
+            'DBInstanceArn': arn, 'region': REGION, 'VpcSecurityGroups': [{'VpcSecurityGroupId': 'sg-instance'}],
+            'DBSubnetGroup': {
+                'DBSubnetGroupName': f'sng-{n}', 'Subnets': [{'SubnetIdentifier': f'subnet-rds-{n}'}],
+            },
+        }
+        for n, arn in enumerate((own_db, other_db))
+    ]
+    attributes = [
+        {'DBSnapshotArn': arn, 'DBSnapshotAttributes': [{'AttributeName': 'restore', 'AttributeValues': ['all']}]}
+        for arn in (own_snapshot, other_snapshot)
+    ]
+
+    rds.attach_db_security_groups_to_ec2_security_groups(
+        neo4j_session,
+        [
+            {
+                'DBSecurityGroupArn': own_dbsg,
+                'EC2SecurityGroups': [
+                    {'EC2SecurityGroupId': f'sg-{a}'} for a in (ACCOUNT_ID, SIBLING_ACCOUNT_ID, OTHER_ACCOUNT_ID)
+                ],
+            },
+            {'DBSecurityGroupArn': other_dbsg, 'EC2SecurityGroups': [{'EC2SecurityGroupId': f'sg-{ACCOUNT_ID}'}]},
+        ],
+        ACCOUNT_ID, 'ws-rds', TEST_UPDATE_TAG,
+    )
+    rds._attach_associate_roles(neo4j_session, clusters, ACCOUNT_ID, TEST_UPDATE_TAG)
+    for cluster in clusters:
+        rds._attach_db_subnet_group(neo4j_session, cluster, ACCOUNT_ID, TEST_UPDATE_TAG)
+        rds._attach_ec2_security_groups_cluster(neo4j_session, cluster, ACCOUNT_ID, TEST_UPDATE_TAG)
+    rds._attach_ec2_security_groups(neo4j_session, instances, ACCOUNT_ID, TEST_UPDATE_TAG)
+    rds._attach_ec2_subnet_groups(neo4j_session, instances, ACCOUNT_ID, TEST_UPDATE_TAG)
+    rds.load_rds_snapshot_attributes(neo4j_session, attributes, ACCOUNT_ID, TEST_UPDATE_TAG)
+
+    # A sibling account's EC2 group is linked; another customer's is not, nor is their DB security group.
+    assert _targets(neo4j_session, 'USING', own_dbsg) == {f'sg-{ACCOUNT_ID}', f'sg-{SIBLING_ACCOUNT_ID}'}
+    assert _targets(neo4j_session, 'USING', other_dbsg) == set()
+    roles = neo4j_session.run(
+        "MATCH (c:RDSCluster)-[:RDS_ASSUMEROLE_ALLOW]->(:AWSPrincipal) RETURN collect(c.id) AS ids",
+    ).single()['ids']
+    assert roles == [own_cluster]
+    assert _targets(neo4j_session, 'MEMBER_OF_EC2_SECURITY_GROUP', own_cluster) == {'sg-cluster'}
+    assert _targets(neo4j_session, 'MEMBER_OF_EC2_SECURITY_GROUP', other_cluster) == set()
+    assert _arn(ACCOUNT_ID, 'subgrp', 'cluster-sng') in _targets(neo4j_session, 'ATTACHED_TO', own_cluster)
+    assert _targets(neo4j_session, 'ATTACHED_TO', other_cluster) == set()
+    assert _targets(neo4j_session, 'MEMBER_OF_EC2_SECURITY_GROUP', own_db) == {'sg-instance'}
+    assert _targets(neo4j_session, 'MEMBER_OF_EC2_SECURITY_GROUP', other_db) == set()
+    assert _targets(neo4j_session, 'MEMBER_OF_DB_SUBNET_GROUP', other_db) == set()
+    assert _targets(neo4j_session, 'MEMBER_OF_DB_SUBNET_GROUP', own_db) == {_arn(ACCOUNT_ID, 'subgrp', 'sng-0')}
+    subnets = neo4j_session.run(
+        "MATCH (:DBSubnetGroup)-[:CONNECTED_TO]->(s:EC2Subnet) RETURN collect(s.subnetid) AS ids",
+    ).single()['ids']
+    assert subnets == ['subnet-rds-0']
+    snapshots = neo4j_session.run(
+        """
+        MATCH (s:RDSSnapshot) WHERE s.id IN [$own, $other]
+        RETURN s.id AS id, s.restore_attribute_values AS restore, size([(s)-[:HAS_ATTRIBUTE]->() | 1]) AS attrs
+        """,
+        own=own_snapshot, other=other_snapshot,
+    )
+    assert {(r['id'], tuple(r['restore'] or []), r['attrs']) for r in snapshots} == {
+        (own_snapshot, ('all',), 1), (other_snapshot, (), 0),
+    }
+
+
+def test_rds_cluster_links_are_written_on_the_first_sync(neo4j_session):
+    # The links reach the cluster from the account, so they must run after the cluster loads.
+    account_id = '777777777803'
+    cluster_arn = _arn(account_id, 'cluster', 'fresh-cluster')
+    create_test_org_account(neo4j_session, 'ws-rds-fresh', 'o-rds-fresh', account_id)
+
+    rds.load_rds_clusters(
+        neo4j_session,
+        [{
+            'DBClusterArn': cluster_arn, 'DBClusterIdentifier': 'fresh-cluster', 'region': REGION,
+            'DBSubnetGroup': 'default', 'AssociatedRoles': [{'RoleArn': f'arn:aws:iam::{account_id}:role/r'}],
+            'VpcSecurityGroups': [{'VpcSecurityGroupId': 'sg-fresh'}],
+        }],
+        account_id, TEST_UPDATE_TAG,
+    )
+
+    links = neo4j_session.run(
+        "MATCH (:RDSCluster{id: $id})-[r]->() RETURN collect(type(r)) AS types", id=cluster_arn,
+    ).single()['types']
+    assert sorted(links) == ['ATTACHED_TO', 'MEMBER_OF_EC2_SECURITY_GROUP', 'RDS_ASSUMEROLE_ALLOW']

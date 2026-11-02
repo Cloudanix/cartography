@@ -214,6 +214,7 @@ def test_snapshot_attributes(neo4j_session):
     cartography.intel.aws.rds.load_rds_snapshot_attributes(
         neo4j_session=neo4j_session,
         data=DESCRIBE_DBSNAPSHOT_ATTRIBUTE_RESPONSE,
+        current_aws_account_id='1234',
         aws_update_tag=TEST_UPDATE_TAG,
     )
 
@@ -290,6 +291,7 @@ def test_rds_exposure(neo4j_session):
     cartography.intel.aws.rds.load_rds_snapshot_attributes(
         neo4j_session=neo4j_session,
         data=DESCRIBE_DBSNAPSHOT_ATTRIBUTE_RESPONSE,
+        current_aws_account_id='1234',
         aws_update_tag=TEST_UPDATE_TAG,
     )
     common_job_parameters = {

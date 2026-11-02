@@ -33,7 +33,7 @@ def _group(neo4j_session, group_id, name, port, cidr=None, prefix_list=None):
             }],
             'IpPermissionsEgress': [],
         }],
-        TEST_UPDATE_TAG,
+        ACCOUNT_ID, TEST_UPDATE_TAG,
     )
 
 
@@ -78,7 +78,7 @@ def test_classic_elb_exposure_follows_its_attached_security_groups(neo4j_session
     cartography.intel.aws.ec2.load_balancers.load_load_balancers(
         neo4j_session,
         [_classic('clb-corp', 'sg-clb-corp'), _classic('clb-open', 'sg-clb-open'), _classic('clb-cdn', 'sg-clb-cdn')],
-        ACCOUNT_ID, TEST_UPDATE_TAG,
+        ACCOUNT_ID, TEST_UPDATE_TAG, WORKSPACE_ID,
     )
     run_analysis_job(
         'aws_ec2_elb_asset_exposure.json', neo4j_session,

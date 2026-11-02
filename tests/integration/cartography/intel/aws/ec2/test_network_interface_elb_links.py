@@ -81,26 +81,26 @@ def _seed(neo4j_session):
     elb.load_load_balancers(
         neo4j_session,
         [_classic_elb(ACCOUNT_ID, 'enilb-classic', REGION), _classic_elb(ACCOUNT_ID, 'enilb-classic', 'us-west-2')],
-        ACCOUNT_ID, TEST_UPDATE_TAG,
+        ACCOUNT_ID, TEST_UPDATE_TAG, 'ws-enilb',
     )
     elb.load_load_balancers(
         neo4j_session, [_classic_elb(OTHER_ACCOUNT_ID, 'enilb-classic', REGION)], OTHER_ACCOUNT_ID, TEST_UPDATE_TAG,
+        'ws-enilb-other',
     )
     elbv2 = cartography.intel.aws.ec2.load_balancer_v2s
     elbv2.load_load_balancer_v2s(
         neo4j_session, [_elbv2(ACCOUNT_ID, 'app', 'enilb-alb', '50dc6c495c0c9188')],
-        ACCOUNT_ID, TEST_UPDATE_TAG, REGION,
+        ACCOUNT_ID, TEST_UPDATE_TAG, REGION, 'ws-enilb',
     )
     elbv2.load_load_balancer_v2s(
         neo4j_session, [_elbv2(OTHER_ACCOUNT_ID, 'app', 'enilb-alb', '50dc6c495c0c9188')],
-        OTHER_ACCOUNT_ID, TEST_UPDATE_TAG, REGION,
+        OTHER_ACCOUNT_ID, TEST_UPDATE_TAG, REGION, 'ws-enilb-other',
     )
 
 
 def _classic_arn(account_id):
-    # load_load_balancers stores the DNS name in the ARN slot of a classic load balancer.
-    dns = f'enilb-classic-{account_id}.{REGION}.elb.amazonaws.com'
-    return f'arn:aws:elasticloadbalancing:{REGION}:{account_id}:loadbalancer/{dns}'
+    # load_load_balancers builds the real classic ARN from the load balancer's name.
+    return f'arn:aws:elasticloadbalancing:{REGION}:{account_id}:loadbalancer/enilb-classic'
 
 
 ALB_ARN = f'arn:aws:elasticloadbalancing:{REGION}:{ACCOUNT_ID}:loadbalancer/app/enilb-alb/50dc6c495c0c9188'
