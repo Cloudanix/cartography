@@ -275,6 +275,7 @@ def load_bigquery_datasets_tx(
         dataset.firstseen = timestamp()
     SET
         dataset.lastseen = $gcp_update_tag,
+        dataset.lastupdated = $gcp_update_tag,
         dataset.name = d.name,
         dataset.uniqueId = d.uniqueId,
         dataset.consolelink = d.consolelink,
@@ -317,6 +318,7 @@ def load_bigquery_tables_tx(
         table.firstseen = timestamp()
     SET
         table.lastseen = $gcp_update_tag,
+        table.lastupdated = $gcp_update_tag,
         table.name = t.name,
         table.uniqueId = t.uniqueId,
         table.consolelink = t.consolelink,

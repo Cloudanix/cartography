@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_OWNERSHIP_PATH = '<-[:RESOURCE]-'
 OWNERSHIP_PATHS: Dict[str, str] = {
     'GCPKMSCryptoKey': '<-[:RESOURCE]-(:GCPKMSKeyRing)<-[:RESOURCE]-',
+    'GCPBigqueryTable': '<-[:HAS_TABLE]-(:GCPBigqueryDataset)<-[:RESOURCE]-',
 }
 
 

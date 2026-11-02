@@ -106,3 +106,72 @@ def test_dataflow_job_references_tables_only_inside_its_org(neo4j_session, mocke
     assert _rows(
         neo4j_session, "MATCH (:GCPDataFlowJob{id: 'job-bqt'})-[:REFERENCES]->(t:GCPBigqueryTable) RETURN t.id",
     ) == {(_table_id(PROJECT),)}
+
+
+def _sync_datasets(neo4j_session, mocker, project, tag, datasets):
+    # datasets: name -> labels; each dataset has one table "events" with the same labels.
+    module = bigquery
+    mocker.patch.object(
+        module, 'get_bigquery_dataset',
+        side_effect=lambda *_: [
+            {'datasetReference': {'datasetId': d}, 'labels': dict(lb)} for d, lb in datasets.items()
+        ],
+    )
+    mocker.patch.object(module, 'get_dataset_info', return_value={})
+    mocker.patch.object(module, 'get_dataset_access_info', side_effect=lambda *_: [])
+    mocker.patch.object(
+        module, 'get_bigquery_tables',
+        side_effect=lambda _b, d, *_: [{'tableReference': {'tableId': TABLE}, 'labels': dict(datasets[d['name']])}],
+    )
+    mocker.patch.object(module, 'get_table_info', return_value={})
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    module.sync(neo4j_session, None, project, tag, {**_params(project), 'UPDATE_TAG': tag}, [])
+
+
+def _bigquery_with_labels(neo4j_session, project):
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $p})-[:RESOURCE]->(d:GCPBigqueryDataset)
+        OPTIONAL MATCH (d)-[:HAS_TABLE]->(t:GCPBigqueryTable)
+        UNWIND [d, t] AS n
+        WITH DISTINCT n WHERE n IS NOT NULL
+        OPTIONAL MATCH (n)-[:LABELED]->(l:GCPLabel)
+        RETURN n.id AS id, l.id AS label
+        """,
+        p=project,
+    )
+    return {(r['id'], r['label']) for r in rows}
+
+
+def test_stale_datasets_tables_and_labels_are_cleaned(neo4j_session, mocker):
+    project, other = 'proj-bqc-a', 'proj-bqc-b'
+    for p in (project, other):
+        neo4j_session.run(
+            "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:GCPOrganization{id: $org})"
+            "-[:OWNER]->(:GCPProject{id: $p})",
+            ws=_params(p)['WORKSPACE_ID'], org=_params(p)['GCP_ORGANIZATION_ID'], p=p,
+        )
+        _sync_datasets(neo4j_session, mocker, p, TEST_UPDATE_TAG, {'old_ds': {'env': 'prod'}, 'kept_ds': {}})
+
+    def ids(p, d):
+        return f'projects/{p}/datasets/{d}', f'projects/{p}/datasets/{d}/tables/{TABLE}'
+
+    old_ds, old_table = ids(project, 'old_ds')
+    # Table labels are written too (the table hangs off its dataset, not the project).
+    assert {(old_ds, f'{old_ds}/label/env'), (old_table, f'{old_table}/label/env')} <= _bigquery_with_labels(
+        neo4j_session, project,
+    )
+
+    # Next sync: old_ds was deleted in GCP.
+    _sync_datasets(neo4j_session, mocker, project, TEST_UPDATE_TAG + 1, {'kept_ds': {}})
+
+    assert _bigquery_with_labels(neo4j_session, project) == {(i, None) for i in ids(project, 'kept_ds')}
+    assert neo4j_session.run(
+        "MATCH (n) WHERE n.id IN $ids OR n.id STARTS WITH $old RETURN count(n) AS c",
+        ids=[old_ds, old_table], old=f'{old_ds}/',
+    ).single()['c'] == 0
+    # The other tenant's same-named dataset, table and labels are untouched.
+    o_ds, o_table = ids(other, 'old_ds')
+    assert {(o_ds, f'{o_ds}/label/env'), (o_table, f'{o_table}/label/env')} <= _bigquery_with_labels(
+        neo4j_session, other,
+    )
