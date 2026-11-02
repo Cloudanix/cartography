@@ -123,15 +123,15 @@ def load_elastic_ip_addresses(
         MERGE (account)-[r:RESOURCE]->(address)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
-        WITH address
+        WITH account, address
 
-        MATCH (instance:EC2Instance) WHERE instance.id = address.instance_id
+        MATCH (account)-[:RESOURCE]->(instance:EC2Instance) WHERE instance.id = address.instance_id
         MERGE (instance)-[r:ELASTIC_IP_ADDRESS]->(address)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
-        WITH address
+        WITH account, address
 
-        MATCH (ni:NetworkInterface{id: address.network_interface_id})
+        MATCH (account)-[:RESOURCE]->(ni:NetworkInterface{id: address.network_interface_id})
         MERGE (ni)-[r:ELASTIC_IP_ADDRESS]->(address)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag

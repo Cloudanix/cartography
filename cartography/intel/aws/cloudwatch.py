@@ -163,7 +163,7 @@ def _load_event_rules_tx(
         rule.state = record.State,
         rule.role_arn = record.RoleArn
     WITH rule, record
-    MATCH (bus:AWSEventBridgeEventBus{arn:record.EventBusName})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(bus:AWSEventBridgeEventBus{arn:record.EventBusName})
     MERGE (bus)-[rt:HAS]->(rule)
     ON CREATE SET
         rt.firstseen = timestamp()
