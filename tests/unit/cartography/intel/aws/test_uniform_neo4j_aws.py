@@ -76,7 +76,7 @@ class TestEks:
         session = MagicMock()
         asgs = [{"AutoScalingGroupARN": "arn:aws:autoscaling:us-east-1:1234:autoScalingGroup:g1"}]
 
-        eks.attact_autoscaling_groups_to_nodegroups(session, "arn:nodegroup", asgs, TEST_UPDATE_TAG)
+        eks.attact_autoscaling_groups_to_nodegroups(session, "arn:nodegroup", asgs, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         call = session.execute_write.call_args
