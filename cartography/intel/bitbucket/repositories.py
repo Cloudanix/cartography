@@ -209,7 +209,8 @@ def _load_branches(tx: neo4j.Transaction, branches_data: List[Dict], common_job_
     br.lastupdated = $UpdateTag
 
     WITH br, branch
-    MATCH (repo:BitbucketRepository{id:branch.repo_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)-[:RESOURCE]->(:BitbucketProject)
+        -[:RESOURCE]->(repo:BitbucketRepository{id:branch.repo_id})
     MERGE (repo)-[r:BRANCH]->(br)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -218,17 +219,21 @@ def _load_branches(tx: neo4j.Transaction, branches_data: List[Dict], common_job_
     tx.run(
         ingest_branches,
         branchesData=branches_data,
+        WORKSPACE_ID=common_job_parameters["WORKSPACE_ID"],
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
 
 @timeit
-def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_language: List[Dict]) -> None:
+def load_languages(
+    neo4j_session: neo4j.Session, update_tag: int, repo_primary_language: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the relationships for repo languages
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param repo_primary_language: list of primary language to repo mappings
+    :param workspace_id: the syncing Cloudanix workspace; a language links only to a repo of its workspaces
     """
     ingest_languages = """
         UNWIND $DictList as lang
@@ -239,7 +244,8 @@ def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_l
         SET pl.lastupdated = $UpdateTag
         WITH pl, lang
 
-        MATCH (repo:BitbucketRepository{id: lang.repo_id})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)-[:RESOURCE]->(:BitbucketProject)
+            -[:RESOURCE]->(repo:BitbucketRepository{id: lang.repo_id})
         MERGE (repo)-[r:PRIMARY_LANGUAGE]->(pl)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $UpdateTag
@@ -250,6 +256,7 @@ def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_l
         ingest_languages,
         repo_primary_language,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
@@ -281,7 +288,8 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     re.consolelink = repo.consolelink
 
     WITH re, repo
-    MATCH (project:BitbucketProject{id:repo.project.uuid})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)
+        -[:RESOURCE]->(project:BitbucketProject{id:repo.project.uuid})
     MERGE (project)-[o:RESOURCE]->(re)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
@@ -291,6 +299,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
         ingest_repositories,
         reposData=repos_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
+        WORKSPACE_ID=common_job_parameters["WORKSPACE_ID"],
     )
 
 
@@ -299,10 +308,12 @@ def _update_repo_last_activity(
     repo_id: str,
     branches: List[Dict],
     default_branch: str,
+    workspace_id: str,
 ) -> None:
     """
     Compute and store last_activity_at for a Bitbucket repository from its branch commit dates.
     Priority: (1) default branch commit date, (2) max commit date across all branches.
+    :param workspace_id: the syncing Cloudanix workspace; only a repo of its Bitbucket workspaces is updated
     """
     last_activity_at = None
     # Priority 1: default branch commit date
@@ -321,8 +332,13 @@ def _update_repo_last_activity(
         iso_str, ts_ms = normalize_datetime(last_activity_at)
         run_write_query(
             neo4j_session,
-            "MATCH (r:BitbucketRepository{id: $RepoId}) SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs",  # noqa: E501
+            """
+            MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)
+                -[:RESOURCE]->(:BitbucketProject)-[:RESOURCE]->(r:BitbucketRepository{id: $RepoId})
+            SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs
+            """,
             RepoId=repo_id,
+            WORKSPACE_ID=workspace_id,
             LastActivity=iso_str,
             LastActivityTs=ts_ms,
         )
@@ -367,10 +383,15 @@ def sync(
         default_branch = repo.get("default_branch")
         transformed_branches = transform_branches(branches, repo["uuid"], default_branch, workspace_name, repo_slug)
         load_branches(neo4j_session, transformed_branches, common_job_parameters)
-        _update_repo_last_activity(neo4j_session, repo["uuid"], transformed_branches, default_branch)
+        _update_repo_last_activity(
+            neo4j_session, repo["uuid"], transformed_branches, default_branch, common_job_parameters["WORKSPACE_ID"],
+        )
 
     # Load languages
-    load_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"])
+    load_languages(
+        neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"],
+        common_job_parameters["WORKSPACE_ID"],
+    )
 
     if list_complete:
         cleanup(neo4j_session, common_job_parameters)
