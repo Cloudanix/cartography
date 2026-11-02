@@ -7,6 +7,7 @@ TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'eu-west-1'
 TEST_UPDATE_TAG = 123456789
 TEST_WORKSPACE_ID = '12345'
+API_ARN = "arn:aws:apigateway:us-east-1::/restapis/"
 
 
 def test_load_apigateway_rest_apis(neo4j_session):
@@ -19,8 +20,8 @@ def test_load_apigateway_rest_apis(neo4j_session):
     )
 
     expected_nodes = {
-        "test-001",
-        "test-002",
+        API_ARN + "test-001",
+        API_ARN + "test-002",
     }
 
     nodes = neo4j_session.run(
@@ -55,8 +56,8 @@ def test_load_apigateway_rest_apis_relationships(neo4j_session):
         TEST_UPDATE_TAG,
     )
     expected = {
-        (TEST_ACCOUNT_ID, 'test-001'),
-        (TEST_ACCOUNT_ID, 'test-002'),
+        (TEST_ACCOUNT_ID, API_ARN + 'test-001'),
+        (TEST_ACCOUNT_ID, API_ARN + 'test-002'),
     }
 
     # Fetch relationships
@@ -120,11 +121,11 @@ def test_load_apigateway_stages_relationships(neo4j_session):
 
     expected = {
         (
-            'test-001',
+            API_ARN + 'test-001',
             'arn:aws:apigateway:us-east-1::/restapis/test-001/stages/Cartography-testing-infra',
         ),
         (
-            'test-002',
+            API_ARN + 'test-002',
             'arn:aws:apigateway:us-east-1::/restapis/test-002/stages/Cartography-testing-unit',
         ),
     }
@@ -218,7 +219,7 @@ def test_load_apigateway_resources(neo4j_session):
     )
 
     expected_nodes = {
-        "3kzxbg5sa2",
+        API_ARN + "test-001/resources/3kzxbg5sa2",
     }
 
     nodes = neo4j_session.run(
@@ -245,7 +246,7 @@ def test_load_apigateway_resources_relationships(neo4j_session):
 
     expected = {
         (
-            'test-001', '3kzxbg5sa2',
+            API_ARN + 'test-001', API_ARN + 'test-001/resources/3kzxbg5sa2',
         ),
     }
 
@@ -303,7 +304,7 @@ def test_apigateway_analysis(neo4j_session):
     run_analysis_job('aws_apigateway_asset_exposure.json', neo4j_session, common_job_parameters)
 
     expected = {
-        ('test-001', 'endpoint_type'),
+        (API_ARN + 'test-001', 'endpoint_type'),
     }
 
     # Fetch relationships
@@ -371,9 +372,9 @@ def test_apigateway_exposure_honours_resource_policy(neo4j_session):
     )
     neo4j_session.run(
         """
-        MATCH (api:APIGatewayRestAPI{id: 'gw-policy-removed'}) SET api.policy_internet_accessible = false
+        MATCH (api:APIGatewayRestAPI{rest_api_id: 'gw-policy-removed'}) SET api.policy_internet_accessible = false
         WITH api
-        MATCH (open:APIGatewayRestAPI{id: 'gw-regional-open'})
+        MATCH (open:APIGatewayRestAPI{rest_api_id: 'gw-regional-open'})
         UNWIND $resources AS res
         MERGE (open)-[:RESOURCE]->(r:APIGatewayResource{id: res})
         SET r.anonymous_access = CASE WHEN res = 'gw-res-stale' THEN true END
@@ -398,7 +399,7 @@ def test_apigateway_exposure_honours_resource_policy(neo4j_session):
         MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(api:APIGatewayRestAPI)
         OPTIONAL MATCH (api)-[:RESOURCE]->(res:APIGatewayResource)
         WITH api, collect(res) AS resources
-        RETURN api.id AS id, api.exposed_internet AS exposed, api.anonymous_access AS anonymous,
+        RETURN api.rest_api_id AS id, api.exposed_internet AS exposed, api.anonymous_access AS anonymous,
                [r IN resources WHERE r.anonymous_access OR r.exposed_internet | r.id] AS public_resources
         """,
         account_id=POLICY_ACCOUNT_ID,
@@ -465,7 +466,7 @@ def test_apigateway_exposure_honours_disabled_execute_api_endpoint(neo4j_session
     nodes = neo4j_session.run(
         """
         MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(api:APIGatewayRestAPI{exposed_internet: true})
-        RETURN api.id AS id
+        RETURN api.rest_api_id AS id
         """,
         account_id=DOMAIN_ACCOUNT_ID,
     )

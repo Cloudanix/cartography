@@ -333,7 +333,8 @@ def _seed_rest_apis(neo4j_session, account_id, apis):
         """
         UNWIND $apis AS a
         MATCH (aa:AWSAccount{id: $account_id})
-        MERGE (aa)-[:RESOURCE]->(:APIGatewayRestAPI{id: a.id, endpoint_conf_types: a.types})
+        MERGE (aa)-[:RESOURCE]->(api:APIGatewayRestAPI{id: 'arn:aws:apigateway:us-east-1::/restapis/' + a.id})
+        SET api.rest_api_id = a.id, api.endpoint_conf_types = a.types
         """,
         account_id=account_id, apis=apis,
     )

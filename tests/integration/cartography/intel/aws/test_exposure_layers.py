@@ -171,7 +171,12 @@ def _managed(session):
         SET lf.functionurl = 'https://x.lambda-url.us-east-1.on.aws/', lf.functionurl_auth_type = 'NONE',
             lf.runtime = 'python3.12'
         MERGE (a)-[:RESOURCE]->(api:APIGatewayRestAPI{id: 'api-open'})
-        SET api.endpoint_conf_types = ['REGIONAL'], api.disableexecuteapiendpoint = false
+        SET api.endpoint_conf_types = ['REGIONAL'], api.disableexecuteapiendpoint = false, api.rest_api_id = 'api-open'
+        // Keyed on its ARN like the loader writes it; the function's trigger names the short id.
+        MERGE (a)-[:RESOURCE]->(priv:APIGatewayRestAPI{id: 'arn:aws:apigateway:us-east-1::/restapis/api-priv'})
+        SET priv.endpoint_conf_types = ['PRIVATE'], priv.rest_api_id = 'api-priv'
+        MERGE (a)-[:RESOURCE]->(fn_priv:AWSLambda{id: 'fn-private-api'})
+        SET fn_priv.public_trigger_sources = ['apigateway'], fn_priv.apigateway_source_api_ids = ['api-priv']
         MERGE (api)-[:RESOURCE]->(:APIGatewayResource{id: 'res-1', unauthenticated_methods: ['GET']})
         // get_resources failed: no resources, or methods stored null next to an empty list.
         MERGE (a)-[:RESOURCE]->(:APIGatewayRestAPI{id: 'api-no-resources'})
@@ -416,6 +421,7 @@ def test_aws_exposure_layers_end_to_end(neo4j_session):
     assert reach('RDSInstance', 'db-public')[:2] == (True, ['tcp:5432-5432'])
     assert reach('AWSLambda', 'fn-url') == (True, ['tcp:443-443'], ['function_url'], ['function_url'])
     assert reach('APIGatewayRestAPI', 'api-open')[0] is True
+    assert reach('AWSLambda', 'fn-private-api')[0] is False
     assert reach('ElasticacheCluster', 'cache-1')[0] is False
     assert reach('S3Bucket', 'bucket-public')[3] == ['public_resource_policy']
 
