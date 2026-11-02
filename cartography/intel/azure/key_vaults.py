@@ -12,7 +12,6 @@ from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
-from cartography.util import get_azure_subscription_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -145,24 +144,24 @@ def _load_key_vaults_tx(
     )
     for key_vault in key_vaults_list:
         resource_group = get_azure_resource_group_name(key_vault.get('id'))
-        _attach_resource_group_key_vaults(tx, key_vault['id'], resource_group, update_tag)
+        _attach_resource_group_key_vaults(tx, subscription_id, key_vault['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_key_vaults(tx: neo4j.Transaction, key_vault_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_key_vaults(
+    tx: neo4j.Transaction, subscription_id: str, key_vault_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_vault = """
-    MATCH (k:AzureKeyVault{id: $key_vault_id})
-    WITH k
-    MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})
-    MATCH (rg_sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(k:AzureKeyVault{id: $key_vault_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (k)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
     tx.run(
         ingest_vault,
+        subscription_id=subscription_id,
         key_vault_id=key_vault_id,
         resource_group=resource_group,
-        resource_group_subscription_id=get_azure_subscription_id(key_vault_id),
         update_tag=update_tag,
     )
 
@@ -213,7 +212,7 @@ def _load_key_vaults_keys_tx(
     k.managed = key.managed
     SET k.consolelink = coalesce(key.consolelink, k.consolelink), k.lastupdated = $update_tag
     WITH k, key
-    MATCH (keyvault:AzureKeyVault{id: key.vault_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(keyvault:AzureKeyVault{id: key.vault_id})
     MERGE (keyvault)-[r:HAS_KEY]->(k)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -274,7 +273,7 @@ def _load_key_vault_secrets_tx(
     s.managed = s.managed
     SET s.consolelink = coalesce(sec.consolelink, s.consolelink), s.lasupdated = $update_tag
     WITH s, sec
-    MATCH (keyvault:AzureKeyVault{id: sec.vault_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(keyvault:AzureKeyVault{id: sec.vault_id})
     MERGE (keyvault)-[r:HAS_SECRET]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -345,7 +344,7 @@ def _load_key_vault_certificates_tx(
     c.secretId = cert.sid
     SET c.consolelink = coalesce(cert.consolelink, c.consolelink), c.lasupdated = $update_tag
     WITH c, cert
-    MATCH (keyvault:AzureKeyVault{id: cert.vault_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(keyvault:AzureKeyVault{id: cert.vault_id})
     MERGE (keyvault)-[r:HAS_CERTIFICATE]->(c)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag

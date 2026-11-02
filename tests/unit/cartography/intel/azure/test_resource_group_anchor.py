@@ -8,8 +8,9 @@ from cartography.util import get_azure_subscription_id
 
 AZURE_INTEL = Path(cartography.intel.azure.__file__).parent
 RG_BY_NAME = re.compile(r"\(\s*\w*\s*:\s*AzureResourceGroup\s*\{\s*name\s*:")
-SUBSCRIPTION = "MATCH (rg_sub:AzureSubscription{id: $resource_group_subscription_id})"
-ANCHORED = "MATCH (rg_sub)-[:RESOURCE]->("
+# The group is reached from a variable bound to the subscription the sync is loading.
+ANCHORED = re.compile(r"MATCH \((\w+)\)-\[:RESOURCE\]->\(\w+:AzureResourceGroup\{name:")
+SYNCING_SUBSCRIPTION = r"\({var}:AzureSubscription\{{id: \$(subscription_id|SUBSCRIPTION_ID|AZURE_SUBSCRIPTION_ID|resource_group_subscription_id)\}}\)"
 
 
 @pytest.mark.parametrize(
@@ -26,7 +27,7 @@ def test_get_azure_subscription_id(arm_id, expected):
     assert get_azure_subscription_id(arm_id) == expected
 
 
-def test_resource_groups_are_matched_by_name_only_under_a_subscription():
+def test_resource_groups_are_matched_by_name_only_under_the_syncing_subscription():
     # Resource group names (NetworkWatcherRG, DefaultResourceGroup-EUS, ...) repeat in every
     # subscription of every tenant: a name-only MATCH links one customer's resources to all of them.
     unanchored = []
@@ -35,6 +36,8 @@ def test_resource_groups_are_matched_by_name_only_under_a_subscription():
         for number, line in enumerate(lines, 1):
             if not RG_BY_NAME.search(line):
                 continue
-            if ANCHORED not in line or SUBSCRIPTION not in lines[number - 2]:
+            anchored = ANCHORED.search(line)
+            before = '\n'.join(lines[max(0, number - 4):number])
+            if not anchored or not re.search(SYNCING_SUBSCRIPTION.format(var=anchored.group(1)), before):
                 unanchored.append(f'{path.name}:{number}: {line.strip()}')
     assert unanchored == []
