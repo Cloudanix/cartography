@@ -1,11 +1,16 @@
+import pytest
+
 from cartography.intel.aws import ecr
 from cartography.intel.aws.ec2 import images
+from cartography.util import run_cleanup_job
 from tests.integration.cartography.intel.aws.common import create_test_org_account
 from tests.integration.cartography.intel.aws.common import exposure_job_parameters
 
-OLD_TAG = 1
-OWNER_TAG = 2
-CLEANUP_TAG = 3
+# Real-looking epoch seconds: the orphan sweeps only delete nodes untouched for ORPHAN_GRACE.
+ORPHAN_GRACE = 86400
+CLEANUP_TAG = 1_793_600_000
+OWNER_TAG = CLEANUP_TAG - 3600
+OLD_TAG = CLEANUP_TAG - 2 * ORPHAN_GRACE
 ACCOUNT_ID = '777777777808'
 OTHER_ACCOUNT_ID = '888888888808'
 
@@ -87,3 +92,32 @@ def test_ecr_cleanup_keeps_an_image_another_tenant_still_references(neo4j_sessio
     assert links == {('shc-repo-a:1', 'sha256:shc-shared')}
     orphans = neo4j_session.run("MATCH (img:ECRImage{id: 'sha256:shc-gone'}) RETURN count(img) AS n")
     assert orphans.single()['n'] == 0
+
+
+@pytest.mark.parametrize(
+    'label, job', [
+        ('EC2Image', 'aws_ec2_image_orphan_cleanup.json'),
+        ('ECRImage', 'aws_ecr_image_orphan_cleanup.json'),
+    ],
+)
+def test_orphan_sweep_spares_a_node_another_worker_just_wrote(neo4j_session, label, job):
+    # 'fresh' stands for a node another worker's sync has written but not linked yet; the sweep must
+    # leave it alone. 'stale' has had no edge and no write for longer than the grace window.
+    neo4j_session.run(
+        f"""
+        MERGE (fresh:{label}{{id: 'shc-sweep-fresh'}}) SET fresh.lastupdated = $fresh_tag
+        MERGE (edge:{label}{{id: 'shc-sweep-edge'}}) SET edge.lastupdated = $old_tag
+        MERGE (stale:{label}{{id: 'shc-sweep-stale'}}) SET stale.lastupdated = $old_tag
+        MERGE (holder:ShcSweepHolder{{id: 'shc-sweep-holder'}})-[:HOLDS]->(edge)
+        """,
+        fresh_tag=CLEANUP_TAG - 60, old_tag=OLD_TAG,
+    )
+
+    run_cleanup_job(job, neo4j_session, {'UPDATE_TAG': CLEANUP_TAG})
+
+    left = {
+        row['id'] for row in neo4j_session.run(
+            f"MATCH (n:{label}) WHERE n.id STARTS WITH 'shc-sweep-' RETURN n.id AS id",
+        )
+    }
+    assert left == {'shc-sweep-fresh', 'shc-sweep-edge'}
