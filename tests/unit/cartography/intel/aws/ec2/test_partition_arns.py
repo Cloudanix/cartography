@@ -101,7 +101,7 @@ def test_load_ec2_security_groupinfo(load_graph_data, _rules, kwargs, region, pr
 @patch.object(vpc_peerings, 'load_graph_data')
 def test_load_vpc_peerings(load_graph_data, kwargs, region, prefix):
     data = [{'VpcPeeringConnectionId': 'pcx-1'}]
-    vpc_peerings.load_vpc_peerings(MagicMock(), data, region, ACCOUNT, 1, **kwargs)
+    vpc_peerings.load_vpc_peerings(MagicMock(), data, region, ACCOUNT, 1, 'ws', **kwargs)
     assert _rows(load_graph_data)[0]['arn'] == f'{prefix}ec2:{region}:{ACCOUNT}:vpc-peering-connection/pcx-1'
 
 

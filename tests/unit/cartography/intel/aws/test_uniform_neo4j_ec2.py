@@ -129,7 +129,7 @@ class TestBatchedLoaders:
             "RequesterVpcInfo": {"VpcId": "vpc-2", "CidrBlockSet": []},
         }]
 
-        vpc_peerings.load_vpc_peerings(session, data, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        vpc_peerings.load_vpc_peerings(session, data, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
 
         session.run.assert_not_called()
         assert_batched(session.execute_write.call_args, data)

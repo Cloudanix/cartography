@@ -8,7 +8,7 @@ from cartography.intel.aws.ec2 import vpc_peerings
 @patch.object(vpc_peerings, 'load_graph_data')
 def test_peering_arn_read_from_row(load_graph_data):
     data = [{'VpcPeeringConnectionId': 'pcx-1'}]
-    vpc_peerings.load_vpc_peerings(MagicMock(), data, 'us-east-1', '123456789012', 1)
+    vpc_peerings.load_vpc_peerings(MagicMock(), data, 'us-east-1', '123456789012', 1, 'ws')
 
     query, rows = load_graph_data.call_args.args[1:3]
     row_var = re.search(r"UNWIND \$DictList AS (\w+)", query, re.IGNORECASE).group(1)

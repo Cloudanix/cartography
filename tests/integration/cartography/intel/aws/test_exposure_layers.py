@@ -270,7 +270,7 @@ def _build_cross_vpc(session):
         _vpc(session, vpc_id, cidr)
     peerings = [_peering('pcx-ok', 'vpc-src', 'vpc-peer'), _peering('pcx-noroute', 'vpc-src', 'vpc-noroute')]
     for loader in (load_vpc_peerings, load_accepter_cidrs, load_requester_cidrs):
-        loader(session, peerings, 'us-east-1', ACCOUNT, TAG)
+        loader(session, peerings, 'us-east-1', ACCOUNT, TAG, WS)
     tgw = {
         'TransitGatewayId': 'tgw-xl', 'TransitGatewayArn': 'arn:aws:ec2:us-east-1:1:transit-gateway/tgw-xl',
         'OwnerId': ACCOUNT, 'State': 'available', 'Description': '',
