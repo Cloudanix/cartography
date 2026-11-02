@@ -135,8 +135,12 @@ def load_caches(neo4j_session: neo4j.Session, subscription_id: str, caches: List
         ON CREATE SET g.firstseen = timestamp()
         SET g.lastupdated = $update_tag
     )
-    WITH c, cache
-    OPTIONAL MATCH (s:AzureNetworkSubnet{id: cache.subnet_id})
+    WITH c, cache, sub
+    // The injected subnet sits in a subscription of the cache's own tenant, never another customer's.
+    // Two clauses: one pattern may not walk the tenant -> own subscription edge twice.
+    OPTIONAL MATCH (sub)<-[:RESOURCE]-(tenant:AzureTenant)
+    OPTIONAL MATCH (tenant)-[:RESOURCE]->(:AzureSubscription)-[:RESOURCE]->(:AzureNetwork)
+        -[:CONTAIN]->(s:AzureNetworkSubnet{id: cache.subnet_id})
     FOREACH (_ IN CASE WHEN s IS NULL THEN [] ELSE [1] END |
         MERGE (c)-[n:SUBNET]->(s)
         ON CREATE SET n.firstseen = timestamp()
@@ -146,10 +150,10 @@ def load_caches(neo4j_session: neo4j.Session, subscription_id: str, caches: List
     load_graph_data(neo4j_session, query, caches, subscription_id=subscription_id, update_tag=update_tag)
 
 
-def load_firewall_rules(neo4j_session: neo4j.Session, rules: List[Dict], update_tag: int) -> None:
+def load_firewall_rules(neo4j_session: neo4j.Session, subscription_id: str, rules: List[Dict], update_tag: int) -> None:
     query = """
     UNWIND $DictList AS rule
-    MATCH (c:AzureRedisCache{id: rule.cache_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(c:AzureRedisCache{id: rule.cache_id})
     MERGE (fw:AzureRedisFirewallRule{id: rule.id})
     ON CREATE SET fw.firstseen = timestamp()
     SET fw.name = rule.name,
@@ -161,7 +165,7 @@ def load_firewall_rules(neo4j_session: neo4j.Session, rules: List[Dict], update_
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    load_graph_data(neo4j_session, query, rules, update_tag=update_tag)
+    load_graph_data(neo4j_session, query, rules, subscription_id=subscription_id, update_tag=update_tag)
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
@@ -184,5 +188,5 @@ def sync(
         rules.extend(cache_rules or [])
 
     load_caches(neo4j_session, subscription_id, caches, update_tag)
-    load_firewall_rules(neo4j_session, rules, update_tag)
+    load_firewall_rules(neo4j_session, subscription_id, rules, update_tag)
     cleanup(neo4j_session, common_job_parameters)
