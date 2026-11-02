@@ -462,9 +462,11 @@ def front_door_backends(
     members = {(NIC, r["id"]): (r["subnets"], r["nsgs"]) for r in nic_rows}
     members.update({(VMSS, r["id"]): (r["subnets"], r["nsgs"]) for r in vmss_rows})
     return gateways.Backends(
-        index.by_ipconfig, index.by_pool, gateways.nics_by_ip(nic_rows, NIC), members,
-        subnets, nsg_rules, nsgs, results, world_denies(nsg_rules),
-        gateways.vnet_peers(q(gateways.PEERING_QUERY)), gateways.web_app_hosts(q(gateways.WEB_APP_HOST_QUERY)),
+        by_ipconfig=index.by_ipconfig, by_pool=index.by_pool, by_ip=gateways.nics_by_ip(nic_rows, NIC),
+        members=members, subnets=subnets, nsg_rules=nsg_rules, world_nsgs=nsgs, results=results,
+        world_denies=world_denies(nsg_rules),
+        peers=gateways.vnet_peers(q(gateways.PEERING_QUERY)),
+        apps_by_host=gateways.web_app_hosts(q(gateways.WEB_APP_HOST_QUERY)),
     )
 
 
