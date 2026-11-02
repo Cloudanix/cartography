@@ -91,11 +91,12 @@ def get_users(api_url: str, organization_name: str, access_token: str) -> List[D
 def load_users(
     neo4j_session: neo4j.Session,
     user_data: List[Dict],
-    org_name: str,
+    org_node_id: str,
     common_job_parameters: Dict[str, Any],
 ) -> None:
     """
-    Load Azure DevOps user data into Neo4j with comprehensive properties.
+    Load Azure DevOps user data into Neo4j with comprehensive properties, as members of the organization whose
+    graph id is org_node_id (common_job_parameters["ORGANIZATION_ID"]).
     - id: User ID (unique identifier)
     - name: Display name
     - principalName: Principal name (email/UPN)
@@ -134,7 +135,7 @@ def load_users(
         neo4j_session,
         query,
         user_data,
-        OrganizationName=org_name,
+        OrganizationName=org_node_id,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
@@ -162,6 +163,6 @@ def sync(
     if users:
         users_link = get_console_link("user", base_url=url, organization=org_name)
         transformed_users = [transform_user(user_data, users_link) for user_data in users]
-        load_users(neo4j_session, transformed_users, org_name, common_job_parameters)
+        load_users(neo4j_session, transformed_users, common_job_parameters["ORGANIZATION_ID"], common_job_parameters)
         cleanup(neo4j_session, common_job_parameters)
     logger.info(f"Processed {len(users) if users else 0} users for org '{org_name}'")

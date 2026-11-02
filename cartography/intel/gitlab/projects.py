@@ -12,6 +12,7 @@ from urllib.parse import quote
 import neo4j
 
 from cartography.intel.gitlab.common import get_console_link
+from cartography.intel.gitlab.common import get_node_id
 from cartography.intel.gitlab.common import get_web_base_url
 from cartography.intel.gitlab.pagination import paginate_request
 from cartography.util import make_requests_url
@@ -62,6 +63,7 @@ def get_project_branches(hosted_domain: str, access_token: str, project_id: int)
 def transform_projects_data(projects: List[Dict], hosted_domain: Optional[str] = None) -> List[Dict]:
     base_url = get_web_base_url(hosted_domain)
     for project in projects:
+        project["node_id"] = get_node_id(hosted_domain, project.get("id"))
         project["consolelink"] = get_console_link(
             "project", base_url=base_url, project_path=project.get("path_with_namespace"),
         )
@@ -89,6 +91,7 @@ def transform_branches_data(
     transformed_branches = []
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
     base_url = get_web_base_url(hosted_domain)
+    project_node_id = get_node_id(hosted_domain, project_id)
 
     for branch in branches:
         branch_name = branch["name"]
@@ -101,7 +104,8 @@ def transform_branches_data(
             transformed_branches.append({
                 "project_id": project_id,
                 "project_path": project_path,
-                "id": f"{project_id}:{branch_name}",
+                "project_node_id": project_node_id,
+                "id": f"{project_node_id}:{branch_name}",
                 "name": branch_name,
                 "committed_date": committed_date_str,
                 "consolelink": consolelink,
@@ -115,7 +119,8 @@ def transform_branches_data(
                 transformed_branches.append({
                     "project_id": project_id,
                     "project_path": project_path,
-                    "id": f"{project_id}:{branch_name}",
+                    "project_node_id": project_node_id,
+                    "id": f"{project_node_id}:{branch_name}",
                     "name": branch_name,
                     "committed_date": committed_date_str,
                     "consolelink": consolelink,
@@ -124,7 +129,8 @@ def transform_branches_data(
             transformed_branches.append({
                 "project_id": project_id,
                 "project_path": project_path,
-                "id": f"{project_id}:{branch_name}",
+                "project_node_id": project_node_id,
+                "id": f"{project_node_id}:{branch_name}",
                 "name": branch_name,
                 "committed_date": committed_date_str,
                 "consolelink": consolelink,
@@ -137,13 +143,16 @@ def load_projects_data(
     session: neo4j.Session,
     project_data: List[Dict],
     common_job_parameters: Dict,
-    group_id: int,
+    group_node_id: str,
 ) -> None:
+    """
+    :param group_node_id: the group's graph id (common_job_parameters["GITLAB_GROUP_NODE_ID"])
+    """
     session.execute_write(
         _load_projects_data,
         project_data,
         common_job_parameters,
-        group_id,
+        group_node_id,
     )
 
 
@@ -151,11 +160,16 @@ def load_branches_data(
     session: neo4j.Session,
     branches_data: List[Dict],
     common_job_parameters: Dict,
+    group_node_id: str,
 ) -> None:
+    """
+    :param group_node_id: the group's graph id; a branch attaches only to a project of this group
+    """
     session.execute_write(
         _load_branches_data,
         branches_data,
         common_job_parameters,
+        group_node_id,
     )
 
 
@@ -163,6 +177,7 @@ def _load_branches_data(
     tx: neo4j.Transaction,
     branches_data: List[Dict],
     common_job_parameters: Dict,
+    group_node_id: str,
 ) -> None:
     ingest_branches = """
     UNWIND $branchesData as branch
@@ -175,7 +190,7 @@ def _load_branches_data(
     br.lastupdated = $UpdateTag
 
     WITH br, branch
-    MATCH (project:GitLabProject{path_with_namespace:branch.project_path})
+    MATCH (:GitLabGroup{id: $GroupId})-[:RESOURCE]->(project:GitLabProject{id: branch.project_node_id})
     MERGE (project)-[r:BRANCH]->(br)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -185,6 +200,7 @@ def _load_branches_data(
         ingest_branches,
         branchesData=branches_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
+        GroupId=group_node_id,
     )
 
 
@@ -192,11 +208,11 @@ def _load_projects_data(
     tx: neo4j.Transaction,
     project_data: List[Dict],
     common_job_parameters: Dict,
-    group_id: int,
+    group_node_id: str,
 ) -> None:
     ingest_group = """
     UNWIND $projectData as project
-    MERGE (pro:GitLabProject {id: project.id})
+    MERGE (pro:GitLabProject {id: project.node_id})
     ON CREATE SET
         pro.firstseen = timestamp(),
         pro.created_at = project.created_at
@@ -233,7 +249,7 @@ def _load_projects_data(
         ingest_group,
         projectData=project_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
-        GroupId=group_id,
+        GroupId=group_node_id,
     )
 
 
@@ -277,7 +293,8 @@ def sync(
 
     group_projects = transform_projects_data(group_projects, hosted_domain)
 
-    load_projects_data(neo4j_session, group_projects, common_job_parameters, group_id)
+    group_node_id = common_job_parameters["GITLAB_GROUP_NODE_ID"]
+    load_projects_data(neo4j_session, group_projects, common_job_parameters, group_node_id)
 
     # Sync branches for each project
     for project in group_projects:
@@ -289,7 +306,7 @@ def sync(
             project.get("default_branch"),
             hosted_domain,
         )
-        load_branches_data(neo4j_session, transformed_branches, common_job_parameters)
+        load_branches_data(neo4j_session, transformed_branches, common_job_parameters, group_node_id)
 
     cleanup(neo4j_session, common_job_parameters)
 

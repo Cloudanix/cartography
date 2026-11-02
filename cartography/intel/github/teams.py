@@ -12,6 +12,7 @@ from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_org_node_id
 from cartography.intel.github.util import get_web_base_url
 from cartography.intel.github.util import PaginatedGraphqlData
 from cartography.models.github.teams import GitHubTeamSchema
@@ -184,9 +185,12 @@ def sync_github_teams(
 
     teams_paginated, org_data = get_teams(organization, github_url, github_api_key)
     team_repos = _get_team_repos_for_multiple_teams(teams_paginated.nodes, organization, github_url, github_api_key)
-    processed_data = transform_teams(teams_paginated, org_data, team_repos, get_web_base_url(github_url))
-    load_team_repos(neo4j_session, processed_data, common_job_parameters["UPDATE_TAG"], org_data["login"])
-    common_job_parameters["org_login"] = org_data["login"]
+    web_base_url = get_web_base_url(github_url)
+    processed_data = transform_teams(teams_paginated, org_data, team_repos, web_base_url)
+    # org_login is the org's graph id (host-qualified off github.com), which the team schema matches on.
+    org_node_id = get_org_node_id(web_base_url, org_data["login"])
+    load_team_repos(neo4j_session, processed_data, common_job_parameters["UPDATE_TAG"], org_node_id)
+    common_job_parameters["org_login"] = org_node_id
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

@@ -17,6 +17,8 @@ from . import organization
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph.session import Session
+from cartography.intel.github.util import get_org_node_id
+from cartography.intel.github.util import get_web_base_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -71,6 +73,10 @@ def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: D
     _service_timings: Dict = {}
     _failed_services: Dict = {}
     try:
+        # Cleanup jobs anchor on the org's graph id, host-qualified off github.com (see get_org_node_id).
+        common_job_parameters["ORGANIZATION_ID"] = get_org_node_id(
+            get_web_base_url(auth_data["url"]), auth_data["name"],
+        )
         logger.info("Syncing Github Organization: %s", common_job_parameters["ORGANIZATION_ID"])
         organization.sync(neo4j_session, auth_data["token"], auth_data["name"], auth_data["url"], common_job_parameters)
 

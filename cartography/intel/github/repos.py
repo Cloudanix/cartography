@@ -21,6 +21,7 @@ from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import describe_request_error
 from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_org_node_id
 from cartography.intel.github.util import get_retry_delay_seconds
 from cartography.intel.github.util import get_web_base_url
 from cartography.intel.github.util import handle_rate_limit_sleep
@@ -312,7 +313,7 @@ def transform(repos_json: List[Dict], web_base_url: Optional[str] = None) -> Dic
     for repo_object in repos_json:
         _transform_repo_languages(repo_object["url"], repo_object, transformed_repo_languages)
         _transform_repo_objects(repo_object, transformed_repo_list, web_base_url)
-        _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
+        _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners, web_base_url)
         _transform_collaborators(repo_object.get("collaborators"), repo_object["url"], transformed_collaborators)
         _transform_branches(repo_object["url"], repo_object, transformed_branches, web_base_url)
         # _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
@@ -490,18 +491,22 @@ def _transform_repo_objects(
     )
 
 
-def _transform_repo_owners(owner_id: str, repo: Dict, repo_owners: List[Dict]) -> None:
+def _transform_repo_owners(
+    owner_id: str, repo: Dict, repo_owners: List[Dict], web_base_url: Optional[str] = None,
+) -> None:
     """
     Helper function to transform repo owners.
     :param owner_id: The URL of the owner object (either of type Organization or User).
     :param repo: The repo object; see tests.data.github.repos.GET_REPOS for data shape.
     :param repo_owners: Output array to append transformed results to.
+    :param web_base_url: GitHub web host the repo lives on; None means github.com.
     :return: Nothing.
     """
     repo_owners.append(
         {
             "repo_id": repo["url"],
             "owner": repo["owner"]["login"],
+            "owner_node_id": get_org_node_id(web_base_url, repo["owner"]["login"]),
             "owner_id": owner_id,
             "type": repo["owner"]["__typename"],
         },
@@ -764,7 +769,7 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
     """
     ingest_owner_template = Template("""
         UNWIND $DictList AS item
-        MERGE (node:$account_type{id: item.owner})
+        MERGE (node:$account_type{id: item.owner_node_id})
         ON CREATE SET node.firstseen = timestamp()
         SET node.username = item.owner,
         node.lastupdated = $UpdateTag
@@ -781,7 +786,7 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
 
     for owner_type, type_label in account_type.items():
         rows = [
-            {"owner": owner["owner"], "repo_id": owner["repo_id"]}
+            {"owner": owner["owner"], "owner_node_id": owner["owner_node_id"], "repo_id": owner["repo_id"]}
             for owner in repo_owners
             if owner["type"] == owner_type
         ]

@@ -29,7 +29,7 @@ class TestLoadUsers:
 class TestLoadOrganization:
     def test_goes_through_managed_tx(self):
         session = MagicMock()
-        org_data = {"name": "org-1", "url": "https://dev.azure.com/org-1", "status": "active"}
+        org_data = {"node_id": "org-1", "name": "org-1", "url": "https://dev.azure.com/org-1", "status": "active"}
 
         organization.load_organization(session, org_data, COMMON_JOB_PARAMS)
 

@@ -1,5 +1,6 @@
 import logging
 from typing import Optional
+from typing import Union
 from urllib.parse import urlparse
 
 from cloudconsolelink.clouds.git import GitLinker
@@ -7,6 +8,8 @@ from cloudconsolelink.clouds.git import GitLinker
 logger = logging.getLogger(__name__)
 git_linker = GitLinker()
 WEB_SCHEMES = ("http", "https")
+# A native SCM id: a login / path / name, or GitLab's numeric project id (kept an int on gitlab.com).
+ScmKey = Optional[Union[str, int]]
 
 
 def safe_base_url(url: Optional[str], keep_path: bool = True) -> Optional[str]:
@@ -28,6 +31,28 @@ def safe_base_url(url: Optional[str], keep_path: bool = True) -> Optional[str]:
         return None
     base = f"{parsed.scheme}://{parsed.hostname}{f':{port}' if port else ''}"
     return f"{base}{parsed.path}".rstrip("/") if keep_path else base
+
+
+def host_scoped_key(base_url: Optional[str], saas_host: str, key: ScmKey) -> ScmKey:
+    """
+    Graph key for an SCM entity whose native id is unique only within one instance: an org login, a GitLab
+    group path, username or numeric project id, an Azure DevOps organization (collection) name.
+
+    On the SaaS host the bare key stays, the id these nodes have always had, so github.com / gitlab.com /
+    dev.azure.com assets keep their identity. Any other host (GitHub Enterprise Server, GHE.com, self-managed
+    GitLab, Azure DevOps Server) gets "<host>[:port][/path]/<key>", so two instances' "platform" never MERGE
+    into one node that two tenants then share.
+
+    :param base_url: the configured web/API base url of the instance; None, or a url that is not plain http(s),
+        means the SaaS host (the same fallback the console links use)
+    :param saas_host: the provider's public host, e.g. "github.com"
+    :param key: the native id; None stays None
+    :return: the key, host-qualified unless the instance is the SaaS host
+    """
+    base = safe_base_url(base_url)
+    if key is None or not base or urlparse(base).hostname == saas_host:
+        return key
+    return f"{base.split('://', 1)[1]}/{key}"
 
 
 def get_console_link(

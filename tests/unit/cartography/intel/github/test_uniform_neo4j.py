@@ -13,7 +13,7 @@ TEST_UPDATE_TAG = 123456789
 COMMON_JOB_PARAMS = {"UPDATE_TAG": TEST_UPDATE_TAG, "WORKSPACE_ID": "ws-1"}
 
 ORG_DATA = {
-    "login": "acme", "url": "https://github.com/acme", "email": None, "id": "O1",
+    "login": "acme", "node_id": "acme", "url": "https://github.com/acme", "email": None, "id": "O1",
     "name": "Acme", "description": "", "createdAt": "2020-01-01", "isVerified": True,
     "location": "", "websiteUrl": "", "requiresTwoFactorAuthentication": True,
 }
