@@ -1,10 +1,17 @@
 {
-    "statements": [
-        {
-            "query": "MATCH (n:GCPContainerRepository) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n)",
-            "iterative": true,
-            "iterationsize": 100
-        }
-    ],
-    "name": "cleanup GCP Container Repositories"
+	"statements": [
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(n:GCPContainerRepository) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Delete this project's GCP Container Repositories that were not seen in the latest sync. No loader writes this label today (the module that would was never added). Anchored to the syncing project in the shape of gcp_artifact_registry_*_cleanup.json, so wiring it up cannot delete another tenant's nodes."
+		},
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[r:RESOURCE]->(:GCPContainerRepository) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove GCP Project-to-Container Repository relationships that are out of date."
+		}
+	],
+	"name": "cleanup GCP Container Repositories"
 }

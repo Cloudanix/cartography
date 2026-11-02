@@ -123,3 +123,35 @@ def test_domain_cleanup_keeps_a_domain_another_tenant_grants(neo4j_session):
 
     run_cleanup_job('gcp_iam_domains_cleanup.json', neo4j_session, _params('b', OTHER_TAG + 1))
     assert _domain_owners(neo4j_session, domain) == set()
+
+
+CONTAINER_JOBS = (
+    'gcp_container_versions_cleanup.json', 'gcp_container_packages_cleanup.json',
+    'gcp_container_repositories_cleanup.json',
+)
+
+
+def test_container_cleanups_stay_inside_the_project(neo4j_session):
+    # No loader writes these labels today; seed the repository -> package -> version shape the jobs expect.
+    for tenant, tag in (('a', OWN_TAG), ('b', OTHER_TAG)):
+        _seed(neo4j_session, tenant, tag)
+        neo4j_session.run(
+            """
+            MATCH (p:GCPProject{id: $GCP_PROJECT_ID})
+            MERGE (p)-[r1:RESOURCE]->(repo:GCPContainerRepository{id: $GCP_PROJECT_ID + '/repo'})
+            MERGE (repo)-[r2:CONTAINS]->(pkg:GCPContainerPackage{id: $GCP_PROJECT_ID + '/pkg'})
+            MERGE (pkg)-[r3:CONTAINS]->(ver:GCPContainerVersion{id: $GCP_PROJECT_ID + '/ver'})
+            SET repo.lastupdated = $UPDATE_TAG, pkg.lastupdated = $UPDATE_TAG, ver.lastupdated = $UPDATE_TAG,
+                r1.lastupdated = $UPDATE_TAG, r2.lastupdated = $UPDATE_TAG, r3.lastupdated = $UPDATE_TAG
+            """,
+            **_params(tenant, tag),
+        )
+
+    # Tenant a's next sync no longer sees its repository: only its own nodes go.
+    for job in CONTAINER_JOBS:
+        run_cleanup_job(job, neo4j_session, _params('a', OWN_TAG + 1))
+
+    rows = neo4j_session.run(
+        "MATCH (n) WHERE n:GCPContainerRepository OR n:GCPContainerPackage OR n:GCPContainerVersion RETURN n.id AS id",
+    )
+    assert {r['id'] for r in rows} == {'proj-snc-b/repo', 'proj-snc-b/pkg', 'proj-snc-b/ver'}
