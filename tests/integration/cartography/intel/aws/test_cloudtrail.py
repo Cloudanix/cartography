@@ -24,7 +24,7 @@ def test_load_cloudtrails(neo4j_session):
         aws_update_tag=TEST_UPDATE_TAG,
         workspace_id=TEST_WORKSPACE_ID,
     )
-    load_trails(neo4j_session, DESCRIBE_TRAILS, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+    load_trails(neo4j_session, DESCRIBE_TRAILS, TEST_ACCOUNT_ID, TEST_WORKSPACE_ID, TEST_UPDATE_TAG)
 
     nodes = neo4j_session.run(
         """
@@ -43,7 +43,7 @@ def test_cloudtrails_analysis(neo4j_session):
     load_s3_buckets(neo4j_session, LIST_BUCKETS, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
     policy = parse_policy('bucket-1', LIST_STATEMENTS)
     _load_s3_policies(neo4j_session, [policy], TEST_UPDATE_TAG)
-    load_trails(neo4j_session, DESCRIBE_TRAILS, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+    load_trails(neo4j_session, DESCRIBE_TRAILS, TEST_ACCOUNT_ID, TEST_WORKSPACE_ID, TEST_UPDATE_TAG)
 
     nodes = neo4j_session.run(
         """

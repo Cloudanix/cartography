@@ -78,11 +78,10 @@ def load_transit_gateways(
     neo4j_session: neo4j.Session, data: List[Dict], region: str, current_aws_account_id: str,
     update_tag: int,
 ) -> None:
+    # Only the owner account writes the gateway and claims it. A gateway shared in through RAM belongs to
+    # another account, maybe another tenant: _attach_shared_transit_gateway links it with SHARED_WITH only.
     ingest_transit_gateway = """
-    MERGE (ownerAccount:AWSAccount {id: $OwnerId})
-    ON CREATE SET ownerAccount.firstseen = timestamp()
-    SET ownerAccount.lastupdated = $update_tag
-
+    MATCH (ownerAccount:AWSAccount {id: $AWS_ACCOUNT_ID})
     MERGE (tgw:AWSTransitGateway {id: $ARN})
     ON CREATE SET tgw.firstseen = timestamp(), tgw.arn = $ARN
     SET tgw.tgw_id = $TgwId,
@@ -93,7 +92,7 @@ def load_transit_gateways(
     tgw.lastupdated = $update_tag,
     tgw.consolelink = $consolelink
 
-    WITH tgw
+    WITH ownerAccount, tgw
     MERGE (ownerAccount)-[r:RESOURCE]->(tgw)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -101,6 +100,9 @@ def load_transit_gateways(
 
     for tgw in data:
         tgw_id = tgw["TransitGatewayId"]
+        if tgw["OwnerId"] != current_aws_account_id:
+            _attach_shared_transit_gateway(neo4j_session, tgw, region, current_aws_account_id, update_tag)
+            continue
 
         run_write_query(
             neo4j_session,
@@ -115,36 +117,48 @@ def load_transit_gateways(
             update_tag=update_tag,
             consolelink=aws_console_link.get_console_link(arn=tgw["TransitGatewayArn"]),
         )
-        _attach_shared_transit_gateway(
-            neo4j_session, tgw, region, current_aws_account_id, update_tag,
-        )
 
 
 @timeit
 def _attach_shared_transit_gateway(
     neo4j_session: neo4j.Session, tgw: Dict, region: str, current_aws_account_id: str, update_tag: int,
 ) -> None:
+    # The owner's node, or a stub of its global facts when the owner is not synced: never SET on it, never
+    # touch the owner's AWSAccount node. The edge carries this account's stamp, and its cleanup expires it.
     attach_tgw = """
-    MERGE (tgw:AWSTransitGateway {id: $ARN})
-    ON CREATE SET tgw.firstseen = timestamp()
-    SET tgw.lastupdated = $update_tag
-
-    WITH tgw
     MATCH (currentAccount:AWSAccount{id: $AWS_ACCOUNT_ID})
+    MERGE (tgw:AWSTransitGateway {id: $ARN})
+    ON CREATE SET tgw.firstseen = timestamp(), tgw.arn = $ARN, tgw.tgw_id = $TransitGatewayId,
+        tgw.ownerid = $OwnerId, tgw.region = $Region, tgw.lastupdated = $update_tag
     MERGE (tgw)-[s:SHARED_WITH]->(currentAccount)
     ON CREATE SET s.firstseen = timestamp()
     SET s.lastupdated = $update_tag
     """
 
-    if tgw["OwnerId"] != current_aws_account_id:
-        run_write_query(
-            neo4j_session,
-            attach_tgw,
-            ARN=tgw["TransitGatewayArn"],
-            TransitGatewayId=tgw["TransitGatewayId"],
-            AWS_ACCOUNT_ID=current_aws_account_id,
-            update_tag=update_tag,
-        )
+    run_write_query(
+        neo4j_session,
+        attach_tgw,
+        ARN=tgw["TransitGatewayArn"],
+        TransitGatewayId=tgw["TransitGatewayId"],
+        OwnerId=tgw["OwnerId"],
+        Region=region,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        update_tag=update_tag,
+    )
+
+
+def _is_foreign_vpc_attachment(tgwa: Dict, current_aws_account_id: str) -> bool:
+    """
+    The gateway owner's account also lists the attachments of other accounts' VPCs to its gateway. Those belong
+    to the VPC owner (maybe another tenant), whose own sync loads them and links them to the gateway: this
+    account must not claim them nor write onto that VPC and its subnets.
+    describe_transit_gateway_attachments gives ResourceOwnerId (ResourceType 'vpc'),
+    describe_transit_gateway_vpc_attachments gives VpcOwnerId. Without either, the attachment is this account's.
+    """
+    vpc_owner = tgwa.get("VpcOwnerId")
+    if vpc_owner is None and tgwa.get("ResourceType") == "vpc":
+        vpc_owner = tgwa.get("ResourceOwnerId")
+    return vpc_owner is not None and vpc_owner != current_aws_account_id
 
 
 @timeit
@@ -176,6 +190,8 @@ def load_tgw_attachments(
     """
 
     for tgwa in data:
+        if _is_foreign_vpc_attachment(tgwa, current_aws_account_id):
+            continue
         tgwa_id = tgwa["TransitGatewayAttachmentId"]
         tgwa_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:transit-gateway-attachment/{tgwa_id}"
 
