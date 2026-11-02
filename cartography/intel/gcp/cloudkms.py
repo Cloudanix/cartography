@@ -12,6 +12,7 @@ from googleapiclient.discovery import Resource
 from . import iam
 from . import label
 from cartography.client.core.tx import run_write_query
+from cartography.intel.gcp.util.principals import ORG_PRINCIPAL_MATCH
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -400,12 +401,16 @@ def _load_kms_key_rings_tx(
 
 
 @timeit
-def load_keyring_entity_relation(session: neo4j.Session, keyring: Dict, update_tag: int) -> None:
-    session.execute_write(load_keyring_entity_relation_tx, keyring, update_tag)
+def load_keyring_entity_relation(
+    session: neo4j.Session, keyring: Dict, update_tag: int, common_job_parameters: Dict,
+) -> None:
+    session.execute_write(load_keyring_entity_relation_tx, keyring, update_tag, common_job_parameters)
 
 
 @timeit
-def load_keyring_entity_relation_tx(tx: neo4j.Transaction, keyring: Dict, gcp_update_tag: int) -> None:
+def load_keyring_entity_relation_tx(
+    tx: neo4j.Transaction, keyring: Dict, gcp_update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
         :type neo4j_session: Neo4j session object
         :param neo4j session: The Neo4j session object
@@ -424,8 +429,8 @@ def load_keyring_entity_relation_tx(tx: neo4j.Transaction, keyring: Dict, gcp_up
     """
     ingest_entities = """
     UNWIND $entities AS entity
-    MATCH (principal:GCPPrincipal{email:entity.email})
-    WITH principal
+    """ + ORG_PRINCIPAL_MATCH + """
+    WITH DISTINCT principal
     MATCH (keyring:GCPKMSKeyRing{id: $keyring_id})
     MERGE (principal)-[r:USES]->(keyring)
     ON CREATE SET r.firstseen = timestamp()
@@ -434,6 +439,8 @@ def load_keyring_entity_relation_tx(tx: neo4j.Transaction, keyring: Dict, gcp_up
         ingest_entities,
         keyring_id=keyring.get('id', None),
         entities=keyring.get('entities', []),
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -546,7 +553,7 @@ def sync(
     key_rings = get_kms_keyrings(kms, locations, project_id)
     load_kms_key_rings(neo4j_session, key_rings, project_id, gcp_update_tag)
     for key_ring in key_rings:
-        load_keyring_entity_relation(neo4j_session, key_ring, gcp_update_tag)
+        load_keyring_entity_relation(neo4j_session, key_ring, gcp_update_tag, common_job_parameters)
         bindings = get_keyring_policy_bindings(kms, key_ring, project_id)
         bindings_list = transform_keryring_policy_bindings(bindings, key_ring['id'], project_id)
         attach_keyring_to_binding(neo4j_session, key_ring['id'], bindings_list, gcp_update_tag)

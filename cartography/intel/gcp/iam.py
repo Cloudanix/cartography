@@ -163,15 +163,17 @@ def load_gcp_external_principal(
     ingest_external_principal = """
     MERGE (ep:GCPExternalPrincipal{principal: $PRINCIPAL})
     ON CREATE SET ep.firstseen = timestamp()
+    // One node per principal for every tenant that grants it: only facts about the principal itself. access_type
+    // is ThirdParty for every principal emitted today; it stays here until inventory-sync reads the edge's.
     SET ep.lastupdated = $gcp_update_tag,
     ep.access_type = $ACCESS_TYPE,
-    ep.member_type = $MEMBER_TYPE,
-    ep.account_id = $PROJECT_ID
+    ep.member_type = $MEMBER_TYPE
     WITH ep
     MATCH (role:GCPRole{id: $ROLE_ID})
-    MERGE (role)-[r:TRUSTS_GCP_PRINCIPAL]->(ep)
+    // The granting project is this tenant's fact: one edge per project, carrying it.
+    MERGE (role)-[r:TRUSTS_GCP_PRINCIPAL{account_id: $PROJECT_ID}]->(ep)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $gcp_update_tag
+    SET r.lastupdated = $gcp_update_tag, r.access_type = $ACCESS_TYPE
     """
     run_write_query(
         neo4j_session,
@@ -1048,8 +1050,7 @@ def attach_project_role_to_user(
     user.name = $UserName,
     user.lastupdated = $gcp_update_tag,
     user.isDeleted = $isDeleted,
-    user.managed_type = 'custom',
-    user.consolelink = $ConsoleLink
+    user.managed_type = 'custom'
     WITH user
     MATCH (:GCPProject{id: $project_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
     MERGE (user)-[r:ASSUME_ROLE]->(role)
@@ -1060,7 +1061,8 @@ def attach_project_role_to_user(
     MERGE (p)-[pr:RESOURCE]->(user)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1097,8 +1099,7 @@ def attach_sso_role_to_user(
     user.name = $UserName,
     user.lastupdated = $gcp_update_tag,
     user.isDeleted = $isDeleted,
-    user.managed_type = 'custom',
-    user.consolelink = $ConsoleLink
+    user.managed_type = 'custom'
     WITH user
     MATCH (:GCPOrganization{id: $organization_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
     MATCH (:GCPOrganization{id: $organization_id})-[:OWNER]->(project:GCPProject{id: $project_id})
@@ -1112,7 +1113,8 @@ def attach_sso_role_to_user(
     MERGE (p)-[pr:RESOURCE]->(user)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1218,7 +1220,6 @@ def attach_project_role_to_group(
     SET
     group.email = $GroupEmail,
     group.name = $GroupName,
-    group.consolelink = $ConsoleLink,
     group.lastupdated = $gcp_update_tag,
     group.isDeleted = $isDeleted,
     group.managed_type = 'custom'
@@ -1232,7 +1233,8 @@ def attach_project_role_to_group(
     MERGE (p)-[pr:RESOURCE]->(group)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1267,7 +1269,6 @@ def attach_sso_role_to_group(
     SET
     group.email = $GroupEmail,
     group.name = $GroupName,
-    group.consolelink = $ConsoleLink,
     group.lastupdated = $gcp_update_tag,
     group.isDeleted = $isDeleted,
     group.managed_type = 'custom'
@@ -1284,7 +1285,8 @@ def attach_sso_role_to_group(
     MERGE (p)-[pr:RESOURCE]->(group)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1319,7 +1321,6 @@ def attach_project_role_to_domain(
     SET
     domain.email = $DomainEmail,
     domain.name = $DomainName,
-    domain.consolelink = $ConsoleLink,
     domain.lastupdated = $gcp_update_tag,
     domain.isDeleted = $isDeleted,
     domain.managed_type = 'custom'
@@ -1333,7 +1334,8 @@ def attach_project_role_to_domain(
     MERGE (p)-[pr:RESOURCE]->(domain)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1367,7 +1369,6 @@ def attach_sso_role_to_domain(
     SET
     domain.email = $DomainEmail,
     domain.name = $DomainName,
-    domain.consolelink = $ConsoleLink,
     domain.lastupdated = $gcp_update_tag,
     domain.isDeleted = $isDeleted,
     domain.managed_type = 'custom'
@@ -1384,7 +1385,8 @@ def attach_sso_role_to_domain(
     MERGE (p)-[pr:RESOURCE]->(domain)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(

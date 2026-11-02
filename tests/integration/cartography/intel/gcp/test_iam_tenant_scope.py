@@ -1,3 +1,4 @@
+from cartography.intel.gcp import apigateway
 from cartography.intel.gcp import iam
 
 TEST_UPDATE_TAG = 123456789
@@ -98,3 +99,61 @@ def test_binding_to_another_tenants_service_account_writes_nothing_on_it(neo4j_s
         "MATCH (:GCPRole{id: $r})-[:TRUSTS_GCP_PRINCIPAL]->(ep:GCPExternalPrincipal) RETURN ep.principal",
         r=custom_role,
     )
+
+
+def test_shared_principals_keep_tenant_facts_on_the_tenants_edges(neo4j_session):
+    _seed(neo4j_session)
+    # A consultant both customers grant a role to: one GCPUser node for both tenants.
+    for tenant in (TENANT, OTHER_TENANT):
+        _bind(neo4j_session, tenant, ['user:consultant@shared-iamt.example'])
+
+    # The console link names a project, so it is per tenant and lives on the tenant's edge.
+    assert _rows(
+        neo4j_session,
+        """
+        MATCH (org:GCPOrganization)-[r:RESOURCE]->(u:GCPUser{id: 'consultant@shared-iamt.example'})
+        RETURN org.id, r.consolelink CONTAINS ('project=proj-iamt-' + right(org.id, 1)), u.consolelink
+        """,
+    ) == {
+        (_params(TENANT)['GCP_ORGANIZATION_ID'], True, None),
+        (_params(OTHER_TENANT)['GCP_ORGANIZATION_ID'], True, None),
+    }
+
+
+def test_shared_external_principal_keeps_the_granting_project_on_the_edge(neo4j_session):
+    _seed(neo4j_session)
+    for tenant in (TENANT, OTHER_TENANT):
+        _bind(neo4j_session, tenant, ['user:bob@vendor-iamt.example'])
+
+    # The granting project is on each tenant's trust edge, never on the shared external principal.
+    assert _rows(
+        neo4j_session,
+        """
+        MATCH (role:GCPRole)-[r:TRUSTS_GCP_PRINCIPAL]->(ep:GCPExternalPrincipal)
+        WHERE ep.principal = 'user:bob@vendor-iamt.example'
+        RETURN role.id, r.account_id, r.access_type, ep.account_id
+        """,
+    ) == {
+        (f"{_params(t)['GCP_ORGANIZATION_ID']}/roles/viewer", _params(t)['GCP_PROJECT_ID'], 'ThirdParty', None)
+        for t in (TENANT, OTHER_TENANT)
+    }
+
+
+def test_policy_members_link_only_the_orgs_own_principals(neo4j_session):
+    _seed(neo4j_session)
+    for tenant in (TENANT, OTHER_TENANT):
+        email = _service_account(tenant)
+        iam.load_service_accounts(
+            neo4j_session, [{'id': email, 'email': email, 'name': email, 'displayName': 'svc'}],
+            _params(tenant)['GCP_PROJECT_ID'], TEST_UPDATE_TAG,
+        )
+    api_id = 'projects/proj-iamt-a/locations/global/apis/api-iamt'
+    neo4j_session.run("MERGE (:GCPAPI{id: $id})", id=api_id)
+    # This customer's API policy names its own service account and the other customer's.
+    api = {'id': api_id, 'entities': [{'email': _service_account(TENANT)}, {'email': _service_account(OTHER_TENANT)}]}
+
+    apigateway.load_apis_entity_relation(neo4j_session, api, TEST_UPDATE_TAG, _params(TENANT))
+
+    assert _rows(
+        neo4j_session, "MATCH (p:GCPPrincipal)-[:USES]->(:GCPAPI{id: $id}) RETURN p.id", id=api_id,
+    ) == {(_service_account(TENANT),)}

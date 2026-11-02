@@ -14,6 +14,7 @@ from . import iam
 from . import label
 from cartography.intel.gcp.util.errors import POLICY_RESOLVED
 from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
+from cartography.intel.gcp.util.principals import ORG_PRINCIPAL_MATCH
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -222,12 +223,16 @@ def _load_functions_tx(tx: neo4j.Transaction, functions: List[Resource], project
 
 
 @timeit
-def load_function_entity_relation(session: neo4j.Session, function: Dict, update_tag: int) -> None:
-    session.execute_write(load_function_entity_relation_tx, function, update_tag)
+def load_function_entity_relation(
+    session: neo4j.Session, function: Dict, update_tag: int, common_job_parameters: Dict,
+) -> None:
+    session.execute_write(load_function_entity_relation_tx, function, update_tag, common_job_parameters)
 
 
 @timeit
-def load_function_entity_relation_tx(tx: neo4j.Transaction, function: Dict, gcp_update_tag: int) -> None:
+def load_function_entity_relation_tx(
+    tx: neo4j.Transaction, function: Dict, gcp_update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
         :type neo4j_session: Neo4j session object
         :param neo4j session: The Neo4j session object
@@ -246,8 +251,8 @@ def load_function_entity_relation_tx(tx: neo4j.Transaction, function: Dict, gcp_
     """
     ingest_entities = """
     UNWIND $entities AS entity
-    MATCH (principal:GCPPrincipal{email:entity.email})
-    WITH principal
+    """ + ORG_PRINCIPAL_MATCH + """
+    WITH DISTINCT principal
     MATCH (function:GCPFunction{id: $function_id})
     MERGE (principal)-[r:USES]->(function)
     ON CREATE SET r.firstseen = timestamp()
@@ -256,6 +261,8 @@ def load_function_entity_relation_tx(tx: neo4j.Transaction, function: Dict, gcp_
         ingest_entities,
         function_id=function.get('id', None),
         entities=function.get('entities', []),
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -372,7 +379,7 @@ def sync(
 
     load_functions(neo4j_session, functions, project_id, gcp_update_tag)
     for func in functions:
-        load_function_entity_relation(neo4j_session, func, gcp_update_tag)
+        load_function_entity_relation(neo4j_session, func, gcp_update_tag, common_job_parameters)
         attach_function_to_binding(neo4j_session, func['id'], bindings[func['id']], gcp_update_tag)
 
     cleanup_function_policy_bindings(neo4j_session, common_job_parameters)

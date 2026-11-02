@@ -29,6 +29,7 @@ from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.intel.gcp.util.errors import is_permission_error
+from cartography.intel.gcp.util.principals import ORG_PRINCIPAL_MATCH
 from cartography.util import batch
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -1256,12 +1257,16 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
 
 
 @timeit
-def load_compute_entity_relation(session: neo4j.Session, instance: Dict, update_tag: int) -> None:
-    session.execute_write(load_compute_entity_relation_tx, instance, update_tag)
+def load_compute_entity_relation(
+    session: neo4j.Session, instance: Dict, update_tag: int, common_job_parameters: Dict,
+) -> None:
+    session.execute_write(load_compute_entity_relation_tx, instance, update_tag, common_job_parameters)
 
 
 @timeit
-def load_compute_entity_relation_tx(tx: neo4j.Transaction, instance: Dict, gcp_update_tag: int) -> None:
+def load_compute_entity_relation_tx(
+    tx: neo4j.Transaction, instance: Dict, gcp_update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
     :type neo4j_session: Neo4j session object
     :param neo4j session: The Neo4j session object
@@ -1280,8 +1285,8 @@ def load_compute_entity_relation_tx(tx: neo4j.Transaction, instance: Dict, gcp_u
     """
     ingest_entities = """
     UNWIND $entities AS entity
-    MATCH (principal:GCPPrincipal{email:entity.email})
-    WITH principal
+    """ + ORG_PRINCIPAL_MATCH + """
+    WITH DISTINCT principal
     MATCH (i:GCPInstance{id: $instance_id})
     MERGE (principal)-[r:USES]->(i)
     ON CREATE SET r.firstseen = timestamp()
@@ -1290,6 +1295,8 @@ def load_compute_entity_relation_tx(tx: neo4j.Transaction, instance: Dict, gcp_u
         ingest_entities,
         instance_id=instance.get("name", None),
         entities=instance.get("entities", []),
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 

@@ -11,6 +11,7 @@ from googleapiclient.discovery import Resource
 
 from . import iam
 from . import label
+from cartography.intel.gcp.util.principals import ORG_PRINCIPAL_MATCH
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -491,12 +492,16 @@ def cleanup_apis(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> N
 
 
 @timeit
-def load_apis_entity_relation(session: neo4j.Session, api: Dict, update_tag: int) -> None:
-    session.execute_write(load_apis_entity_relation_tx, api, update_tag)
+def load_apis_entity_relation(
+    session: neo4j.Session, api: Dict, update_tag: int, common_job_parameters: Dict,
+) -> None:
+    session.execute_write(load_apis_entity_relation_tx, api, update_tag, common_job_parameters)
 
 
 @timeit
-def load_apis_entity_relation_tx(tx: neo4j.Transaction, api: Dict, gcp_update_tag: int) -> None:
+def load_apis_entity_relation_tx(
+    tx: neo4j.Transaction, api: Dict, gcp_update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
         :type neo4j_session: Neo4j session object
         :param neo4j session: The Neo4j session object
@@ -515,8 +520,8 @@ def load_apis_entity_relation_tx(tx: neo4j.Transaction, api: Dict, gcp_update_ta
     """
     ingest_entities = """
     UNWIND $entities AS entity
-    MATCH (principal:GCPPrincipal{email:entity.email})
-    WITH principal
+    """ + ORG_PRINCIPAL_MATCH + """
+    WITH DISTINCT principal
     MATCH (api:GCPAPI{id: $api_id})
     MERGE (principal)-[r:USES]->(api)
     ON CREATE SET r.firstseen = timestamp()
@@ -525,17 +530,23 @@ def load_apis_entity_relation_tx(tx: neo4j.Transaction, api: Dict, gcp_update_ta
         ingest_entities,
         api_id=api.get('id', None),
         entities=api.get('entities', []),
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
 
 @timeit
-def load_gateway_entity_relation(session: neo4j.Session, gateway: Dict, update_tag: int) -> None:
-    session.execute_write(load_gateway_entity_relation_tx, gateway, update_tag)
+def load_gateway_entity_relation(
+    session: neo4j.Session, gateway: Dict, update_tag: int, common_job_parameters: Dict,
+) -> None:
+    session.execute_write(load_gateway_entity_relation_tx, gateway, update_tag, common_job_parameters)
 
 
 @timeit
-def load_gateway_entity_relation_tx(tx: neo4j.Transaction, gateway: Dict, gcp_update_tag: int) -> None:
+def load_gateway_entity_relation_tx(
+    tx: neo4j.Transaction, gateway: Dict, gcp_update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
         :type neo4j_session: Neo4j session object
         :param neo4j session: The Neo4j session object
@@ -554,8 +565,8 @@ def load_gateway_entity_relation_tx(tx: neo4j.Transaction, gateway: Dict, gcp_up
     """
     ingest_entities = """
     UNWIND $entities AS entity
-    MATCH (principal:GCPPrincipal{email:entity.email})
-    WITH principal
+    """ + ORG_PRINCIPAL_MATCH + """
+    WITH DISTINCT principal
     MATCH (gateway:GCPAPIGateway{id: $gateway_id})
     MERGE (principal)-[r:USES]->(gateway)
     ON CREATE SET r.firstseen = timestamp()
@@ -564,6 +575,8 @@ def load_gateway_entity_relation_tx(tx: neo4j.Transaction, gateway: Dict, gcp_up
         ingest_entities,
         gateway_id=gateway.get('id', None),
         entities=gateway.get('entities', []),
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -763,7 +776,7 @@ def sync(
     apis = get_apis(apigateway, project_id, regions, common_job_parameters)
     load_apis(neo4j_session, apis, project_id, gcp_update_tag)
     for api in apis:
-        load_apis_entity_relation(neo4j_session, api, gcp_update_tag)
+        load_apis_entity_relation(neo4j_session, api, gcp_update_tag, common_job_parameters)
 
     # Cleanup APIs
     cleanup_apis(neo4j_session, common_job_parameters)
@@ -780,7 +793,7 @@ def sync(
     gateways = get_gateways(apigateway, project_id, regions, common_job_parameters)
     load_gateways(neo4j_session, gateways, project_id, gcp_update_tag)
     for gateway in gateways:
-        load_gateway_entity_relation(neo4j_session, gateway, gcp_update_tag)
+        load_gateway_entity_relation(neo4j_session, gateway, gcp_update_tag, common_job_parameters)
 
     # Cleanup API Gateway Gateways
     cleanup_api_gateways(neo4j_session, common_job_parameters)
