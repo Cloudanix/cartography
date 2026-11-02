@@ -7,6 +7,11 @@ TEST_PROJECT_ID = 'project123'
 TEST_UPDATE_TAG = 123456789
 
 
+def _seed_project(neo4j_session):
+    # Links to an instance, config or backup start from the syncing project, as in the sync.
+    neo4j_session.run("MERGE (:GCPProject{id: $p})", p=TEST_PROJECT_ID)
+
+
 def test_spanner_instances(neo4j_session: neo4j.Session):
     data = tests.data.gcp.spanner.TEST_INSTANCES
     cartography.intel.gcp.spanner.load_spanner_instances(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
@@ -83,12 +88,14 @@ def test_spanner_instance_database(neo4j_session: neo4j.Session):
 
 
 def test_spanner_instance_to_instance_config_to_replica_relation(neo4j_session: neo4j.Session):
+    _seed_project(neo4j_session)
     data = tests.data.gcp.spanner.TEST_INSTANCES
     cartography.intel.gcp.spanner.load_spanner_instances(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
-    data = tests.data.gcp.spanner.TEST_INSTANCE_CONFIG_REPLICA
-    cartography.intel.gcp.spanner.load_spanner_instance_configs_replicas(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
+    # Sync order: configs (linked to their instances) before their replicas.
     data = tests.data.gcp.spanner.TEST_INSTANCE_CONFIG
     cartography.intel.gcp.spanner.load_spanner_instance_configs(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
+    data = tests.data.gcp.spanner.TEST_INSTANCE_CONFIG_REPLICA
+    cartography.intel.gcp.spanner.load_spanner_instance_configs_replicas(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
 
     expected_nodes = {
         ('projects/project-123/instanceConfigs/config1/replicas/us-central1', 'projects/project-123/instanceConfigs/config1', 'projects/project-123/instances/instance1'),
@@ -107,6 +114,7 @@ def test_spanner_instance_to_instance_config_to_replica_relation(neo4j_session: 
 
 
 def test_spanner_instance_to_database_to_backup_relation(neo4j_session: neo4j.Session):
+    _seed_project(neo4j_session)
     data = tests.data.gcp.spanner.TEST_INSTANCES
     cartography.intel.gcp.spanner.load_spanner_instances(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
     data = tests.data.gcp.spanner.TEST_INSTANCE_BACKUP
@@ -135,6 +143,7 @@ def test_spanner_instance_to_database_to_backup_relation(neo4j_session: neo4j.Se
 
 
 def test_spanner_instance_to_backup_relation(neo4j_session: neo4j.Session):
+    _seed_project(neo4j_session)
     data = tests.data.gcp.spanner.TEST_INSTANCES
     cartography.intel.gcp.spanner.load_spanner_instances(neo4j_session, data, TEST_PROJECT_ID, TEST_UPDATE_TAG)
     data = tests.data.gcp.spanner.TEST_INSTANCE_BACKUP
