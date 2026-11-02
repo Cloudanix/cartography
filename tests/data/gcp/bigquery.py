@@ -1,6 +1,10 @@
+# Ids as transform_bigquery_dataset / transform_bigquery_tables build them for project 000000000000.
+DATASET_PREFIX = 'projects/000000000000/datasets'
+
 TEST_DATASET = [
     {
-        'id': 'dataset1',
+        'id': f'{DATASET_PREFIX}/dataset1',
+        'name': 'dataset1',
         'details': {
             'friendlyName': 'dataset123',
             'defaultTableExpirationMs': '23',
@@ -11,7 +15,8 @@ TEST_DATASET = [
         },
     },
     {
-        'id': 'dataset2',
+        'id': f'{DATASET_PREFIX}/dataset2',
+        'name': 'dataset2',
         'details': {
             'friendlyName': 'dataset1234',
             'defaultTableExpirationMs': '25',
@@ -25,8 +30,9 @@ TEST_DATASET = [
 
 TEST_TABLE = [
     {
-        'id': 'table1',
-        'datasetId': 'dataset1',
+        'id': f'{DATASET_PREFIX}/dataset1/tables/table1',
+        'name': 'table1',
+        'datasetId': f'{DATASET_PREFIX}/dataset1',
         'details': {
             'friendlyName': 'table123',
             'requirePartitionFilter': True,
@@ -36,8 +42,9 @@ TEST_TABLE = [
         },
     },
     {
-        'id': 'table2',
-        'datasetId': 'dataset2',
+        'id': f'{DATASET_PREFIX}/dataset2/tables/table2',
+        'name': 'table2',
+        'datasetId': f'{DATASET_PREFIX}/dataset2',
         'details': {
             'friendlyName': 'table1234',
             'requirePartitionFilter': True,

@@ -89,14 +89,16 @@ def transform_jobs(jobs: List[Dict], project_id: str) -> List[Dict]:
 
 
 @timeit
-def load_dataflow_jobs(session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int) -> None:
-    session.execute_write(load_dataflow_jobs_tx, data_list, project_id, update_tag)
+def load_dataflow_jobs(
+    session: neo4j.Session, data_list: List[Dict], project_id: str, update_tag: int, common_job_parameters: Dict,
+) -> None:
+    session.execute_write(load_dataflow_jobs_tx, data_list, project_id, update_tag, common_job_parameters)
 
 
 @timeit
 def load_dataflow_jobs_tx(
     tx: neo4j.Transaction, data: List[Dict],
-    project_id: str, gcp_update_tag: int,
+    project_id: str, gcp_update_tag: int, common_job_parameters: Dict,
 ) -> None:
 
     query = """
@@ -130,7 +132,10 @@ def load_dataflow_jobs_tx(
         rjbt.firstseen = timestamp()
     WITH job, record
     UNWIND record.bigQueries as big_query_id
-    MATCH (big_query:GCPBigqueryTable{id: big_query_id})
+    // A job may name a table in any project, including another customer's: only follow it inside this org.
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id: $GCP_ORGANIZATION_ID})
+        -[:OWNER]->(:GCPProject)-[:RESOURCE]->(:GCPBigqueryDataset)
+        -[:HAS_TABLE]->(big_query:GCPBigqueryTable{id: big_query_id})
     MERGE (job)-[rjbq:REFERENCES]->(big_query)
     ON CREATE SET
         rjbq.firstseen = timestamp()
@@ -162,6 +167,8 @@ def load_dataflow_jobs_tx(
         query,
         Records=data,
         ProjectId=project_id,
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -182,7 +189,7 @@ def sync(
 
     jobs = get_dataflow_jobs(dataflow, project_id, regions, common_job_parameters)
     transformed_jobs = transform_jobs(jobs, project_id)
-    load_dataflow_jobs(neo4j_session, transformed_jobs, project_id, gcp_update_tag)
+    load_dataflow_jobs(neo4j_session, transformed_jobs, project_id, gcp_update_tag, common_job_parameters)
 
     label.sync_labels(
         neo4j_session, transformed_jobs, gcp_update_tag,

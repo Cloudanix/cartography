@@ -5,7 +5,8 @@ from cartography.util import run_analysis_job
 TEST_PROJECT_NUMBER = '000000000000'
 TEST_UPDATE_TAG = 123456789
 TEST_REGION = 'us-east-1a'
-TEST_DATASET_ID = 'dataset1'
+TEST_DATASET_ID = f'projects/{TEST_PROJECT_NUMBER}/datasets/dataset1'
+DATASET_PREFIX = tests.data.gcp.bigquery.DATASET_PREFIX
 
 TEST_WORKSPACE_ID = '1223344'
 
@@ -40,8 +41,8 @@ def test_load_bigquey_dataset(neo4j_session):
     )
 
     expected_nodes = {
-        "dataset1",
-        "dataset2",
+        f"{DATASET_PREFIX}/dataset1",
+        f"{DATASET_PREFIX}/dataset2",
     }
 
     nodes = neo4j_session.run(
@@ -65,8 +66,8 @@ def test_load_bigquery_tables(neo4j_session):
     )
 
     expected_nodes = {
-        "table1",
-        "table2",
+        f"{DATASET_PREFIX}/dataset1/tables/table1",
+        f"{DATASET_PREFIX}/dataset2/tables/table2",
     }
 
     nodes = neo4j_session.run(
@@ -102,8 +103,8 @@ def test_bigquery_dataset_relationship(neo4j_session):
     )
 
     expected = {
-        (TEST_PROJECT_NUMBER, 'dataset1'),
-        (TEST_PROJECT_NUMBER, 'dataset2'),
+        (TEST_PROJECT_NUMBER, f'{DATASET_PREFIX}/dataset1'),
+        (TEST_PROJECT_NUMBER, f'{DATASET_PREFIX}/dataset2'),
     }
 
     # Fetch relationships
@@ -140,8 +141,8 @@ def test_bigquey_dataset_table_relationship(neo4j_session):
     )
 
     expected = {
-        ('dataset1', 'table1'),
-        ('dataset2', 'table2'),
+        (f'{DATASET_PREFIX}/dataset1', f'{DATASET_PREFIX}/dataset1/tables/table1'),
+        (f'{DATASET_PREFIX}/dataset2', f'{DATASET_PREFIX}/dataset2/tables/table2'),
     }
 
     # Fetch relationships
@@ -187,7 +188,7 @@ def test_cloud_function(neo4j_session):
     expected_nodes = {
 
         (
-            'dataset1',
+            TEST_DATASET_ID,
             True,
             'allAuthenticatedUsers',
         ),
@@ -291,12 +292,13 @@ def test_unread_dataset_access_keeps_entries_and_reads_unknown(neo4j_session, mo
         """,
         p=project,
     )
+    read, unread = (f'projects/{project}/datasets/{d}' for d in ('bq-read', 'bq-unread'))
     assert {r['id']: (r['status'], r['members']) for r in rows} == {
-        'bq-read': ('resolved', []),
-        'bq-unread': ('unresolved', ['allUsers']),
+        read: ('resolved', []),
+        unread: ('unresolved', ['allUsers']),
     }
     auth = access.compute(neo4j_session, params)['GCPBigqueryDataset']
-    assert auth['bq-read']['access_auth'] == 'required'
-    assert (auth['bq-unread']['access_auth'], auth['bq-unread']['access_auth_reasons']) == (
+    assert auth[read]['access_auth'] == 'required'
+    assert (auth[unread]['access_auth'], auth[unread]['access_auth_reasons']) == (
         'unknown', ['dataset_access_not_read'],
     )
