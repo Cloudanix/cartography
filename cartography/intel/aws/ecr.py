@@ -141,12 +141,12 @@ def _load_ecr_repo_img_tx(
             ri.consolelink = repo_img.consolelink
         WITH ri, repo_img
 
+        // ECRImage is keyed by digest alone: every account that pushed the same image shares it,
+        // so only the digest goes on the node; region and console link stay on ri (this account's).
         MERGE (img:ECRImage{id: repo_img.imageDigest})
         ON CREATE SET img.firstseen = timestamp(),
             img.digest = repo_img.imageDigest
-        SET img.lastupdated = $aws_update_tag,
-            img.region = repo_img.region,
-            img.consolelink = repo_img.consolelink
+        SET img.lastupdated = $aws_update_tag
         WITH ri, img, repo_img
 
         MERGE (ri)-[r1:IMAGE]->(img)
@@ -177,6 +177,8 @@ def load_ecr_repository_images(
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     logger.debug("Running ECR cleanup job.")
     run_cleanup_job("aws_import_ecr_cleanup.json", neo4j_session, common_job_parameters)
+    # ECRImage is shared across tenants: the account cleanup only drops its edges, this drops orphans.
+    run_cleanup_job("aws_ecr_image_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def _get_image_data(
