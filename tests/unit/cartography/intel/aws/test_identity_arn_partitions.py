@@ -38,7 +38,7 @@ def test_apigateway_arns(region, partition, prefix):
 
     stages = [{'region': region, 'apiId': 'a1', 'stageName': 'prod', 'createdDate': 'd'}]
     with patch.object(apigateway, 'load_graph_data'):
-        apigateway._load_apigateway_stages(MagicMock(), stages, 1, **_kw(partition))
+        apigateway._load_apigateway_stages(MagicMock(), stages, ACCOUNT, 1, **_kw(partition))
     assert stages[0]['arn'] == f'{prefix}apigateway:{region}::/restapis/a1/stages/prod'
 
 

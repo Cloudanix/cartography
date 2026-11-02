@@ -199,7 +199,7 @@ class TestApiGateway:
         stages = [{"apiId": "a1", "stageName": "prod", "region": TEST_REGION, "createdDate": "2024-01-01"}]
 
         apigateway.load_apigateway_rest_apis(session, apis, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
-        apigateway._load_apigateway_stages(session, stages, TEST_UPDATE_TAG)
+        apigateway._load_apigateway_stages(session, stages, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
         assert session.execute_write.call_count == 2

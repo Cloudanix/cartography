@@ -389,7 +389,8 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
 
 @timeit
 def _load_apigateway_stages(
-        neo4j_session: neo4j.Session, stages: List, update_tag: int, partition: str = DEFAULT_PARTITION,
+        neo4j_session: neo4j.Session, stages: List, aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the Stage resource details into neo4j.
@@ -410,7 +411,7 @@ def _load_apigateway_stages(
     s.lastupdated = $UpdateTag,
     s.arn = stage.arn
     WITH s, stage
-    MATCH (rest_api:APIGatewayRestAPI{id: stage.apiId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rest_api:APIGatewayRestAPI{id: stage.apiId})
     MERGE (rest_api)-[r:ASSOCIATED_WITH]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -429,13 +430,14 @@ def _load_apigateway_stages(
         neo4j_session,
         ingest_stages,
         stages,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
 def _load_apigateway_certificates(
-        neo4j_session: neo4j.Session, certificates: List, update_tag: int,
+        neo4j_session: neo4j.Session, certificates: List, aws_account_id: str, update_tag: int,
 ) -> None:
     """
     Ingest the API Gateway Client Certificate details into neo4j.
@@ -450,7 +452,8 @@ def _load_apigateway_certificates(
     c.client_certificate_id = certificate.clientCertificateId,
     c.arn = certificate.arn
     WITH c, certificate
-    MATCH (stage:APIGatewayStage{clientcertificateid: certificate.clientCertificateId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:APIGatewayRestAPI{id: certificate.apiId})
+    -[:ASSOCIATED_WITH]->(stage:APIGatewayStage{clientcertificateid: certificate.clientCertificateId})
     MERGE (stage)-[r:HAS_CERTIFICATE]->(c)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -460,13 +463,15 @@ def _load_apigateway_certificates(
         neo4j_session,
         ingest_certificates,
         certificates,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
 def _load_apigateway_resources(
-        neo4j_session: neo4j.Session, resources: List, update_tag: int, partition: str = DEFAULT_PARTITION,
+        neo4j_session: neo4j.Session, resources: List, aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the API Gateway Resource details into neo4j.
@@ -485,7 +490,7 @@ def _load_apigateway_resources(
     s.method_authorization_types = res.method_authorization_types,
     s.unauthenticated_methods = res.unauthenticated_methods
     WITH s, res
-    MATCH (rest_api:APIGatewayRestAPI{id: res.apiId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rest_api:APIGatewayRestAPI{id: res.apiId})
     MERGE (rest_api)-[r:RESOURCE]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -503,6 +508,7 @@ def _load_apigateway_resources(
         neo4j_session,
         ingest_resources,
         resources,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -576,9 +582,9 @@ def load_rest_api_details(
 
     partition = get_partition_from_params(common_job_parameters)
     _load_apigateway_policies(neo4j_session, policies, aws_account_id, update_tag)
-    _load_apigateway_stages(neo4j_session, stages, update_tag, partition)
-    _load_apigateway_certificates(neo4j_session, certificates, update_tag)
-    _load_apigateway_resources(neo4j_session, resources, update_tag, partition)
+    _load_apigateway_stages(neo4j_session, stages, aws_account_id, update_tag, partition)
+    _load_apigateway_certificates(neo4j_session, certificates, aws_account_id, update_tag)
+    _load_apigateway_resources(neo4j_session, resources, aws_account_id, update_tag, partition)
     _set_default_values(neo4j_session, aws_account_id)
 
 

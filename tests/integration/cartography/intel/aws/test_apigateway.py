@@ -77,6 +77,7 @@ def test_load_apigateway_stages(neo4j_session):
     cartography.intel.aws.apigateway._load_apigateway_stages(
         neo4j_session,
         data,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -95,21 +96,25 @@ def test_load_apigateway_stages(neo4j_session):
     assert actual_nodes == expected_nodes
 
 
-def test_load_apigateway_stages_relationships(neo4j_session):
-    # Load Test REST API
-    data_rest_api = tests.data.aws.apigateway.GET_REST_APIS
+def _load_test_rest_apis(neo4j_session):
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, f'{TEST_WORKSPACE_ID}-org', TEST_ACCOUNT_ID)
     cartography.intel.aws.apigateway.load_apigateway_rest_apis(
         neo4j_session,
-        data_rest_api,
+        tests.data.aws.apigateway.GET_REST_APIS,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
+
+
+def test_load_apigateway_stages_relationships(neo4j_session):
+    _load_test_rest_apis(neo4j_session)
 
     # Load test API Gateway Stages
     data_stages = tests.data.aws.apigateway.GET_STAGES
     cartography.intel.aws.apigateway._load_apigateway_stages(
         neo4j_session,
         data_stages,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -142,6 +147,7 @@ def test_load_apigateway_certificates(neo4j_session):
     cartography.intel.aws.apigateway._load_apigateway_certificates(
         neo4j_session,
         data,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -160,11 +166,13 @@ def test_load_apigateway_certificates(neo4j_session):
 
 
 def test_load_apigateway_certificates_relationships(neo4j_session):
+    _load_test_rest_apis(neo4j_session)
     # Load test API Gateway Stages
     data_stages = tests.data.aws.apigateway.GET_STAGES
     cartography.intel.aws.apigateway._load_apigateway_stages(
         neo4j_session,
         data_stages,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -173,6 +181,7 @@ def test_load_apigateway_certificates_relationships(neo4j_session):
     cartography.intel.aws.apigateway._load_apigateway_certificates(
         neo4j_session,
         data_certificates,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -204,6 +213,7 @@ def test_load_apigateway_resources(neo4j_session):
     cartography.intel.aws.apigateway._load_apigateway_resources(
         neo4j_session,
         data,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -222,20 +232,14 @@ def test_load_apigateway_resources(neo4j_session):
 
 
 def test_load_apigateway_resources_relationships(neo4j_session):
-    # Load Test REST API
-    data_rest_api = tests.data.aws.apigateway.GET_REST_APIS
-    cartography.intel.aws.apigateway.load_apigateway_rest_apis(
-        neo4j_session,
-        data_rest_api,
-        TEST_ACCOUNT_ID,
-        TEST_UPDATE_TAG,
-    )
+    _load_test_rest_apis(neo4j_session)
 
     # Load test API Gateway Resource resources
     data_resources = tests.data.aws.apigateway.GET_RESOURCES
     cartography.intel.aws.apigateway._load_apigateway_resources(
         neo4j_session,
         data_resources,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
