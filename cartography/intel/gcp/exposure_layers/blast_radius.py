@@ -209,7 +209,9 @@ def sync(session: neo4j.Session, params: Dict, vpcs: Dict[str, VpcFacts], instan
     session.run(_CLEANUP, **params).consume()
 
     compute_ids = [c.id for c in computes]
-    typed = [{**row, "dst_type": label} for label, rows in edges.items() for row in rows]
+    # Summary lists data stores only (as AWS / Azure / OCI): peer VMs stay edges, else an instance under
+    # default-allow-internal would list every VM of its network as a "data store".
+    typed = [{**row, "dst_type": SQL} for row in edges[SQL]]
     set_node_properties(session, COMPUTE, reach_summaries(compute_ids, typed), evaluated_at=tag)
     write_reach_counts(session, SQL, [r["id"] for r in session.run(_SQL_IDS_QUERY, **params)], tag)
     write_reach_counts(session, COMPUTE, compute_ids, tag)

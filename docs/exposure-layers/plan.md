@@ -467,7 +467,8 @@ default-internet-gateway`), then the world-sourced allows overlapping the opened
 `target_group`; managed services one `service` hop with the deciding setting. Blockers:
 `no_internet_route` (route), `denied` (firewall_policy with detail = policy type, or firewall =
 VPC rule), `not_allowed` (firewall = implied deny; service = narrow authorized networks / internal
-ingress). L5 summaries on every GCPInstance (`admitted_by` = identity or source-range allow rule), reverse counts on
+ingress). L5 summaries on every GCPInstance list data stores only (GCPSQLInstance; instance -> instance
+edges stay edges, `admitted_by` on them = identity or source-range allow rule), reverse counts on
 GCPSQLInstance and GCPInstance. Admitting-rule hops are candidates (a shadowed allow is listed too).
 
 Ceilings: regional network firewall policies (need a per-region, per-network call); secure tag

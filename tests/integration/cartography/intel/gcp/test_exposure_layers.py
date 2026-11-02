@@ -427,16 +427,9 @@ def test_gcp_exposure_context_paths_blockers_and_summaries(neo4j_session):
     assert _json(_props(s, FR_ID, 'GCPForwardingRule', 'id'), 'exposure_paths')[0]['hops'] == [listener]
 
     app = _props(s, 'app')
-    assert app['network_reachable_data_store_count'] == 3
+    # Data stores only: the app -> db and app -> rfc1918 VM edges exist but are not listed here.
+    assert app['network_reachable_data_store_count'] == 1
     assert _json(app, 'network_reachable_data_stores') == [
-        {
-            'id': f'{ZONE}/instances/db', 'type': 'GCPInstance', 'ports': ['tcp:5432-5432'],
-            'via': 'firewall_source_tag_or_sa', 'admitted_by': 'db-from-app',
-        },
-        {
-            'id': f'{ZONE}/instances/rfc1918', 'type': 'GCPInstance', 'ports': ['tcp:22-22'],
-            'via': 'cidr', 'admitted_by': 'internal-ssh',
-        },
         {'id': 'sql-pg', 'type': 'GCPSQLInstance', 'ports': ['tcp:5432-5432'], 'via': 'private_service_access'},
     ]
     assert _props(s, 'noroute')['network_reachable_data_store_count'] == 0
