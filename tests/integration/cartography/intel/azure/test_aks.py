@@ -602,3 +602,52 @@ def test_sync_aks_node_links(neo4j_session):
         ('aksl-pool', 'aksl-vmss-noderg'),
         ('aksl-pool', 'aksl-vm-tags'),
     }
+
+
+def test_agentpool_properties_refresh_on_every_sync(neo4j_session):
+    """Pool properties are re-set on every sync, not only when the node is created.
+
+    Pools first ingested while the SDK returned the raw REST shape got count=None;
+    with ON CREATE SET the next syncs never repaired it, so the console could not
+    size AKS clusters from pool counts. A changed count (autoscaling) must also land.
+    """
+    cluster_id = '/subscriptions/pc-sub/resourceGroups/pc-rg/providers/Microsoft.ContainerService/managedClusters/pc'
+    pool_id = f'{cluster_id}/agentPools/nodepool1'
+    neo4j_session.run(
+        """
+        MERGE (s:AzureSubscription {id: 'pc-sub'})
+        MERGE (s)-[:RESOURCE]->(:AzureCluster {id: $cluster_id})
+        """,
+        cluster_id=cluster_id,
+    )
+
+    def sync(count, max_pods, update_tag):
+        aks.load_aks_managed_cluster_agentpools(
+            neo4j_session, 'pc-sub', cluster_id,
+            [{
+                'id': pool_id, 'name': 'nodepool1', 'type': 'VirtualMachineScaleSets', 'count': count,
+                'max_pods': max_pods, 'resource_group': 'pc-rg', 'consolelink': None,
+            }],
+            update_tag,
+        )
+        return neo4j_session.run(
+            'MATCH (p:AzureClusterAgentPool {id: $id}) RETURN p.count AS count, p.max_pods AS max_pods, '
+            'p.firstseen AS firstseen',
+            id=pool_id,
+        ).single()
+
+    first = sync(None, None, 1)
+    assert first['count'] is None
+    # A sentinel, not timestamp(): two syncs in the same millisecond would hide an overwrite.
+    original_firstseen = 1
+    neo4j_session.run(
+        'MATCH (p:AzureClusterAgentPool {id: $id}) SET p.firstseen = $firstseen',
+        id=pool_id, firstseen=original_firstseen,
+    )
+
+    repaired = sync(3, 30, 2)
+    assert (repaired['count'], repaired['max_pods']) == (3, 30)
+    assert repaired['firstseen'] == original_firstseen
+
+    scaled = sync(7, 30, 3)
+    assert scaled['count'] == 7
