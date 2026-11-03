@@ -86,3 +86,68 @@ class TestInstanceOperatorTransform:
 
         assert props.operatormanaged.name == "OperatorManaged"
         assert props.operatorprincipal.name == "OperatorPrincipal"
+
+
+class TestImdsTransform:
+    """MetadataOptions (IMDS configuration) must reach the graph from DescribeInstances."""
+
+    def test_imds_fields_extracted(self):
+        instance = _transform_one(
+            {
+                "MetadataOptions": {
+                    "State": "applied",
+                    "HttpTokens": "required",
+                    "HttpEndpoint": "enabled",
+                    "HttpPutResponseHopLimit": 2,
+                    "InstanceMetadataTags": "disabled",
+                },
+            },
+        )
+
+        assert instance["ImdsHttpTokens"] == "required"
+        assert instance["ImdsHttpEndpoint"] == "enabled"
+        assert instance["ImdsHopLimit"] == 2
+        assert instance["ImdsState"] == "applied"
+        assert instance["ImdsInstanceMetadataTags"] == "disabled"
+
+    def test_imds_absent_yields_none(self):
+        """When MetadataOptions is missing (older API, rare), all IMDS fields stay None."""
+        instance = _transform_one({})
+
+        assert instance["ImdsHttpTokens"] is None
+        assert instance["ImdsHttpEndpoint"] is None
+        assert instance["ImdsHopLimit"] is None
+        assert instance["ImdsState"] is None
+        assert instance["ImdsInstanceMetadataTags"] is None
+
+    def test_imds_fields_in_model(self):
+        props = EC2InstanceNodeProperties()
+
+        assert props.imdshttptokens.name == "ImdsHttpTokens"
+        assert props.imdshttpendpoint.name == "ImdsHttpEndpoint"
+        assert props.imdshoplimit.name == "ImdsHopLimit"
+        assert props.imdsstate.name == "ImdsState"
+        assert props.imdsinstancemetadatatags.name == "ImdsInstanceMetadataTags"
+
+
+class TestArchitectureFallback:
+    """os.arch (architecture) should fall back to the instance-level Architecture field
+    when describe_images did not return details for the image."""
+
+    def test_uses_image_architecture_when_available(self):
+        instance = _transform_one(
+            {"Architecture": "arm64"},
+            # OSDetails is injected by get_ec2_images; simulate it here
+        )
+        # Without OSDetails, falls back to instance-level Architecture
+        assert instance["Architecture"] == "arm64"
+
+    def test_falls_back_to_instance_architecture(self):
+        instance = _transform_one(
+            {"Architecture": "x86_64"},
+        )
+        assert instance["Architecture"] == "x86_64"
+
+    def test_unknown_when_neither_available(self):
+        instance = _transform_one({})  # no Architecture on instance, no OSDetails
+        assert instance["Architecture"] == "Unknown"

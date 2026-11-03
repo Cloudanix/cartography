@@ -50,6 +50,32 @@ def test_sync_ec2_instances(neo4j_session):
     }
 
 
+def test_ec2_instance_imds_fields(neo4j_session):
+    """
+    Ensure that IMDS (Instance Metadata Service) configuration from MetadataOptions
+    is loaded onto EC2Instance nodes.
+    """
+    _load_instances(neo4j_session)
+
+    result = neo4j_session.run(
+        """
+        MATCH (n:EC2Instance)
+        RETURN n.id, n.imdshttptokens, n.imdshttpendpoint, n.imdshoplimit
+        ORDER BY n.id
+        """,
+    )
+    rows = {
+        (row['n.id'], row['n.imdshttptokens'], row['n.imdshttpendpoint'], row['n.imdshoplimit'])
+        for row in result
+    }
+    assert rows == {
+        ('i-01', 'required', 'enabled', 1),
+        ('i-02', 'optional', 'enabled', 1),
+        ('i-03', 'required', 'enabled', 2),
+        ('i-04', 'optional', 'disabled', 1),
+    }
+
+
 def test_ec2_reservations_to_instances(neo4j_session, *args):
     """
     Ensure that instances are connected to their expected reservations

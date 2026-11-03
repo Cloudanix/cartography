@@ -43,7 +43,7 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     ebsoptimized: PropertyRef = PropertyRef("EbsOptimized")
     bootmode: PropertyRef = PropertyRef("BootMode")
     instancelifecycle: PropertyRef = PropertyRef("InstanceLifecycle")
-    hibernationoptions: PropertyRef = PropertyRef("HibernationOption")
+    hibernationoptions: PropertyRef = PropertyRef("HibernationOptions")
     ssmenabled: PropertyRef = PropertyRef("SsmEnabled")
     ssmagentversion: PropertyRef = PropertyRef("SsmAgentVersion")
     ssmpingstatus: PropertyRef = PropertyRef("SsmPingStatus")
@@ -81,6 +81,14 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     # Instance.Operator: set only for EC2 managed instances (EKS Auto Mode, ECS Managed Instances, ...)
     operatormanaged: PropertyRef = PropertyRef("OperatorManaged")
     operatorprincipal: PropertyRef = PropertyRef("OperatorPrincipal")
+    # IMDS (Instance Metadata Service) configuration from instance MetadataOptions.
+    # imdshttptokens: "required" => IMDSv2 enforced; "optional" => IMDSv1 still allowed.
+    # imdshttpendpoint: "enabled" | "disabled" — whether the IMDS endpoint is reachable at all.
+    imdshttptokens: PropertyRef = PropertyRef("ImdsHttpTokens")
+    imdshttpendpoint: PropertyRef = PropertyRef("ImdsHttpEndpoint")
+    imdshoplimit: PropertyRef = PropertyRef("ImdsHopLimit")
+    imdsstate: PropertyRef = PropertyRef("ImdsState")
+    imdsinstancemetadatatags: PropertyRef = PropertyRef("ImdsInstanceMetadataTags")
 
 
 #    roleArn: PropertyRef = PropertyRef('RoleArn')

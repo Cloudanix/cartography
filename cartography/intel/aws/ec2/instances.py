@@ -215,7 +215,9 @@ def transform_ec2_instances(
 
             os_details = instance.get("OSDetails", {})
             platform = os_details.get("Platform", "Linux")
-            architecture = os_details.get("Architecture", "Unknown")
+            # Fall back to the instance-level Architecture (always present in DescribeInstances)
+            # when describe_images did not return details for this image.
+            architecture = os_details.get("Architecture") or instance.get("Architecture", "Unknown")
             virtualization_type = os_details.get("VirtualizationType", "Unknown")
             hypervisor = os_details.get("Hypervisor", "Unknown")
             vm_os = "Unknown"
@@ -232,6 +234,11 @@ def transform_ec2_instances(
             is_spot_instance = str(instance.get("InstanceLifecycle", "")).lower() == "spot"
             # Operator is only returned for service-managed instances; absent -> None -> property not set.
             operator = instance.get("Operator") or {}
+
+            # --- IMDS (Instance Metadata Service) configuration ---
+            # HttpTokens "required" => IMDSv2 enforced; "optional" => IMDSv1 still allowed.
+            # HttpEndpoint "disabled" => IMDS endpoint is turned off entirely.
+            metadata_options = instance.get("MetadataOptions") or {}
 
             instance_list.append(
                 {
@@ -273,6 +280,12 @@ def transform_ec2_instances(
                     "EksNodeGroupName": eks_nodegroup_name,
                     "OperatorManaged": operator.get("Managed"),
                     "OperatorPrincipal": operator.get("Principal"),
+                    # IMDS (Instance Metadata Service) configuration from MetadataOptions
+                    "ImdsHttpTokens": metadata_options.get("HttpTokens"),
+                    "ImdsHttpEndpoint": metadata_options.get("HttpEndpoint"),
+                    "ImdsHopLimit": metadata_options.get("HttpPutResponseHopLimit"),
+                    "ImdsState": metadata_options.get("State"),
+                    "ImdsInstanceMetadataTags": metadata_options.get("InstanceMetadataTags"),
                 },
             )
 
