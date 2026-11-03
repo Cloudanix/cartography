@@ -1,10 +1,9 @@
 import neo4j
 import pytest
 
-import cloudanix
 from cartography.intel import create_indexes
 
-CONSTRAINT = cloudanix.WORKSPACE_ID_CONSTRAINT
+CONSTRAINT = 'cloudanix_workspace_id_unique'
 
 
 def _drop_schema(neo4j_session):
@@ -24,36 +23,16 @@ def _constraint_count(neo4j_session):
     ).single()['n']
 
 
-def test_replaces_the_plain_index_with_a_unique_constraint(neo4j_session):
+def test_indexes_cypher_creates_the_workspace_id_constraint(neo4j_session):
     _drop_schema(neo4j_session)
-    neo4j_session.run("CREATE INDEX IF NOT EXISTS FOR (n:CloudanixWorkspace) ON (n.id)")
-    neo4j_session.run("CREATE (:CloudanixWorkspace{id: 'ws-unique-1'})")
 
-    assert cloudanix.ensure_workspace_id_unique(neo4j_session) is True
-    assert cloudanix.ensure_workspace_id_unique(neo4j_session) is True  # idempotent
+    create_indexes.run(neo4j_session, None)
+    create_indexes.run(neo4j_session, None)  # idempotent
 
     assert _constraint_count(neo4j_session) == 1
+    neo4j_session.run("CREATE (:CloudanixWorkspace{id: 'ws-unique-1'})").consume()
     with pytest.raises(neo4j.exceptions.ConstraintError):
         neo4j_session.run("CREATE (:CloudanixWorkspace{id: 'ws-unique-1'})").consume()
-    # indexes.cypher and schema-model loaders keep issuing this; it must stay a no-op next to the constraint.
-    create_indexes.run(neo4j_session, None)
+    # schema-model loaders may still issue this; it must stay a no-op next to the constraint.
     neo4j_session.run("CREATE INDEX IF NOT EXISTS FOR (n:CloudanixWorkspace) ON (n.id)").consume()
-    _drop_schema(neo4j_session)
-
-
-def test_leaves_duplicates_and_index_in_place_until_they_are_merged(neo4j_session):
-    _drop_schema(neo4j_session)
-    neo4j_session.run("CREATE INDEX IF NOT EXISTS FOR (n:CloudanixWorkspace) ON (n.id)")
-    neo4j_session.run("CREATE (:CloudanixWorkspace{id: 'ws-dup-1'}), (:CloudanixWorkspace{id: 'ws-dup-1'})")
-
-    assert cloudanix.ensure_workspace_id_unique(neo4j_session) is False
-
-    assert _constraint_count(neo4j_session) == 0
-    assert neo4j_session.run(
-        "MATCH (w:CloudanixWorkspace{id: 'ws-dup-1'}) RETURN count(w) AS n",
-    ).single()['n'] == 2
-    indexes = neo4j_session.run(
-        "SHOW INDEXES YIELD labelsOrTypes WHERE labelsOrTypes = ['CloudanixWorkspace'] RETURN count(*) AS n",
-    ).single()['n']
-    assert indexes == 1
     _drop_schema(neo4j_session)
