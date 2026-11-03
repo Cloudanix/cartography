@@ -638,10 +638,16 @@ def test_agentpool_properties_refresh_on_every_sync(neo4j_session):
 
     first = sync(None, None, 1)
     assert first['count'] is None
+    # A sentinel, not timestamp(): two syncs in the same millisecond would hide an overwrite.
+    original_firstseen = 1
+    neo4j_session.run(
+        'MATCH (p:AzureClusterAgentPool {id: $id}) SET p.firstseen = $firstseen',
+        id=pool_id, firstseen=original_firstseen,
+    )
 
     repaired = sync(3, 30, 2)
     assert (repaired['count'], repaired['max_pods']) == (3, 30)
-    assert repaired['firstseen'] == first['firstseen']
+    assert repaired['firstseen'] == original_firstseen
 
     scaled = sync(7, 30, 3)
     assert scaled['count'] == 7
