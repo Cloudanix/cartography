@@ -210,7 +210,9 @@ def get_aks_managed_cluster_agentpools_list(
 def _load_aks_managed_cluster_agentpools_tx(
     tx: neo4j.Transaction, subscription_id: str, cluster_id: str, agentpools_list: List[Dict], update_tag: int,
 ) -> None:
+    # Anchor first: a cluster this subscription does not own gets no pool node, not even an orphan one.
     ingest_aks_agentpools = """
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(c:AzureCluster{id: $cluster_id})
     UNWIND $agentpools_list AS pool
     MERGE (a:AzureClusterAgentPool{id: pool.id})
     ON CREATE SET a.firstseen = timestamp()
@@ -221,8 +223,6 @@ def _load_aks_managed_cluster_agentpools_tx(
     a.host_group_id = pool.host_group_id,
     a.max_pods = pool.max_pods,
     a.resourcegroup = pool.resource_group
-    WITH a
-    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(c:AzureCluster{id: $cluster_id})
     MERGE (c)-[r:HAS]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag

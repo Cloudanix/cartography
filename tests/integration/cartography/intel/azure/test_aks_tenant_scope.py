@@ -68,6 +68,10 @@ def test_aks_children_stay_in_the_syncing_subscription(neo4j_session):
     aks.load_aks_managed_cluster_agentpools(neo4j_session, SUB_A, cluster_b, [{'id': f'{cluster_b}/pool'}], UPDATE_TAG)
     assert linked_ids(neo4j_session, 'AzureCluster', cluster_a, 'HAS', 'AzureClusterAgentPool') == {f'{cluster_a}/pool'}
     assert linked_ids(neo4j_session, 'AzureCluster', cluster_b, 'HAS', 'AzureClusterAgentPool') == set()
+    # Nor writes the pool node itself: the cluster anchor comes before the MERGE.
+    assert neo4j_session.run(
+        'MATCH (p:AzureClusterAgentPool {id: $id}) RETURN count(p) AS n', id=f'{cluster_b}/pool',
+    ).single()['n'] == 0
 
     for load, label, segment in REGISTRY_CHILDREN:
         own, foreign = f'{registry_a}/{segment}/own', f'{registry_b}/{segment}/x'
