@@ -71,11 +71,15 @@ def _vault(name, access, action):
 def test_key_vault_exposure(neo4j_session):
     _scope(neo4j_session)
     vaults = [_vault(name, access, action) for name, access, action, _ in MATRIX]
+    # Azure sometimes returns a vault with no properties at all (no URI, no network settings):
+    # nothing says it is public, so it stays unknown instead of counted as public.
+    vaults.append({**_vault('no-properties', None, None), 'properties': {}})
     key_vaults.load_key_vaults(neo4j_session, SUB, vaults, 1)
 
     run_analysis_job('azure_keyvault_asset_exposure.json', neo4j_session, PARAMS)
 
-    assert _exposed(neo4j_session, 'AzureKeyVault') == {name: exp for name, _, _, exp in MATRIX}
+    expected = {name: exp for name, _, _, exp in MATRIX}
+    assert _exposed(neo4j_session, 'AzureKeyVault') == {**expected, 'no-properties': False}
 
 
 def test_key_vault_children_do_not_inherit_exposure(neo4j_session):

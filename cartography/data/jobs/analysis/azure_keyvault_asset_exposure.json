@@ -21,7 +21,7 @@
       "iterationsize": 100
     },
     {
-      "query": "MATCH (kv:AzureKeyVault)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(kv.public_network_access, '') <> 'Disabled' AND coalesce(kv.network_acl_default_action, 'Allow') = 'Allow' SET kv.exposed_internet = true, (CASE WHEN NOT 'default_network_access' IN  coalesce(kv.exposed_internet_type , []) THEN kv END).exposed_internet_type = coalesce(kv.exposed_internet_type , []) + 'default_network_access';",
+      "query": "MATCH (kv:AzureKeyVault)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE kv.uri IS NOT NULL AND coalesce(kv.public_network_access, '') <> 'Disabled' AND coalesce(kv.network_acl_default_action, 'Allow') = 'Allow' SET kv.exposed_internet = true, (CASE WHEN NOT 'default_network_access' IN  coalesce(kv.exposed_internet_type , []) THEN kv END).exposed_internet_type = coalesce(kv.exposed_internet_type , []) + 'default_network_access';",
       "iterative": false
     },
     {
