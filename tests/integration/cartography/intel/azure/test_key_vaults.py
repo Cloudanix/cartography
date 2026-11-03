@@ -284,6 +284,39 @@ def test_key_vaults_public_exposure_analysis(neo4j_session):
     assert actual_nodes == expected_nodes
 
 
+def test_cleanup_removes_secrets_and_certificates_gone_from_the_vault(neo4j_session):
+    # Secrets and certificates must carry lastupdated, or the cleanup job never deletes them and
+    # they outlive their vault as orphans.
+    sub = 'kvc-sub'
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: 'kvc-ws'})-[:OWNER]->(:AzureTenant{id: 'kvc-tenant'})"
+        "-[:RESOURCE]->(:AzureSubscription{id: $sub})",
+        sub=sub,
+    )
+    vault_id = f'/subscriptions/{sub}/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kvc'
+    vault = {'id': vault_id, 'name': 'kvc', 'location': 'eastus', 'resource_group': 'rg', 'properties': {}}
+    child = {'vault_id': vault_id, 'location': 'eastus', 'properties': {'attributes': {}}}
+    secret = {**child, 'id': f'{vault_id}/secrets/gone', 'name': 'gone'}
+    cert = {**child, 'id': f'{vault_id}/certificates/gone', 'name': 'gone'}
+    key_vaults.load_key_vaults(neo4j_session, sub, [vault], 1)
+    key_vaults.load_key_vaults_secrets(neo4j_session, sub, [secret], 1)
+    key_vaults.load_key_vaults_certificates(neo4j_session, sub, [cert], 1)
+
+    # Next sync: the vault is still there, the secret and certificate were deleted in Azure.
+    key_vaults.load_key_vaults(neo4j_session, sub, [vault], 2)
+    key_vaults.cleanup_key_vaults(
+        neo4j_session, {
+            'UPDATE_TAG': 2, 'WORKSPACE_ID': 'kvc-ws', 'AZURE_TENANT_ID': 'kvc-tenant',
+            'AZURE_SUBSCRIPTION_ID': sub, 'LIMIT_SIZE': 1000,
+        },
+    )
+
+    left = neo4j_session.run(
+        "MATCH (n) WHERE n.id IN $ids RETURN n.id AS id", ids=[secret['id'], cert['id']],
+    ).value('id')
+    assert left == []
+
+
 def test_vault_network_acl_is_updated_on_resync(neo4j_session):
     vault_id = '/subscriptions/00-00/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/resync'
     vault = {
