@@ -213,14 +213,14 @@ def _load_aks_managed_cluster_agentpools_tx(
     ingest_aks_agentpools = """
     UNWIND $agentpools_list AS pool
     MERGE (a:AzureClusterAgentPool{id: pool.id})
-    ON CREATE SET a.firstseen = timestamp(),
+    ON CREATE SET a.firstseen = timestamp()
+    SET a.consolelink = coalesce(pool.consolelink, a.consolelink), a.lastupdated = $update_tag,
+    a.name = pool.name,
     a.type = pool.type,
     a.count = pool.count,
     a.host_group_id = pool.host_group_id,
     a.max_pods = pool.max_pods,
     a.resourcegroup = pool.resource_group
-    SET a.consolelink = coalesce(pool.consolelink, a.consolelink), a.lastupdated = $update_tag,
-    a.name = pool.name
     WITH a
     MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(c:AzureCluster{id: $cluster_id})
     MERGE (c)-[r:HAS]->(a)
