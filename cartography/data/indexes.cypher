@@ -1,4 +1,4 @@
-CREATE INDEX IF NOT EXISTS FOR (n:CloudanixWorkspace) ON (n.id);
+CREATE CONSTRAINT cloudanix_workspace_id_unique IF NOT EXISTS FOR (w:CloudanixWorkspace) REQUIRE w.id IS UNIQUE;
 CREATE INDEX IF NOT EXISTS FOR (n:AWSOrganization) ON (n.id);
 CREATE INDEX IF NOT EXISTS FOR (n:AWSPermissionSet) ON (n.arn);
 CREATE INDEX IF NOT EXISTS FOR (n:AWSConfigurationRecorder) ON (n.id);
