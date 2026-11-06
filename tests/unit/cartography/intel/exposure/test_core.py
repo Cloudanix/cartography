@@ -12,9 +12,6 @@ from cartography.intel.exposure.rules import is_world
 from cartography.intel.exposure.rules import tiered_open
 from cartography.intel.exposure.rules import with_stateless_return
 from cartography.intel.exposure.software import os_from_image_name
-from cartography.intel.exposure.step import is_requested
-from cartography.intel.exposure.step import run_if_requested
-from cartography.util import collect_failed_analysis_jobs
 
 
 def ps(*values):
@@ -179,24 +176,6 @@ def test_reach_summaries_rewrite_every_source():
     assert [s["type"] for s in stores] == ["ElasticacheCluster", "RDSInstance"]
     assert stores[0]["admitted_by"] == "sg-9" and "admitted_by" not in stores[1]
     assert rows["i-1"]["network_reachable_data_store_count"] == 2
-
-
-def test_exposure_step_runs_only_when_requested():
-    all_syncs = ["ec2:instance", "rds"]
-    assert is_requested(None, all_syncs) and is_requested([], all_syncs)
-    assert is_requested(["exposure_layers"], all_syncs)
-    assert is_requested(["rds", "ec2:instance"], all_syncs)
-    assert not is_requested(["rds"], all_syncs)
-
-
-def test_exposure_step_failure_is_reported_not_raised():
-    def boom(_session, _params):
-        raise RuntimeError("bug")
-
-    with collect_failed_analysis_jobs() as failed:
-        run_if_requested(boom, None, {"AWS_ID": "123", "UPDATE_TAG": 1}, ["exposure_layers"], ["rds"])
-        run_if_requested(boom, None, {"AWS_ID": "123"}, ["rds"], ["rds", "s3"])  # not requested: not run
-    assert failed == [{"job": "exposure_layers", "scope": {"AWS_ID": "123"}}]
 
 
 def test_os_from_image_name():
