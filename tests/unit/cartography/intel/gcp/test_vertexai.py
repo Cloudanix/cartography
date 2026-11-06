@@ -46,6 +46,41 @@ def test_collector_returns_one_item_with_console_link(collector, collection, key
     assert items[0]['consolelink'].startswith('https://console.cloud.google.com/vertex-ai')
 
 
+MODEL = f'projects/{PROJECT_ID}/locations/{REGION}/models/42'
+
+
+def test_model_references_drop_version_suffix():
+    endpoints = vertexai.get_vertexai_endpoints(
+        {
+            REGION: _stub_client(
+                'endpoints', {
+                    'endpoints': [{
+                        'name': 'e1', 'deployedModels': [{'model': f'{MODEL}@2'}, {'model': f'{MODEL}@golden'}, {}],
+                    }],
+                },
+            ),
+        },
+        PROJECT_ID,
+    )
+    jobs = vertexai.get_vertexai_batch_prediction_jobs(
+        {REGION: _stub_client('batchPredictionJobs', {'batchPredictionJobs': [{'name': 'j1', 'model': f'{MODEL}@3'}]})},
+        PROJECT_ID,
+    )
+    pipelines = vertexai.get_vertexai_training_pipelines(
+        {
+            REGION: _stub_client(
+                'trainingPipelines', {'trainingPipelines': [{'name': 'tp1', 'modelToUpload': {'name': f'{MODEL}@1'}}]},
+            ),
+        },
+        PROJECT_ID,
+    )
+
+    assert endpoints[0]['deployed_model_ids'] == [MODEL, MODEL]
+    assert jobs[0]['model_id'] == MODEL
+    assert jobs[0]['model'] == f'{MODEL}@3'
+    assert pipelines[0]['model_to_upload'] == MODEL
+
+
 def _http_error(status: int, error_status: str) -> HttpError:
     body = json.dumps({'error': {'code': status, 'message': 'x', 'status': error_status}}).encode()
     return HttpError(httplib2.Response({'status': status}), body)

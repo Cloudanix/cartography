@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import googleapiclient.discovery
 import neo4j
@@ -51,6 +52,14 @@ def _handle_http_error(e: HttpError, resource_name: str, project_id: str, region
 
 def _parent(project_id: str, region: str) -> str:
     return f"projects/{project_id}/locations/{region}"
+
+
+def _model_id(model_name: Optional[str]) -> Optional[str]:
+    """
+    Strip the `@{version}` / `@{alias}` suffix that DeployedModel.model, BatchPredictionJob.model and
+    TrainingPipeline.modelToUpload.name may carry, so it matches GCPVertexAIModel.id (the models.list name).
+    """
+    return model_name.split('@', 1)[0] if model_name else None
 
 
 def get_vertexai_locations(vertexai: Resource, project_id: str) -> List[str]:
@@ -165,7 +174,7 @@ def get_vertexai_endpoints(clients: Dict[str, Resource], project_id: str) -> Lis
                     endpoint['region'] = region
                     endpoint['id'] = endpoint['name']
                     endpoint['deployed_model_ids'] = [
-                        dm.get('model') for dm in endpoint.get('deployedModels', []) if dm.get('model')
+                        _model_id(dm['model']) for dm in endpoint.get('deployedModels', []) if dm.get('model')
                     ]
                     endpoint['consolelink'] = gcp_console_link.get_console_link(
                         project_id=project_id, resource_name='vertex_ai_endpoint',
@@ -355,7 +364,7 @@ def get_vertexai_training_pipelines(clients: Dict[str, Resource], project_id: st
                 for pipeline in res.get('trainingPipelines', []):
                     pipeline['region'] = region
                     pipeline['id'] = pipeline['name']
-                    pipeline['model_to_upload'] = pipeline.get('modelToUpload', {}).get('name')
+                    pipeline['model_to_upload'] = _model_id(pipeline.get('modelToUpload', {}).get('name'))
                     pipeline['consolelink'] = gcp_console_link.get_console_link(
                         project_id=project_id, resource_name='vertex_ai_home',
                     )
@@ -425,6 +434,7 @@ def get_vertexai_batch_prediction_jobs(clients: Dict[str, Resource], project_id:
                 for job in res.get('batchPredictionJobs', []):
                     job['region'] = region
                     job['id'] = job['name']
+                    job['model_id'] = _model_id(job.get('model'))
                     job['consolelink'] = gcp_console_link.get_console_link(
                         project_id=project_id, resource_name='vertex_ai_home',
                     )
@@ -470,8 +480,8 @@ def _load_vertexai_batch_prediction_jobs_tx(
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     WITH job, record
-    WHERE record.model IS NOT NULL
-    MATCH (model:GCPVertexAIModel{id: record.model})
+    WHERE record.model_id IS NOT NULL
+    MATCH (model:GCPVertexAIModel{id: record.model_id})
     MERGE (job)-[ur:USES_MODEL]->(model)
     ON CREATE SET
         ur.firstseen = timestamp()
