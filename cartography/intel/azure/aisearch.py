@@ -4,11 +4,11 @@ from typing import Dict
 from typing import List
 
 import neo4j
+from azure.core.credentials import TokenCredential
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.search import SearchManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
-from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -18,7 +18,7 @@ azure_console_link = AzureLinker()
 
 
 @timeit
-def get_client(credentials: Credentials, subscription_id: str) -> SearchManagementClient:
+def get_client(credentials: TokenCredential, subscription_id: str) -> SearchManagementClient:
     from .util.timing import get_timing_policy
     client = SearchManagementClient(
         credentials, subscription_id, per_call_policies=[get_timing_policy()],
@@ -113,13 +113,13 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
 
 @timeit
 def sync(
-    neo4j_session: neo4j.Session, credentials: Credentials, subscription_id: str, update_tag: int,
+    neo4j_session: neo4j.Session, credentials: TokenCredential, subscription_id: str, update_tag: int,
     common_job_parameters: Dict, region: list,
 ) -> None:
     tic = time.perf_counter()
     logger.info("Syncing AI Search for subscription '%s'.", subscription_id)
 
-    client = get_client(credentials.arm_credentials, subscription_id)
+    client = get_client(credentials, subscription_id)
 
     services = get_search_services_list(client)
     services = transform_search_services(services, region, common_job_parameters)
