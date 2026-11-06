@@ -128,18 +128,17 @@ def _load_notebook_instances_tx(
         ON CREATE SET ar.firstseen = timestamp()
         SET ar.lastupdated = $aws_update_tag
     )
-    FOREACH (_ IN CASE WHEN instance.SubnetId IS NULL THEN [] ELSE [1] END |
-        MERGE (sn:EC2Subnet{subnetid: instance.SubnetId})
-        ON CREATE SET sn.firstseen = timestamp()
-        SET sn.lastupdated = $aws_update_tag
+    // Link only the account's own subnet / security groups. ec2:* syncs after sagemaker, so on an account's
+    // first sync these edges appear one cycle later.
+    WITH i, instance, aa,
+        [(aa)-[:RESOURCE]->(sn:EC2Subnet{subnetid: instance.SubnetId}) | sn] AS subnets,
+        [(aa)-[:RESOURCE]->(sg:EC2SecurityGroup) WHERE sg.id IN instance.SecurityGroups | sg] AS groups
+    FOREACH (sn IN subnets |
         MERGE (i)-[insub:IN_SUBNET]->(sn)
         ON CREATE SET insub.firstseen = timestamp()
         SET insub.lastupdated = $aws_update_tag
     )
-    FOREACH (sg_id IN instance.SecurityGroups |
-        MERGE (sg:EC2SecurityGroup{id: sg_id})
-        ON CREATE SET sg.firstseen = timestamp()
-        SET sg.lastupdated = $aws_update_tag
+    FOREACH (sg IN groups |
         MERGE (i)-[msg:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
         ON CREATE SET msg.firstseen = timestamp()
         SET msg.lastupdated = $aws_update_tag
@@ -469,18 +468,17 @@ def _load_domains_tx(
         ON CREATE SET ar.firstseen = timestamp()
         SET ar.lastupdated = $aws_update_tag
     )
-    FOREACH (_ IN CASE WHEN domain.VpcId IS NULL THEN [] ELSE [1] END |
-        MERGE (v:AWSVpc{id: domain.VpcId})
-        ON CREATE SET v.firstseen = timestamp()
-        SET v.lastupdated = $aws_update_tag
+    // Link only the account's own VPC / subnets. ec2:* syncs after sagemaker, so on an account's first sync
+    // these edges appear one cycle later.
+    WITH i, domain, aa,
+        [(aa)-[:RESOURCE]->(v:AWSVpc{id: domain.VpcId}) | v] AS vpcs,
+        [(aa)-[:RESOURCE]->(sn:EC2Subnet) WHERE sn.subnetid IN domain.SubnetIds | sn] AS subnets
+    FOREACH (v IN vpcs |
         MERGE (i)-[mv:MEMBER_OF_AWS_VPC]->(v)
         ON CREATE SET mv.firstseen = timestamp()
         SET mv.lastupdated = $aws_update_tag
     )
-    FOREACH (sn_id IN domain.SubnetIds |
-        MERGE (sn:EC2Subnet{subnetid: sn_id})
-        ON CREATE SET sn.firstseen = timestamp()
-        SET sn.lastupdated = $aws_update_tag
+    FOREACH (sn IN subnets |
         MERGE (i)-[insub:IN_SUBNET]->(sn)
         ON CREATE SET insub.firstseen = timestamp()
         SET insub.lastupdated = $aws_update_tag
