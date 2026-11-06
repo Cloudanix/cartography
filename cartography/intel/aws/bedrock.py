@@ -236,35 +236,6 @@ def get_bedrock_flows_list(
 
 
 @timeit
-def get_bedrock_foundation_models_list(
-    boto3_session: boto3.session.Session,
-    region: str,
-) -> List[Dict]:
-    foundation_models: List[Dict] = []
-    try:
-        client = get_boto3_client(boto3_session, "bedrock", region)
-        response = client.list_foundation_models()
-        models = response.get("modelSummaries")
-
-        for model in models:
-            model["region"] = region
-            model["consolelink"] = aws_console_link.get_console_link(arn=model["modelArn"])
-            model["arn"] = model.get("modelArn", "")
-            # Flatten list / nested fields to scalars for Neo4j, matching the
-            # rest of this module which stores scalar properties.
-            model["inputModalitiesStr"] = ",".join(model.get("inputModalities", []) or [])
-            model["outputModalitiesStr"] = ",".join(model.get("outputModalities", []) or [])
-            model["customizationsSupportedStr"] = ",".join(model.get("customizationsSupported", []) or [])
-            model["inferenceTypesSupportedStr"] = ",".join(model.get("inferenceTypesSupported", []) or [])
-            model["modelLifecycleStatus"] = model.get("modelLifecycle", {}).get("status")
-            foundation_models.append(model)
-
-    except Exception as e:
-        logger.warning(f"Could not list bedrock foundation models. skipping. - {e}")
-    return foundation_models
-
-
-@timeit
 def get_bedrock_provisioned_throughputs_list(
     boto3_session: boto3.session.Session,
     region: str,
@@ -398,57 +369,6 @@ def load_bedrock_data_sources(
 ) -> None:
     neo4j_session.execute_write(
         _load_bedrock_data_sources_tx, bedrock_data_sources, current_aws_account_id, aws_update_tag,
-    )
-
-
-@timeit
-def load_bedrock_foundation_models(
-    neo4j_session: neo4j.Session,
-    bedrock_foundation_models: List[Dict],
-    current_aws_account_id: str,
-    aws_update_tag: int,
-) -> None:
-    neo4j_session.execute_write(
-        _load_bedrock_foundation_models_tx, bedrock_foundation_models, current_aws_account_id, aws_update_tag,
-    )
-
-
-@timeit
-def _load_bedrock_foundation_models_tx(
-    tx: neo4j.Transaction,
-    bedrock_foundation_models: List[Dict],
-    current_aws_account_id: str,
-    aws_update_tag: int,
-) -> None:
-    ingest_bedrock_foundation_models = """
-    UNWIND $bedrock_foundation_models AS fm
-    MERGE (i:AWSBedrockFoundationModel{arn:fm.arn})
-    ON CREATE SET i.firstseen = timestamp(),
-    i.arn = fm.arn,
-    i.modelid = fm.modelId
-    SET i.name = fm.modelName,
-    i.providername = fm.providerName,
-    i.inputmodalities = fm.inputModalitiesStr,
-    i.outputmodalities = fm.outputModalitiesStr,
-    i.customizationssupported = fm.customizationsSupportedStr,
-    i.inferencetypessupported = fm.inferenceTypesSupportedStr,
-    i.responsestreamingsupported = fm.responseStreamingSupported,
-    i.modellifecyclestatus = fm.modelLifecycleStatus,
-    i.lastupdated = $aws_update_tag,
-    i.region = fm.region,
-    i.consolelink = fm.consolelink
-    WITH i
-    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
-    MERGE (aa)-[r:RESOURCE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
-    """
-
-    tx.run(
-        ingest_bedrock_foundation_models,
-        bedrock_foundation_models=bedrock_foundation_models,
-        AWS_ACCOUNT_ID=current_aws_account_id,
-        aws_update_tag=aws_update_tag,
     )
 
 
@@ -1213,14 +1133,6 @@ def sync_bedrock(
     logger.info(f"Total bedrock flows: {len(flows_list)}")
 
     load_bedrock_flows(neo4j_session, flows_list, current_aws_account_id, aws_update_tag)
-
-    foundation_models_list = []
-    for region in regions:
-        foundation_models_list.extend(get_bedrock_foundation_models_list(boto3_session, region))
-
-    logger.info(f"Total bedrock foundation models: {len(foundation_models_list)}")
-
-    load_bedrock_foundation_models(neo4j_session, foundation_models_list, current_aws_account_id, aws_update_tag)
 
     provisioned_throughputs_list = []
     for region in regions:
