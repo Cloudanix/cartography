@@ -27,8 +27,8 @@ import oci.object_storage
 
 from . import tags
 from . import utils
-from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -78,9 +78,10 @@ def load_audit_configuration(
         ac.compartment_id = $COMPARTMENT_ID,
         ac.retention_period_days = $RETENTION_PERIOD_DAYS,
         ac.region = $REGION,
+        ac.consolelink = $CONSOLELINK,
         ac.lastupdated = $oci_update_tag
     WITH ac
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+    MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (cc)-[r:RESOURCE]->(ac)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -94,6 +95,7 @@ def load_audit_configuration(
         COMPARTMENT_ID=compartment_id,
         RETENTION_PERIOD_DAYS=retention,
         REGION=region,
+        CONSOLELINK=utils.get_console_link("tenancy"),
         oci_update_tag=oci_update_tag,
     )
 
@@ -185,9 +187,10 @@ def load_log_groups(
             g.description = lg.description,
             g.lifecycle_state = lg.lifecycle_state,
             g.region = $REGION,
+            g.consolelink = lg.consolelink,
             g.lastupdated = $oci_update_tag
         WITH g, lg
-        MATCH (cc:OCICompartment{id: lg.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: lg.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(g)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -201,12 +204,13 @@ def load_log_groups(
             "description": lg.get("description", ""),
             "lifecycle_state": lg.get("lifecycle-state", ""),
             "time_created": str(lg.get("time-created", "")),
+            "consolelink": utils.get_console_link("log_group", region=region, ocid=lg.get("id")),
         }
         for lg in log_groups
     ]
     load_graph_data(
         neo4j_session, ingest_log_group, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -214,6 +218,7 @@ def load_logs(
     neo4j_session: neo4j.Session,
     logs: List[Dict[str, Any]],
     log_group_id: str,
+    tenancy_id: str,
     region: str,
     oci_update_tag: int,
 ) -> None:
@@ -238,9 +243,11 @@ def load_logs(
             l.source_resource = log.source_resource,
             l.source_category = log.source_category,
             l.region = $REGION,
+            l.consolelink = log.consolelink,
             l.lastupdated = $oci_update_tag
         WITH l
-        MATCH (lg:OCILogGroup{id: $LOG_GROUP_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(lg:OCILogGroup{id: $LOG_GROUP_ID})
         MERGE (lg)-[r:OCI_LOG]->(l)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -262,11 +269,14 @@ def load_logs(
             "source_resource": source.get("resource", ""),
             "source_category": source.get("category", ""),
             "time_created": str(log_entry.get("time-created", "")),
+            "consolelink": utils.get_console_link(
+                "log", region=region, ocid=log_entry.get("id"), log_group_id=log_group_id,
+            ),
         })
 
     load_graph_data(
         neo4j_session, ingest_log, rows,
-        LOG_GROUP_ID=log_group_id, REGION=region, oci_update_tag=oci_update_tag,
+        LOG_GROUP_ID=log_group_id, TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -301,7 +311,7 @@ def sync_log_groups(
                 if lg_id:
                     logs = get_logs_for_log_group(logging_client, lg_id)
                     if logs:
-                        load_logs(neo4j_session, logs, lg_id, region, oci_update_tag)
+                        load_logs(neo4j_session, logs, lg_id, tenancy_id, region, oci_update_tag)
                         tags.sync_tags(
                             neo4j_session, logs, 'OCILog',
                             oci_update_tag, common_job_parameters,
@@ -356,7 +366,7 @@ def load_logging_services(
             ls.region = $REGION,
             ls.lastupdated = $oci_update_tag
         WITH ls
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(ls)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -373,7 +383,9 @@ def load_logging_services(
 
         svc_id = svc.get("id") or svc.get("service-type") or svc.get("name", "")
         rows.append({
-            "service_id": f"oci.logging.service.{svc_id}.{region}",
+            # ListServices is the same catalog for every tenancy: the compartment in the id keeps each
+            # compartment's node (and its compartment_id) its own.
+            "service_id": f"oci.logging.service.{compartment_id}.{svc_id}.{region}",
             "name": svc.get("name", "") or svc.get("service-type", ""),
             "namespace": svc.get("namespace", ""),
             "resource_types": resource_types,
@@ -381,7 +393,7 @@ def load_logging_services(
 
     load_graph_data(
         neo4j_session, ingest_service, rows,
-        COMPARTMENT_ID=compartment_id, REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -466,7 +478,7 @@ def load_logging_configuration(
         lc.has_enabled_logs = $HAS_ENABLED_LOGS,
         lc.lastupdated = $oci_update_tag
     WITH lc
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+    MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (cc)-[r:RESOURCE]->(lc)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -477,6 +489,7 @@ def load_logging_configuration(
         neo4j_session,
         ingest_config,
         CONFIG_ID=config_id,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=config["compartment_id"],
         REGION=config["region"],
         TOTAL_LOG_GROUPS=config["total_log_groups"],
@@ -541,7 +554,8 @@ def enrich_bucket_logging_status(
         # Update bucket nodes with logging status
         update_bucket_logging = """
         UNWIND $DictList AS bkt
-            MATCH (b:OCIStorageBucket)
+            MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
+                -[:RESOURCE]->(b:OCIStorageBucket)
             WHERE b.compartment_id = $COMPARTMENT_ID AND b.region = $REGION
               AND (b.ocid = bkt.bucket_id OR b.name = bkt.bucket_id)
             SET b.write_logging_enabled = bkt.write_logging_enabled,
@@ -561,12 +575,13 @@ def enrich_bucket_logging_status(
             })
         load_graph_data(
             neo4j_session, update_bucket_logging, rows,
-            COMPARTMENT_ID=compartment_id, REGION=region,
+            TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, REGION=region,
         )
 
         # Mark buckets without any logging as not enabled
         mark_unlogged_buckets = """
-        MATCH (b:OCIStorageBucket)
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
+            -[:RESOURCE]->(b:OCIStorageBucket)
         WHERE b.compartment_id = $COMPARTMENT_ID AND b.region = $REGION
           AND b.logging_enabled IS NULL
         SET b.write_logging_enabled = false,
@@ -577,6 +592,7 @@ def enrich_bucket_logging_status(
         run_write_query(
             neo4j_session,
             mark_unlogged_buckets,
+            TENANCY_ID=tenancy_id,
             COMPARTMENT_ID=compartment_id,
             REGION=region,
         )

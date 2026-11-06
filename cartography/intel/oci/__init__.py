@@ -9,7 +9,6 @@ from typing import Dict
 from typing import List
 
 import neo4j
-import oci
 import oci.artifacts
 import oci.key_management
 import oci.logging
@@ -20,6 +19,7 @@ from oci.exceptions import ProfileNotFound
 
 from . import compartment
 from . import database
+from . import exposure_layers
 from . import iam
 from . import oke
 from . import organizations
@@ -28,12 +28,36 @@ from . import tags
 from . import utils
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
+from cartography.intel.exposure import step as exposure_step
 from cartography.intel.oci.util.common import parse_and_validate_oci_requested_syncs
-from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 # from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
 Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging containerregistry database')
+
+# Analysis jobs run per compartment after all resource syncs, in this order.
+OCI_ANALYSIS_JOBS = [
+    'oci_subnet_asset_exposure.json',
+    # Reads the subnet job's exposed_internet.
+    'oci_security_list_asset_exposure.json',
+    'oci_load_balancer_asset_exposure.json',
+    'oci_instance_asset_exposure.json',
+    # Reads the instance job's exposed_internet.
+    'oci_boot_volume_asset_exposure.json',
+    'oci_db_system_asset_exposure.json',
+    'oci_iam_user_analysis.json',
+    'oci_iam_policy_analysis.json',
+    'oci_encryption_analysis.json',
+    'oci_monitoring_analysis.json',
+    'oci_containerregistry_asset_exposure.json',
+    'oci_object_storage_asset_exposure.json',
+    'oci_file_storage_asset_exposure.json',
+    'oci_autonomous_database_asset_exposure.json',
+    'oci_oke_cluster_asset_exposure.json',
+    'oci_api_gateway_asset_exposure.json',
+    'oci_logging_analysis.json',
+]
 
 
 def _sync_one_compartment(
@@ -97,7 +121,7 @@ def _sync_one_compartment(
 
     # Run remaining resource syncs (skip IAM since it's already handled above)
     for func_name in requested_syncs:
-        if func_name == "iam":
+        if func_name in ("iam", exposure_step.EXPOSURE_LAYERS_SYNC):
             continue
         if func_name in RESOURCE_FUNCTIONS:
             logger.info("Syncing OCI %s for compartment '%s'.", func_name, compartment_id)
@@ -137,23 +161,13 @@ def _sync_one_compartment(
             )
 
     # Run analysis jobs after all resource syncs complete
-    _oci_analysis_jobs = [
-        'oci_subnet_asset_exposure.json',
-        'oci_instance_asset_exposure.json',
-        'oci_iam_user_analysis.json',
-        'oci_iam_policy_analysis.json',
-        'oci_encryption_analysis.json',
-        'oci_monitoring_analysis.json',
-        'oci_containerregistry_asset_exposure.json',
-        'oci_object_storage_asset_exposure.json',
-        'oci_file_storage_asset_exposure.json',
-        'oci_logging_analysis.json',
-    ]
-    for job_file in _oci_analysis_jobs:
-        try:
-            run_analysis_job(job_file, neo4j_session, common_job_parameters)
-        except Exception as e:
-            logger.error("Error running OCI analysis job '%s': %s", job_file, e, exc_info=True)
+    for job_file in OCI_ANALYSIS_JOBS:
+        run_analysis_job(job_file, neo4j_session, common_job_parameters)
+
+    # Reads what the syncs and jobs above wrote; runs only when requested (see exposure/step.py).
+    exposure_step.run_if_requested(
+        exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
+    )
 
     logger.info(
         json.dumps({

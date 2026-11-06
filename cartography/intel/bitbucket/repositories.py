@@ -6,11 +6,13 @@ from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
 from .common import cleanse_string
+from .common import get_console_link
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.util import make_requests_url
@@ -128,6 +130,7 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
         }
 
         repo["uniqueId"] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
+        repo["consolelink"] = get_console_link("repository", workspace=workspace, repo=repo["slug"])
         transformed_repo_list.append(repo)
 
     return {
@@ -136,7 +139,13 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
     }
 
 
-def transform_branches(branches: List[Dict], repo_id: str, default_branch: str = None) -> List[Dict]:
+def transform_branches(
+    branches: List[Dict],
+    repo_id: str,
+    default_branch: str = None,
+    workspace: Optional[str] = None,
+    repo_slug: Optional[str] = None,
+) -> List[Dict]:
     """
     Transform branch data and filter to include only branches active in the last 6 months (180 days).
     The default branch is always included regardless of activity date.
@@ -148,6 +157,7 @@ def transform_branches(branches: List[Dict], repo_id: str, default_branch: str =
         branch_name = branch["name"]
         target = branch.get("target", {})
         date_str = target.get("date")
+        consolelink = get_console_link("branch", workspace=workspace, repo=repo_slug, branch=branch_name)
 
         # Always include default branch
         if branch_name == default_branch:
@@ -156,6 +166,7 @@ def transform_branches(branches: List[Dict], repo_id: str, default_branch: str =
                 "id": f"{repo_id}:{branch_name}",
                 "name": branch_name,
                 "date": date_str,
+                "consolelink": consolelink,
             })
             continue
 
@@ -169,6 +180,7 @@ def transform_branches(branches: List[Dict], repo_id: str, default_branch: str =
                         "id": f"{repo_id}:{branch_name}",
                         "name": branch_name,
                         "date": date_str,
+                        "consolelink": consolelink,
                     })
             except (ValueError, AttributeError):
                 pass
@@ -193,10 +205,12 @@ def _load_branches(tx: neo4j.Transaction, branches_data: List[Dict], common_job_
     ON CREATE SET br.firstseen = timestamp()
     SET br.name = branch.name,
     br.date = branch.date,
+    br.consolelink = branch.consolelink,
     br.lastupdated = $UpdateTag
 
     WITH br, branch
-    MATCH (repo:BitbucketRepository{id:branch.repo_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)-[:RESOURCE]->(:BitbucketProject)
+        -[:RESOURCE]->(repo:BitbucketRepository{id:branch.repo_id})
     MERGE (repo)-[r:BRANCH]->(br)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -205,17 +219,21 @@ def _load_branches(tx: neo4j.Transaction, branches_data: List[Dict], common_job_
     tx.run(
         ingest_branches,
         branchesData=branches_data,
+        WORKSPACE_ID=common_job_parameters["WORKSPACE_ID"],
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
 
 @timeit
-def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_language: List[Dict]) -> None:
+def load_languages(
+    neo4j_session: neo4j.Session, update_tag: int, repo_primary_language: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the relationships for repo languages
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param repo_primary_language: list of primary language to repo mappings
+    :param workspace_id: the syncing Cloudanix workspace; a language links only to a repo of its workspaces
     """
     ingest_languages = """
         UNWIND $DictList as lang
@@ -226,7 +244,8 @@ def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_l
         SET pl.lastupdated = $UpdateTag
         WITH pl, lang
 
-        MATCH (repo:BitbucketRepository{id: lang.repo_id})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)-[:RESOURCE]->(:BitbucketProject)
+            -[:RESOURCE]->(repo:BitbucketRepository{id: lang.repo_id})
         MERGE (repo)-[r:PRIMARY_LANGUAGE]->(pl)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $UpdateTag
@@ -237,6 +256,7 @@ def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_l
         ingest_languages,
         repo_primary_language,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
@@ -264,10 +284,12 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     re.updated_on = repo.updated_on,
     re.visibility = repo.visibility,
     re.lastupdated = $UpdateTag,
-    re.console_link = repo.console_link
+    re.console_link = repo.console_link,
+    re.consolelink = repo.consolelink
 
     WITH re, repo
-    MATCH (project:BitbucketProject{id:repo.project.uuid})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)
+        -[:RESOURCE]->(project:BitbucketProject{id:repo.project.uuid})
     MERGE (project)-[o:RESOURCE]->(re)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
@@ -277,6 +299,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
         ingest_repositories,
         reposData=repos_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
+        WORKSPACE_ID=common_job_parameters["WORKSPACE_ID"],
     )
 
 
@@ -285,10 +308,12 @@ def _update_repo_last_activity(
     repo_id: str,
     branches: List[Dict],
     default_branch: str,
+    workspace_id: str,
 ) -> None:
     """
     Compute and store last_activity_at for a Bitbucket repository from its branch commit dates.
     Priority: (1) default branch commit date, (2) max commit date across all branches.
+    :param workspace_id: the syncing Cloudanix workspace; only a repo of its Bitbucket workspaces is updated
     """
     last_activity_at = None
     # Priority 1: default branch commit date
@@ -307,8 +332,13 @@ def _update_repo_last_activity(
         iso_str, ts_ms = normalize_datetime(last_activity_at)
         run_write_query(
             neo4j_session,
-            "MATCH (r:BitbucketRepository{id: $RepoId}) SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs",  # noqa: E501
+            """
+            MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)
+                -[:RESOURCE]->(:BitbucketProject)-[:RESOURCE]->(r:BitbucketRepository{id: $RepoId})
+            SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs
+            """,
             RepoId=repo_id,
+            WORKSPACE_ID=workspace_id,
             LastActivity=iso_str,
             LastActivityTs=ts_ms,
         )
@@ -351,12 +381,17 @@ def sync(
 
         branches = get_branches(bitbucket_access_token, workspace_name, repo_slug)
         default_branch = repo.get("default_branch")
-        transformed_branches = transform_branches(branches, repo["uuid"], default_branch)
+        transformed_branches = transform_branches(branches, repo["uuid"], default_branch, workspace_name, repo_slug)
         load_branches(neo4j_session, transformed_branches, common_job_parameters)
-        _update_repo_last_activity(neo4j_session, repo["uuid"], transformed_branches, default_branch)
+        _update_repo_last_activity(
+            neo4j_session, repo["uuid"], transformed_branches, default_branch, common_job_parameters["WORKSPACE_ID"],
+        )
 
     # Load languages
-    load_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"])
+    load_languages(
+        neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"],
+        common_job_parameters["WORKSPACE_ID"],
+    )
 
     if list_complete:
         cleanup(neo4j_session, common_job_parameters)

@@ -117,6 +117,7 @@ def transform_rrs(rrsets: List, zone: Dict, project_id: str):
         resource_record_set['zone'] = zone['id']
         resource_record_set['consolelink'] = gcp_console_link.get_console_link(
             resource_name='dns_resource_record_set', project_id=project_id, dns_zone_name=zone['name'], dns_rrset_name=resource_record_set['name'],
+            dns_type=resource_record_set.get('type'),
         )
         resource_record_set[
             "id"
@@ -172,7 +173,9 @@ def transform_dns_keys(dnsKeys: List, project_id: str, zone: Dict):
 
     for key in dnsKeys:
         key['zone'] = zone['id']
-        key['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='dns_home')
+        key['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='dns_zone', dns_zone_name=zone['name'],
+        )
         key['id'] = f"projects/{project_id}/managedZones/{zone['name']}/dnsKeys/{key['id']}"
         list_keys.append(key)
 
@@ -320,7 +323,7 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
         rrs.consolelink = record.consolelink,
         rrs.lastupdated = $gcp_update_tag
     WITH rrs, record
-    MATCH (zone:GCPDNSZone{id:record.zone})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(zone:GCPDNSZone{id:record.zone})
     MERGE (zone)-[r:HAS_RECORD]->(rrs)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -331,6 +334,7 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
         ingest_records,
         dns_rrs,
         region="global",
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -419,7 +423,7 @@ def load_dns_keys(neo4j_session: neo4j.Session, dns_keys: List[Dict], project_id
         ky.isActive = key.isActive,
         ky.lastupdated = $gcp_update_tag
     WITH ky, key
-    MATCH (zone:GCPDNSZone{id:key.zone})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(zone:GCPDNSZone{id:key.zone})
     MERGE (zone)-[r:HAS_KEY]->(ky)
     ON CREATE SET
         r.firstseen = timestamp()

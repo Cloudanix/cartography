@@ -9,6 +9,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -91,13 +93,16 @@ def get_internet_gateways(boto3_session: boto3.session.Session, region: str) -> 
 @timeit
 def load_internet_gateways(
     neo4j_session: neo4j.Session, internet_gateways: List[Dict], region: str,
-    current_aws_account_id: str, update_tag: int,
+    current_aws_account_id: str, update_tag: int, workspace_id: str, partition: str = DEFAULT_PARTITION,
 ) -> None:
     logger.info("Loading %d Internet Gateways in %s.", len(internet_gateways), region)
-    # TODO: Right now this won't work in non-AWS commercial (GovCloud, China) as partition is hardcoded
+    owned: List[Dict] = []
+    shared: List[Dict] = []
     for igw in internet_gateways:
-        arn = f"arn:aws:ec2:{region}:{igw.get('OwnerId', '')}:internet-gateway/{igw['InternetGatewayId']}"
+        arn = f"arn:{partition}:ec2:{region}:{igw.get('OwnerId', '')}:internet-gateway/{igw['InternetGatewayId']}"
         igw['consolelink'] = aws_console_link.get_console_link(arn=arn)
+        (owned if igw.get('OwnerId', current_aws_account_id) == current_aws_account_id else shared).append(igw)
+
     query = """
     UNWIND $DictList as igw
         MERGE (ig:AWSInternetGateway{id: igw.InternetGatewayId})
@@ -107,7 +112,7 @@ def load_internet_gateways(
         SET
             ig.ownerid = igw.OwnerId,
             ig.lastupdated = $aws_update_tag,
-            ig.arn = "arn:aws:ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
+            ig.arn = "arn:"+$partition+":ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
             ig.is_default = igw.isDefault,
             ig.consolelink = igw.consolelink
         WITH igw, ig
@@ -117,22 +122,50 @@ def load_internet_gateways(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
         WITH igw, ig
-
         UNWIND igw.Attachments as attachment
-        MATCH (vpc:AWSVpc{id: attachment.VpcId})
+        MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(vpc:AWSVpc{id: attachment.VpcId})
+    """ + _ATTACH_TO_VPC
+
+    # A gateway of a VPC shared into this account (RAM) belongs to the VPC owner, maybe another tenant:
+    # no RESOURCE claim, nothing SET on an existing node (is_default is computed against this account's
+    # default VPC). It is still linked to its VPC, which this account's resources in shared subnets reach,
+    # when an account of this workspace owns that VPC; another customer's VPC is never linked.
+    shared_query = """
+    UNWIND $DictList as igw
+        MERGE (ig:AWSInternetGateway{id: igw.InternetGatewayId})
+        ON CREATE SET
+            ig.firstseen = timestamp(),
+            ig.region = $region,
+            ig.lastupdated = $aws_update_tag,
+            ig.ownerid = igw.OwnerId,
+            ig.arn = "arn:"+$partition+":ec2:"+$region+":"+igw.OwnerId+":internet-gateway/"+igw.InternetGatewayId,
+            ig.consolelink = igw.consolelink
+        WITH igw, ig
+        UNWIND igw.Attachments as attachment
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+            -[:RESOURCE]->(vpc:AWSVpc{id: attachment.VpcId})
+    """ + _ATTACH_TO_VPC
+
+    for statement, rows in ((query, owned), (shared_query, shared)):
+        if not rows:
+            continue
+        load_graph_data(
+            neo4j_session,
+            statement,
+            rows,
+            region=region,
+            partition=partition,
+            aws_account_id=current_aws_account_id,
+            WORKSPACE_ID=workspace_id,
+            aws_update_tag=update_tag,
+        )
+
+
+_ATTACH_TO_VPC = """
         MERGE (vpc)-[r:ATTACHED_TO]->(ig)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
-    """
-
-    load_graph_data(
-        neo4j_session,
-        query,
-        internet_gateways,
-        region=region,
-        aws_account_id=current_aws_account_id,
-        aws_update_tag=update_tag,
-    )
+"""
 
 
 @timeit
@@ -149,13 +182,17 @@ def sync_internet_gateways(
     tic = time.perf_counter()
     logger.info("Syncing EC2 Internet Gateways for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.info("Syncing Internet Gateways for region '%s' in account '%s'.", region, current_aws_account_id)
         internet_gateways = get_internet_gateways(boto3_session, region)
 
         logger.info(f"Total Internet Gateways: {len(internet_gateways)} for {region}")
 
-        load_internet_gateways(neo4j_session, internet_gateways, region, current_aws_account_id, update_tag)
+        load_internet_gateways(
+            neo4j_session, internet_gateways, region, current_aws_account_id, update_tag,
+            common_job_parameters['WORKSPACE_ID'], partition=partition,
+        )
 
     cleanup(neo4j_session, common_job_parameters)
     toc = time.perf_counter()

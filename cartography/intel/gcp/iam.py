@@ -77,6 +77,7 @@ def classify_external_member(
     member: str,
     project_id: str,
     organization_domains: frozenset,
+    organization_projects: frozenset = frozenset(),
 ) -> Dict[str, str] | None:
     """Classify a binding member as an external principal, or None if internal.
 
@@ -86,8 +87,8 @@ def classify_external_member(
       not a Google-managed agent,
     * a user/group/domain whose domain is outside the org's verified domains.
 
-    access_type is "CrossAccount" when the principal still belongs to the
-    customer org (e.g. a sibling project / verified domain), "ThirdParty"
+    access_type is "CrossAccount" for a service account of a sibling project
+    (one of organization_projects, the org's synced project ids), "ThirdParty"
     otherwise. Returns a record with the raw member string as the principal.
     """
     raw = (member or "").strip()
@@ -112,7 +113,8 @@ def classify_external_member(
         owning_project = _gcp_service_account_project(value)
         if not owning_project or owning_project == (project_id or "").lower():
             return None  # customer's own project
-        return {"principal": raw, "member_type": "serviceaccount", "access_type": "ThirdParty"}
+        access_type = "CrossAccount" if owning_project in organization_projects else "ThirdParty"
+        return {"principal": raw, "member_type": "serviceaccount", "access_type": access_type}
 
     if member_type == "domain":
         if value in organization_domains:
@@ -128,19 +130,42 @@ def classify_external_member(
     return None
 
 
-def _get_organization_domains(neo4j_session: neo4j.Session, project_id: str) -> frozenset:
+def _get_organization_domains(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> frozenset:
     """Return the set of domains the customer org owns, lowercased.
 
-    Derived from GCPDomain nodes already loaded for the org/project. An empty
-    set means user/group/domain members are treated as external (safe
-    over-report) until verified-domain data is ingested.
+    Derived from GCPDomain nodes already loaded for the projects of the
+    syncing org (GCPDomain nodes are shared: every tenant's domains are in
+    the graph). An empty set means user/group/domain members are treated as
+    external (safe over-report) until verified-domain data is ingested.
     """
-    query = "MATCH (d:GCPDomain) WHERE d.name IS NOT NULL RETURN DISTINCT d.name AS name"
+    query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id: $GCP_ORGANIZATION_ID})
+        -[:OWNER]->(:GCPProject)-[:RESOURCE]->(d:GCPDomain)
+    WHERE d.name IS NOT NULL
+    RETURN DISTINCT d.name AS name
+    """
     try:
-        rows = neo4j_session.execute_read(read_list_of_dicts_tx, query)
+        rows = neo4j_session.execute_read(
+            read_list_of_dicts_tx, query,
+            WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+            GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
+        )
     except Exception:
         return frozenset()
     return frozenset(row["name"].lower() for row in rows if row.get("name"))
+
+
+def _get_organization_project_ids(neo4j_session: neo4j.Session, organization_id: str, workspace_id: str) -> frozenset:
+    """Return the lowercased ids of the projects synced under this workspace's organization."""
+    query = """
+    MATCH (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(:GCPOrganization{id: $organization_id})
+        -[:OWNER]->(p:GCPProject)
+    RETURN DISTINCT p.id AS id
+    """
+    rows = neo4j_session.execute_read(
+        read_list_of_dicts_tx, query, organization_id=organization_id, workspace_id=workspace_id,
+    )
+    return frozenset(row["id"].lower() for row in rows if row.get("id"))
 
 
 def load_gcp_external_principal(
@@ -153,15 +178,19 @@ def load_gcp_external_principal(
     ingest_external_principal = """
     MERGE (ep:GCPExternalPrincipal{principal: $PRINCIPAL})
     ON CREATE SET ep.firstseen = timestamp()
+    // One node per principal for every tenant that grants it: only facts about the principal itself. access_type
+    // is ThirdParty for every principal emitted today; it stays here until inventory-sync reads the edge's.
     SET ep.lastupdated = $gcp_update_tag,
     ep.access_type = $ACCESS_TYPE,
-    ep.member_type = $MEMBER_TYPE,
-    ep.account_id = $PROJECT_ID
+    ep.member_type = $MEMBER_TYPE
     WITH ep
-    MATCH (role:GCPRole{id: $ROLE_ID})
-    MERGE (role)-[r:TRUSTS_GCP_PRINCIPAL]->(ep)
+    // The role of the granting (syncing) project: its custom role, or a role of the organization that owns it.
+    MATCH (project:GCPProject{id: $ProjectId}), (role:GCPRole{id: $ROLE_ID})
+    WHERE (project)-[:RESOURCE]->(role) OR (project)<-[:OWNER]-(:GCPOrganization)-[:RESOURCE]->(role)
+    // The granting project is this tenant's fact: one edge per project, carrying it.
+    MERGE (role)-[r:TRUSTS_GCP_PRINCIPAL{account_id: $ProjectId}]->(ep)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $gcp_update_tag
+    SET r.lastupdated = $gcp_update_tag, r.access_type = $ACCESS_TYPE
     """
     run_write_query(
         neo4j_session,
@@ -170,7 +199,7 @@ def load_gcp_external_principal(
         PRINCIPAL=external_principal["principal"],
         ACCESS_TYPE=external_principal["access_type"],
         MEMBER_TYPE=external_principal.get("member_type", ""),
-        PROJECT_ID=project_id,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -665,11 +694,11 @@ def load_service_account_keys(
     ingest_service_accounts = """
     UNWIND $DictList AS sa
     MERGE (u:GCPServiceAccountKey{id: sa.id})
-    ON CREATE SET u.firstseen = timestamp()
+    ON CREATE SET u.firstseen = timestamp(),
+    u.create_date = $createDate
     SET u.name=sa.name, u.serviceaccountid= $serviceaccount,
     u.displayname = sa.displayname,
     u.region = $region,
-    u.create_date = $createDate,
     u.keytype = sa.keyType, u.origin = sa.keyOrigin,
     u.consolelink = sa.consolelink,
     u.lastauthenticatedtime=sa.lastAuthenticatedTime,
@@ -708,11 +737,11 @@ def load_project_roles(neo4j_session: neo4j.Session, roles: List[Dict], project_
     ingest_roles = """
     UNWIND $DictList AS d
     MERGE (u:GCPRole{id: d.id})
-    ON CREATE SET u.firstseen = timestamp()
+    ON CREATE SET u.firstseen = timestamp(),
+    u.create_date = $createDate
     SET u.name = d.name,
     u.title = d.title,
     u.region = $region,
-    u.create_date = $createDate,
     u.is_sso = d.is_sso,
     u.description = d.description,
     u.deleted = d.deleted,
@@ -746,11 +775,11 @@ def load_sso_roles(neo4j_session: neo4j.Session, roles: List[Dict], org_id: str,
     ingest_roles = """
     UNWIND $DictList AS d
     MERGE (u:GCPRole{id: d.id})
-    ON CREATE SET u.firstseen = timestamp()
+    ON CREATE SET u.firstseen = timestamp(),
+    u.create_date = $createDate
     SET u.name = d.name,
     u.title = d.title,
     u.region = $region,
-    u.create_date = $createDate,
     u.description = d.description,
     u.is_sso = d.is_sso,
     u.deleted = d.deleted,
@@ -786,7 +815,10 @@ def cleanup_roles(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 
 @timeit
 def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id: str, organization_id: str, gcp_update_tag: int, common_job_parameters: Dict) -> None:
-    organization_domains = _get_organization_domains(neo4j_session, project_id)
+    organization_domains = _get_organization_domains(neo4j_session, common_job_parameters)
+    organization_projects = _get_organization_project_ids(
+        neo4j_session, organization_id, common_job_parameters['WORKSPACE_ID'],
+    )
     for binding in bindings:
         role_id = get_role_id(binding['role'], project_id, common_job_parameters)
 
@@ -794,7 +826,9 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
         # (public, foreign service accounts, out-of-org users/groups/domains), so
         # the IAM Deep Dive can surface third-party access with a vendor label.
         for member in binding['members']:
-            external_principal = classify_external_member(member, project_id, organization_domains)
+            external_principal = classify_external_member(
+                member, project_id, organization_domains, organization_projects,
+            )
             if external_principal and role_id:
                 load_gcp_external_principal(
                     neo4j_session, role_id, external_principal, project_id, gcp_update_tag,
@@ -834,7 +868,9 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         neo4j_session,
                         role_id, serviceAccount,
                         project_id,
+                        organization_id,
                         gcp_update_tag,
+                        common_job_parameters['WORKSPACE_ID'],
                     )
                 else:
                     attach_sso_role_to_service_account(
@@ -843,6 +879,7 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                         project_id,
                         organization_id,
                         gcp_update_tag,
+                        common_job_parameters['WORKSPACE_ID'],
                     )
 
             elif member.startswith('group:'):
@@ -944,7 +981,9 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                             neo4j_session,
                             role_id, serviceAccount,
                             project_id,
+                            organization_id,
                             gcp_update_tag,
+                            common_job_parameters['WORKSPACE_ID'],
                         )
                     else:
                         attach_sso_role_to_service_account(
@@ -953,6 +992,7 @@ def load_bindings(neo4j_session: neo4j.Session, bindings: List[Dict], project_id
                             project_id,
                             organization_id,
                             gcp_update_tag,
+                            common_job_parameters['WORKSPACE_ID'],
                         )
 
                 elif member.startswith('group:'):
@@ -1025,15 +1065,14 @@ def attach_project_role_to_user(
     MERGE (user:GCPUser{id: $UserId})
     ON CREATE SET
     user:GCPPrincipal,
-    user.firstseen = timestamp()
+    user.firstseen = timestamp(),
+    user.create_date = $createDate
     SET
     user.email = $UserEmail,
     user.name = $UserName,
-    user.create_date = $createDate,
     user.lastupdated = $gcp_update_tag,
     user.isDeleted = $isDeleted,
-    user.managed_type = 'custom',
-    user.consolelink = $ConsoleLink
+    user.managed_type = 'custom'
     WITH user
     MATCH (:GCPProject{id: $project_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
     MERGE (user)-[r:ASSUME_ROLE]->(role)
@@ -1044,7 +1083,8 @@ def attach_project_role_to_user(
     MERGE (p)-[pr:RESOURCE]->(user)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1074,15 +1114,14 @@ def attach_sso_role_to_user(
     MERGE (user:GCPUser{id: $UserId})
     ON CREATE SET
     user:GCPPrincipal,
-    user.firstseen = timestamp()
+    user.firstseen = timestamp(),
+    user.create_date = $createDate
     SET
     user.email = $UserEmail,
     user.name = $UserName,
-    user.create_date = $createDate,
     user.lastupdated = $gcp_update_tag,
     user.isDeleted = $isDeleted,
-    user.managed_type = 'custom',
-    user.consolelink = $ConsoleLink
+    user.managed_type = 'custom'
     WITH user
     MATCH (:GCPOrganization{id: $organization_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
     MATCH (:GCPOrganization{id: $organization_id})-[:OWNER]->(project:GCPProject{id: $project_id})
@@ -1096,7 +1135,8 @@ def attach_sso_role_to_user(
     MERGE (p)-[pr:RESOURCE]->(user)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1120,13 +1160,16 @@ def attach_sso_role_to_user(
 @timeit
 def attach_project_role_to_service_account(
     neo4j_session: neo4j.Session, role_id: str,
-    serviceAccount: Dict, project_id: str, gcp_update_tag: int,
+    serviceAccount: Dict, project_id: str, organization_id: str, gcp_update_tag: int, workspace_id: str,
 ) -> None:
     ingest_script = """
-    MATCH (sa:GCPServiceAccount{id: $saId})
+    // A binding may name a service account of another organization (another customer's): it gets no edge
+    // and no write here; the binding surfaces as a GCPExternalPrincipal instead.
+    MATCH (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(:GCPOrganization{id: $organization_id})
+        -[:OWNER]->(:GCPProject)-[:RESOURCE]->(sa:GCPServiceAccount{id: $saId})
     SET
     sa.isDeleted = $isDeleted
-    WITH sa
+    WITH DISTINCT sa
     MATCH (:GCPProject{id: $project_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
     MERGE (sa)-[r:ASSUME_ROLE]->(role)
     ON CREATE SET r.firstseen = timestamp()
@@ -1142,6 +1185,8 @@ def attach_project_role_to_service_account(
         ParentId=serviceAccount['parent_id'],
         saId=serviceAccount['id'],
         project_id=project_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -1149,13 +1194,16 @@ def attach_project_role_to_service_account(
 @timeit
 def attach_sso_role_to_service_account(
     neo4j_session: neo4j.Session, role_id: str,
-    serviceAccount: Dict, project_id: str, organization_id: str, gcp_update_tag: int,
+    serviceAccount: Dict, project_id: str, organization_id: str, gcp_update_tag: int, workspace_id: str,
 ) -> None:
     ingest_script = """
-    MATCH (sa:GCPServiceAccount{id: $saId})
+    // A binding may name a service account of another organization (another customer's): it gets no edge
+    // and no write here; the binding surfaces as a GCPExternalPrincipal instead.
+    MATCH (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(:GCPOrganization{id: $organization_id})
+        -[:OWNER]->(:GCPProject)-[:RESOURCE]->(sa:GCPServiceAccount{id: $saId})
     SET
     sa.isDeleted = $isDeleted
-    WITH sa
+    WITH DISTINCT sa
     MATCH (:GCPOrganization{id: $organization_id})-[:RESOURCE]->(role:GCPRole{id: $RoleId})
     MATCH (:GCPOrganization{id: $organization_id})-[:OWNER]->(project:GCPProject{id: $project_id})
     MERGE (sa)-[r1:ASSUME_ROLE{project_id:$project_id}]->(role)-[r2:HAS_ACCESS_TO{email:$saId}]->(project)
@@ -1175,6 +1223,7 @@ def attach_sso_role_to_service_account(
         saId=serviceAccount['id'],
         project_id=project_id,
         organization_id=organization_id,
+        workspace_id=workspace_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -1188,12 +1237,11 @@ def attach_project_role_to_group(
     MERGE (group:GCPGroup{id: $GroupId})
     ON CREATE SET
     group:GCPPrincipal,
-    group.firstseen = timestamp()
+    group.firstseen = timestamp(),
+    group.create_date = $createDate
     SET
     group.email = $GroupEmail,
     group.name = $GroupName,
-    group.create_date = $createDate,
-    group.consolelink = $ConsoleLink,
     group.lastupdated = $gcp_update_tag,
     group.isDeleted = $isDeleted,
     group.managed_type = 'custom'
@@ -1207,7 +1255,8 @@ def attach_project_role_to_group(
     MERGE (p)-[pr:RESOURCE]->(group)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1237,12 +1286,11 @@ def attach_sso_role_to_group(
     MERGE (group:GCPGroup{id: $GroupId})
     ON CREATE SET
     group:GCPPrincipal,
-    group.firstseen = timestamp()
+    group.firstseen = timestamp(),
+    group.create_date = $createDate
     SET
     group.email = $GroupEmail,
     group.name = $GroupName,
-    group.create_date = $createDate,
-    group.consolelink = $ConsoleLink,
     group.lastupdated = $gcp_update_tag,
     group.isDeleted = $isDeleted,
     group.managed_type = 'custom'
@@ -1259,7 +1307,8 @@ def attach_sso_role_to_group(
     MERGE (p)-[pr:RESOURCE]->(group)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1289,12 +1338,11 @@ def attach_project_role_to_domain(
     MERGE (domain:GCPDomain{id: $DomainId})
     ON CREATE SET
     domain:GCPPrincipal,
-    domain.firstseen = timestamp()
+    domain.firstseen = timestamp(),
+    domain.create_date = $createDate
     SET
     domain.email = $DomainEmail,
     domain.name = $DomainName,
-    domain.create_date = $createDate,
-    domain.consolelink = $ConsoleLink,
     domain.lastupdated = $gcp_update_tag,
     domain.isDeleted = $isDeleted,
     domain.managed_type = 'custom'
@@ -1308,7 +1356,8 @@ def attach_project_role_to_domain(
     MERGE (p)-[pr:RESOURCE]->(domain)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(
@@ -1337,12 +1386,11 @@ def attach_sso_role_to_domain(
     MERGE (domain:GCPDomain{id: $DomainId})
     ON CREATE SET
     domain:GCPPrincipal,
-    domain.firstseen = timestamp()
+    domain.firstseen = timestamp(),
+    domain.create_date = $createDate
     SET
     domain.email = $DomainEmail,
     domain.name = $DomainName,
-    domain.create_date = $createDate,
-    domain.consolelink = $ConsoleLink,
     domain.lastupdated = $gcp_update_tag,
     domain.isDeleted = $isDeleted,
     domain.managed_type = 'custom'
@@ -1359,7 +1407,8 @@ def attach_sso_role_to_domain(
     MERGE (p)-[pr:RESOURCE]->(domain)
     ON CREATE SET
     pr.firstseen = timestamp()
-    SET pr.lastupdated = $gcp_update_tag
+    // The console link names this tenant's project: it goes on this tenant's edge, not on the shared node.
+    SET pr.lastupdated = $gcp_update_tag, pr.consolelink = $ConsoleLink
     """
 
     run_write_query(

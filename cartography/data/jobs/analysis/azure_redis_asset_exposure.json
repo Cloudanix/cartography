@@ -1,0 +1,26 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (n:AzureRedisCache)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL OR n.exposed_internet_type IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (c:AzureRedisCache)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(c.public_network_access, 'Enabled') <> 'Disabled' AND c.subnet_id IS NULL AND coalesce(c.firewall_rules_fetched, false) = false SET c.exposed_internet = true, c.exposed_internet_type = coalesce(c.exposed_internet_type, []) + 'firewall_not_evaluated'",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (c:AzureRedisCache)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(c.public_network_access, 'Enabled') <> 'Disabled' AND c.subnet_id IS NULL AND c.firewall_rules_fetched = true AND NOT EXISTS { MATCH (c)-[:HAS]->(:AzureRedisFirewallRule) } SET c.exposed_internet = true, c.exposed_internet_type = coalesce(c.exposed_internet_type, []) + 'public_network_no_firewall'",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (c:AzureRedisCache)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(c.public_network_access, 'Enabled') <> 'Disabled' AND c.subnet_id IS NULL AND c.firewall_rules_fetched = true AND EXISTS { MATCH (c)-[:HAS]->(fw:AzureRedisFirewallRule) WHERE coalesce(fw.address_count, 4294967296) > 16777216 } SET c.exposed_internet = true, c.exposed_internet_type = coalesce(c.exposed_internet_type, []) + 'unrestricted_firewall'",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (c:AzureRedisCache)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE c.exposed_internet = true OPTIONAL MATCH (c)-[:HAS]->(fw:AzureRedisFirewallRule) WHERE coalesce(fw.address_count, 4294967296) > 16777216 WITH c, [r IN collect(DISTINCT fw) | {firewallRuleId: r.id, startIp: r.start_ip_address, endIp: r.end_ip_address}] AS firewallRules SET c.publicContext = apoc.convert.toJson([{resource: c.id, resourceType: 'azure-database-redis-cluster', context: [{cacheId: c.id, cacheName: c.name, hostName: c.host_name, port: c.port, sslPort: c.ssl_port, enableNonSslPort: c.enable_non_ssl_port, minimumTlsVersion: c.minimum_tls_version, publicNetworkAccess: c.public_network_access, sku: c.sku_name, redisVersion: c.redis_version, privateEndpointConnectionCount: c.private_endpoint_connection_count, exposureTypes: c.exposed_internet_type, firewallRules: firewallRules, location: c.location}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "Azure redis cache asset internet exposure"
+}

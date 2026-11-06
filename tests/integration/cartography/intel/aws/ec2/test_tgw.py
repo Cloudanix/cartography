@@ -1,5 +1,6 @@
 import cartography.intel.aws.ec2
 import tests.data.aws.ec2.tgw
+from tests.integration.cartography.intel.aws.common import create_test_account
 
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'eu-west-1'
@@ -7,6 +8,8 @@ TEST_UPDATE_TAG = 123456789
 
 
 def test_load_transit_gateways(neo4j_session):
+    # The owner account claims its gateway, so the sync runs with its account node in the graph.
+    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
     data = tests.data.aws.ec2.tgw.TRANSIT_GATEWAYS
     cartography.intel.aws.ec2.tgw.load_transit_gateways(
         neo4j_session,

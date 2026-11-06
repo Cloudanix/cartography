@@ -1,9 +1,16 @@
 {
   "statements": [
     {
-      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id:$AWS_ID})-[:RESOURCE]->(n:AWSInternetGateway) WHERE n.lastupdated <> $UPDATE_TAG DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id:$AWS_ID})-[:RESOURCE]->(n:AWSInternetGateway) WHERE n.lastupdated <> $UPDATE_TAG AND coalesce(n.ownerid, $AWS_ID) = $AWS_ID WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
       "iterative": true,
-      "iterationsize": 100
+      "iterationsize": 100,
+      "__comment__": "Only a gateway this account owns: one shared into it (RAM, another account's VPC) is the owner's to delete"
+    },
+    {
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id:$AWS_ID})-[r:RESOURCE]->(:AWSInternetGateway) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100,
+      "__comment__": "Stale claims, e.g. the RESOURCE edges an account used to take to gateways shared into it"
     }
   ],
   "name": "cleanup AWSInternetGateway"

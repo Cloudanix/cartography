@@ -12,6 +12,7 @@ from oci.exceptions import ConfigFileNotFound
 from oci.exceptions import InvalidConfig
 from oci.exceptions import ProfileNotFound
 
+from . import utils
 from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 
@@ -121,7 +122,8 @@ def load_oci_accounts(
         WITH w, acct
         MERGE (aa:OCITenancy{id: acct.tenancy_id})
         ON CREATE SET aa.firstseen = timestamp()
-        SET aa.ocid = acct.tenancy_id, aa.unique_id = acct.unique_id, aa.lastupdated = $oci_update_tag, aa.name = acct.account_name
+        SET aa.ocid = acct.tenancy_id, aa.unique_id = acct.unique_id, aa.lastupdated = $oci_update_tag, aa.name = acct.account_name,
+        aa.consolelink = $CONSOLELINK
         WITH w, aa
         MERGE (w)-[r:OWNER]->(aa)
         ON CREATE SET r.firstseen = timestamp()
@@ -144,6 +146,7 @@ def load_oci_accounts(
         query,
         rows,
         WORKSPACE_ID=common_job_parameters.get("WORKSPACE_ID", ""),
+        CONSOLELINK=utils.get_console_link("tenancy"),
         oci_update_tag=oci_update_tag,
     )
 

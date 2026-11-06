@@ -7,6 +7,7 @@ from typing import Optional
 import neo4j
 
 from .util import call_azure_devops_api
+from .util import get_console_link
 from .util import validate_organization_data
 from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
@@ -53,7 +54,7 @@ def load_organization(
     Load Azure DevOps organization data into Neo4j with comprehensive properties.
 
     Properties mapped from Azure DevOps API:
-    - id: Organization name (unique identifier)
+    - id: org_data["node_id"]: the organization name on dev.azure.com, host-qualified elsewhere (get_org_node_id)
     - url: Organization URL
     - status: Organization status
     - type: Organization type
@@ -62,13 +63,14 @@ def load_organization(
     - last_updated: Last update timestamp
     """
     query = """
-    MERGE (org:AzureDevOpsOrganization{id: $OrgName})
+    MERGE (org:AzureDevOpsOrganization{id: $OrgNodeId})
     ON CREATE SET org.firstseen = timestamp()
     SET org.url = $OrgUrl,
         org.status = $OrgStatus,
         org.type = $OrgType,
         org.description = $OrgDescription,
         org.created_date = $OrgCreatedDate,
+        org.consolelink = $OrgConsoleLink,
         org.lastupdated = $UpdateTag
     WITH org
 
@@ -80,12 +82,13 @@ def load_organization(
     run_write_query(
         neo4j_session,
         query,
-        OrgName=org_data.get("name"),
+        OrgNodeId=org_data["node_id"],
         OrgUrl=org_data.get("url"),
         OrgStatus=org_data.get("status"),
         OrgType=org_data.get("type"),
         OrgDescription=org_data.get("description"),
         OrgCreatedDate=org_data.get("createdDate"),
+        OrgConsoleLink=org_data.get("consolelink"),
         UpdateTag=common_job_parameters["UPDATE_TAG"],
         workspace_id=common_job_parameters["WORKSPACE_ID"],
     )
@@ -109,8 +112,10 @@ def sync(
     logger.info(f"Syncing Azure DevOps Organization '{org_name}'")
     # There is no direct api to get org data
     org_data = {
+        "node_id": common_job_parameters["ORGANIZATION_ID"],
         "name": org_name,
         "url": f"{url}/{org_name}",
+        "consolelink": get_console_link("organization", base_url=url, organization=org_name),
     }
     if org_data:
         load_organization(neo4j_session, org_data, common_job_parameters)

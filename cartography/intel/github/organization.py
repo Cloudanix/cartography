@@ -12,6 +12,9 @@ from cartography.client.core.tx import run_write_query
 from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import fetch_page
+from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_org_node_id
+from cartography.intel.github.util import get_web_base_url
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_cleanup_job
@@ -61,7 +64,7 @@ def load_organization(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     query = """
-    MERGE (org:GitHubOrganization{id: $OrgLogin})
+    MERGE (org:GitHubOrganization{id: $OrgNodeId})
     ON CREATE SET org.firstseen = timestamp()
     SET org.username = $OrgLogin,
     org.url = $OrgUrl,
@@ -74,6 +77,7 @@ def load_organization(
     org.location = $OrgLocation,
     org.websiteurl = $OrgWebsiteUrl,
     org.requirestwofactorauthentication = $OrgRequiresTwoFactorAuthentication,
+    org.consolelink = $OrgConsoleLink,
     org.lastupdated = $UpdateTag
     WITH org
 
@@ -85,6 +89,7 @@ def load_organization(
     run_write_query(
         neo4j_session,
         query,
+        OrgNodeId=org_data['node_id'],
         OrgLogin=org_data['login'],
         OrgUrl=org_data['url'],
         OrgEmail=org_data['email'],
@@ -96,6 +101,7 @@ def load_organization(
         OrgLocation=org_data['location'],
         OrgWebsiteUrl=org_data['websiteUrl'],
         OrgRequiresTwoFactorAuthentication=org_data.get('requiresTwoFactorAuthentication'),
+        OrgConsoleLink=org_data.get('consolelink'),
         UpdateTag=common_job_parameters['UPDATE_TAG'],
         workspace_id=common_job_parameters['WORKSPACE_ID'],
     )
@@ -122,6 +128,11 @@ def sync(
     # Cartography supports Organizations only. No individual accounts.
     # Handle non-org based ingestion
     if org_data:
+        web_base_url = get_web_base_url(github_url)
+        org_data['node_id'] = get_org_node_id(web_base_url, org_data['login'])
+        org_data['consolelink'] = get_console_link(
+            'organization', base_url=web_base_url, owner=org_data.get('login'),
+        )
         load_organization(neo4j_session, org_data, common_job_parameters)
 
     cleanup(neo4j_session, common_job_parameters)

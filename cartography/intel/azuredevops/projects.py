@@ -7,6 +7,7 @@ from typing import Optional
 import neo4j
 
 from .util import call_azure_devops_api_pagination
+from .util import get_console_link
 from .util import validate_project_data
 from cartography.client.core.tx import load_graph_data
 from cartography.util import normalize_datetime
@@ -59,11 +60,12 @@ def get_projects(api_url: str, organization_name: str, access_token: str) -> Lis
 def load_projects(
     neo4j_session: neo4j.Session,
     project_data: List[Dict],
-    organization_name: str,
+    org_node_id: str,
     common_job_parameters: Dict[str, Any],
 ) -> None:
     """
-    Load Azure DevOps project data into Neo4j with comprehensive properties.
+    Load Azure DevOps project data into Neo4j with comprehensive properties, under the organization whose graph id
+    is org_node_id (common_job_parameters["ORGANIZATION_ID"]).
     - id: Project ID (unique identifier)
     - name: Project name
     - url: Project URL
@@ -94,7 +96,8 @@ def load_projects(
         p.last_activity_at = project.last_activity_at,
         p.last_activity_at_timestamp = project.last_activity_at_timestamp,
         p.description = project.description,
-        p.capabilities = project.capabilities
+        p.capabilities = project.capabilities,
+        p.consolelink = project.consolelink
 
     WITH p, project
     MATCH (org:AzureDevOpsOrganization{id: $OrganizationName})
@@ -106,7 +109,7 @@ def load_projects(
         neo4j_session,
         query,
         project_data,
-        OrganizationName=organization_name,
+        OrganizationName=org_node_id,
         UPDATE_TAG=common_job_parameters["UPDATE_TAG"],
     )
 
@@ -136,7 +139,10 @@ def sync(
             iso_str, ts_ms = normalize_datetime(project.get("lastUpdateTime"))
             project["last_activity_at"] = iso_str
             project["last_activity_at_timestamp"] = ts_ms
-        load_projects(neo4j_session, projects, organization_name, common_job_parameters)
+            project["consolelink"] = get_console_link(
+                "project", base_url=azure_devops_url, organization=organization_name, project=project.get("name"),
+            )
+        load_projects(neo4j_session, projects, common_job_parameters["ORGANIZATION_ID"], common_job_parameters)
         cleanup(neo4j_session, common_job_parameters)
     logger.info(f"Processed {len(projects) if projects else 0} projects for org '{organization_name}'")
     return projects

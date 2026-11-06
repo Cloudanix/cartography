@@ -78,11 +78,14 @@ def get_cloudtasks_queues(cloudtasks: Resource, locations: List[str], project_id
 def transform_cloudtasks_queues(queues: List[Dict], project_id: str) -> List[Dict]:
     transformed_queues = []
     for queue in queues:
-        queue['consolelink'] = ''  # TODO
         queue['project_id'] = project_id
         queue['region'] = queue['name'].split('/')[-3]
         queue['id'] = queue['name']
         queue['queue_name'] = queue['name'].split('/')[-1]
+        queue['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='cloud_tasks_queue',
+            region=queue['region'], instance_name=queue['queue_name'],
+        )
         transformed_queues.append(queue)
     return transformed_queues
 

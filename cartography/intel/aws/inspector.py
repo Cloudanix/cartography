@@ -33,37 +33,29 @@ def get_inspector_findings(
     We must list_findings by filtering the request, otherwise the request could tiemout.
     First, we filter by account_id. And since there may be millions of CLOSED findings that may never go away,
     we will only fetch those in ACTIVE or SUPPRESSED statuses.
-    list_members will get us all the accounts that
-    have delegated access to the account specified by current_aws_account_id.
+
+    Only the syncing account's own findings are fetched. A delegated administrator can also list its member
+    accounts' findings, but those belong to the members (maybe onboarded in another workspace, maybe not at
+    all): each member account's own sync claims its findings.
     """
     client = session.client('inspector2', region_name=region)
-
-    members = aws_paginate(client, 'list_members', 'members')
-    # the current host account may not be considered a "member", but we still fetch its findings
-    accounts = [current_aws_account_id] + [m['accountId'] for m in members]
-
-    findings = []
-    for account in accounts:
-        logger.info(f'Getting findings for member account {account} in region {region}')
-        findings.extend(
-            aws_paginate(
-                client, 'list_findings', 'findings', filterCriteria={
-                    'awsAccountId': [
-                        {
-                            'comparison': 'EQUALS',
-                            'value': account,
-                        },
-                    ],
-                    'findingStatus': [
-                        {
-                            'comparison': 'NOT_EQUALS',
-                            'value': 'CLOSED',
-                        },
-                    ],
+    logger.info(f'Getting findings for account {current_aws_account_id} in region {region}')
+    return aws_paginate(
+        client, 'list_findings', 'findings', filterCriteria={
+            'awsAccountId': [
+                {
+                    'comparison': 'EQUALS',
+                    'value': current_aws_account_id,
                 },
-            ),
-        )
-    return findings
+            ],
+            'findingStatus': [
+                {
+                    'comparison': 'NOT_EQUALS',
+                    'value': 'CLOSED',
+                },
+            ],
+        },
+    )
 
 
 def transform_inspector_findings(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -89,7 +81,12 @@ def transform_inspector_findings(results: List[Dict[str, Any]]) -> Tuple[List[Di
         if f['resources'][0]['type'] == "AWS_EC2_INSTANCE":
             finding['instanceid'] = f['resources'][0]['id']
         if f['resources'][0]['type'] == "AWS_ECR_CONTAINER_IMAGE":
-            finding['ecrimageid'] = f['resources'][0]['id'].split('/')[2]
+            # id is "<repository arn>/<digest>". ECRImage is keyed by digest alone and shared by every
+            # tenant that pushed the same image, so the finding AFFECTS the account's repository
+            # (ARN) and keeps the digest as a property, never an edge onto the shared node.
+            repository_arn, digest = f['resources'][0]['id'].rsplit('/', 1)
+            finding['ecrimageid'] = digest
+            finding['ecrrepositoryid'] = repository_arn
         if f['resources'][0]['type'] == "AWS_ECR_REPOSITORY":
             finding['ecrrepositoryid'] = f['resources'][0]['id']
         if f.get('networkReachabilityDetails'):
@@ -128,7 +125,10 @@ def _process_packages(package_details: Dict[str, Any], aws_account_id: str, find
     packages: Dict[str, Any] = {}
     for package in package_details['vulnerablePackages']:
         new_package = {}
+        # Account first: the node carries this account's finding arn, file path and layer, so a
+        # package version found in two tenants must be two nodes.
         new_package['id'] = (
+            f"{aws_account_id}|"
             f"{package.get('name', '')}|"
             f"{package.get('arch', '')}|"
             f"{package.get('version', '')}|"

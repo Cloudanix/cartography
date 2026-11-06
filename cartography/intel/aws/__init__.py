@@ -16,6 +16,7 @@ import neo4j
 from neo4j import GraphDatabase
 
 from . import ec2
+from . import exposure_layers
 from . import organizations
 from .ec2.util import get_botocore_config
 from .resources import parse_and_validate_aws_requested_syncs
@@ -23,12 +24,17 @@ from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
 from cartography.graph.session import Session
+from cartography.intel.aws.dms import link_replication_instance_networks
 from cartography.intel.aws.ec2.instances import sync_eks_node_links
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.elasticbeanstalk import link_environment_resources
+from cartography.intel.aws.util.arns import get_partition
+from cartography.intel.aws.util.arns import PARTITION_PARAM
+from cartography.intel.exposure import step as exposure_step
 from cartography.stats import get_stats_client
 from cartography.util import is_aws_access_denied
 from cartography.util import merge_module_sync_metadata
-from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -250,7 +256,8 @@ def _sync_one_account(
         ]
         try:
             with ThreadPoolExecutor(
-                max_workers=min(8, len(parallel_services)),
+                # max(1, ...): an exposure_layers-only subrun has no services, and 0 workers raises.
+                max_workers=max(1, min(8, len(parallel_services))),
             ) as executor:
                 futures: Dict = {}
 
@@ -289,6 +296,20 @@ def _sync_one_account(
             sync_eks_node_links(neo4j_session, common_job_parameters)
         except Exception as e:
             logger.warning(f"error to link EKS nodes for account {current_aws_account_id} - {e}")
+
+    # DMS instances link to security groups and subnets, which other syncs load in parallel.
+    if "dms" in aws_requested_syncs:
+        try:
+            link_replication_instance_networks(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link DMS replication instances for account {current_aws_account_id} - {e}")
+
+    # Beanstalk environments link to load balancers and instances, which other syncs load in parallel.
+    if "elasticbeanstalk" in aws_requested_syncs:
+        try:
+            link_environment_resources(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link Beanstalk environments for account {current_aws_account_id} - {e}")
 
     # MAP IAM permissions
     if "permission_relationships" in aws_requested_syncs:
@@ -364,18 +385,6 @@ def _sync_one_account(
     )
 
     run_analysis_job(
-        "aws_lambda_function_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_s3acl_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
         "aws_s3_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
@@ -383,6 +392,12 @@ def _sync_one_account(
 
     run_analysis_job(
         "aws_rds_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    # Must run after the RDS job: a Neptune cluster is exposed through its RDSInstance members.
+    run_analysis_job(
+        "aws_neptune_cluster_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
@@ -395,6 +410,13 @@ def _sync_one_account(
 
     run_analysis_job(
         "aws_apigateway_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    # Must run after the API Gateway (and ELB) jobs: a Lambda behind an API Gateway or ALB
+    # trigger is only public when that REST API / load balancer is.
+    run_analysis_job(
+        "aws_lambda_function_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
@@ -424,9 +446,50 @@ def _sync_one_account(
         neo4j_session,
         common_job_parameters,
     )
+    run_analysis_job(
+        "aws_sns_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_sqs_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_sagemaker_notebook_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_appsync_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_dms_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    # Reads the exposure the ELB and EC2 instance jobs above set on the environment's load balancers / instances.
+    run_analysis_job(
+        "aws_elasticbeanstalk_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
 
     run_analysis_job(
         "aws_redshift_cluster_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_mq_broker_asset_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    run_analysis_job(
+        "aws_msk_cluster_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
     )
@@ -435,6 +498,11 @@ def _sync_one_account(
         "aws_internetgateway_asset_exposure.json",
         neo4j_session,
         common_job_parameters,
+    )
+
+    # Reads what the jobs above and every sync wrote; runs only when requested (see exposure/step.py).
+    exposure_step.run_if_requested(
+        exposure_layers.run, neo4j_session, common_job_parameters, aws_requested_syncs, RESOURCE_FUNCTIONS.keys(),
     )
 
     run_analysis_job(
@@ -692,6 +760,42 @@ def _sync_multiple_accounts(
     # run_cleanup_job('aws_post_ingestion_dns_cleanup.json', neo4j_session, common_job_parameters)
 
 
+def _requested_syncs(services: List[Dict[str, Any]], common_job_parameters: Dict[str, Any]) -> List[str]:
+    """
+    Service names the caller asked for, recording each one's pagination in common_job_parameters.
+
+    cloudanix-web sends its configured service list, which can name a service this build does not have yet (web
+    config shipped before the cartography deploy). Such a name is skipped with a warning instead of failing the whole
+    AWS sync; the CLI keeps rejecting it through parse_and_validate_aws_requested_syncs.
+    """
+    names: List[str] = []
+    for service in services:
+        name = (service.get("name") or "").strip()
+        if service.get("pagination"):
+            pagination = service["pagination"]
+            pagination["hasNextPage"] = False
+            common_job_parameters["pagination"][name] = pagination
+        names.append(name)
+
+    unknown = [name for name in names if name not in RESOURCE_FUNCTIONS]
+    if unknown:
+        logger.warning(f"Skipping AWS services this cartography build does not sync: {unknown}")
+    known = [name for name in names if name in RESOURCE_FUNCTIONS]
+    if not known:
+        return []
+    return parse_and_validate_aws_requested_syncs(",".join(known))
+
+
+def _get_account_partition(boto3_session: boto3.session.Session, config: Config) -> str:
+    """
+    Partition of the synced account, so built ARNs read arn:aws-cn:/arn:aws-us-gov: where needed.
+    Any region of the account identifies it: prefer the configured ones over the session default.
+    """
+    configured_regions = config.params.get("regions") or []
+    region = config.params.get("defaultRegion") or next(iter(configured_regions), None) or boto3_session.region_name
+    return get_partition(boto3_session, region)
+
+
 @timeit
 def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     common_job_parameters = {
@@ -742,6 +846,8 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         )
         return
 
+    common_job_parameters[PARTITION_PARAM] = _get_account_partition(boto3_session, config)
+
     if config.aws_sync_all_profiles:
         aws_accounts = organizations.get_aws_accounts_from_botocore_config(
             boto3_session,
@@ -779,19 +885,7 @@ def start_aws_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
 
     requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
     if config.aws_requested_syncs:
-        aws_requested_syncs_string = ""
-        for service in config.aws_requested_syncs:
-            aws_requested_syncs_string += f"{service.get('name', '')},"
-            if service.get("pagination", None):
-                pagination = service.get("pagination", {})
-                pagination["hasNextPage"] = False
-                common_job_parameters["pagination"][service.get("name", None)] = (
-                    pagination
-                )
-
-        requested_syncs = parse_and_validate_aws_requested_syncs(
-            aws_requested_syncs_string[:-1],
-        )
+        requested_syncs = _requested_syncs(config.aws_requested_syncs, common_job_parameters)
 
     sync_successful = _sync_multiple_accounts(
         neo4j_session,

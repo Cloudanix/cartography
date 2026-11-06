@@ -1,0 +1,26 @@
+{
+    "statements": [
+        {
+            "__comment": "Reset. This job is the only writer of exposure on Cloud Run services. Iterative with a WHERE so every flagged node is reached, not only the first batch.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(svc:GCPCloudRunService) WHERE svc.exposed_internet IS NOT NULL OR svc.exposed_internet_type IS NOT NULL OR svc.publicContext IS NOT NULL WITH svc LIMIT $LIMIT_SIZE REMOVE svc.exposed_internet, svc.exposed_internet_type, svc.publicContext return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 1000
+        },
+        {
+            "__comment": "Public at its run.app URL: ingress lets internet traffic in (all, no annotation, or a value this job does not know; internal and internal-and-cloud-load-balancing refuse direct internet requests) AND anyone can invoke it: allUsers / allAuthenticatedUsers on a role that can invoke (cloudrun.resolve_service_invokers, same role rule as gcp_cloud_function_analysis.json), the invoker IAM check turned off, or an IAM policy that could not be read (fail-safe: unresolved or never fetched).",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(svc:GCPCloudRunService)\nWHERE NOT coalesce(svc.ingress, 'all') IN ['internal', 'internal-and-cloud-load-balancing']\nWITH svc, coalesce(svc.public_invokers, []) + CASE WHEN svc.invoker_iam_disabled = true THEN ['invoker_iam_disabled'] ELSE [] END + CASE WHEN coalesce(svc.iam_policy_status, 'unresolved') = 'unresolved' THEN ['iam_policy_unresolved'] ELSE [] END AS reasons\nWHERE size(reasons) > 0\nSET svc.exposed_internet = true, svc.exposed_internet_type = reasons",
+            "iterative": false
+        },
+        {
+            "__comment": "Public through an external load balancer: a serverless NEG of the same project and region that gcp_load_balancer_exposure.json (run before this job) flagged external_load_balancer names the service, ingress is not internal, and anyone can invoke it (the load balancer does not bypass the invoker check). NEG nodes and their cloud_run_service / region properties come from cartography PR #506; until it is merged this statement matches nothing and services with internal-and-cloud-load-balancing ingress stay not public. NEGs that route by URL mask (no service name) are not resolved.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(p:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(neg:GCPNetworkEndpointGroup)\nWHERE neg.cloud_run_service IS NOT NULL AND 'external_load_balancer' IN coalesce(neg.exposed_internet_type, [])\nMATCH (p)-[:RESOURCE]->(svc:GCPCloudRunService)\nWHERE svc.name = neg.cloud_run_service AND svc.region = neg.region AND coalesce(svc.ingress, 'all') <> 'internal'\nWITH DISTINCT svc\nWITH svc, coalesce(svc.public_invokers, []) + CASE WHEN svc.invoker_iam_disabled = true THEN ['invoker_iam_disabled'] ELSE [] END + CASE WHEN coalesce(svc.iam_policy_status, 'unresolved') = 'unresolved' THEN ['iam_policy_unresolved'] ELSE [] END AS reasons\nWHERE size(reasons) > 0\nSET svc.exposed_internet = true, svc.exposed_internet_type = coalesce(svc.exposed_internet_type, reasons) + 'external_load_balancer'",
+            "iterative": false
+        },
+        {
+            "__comment": "publicContext for the exposed services.",
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(svc:GCPCloudRunService)\nWHERE svc.exposed_internet = true\nSET svc.publicContext = apoc.convert.toJson([{resource: svc.id, resourceType: 'gcp-compute-cloudrun-service', context: [{serviceName: svc.name, region: svc.region, url: svc.url, ingress: coalesce(svc.ingress, 'all'), invokerIamDisabled: svc.invoker_iam_disabled, publicInvokers: svc.public_invokers, iamPolicyStatus: svc.iam_policy_status, exposureTypes: svc.exposed_internet_type}]}])",
+            "iterative": false
+        }
+    ],
+    "name": "GCP Cloud Run service exposure"
+}

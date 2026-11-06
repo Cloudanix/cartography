@@ -17,8 +17,13 @@
       "iterative": false
     },
     {
+      "__comment": "Mark buckets as exposed if an unexpired pre-authenticated request grants read on the bucket or one of its objects: anyone with the PAR URL reads without credentials. read_par_expires_at (latest read PAR expiry, epoch ms) is set at ingest; comparing it with now drops PARs that expired since the last sync.",
+      "query": "MATCH (b:OCIStorageBucket)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE b.read_par_expires_at > timestamp() SET b.exposed_internet = true, (CASE WHEN NOT 'pre_authenticated_read' IN coalesce(b.exposed_internet_type, []) THEN b END).exposed_internet_type = coalesce(b.exposed_internet_type, []) + 'pre_authenticated_read'",
+      "iterative": false
+    },
+    {
       "__comment": "Build publicContext JSON for exposed buckets",
-      "query": "MATCH (b:OCIStorageBucket)<-[:RESOURCE]-(c:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE b.exposed_internet = true WITH b, c SET b.publicContext = apoc.convert.toJson([{resource: b.id, resourceType: 'oci-storage-bucket', context: [{bucketId: b.id, bucketName: b.name, namespace: b.namespace, compartmentId: c.id, publicAccessType: b.public_access_type, exposureTypes: b.exposed_internet_type, versioning: b.versioning, region: b.region}]}])",
+      "query": "MATCH (b:OCIStorageBucket)<-[:RESOURCE]-(c:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE b.exposed_internet = true WITH b, c SET b.publicContext = apoc.convert.toJson([{resource: b.id, resourceType: 'oci-storage-bucket', context: [{bucketId: b.id, bucketName: b.name, namespace: b.namespace, compartmentId: c.id, publicAccessType: b.public_access_type, readParAccessTypes: CASE WHEN b.read_par_expires_at > timestamp() THEN b.read_par_access_types ELSE [] END, readParExpiresAt: CASE WHEN b.read_par_expires_at > timestamp() THEN b.read_par_expires_at END, exposureTypes: b.exposed_internet_type, versioning: b.versioning, region: b.region}]}])",
       "iterative": false
     }
   ],

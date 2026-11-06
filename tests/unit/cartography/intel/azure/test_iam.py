@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from cartography.intel.azure import iam
+from cartography.intel.azure.util import console_link
 
 
 def test_azure_role_managed_type():
@@ -128,7 +129,7 @@ def test_get_tenant_service_accounts_list_stringifies_graph_uuid_fields():
         return_value=MagicMock(value=[first_party, customer_owned, unowned], odata_next_link=None),
     )
 
-    with patch.object(iam.azure_console_link, "get_console_link", return_value="link"):
+    with patch.object(console_link.azure_console_link, "get_console_link", return_value="link"):
         sps = asyncio.run(iam.get_tenant_service_accounts_list(client, CUSTOMER_TENANT))
 
     assert [sp["managed_type"] for sp in sps] == ["predefined", "custom", "custom"]

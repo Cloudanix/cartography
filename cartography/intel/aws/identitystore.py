@@ -7,17 +7,21 @@ from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
+from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.iam import load_policy_data
 from cartography.intel.aws.iam import transform_policy_data
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker()
 
 
 class PolicyType(enum.Enum):
@@ -28,6 +32,24 @@ class PolicyType(enum.Enum):
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
     client = boto3_session.client(service, region_name=region, config=get_botocore_config())
     return client
+
+
+def get_sso_console_link(arn: str, region: str) -> Optional[str]:
+    """
+    Identity Center console link for an instance, permission set, user or group ARN, or None when the ARN
+    is malformed; one bad ARN must not fail the user or group sync.
+
+    cloudconsolelink 4.2.0 has no per-principal page, so every user, group and permission set gets the
+    instance's region-scoped Identity Center home, not a deep link.
+    """
+    # Identity Center ARNs carry no region; put the instance's region in so the link opens it there.
+    tokens = (arn or "").split(":")
+    try:
+        tokens[3] = region
+        return aws_console_link.get_console_link(arn=":".join(tokens))
+    except (IndexError, ValueError) as e:
+        logger.debug("Skipping Identity Center console link for %s: %s", arn, e)
+        return None
 
 
 @timeit
@@ -165,7 +187,8 @@ def _load_identity_center_permissions_sets_tx(
             p.is_sso = true,
             p.description = permissions_set.Description,
             p.session_duration = permissions_set.SessionDuration,
-            p.relay_state = permissions_set.RelayState
+            p.relay_state = permissions_set.RelayState,
+            p.consolelink = permissions_set.consolelink
         WITH p
             MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})
             MERGE (i)-[r:RESOURCE]->(p)
@@ -372,6 +395,7 @@ def load_identity_center_account_assignments(
                         PolicyType.inline.value,
                         current_aws_account_id,
                         update_tag,
+                        get_partition_from_params(common_job_parameters),
                     )
                 loaded_permissions_sets.append(permissions_set["PermissionSetArn"])
 
@@ -400,7 +424,8 @@ def _load_identity_center_account_assignments_tx(
                         p.lastupdated = $update_tag,
                         p.name = $permissions_set.Name,
                         p.arn = $permissions_set.PermissionSetArn,
-                        p.session_duration = $permissions_set.SessionDuration
+                        p.session_duration = $permissions_set.SessionDuration,
+                        p.consolelink = $permissions_set.consolelink
                 MERGE (a:AWSAccount{id: $assignment.AccountId})
                     ON CREATE SET
                         a.firstseen = timestamp()
@@ -430,8 +455,9 @@ def _load_identity_center_account_assignments_tx(
     )
 
     ingest_assignment = """
-                MATCH (p:AWSPermissionSet{id: $permissions_set_id})
-                MATCH (pr:AWSPrincipal{id: $assignment.PrincipalId})
+                MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})
+                    -[:RESOURCE]->(p:AWSPermissionSet{id: $permissions_set_id})
+                MATCH (i)-[:RESOURCE]->(pr:AWSPrincipal{id: $assignment.PrincipalId})
                 WITH p,pr
                 MERGE (p)-[r:ASSIGNED_TO]->(pr)
                 ON CREATE SET
@@ -444,6 +470,7 @@ def _load_identity_center_account_assignments_tx(
         ingest_assignment,
         assignment=assignment,
         permissions_set_id=permissions_set_id,
+        INSTANCE_ARN=instance_arn,
         update_tag=update_tag,
     )
 
@@ -468,6 +495,8 @@ def sync_identity_center_permissions_sets(
     common_job_parameters: Dict,
 ) -> None:
     permissions_sets = get_identity_center_permissions_sets_list(boto3_session, instance, region)
+    for permissions_set in permissions_sets:
+        permissions_set["consolelink"] = get_sso_console_link(permissions_set["PermissionSetArn"], region)
 
     # INFO: This is a temporary solution to skip Loading Policies for manual runs.
     if common_job_parameters.get("MANUAL_RUN", False) or current_aws_account_id == "934101271236":
@@ -533,7 +562,10 @@ def sync_identity_center_permissions_sets(
     transform_policy_data(unloaded_managed_policies, PolicyType.managed.value, current_aws_account_id)
     load_policy_data(neo4j_session, unloaded_managed_policies, PolicyType.managed.value, current_aws_account_id, aws_update_tag)
     transform_policy_data(unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    load_policy_data(
+        neo4j_session, unloaded_inline_policies, PolicyType.inline.value, current_aws_account_id, aws_update_tag,
+        get_partition_from_params(common_job_parameters),
+    )
 
 
 @timeit
@@ -554,6 +586,7 @@ def get_identity_center_users_list(boto3_session: boto3.session.Session, instanc
 
     for user in users:
         user["arn"] = f"{instance['InstanceArn']}/user/{user['UserId']}"
+        user["consolelink"] = get_sso_console_link(user["arn"], region)
 
     return users
 
@@ -589,7 +622,8 @@ def _load_identity_center_users_tx(
             u.arn = user.arn
         SET
             u.lastupdated = $update_tag,
-            u.name = user.DisplayName
+            u.name = user.DisplayName,
+            u.consolelink = user.consolelink
         WITH u
             MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})
             MERGE (i)-[r:RESOURCE]->(u)
@@ -637,6 +671,7 @@ def get_identity_center_groups_list(boto3_session: boto3.session.Session, instan
 
     for group in groups:
         group["arn"] = f"{instance['InstanceArn']}/group/{group['GroupId']}"
+        group["consolelink"] = get_sso_console_link(group["arn"], region)
 
     return groups
 
@@ -670,7 +705,8 @@ def _load_identity_center_groups_tx(
         SET
             g.lastupdated = $update_tag,
             g.is_sso = true,
-            g.name = group.DisplayName
+            g.name = group.DisplayName,
+            g.consolelink = group.consolelink
         WITH g
             MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})
             MERGE (i)-[r:RESOURCE]->(g)
@@ -717,16 +753,19 @@ def load_identity_center_group_memberships(
     neo4j_session: neo4j.Session,
     memberships: List[Dict],
     update_tag: int,
+    instance_arn: str,
 ) -> None:
-    neo4j_session.execute_write(_load_identity_center_group_memberships_tx, memberships, update_tag)
+    neo4j_session.execute_write(_load_identity_center_group_memberships_tx, memberships, update_tag, instance_arn)
 
 
 @timeit
-def _load_identity_center_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], update_tag: int) -> None:
+def _load_identity_center_group_memberships_tx(
+    tx: neo4j.Transaction, memberships: List[Dict], update_tag: int, instance_arn: str,
+) -> None:
     ingest_memberships = """
     UNWIND $memberships AS membership
-        MATCH (p:AWSGroup{id: membership.GroupId})
-        MATCH (pr:AWSUser{id: membership.MemberId.UserId})
+        MATCH (i:AWSOrganization{identity_store_arn: $INSTANCE_ARN})-[:RESOURCE]->(p:AWSGroup{id: membership.GroupId})
+        MATCH (i)-[:RESOURCE]->(pr:AWSUser{id: membership.MemberId.UserId})
         WITH p,pr
         MERGE (pr)-[r:MEMBER_AWS_GROUP]->(p)
         ON CREATE SET
@@ -738,6 +777,7 @@ def _load_identity_center_group_memberships_tx(tx: neo4j.Transaction, membership
     tx.run(
         ingest_memberships,
         memberships=memberships,
+        INSTANCE_ARN=instance_arn,
         update_tag=update_tag,
     )
 
@@ -760,7 +800,7 @@ def sync_identity_center_groups(
         if memberships:
             all_memberships.extend(memberships)
     if all_memberships:
-        load_identity_center_group_memberships(neo4j_session, all_memberships, aws_update_tag)
+        load_identity_center_group_memberships(neo4j_session, all_memberships, aws_update_tag, instance["InstanceArn"])
 
 
 @timeit
@@ -899,7 +939,7 @@ def sync_scoped_groups(
     if scoped_users:
         load_identity_center_users(neo4j_session, instance["InstanceArn"], scoped_users, aws_update_tag)
     if all_memberships:
-        load_identity_center_group_memberships(neo4j_session, all_memberships, aws_update_tag)
+        load_identity_center_group_memberships(neo4j_session, all_memberships, aws_update_tag, instance["InstanceArn"])
 
     logger.info(
         f"IdentityStore: Neo4j write done in {time.perf_counter() - t0:.2f}s",

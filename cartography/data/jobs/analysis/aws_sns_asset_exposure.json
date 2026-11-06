@@ -1,0 +1,15 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (topic:AWSSNSTopic)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE topic.exposed_internet IS NOT NULL WITH topic LIMIT $LIMIT_SIZE REMOVE topic.exposed_internet, topic.exposed_internet_type, topic.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "policy_internet_accessible: the topic policy allows Principal * with no condition that pins the caller (sns.py, util/common.py is_resource_policy_internet_accessible). Unknown (unparseable) is not flagged.",
+      "query": "MATCH (topic:AWSSNSTopic)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE topic.policy_internet_accessible = true SET topic.exposed_internet = true, topic.exposed_internet_type = ['resource_policy'], topic.publicContext = apoc.convert.toJson([{resource: topic.id, resourceType: 'aws-applicationintegration-sns-topic', context: [{topicArn: topic.arn, topicName: topic.name, region: topic.region, exposureTypes: ['resource_policy']}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws SNS topic internet exposure"
+}

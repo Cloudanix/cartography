@@ -1,0 +1,22 @@
+{
+  "statements": [
+    {
+      "query": "MATCH ((n:AzureVirtualMachineScaleSet)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE n.exposed_internet IS NOT NULL OR n.exposed_internet_type IS NOT NULL OR n.publicContext IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (vmss:AzureVirtualMachineScaleSet{public_ip_per_instance: true})<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET vmss.exposed_internet = true, (CASE WHEN NOT 'public_ip' IN coalesce(vmss.exposed_internet_type, []) THEN vmss END).exposed_internet_type = coalesce(vmss.exposed_internet_type, []) + 'public_ip';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (vmss:AzureVirtualMachineScaleSet)<-[:RESOURCE]-(sub:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (sub)-[:RESOURCE]->(lb:AzureNetworkLoadBalancer)-[:HAS]->(:AzureLoadBalancerFrontendIPConfiguration)-[:MEMBER_PUBLIC_IP_ADDRESS]->(:AzurePublicIPAddress) WHERE toLower(lb.id) IN coalesce(vmss.lb_inbound_nat_lb_ids, []) OR any(pool IN coalesce(vmss.lb_backend_pool_ids, []) WHERE pool STARTS WITH toLower(lb.id) + '/' AND (lb.inbound_backend_pool_ids IS NULL OR pool IN lb.inbound_backend_pool_ids)) WITH DISTINCT vmss SET vmss.exposed_internet = true, (CASE WHEN NOT 'public_load_balancer' IN coalesce(vmss.exposed_internet_type, []) THEN vmss END).exposed_internet_type = coalesce(vmss.exposed_internet_type, []) + 'public_load_balancer';",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (vmss:AzureVirtualMachineScaleSet)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE vmss.exposed_internet = true SET vmss.publicContext = apoc.convert.toJson([{resource: vmss.id, resourceType: 'azure-compute-vm-scaleset', context: [{scaleSetId: vmss.id, scaleSetName: vmss.name, publicIpPerInstance: vmss.public_ip_per_instance, loadBalancerBackendPools: coalesce(vmss.lb_backend_pool_ids, []), inboundNatLoadBalancers: coalesce(vmss.lb_inbound_nat_lb_ids, []), aksClusterName: vmss.aks_cluster_name, exposureTypes: vmss.exposed_internet_type, location: vmss.location}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "Azure VM scale set asset internet exposure"
+}

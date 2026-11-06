@@ -45,6 +45,7 @@ def test_load_route_tables_explicit_relationships(neo4j_session):
         data,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        'ws-route-tables',
     )
 
     data = tests.data.aws.ec2.instances.DESCRIBE_INSTANCES['Reservations']
@@ -103,6 +104,7 @@ def test_load_route_tables_implicit_relationships(neo4j_session):
         data,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        'ws-route-tables',
     )
 
     data = tests.data.aws.ec2.instances.DESCRIBE_INSTANCES['Reservations']

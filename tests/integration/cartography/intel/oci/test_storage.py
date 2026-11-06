@@ -5,12 +5,16 @@ from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
 TEST_COMPARTMENT_ID = test_data.TEST_COMPARTMENT_ID
+TEST_TENANCY_ID = test_data.TEST_TENANCY_ID
 TEST_UPDATE_TAG = 123456789
 
 
 def _seed_compartment(neo4j_session):
     neo4j_session.run(
-        "MERGE (c:OCICompartment{id: $id}) SET c.lastupdated = $tag",
+        "MERGE (t:OCITenancy{id: $tenancy_id}) "
+        "MERGE (c:OCICompartment{id: $id}) SET c.lastupdated = $tag "
+        "MERGE (t)-[:OWNER]->(c)",
+        tenancy_id=TEST_TENANCY_ID,
         id=TEST_COMPARTMENT_ID,
         tag=TEST_UPDATE_TAG,
     )
@@ -21,7 +25,7 @@ def test_load_buckets_batches_across_chunk_boundary(neo4j_session):
     _seed_compartment(neo4j_session)
     buckets = test_data.bucket_list(600)
 
-    storage.load_buckets(neo4j_session, buckets, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG)
+    storage.load_buckets(neo4j_session, buckets, TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG)
 
     count = neo4j_session.run("MATCH (b:OCIStorageBucket) RETURN count(b) AS c").single()["c"]
     assert count == 600
@@ -33,10 +37,27 @@ def test_load_buckets_batches_across_chunk_boundary(neo4j_session):
     assert (TEST_COMPARTMENT_ID, "oci.bucket.599") in rels
 
 
+def test_load_buckets_keeps_last_public_access_type_when_unknown(neo4j_session):
+    # A failed GetBucket transforms to public_access_type None; the last good value must survive.
+    _seed_compartment(neo4j_session)
+    bucket = {**test_data.bucket_list(1)[0], "id": "oci.bucket.keep", "public_access_type": "ObjectRead"}
+    storage.load_buckets(neo4j_session, [bucket], TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG)
+
+    storage.load_buckets(
+        neo4j_session, [{**bucket, "public_access_type": None}],
+        TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG + 1,
+    )
+
+    row = neo4j_session.run(
+        "MATCH (b:OCIStorageBucket{id: 'oci.bucket.keep'}) RETURN b.public_access_type AS t, b.is_public AS p",
+    ).single()
+    assert (row["t"], row["p"]) == ("ObjectRead", True)
+
+
 def test_load_block_volumes(neo4j_session):
     _seed_compartment(neo4j_session)
     storage.load_block_volumes(
-        neo4j_session, test_data.BLOCK_VOLUMES, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
+        neo4j_session, test_data.BLOCK_VOLUMES, TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
     )
     assert check_nodes(neo4j_session, "OCIBlockVolume", ["id"]) == {("oci.blockvol.0",)}
     assert (TEST_COMPARTMENT_ID, "oci.blockvol.0") in check_rels(
@@ -47,7 +68,7 @@ def test_load_block_volumes(neo4j_session):
 def test_load_boot_volumes(neo4j_session):
     _seed_compartment(neo4j_session)
     storage.load_boot_volumes(
-        neo4j_session, test_data.BOOT_VOLUMES, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
+        neo4j_session, test_data.BOOT_VOLUMES, TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
     )
     assert check_nodes(neo4j_session, "OCIBootVolume", ["id"]) == {("oci.bootvol.0",)}
 
@@ -55,12 +76,12 @@ def test_load_boot_volumes(neo4j_session):
 def test_load_volume_backups_links_both_parent_kinds(neo4j_session):
     _seed_compartment(neo4j_session)
     storage.load_block_volumes(
-        neo4j_session, test_data.BLOCK_VOLUMES, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
+        neo4j_session, test_data.BLOCK_VOLUMES, TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
     )
     storage.load_boot_volumes(
-        neo4j_session, test_data.BOOT_VOLUMES, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
+        neo4j_session, test_data.BOOT_VOLUMES, TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
     )
-    storage.load_volume_backups(neo4j_session, test_data.VOLUME_BACKUPS, TEST_UPDATE_TAG)
+    storage.load_volume_backups(neo4j_session, test_data.VOLUME_BACKUPS, TEST_TENANCY_ID, TEST_UPDATE_TAG)
 
     assert check_nodes(neo4j_session, "OCIVolumeBackup", ["id"]) == {
         ("oci.backup.block.0",), ("oci.backup.boot.0",),
@@ -76,12 +97,12 @@ def test_load_volume_backups_links_both_parent_kinds(neo4j_session):
 def test_load_file_storage(neo4j_session):
     _seed_compartment(neo4j_session)
     storage.load_file_systems(
-        neo4j_session, test_data.FILE_SYSTEMS, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
+        neo4j_session, test_data.FILE_SYSTEMS, TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
     )
     storage.load_mount_targets(
-        neo4j_session, test_data.MOUNT_TARGETS, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
+        neo4j_session, test_data.MOUNT_TARGETS, TEST_TENANCY_ID, TEST_COMPARTMENT_ID, TEST_UPDATE_TAG,
     )
-    storage.load_exports(neo4j_session, test_data.EXPORTS, TEST_UPDATE_TAG)
+    storage.load_exports(neo4j_session, test_data.EXPORTS, TEST_TENANCY_ID, TEST_UPDATE_TAG)
 
     assert check_nodes(neo4j_session, "OCIFileSystem", ["id"]) == {("oci.fs.0",)}
     assert check_nodes(neo4j_session, "OCIMountTarget", ["id"]) == {("oci.mt.0",)}

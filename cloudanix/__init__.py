@@ -1,9 +1,16 @@
-from cartography.util import run_cleanup_job
+import logging
+
+from cartography.util import run_cleanup_job  # noqa: F401
 from cartography.util import timeit
+
+logger = logging.getLogger(__name__)
 
 
 @timeit
 def run(neo4j_session, config):
+    # CloudanixWorkspace.id uniqueness is a schema constraint in data/indexes.cypher, applied by DB admins, not
+    # here: a schema change needs Neo4j's exclusive schema lock, and run from a sync it queued every sync behind
+    # any long-running transaction (US prod, 2026-11-03).
     common_job_parameters = {
         "UPDATE_TAG": config.update_tag,
         "WORKSPACE_ID": config.params['workspace']['id_string'],

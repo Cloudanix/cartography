@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
@@ -9,6 +10,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import batch
 from cartography.util import log_aws_error
@@ -118,11 +121,10 @@ def get_event_rules(boto3_session: boto3.session.Session, region, account_id):
 
 
 @timeit
-def transform_rules(rules: List[Dict], region: str, account_id) -> List[Dict]:
+def transform_rules(rules: List[Dict], region: str, account_id, partition: str = DEFAULT_PARTITION) -> List[Dict]:
     event_rules = []
     for event_rule in rules:
-        console_arn = f"arn:aws:cloudwatch:{region if region else ''}:{account_id if account_id else ''}:rule/{event_rule['Name']}"
-        event_rule["consolelink"] = aws_console_link.get_console_link(arn=console_arn)
+        event_rule["consolelink"] = aws_console_link.get_console_link(arn=event_rule["Arn"])
         event_rule["region"] = region
         event_rules.append(event_rule)
 
@@ -161,16 +163,18 @@ def _load_event_rules_tx(
         rule.state = record.State,
         rule.role_arn = record.RoleArn
     WITH rule, record
-    MATCH (bus:AWSEventBridgeEventBus{arn:record.EventBusName})
-    MERGE (bus)-[rt:HAS]->(rule)
-    ON CREATE SET
-        rt.firstseen = timestamp()
-    SET rt.lastupdated = $aws_update_tag
-    WITH rule
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(rule)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
+    WITH owner, rule, record
+    // ListRules returns the bus name, not its ARN, and a name ("default") is unique only within
+    // one account and region: resolve it among this account's buses in the rule's region.
+    MATCH (owner)-[:RESOURCE]->(bus:AWSEventBridgeEventBus{name: record.EventBusName, region: record.region})
+    MERGE (bus)-[rt:HAS]->(rule)
+    ON CREATE SET
+        rt.firstseen = timestamp()
+    SET rt.lastupdated = $aws_update_tag
     """
 
     tx.run(
@@ -214,8 +218,6 @@ def transform_log_groups(boto3_session: boto3.session.Session, groups: List, reg
     try:
         kms_client = boto3_session.client("kms", region_name=region, config=get_botocore_config())
         for log_group in groups:
-            log_group["arn"] = log_group["arn"]
-            log_group["arn"].replace("/", "$252F")
             log_group["consolelink"] = aws_console_link.get_console_link(arn=log_group["arn"])
             log_group["region"] = region
             if log_group.get("kmsKeyId"):
@@ -324,13 +326,18 @@ def get_metrics(boto3_session: boto3.session.Session, region):
 
 
 @timeit
-def transform_metrics(mets: List[Dict], account_id: str, region: str) -> List[Dict]:
+def transform_metrics(
+    mets: List[Dict], account_id: str, region: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     metrics = []
     for metric in mets:
-        console_arn = f"arn:aws:cloudwatch:{region if region else ''}:{account_id if account_id else ''}:metrics/{metric['MetricName']}"
+        console_arn = (
+            f"arn:{partition}:cloudwatch:{region if region else ''}:{account_id if account_id else ''}"
+            f":metrics/{metric['MetricName']}"
+        )
         # metric['consolelink'] = aws_console_link.get_console_link(console_arn)
         metric["consolelink"] = aws_console_link.get_console_link(console_arn)
-        metric["arn"] = f"arn:aws:cloudwatch:{region}:{account_id}:metrics/{metric['MetricName']}"
+        metric["arn"] = f"arn:{partition}:cloudwatch:{region}:{account_id}:metrics/{metric['MetricName']}"
         metric["region"] = region
         metrics.append(metric)
 
@@ -487,11 +494,36 @@ def get_cloudwatch_flowlogs(boto3_session: boto3.session.Session, region: str) -
         return flowlogs
 
 
+# Flow logs have no console page of their own; they are listed on the VPC, subnet or ENI they watch.
+FLOW_LOG_RESOURCE_TYPES = {"vpc-": "vpc", "subnet-": "subnet", "eni-": "network-interface"}
+
+
+def _flow_log_console_link(flowlog: Dict, current_aws_account_id: str, region: str) -> Optional[str]:
+    """
+    Link to the console page of the VPC, subnet or ENI the flow log watches, or None for any other
+    resource (transit gateway, attachment): cloudconsolelink has no page for those, and the synthetic
+    vcp-flow-log node id would only resolve to the EC2 service home.
+    """
+    # Assumes the watched resource is in this account and the aws partition: DescribeFlowLogs does not
+    # return the resource's owner. A shared VPC owned by another account, or GovCloud/China, will not open.
+    resource_id = flowlog.get("ResourceId") or ""
+    for prefix, resource_type in FLOW_LOG_RESOURCE_TYPES.items():
+        if resource_id.startswith(prefix):
+            return aws_console_link.get_console_link(
+                arn=f"arn:aws:ec2:{region}:{current_aws_account_id}:{resource_type}/{resource_id}",
+            )
+    return None
+
+
 @timeit
-def transform_flow_logs(logs: List[Dict], current_aws_account_id: str, region: str) -> List[Dict]:
+def transform_flow_logs(
+    logs: List[Dict], current_aws_account_id: str, region: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     flowlogs = []
     for flowlog in logs:
-        flowlog["arn"] = f"arn:aws:ec2:{region}:{current_aws_account_id}:vcp-flow-log/{flowlog['FlowLogId']}"
+        # "vcp" typo is the node id (MERGE key); kept so existing nodes and findings keep their identity.
+        flowlog["arn"] = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:vcp-flow-log/{flowlog['FlowLogId']}"
+        flowlog["consolelink"] = _flow_log_console_link(flowlog, current_aws_account_id, region)
         flowlog["region"] = region
         flowlogs.append(flowlog)
 
@@ -522,6 +554,7 @@ def _load_cloudwatch_flowlogs_tx(
     SET log.lastupdated = $aws_update_tag,
         log.name = record.FlowLogId,
         log.region = record.region,
+        log.consolelink = record.consolelink,
         log.creation_time = record.CreationTime,
         log.deliver_logs_status = record.DeliverLogsStatus,
         log.flow_log_id = record.FlowLogId,
@@ -568,13 +601,14 @@ def sync(
     log_groups = []
     # metrics = []
     rules = []
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.info("Syncing Cloudwatch for region '%s' in account '%s'.", region, current_aws_account_id)
 
         alms = get_cloudwatch_alarm(boto3_session, region)
         alarms.extend(transform_alarms(alms, region))
         flgs = get_cloudwatch_flowlogs(boto3_session, region)
-        flowlogs.extend(transform_flow_logs(flgs, current_aws_account_id, region))
+        flowlogs.extend(transform_flow_logs(flgs, current_aws_account_id, region, partition=partition))
         ebs = get_event_buses(boto3_session, region)
         event_buses.extend(transform_event_buses(ebs, region))
         log_g = get_log_groups(boto3_session, region)
@@ -616,7 +650,7 @@ def sync(
 
     for region in regions:
         rls = get_event_rules(boto3_session, region, current_aws_account_id)
-        rules.extend(transform_rules(rls, region, current_aws_account_id))
+        rules.extend(transform_rules(rls, region, current_aws_account_id, partition=partition))
 
     load_event_rules(neo4j_session, rules, current_aws_account_id, update_tag)
 

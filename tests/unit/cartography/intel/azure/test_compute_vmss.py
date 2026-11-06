@@ -12,4 +12,4 @@ def test_load_vm_scale_sets_writes_consolelink_on_every_run():
     query = tx.run.call_args_list[0].args[0]
     # Was only set on create, so exports never saw it.
     set_clause = query.split("SET a.lastupdated", 1)[1]
-    assert "a.consolelink = set.consolelink" in set_clause
+    assert "a.consolelink = coalesce(set.consolelink, a.consolelink)" in set_clause

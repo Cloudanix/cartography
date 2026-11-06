@@ -1,0 +1,31 @@
+{
+	"statements": [
+		{
+			"query": "MATCH (:EC2SecurityGroup)<-[r:MEMBER_OF_EC2_SECURITY_GROUP]-(:NeptuneCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		},
+		{
+			"query": "MATCH (:DBSubnetGroup)<-[r:MEMBER_OF_DB_SUBNET_GROUP]-(:NeptuneCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		},
+		{
+			"__comment__": "Runs with the cluster sync, before the RDS instance sync re-links current members.",
+			"query": "MATCH (:NeptuneCluster)<-[r:IS_CLUSTER_MEMBER_OF]-(:RDSInstance)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		},
+		{
+			"query": "MATCH (n:NeptuneCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		},
+		{
+			"query": "MATCH (:NeptuneCluster)<-[r:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100
+		}
+	],
+	"name": "cleanup NeptuneCluster"
+}

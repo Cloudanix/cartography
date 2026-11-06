@@ -1768,6 +1768,65 @@ Representation of an [AzureKeyVault](https://docs.microsoft.com/en-us/rest/api/k
         (AzureSubscription)-[RESOURCE]->(AzureKeyVault)
         ```
 
+### AzureRedisCache
+
+Representation of an [Azure Cache for Redis](https://learn.microsoft.com/en-us/rest/api/redis/redis/list-by-subscription) instance. Redis Enterprise (`Microsoft.Cache/redisEnterprise`) is a separate API and is not synced.
+
+| Field                             | Description                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------- |
+| firstseen                         | Timestamp of when a sync job discovered this node                                |
+| lastupdated                       | Timestamp of the last time the node was updated                                  |
+| **id**                            | The ARM resource ID of the cache                                                 |
+| name                              | The name of the cache                                                            |
+| location / region                 | The location where the cache is created                                          |
+| resourcegroup                     | The Resource Group of the cache (lower case)                                     |
+| sku_name / sku_family / sku_capacity | The SKU (Basic, Standard, Premium), family (C, P) and size                     |
+| enable_non_ssl_port               | Whether the non-TLS port 6379 is enabled                                         |
+| minimum_tls_version               | The minimum TLS version clients must use                                         |
+| public_network_access             | Enabled or Disabled                                                              |
+| redis_version                     | The Redis version                                                                |
+| subnet_id                         | The subnet the cache is injected into (Premium VNet injection), if any           |
+| static_ip                         | The private IP of a VNet-injected cache                                          |
+| host_name / port / ssl_port       | The cache endpoint                                                               |
+| private_endpoint_connection_count | Number of private endpoint connections                                          |
+| firewall_rules_fetched            | Whether the firewall rules were read this sync (false: read failed)              |
+| exposed_internet / exposed_internet_type / publicContext | Set by `azure_redis_asset_exposure.json`                  |
+
+#### Relationships
+
+- Azure Subscription contains one or more Redis caches.
+
+        ```
+        (AzureSubscription)-[RESOURCE]->(AzureRedisCache)
+        ```
+
+- A Redis cache belongs to a Resource Group, and to a subnet when VNet-injected.
+
+        ```
+        (AzureRedisCache)-[RESOURCE_GROUP]->(AzureResourceGroup)
+        (AzureRedisCache)-[SUBNET]->(AzureNetworkSubnet)
+        ```
+
+### AzureRedisFirewallRule
+
+Representation of an [Azure Cache for Redis firewall rule](https://learn.microsoft.com/en-us/rest/api/redis/firewall-rules/list).
+
+| Field            | Description                                                        |
+| ---------------- | ------------------------------------------------------------------ |
+| **id**           | The ARM resource ID of the rule                                    |
+| name             | The name of the rule                                               |
+| start_ip_address | First IPv4 address of the allowed range                            |
+| end_ip_address   | Last IPv4 address of the allowed range                             |
+| address_count    | Number of addresses the range admits (null when unparseable)       |
+
+#### Relationships
+
+- A Redis cache has zero or more firewall rules.
+
+        ```
+        (AzureRedisCache)-[HAS]->(AzureRedisFirewallRule)
+        ```
+
 ### AzureVirtualMachineExtension
 
 Representation of an [AzureVirtualMachineExtension](https://docs.microsoft.com/en-us/rest/api/compute/virtual-machine-extensions/list).
@@ -1977,6 +2036,65 @@ Representation of an [AzureContainerRegistryWebhook](https://docs.microsoft.com/
 
         ```
         (AzureContainerRegistry)-[CONTAIN]->(AzureContainerRegistryWebhook)
+        ```
+
+### AzureContainerRepository
+
+A repository in an Azure Container Registry, read from the registry's data plane
+(`GET https://<loginServer>/acr/v1/_catalog`). Registries we cannot read (no data-plane role, firewall,
+public network access disabled) get none; see `repositories_fetched` / `repositories_fetch_error` on the
+registry. At most 500 repositories per registry are ingested (catalog order; `repositories_truncated` on the
+registry says when more exist).
+
+| Field           | Description                                                    |
+| --------------- | -------------------------------------------------------------- |
+| firstseen       | Timestamp of when a sync job discovered this node              |
+| lastupdated     | Timestamp of the last time the node was updated                |
+| **id**          | `<registry id>/repositories/<name>`                            |
+| name            | Repository name, e.g. `team/webapp`                            |
+| registry_name   | Name of the registry                                           |
+| uri             | `<loginServer>/<name>`                                         |
+| location        | Region of the registry                                         |
+| resourcegroup   | Resource group of the registry                                 |
+| subscription_id | Subscription of the registry                                   |
+| last_update_time | Last update of the newest manifest                            |
+| manifests_truncated | True when the repository has more than the 50 manifests kept |
+
+#### Relationships
+
+- Azure Container Registry contains one or more Container Repositories.
+
+        ```
+        (AzureContainerRegistry)-[CONTAIN]->(AzureContainerRepository)
+        ```
+
+### AzureContainerImage
+
+A manifest in an Azure Container Repository (`GET https://<loginServer>/acr/v1/<repository>/_manifests`). Only the
+50 most recently updated manifests of each repository are ingested.
+
+| Field            | Description                                       |
+| ---------------- | ------------------------------------------------- |
+| firstseen        | Timestamp of when a sync job discovered this node |
+| lastupdated      | Timestamp of the last time the node was updated   |
+| **id**           | `<repository id>@<digest>`                        |
+| digest           | Manifest digest, e.g. `sha256:...`                |
+| name             | `<repository>@<digest>`                           |
+| uri              | `<loginServer>/<repository>@<digest>`             |
+| tags             | Tags pointing at the manifest                     |
+| architecture     | CPU architecture, e.g. `amd64`                    |
+| os               | Operating system, e.g. `linux`                    |
+| size_bytes       | Manifest size in bytes                            |
+| created_time     | When the manifest was pushed                      |
+| last_update_time | When the manifest was last updated                |
+| subscription_id  | Subscription of the registry                      |
+
+#### Relationships
+
+- Azure Container Repository contains one or more Container Images.
+
+        ```
+        (AzureContainerRepository)-[CONTAIN]->(AzureContainerImage)
         ```
 
 ### AzureContainerGroup

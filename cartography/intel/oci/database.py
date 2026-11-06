@@ -10,6 +10,7 @@ from typing import Optional
 import neo4j
 import oci
 
+from . import network
 from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
@@ -174,8 +175,8 @@ def transform_autonomous_databases(
             "kms_key_lifecycle_details": adb.get("kms-key-lifecycle-details"),
             "is_encrypted_with_cmk": bool(adb.get("kms-key-id")),
             # Connection endpoints (security-relevant: ORDS / APEX surfaces)
-            "service_console_url": connection_urls.get("sql-dev-web-url")
-            or connection_urls.get("apex-url"),
+            "service_console_url": connection_urls.get("sql-dev-web-url") or
+            connection_urls.get("apex-url"),
             "apex_url": connection_urls.get("apex-url"),
             "graph_studio_url": connection_urls.get("graph-studio-url"),
             "machine_learning_user_management_url": connection_urls.get(
@@ -195,6 +196,7 @@ def transform_autonomous_databases(
             "available_upgrade_versions": adb.get("available-upgrade-versions") or [],
             "time_created": str(adb.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("autonomous_database", region=region, ocid=adb.get("id")),
         })
     return transformed
 
@@ -202,6 +204,7 @@ def transform_autonomous_databases(
 def load_autonomous_databases(
     neo4j_session: neo4j.Session,
     autonomous_databases: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -264,9 +267,10 @@ def load_autonomous_databases(
             a.role = adb.role,
             a.available_upgrade_versions = adb.available_upgrade_versions,
             a.region = adb.region,
+            a.consolelink = adb.consolelink,
             a.lastupdated = $oci_update_tag
         WITH a
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(a)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -275,6 +279,7 @@ def load_autonomous_databases(
         neo4j_session,
         ingest_adb,
         autonomous_databases,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -282,12 +287,14 @@ def load_autonomous_databases(
     _link_subnet_and_nsg(
         neo4j_session,
         label="OCIAutonomousDatabase",
+        tenancy_id=tenancy_id,
         items=autonomous_databases,
         oci_update_tag=oci_update_tag,
     )
     _link_kms_key(
         neo4j_session,
         label="OCIAutonomousDatabase",
+        tenancy_id=tenancy_id,
         items=autonomous_databases,
         oci_update_tag=oci_update_tag,
     )
@@ -296,6 +303,7 @@ def load_autonomous_databases(
 def sync_autonomous_databases(
     neo4j_session: neo4j.Session,
     database_client: oci.database.DatabaseClient,
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
@@ -308,7 +316,7 @@ def sync_autonomous_databases(
     raw = get_autonomous_database_list_data(database_client, compartment_id)["AutonomousDatabases"]
     items = transform_autonomous_databases(raw, region)
     if items:
-        load_autonomous_databases(neo4j_session, items, compartment_id, oci_update_tag)
+        load_autonomous_databases(neo4j_session, items, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, raw, 'OCIAutonomousDatabase', oci_update_tag, common_job_parameters)
 
@@ -408,6 +416,7 @@ def transform_db_systems(
             "maintenance_window_preference": maintenance.get("preference"),
             "time_created": str(sys.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("db_system", region=region, ocid=sys.get("id")),
         })
     return transformed
 
@@ -415,6 +424,7 @@ def transform_db_systems(
 def load_db_systems(
     neo4j_session: neo4j.Session,
     db_systems: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -463,9 +473,10 @@ def load_db_systems(
             sys.iorm_lifecycle_state = s.iorm_lifecycle_state,
             sys.maintenance_window_preference = s.maintenance_window_preference,
             sys.region = s.region,
+            sys.consolelink = s.consolelink,
             sys.lastupdated = $oci_update_tag
         WITH sys
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(sys)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -474,6 +485,7 @@ def load_db_systems(
         neo4j_session,
         ingest_db_system,
         db_systems,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -481,12 +493,14 @@ def load_db_systems(
     _link_subnet_and_nsg(
         neo4j_session,
         label="OCIDbSystem",
+        tenancy_id=tenancy_id,
         items=db_systems,
         oci_update_tag=oci_update_tag,
     )
     _link_kms_key(
         neo4j_session,
         label="OCIDbSystem",
+        tenancy_id=tenancy_id,
         items=db_systems,
         oci_update_tag=oci_update_tag,
     )
@@ -548,6 +562,9 @@ def transform_db_homes(
             "last_patch_history_entry_id": h.get("last-patch-history-entry-id"),
             "time_created": str(h.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link(
+                "db_home", region=region, ocid=h.get("id"), db_system_id=h.get("db-system-id") or "",
+            ),
         })
     return transformed
 
@@ -555,6 +572,7 @@ def transform_db_homes(
 def load_db_homes(
     neo4j_session: neo4j.Session,
     db_homes: List[Dict[str, Any]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -580,20 +598,23 @@ def load_db_homes(
             dh.is_encrypted_with_cmk = h.is_encrypted_with_cmk,
             dh.last_patch_history_entry_id = h.last_patch_history_entry_id,
             dh.region = h.region,
+            dh.consolelink = h.consolelink,
             dh.lastupdated = $oci_update_tag
         WITH dh, h
-        MATCH (sys:OCIDbSystem{id: h.db_system_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(sys:OCIDbSystem{id: h.db_system_id})
         MERGE (sys)-[r:HAS_DB_HOME]->(dh)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
     load_graph_data(
-        neo4j_session, ingest_db_home, db_homes, oci_update_tag=oci_update_tag,
+        neo4j_session, ingest_db_home, db_homes, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
     )
 
     _link_kms_key(
         neo4j_session,
         label="OCIDbHome",
+        tenancy_id=tenancy_id,
         items=db_homes,
         oci_update_tag=oci_update_tag,
     )
@@ -661,6 +682,9 @@ def transform_db_nodes(
             ),
             "time_created": str(n.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link(
+                "db_node", region=region, ocid=n.get("id"), db_system_id=n.get("db-system-id") or "",
+            ),
         })
     return transformed
 
@@ -668,6 +692,7 @@ def transform_db_nodes(
 def load_db_nodes(
     neo4j_session: neo4j.Session,
     db_nodes: List[Dict[str, Any]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -695,26 +720,94 @@ def load_db_nodes(
             dn.time_maintenance_window_start = n.time_maintenance_window_start,
             dn.time_maintenance_window_end = n.time_maintenance_window_end,
             dn.region = n.region,
+            dn.consolelink = n.consolelink,
             dn.lastupdated = $oci_update_tag
         WITH dn, n
-        MATCH (sys:OCIDbSystem{id: n.db_system_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(sys:OCIDbSystem{id: n.db_system_id})
         MERGE (sys)-[r:HAS_DB_NODE]->(dn)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
     load_graph_data(
-        neo4j_session, ingest_db_node, db_nodes, oci_update_tag=oci_update_tag,
+        neo4j_session, ingest_db_node, db_nodes, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
     )
+
+
+def get_db_node_vnics(
+    network_client: oci.core.VirtualNetworkClient,
+    db_nodes: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    GetVnic for each DB node's client VNIC and backup VNIC. The backup VNIC is a
+    second interface on the same host, so a public IP on it is a way in too.
+    Unreadable VNICs are skipped, so the exposure job treats their DB node as unresolved.
+    """
+    vnic_ids = sorted({
+        vnic_id for n in db_nodes for vnic_id in (n.get("vnic_id"), n.get("backup_vnic_id")) if vnic_id
+    })
+    vnics = [network.get_vnic_data(network_client, vnic_id) for vnic_id in vnic_ids]
+    return [vnic for vnic in vnics if vnic]
+
+
+def load_db_node_vnics(
+    neo4j_session: neo4j.Session,
+    vnics: List[Dict[str, Any]],
+    tenancy_id: str,
+    region: str,
+    oci_update_tag: int,
+) -> None:
+    """
+    Load DB node VNICs with the network loader (public IP, NSG ids, subnet edge)
+    and link each OCIDbNode to its client and backup VNICs via OCI_VNIC.
+    """
+    network.load_vnics(neo4j_session, vnics, tenancy_id, region, oci_update_tag)
+    link_db_node_vnic = """
+    UNWIND $DictList AS vnic
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIDbSystem)
+            -[:HAS_DB_NODE]->(dn:OCIDbNode)
+        WHERE dn.vnic_id = vnic.id OR dn.backup_vnic_id = vnic.id
+        // The VNIC has no tenancy path of its own when its subnet is not synced; load_vnics just
+        // MERGEd it by its OCID (globally unique), so MERGE on that key instead of looking it up.
+        MERGE (v:OCIVnic{id: vnic.id})
+        MERGE (dn)-[r:OCI_VNIC]->(v)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $oci_update_tag
+    """
+    load_graph_data(
+        neo4j_session, link_db_node_vnic, vnics, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
+    )
+
+
+def _network_client_for(database_client: oci.database.DatabaseClient, region: str) -> oci.core.VirtualNetworkClient:
+    # GetVnic lives on the Virtual Network API; reuse the database client's auth.
+    network_client = oci.core.VirtualNetworkClient(
+        config=database_client.base_client.config,
+        signer=getattr(database_client.base_client, "signer", None),
+    )
+    if region:
+        network_client.base_client.set_region(region)
+    return network_client
 
 
 # ---------------------------------------------------------------------------
 # Edge helpers (subnet / NSG / KMS) — MATCH-only, safe no-op
 # ---------------------------------------------------------------------------
 
+# Path from the tenancy to each DB resource label, so both ends of a link are reached
+# from the syncing tenancy (AGENTS.md "Tenant isolation").
+_TENANCY_PATH_TO = {
+    "OCIAutonomousDatabase": "-[:OWNER]->(:OCICompartment)-[:RESOURCE]->",
+    "OCIDbSystem": "-[:OWNER]->(:OCICompartment)-[:RESOURCE]->",
+    "OCIDbHome": "-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIDbSystem)-[:HAS_DB_HOME]->",
+}
+
+
 def _link_subnet_and_nsg(
     neo4j_session: neo4j.Session,
     label: str,
     items: List[Dict[str, Any]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -729,14 +822,15 @@ def _link_subnet_and_nsg(
     if subnet_links:
         link_subnet = f"""
         UNWIND $DictList AS link
-            MATCH (r:{label}{{id: link.resource_id}})
-            MATCH (s:OCISubnet{{id: link.subnet_id}})
+            MATCH (t:OCITenancy{{id: $TENANCY_ID}})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+                -[:OCI_SUBNET]->(s:OCISubnet{{id: link.subnet_id}})
+            MATCH (t){_TENANCY_PATH_TO[label]}(r:{label}{{id: link.resource_id}})
             MERGE (r)-[rel:OCI_SUBNET]->(s)
             ON CREATE SET rel.firstseen = timestamp()
             SET rel.lastupdated = $oci_update_tag
         """
         load_graph_data(
-            neo4j_session, link_subnet, subnet_links, oci_update_tag=oci_update_tag,
+            neo4j_session, link_subnet, subnet_links, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
         )
 
     nsg_links: List[Dict[str, str]] = []
@@ -746,14 +840,15 @@ def _link_subnet_and_nsg(
     if nsg_links:
         link_nsg = f"""
         UNWIND $DictList AS link
-            MATCH (r:{label}{{id: link.resource_id}})
-            MATCH (n:OCINetworkSecurityGroup{{id: link.nsg_id}})
+            MATCH (t:OCITenancy{{id: $TENANCY_ID}})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+                -[:OCI_NETWORK_SECURITY_GROUP]->(n:OCINetworkSecurityGroup{{id: link.nsg_id}})
+            MATCH (t){_TENANCY_PATH_TO[label]}(r:{label}{{id: link.resource_id}})
             MERGE (r)-[rel:OCI_NSG]->(n)
             ON CREATE SET rel.firstseen = timestamp()
             SET rel.lastupdated = $oci_update_tag
         """
         load_graph_data(
-            neo4j_session, link_nsg, nsg_links, oci_update_tag=oci_update_tag,
+            neo4j_session, link_nsg, nsg_links, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
         )
 
 
@@ -761,6 +856,7 @@ def _link_kms_key(
     neo4j_session: neo4j.Session,
     label: str,
     items: List[Dict[str, Any]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -775,13 +871,14 @@ def _link_kms_key(
         return
     link_kms = f"""
     UNWIND $DictList AS link
-        MATCH (r:{label}{{id: link.resource_id}})
-        MATCH (k:OCIKmsKey{{id: link.kms_key_id}})
+        MATCH (t:OCITenancy{{id: $TENANCY_ID}})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIKmsVault)
+            -[:OCI_KMS_KEY]->(k:OCIKmsKey{{id: link.kms_key_id}})
+        MATCH (t){_TENANCY_PATH_TO[label]}(r:{label}{{id: link.resource_id}})
         MERGE (r)-[rel:OCI_KMS_KEY]->(k)
         ON CREATE SET rel.firstseen = timestamp()
         SET rel.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, link_kms, links, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, link_kms, links, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
@@ -791,10 +888,11 @@ def _link_kms_key(
 def sync_db_systems(
     neo4j_session: neo4j.Session,
     database_client: oci.database.DatabaseClient,
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
-    common_job_parameters: Dict[str, Any] = None,
+    common_job_parameters: Optional[Dict[str, Any]] = None,
 ) -> None:
     logger.debug(
         "Syncing OCI DB Systems for compartment '%s', region '%s'.",
@@ -805,7 +903,7 @@ def sync_db_systems(
     if not db_systems:
         return
 
-    load_db_systems(neo4j_session, db_systems, compartment_id, oci_update_tag)
+    load_db_systems(neo4j_session, db_systems, tenancy_id, compartment_id, oci_update_tag)
     if common_job_parameters:
         tags.sync_tags(neo4j_session, raw_systems, 'OCIDbSystem', oci_update_tag, common_job_parameters)
 
@@ -826,11 +924,14 @@ def sync_db_systems(
         all_nodes.extend(transform_db_nodes(nodes_raw, region))
 
     if all_homes:
-        load_db_homes(neo4j_session, all_homes, oci_update_tag)
+        load_db_homes(neo4j_session, all_homes, tenancy_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, all_homes_raw, 'OCIDbHome', oci_update_tag, common_job_parameters)
     if all_nodes:
-        load_db_nodes(neo4j_session, all_nodes, oci_update_tag)
+        load_db_nodes(neo4j_session, all_nodes, tenancy_id, oci_update_tag)
+        db_node_vnics = get_db_node_vnics(_network_client_for(database_client, region), all_nodes)
+        if db_node_vnics:
+            load_db_node_vnics(neo4j_session, db_node_vnics, tenancy_id, region, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
@@ -876,7 +977,7 @@ def sync(
 
         try:
             sync_autonomous_databases(
-                neo4j_session, database_client, compartment_id, region, oci_update_tag,
+                neo4j_session, database_client, tenancy_id, compartment_id, region, oci_update_tag,
                 common_job_parameters,
             )
         except Exception as e:
@@ -884,7 +985,7 @@ def sync(
 
         try:
             sync_db_systems(
-                neo4j_session, database_client, compartment_id, region, oci_update_tag,
+                neo4j_session, database_client, tenancy_id, compartment_id, region, oci_update_tag,
                 common_job_parameters,
             )
         except Exception as e:

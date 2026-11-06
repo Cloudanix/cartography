@@ -3,10 +3,14 @@ import time
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from urllib.parse import quote
 
 import neo4j
 
+from cartography.intel.gitlab.common import get_console_link
+from cartography.intel.gitlab.common import get_node_id
+from cartography.intel.gitlab.common import get_web_base_url
 from cartography.intel.gitlab.pagination import paginate_request
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -27,12 +31,23 @@ def get_group_members(hosted_domain: str, access_token: str, group_id: int):
     return members
 
 
+def transform_members(members: List[Dict], hosted_domain: Optional[str]) -> List[Dict]:
+    base_url = get_web_base_url(hosted_domain)
+    for member in members:
+        member["node_id"] = get_node_id(hosted_domain, member.get("username"))
+        member["consolelink"] = get_console_link("member", base_url=base_url, username=member.get("username"))
+    return members
+
+
 def load_members_data(
     session: neo4j.Session,
     members_data: List[Dict],
     common_job_parameters: Dict,
-    group_id: int,
+    group_node_id: str,
 ) -> None:
+    """
+    :param group_node_id: the group's graph id (common_job_parameters["GITLAB_GROUP_NODE_ID"])
+    """
     # Ensure that we only process members that have an ID.
     # Some members, like invited members, may not have an ID.
     valid_members = [member for member in members_data if member.get("id")]
@@ -40,13 +55,15 @@ def load_members_data(
         logger.warning("No valid GitLab members with IDs found to sync.")
         return
 
-    session.execute_write(_load_members_data, valid_members, common_job_parameters, group_id)
+    session.execute_write(_load_members_data, valid_members, common_job_parameters, group_node_id)
 
 
-def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict, group_id: int):
+def _load_members_data(
+    tx: neo4j.Transaction, members_data: List[Dict], common_job_parameters: Dict, group_node_id: str,
+) -> None:
     ingest_group_query = """
     UNWIND $membersData as member
-    MERGE (mem:GitLabMember {id: member.username})
+    MERGE (mem:GitLabMember {id: member.node_id})
     ON CREATE SET
         mem.firstseen = timestamp(),
         mem.created_at = member.created_at
@@ -56,22 +73,26 @@ def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_j
         mem.username = member.username,
         mem.state = member.state,
         mem.profile_url = member.web_url,
-        mem.created_by = member.created_by,
-        mem.access_level = member.access_level,
         mem.avatar_url = member.avatar_url,
         mem.email = member.public_email,
-        mem.expires_at = member.expires_at,
-        mem.group_id = member.group_id,
         mem.locked = member.locked,
-        mem.membership_state = member.membership_state,
         mem.web_url = member.web_url,
+        mem.consolelink = member.consolelink,
         mem.lastupdated = $UpdateTag
+    // The member node is shared by every group (and tenant) the user is in: the membership values go on
+    // this group's MEMBER edge.
+    REMOVE mem.created_by, mem.access_level, mem.expires_at, mem.group_id, mem.membership_state
 
-    WITH mem
+    WITH mem, member
     MATCH (owner:GitLabGroup {id: $GroupId})
     MERGE (owner)-[o:MEMBER]->(mem)
     ON CREATE SET o.firstseen = timestamp()
-    SET o.lastupdated = $UpdateTag
+    SET o.lastupdated = $UpdateTag,
+        o.created_by = member.created_by,
+        o.access_level = member.access_level,
+        o.expires_at = member.expires_at,
+        o.group_id = member.group_id,
+        o.membership_state = member.membership_state
 
     """
     for member in members_data:
@@ -81,12 +102,16 @@ def _load_members_data(tx: neo4j.Transaction, members_data: List[Dict], common_j
         ingest_group_query,
         membersData=members_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
-        GroupId=group_id,
+        GroupId=group_node_id,
     )
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job("gitlab_group_member_cleanup.json", neo4j_session, common_job_parameters)
+    # A GitLabMember (keyed by username per instance) can be in several tenants' groups, so the tenant cleanup
+    # above removes only this group's stale MEMBER edges; this tenant-independent sweep deletes a member once no
+    # group links to it. Plain DELETE: a member another sync is linking at that moment fails this sweep instead.
+    run_cleanup_job("gitlab_members_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def sync(
@@ -107,9 +132,11 @@ def sync(
 
     logger.info("Syncing Members for Gitlab Group '%s', at %s.", group_name, tic)
 
-    group_members = get_group_members(hosted_domain, access_token, group_id)
+    group_members = transform_members(get_group_members(hosted_domain, access_token, group_id), hosted_domain)
 
-    load_members_data(neo4j_session, group_members, common_job_parameters, group_id)
+    load_members_data(
+        neo4j_session, group_members, common_job_parameters, common_job_parameters["GITLAB_GROUP_NODE_ID"],
+    )
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

@@ -121,7 +121,13 @@ def test_expanded_mappings_present():
 def test_every_mapping_has_label_and_property():
     for resource_type, mapping in rgta.TAG_RESOURCE_TYPE_MAPPINGS.items():
         assert mapping.get('label'), resource_type
-        assert mapping.get('property') in ('id', 'arn', 'name', 'subnetid', 'zoneid'), resource_type
+        assert mapping.get('property') in ('id', 'arn', 'name', 'subnetid', 'zoneid', 'attachment_id'), resource_type
+
+
+def test_tgw_attachment_tags_match_on_attachment_id():
+    # Peering / client-vpn attachment nodes are keyed per account (<attachment id>|<account>); every attachment
+    # node carries the bare id in attachment_id, which is what the tagging API returns.
+    assert rgta.TAG_RESOURCE_TYPE_MAPPINGS['ec2:transit-gateway-attachment']['property'] == 'attachment_id'
 
 
 def test_untaggable_types_removed():
@@ -214,6 +220,7 @@ def test_iam_role_tags_fetched_once_per_account(mocker, monkeypatch):
     calls = [(c.args[2], c.args[3]) for c in sync_tags.call_args_list]
     assert [c for c in calls if c[1] == 'iam:role'] == [('us-east-1', 'iam:role')]
 
+
 def test_sync_tags_streams_pages_without_buffering(mocker):
     """Each tagging-API page is transform+load'd immediately; pages are not accumulated."""
     pages = [
@@ -240,4 +247,3 @@ def test_get_tags_collects_all_pages(mocker):
     assert rgta.get_tags(mocker.MagicMock(), 'ec2:instance', 'us-east-1') == [
         {'ResourceARN': 'a'}, {'ResourceARN': 'b'},
     ]
-

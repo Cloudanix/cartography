@@ -38,6 +38,11 @@ def _parse_mig_zone_region(self_link: str, fallback_zone: Optional[str], fallbac
     }
 
 
+def _partial_uri(self_link: Optional[str]) -> Optional[str]:
+    """projects/... part of a compute self-link (same form as compute._parse_compute_full_uri_to_partial_uri)."""
+    return self_link.split("compute/v1/")[-1] if self_link else None
+
+
 def _get_zonal_managed_instance_groups(
     compute: Resource,
     project_id: str,
@@ -61,6 +66,8 @@ def _get_zonal_managed_instance_groups(
                             "region": zone_region["region"],
                             # Used later in listManagedInstances() calls.
                             "instanceGroupManager_name": igm["name"],
+                            # The instance group this manager runs; backend services reference it by this URI.
+                            "instance_group": _partial_uri(igm.get("instanceGroup")),
                             "consolelink": gcp_console_link.get_console_link(
                                 resource_name='global_instance_group',
                                 project_id=project_id,
@@ -98,6 +105,8 @@ def _get_regional_managed_instance_groups(compute: Resource, project_id: str, re
                             "region": zone_region["region"],
                             # Used later in listManagedInstances() calls.
                             "instanceGroupManager_name": igm["name"],
+                            # The instance group this manager runs; backend services reference it by this URI.
+                            "instance_group": _partial_uri(igm.get("instanceGroup")),
                             "consolelink": gcp_console_link.get_console_link(
                                 resource_name='regional_instance_group',
                                 project_id=project_id,
@@ -141,6 +150,7 @@ def _load_managed_instance_groups_tx(
         ig.project_id = mig.project_id,
         ig.zone = mig.zone,
         ig.region = mig.region,
+        ig.instance_group = mig.instance_group,
         ig.consolelink = mig.consolelink
     WITH ig
     MATCH (owner:GCPProject{id: $ProjectId})
@@ -207,19 +217,21 @@ def _load_vm_to_mig_part_of_relationships(
     session: neo4j.Session,
     relationships: List[Dict],
     gcp_update_tag: int,
+    project_id: str,
 ) -> None:
-    session.execute_write(_load_vm_to_mig_part_of_relationships_tx, relationships, gcp_update_tag)
+    session.execute_write(_load_vm_to_mig_part_of_relationships_tx, relationships, gcp_update_tag, project_id)
 
 
 def _load_vm_to_mig_part_of_relationships_tx(
     tx: neo4j.Transaction,
     relationships: List[Dict],
     gcp_update_tag: int,
+    project_id: str,
 ) -> None:
     query = """
     UNWIND $relationships AS rel
-    MATCH (vm:GCPComputeInstance {self_link: rel.vm_self_link})
-    MATCH (mig:GCPInstanceGroup {id: rel.mig_id})
+    MATCH (p:GCPProject{id: $ProjectId})-[:RESOURCE]->(mig:GCPInstanceGroup {id: rel.mig_id})
+    MATCH (p)-[:RESOURCE]->(vm:GCPComputeInstance {self_link: rel.vm_self_link})
     MERGE (vm)-[r:PART_OF]->(mig)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
@@ -227,6 +239,7 @@ def _load_vm_to_mig_part_of_relationships_tx(
     tx.run(
         query,
         relationships=relationships,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -261,7 +274,7 @@ def sync_managed_instance_groups(
         relationships.extend(_get_managed_instances_for_mig(compute, project_id, mig))
 
     if relationships:
-        _load_vm_to_mig_part_of_relationships(neo4j_session, relationships, gcp_update_tag)
+        _load_vm_to_mig_part_of_relationships(neo4j_session, relationships, gcp_update_tag, project_id)
 
     run_cleanup_job("gcp_instance_groups_cleanup.json", neo4j_session, common_job_parameters)
     toc = time.perf_counter()

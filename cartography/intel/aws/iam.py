@@ -1,6 +1,7 @@
 import enum
 import json
 import logging
+import re
 import time
 from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +22,8 @@ from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.permission_relationships import parse_statement_node
 from cartography.intel.aws.permission_relationships import principal_allowed_on_resource
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -247,10 +250,14 @@ def get_user_list_data(boto3_session: boto3.session.Session) -> Dict:
 MANAGED_TYPE_PREDEFINED = "predefined"
 MANAGED_TYPE_CUSTOM = "custom"
 
-# Role paths that AWS reserves for service-linked / service / SSO-reserved roles it manages.
-_AWS_PREDEFINED_ROLE_PATHS = ["/aws-service-role/", "/service-role/", "/aws-reserved/"]
-# Prefix of AWS-managed (vs customer-managed) policy ARNs.
-_AWS_MANAGED_POLICY_ARN_PREFIX = "arn:aws:iam::aws:policy/"
+# Role paths AWS reserves for roles it manages itself: service-linked roles and the roles IAM
+# Identity Center provisions from permission sets. "/service-role/" is NOT one of them: the console
+# creates service roles there for Lambda, Glue, CodeBuild, ..., but the customer owns them and can
+# edit their policies and trust, so they stay custom (isServiceRole still marks them for JIT).
+_AWS_PREDEFINED_ROLE_PATHS = ["/aws-service-role/", "/aws-reserved/"]
+# AWS-managed (vs customer-managed) policy ARNs in any partition (aws, aws-us-gov, aws-cn, ...).
+# Full-match form so the same pattern works with Python re.fullmatch and Cypher =~.
+_AWS_MANAGED_POLICY_ARN_PATTERN = r"arn:[^:]+:iam::aws:policy/.*"
 
 
 def _aws_role_managed_type(path: str) -> str:
@@ -261,7 +268,8 @@ def _aws_role_managed_type(path: str) -> str:
 
 
 def _aws_policy_managed_type(arn: str) -> str:
-    return MANAGED_TYPE_PREDEFINED if str(arn or "").startswith(_AWS_MANAGED_POLICY_ARN_PREFIX) else MANAGED_TYPE_CUSTOM
+    is_aws_managed = re.fullmatch(_AWS_MANAGED_POLICY_ARN_PATTERN, str(arn or ""))
+    return MANAGED_TYPE_PREDEFINED if is_aws_managed else MANAGED_TYPE_CUSTOM
 
 
 @timeit
@@ -280,6 +288,7 @@ def transform_policies_data(current_aws_account_id: str, policies: List[Dict]) -
     for policy in policies:
         policy["id"] = transform_policy_id(current_aws_account_id, PolicyType.managed.value, policy.get("PolicyName"))
         policy["managed_type"] = _aws_policy_managed_type(policy.get("Arn", ""))
+        policy["consolelink"] = aws_console_link.get_console_link(arn=policy["Arn"]) if policy.get("Arn") else None
     return policies
 
 
@@ -335,17 +344,17 @@ def get_role_list_data(boto3_session: boto3.session.Session) -> Dict:
         try:
             role_data = client.get_role(RoleName=role.get("RoleName")).get("Role")
             role["RoleLastUsed"] = role_data.get("RoleLastUsed")
-            role["type"] = "custom"
+            # One source of truth for predefined vs custom (_AWS_PREDEFINED_ROLE_PATHS); the JIT
+            # flags below are wider on purpose (/service-role/ counts as a service role there).
+            role["type"] = _aws_role_managed_type(role_data.get("Path", ""))
 
             if any(service_role_type in role_data.get("Path", "") for service_role_type in service_role_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isServiceRole"] = True
-                role["type"] = "predefined"
 
             if any(sso_reserved_type in role_data.get("Path", "") for sso_reserved_type in sso_reserved_types):
                 # Skip this roles from IAM-JIT, because we can't edit the trust policy for these types of roles
                 role["isSSOReservedRole"] = True
-                role["type"] = "predefined"
 
         except Exception as e:
             logger.warning(f"Failed to get role info. {e}")
@@ -363,7 +372,10 @@ def get_external_access_roles(boto3_session: boto3.session.Session, common_job_p
             paginator = analyzer_client.get_paginator("list_findings_v2")
             for page in paginator.paginate(
                 analyzerArn=analyzers_list[0].get("arn"),
-                filter={"resourceType": {"eq": ["AWS::IAM::Role"]}},
+                filter={
+                    "resourceType": {"eq": ["AWS::IAM::Role"]},
+                    "status": {"eq": ["ACTIVE"]},
+                },
             ):
                 findings.extend(page.get("findings", []))
             return findings
@@ -390,8 +402,12 @@ def transform_roles(
 
     try:
         client = boto3_session.client("organizations")
-        response = client.list_accounts()
-        internal_accounts = [account["Id"] for account in response["Accounts"]]
+        paginator = client.get_paginator("list_accounts")
+        internal_accounts = [
+            account["Id"]
+            for page in paginator.paginate()
+            for account in page["Accounts"]
+        ]
     except Exception:
         internal_accounts = []
 
@@ -479,9 +495,9 @@ def load_users(
     UNWIND $DictList AS item
     MERGE (unode:AWSUser{arn: item.arn})
     ON CREATE SET unode:AWSPrincipal, unode.userid = item.userid, unode.firstseen = timestamp(),
-    unode.consolelink = item.consolelink,
     unode.createdate = item.createdate
     SET unode.name = item.username, unode.user_name = item.username,
+    unode.consolelink = item.consolelink,
     unode.path = item.path, unode.passwordlastused = item.passwordlastused,
     unode.region = 'global',
     unode.consoleloginenabled = item.consoleloginenabled,
@@ -530,9 +546,9 @@ def load_service_accounts(
     UNWIND $DictList AS item
     MERGE (sanode:AWSServiceAccount{arn: item.arn})
     ON CREATE SET sanode:AWSPrincipal, sanode.userid = item.userid, sanode.firstseen = timestamp(),
-    sanode.consolelink = item.consolelink,
     sanode.createdate = item.createdate
     SET sanode.name = item.username, sanode.user_name = item.username,
+    sanode.consolelink = item.consolelink,
     sanode.path = item.path, sanode.passwordlastused = item.passwordlastused,
     sanode.region = 'global',
     sanode.consoleloginenabled = item.consoleloginenabled,
@@ -612,7 +628,8 @@ def _load_policies_for_account_tx(
             p.default_version_id = policy.DefaultVersionId,
             p.is_attachable = policy.IsAttachable,
             p.region = $region,
-            p.managed_type = coalesce(policy.managed_type, CASE WHEN policy.Arn STARTS WITH 'arn:aws:iam::aws:policy/' THEN 'predefined' ELSE 'custom' END),
+            p.consolelink = policy.consolelink,
+            p.managed_type = coalesce(policy.managed_type, CASE WHEN policy.Arn =~ $aws_managed_policy_arn_pattern THEN 'predefined' ELSE 'custom' END),
             p.lastupdated = $update_tag
         WITH p
             MATCH (i:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -638,6 +655,7 @@ def _load_policies_for_account_tx(
             policy_type=PolicyType.managed.value,
             region="global",
             update_tag=update_tag,
+            aws_managed_policy_arn_pattern=_AWS_MANAGED_POLICY_ARN_PATTERN,
         )
 
 
@@ -712,9 +730,9 @@ def load_roles(
     MERGE (rnode:AWSRole{arn: item.arn})
     ON CREATE SET rnode:AWSPrincipal, rnode.roleid = item.roleid, rnode.firstseen = timestamp(),
     rnode.region = 'global',
-    rnode.consolelink = item.consolelink,
     rnode.createdate = item.createdate
     SET rnode.name = item.rolename, rnode.path = item.path,
+    rnode.consolelink = item.consolelink,
     rnode.lastuseddate = item.lastuseddate, rnode.lastusedregion = item.lastusedregion,
     rnode.is_service_role = item.is_service_role,
     rnode.is_sso_reserved_role = item.is_sso_reserved_role,
@@ -734,24 +752,26 @@ def load_roles(
     ON CREATE SET spnnode.firstseen = timestamp()
     SET spnnode.lastupdated = $aws_update_tag, spnnode.type = item.spn_type
     WITH spnnode, item
-    MATCH (role:AWSRole{arn: item.role_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(role:AWSRole{arn: item.role_arn})
     MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(spnnode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
 
+    # One AWSExternalPrincipal per principal, shared by every tenant whose roles trust it: it holds only
+    # global facts. access_type (CrossAccount when the principal's account is in the role's organization,
+    # else ThirdParty) depends on the tenant, so it is on the trust edge only; inventory-sync-aws reads it there.
     ingest_external_account_principals = """
     UNWIND $DictList AS item
     MERGE (epnode:AWSExternalPrincipal{principal: item.principal})
     ON CREATE SET epnode.firstseen = timestamp()
     SET epnode.lastupdated = $aws_update_tag,
-    epnode.access_type = item.access_type,
     epnode.account_id = item.account_id
     WITH epnode, item
-    MATCH (role:AWSRole{arn: item.role_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(role:AWSRole{arn: item.role_arn})
     MERGE (role)-[r:TRUSTS_AWS_PRINCIPAL]->(epnode)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
+    SET r.lastupdated = $aws_update_tag, r.access_type = item.access_type
     """
 
     # TODO support conditions
@@ -796,6 +816,7 @@ def load_roles(
         neo4j_session,
         ingest_external_account_principals,
         external_principal_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -813,17 +834,21 @@ def load_roles(
         neo4j_session,
         ingest_policy_statement,
         trust_principal_rows,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
 
 @timeit
-def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict, aws_update_tag: int) -> None:
+def load_group_memberships(
+    neo4j_session: neo4j.Session, group_memberships: Dict, current_aws_account_id: str, aws_update_tag: int,
+) -> None:
+    # A group's members are users of the group's own account.
     ingest_membership = """
     UNWIND $DictList AS item
-    MATCH (group:AWSGroup{arn: item.group_arn})
-    WITH group, item
-    MATCH (user:AWSPrincipal{arn: item.principal_arn})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AWSGroup{arn: item.group_arn})
+    WITH aa, group, item
+    MATCH (aa)-[:RESOURCE]->(user:AWSPrincipal{arn: item.principal_arn})
     WHERE user:AWSUser OR user:AWSServiceAccount
     MERGE (user)-[r:MEMBER_AWS_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
@@ -839,7 +864,10 @@ def load_group_memberships(neo4j_session: neo4j.Session, group_memberships: Dict
         for group_arn, membership_data in group_memberships.items()
         for info in membership_data.get("Users", [])
     ]
-    load_graph_data(neo4j_session, ingest_membership, membership_rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, ingest_membership, membership_rows, aws_update_tag=aws_update_tag,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+    )
 
 
 @timeit
@@ -885,7 +913,7 @@ def sync_assumerole_relationships(
     UNWIND $DictList AS item
     MATCH (source:AWSPrincipal{arn: item.source_arn})
     WITH source, item
-    MATCH (role:AWSRole{arn: item.target_arn})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(role:AWSRole{arn: item.target_arn})
     WITH role, source
     MERGE (source)-[r:STS_ASSUMEROLE_ALLOW]->(role)
     ON CREATE SET r.firstseen = timestamp()
@@ -905,7 +933,10 @@ def sync_assumerole_relationships(
             get_policies_for_principal(neo4j_session, source_arn), target_arn, ["sts:AssumeRole"],
         )
     ]
-    load_graph_data(neo4j_session, ingest_policies_assume_role, allowed_rows, aws_update_tag=aws_update_tag)
+    load_graph_data(
+        neo4j_session, ingest_policies_assume_role, allowed_rows, aws_update_tag=aws_update_tag,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+    )
     run_cleanup_job(
         "aws_import_roles_policy_cleanup.json",
         neo4j_session,
@@ -932,9 +963,9 @@ def load_user_access_keys(
     ON CREATE SET key.firstseen = timestamp(),
     key.region = 'global',
     key.createdate = item.createdate,
-    key.rotatedate = item.createdate,
-    key.consolelink = $consolelink
+    key.rotatedate = item.createdate
     SET key.status = item.status,
+    key.consolelink = $consolelink,
     key.keyage = item.keyage,
     key.lastuseddate = item.lastuseddate,
     key.lastupdated = $aws_update_tag
@@ -1017,6 +1048,7 @@ def _load_policy_tx(
     principal_arn: str,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_policy = """
     MERGE (policy:AWSPolicy{id: $PolicyId})
@@ -1026,9 +1058,8 @@ def _load_policy_tx(
     policy.region = $region,
     policy.name = $PolicyName,
     policy.arn = $PolicyArn,
-    policy.managed_type = $ManagedType,
-    policy.consolelink = $consolelink
-    SET policy.lastupdated = $aws_update_tag
+    policy.managed_type = $ManagedType
+    SET policy.lastupdated = $aws_update_tag, policy.consolelink = $consolelink
     WITH policy
     MATCH (principal:AWSPrincipal{arn: $PrincipalArn})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1048,8 +1079,9 @@ def _load_policy_tx(
         """
 
     policy = policy_name.split("/")[-1]
-    policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
-    consolelink = aws_console_link.get_console_link(arn=policy_arn)
+    policy_arn = f"arn:{partition}:iam::{current_aws_account_id}:policy/{policy}"
+    # Same rule as load_policy_data: an inline policy shows on its IAM principal's page.
+    consolelink = aws_console_link.get_console_link(arn=principal_arn) if ":iam::" in principal_arn else None
 
     tx.run(
         ingest_policy,
@@ -1072,9 +1104,8 @@ def _load_policy_tx(
     policy.region = $region,
     policy.name = $PolicyName,
     policy.arn = $PolicyArn,
-    policy.managed_type = $ManagedType,
-    policy.consolelink = $consolelink
-    SET policy.lastupdated = $aws_update_tag
+    policy.managed_type = $ManagedType
+    SET policy.lastupdated = $aws_update_tag, policy.consolelink = $consolelink
     WITH policy
     MATCH (principal:AWSPrincipal{id: $PrincipalArn})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1116,6 +1147,7 @@ def load_policy(
     principal_arn: str,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     neo4j_session.execute_write(
         _load_policy_tx,
@@ -1125,6 +1157,7 @@ def load_policy(
         principal_arn,
         current_aws_account_id,
         aws_update_tag,
+        partition,
     )
 
 
@@ -1136,9 +1169,15 @@ def load_policy_statements(
     statements: Any,
     aws_update_tag: int,
     consolelink: str,
+    aws_account_id: str,
 ) -> None:
     ingest_policy_statement = """
         MATCH (policy:AWSPolicy{id: $PolicyId})
+        WHERE EXISTS { (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:AWSPrincipal)-[:POLICY]->(policy) }
+        OR EXISTS {
+            (:AWSAccount{id: $AWS_ACCOUNT_ID})<-[:OWNER]-(:AWSOrganization)-[:RESOURCE]->(:AWSPrincipal)
+            -[:POLICY]->(policy)
+        }
         WITH policy
         UNWIND $Statements as statement_data
         MERGE (statement:AWSPolicyStatement{id: statement_data.id})
@@ -1165,6 +1204,7 @@ def load_policy_statements(
         PolicyName=policy_name,
         Statements=statements,
         region="global",
+        AWS_ACCOUNT_ID=aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -1192,15 +1232,17 @@ def _batch_load_policies(
         policy.region = 'global',
         policy.name = item.policy_name,
         policy.arn = item.policy_arn,
-        policy.managed_type = $ManagedType,
-        policy.consolelink = item.consolelink
+        policy.managed_type = $ManagedType
         """
 
+    # A managed policy's link is written by sync_policies from its real ARN (AWS-managed policies live
+    # under arn:aws:iam::aws:policy/); only an inline policy's link is known here.
+    link_clause = "" if policy_type == PolicyType.managed.value else ", policy.consolelink = item.consolelink"
     ingest_policy = f"""
     UNWIND $DictList AS item
     MERGE (policy:AWSPolicy{{id: item.policy_id}})
     {create_clause}
-    SET policy.lastupdated = $aws_update_tag
+    SET policy.lastupdated = $aws_update_tag{link_clause}
     WITH policy, item
     MATCH (principal:AWSPrincipal{{arn: item.principal_arn}})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1210,7 +1252,7 @@ def _batch_load_policies(
     UNWIND $DictList AS item
     MERGE (policy:AWSPolicy{{id: item.policy_id}})
     {create_clause}
-    SET policy.lastupdated = $aws_update_tag
+    SET policy.lastupdated = $aws_update_tag{link_clause}
     WITH policy, item
     MATCH (principal:AWSPrincipal{{id: item.principal_arn}})
     MERGE (policy) <-[r:POLICY]-(principal)
@@ -1230,13 +1272,25 @@ def _batch_load_policies(
 def _batch_load_policy_statements(
     neo4j_session: neo4j.Session,
     statement_rows: List[Dict],
+    aws_account_id: str,
     aws_update_tag: int,
-    consolelink: str,
 ) -> None:
-    """Batched equivalent of load_policy_statements: one write for all policies."""
+    """
+    Batched equivalent of load_policy_statements: one write for all policies. A statement has no console
+    page of its own, so it carries its policy's link.
+
+    A policy has no tenant root of its own (AWS-managed ones are one node for every tenant): statements are
+    written only for a policy a principal of this account, or an Identity Center principal of its
+    organization, is attached to (_batch_load_policies attaches them just before).
+    """
     ingest_policy_statement = """
         UNWIND $DictList AS item
         MATCH (policy:AWSPolicy{id: item.policy_id})
+        WHERE EXISTS { (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:AWSPrincipal)-[:POLICY]->(policy) }
+        OR EXISTS {
+            (:AWSAccount{id: $AWS_ACCOUNT_ID})<-[:OWNER]-(:AWSOrganization)-[:RESOURCE]->(:AWSPrincipal)
+            -[:POLICY]->(policy)
+        }
         WITH policy, item
         UNWIND item.statements as statement_data
         MERGE (statement:AWSPolicyStatement{id: statement_data.id})
@@ -1244,7 +1298,7 @@ def _batch_load_policy_statements(
         statement.effect = statement_data.Effect,
         statement.action = statement_data.Action,
         statement.region = 'global',
-        statement.consolelink = $consolelink,
+        statement.consolelink = policy.consolelink,
         statement.notaction = statement_data.NotAction,
         statement.resource = statement_data.Resource,
         statement.notresource = statement_data.NotResource,
@@ -1256,8 +1310,8 @@ def _batch_load_policy_statements(
         SET r.lastupdated = $aws_update_tag
         """
     load_graph_data(
-        neo4j_session, ingest_policy_statement, statement_rows,
-        consolelink=consolelink, aws_update_tag=aws_update_tag,
+        neo4j_session, ingest_policy_statement, statement_rows, AWS_ACCOUNT_ID=aws_account_id,
+        aws_update_tag=aws_update_tag,
     )
 
 
@@ -1268,6 +1322,7 @@ def load_policy_data(
     policy_type: str,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     policy_rows = []
     statement_rows = []
@@ -1276,18 +1331,22 @@ def load_policy_data(
         for policy_name, statements in policy_list.items():
             policy_id = transform_policy_id(current_aws_account_id, policy_type, policy_name)
             policy = policy_name.split("/")[-1]
-            policy_arn = f"arn:aws:iam::{current_aws_account_id}:policy/{policy}"
+            # Only inline policies store this arn (ON CREATE); managed ones keep the API's.
+            policy_arn = f"arn:{partition}:iam::{current_aws_account_id}:policy/{policy}"
+            # Inline policies have no console page of their own; an IAM one shows on its principal's page.
+            # An Identity Center permission set's inline policy has no IAM page, so it gets no link.
+            is_iam_inline = policy_type == PolicyType.inline.value and ":iam::" in principal_arn
             policy_rows.append({
                 "policy_id": policy_id,
                 "policy_name": policy_name,
                 "principal_arn": principal_arn,
                 "policy_arn": policy_arn,
-                "consolelink": aws_console_link.get_console_link(arn=policy_arn),
+                "consolelink": aws_console_link.get_console_link(arn=principal_arn) if is_iam_inline else None,
             })
             statement_rows.append({"policy_id": policy_id, "statements": statements})
 
     _batch_load_policies(neo4j_session, policy_rows, policy_type, aws_update_tag)
-    _batch_load_policy_statements(neo4j_session, statement_rows, aws_update_tag, consolelink="")
+    _batch_load_policy_statements(neo4j_session, statement_rows, current_aws_account_id, aws_update_tag)
 
 
 @timeit
@@ -1319,7 +1378,10 @@ def sync_users(
         pass
 
     else:
-        sync_user_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+        sync_user_inline_policies(
+            boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag,
+            get_partition_from_params(common_job_parameters),
+        )
 
         sync_user_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
@@ -1353,10 +1415,13 @@ def sync_user_inline_policies(
     neo4j_session: neo4j.Session,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     policy_data = get_user_policy_data(boto3_session, data["Users"])
     transform_policy_data(policy_data, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    load_policy_data(
+        neo4j_session, policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag, partition,
+    )
 
 
 @timeit
@@ -1379,7 +1444,10 @@ def sync_groups(
         pass
 
     else:
-        sync_groups_inline_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
+        sync_groups_inline_policies(
+            boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag,
+            get_partition_from_params(common_job_parameters),
+        )
 
         sync_group_managed_policies(boto3_session, data, neo4j_session, current_aws_account_id, aws_update_tag)
 
@@ -1412,10 +1480,13 @@ def sync_groups_inline_policies(
     neo4j_session: neo4j.Session,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     policy_data = get_group_policy_data(boto3_session, data["Groups"])
     transform_policy_data(policy_data, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    load_policy_data(
+        neo4j_session, policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag, partition,
+    )
 
 
 @timeit
@@ -1440,7 +1511,10 @@ def sync_roles(
         pass
 
     else:
-        sync_role_inline_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
+        sync_role_inline_policies(
+            current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag,
+            get_partition_from_params(common_job_parameters),
+        )
 
         sync_role_managed_policies(current_aws_account_id, boto3_session, data, neo4j_session, aws_update_tag)
 
@@ -1474,11 +1548,14 @@ def sync_role_inline_policies(
     data: Dict,
     neo4j_session: neo4j.Session,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     logger.info("Syncing IAM role inline policies for account '%s'.", current_aws_account_id)
     inline_policy_data = get_role_policy_data(boto3_session, data["Roles"])
     transform_policy_data(inline_policy_data, PolicyType.inline.value, current_aws_account_id)
-    load_policy_data(neo4j_session, inline_policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag)
+    load_policy_data(
+        neo4j_session, inline_policy_data, PolicyType.inline.value, current_aws_account_id, aws_update_tag, partition,
+    )
 
 
 @timeit
@@ -1496,7 +1573,7 @@ def sync_group_memberships(
     )
     groups = neo4j_session.execute_read(read_list_of_dicts_tx, query, AWS_ACCOUNT_ID=current_aws_account_id)
     groups_membership = {group["arn"]: get_group_membership_data(boto3_session, group["name"]) for group in groups}
-    load_group_memberships(neo4j_session, groups_membership, aws_update_tag)
+    load_group_memberships(neo4j_session, groups_membership, current_aws_account_id, aws_update_tag)
     run_cleanup_job(
         "aws_import_groups_membership_cleanup.json",
         neo4j_session,
@@ -1516,13 +1593,14 @@ def sync_user_access_keys(
     query = "MATCH (user:AWSPrincipal)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ACCOUNT_ID}) WHERE user:AWSUser OR user:AWSServiceAccount return user.name as name"
     result = neo4j_session.execute_read(read_list_of_dicts_tx, query, AWS_ACCOUNT_ID=current_aws_account_id)
     usernames = [r["name"] for r in result]
+    partition = get_partition_from_params(common_job_parameters)
     for name in usernames:
         access_keys = get_account_access_key_data(boto3_session, name)
         if access_keys:
             consolelink = aws_console_link.get_console_link(
-                arn=f"arn:aws:iam::{current_aws_account_id}:access_keys/{name}",
+                arn=f"arn:{partition}:iam::{current_aws_account_id}:access_keys/{name}",
             )
-            account_access_keys = {f"arn:aws:iam::{current_aws_account_id}:user/{name}": access_keys}
+            account_access_keys = {f"arn:{partition}:iam::{current_aws_account_id}:user/{name}": access_keys}
             load_user_access_keys(neo4j_session, account_access_keys, aws_update_tag, consolelink)
     run_cleanup_job(
         "aws_import_account_access_key_cleanup.json",

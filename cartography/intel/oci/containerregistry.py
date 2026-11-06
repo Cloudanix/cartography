@@ -14,7 +14,6 @@ from typing import Dict
 from typing import List
 
 import neo4j
-import oci
 import oci.artifacts
 
 from . import tags
@@ -103,9 +102,10 @@ def load_container_repositories(
     repo.namespace = $NAMESPACE,
     repo.billable_size_in_gbs = $BILLABLE_SIZE_IN_GBS,
     repo.region = $REGION,
+    repo.consolelink = $CONSOLELINK,
     repo.lastupdated = $oci_update_tag
     WITH repo
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+    MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (cc)-[r:RESOURCE]->(repo)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -116,6 +116,7 @@ def load_container_repositories(
             neo4j_session,
             ingest_repo,
             OCID=repo.get("id"),
+            TENANCY_ID=tenancy_id,
             DISPLAY_NAME=repo.get("display-name", ""),
             COMPARTMENT_ID=repo.get("compartment-id", compartment_id),
             IMAGE_COUNT=repo.get("image-count", 0),
@@ -127,6 +128,7 @@ def load_container_repositories(
             NAMESPACE=repo.get("namespace", ""),
             BILLABLE_SIZE_IN_GBS=repo.get("billable-size-in-gbs", 0),
             REGION=region,
+            CONSOLELINK=utils.get_console_link("container_repository", region=region, ocid=repo.get("id")),
             TIME_CREATED=str(repo.get("time-created", "")),
             oci_update_tag=oci_update_tag,
         )
@@ -220,9 +222,11 @@ def load_container_images(
     img.layers_size_in_bytes = $LAYERS_SIZE_IN_BYTES,
     img.time_last_pushed = $TIME_LAST_PUSHED,
     img.region = $REGION,
+    img.consolelink = $CONSOLELINK,
     img.lastupdated = $oci_update_tag
     WITH img
-    MATCH (repo:OCIContainerRepository{id: $REPOSITORY_ID})
+    MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+        -[:RESOURCE]->(repo:OCIContainerRepository{id: $REPOSITORY_ID})
     MERGE (repo)-[r:OCI_CONTAINER_IMAGE]->(img)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
@@ -233,6 +237,7 @@ def load_container_images(
             neo4j_session,
             ingest_image,
             OCID=image.get("id"),
+            TENANCY_ID=tenancy_id,
             DISPLAY_NAME=image.get("display-name", image.get("repository-name", "")),
             COMPARTMENT_ID=image.get("compartment-id", compartment_id),
             DIGEST=image.get("digest", ""),
@@ -244,6 +249,9 @@ def load_container_images(
             LAYERS_SIZE_IN_BYTES=image.get("layers-size-in-bytes", 0),
             TIME_LAST_PUSHED=str(image.get("time-last-pushed", "")),
             REGION=region,
+            CONSOLELINK=utils.get_console_link(
+                "container_image", region=region, ocid=image.get("id"), repository_id=image.get("repository-id", ""),
+            ),
             TIME_CREATED=str(image.get("time-created", "")),
             oci_update_tag=oci_update_tag,
         )

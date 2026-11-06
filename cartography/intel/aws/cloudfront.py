@@ -58,12 +58,20 @@ def transform_distribution(dists: List[Dict]) -> List[Dict]:
     return distributions
 
 
-def load_cloudfront_distributions(session: neo4j.Session, distributions: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
-    session.execute_write(_load_cloudfront_distributions_tx, distributions, current_aws_account_id, aws_update_tag)
+def load_cloudfront_distributions(
+    session: neo4j.Session, distributions: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+    workspace_id: str,
+) -> None:
+    session.execute_write(
+        _load_cloudfront_distributions_tx, distributions, current_aws_account_id, aws_update_tag, workspace_id,
+    )
 
 
 @timeit
-def _load_cloudfront_distributions_tx(tx: neo4j.Transaction, distributions: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
+def _load_cloudfront_distributions_tx(
+    tx: neo4j.Transaction, distributions: List[Dict], current_aws_account_id: str, aws_update_tag: int,
+    workspace_id: str,
+) -> None:
     query: str = """
     UNWIND $Records as record
     MERGE (distribution:AWSCloudfrontDistribution{id: record.ARN})
@@ -90,7 +98,9 @@ def _load_cloudfront_distributions_tx(tx: neo4j.Transaction, distributions: List
     SET r.lastupdated = $aws_update_tag
     WITH distribution, record
     UNWIND record.s3BucketNames AS bucket_name
-    MATCH (bucket:S3Bucket {name: bucket_name})
+    // The origin bucket can be in another account of the workspace; another customer's is not linked.
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+        -[:RESOURCE]->(bucket:S3Bucket {name: bucket_name})
     MERGE (distribution)-[rel:LINKED_TO]->(bucket)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $aws_update_tag
@@ -100,6 +110,7 @@ def _load_cloudfront_distributions_tx(tx: neo4j.Transaction, distributions: List
         query,
         Records=distributions,
         AWS_ACCOUNT_ID=current_aws_account_id,
+        WORKSPACE_ID=workspace_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -123,7 +134,9 @@ def sync(
 
     logger.info(f"Total Cloudfront Distributions: {len(distributions)}")
 
-    load_cloudfront_distributions(neo4j_session, distributions, current_aws_account_id, update_tag)
+    load_cloudfront_distributions(
+        neo4j_session, distributions, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'],
+    )
 
     cleanup_cloudfront_distributions(neo4j_session, common_job_parameters)
 

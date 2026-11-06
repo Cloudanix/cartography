@@ -12,6 +12,7 @@ import boto3
 import botocore
 import neo4j
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
@@ -19,6 +20,8 @@ from policyuniverse.policy import Policy
 from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
@@ -26,6 +29,26 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+
+def build_apigateway_arn(region: str, path: str, partition: str = DEFAULT_PARTITION) -> str:
+    """
+    Build an API Gateway ARN in AWS's documented form: no account id and a path with a
+    leading slash, e.g. arn:aws:apigateway:us-east-1::/restapis/a1b2c3.
+    https://docs.aws.amazon.com/apigateway/latest/developerguide/arn-format-reference.html
+    """
+    return f"arn:{partition}:apigateway:{region}::/{path}"
+
+
+def build_rest_api_arn(region: str, api_id: str, partition: str = DEFAULT_PARTITION) -> str:
+    """The REST API's ARN, which is also its node id (the short id is only unique within a region)."""
+    return build_apigateway_arn(region, f"restapis/{api_id}", partition)
+
+
+def get_apigateway_console_link(arn: str) -> str:
+    # cloudconsolelink only deep-links the legacy slashless form (::restapis/...);
+    # the documented form falls back to the service home page.
+    return aws_console_link.get_console_link(arn=arn.replace('::/', '::', 1))
 
 
 @timeit
@@ -47,13 +70,16 @@ def get_client_certificates(boto3_session: boto3.session.Session, region: str) -
 
 
 @timeit
-def transform_client_certificates(certs: List[Dict], region: str, account_id: str) -> List[Dict]:
+def transform_client_certificates(
+    certs: List[Dict], region: str, account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     certificates = []
     for certificate in certs:
         certificate['region'] = region
-        console_arn = f"arn:aws:apigateway:{region}:{account_id}:clientcertificates/{certificate['clientCertificateId']}"
-        # certificate['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
-        certificate['arn'] = console_arn
+        certificate['arn'] = build_apigateway_arn(
+            region, f"clientcertificates/{certificate['clientCertificateId']}", partition,
+        )
+        certificate['consolelink'] = get_apigateway_console_link(certificate['arn'])
         certificates.append(certificate)
 
     return certificates
@@ -103,10 +129,11 @@ def sync_client_certificates(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    partition = get_partition_from_params(common_job_parameters)
     data = []
     for region in regions:
         certs = get_client_certificates(boto3_session, region)
-        data.extend(transform_client_certificates(certs, region, current_aws_account_id))
+        data.extend(transform_client_certificates(certs, region, current_aws_account_id, partition))
 
     logger.info(f"Total API Gateway Certificates: {len(data)}")
 
@@ -129,6 +156,46 @@ def get_apigateway_rest_apis(boto3_session: boto3.session.Session, region: str) 
 
 
 @timeit
+def get_public_custom_domains(boto3_session: boto3.session.Session, region: str) -> Optional[Dict[str, List[str]]]:
+    """
+    Maps each REST API id in the region to the non-PRIVATE custom domain names whose base path mappings point at it.
+    Returns None when the custom domains cannot be read (unknown).
+    """
+    try:
+        client = boto3_session.client('apigateway', region_name=region, config=get_botocore_config())
+        domains: List[Dict] = []
+        for page in client.get_paginator('get_domain_names').paginate():
+            domains.extend(page['items'])
+        public_domains: Dict[str, List[str]] = {}
+        for domain in domains:
+            # A private custom domain is reachable only through VPC endpoints.
+            if 'PRIVATE' in domain.get('endpointConfiguration', {}).get('types', []):
+                continue
+            for page in client.get_paginator('get_base_path_mappings').paginate(domainName=domain['domainName']):
+                for mapping in page.get('items', []):
+                    public_domains.setdefault(mapping['restApiId'], []).append(domain['domainName'])
+        return public_domains
+    except (ClientError, BotoCoreError) as e:
+        logger.warning(f"Failed to retrieve API Gateway custom domains in {region} - {e}")
+        return None
+
+
+@timeit
+def add_public_custom_domains(boto3_session: boto3.session.Session, apis: List[Dict]) -> None:
+    """
+    Sets public_custom_domains on each API whose default execute-api endpoint is disabled: the list of public
+    custom domains that map to it, or None when they cannot be read. Only regions with such APIs are queried.
+    """
+    disabled = [api for api in apis if api.get('disableExecuteApiEndpoint')]
+    for region in {api['region'] for api in disabled}:
+        public_domains = get_public_custom_domains(boto3_session, region)
+        for api in disabled:
+            if api['region'] != region:
+                continue
+            api['public_custom_domains'] = None if public_domains is None else public_domains.get(api['id'], [])
+
+
+@timeit
 def transform_apigateway_rest_apis(apis):
     # neo4j does not accept datetime objects and values. This loop is used to convert
     # these values to string.
@@ -140,6 +207,7 @@ def transform_apigateway_rest_apis(apis):
 @aws_handle_regions
 def get_rest_api_details(
         boto3_session: boto3.session.Session, rest_apis: List[Dict], aws_account_id: str,
+        partition: str = DEFAULT_PARTITION,
 ) -> Generator[Any, Any, Any]:
     """
     Iterates over all API Gateway REST APIs.
@@ -149,13 +217,8 @@ def get_rest_api_details(
         client = boto3_session.client('apigateway', region_name=api['region'], config=get_botocore_config())
         stages = get_rest_api_stages(api, client)
         cert = get_rest_api_client_certificate(stages, client)
-        certificate = transform_rest_api_client_certificate(cert, api['region'], aws_account_id)
+        certificate = transform_rest_api_client_certificate(cert, api['region'], aws_account_id, partition)
         resources = get_rest_api_resources(api, client)
-        for resource in resources:
-            # console_arn = f"arn:aws:apigateway:{api['region']}::/{api['id']}"
-            # resource['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
-            resource['consolelink'] = ''
-
         policy = get_rest_api_policy(api, client)
         yield api['id'], stages, certificate, resources, policy, api['region']
 
@@ -197,7 +260,9 @@ def get_rest_api_client_certificate(stages: Dict, client: botocore.client.BaseCl
 
 
 @timeit
-def transform_rest_api_client_certificate(certs: List[Dict], api_region: str, aws_account_id: str) -> List[Dict]:
+def transform_rest_api_client_certificate(
+    certs: List[Dict], api_region: str, aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     certificates = []
 
     # neo4j does not accept datetime objects and values. This loop is used to convert date values to string.
@@ -205,8 +270,10 @@ def transform_rest_api_client_certificate(certs: List[Dict], api_region: str, aw
         certificate['region'] = api_region
         certificate['createdDate'] = str(certificate['createdDate'])
         certificate['expirationDate'] = str(certificate.get('expirationDate'))
-        certificate['arn'] = f"arn:aws:apigateway:{api_region}:{aws_account_id}:clientcertificates/{certificate['clientCertificateId']}"
-        # certificate['consolelink'] = aws_console_link.get_console_link(arn=certificate['arn'])
+        certificate['arn'] = build_apigateway_arn(
+            api_region, f"clientcertificates/{certificate['clientCertificateId']}", partition,
+        )
+        certificate['consolelink'] = get_apigateway_console_link(certificate['arn'])
 
         certificates.append(certificate)
 
@@ -216,11 +283,12 @@ def transform_rest_api_client_certificate(certs: List[Dict], api_region: str, aw
 @timeit
 def get_rest_api_resources(api: Dict, client: botocore.client.BaseClient) -> List[Any]:
     """
-    Gets the collection of Resource resources.
+    Gets the collection of Resource resources, with their methods embedded (same call, no extra
+    request) so method authorization feeds the L3 access layer.
     """
     resources: List[Any] = []
     paginator = client.get_paginator('get_resources')
-    response_iterator = paginator.paginate(restApiId=api['id'])
+    response_iterator = paginator.paginate(restApiId=api['id'], embed=['methods'])
     for page in response_iterator:
         resources.extend(page['items'])
 
@@ -239,20 +307,24 @@ def get_rest_api_policy(api: Dict, client: botocore.client.BaseClient) -> List[A
 @timeit
 def load_apigateway_rest_apis(
     neo4j_session: neo4j.Session, rest_apis: List[Dict], current_aws_account_id: str,
-    aws_update_tag: int,
+    aws_update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the details of API Gateway REST APIs into neo4j.
     """
+    # Keyed on the ARN: the short REST API id is only unique within a region, so two accounts could
+    # share one node. The short id stays as rest_api_id for display and for Lambda trigger matching.
     ingest_rest_apis = """
     UNWIND $DictList AS r
-    MERGE (rest_api:APIGatewayRestAPI{id:r.id})
+    MERGE (rest_api:APIGatewayRestAPI{id: r.Arn})
     ON CREATE SET rest_api.firstseen = timestamp(),
     rest_api.createddate = r.createdDate
-    SET rest_api.version = r.version,
+    SET rest_api.rest_api_id = r.id,
+    rest_api.version = r.version,
     rest_api.minimumcompressionsize = r.minimumCompressionSize,
     rest_api.name = r.name,
     rest_api.disableexecuteapiendpoint = r.disableExecuteApiEndpoint,
+    rest_api.public_custom_domains = r.public_custom_domains,
     rest_api.endpoint_conf_types = r.endpointConfiguration.types,
     rest_api.lastupdated = $aws_update_tag,
     rest_api.region = r.region,
@@ -268,10 +340,9 @@ def load_apigateway_rest_apis(
     # neo4j does not accept datetime objects and values. This loop is used to convert
     # these values to string.
     for api in rest_apis:
-        region = api['region']
         api['createdDate'] = str(api['createdDate']) if 'createdDate' in api else None
-        api['Arn'] = f"arn:aws:apigateway:{region}::restapis/{api['id']}"
-        api['consolelink'] = aws_console_link.get_console_link(arn=api['Arn'])
+        api['Arn'] = build_rest_api_arn(api['region'], api['id'], partition)
+        api['consolelink'] = get_apigateway_console_link(api['Arn'])
 
     load_graph_data(
         neo4j_session,
@@ -284,16 +355,19 @@ def load_apigateway_rest_apis(
 
 @timeit
 def _load_apigateway_policies(
-        neo4j_session: neo4j.Session, policies: List, update_tag: int,
+        neo4j_session: neo4j.Session, policies: List[Dict], aws_account_id: str, update_tag: int,
 ) -> None:
     """
-    Ingest API Gateway REST API policy results into neo4j.
+    Store on each REST API whether its resource policy is internet accessible (policy_internet_accessible).
+
+    Plain SET of this sync's result. anonymous_access is deliberately left alone: the exposure job flags a
+    REGIONAL/EDGE API public unless this says the policy shuts the internet out, and a PRIVATE API is never
+    reachable from the internet whatever its policy says.
     """
     ingest_policies = """
     UNWIND $DictList as policy
-    MATCH (r:APIGatewayRestAPI) where r.name = policy.api_id
-    SET r.anonymous_access = (coalesce(r.anonymous_access, false) OR policy.internet_accessible),
-    r.anonymous_actions = coalesce(r.anonymous_actions, []) + policy.accessible_actions,
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(r:APIGatewayRestAPI{id: policy.api_arn})
+    SET r.policy_internet_accessible = policy.internet_accessible,
     r.lastupdated = $UpdateTag
     """
 
@@ -301,6 +375,7 @@ def _load_apigateway_policies(
         neo4j_session,
         ingest_policies,
         policies,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -321,7 +396,8 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
 
 @timeit
 def _load_apigateway_stages(
-        neo4j_session: neo4j.Session, stages: List, update_tag: int,
+        neo4j_session: neo4j.Session, stages: List, aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the Stage resource details into neo4j.
@@ -342,7 +418,7 @@ def _load_apigateway_stages(
     s.lastupdated = $UpdateTag,
     s.arn = stage.arn
     WITH s, stage
-    MATCH (rest_api:APIGatewayRestAPI{id: stage.apiId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rest_api:APIGatewayRestAPI{id: stage.apiArn})
     MERGE (rest_api)-[r:ASSOCIATED_WITH]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -352,20 +428,23 @@ def _load_apigateway_stages(
     # these values to string.
     for stage in stages:
         stage['createdDate'] = str(stage['createdDate'])
-        stage['arn'] = f"arn:aws:apigateway:{stage['region']}::restapis/{stage['apiId']}/stages/{stage['stageName']}"
-        stage['consolelink'] = aws_console_link.get_console_link(arn=stage['arn'])
+        stage['apiArn'] = build_rest_api_arn(stage['region'], stage['apiId'], partition)
+        stage['arn'] = f"{stage['apiArn']}/stages/{stage['stageName']}"
+        stage['consolelink'] = get_apigateway_console_link(stage['arn'])
 
     load_graph_data(
         neo4j_session,
         ingest_stages,
         stages,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
 def _load_apigateway_certificates(
-        neo4j_session: neo4j.Session, certificates: List, update_tag: int,
+        neo4j_session: neo4j.Session, certificates: List, aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the API Gateway Client Certificate details into neo4j.
@@ -380,54 +459,91 @@ def _load_apigateway_certificates(
     c.client_certificate_id = certificate.clientCertificateId,
     c.arn = certificate.arn
     WITH c, certificate
-    MATCH (stage:APIGatewayStage{clientcertificateid: certificate.clientCertificateId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:APIGatewayRestAPI{id: certificate.apiArn})
+    -[:ASSOCIATED_WITH]->(stage:APIGatewayStage{clientcertificateid: certificate.clientCertificateId})
     MERGE (stage)-[r:HAS_CERTIFICATE]->(c)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
 
+    for certificate in certificates:
+        certificate['apiArn'] = build_rest_api_arn(certificate['region'], certificate['apiId'], partition)
+
     load_graph_data(
         neo4j_session,
         ingest_certificates,
         certificates,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
 def _load_apigateway_resources(
-        neo4j_session: neo4j.Session, resources: List, update_tag: int,
+        neo4j_session: neo4j.Session, resources: List, aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     """
     Ingest the API Gateway Resource details into neo4j.
     """
+    # Keyed on the ARN (<rest api arn>/resources/<id>): the short resource id is only unique within its API.
     ingest_resources = """
     UNWIND $DictList AS res
-    MERGE (s:APIGatewayResource{id: res.id})
+    MERGE (s:APIGatewayResource{id: res.arn})
     ON CREATE SET s.firstseen = timestamp()
-    SET s.path = res.path,
+    SET s.resource_id = res.id,
+    s.path = res.path,
     s.pathpart = res.pathPart,
     s.parentid = res.parentId,
     s.consolelink = res.consolelink,
     s.region=res.region,
     s.lastupdated =$UpdateTag,
-    s.arn = res.arn
+    s.arn = res.arn,
+    s.method_authorization_types = res.method_authorization_types,
+    s.unauthenticated_methods = res.unauthenticated_methods
     WITH s, res
-    MATCH (rest_api:APIGatewayRestAPI{id: res.apiId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(rest_api:APIGatewayRestAPI{id: res.apiArn})
     MERGE (rest_api)-[r:RESOURCE]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
 
     for resource in resources:
-        resource['arn'] = f"arn:aws:apigateway:{resource['region']}::restapis/{resource['apiId']}/resources/{resource['id']}"
+        resource['apiArn'] = build_rest_api_arn(resource['region'], resource['apiId'], partition)
+        resource['arn'] = f"{resource['apiArn']}/resources/{resource['id']}"
+        resource['consolelink'] = get_apigateway_console_link(resource['arn'])
+        # Resources are always fetched with embed=methods, so a missing key means "no methods".
+        resource.update(transform_resource_methods(resource.get('resourceMethods', {})))
 
     load_graph_data(
         neo4j_session,
         ingest_resources,
         resources,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
+
+
+def transform_resource_methods(resource_methods: Optional[Dict]) -> Dict[str, Optional[List[str]]]:
+    """
+    Reduce embedded resourceMethods to what the access layer needs.
+
+    A method is unauthenticated when authorizationType is NONE and no API key is required.
+    OPTIONS is skipped: it is the CORS preflight and returns no data.
+    None (not []) when the API returned no method data, so "unknown" stays distinguishable.
+    """
+    if resource_methods is None:
+        return {'method_authorization_types': None, 'unauthenticated_methods': None}
+    auth_types: List[str] = []
+    open_methods: List[str] = []
+    for verb, method in resource_methods.items():
+        if verb == 'OPTIONS':
+            continue
+        auth_type = method.get('authorizationType', 'NONE')
+        auth_types.append(auth_type)
+        if auth_type == 'NONE' and not method.get('apiKeyRequired', False):
+            open_methods.append(verb)
+    return {'method_authorization_types': sorted(set(auth_types)), 'unauthenticated_methods': sorted(open_methods)}
 
 
 @timeit
@@ -443,10 +559,10 @@ def load_rest_api_details(
     certificates: List[Dict] = []
     resources: List[Dict] = []
     policies: List = []
+    partition = get_partition_from_params(common_job_parameters)
     for api_id, stage, certificate, resource, policy, region in stages_certificate_resources:
-        parsed_policy = parse_policy(api_id, policy)
-        if parsed_policy is not None:
-            policies.append(parsed_policy)
+        # One row per API, policy or not, so a deleted policy clears the previous sync's value.
+        policies.append({**parse_policy(api_id, policy), 'api_arn': build_rest_api_arn(region, api_id, partition)})
 
         if len(stage) > 0:
             for s in stage:
@@ -464,8 +580,8 @@ def load_rest_api_details(
 
         if len(certificate) > 0:
             for cert in certificate:
-                cert['apiId']: api_id
-                cert['region']: region
+                cert['apiId'] = api_id
+                cert['region'] = region
 
             certificates.extend(certificate)
 
@@ -476,37 +592,30 @@ def load_rest_api_details(
         common_job_parameters,
     )
 
-    _load_apigateway_policies(neo4j_session, policies, update_tag)
-    _load_apigateway_stages(neo4j_session, stages, update_tag)
-    _load_apigateway_certificates(neo4j_session, certificates, update_tag)
-    _load_apigateway_resources(neo4j_session, resources, update_tag)
+    _load_apigateway_policies(neo4j_session, policies, aws_account_id, update_tag)
+    _load_apigateway_stages(neo4j_session, stages, aws_account_id, update_tag, partition)
+    _load_apigateway_certificates(neo4j_session, certificates, aws_account_id, update_tag, partition)
+    _load_apigateway_resources(neo4j_session, resources, aws_account_id, update_tag, partition)
     _set_default_values(neo4j_session, aws_account_id)
 
 
 @timeit
-def parse_policy(api_id: str, policy: Policy) -> Optional[Dict[Any, Any]]:
+def parse_policy(api_id: str, policy: Optional[str]) -> Dict[str, Any]:
     """
-    Uses PolicyUniverse to parse API Gateway REST API policy and returns the internet accessibility results
-    """
+    Uses PolicyUniverse to tell whether an API Gateway REST API resource policy lets anyone on the internet invoke it.
 
-    if policy is not None:
+    internet_accessible is None when there is no policy or it cannot be parsed: nothing then narrows the API's
+    endpoint type, and the exposure job keeps a REGIONAL/EDGE API public.
+    """
+    if policy is None:
+        return {"api_id": api_id, "internet_accessible": None}
+    try:
         # unescape doubly escaped JSON
-        policy = policy.replace("\\", "")
-        try:
-            policy = Policy(json.loads(policy))
-            if policy.is_internet_accessible():
-                return {
-                    "api_id": api_id,
-                    "internet_accessible": True,
-                    "accessible_actions": list(policy.internet_accessible_actions()),
-                }
-            else:
-                return None
-        except json.JSONDecodeError:
-            logger.warning(f"failed to decode policy json : {policy}")
-            return None
-    else:
-        return None
+        parsed = Policy(json.loads(policy.replace("\\", "")))
+    except json.JSONDecodeError:
+        logger.warning(f"failed to decode policy json : {policy}")
+        return {"api_id": api_id, "internet_accessible": None}
+    return {"api_id": api_id, "internet_accessible": parsed.is_internet_accessible()}
 
 
 @timeit
@@ -525,9 +634,11 @@ def sync_apigateway_rest_apis(
 
     logger.info(f"Total API Gateway APIs: {len(data)}")
 
-    load_apigateway_rest_apis(neo4j_session, data, current_aws_account_id, aws_update_tag)
+    add_public_custom_domains(boto3_session, data)
+    partition = get_partition_from_params(common_job_parameters)
+    load_apigateway_rest_apis(neo4j_session, data, current_aws_account_id, aws_update_tag, partition)
 
-    stages_certificate_resources = get_rest_api_details(boto3_session, data, current_aws_account_id)
+    stages_certificate_resources = get_rest_api_details(boto3_session, data, current_aws_account_id, partition)
 
     load_rest_api_details(
         neo4j_session, stages_certificate_resources, current_aws_account_id, aws_update_tag, common_job_parameters,

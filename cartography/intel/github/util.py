@@ -4,17 +4,28 @@ import time
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone as tz
+from functools import partial
 from typing import Any
+from typing import cast
 from typing import Dict
 from typing import List
 from typing import NamedTuple
 from typing import Optional
 from typing import Tuple
+from urllib.parse import urlparse
 
 import requests
 
+from cartography.intel import git_links
+
 
 logger = logging.getLogger(__name__)
+GITHUB_API_HOST = "api.github.com"
+# GHE.com data residency: the API is served at api.<tenant>.ghe.com, the web UI at <tenant>.ghe.com.
+GHEC_API_HOST_PREFIX = "api."
+GHEC_HOST_SUFFIX = ".ghe.com"
+GITHUB_HOST = "github.com"
+GITHUB_WEB_BASE_URL = f"https://{GITHUB_HOST}"
 # Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
 _TIMEOUT = (60, 60)
 _GRAPHQL_RATE_LIMIT_REMAINING_THRESHOLD = 500
@@ -24,6 +35,37 @@ _TRANSIENT_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 class PaginatedGraphqlData(NamedTuple):
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
+
+
+def get_web_base_url(api_url: str) -> str:
+    """
+    Return the GitHub web host for a configured API url, e.g. https://api.github.com/graphql -> https://github.com,
+    GitHub Enterprise Server https://ghe.acme.com/api/graphql -> https://ghe.acme.com, and GHE.com
+    https://api.acme.ghe.com/graphql -> https://acme.ghe.com. Credentials, paths and non-http(s) urls never
+    reach the link; those fall back to https://github.com.
+    """
+    base = git_links.safe_base_url(api_url, keep_path=False)
+    host = urlparse(base).hostname if base else None
+    if not base or not host or host == GITHUB_API_HOST:
+        return GITHUB_WEB_BASE_URL
+    if host.startswith(GHEC_API_HOST_PREFIX) and host.endswith(GHEC_HOST_SUFFIX):
+        return base.replace(f"://{GHEC_API_HOST_PREFIX}", "://", 1)
+    return base
+
+
+def get_org_node_id(web_base_url: Optional[str], login: str) -> str:
+    """
+    GitHubOrganization graph id. Logins are unique only within one GitHub host, so an org on GitHub Enterprise
+    Server or GHE.com is keyed "<host>/<login>"; github.com keeps the bare login it has always had.
+
+    :param web_base_url: the org's web host (get_web_base_url of the configured API url); None means github.com
+    :param login: the organization login
+    """
+    return cast(str, git_links.host_scoped_key(web_base_url, GITHUB_HOST, login))  # a str key stays a str
+
+
+# Web link for a GitHub entity, or None (logged) when an identifier is missing; never fails a sync.
+get_console_link = partial(git_links.get_console_link, "github")
 
 
 def get_http_status_code(err: BaseException) -> Optional[int]:

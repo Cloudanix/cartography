@@ -203,6 +203,7 @@ def transform_clusters(
             "available_kubernetes_upgrades": [x for x in (merged.get("available-kubernetes-upgrades") or []) if x is not None],
             "time_created": str(merged.get("metadata", {}).get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("oke_cluster", region=region, ocid=cluster_id),
         })
     return transformed
 
@@ -288,6 +289,9 @@ def transform_node_pools(
             ),
             "time_created": str(merged.get("metadata", {}).get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link(
+                "oke_node_pool", region=region, ocid=pool_id, cluster_id=merged.get("cluster-id") or "",
+            ),
             "nodes": node_records,
         })
     return transformed
@@ -300,6 +304,7 @@ def transform_node_pools(
 def load_clusters(
     neo4j_session: neo4j.Session,
     clusters: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -338,9 +343,10 @@ def load_clusters(
             cl.image_policy_kms_keys = c.image_policy_kms_keys,
             cl.available_kubernetes_upgrades = c.available_kubernetes_upgrades,
             cl.region = c.region,
+            cl.consolelink = c.consolelink,
             cl.lastupdated = $oci_update_tag
         WITH cl
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(cl)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -349,6 +355,7 @@ def load_clusters(
         neo4j_session,
         ingest_clusters,
         clusters,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -357,6 +364,7 @@ def load_clusters(
 def load_node_pools(
     neo4j_session: neo4j.Session,
     node_pools: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -397,15 +405,17 @@ def load_node_pools(
             np.eviction_grace_duration = p.eviction_grace_duration,
             np.is_force_delete_after_grace_duration = p.is_force_delete_after_grace_duration,
             np.region = p.region,
+            np.consolelink = p.consolelink,
             np.node_ids = [n IN coalesce(p.nodes, []) WHERE n.ocid IS NOT NULL | n.ocid],
             np.lastupdated = $oci_update_tag
         WITH np, p
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r1:RESOURCE]->(np)
         ON CREATE SET r1.firstseen = timestamp()
         SET r1.lastupdated = $oci_update_tag
         WITH np, p
-        MATCH (cl:OCIOKECluster{id: p.cluster_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(cl:OCIOKECluster{id: p.cluster_id})
         MERGE (cl)-[r2:HAS_NODE_POOL]->(np)
         ON CREATE SET r2.firstseen = timestamp()
         SET r2.lastupdated = $oci_update_tag
@@ -414,6 +424,7 @@ def load_node_pools(
         neo4j_session,
         ingest_pools,
         node_pools,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -426,6 +437,7 @@ def load_node_pools(
 def sync_clusters(
     neo4j_session: neo4j.Session,
     container_engine: oci.container_engine.ContainerEngineClient,
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
@@ -455,7 +467,7 @@ def sync_clusters(
 
     clusters = transform_clusters(summaries, details_by_id, region)
     if clusters:
-        load_clusters(neo4j_session, clusters, compartment_id, oci_update_tag)
+        load_clusters(neo4j_session, clusters, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, summaries, 'OCIOKECluster', oci_update_tag, common_job_parameters)
     return clusters
@@ -465,6 +477,7 @@ def sync_node_pools(
     neo4j_session: neo4j.Session,
     container_engine: oci.container_engine.ContainerEngineClient,
     clusters: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
@@ -502,7 +515,7 @@ def sync_node_pools(
 
     node_pools = transform_node_pools(all_summaries, pool_details_by_id, region)
     if node_pools:
-        load_node_pools(neo4j_session, node_pools, compartment_id, oci_update_tag)
+        load_node_pools(neo4j_session, node_pools, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, all_summaries, 'OCIOKENodePool', oci_update_tag, common_job_parameters)
 
@@ -518,17 +531,17 @@ def link_oke_nodes(neo4j_session: neo4j.Session, common_job_parameters: Dict[str
     Create (OCIOKENodePool)-[:HAS_NODE]->(OCIInstance) from the worker OCIDs stored on each
     pool (np.node_ids), plus the direct (OCIOKECluster)-[:HAS_NODE]->(OCIInstance) edge.
 
-    Pools are scoped to this workspace's tenancy. Instances are matched by OCID, which is
-    globally unique and came from the pool's own GetNodePool response, so the match cannot
-    cross tenants even when the instance lives in another compartment. MATCH, not MERGE: an
-    instance that was not synced is skipped instead of becoming a stub.
+    Pools and instances are both reached from this workspace's tenancy (the worker OCIDs come
+    from API data), so the link stays in the tenancy even when the instance lives in another
+    compartment. MATCH, not MERGE: an instance that was not synced is skipped instead of
+    becoming a stub.
     """
     query = """
-    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(t:OCITenancy{id: $OCI_TENANCY_ID})
         -[:OWNER]->(:OCICompartment)-[:RESOURCE]->(np:OCIOKENodePool)
     WHERE np.node_ids IS NOT NULL
     UNWIND np.node_ids AS node_id
-    MATCH (i:OCIInstance{id: node_id})
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(i:OCIInstance{id: node_id})
     MERGE (np)-[r:HAS_NODE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UPDATE_TAG
@@ -590,7 +603,7 @@ def sync(
 
         try:
             clusters = sync_clusters(
-                neo4j_session, container_engine, compartment_id, region, oci_update_tag,
+                neo4j_session, container_engine, tenancy_id, compartment_id, region, oci_update_tag,
                 common_job_parameters,
             )
         except Exception as e:
@@ -600,7 +613,7 @@ def sync(
         try:
             sync_node_pools(
                 neo4j_session, container_engine, clusters,
-                compartment_id, region, oci_update_tag,
+                tenancy_id, compartment_id, region, oci_update_tag,
                 common_job_parameters,
             )
         except Exception as e:

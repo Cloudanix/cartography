@@ -2,6 +2,8 @@ import asyncio
 import logging
 import re
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from datetime import timezone
 from functools import partial
@@ -14,6 +16,7 @@ from typing import Callable
 from typing import cast
 from typing import Dict
 from typing import Iterable
+from typing import Iterator
 from typing import List
 from typing import Optional
 from typing import Set
@@ -82,6 +85,79 @@ def run_analysis_job(
         common_job_parameters,
         get_job_shortname(filename),
     )
+
+
+# Identifiers worth putting in a failed-analysis-job log line; whichever the provider sets are logged.
+ANALYSIS_SCOPE_KEYS = (
+    "WORKSPACE_ID",
+    "AWS_ID",
+    "GCP_PROJECT_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_SUBSCRIPTION_ID",
+    "OCI_TENANCY_ID",
+    "OCI_COMPARTMENT_ID",
+)
+
+# Analysis jobs that failed in the current sync, for the sync response. A ContextVar, not a module global, because one
+# process serves concurrent sync requests on separate threads; each thread sees only the list its own sync set.
+# Not common_job_parameters: that dict is passed to Neo4j as query parameters. Analysis jobs run on the sync's own
+# thread today; a job moved into a ThreadPoolExecutor worker would still be logged but not collected.
+_failed_analysis_jobs: ContextVar[Optional[List[Dict[str, Any]]]] = ContextVar("failed_analysis_jobs", default=None)
+
+
+@contextmanager
+def collect_failed_analysis_jobs() -> Iterator[List[Dict[str, Any]]]:
+    """
+    Collect the analysis jobs run_analysis_job_logged lets fail inside this block.
+    Yields the list it appends to; each entry is {"job": <job file>, "scope": {<ANALYSIS_SCOPE_KEYS that were set>}}.
+    """
+    failed: List[Dict[str, Any]] = []
+    token = _failed_analysis_jobs.set(failed)
+    try:
+        yield failed
+    finally:
+        _failed_analysis_jobs.reset(token)
+
+
+def run_analysis_job_logged(
+    filename: str,
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict,
+    package: str = "cartography.data.jobs.analysis",
+) -> None:
+    """
+    Same as run_analysis_job, but a failure is logged at error level (job name, account/project ids, traceback) and
+    recorded for collect_failed_analysis_jobs instead of raised. Provider syncs run their analysis jobs in sequence, so
+    a raise from one job would skip every later job for that account and leave their exposure values stale. Statements
+    inside the failing job still stop at the first error (later statements can depend on earlier ones, e.g. reset then
+    set).
+    Integration tests call run_analysis_job directly, so they still see failures.
+    """
+    run_analysis_step_logged(
+        filename, lambda: run_analysis_job(filename, neo4j_session, common_job_parameters, package),
+        common_job_parameters,
+    )
+
+
+def run_analysis_step_logged(name: str, step: Callable[[], Any], common_job_parameters: Dict) -> None:
+    """
+    Run one post-sync analysis step (a job file or Python code such as the exposure layers). A failure is logged at
+    error level and recorded for collect_failed_analysis_jobs under `name` instead of raised, so the sync response
+    tells the caller which step failed for which account and later steps still run.
+    """
+    try:
+        step()
+    except Exception:
+        scope = {key: common_job_parameters[key] for key in ANALYSIS_SCOPE_KEYS if key in common_job_parameters}
+        logger.error(
+            "Analysis job '%s' failed for %s; continuing with the remaining analysis jobs.",
+            name,
+            scope,
+            exc_info=True,
+        )
+        failed = _failed_analysis_jobs.get()
+        if failed is not None:
+            failed.append({"job": name, "scope": scope})
 
 
 def run_analysis_and_ensure_deps(
@@ -379,6 +455,18 @@ def dict_value_to_str(obj: Dict, key: str) -> Optional[str]:
         return str(value)
     else:
         return None
+
+
+def dict_value_to_iso(obj: Dict, key: str) -> Optional[str]:
+    """
+    ISO-8601 string of the datetime under key, to whole seconds ('2026-10-30T10:00:00+00:00'), or None if absent.
+    The AWS evaluator parses graph-sourced dates with '%Y-%m-%dT%H:%M:%S%z', which neither str(datetime) (space
+    separator) nor fractional seconds satisfy. Non-datetime values fall back to str().
+    """
+    value = obj.get(key)
+    if isinstance(value, datetime):
+        return value.replace(microsecond=0).isoformat()
+    return dict_value_to_str(obj, key)
 
 
 def dict_date_to_epoch(obj: Dict, key: str) -> Optional[int]:

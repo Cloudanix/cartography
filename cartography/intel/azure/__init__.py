@@ -13,6 +13,7 @@ import neo4j
 from neo4j import GraphDatabase
 
 from . import compute
+from . import exposure_layers
 from . import subscription
 from . import tag
 from . import tenant
@@ -23,7 +24,8 @@ from .util.timing import ServiceTimingContext
 from cartography.config import Config
 from cartography.graph.session import Session
 from cartography.intel.azure.util.common import parse_and_validate_azure_requested_syncs
-from cartography.util import run_analysis_job
+from cartography.intel.exposure import step as exposure_step
+from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -309,6 +311,10 @@ def _sync_multiple_subscriptions(
             'azure_sql_asset_exposure.json',
             'azure_cosmosdb_asset_exposure.json',
             'azure_keyvault_asset_exposure.json',
+            'azure_aks_asset_exposure.json',
+            'azure_function_app_asset_exposure.json',
+            'azure_vmss_asset_exposure.json',
+            'azure_redis_asset_exposure.json',
         ]
         analysis_timings: Dict[str, float] = {}
         for job_file in _analysis_jobs:
@@ -316,6 +322,11 @@ def _sync_multiple_subscriptions(
             run_analysis_job(job_file, neo4j_session, common_job_parameters)
             elapsed = round(time.time() - t0, 2)
             analysis_timings[job_file] = elapsed
+
+        # Reads what the jobs above and every sync wrote; runs only when requested (see exposure/step.py).
+        exposure_step.run_if_requested(
+            exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
+        )
 
         logger.info(
             json.dumps({

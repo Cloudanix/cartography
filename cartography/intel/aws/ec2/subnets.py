@@ -77,14 +77,11 @@ def get_subnet_data(boto3_session: boto3.session.Session, region: str) -> List[D
 @timeit
 def load_subnets(
     neo4j_session: neo4j.Session, data: List[Dict], aws_account_id: str,
-    aws_update_tag: int,
+    aws_update_tag: int, workspace_id: str,
 ) -> None:
 
-    ingest_subnets = """
-    UNWIND $DictList as subnet
-    MERGE (snet:EC2Subnet{subnetid: subnet.SubnetId})
-    ON CREATE SET snet.firstseen = timestamp()
-    SET snet.lastupdated = $aws_update_tag, snet.name = subnet.CidrBlock, snet.cidr_block = subnet.CidrBlock,
+    subnet_props = """snet.lastupdated = $aws_update_tag,
+    snet.name = subnet.CidrBlock, snet.cidr_block = subnet.CidrBlock,
     snet.available_ip_address_count = subnet.AvailableIpAddressCount, snet.default_for_az = subnet.DefaultForAz,
     snet.map_customer_owned_ip_on_launch = subnet.MapCustomerOwnedIpOnLaunch,snet.region = subnet.region,
     snet.state = subnet.State, snet.assignipv6addressoncreation = subnet.AssignIpv6AddressOnCreation,
@@ -93,10 +90,37 @@ def load_subnets(
     snet.subnetid = subnet.SubnetId, snet.arn = subnet.SubnetArn, snet.consolelink = subnet.consolelink,
     snet.is_default = subnet.isDefault
     """
+    ingest_subnets = """
+    UNWIND $DictList as subnet
+    MERGE (snet:EC2Subnet{subnetid: subnet.SubnetId})
+    ON CREATE SET snet.firstseen = timestamp()
+    SET """ + subnet_props
+
+    # A subnet shared into this account through RAM belongs to OwnerId, maybe another tenant: create a stub
+    # if the owner is not synced, but never claim it or overwrite the owner's facts (is_default is computed
+    # against this account's default VPC). It still joins its VPC, which this account's instances reach.
+    ingest_shared_subnets = """
+    UNWIND $DictList as subnet
+    MERGE (snet:EC2Subnet{subnetid: subnet.SubnetId})
+    ON CREATE SET snet.firstseen = timestamp(), """ + subnet_props
+
+    owned = [s for s in data if s.get('OwnerId', aws_account_id) == aws_account_id]
+    shared = [s for s in data if s.get('OwnerId', aws_account_id) != aws_account_id]
 
     ingest_subnet_vpc_relations = """
     UNWIND $DictList as subnet
-    MATCH (snet:EC2Subnet{subnetid: subnet.SubnetId}), (vpc:AWSVpc{id: subnet.VpcId})
+    MATCH (aws:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(snet:EC2Subnet{subnetid: subnet.SubnetId})
+    MATCH (aws)-[:RESOURCE]->(vpc:AWSVpc{id: subnet.VpcId})
+    MERGE (snet)-[r:MEMBER_OF_AWS_VPC]->(vpc)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
+    """
+    # A shared subnet and its VPC belong to OwnerId: linked only when an account of this workspace owns both.
+    ingest_shared_subnet_vpc_relations = """
+    UNWIND $DictList as subnet
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(owner:AWSAccount)
+        -[:RESOURCE]->(snet:EC2Subnet{subnetid: subnet.SubnetId})
+    MATCH (owner)-[:RESOURCE]->(vpc:AWSVpc{id: subnet.VpcId})
     MERGE (snet)-[r:MEMBER_OF_AWS_VPC]->(vpc)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -110,27 +134,23 @@ def load_subnets(
     SET r.lastupdated = $aws_update_tag
     """
 
-    load_graph_data(
-        neo4j_session,
-        ingest_subnets,
-        data,
-        aws_update_tag=aws_update_tag,
-        aws_account_id=aws_account_id,
-    )
-    load_graph_data(
-        neo4j_session,
-        ingest_subnet_vpc_relations,
-        data,
-        aws_update_tag=aws_update_tag,
-        aws_account_id=aws_account_id,
-    )
-    load_graph_data(
-        neo4j_session,
-        ingest_subnet_aws_account_relations,
-        data,
-        aws_update_tag=aws_update_tag,
-        aws_account_id=aws_account_id,
-    )
+    for statement, rows in (
+        (ingest_subnets, owned),
+        (ingest_shared_subnets, shared),
+        (ingest_subnet_aws_account_relations, owned),
+        (ingest_subnet_vpc_relations, owned),
+        (ingest_shared_subnet_vpc_relations, shared),
+    ):
+        if not rows:
+            continue
+        load_graph_data(
+            neo4j_session,
+            statement,
+            rows,
+            aws_update_tag=aws_update_tag,
+            aws_account_id=aws_account_id,
+            WORKSPACE_ID=workspace_id,
+        )
 
 
 @timeit
@@ -155,7 +175,7 @@ def sync_subnets(
 
     logger.info(f"Total Subnets: {len(data)}")
 
-    load_subnets(neo4j_session, data, current_aws_account_id, update_tag)
+    load_subnets(neo4j_session, data, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'])
     cleanup_subnets(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

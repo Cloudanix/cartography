@@ -1,5 +1,7 @@
 from datetime import datetime
+from unittest.mock import MagicMock
 
+from cartography.intel.aws.inspector import get_inspector_findings
 from cartography.intel.aws.inspector import transform_inspector_findings
 from tests.data.aws.inspector import LIST_FINDINGS_EC2_PACKAGE
 from tests.data.aws.inspector import LIST_FINDINGS_NETWORK
@@ -63,8 +65,8 @@ def test_transform_inspector_findings_package():
             'status': 'ACTIVE',
 
             'vulnerablepackageids': [
-                'kernel-tools|X86_64|4.9.17|6.29.amzn1|0',
-                'kernel|X86_64|4.9.17|6.29.amzn1|0',
+                '123456789012|kernel-tools|X86_64|4.9.17|6.29.amzn1|0',
+                '123456789012|kernel|X86_64|4.9.17|6.29.amzn1|0',
             ],
         },
     ]
@@ -76,7 +78,7 @@ def test_transform_inspector_findings_package():
             'filepath': None,
             'findingarn': 'arn:aws:test456',
             'fixedinversion': None,
-            'id': 'kernel-tools|X86_64|4.9.17|6.29.amzn1|0',
+            'id': '123456789012|kernel-tools|X86_64|4.9.17|6.29.amzn1|0',
             'manager': 'OS',
             'name': 'kernel-tools',
             'release': '6.29.amzn1',
@@ -90,7 +92,7 @@ def test_transform_inspector_findings_package():
             'filepath': None,
             'findingarn': 'arn:aws:test456',
             'fixedinversion': None,
-            'id': 'kernel|X86_64|4.9.17|6.29.amzn1|0',
+            'id': '123456789012|kernel|X86_64|4.9.17|6.29.amzn1|0',
             'manager': 'OS',
             'name': 'kernel',
             'release': '6.29.amzn1',
@@ -98,3 +100,17 @@ def test_transform_inspector_findings_package():
             'version': '4.9.17',
         },
     ]
+
+
+def test_get_findings_only_for_the_syncing_account_not_delegated_members():
+    # A delegated administrator could list its members' findings; those belong to the members' own syncs.
+    session = MagicMock()
+    client = session.client.return_value
+    client.get_paginator.return_value.paginate.return_value = [{'findings': [{'findingArn': 'arn:own'}]}]
+
+    findings = get_inspector_findings(session, 'us-east-1', '111111111111')
+
+    assert findings == [{'findingArn': 'arn:own'}]
+    client.get_paginator.assert_called_once_with('list_findings')
+    criteria = client.get_paginator.return_value.paginate.call_args.kwargs['filterCriteria']
+    assert criteria['awsAccountId'] == [{'comparison': 'EQUALS', 'value': '111111111111'}]

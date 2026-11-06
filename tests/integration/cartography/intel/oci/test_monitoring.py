@@ -12,7 +12,10 @@ TEST_UPDATE_TAG = 123456789
 
 def _seed_compartment(neo4j_session):
     neo4j_session.run(
-        "MERGE (c:OCICompartment{id: $id}) SET c.lastupdated = $tag",
+        "MERGE (t:OCITenancy{id: $tenancy_id}) "
+        "MERGE (c:OCICompartment{id: $id}) SET c.lastupdated = $tag "
+        "MERGE (t)-[:OWNER]->(c)",
+        tenancy_id=TEST_TENANCY_ID,
         id=TEST_COMPARTMENT_ID,
         tag=TEST_UPDATE_TAG,
     )

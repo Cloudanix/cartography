@@ -1,0 +1,29 @@
+{
+	"statements": [
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(n:GCPImage) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Delete Compute Engine images owned by this project that were not seen in the latest sync."
+		},
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[r:RESOURCE]->(:GCPImage) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove GCP Project to Compute Engine image relationships that are out of date."
+		},
+		{
+			"query": "MATCH (:GCPImage)<-[r:CREATED_FROM]-(:GCPComputeDisk)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove stale disk-to-image relationships."
+		},
+		{
+			"query": "MATCH (n:GCPImage) WHERE n.id STARTS WITH 'https://' AND NOT (n)--() WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Drop legacy image nodes that were keyed by a full image URL and are no longer connected."
+		}
+	],
+	"name": "cleanup GCP Compute Images"
+}

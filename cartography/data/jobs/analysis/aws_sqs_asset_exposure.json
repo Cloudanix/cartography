@@ -1,0 +1,15 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (queue:SQSQueue)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE queue.exposed_internet IS NOT NULL WITH queue LIMIT $LIMIT_SIZE REMOVE queue.exposed_internet, queue.exposed_internet_type, queue.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "policy_internet_accessible: the queue policy allows Principal * with no condition that pins the caller (sqs.py, util/common.py is_resource_policy_internet_accessible). Unknown (unparseable) is not flagged.",
+      "query": "MATCH (queue:SQSQueue)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE queue.policy_internet_accessible = true SET queue.exposed_internet = true, queue.exposed_internet_type = ['resource_policy'], queue.publicContext = apoc.convert.toJson([{resource: queue.id, resourceType: 'aws-applicationintegration-sqs-queue', context: [{queueArn: queue.arn, queueName: queue.name, region: queue.region, exposureTypes: ['resource_policy']}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws SQS queue internet exposure"
+}

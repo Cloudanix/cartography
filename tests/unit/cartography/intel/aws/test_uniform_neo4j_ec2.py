@@ -68,7 +68,7 @@ class TestBatchedLoaders:
         session = MagicMock()
         data = [{"InternetGatewayId": "igw-1", "Attachments": []}]
 
-        internet_gateways.load_internet_gateways(session, data, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        internet_gateways.load_internet_gateways(session, data, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
 
         session.run.assert_not_called()
         assert_batched(session.execute_write.call_args, data)
@@ -113,10 +113,10 @@ class TestBatchedLoaders:
         session = MagicMock()
         data = [{"SubnetId": "subnet-1"}]
 
-        subnets.load_subnets(session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        subnets.load_subnets(session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
 
         session.run.assert_not_called()
-        # subnet nodes, vpc relations, account relations
+        # subnet nodes, account relations, vpc relations
         assert session.execute_write.call_count == 3
         for call in session.execute_write.call_args_list:
             assert_batched(call, data)
@@ -129,7 +129,7 @@ class TestBatchedLoaders:
             "RequesterVpcInfo": {"VpcId": "vpc-2", "CidrBlockSet": []},
         }]
 
-        vpc_peerings.load_vpc_peerings(session, data, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        vpc_peerings.load_vpc_peerings(session, data, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws")
 
         session.run.assert_not_called()
         assert_batched(session.execute_write.call_args, data)
@@ -148,7 +148,7 @@ class TestBatchedLoaders:
         session = MagicMock()
         vpc_data = {"CidrBlockAssociationSet": [{"AssociationId": "a-1", "CidrBlock": "10.0.0.0/16"}]}
 
-        vpc.load_cidr_association_set(session, "vpc-1", vpc_data, "ipv4", TEST_UPDATE_TAG)
+        vpc.load_cidr_association_set(session, "vpc-1", vpc_data, "ipv4", TEST_UPDATE_TAG, TEST_ACCOUNT_ID)
 
         session.run.assert_not_called()
         call = session.execute_write.call_args
@@ -169,10 +169,11 @@ class TestManagedScalarWrites:
     def test_instance_image_relations_write_is_managed(self):
         session = MagicMock()
 
-        images.link_ec2_instances_to_images(session, TEST_UPDATE_TAG)
+        images.link_ec2_instances_to_images(session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
         session.run.assert_not_called()
-        session.execute_write.assert_called_once()
+        # link, then drop the account's stale links
+        assert session.execute_write.call_count == 2
 
     def test_tgw_attachment_writes_are_managed(self):
         session = MagicMock()

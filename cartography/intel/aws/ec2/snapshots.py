@@ -10,6 +10,8 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -17,12 +19,9 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
-# Applied at describe_snapshots so pending/error never leave the API.
+# Applied at describe_snapshots so pending/error never leave the API. Ownership goes in OwnerIds: the
+# owner-alias filter only knows Amazon-maintained aliases ('amazon'), not 'self'.
 EBS_SNAPSHOT_FILTERS = [
-    {
-        "Name": "owner-alias",
-        "Values": ["self"],
-    },
     {
         "Name": "status",
         "Values": ["completed"],
@@ -33,24 +32,28 @@ EBS_SNAPSHOT_FILTERS = [
 @timeit
 @aws_handle_regions
 def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+    """
+    The account's own completed snapshots. volume_permissions is ['all'] for a public snapshot (create volume
+    permission granted to the 'all' group), else []. One extra paginated call finds the public ones
+    (RestorableByUserIds=['all']) instead of a describe_snapshot_attribute call per snapshot.
+    """
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
-    snapshots = []
+    snapshots: List[Dict] = []
     try:
         paginator = client.get_paginator('describe_snapshots')
-
-        snapshots: List[Dict] = []
-
-        page_iterator = paginator.paginate(Filters=EBS_SNAPSHOT_FILTERS)
-        for page in page_iterator:
+        for page in paginator.paginate(OwnerIds=['self'], Filters=EBS_SNAPSHOT_FILTERS):
             snapshots.extend(page['Snapshots'])
+        public_ids = {
+            snapshot['SnapshotId']
+            for page in paginator.paginate(OwnerIds=['self'], RestorableByUserIds=['all'])
+            for snapshot in page['Snapshots']
+        }
         for snapshot in snapshots:
             snapshot['region'] = region
-            volume_permissions = get_snapshot_attribute(client=client, attribute_name='createVolumePermissions', snapshot_id=snapshot['SnapshotId'])
-            for volume_permission in volume_permissions:
-                snapshot['volume_permissions'] = volume_permission.get("Group", '')
+            snapshot['volume_permissions'] = ['all'] if snapshot['SnapshotId'] in public_ids else []
 
     except ClientError as e:
-        if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
+        if e.response['Error']['Code'] in ('AccessDeniedException', 'UnauthorizedOperation'):
             logger.warning(
                 'ec2:describe_snapshots failed with AccessDeniedException; continuing sync.',
                 exc_info=True,
@@ -61,26 +64,10 @@ def get_snapshots(boto3_session: boto3.session.Session, region: str) -> List[Dic
     return snapshots
 
 
-def get_snapshot_attribute(client, snapshot_id, attribute_name):
-    response = {}
-    try:
-        response = client.describe_snapshot_attribute(Attribute=attribute_name, SnapshotId=snapshot_id)
-
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'AccessDeniedException' or e.response['Error']['Code'] == 'UnauthorizedOperation':
-            logger.warning(
-                'ec2:describe_snapshot_attribute failed with AccessDeniedException; continuing sync.',
-                exc_info=True,
-            )
-        else:
-            raise
-
-    return response
-
-
 @timeit
 def load_snapshots(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_snapshots = """
     UNWIND $DictList as snapshot
@@ -103,7 +90,7 @@ def load_snapshots(
     for snapshot in data:
         region = snapshot.get('region', '')
         snapshot['StartTime'] = str(snapshot['StartTime'])
-        snapshot['Arn'] = f"arn:aws:ec2:{region}:{current_aws_account_id}:snapshot/{snapshot['SnapshotId']}"
+        snapshot['Arn'] = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:snapshot/{snapshot['SnapshotId']}"
         snapshot['consolelink'] = aws_console_link.get_console_link(arn=snapshot['Arn'])
 
     load_graph_data(
@@ -139,8 +126,8 @@ def load_snapshot_volume_relations(
     MERGE (aa)-[r:RESOURCE]->(v)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
-    WITH v, volume
-    MATCH (s:EBSSnapshot{id: volume.SnapshotId})
+    WITH aa, v, volume
+    MATCH (aa)-[:RESOURCE]->(s:EBSSnapshot{id: volume.SnapshotId})
     MERGE (s)-[r:CREATED_FROM]->(v)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -180,7 +167,10 @@ def sync_ebs_snapshots(
 
     logger.info(f"Total EBS Snapshot: {len(data)}")
 
-    load_snapshots(neo4j_session, data, current_aws_account_id, update_tag)
+    load_snapshots(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
 
     snapshot_volumes = get_snapshot_volumes(data)
 

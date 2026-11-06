@@ -8,6 +8,7 @@
 #   - Volume Backups (Block + Boot)    https://docs.oracle.com/en-us/iaas/Content/Block/Concepts/blockvolumebackups.htm
 #   - File Storage (File Systems)      https://docs.oracle.com/en-us/iaas/Content/File/Concepts/filestorageoverview.htm
 import logging
+from datetime import datetime
 from typing import Any
 from typing import Dict
 from typing import List
@@ -18,11 +19,15 @@ import oci
 
 from . import tags
 from . import utils
-from cartography.client.core.tx import run_write_query
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
+
+# PAR access types that let the URL holder read: ObjectRead* covers one object,
+# AnyObjectRead* every object in the bucket. Write-only PARs are left out.
+READ_PAR_ACCESS_TYPES = ('ObjectRead', 'ObjectReadWrite', 'AnyObjectRead', 'AnyObjectReadWrite')
 
 
 class OCIStorageClients:
@@ -129,15 +134,64 @@ def get_bucket_details(
         return {}
 
 
+def get_bucket_pre_authenticated_requests(
+    object_storage: oci.object_storage.ObjectStorageClient,
+    namespace: str,
+    bucket_name: str,
+) -> Optional[List[Dict[str, Any]]]:
+    """
+    List the bucket's pre-authenticated requests (PARs). Anyone holding a PAR URL can
+    use it without credentials, so a read PAR is anonymous access to the bucket or object.
+    Returns None when the call fails, so load_buckets keeps the last known answer.
+    API: ListPreauthenticatedRequests,
+    https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingpreauthenticatedrequests.htm
+    """
+    try:
+        response = oci.pagination.list_call_get_all_results(
+            object_storage.list_preauthenticated_requests,
+            namespace_name=namespace,
+            bucket_name=bucket_name,
+        )
+        return utils.oci_object_to_json(response.data)
+    except oci.exceptions.ServiceError as e:
+        logger.warning(
+            "Could not retrieve pre-authenticated requests for '%s/%s': %s",
+            namespace, bucket_name, e.message,
+        )
+        return None
+
+
+def summarise_read_pars(pars: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """
+    Latest expiry (epoch ms) and access types of the PARs that grant read, or None for
+    both when the PARs are unknown. 0 / [] means "checked, none". The exposure job
+    compares the expiry with the time it runs, so a PAR that expires between syncs stops
+    counting without a new sync. An expiry that cannot be parsed makes the answer unknown.
+    """
+    if pars is None:
+        return {"read_par_expires_at": None, "read_par_access_types": None}
+    read_pars = [p for p in pars if p.get("access-type") in READ_PAR_ACCESS_TYPES]
+    try:
+        expiries = [int(datetime.fromisoformat(p["time-expires"]).timestamp() * 1000) for p in read_pars]
+    except (KeyError, TypeError, ValueError):
+        return {"read_par_expires_at": None, "read_par_access_types": None}
+    return {
+        "read_par_expires_at": max(expiries, default=0),
+        "read_par_access_types": sorted({p["access-type"] for p in read_pars}),
+    }
+
+
 def transform_buckets(
     bucket_summaries: List[Dict[str, Any]],
     bucket_details_by_name: Dict[str, Dict[str, Any]],
     namespace: str,
     region: str,
+    pars_by_name: Optional[Dict[str, Optional[List[Dict[str, Any]]]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Merge the per-bucket detail payload back onto each summary row and shape
-    the dicts to the keys our load_buckets Cypher expects.
+    the dicts to the keys our load_buckets Cypher expects. pars_by_name holds each
+    bucket's pre-authenticated requests (None when listing them failed).
     """
     transformed: List[Dict[str, Any]] = []
     for summary in bucket_summaries:
@@ -154,7 +208,10 @@ def transform_buckets(
             "compartment_id": merged.get("compartment-id"),
             "created_by": merged.get("created-by"),
             "etag": merged.get("etag"),
-            "public_access_type": merged.get("public-access-type") or "NoPublicAccess",
+            # Only GetBucket returns public-access-type. When it failed the value is
+            # unknown (None) and load_buckets keeps the last one instead of
+            # reporting a possibly public bucket as NoPublicAccess.
+            "public_access_type": (details.get("public-access-type") or "NoPublicAccess") if details else None,
             "storage_tier": merged.get("storage-tier") or "Standard",
             "object_events_enabled": bool(merged.get("object-events-enabled", False)),
             "replication_enabled": bool(merged.get("replication-enabled", False)),
@@ -167,8 +224,11 @@ def transform_buckets(
             "approximate_size": merged.get("approximate-size"),
             "time_created": str(merged.get("time-created", "")),
             "region": region,
+            # Buckets may carry a synthetic id; the console addresses them by namespace + name.
+            "consolelink": utils.get_console_link("bucket", region=region, namespace=namespace, bucket_name=name),
             "freeform-tags": merged.get("freeform-tags") or {},
             "defined-tags": merged.get("defined-tags") or {},
+            **summarise_read_pars((pars_by_name or {}).get(name)),
         })
     return transformed
 
@@ -176,6 +236,7 @@ def transform_buckets(
 def load_buckets(
     neo4j_session: neo4j.Session,
     buckets: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -194,8 +255,10 @@ def load_buckets(
             b.compartment_id = bucket.compartment_id,
             b.created_by = bucket.created_by,
             b.etag = bucket.etag,
-            b.public_access_type = bucket.public_access_type,
-            b.is_public = (bucket.public_access_type <> 'NoPublicAccess'),
+            b.public_access_type = coalesce(bucket.public_access_type, b.public_access_type),
+            b.is_public = (coalesce(bucket.public_access_type, b.public_access_type) <> 'NoPublicAccess'),
+            b.read_par_expires_at = coalesce(bucket.read_par_expires_at, b.read_par_expires_at),
+            b.read_par_access_types = coalesce(bucket.read_par_access_types, b.read_par_access_types),
             b.storage_tier = bucket.storage_tier,
             b.object_events_enabled = bucket.object_events_enabled,
             b.replication_enabled = bucket.replication_enabled,
@@ -208,9 +271,10 @@ def load_buckets(
             b.approximate_count = bucket.approximate_count,
             b.approximate_size = bucket.approximate_size,
             b.region = bucket.region,
+            b.consolelink = bucket.consolelink,
             b.lastupdated = $oci_update_tag
         WITH b
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(b)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -219,6 +283,7 @@ def load_buckets(
         neo4j_session,
         ingest_buckets,
         buckets,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -231,7 +296,7 @@ def sync_buckets(
     compartment_id: str,
     region: str,
     oci_update_tag: int,
-    common_job_parameters: Dict[str, Any] = None,
+    common_job_parameters: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Fetch → transform → load Object Storage buckets for one compartment.
@@ -253,6 +318,7 @@ def sync_buckets(
         return
 
     details_by_name: Dict[str, Dict[str, Any]] = {}
+    pars_by_name: Dict[str, Optional[List[Dict[str, Any]]]] = {}
     for summary in summaries:
         name = summary.get("name")
         if not name:
@@ -260,10 +326,11 @@ def sync_buckets(
         details = get_bucket_details(object_storage, namespace, name)
         if details:
             details_by_name[name] = details
+        pars_by_name[name] = get_bucket_pre_authenticated_requests(object_storage, namespace, name)
 
-    buckets = transform_buckets(summaries, details_by_name, namespace, region)
+    buckets = transform_buckets(summaries, details_by_name, namespace, region, pars_by_name)
     if buckets:
-        load_buckets(neo4j_session, buckets, compartment_id, oci_update_tag)
+        load_buckets(neo4j_session, buckets, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, buckets, 'OCIStorageBucket', oci_update_tag, common_job_parameters)
 
@@ -321,6 +388,7 @@ def transform_block_volumes(
             "is_auto_tune_enabled": v.get("is-auto-tune-enabled"),
             "time_created": str(v.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("block_volume", region=region, ocid=v.get("id")),
         })
     return transformed
 
@@ -328,6 +396,7 @@ def transform_block_volumes(
 def load_block_volumes(
     neo4j_session: neo4j.Session,
     volumes: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -358,9 +427,10 @@ def load_block_volumes(
             vol.auto_tuned_vpus_per_gb = v.auto_tuned_vpus_per_gb,
             vol.is_auto_tune_enabled = v.is_auto_tune_enabled,
             vol.region = v.region,
+            vol.consolelink = v.consolelink,
             vol.lastupdated = $oci_update_tag
         WITH vol
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(vol)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -369,6 +439,7 @@ def load_block_volumes(
         neo4j_session,
         ingest_volumes,
         volumes,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -377,16 +448,21 @@ def load_block_volumes(
     # active attachment record for it. We rely on the OCIVolumeAttachment
     # nodes that compute.py already ingested.
     link_instances = """
-    MATCH (vol:OCIBlockVolume)
+    MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
+        -[:RESOURCE]->(vol:OCIBlockVolume)
     WHERE vol.lastupdated = $oci_update_tag
-    MATCH (inst:OCIInstance)-[:OCI_VOLUME_ATTACHMENT]->(att:OCIVolumeAttachment)
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)
+        -[:OCI_VOLUME_ATTACHMENT]->(att:OCIVolumeAttachment)
     WHERE att.volume_id = vol.ocid
       AND att.lifecycle_state = 'ATTACHED'
     MERGE (inst)-[r:OCI_VOLUME_ATTACHMENT]->(vol)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
-    run_write_query(neo4j_session, link_instances, oci_update_tag=oci_update_tag)
+    run_write_query(
+        neo4j_session, link_instances,
+        TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_block_volumes(
@@ -404,7 +480,7 @@ def sync_block_volumes(
     raw = get_block_volume_list_data(blockstorage, compartment_id)["Volumes"]
     volumes = transform_block_volumes(raw, region)
     if volumes:
-        load_block_volumes(neo4j_session, volumes, compartment_id, oci_update_tag)
+        load_block_volumes(neo4j_session, volumes, tenancy_id, compartment_id, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +562,7 @@ def transform_boot_volumes(
             "source_id": source.get("id"),
             "time_created": str(v.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("boot_volume", region=region, ocid=v.get("id")),
         })
     return transformed
 
@@ -493,6 +570,7 @@ def transform_boot_volumes(
 def load_boot_volumes(
     neo4j_session: neo4j.Session,
     boot_volumes: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -517,9 +595,10 @@ def load_boot_volumes(
             bv.source_type = v.source_type,
             bv.source_id = v.source_id,
             bv.region = v.region,
+            bv.consolelink = v.consolelink,
             bv.lastupdated = $oci_update_tag
         WITH bv
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(bv)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -528,6 +607,7 @@ def load_boot_volumes(
         neo4j_session,
         ingest_boot_volumes,
         boot_volumes,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -535,16 +615,21 @@ def load_boot_volumes(
     # Link instances to boot volumes via existing OCIBootVolumeAttachment
     # nodes already produced by compute.py.
     link_instances = """
-    MATCH (bv:OCIBootVolume)
+    MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})
+        -[:RESOURCE]->(bv:OCIBootVolume)
     WHERE bv.lastupdated = $oci_update_tag
-    MATCH (inst:OCIInstance)-[:OCI_BOOT_VOLUME_ATTACHMENT]->(att:OCIBootVolumeAttachment)
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)
+        -[:OCI_BOOT_VOLUME_ATTACHMENT]->(att:OCIBootVolumeAttachment)
     WHERE att.boot_volume_id = bv.ocid
       AND att.lifecycle_state = 'ATTACHED'
     MERGE (inst)-[r:OCI_BOOT_VOLUME_ATTACHMENT]->(bv)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
-    run_write_query(neo4j_session, link_instances, oci_update_tag=oci_update_tag)
+    run_write_query(
+        neo4j_session, link_instances,
+        TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_id, oci_update_tag=oci_update_tag,
+    )
 
 
 def sync_boot_volumes(
@@ -566,7 +651,7 @@ def sync_boot_volumes(
         aggregated.extend(raw)
     boot_volumes = transform_boot_volumes(aggregated, region)
     if boot_volumes:
-        load_boot_volumes(neo4j_session, boot_volumes, compartment_id, oci_update_tag)
+        load_boot_volumes(neo4j_session, boot_volumes, tenancy_id, compartment_id, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
@@ -672,12 +757,17 @@ def transform_volume_backups(
             "time_request_received": str(b.get("time-request-received", "")),
             "region": region,
         })
+    for bk in out:
+        bk["consolelink"] = utils.get_console_link(
+            "volume_backup", region=region, ocid=bk["ocid"], source_kind=bk["source_kind"],
+        )
     return out
 
 
 def load_volume_backups(
     neo4j_session: neo4j.Session,
     backups: List[Dict[str, Any]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -707,6 +797,7 @@ def load_volume_backups(
             b.expiration_time = bk.expiration_time,
             b.time_request_received = bk.time_request_received,
             b.region = bk.region,
+            b.consolelink = bk.consolelink,
             b.lastupdated = $oci_update_tag
     """
     load_graph_data(neo4j_session, ingest_backups, backups, oci_update_tag=oci_update_tag)
@@ -714,24 +805,30 @@ def load_volume_backups(
     link_block = """
     UNWIND $DictList AS bk
         WITH bk WHERE bk.source_kind = 'BLOCK' AND bk.parent_volume_id IS NOT NULL
-        MATCH (parent:OCIBlockVolume{id: bk.parent_volume_id})
-        MATCH (b:OCIVolumeBackup{id: bk.id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(parent:OCIBlockVolume{id: bk.parent_volume_id})
+        // The backup has no tenancy path of its own (its parent may be gone); it was MERGEd by its
+        // OCID (globally unique) just above, so MERGE on that key instead of looking it up.
+        MERGE (b:OCIVolumeBackup{id: bk.id})
         MERGE (parent)-[r:OCI_VOLUME_BACKUP]->(b)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, link_block, backups, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, link_block, backups, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
     link_boot = """
     UNWIND $DictList AS bk
         WITH bk WHERE bk.source_kind = 'BOOT' AND bk.parent_volume_id IS NOT NULL
-        MATCH (parent:OCIBootVolume{id: bk.parent_volume_id})
-        MATCH (b:OCIVolumeBackup{id: bk.id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(parent:OCIBootVolume{id: bk.parent_volume_id})
+        // The backup has no tenancy path of its own (its parent may be gone); it was MERGEd by its
+        // OCID (globally unique) just above, so MERGE on that key instead of looking it up.
+        MERGE (b:OCIVolumeBackup{id: bk.id})
         MERGE (parent)-[r:OCI_VOLUME_BACKUP]->(b)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, link_boot, backups, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, link_boot, backups, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
 
 def sync_volume_backups(
@@ -751,7 +848,7 @@ def sync_volume_backups(
     boot_backups = get_boot_volume_backup_list_data(blockstorage, compartment_id)["BootVolumeBackups"]
     backups = transform_volume_backups(block_backups, boot_backups, region)
     if backups:
-        load_volume_backups(neo4j_session, backups, oci_update_tag)
+        load_volume_backups(neo4j_session, backups, tenancy_id, oci_update_tag)
         tags.sync_tags(
             neo4j_session, block_backups + boot_backups, 'OCIVolumeBackup',
             oci_update_tag, common_job_parameters,
@@ -859,6 +956,7 @@ def transform_file_systems(
             "parent_file_system_id": fs.get("parent-file-system-id"),
             "time_created": str(fs.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("file_system", region=region, ocid=fs.get("id")),
         })
     return transformed
 
@@ -884,6 +982,7 @@ def transform_mount_targets(
             "nsg_ids": mt.get("nsg-ids") or [],
             "time_created": str(mt.get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("mount_target", region=region, ocid=mt.get("id")),
         })
     return transformed
 
@@ -910,6 +1009,7 @@ def transform_exports(
 def load_file_systems(
     neo4j_session: neo4j.Session,
     file_systems: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -931,9 +1031,10 @@ def load_file_systems(
             f.source_snapshot_id = fs.source_snapshot_id,
             f.parent_file_system_id = fs.parent_file_system_id,
             f.region = fs.region,
+            f.consolelink = fs.consolelink,
             f.lastupdated = $oci_update_tag
         WITH f
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(f)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -942,6 +1043,7 @@ def load_file_systems(
         neo4j_session,
         ingest_fs,
         file_systems,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -950,6 +1052,7 @@ def load_file_systems(
 def load_mount_targets(
     neo4j_session: neo4j.Session,
     mount_targets: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -968,9 +1071,10 @@ def load_mount_targets(
             m.private_ip_ids = mt.private_ip_ids,
             m.nsg_ids = mt.nsg_ids,
             m.region = mt.region,
+            m.consolelink = mt.consolelink,
             m.lastupdated = $oci_update_tag
         WITH m
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(m)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -979,6 +1083,7 @@ def load_mount_targets(
         neo4j_session,
         ingest_mt,
         mount_targets,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -987,6 +1092,7 @@ def load_mount_targets(
 def load_exports(
     neo4j_session: neo4j.Session,
     exports: List[Dict[str, Any]],
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -998,8 +1104,9 @@ def load_exports(
     ingest_exports = """
     UNWIND $DictList AS ex
         WITH ex WHERE ex.export_set_id IS NOT NULL AND ex.file_system_id IS NOT NULL
-        MATCH (mt:OCIMountTarget{export_set_id: ex.export_set_id})
-        MATCH (fs:OCIFileSystem{id: ex.file_system_id})
+        MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(mt:OCIMountTarget{export_set_id: ex.export_set_id})
+        MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(fs:OCIFileSystem{id: ex.file_system_id})
         MERGE (mt)-[r:OCI_EXPORT{ocid: ex.ocid}]->(fs)
         ON CREATE SET r.firstseen = timestamp()
         SET r.path = ex.path,
@@ -1007,11 +1114,12 @@ def load_exports(
             r.createdate = ex.time_created,
             r.lastupdated = $oci_update_tag
     """
-    load_graph_data(neo4j_session, ingest_exports, exports, oci_update_tag=oci_update_tag)
+    load_graph_data(neo4j_session, ingest_exports, exports, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
 
 def link_instances_to_file_systems(
     neo4j_session: neo4j.Session,
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -1025,8 +1133,10 @@ def link_instances_to_file_systems(
     once that ingestion path lands.
     """
     link_query = """
-    MATCH (mt:OCIMountTarget)-[:OCI_EXPORT]->(fs:OCIFileSystem)
-    MATCH (inst:OCIInstance)-[:OCI_VNIC_ATTACHMENT]->(vnic:OCIVnicAttachment)
+    MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+        -[:RESOURCE]->(mt:OCIMountTarget)-[:OCI_EXPORT]->(fs:OCIFileSystem)
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(inst:OCIInstance)
+        -[:OCI_VNIC_ATTACHMENT]->(vnic:OCIVnicAttachment)
     WHERE vnic.subnet_id IS NOT NULL
       AND vnic.subnet_id = mt.subnet_id
     MERGE (inst)-[r:MOUNTS]->(fs)
@@ -1035,7 +1145,7 @@ def link_instances_to_file_systems(
                   r.inference_method = 'shared_subnet'
     SET r.lastupdated = $oci_update_tag
     """
-    run_write_query(neo4j_session, link_query, oci_update_tag=oci_update_tag)
+    run_write_query(neo4j_session, link_query, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag)
 
 
 def sync_file_storage(
@@ -1067,11 +1177,11 @@ def sync_file_storage(
     mount_targets = transform_mount_targets(mt_raw, region)
 
     if file_systems:
-        load_file_systems(neo4j_session, file_systems, compartment_id, oci_update_tag)
+        load_file_systems(neo4j_session, file_systems, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, fs_raw, 'OCIFileSystem', oci_update_tag, common_job_parameters)
     if mount_targets:
-        load_mount_targets(neo4j_session, mount_targets, compartment_id, oci_update_tag)
+        load_mount_targets(neo4j_session, mount_targets, tenancy_id, compartment_id, oci_update_tag)
         if common_job_parameters:
             tags.sync_tags(neo4j_session, mt_raw, 'OCIMountTarget', oci_update_tag, common_job_parameters)
 
@@ -1079,10 +1189,10 @@ def sync_file_storage(
     exports_raw = get_export_list_data(file_storage, compartment_id)["Exports"]
     exports = transform_exports(exports_raw)
     if exports:
-        load_exports(neo4j_session, exports, oci_update_tag)
+        load_exports(neo4j_session, exports, tenancy_id, oci_update_tag)
 
     # Best-effort instance → file system connectivity inference.
-    link_instances_to_file_systems(neo4j_session, oci_update_tag)
+    link_instances_to_file_systems(neo4j_session, tenancy_id, oci_update_tag)
 
 
 # ---------------------------------------------------------------------------

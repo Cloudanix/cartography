@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 from cartography.intel.gcp import compute
 
 TEST_UPDATE_TAG = 123456789
+TENANT = {"GCP_PROJECT_ID": "p1", "WORKSPACE_ID": "ws-1", "GCP_ORGANIZATION_ID": "organizations/1"}
 
 VPC_A = {
     "partial_uri": "projects/p1/global/networks/default",
@@ -89,7 +90,7 @@ class TestLoadGcpForwardingRules:
             "network_partial_uri": "projects/p1/global/networks/default",
         }
 
-        compute.load_gcp_forwarding_rules(session, [subnet_rule, vpc_rule], TEST_UPDATE_TAG)
+        compute.load_gcp_forwarding_rules(session, [subnet_rule, vpc_rule], TEST_UPDATE_TAG, "p1")
 
         # one write for the rules, one for the subnet attachment batch, one for the vpc batch
         assert session.execute_write.call_count == 3
@@ -102,7 +103,7 @@ class TestLoadGcpForwardingRules:
 
     def test_empty_list_writes_nothing(self):
         session = MagicMock()
-        compute.load_gcp_forwarding_rules(session, [], TEST_UPDATE_TAG)
+        compute.load_gcp_forwarding_rules(session, [], TEST_UPDATE_TAG, "p1")
         session.execute_write.assert_not_called()
 
 
@@ -168,6 +169,8 @@ class TestInstanceRowBuilders:
             "name": "nic0",
             "consolelink": "https://console/nic0",
             "subnet_partial_uri": "projects/p1/regions/us-east1/subnetworks/default",
+            "vpc_partial_uri": "projects/p1/global/networks/default",
+            "network_ip": None,
         }]
 
     def test_access_config_rows(self):
@@ -200,12 +203,12 @@ class TestLoadGcpInstancesBatching:
         session = MagicMock()
         instances = [INSTANCE, {**INSTANCE, "partial_uri": "projects/p1/zones/z1/instances/vm-2"}]
 
-        compute.load_gcp_instances(session, instances, TEST_UPDATE_TAG)
+        compute.load_gcp_instances(session, instances, TEST_UPDATE_TAG, TENANT)
 
         # 1 instance batch + tags + nics + access configs + vpc membership +
-        # service accounts + image relations = 7 writes total for ANY number of instances
+        # service accounts (own project, then others) + image relations = 8 writes for ANY number of instances
         # (was ~8 writes PER instance). GKE node links run later in sync_gke_node_links.
-        assert session.execute_write.call_count == 7
+        assert session.execute_write.call_count == 8
         unwind_calls = [c for c in session.execute_write.call_args_list if "DictList" in c.kwargs]
         for call in unwind_calls:
             assert "UNWIND" in call.args[1]
@@ -213,7 +216,7 @@ class TestLoadGcpInstancesBatching:
     def test_instance_load_never_writes_gke_links(self):
         session = MagicMock()
 
-        compute.load_gcp_instances(session, [INSTANCE], TEST_UPDATE_TAG)
+        compute.load_gcp_instances(session, [INSTANCE], TEST_UPDATE_TAG, TENANT)
 
         queries = [c.args[1] for c in session.execute_write.call_args_list if len(c.args) > 1]
         assert not any("GKECluster" in q for q in queries)
@@ -279,7 +282,7 @@ class TestLoadGcpIngressFirewalls:
     def test_batched_writes(self):
         session = MagicMock()
 
-        compute.load_gcp_ingress_firewalls(session, [FIREWALL, FIREWALL], TEST_UPDATE_TAG)
+        compute.load_gcp_ingress_firewalls(session, [FIREWALL, FIREWALL], TEST_UPDATE_TAG, "p1")
 
         # 1 firewall batch + 4 rule partitions + 1 target tags + 1 public ips = 7
         # (independent of firewall count; was ~7+ writes PER firewall)
@@ -292,7 +295,7 @@ class TestLoadGcpIngressFirewalls:
 
     def test_empty_list_writes_nothing(self):
         session = MagicMock()
-        compute.load_gcp_ingress_firewalls(session, [], TEST_UPDATE_TAG)
+        compute.load_gcp_ingress_firewalls(session, [], TEST_UPDATE_TAG, "p1")
         session.execute_write.assert_not_called()
 
 
@@ -304,7 +307,7 @@ class TestAttachComputeDisksToInstances:
             {"id": "projects/p1/disks/d2", "instance_id": "projects/p1/zones/z1/instances/vm-2"},
         ]
 
-        compute.attach_compute_disks_to_instances(session, rows, TEST_UPDATE_TAG)
+        compute.attach_compute_disks_to_instances(session, rows, TEST_UPDATE_TAG, "p1")
 
         assert session.execute_write.call_count == 1
         call = session.execute_write.call_args
@@ -313,5 +316,5 @@ class TestAttachComputeDisksToInstances:
 
     def test_empty_rows_write_nothing(self):
         session = MagicMock()
-        compute.attach_compute_disks_to_instances(session, [], TEST_UPDATE_TAG)
+        compute.attach_compute_disks_to_instances(session, [], TEST_UPDATE_TAG, "p1")
         session.execute_write.assert_not_called()

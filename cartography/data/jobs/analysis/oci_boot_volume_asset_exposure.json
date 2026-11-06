@@ -1,0 +1,16 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OCI boot volumes in scope",
+      "query": "MATCH (n:OCIBootVolume)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Mark boot volumes as exposed if the instance they are attached to is exposed. Scoped by the boot volume's compartment (the instance may live in another one) so reset and mark always cover the same volumes. Must run after oci_instance_asset_exposure.json.",
+      "query": "MATCH (bv:OCIBootVolume)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (inst:OCIInstance{exposed_internet: true})-[:OCI_BOOT_VOLUME]->(bv) WITH bv, collect(DISTINCT {instanceId: inst.id, instanceName: inst.display_name, instanceExposureTypes: inst.exposed_internet_type}) AS instances SET bv.exposed_internet = true, bv.exposed_internet_type = ['attached_instance_exposed'], bv.publicContext = apoc.convert.toJson([{resource: bv.id, resourceType: 'oci-storage-blockstorage-bootvolume', context: [{bootVolumeId: bv.id, bootVolumeName: bv.display_name, exposureTypes: ['attached_instance_exposed'], instances: instances, region: bv.region}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "OCI boot volume asset internet exposure"
+}

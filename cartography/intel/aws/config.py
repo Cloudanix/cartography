@@ -8,6 +8,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -56,6 +57,7 @@ def load_configuration_recorders(
     region: str,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_configuration_recorders = """
     UNWIND $DictList as recorder
@@ -78,7 +80,7 @@ def load_configuration_recorders(
     # itself is unique per region.
     for recorder in data:
         recorder['_id'] = f'{recorder["name"]}:{current_aws_account_id}:{region}'
-        arn = f'arn:aws:config:{region}:{current_aws_account_id}:configuration-recorder/{recorder["name"]}'
+        arn = f'arn:{partition}:config:{region}:{current_aws_account_id}:configuration-recorder/{recorder["name"]}'
         recorder['consolelink'] = aws_console_link.get_console_link(arn=arn)
 
     load_graph_data(
@@ -98,6 +100,7 @@ def load_delivery_channels(
     region: str,
     current_aws_account_id: str,
     aws_update_tag: int,
+    partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_delivery_channels = """
     UNWIND $DictList as channel
@@ -122,7 +125,7 @@ def load_delivery_channels(
     # itself is unique per region.
     for channel in data:
         channel['_id'] = f'{channel["name"]}:{current_aws_account_id}:{region}'
-        arn = f'arn:aws:config:{region}:{current_aws_account_id}:delivery-channel/{channel["name"]}'
+        arn = f'arn:{partition}:config:{region}:{current_aws_account_id}:delivery-channel/{channel["name"]}'
         channel['consolelink'] = aws_console_link.get_console_link(arn=arn)
 
     load_graph_data(

@@ -2,6 +2,7 @@
 # Transformed (post-transform) OCI storage fixtures, shaped as the load_* functions expect.
 TEST_COMPARTMENT_ID = "ocid1.compartment.oc1..aaaaaaaastorage0000000000000000000000000000000000000000000000000"
 TEST_REGION = "us-phoenix-1"
+TEST_TENANCY_ID = "ocid1.tenancy.oc1..storage"
 
 
 # A larger-than-one-batch (>500) bucket list to exercise load_graph_data's
@@ -57,7 +58,7 @@ VOLUME_BACKUPS = [
         "display_name": "backup-block-0",
         "compartment_id": TEST_COMPARTMENT_ID,
         "source_kind": "BLOCK",
-        "parent_volume_id": "ocid1.volume.oc1..0",
+        "parent_volume_id": "oci.blockvol.0",
         "region": TEST_REGION,
         "time_created": "2024-01-01T00:00:00Z",
     },
@@ -67,7 +68,7 @@ VOLUME_BACKUPS = [
         "display_name": "backup-boot-0",
         "compartment_id": TEST_COMPARTMENT_ID,
         "source_kind": "BOOT",
-        "parent_volume_id": "ocid1.bootvolume.oc1..0",
+        "parent_volume_id": "oci.bootvol.0",
         "region": TEST_REGION,
         "time_created": "2024-01-01T00:00:00Z",
     },

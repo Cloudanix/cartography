@@ -1,10 +1,12 @@
 import cartography.intel.gcp.bigquery
 import tests.data.gcp.bigquery
+from cartography.intel.gcp.exposure_layers import access
 from cartography.util import run_analysis_job
 TEST_PROJECT_NUMBER = '000000000000'
 TEST_UPDATE_TAG = 123456789
 TEST_REGION = 'us-east-1a'
-TEST_DATASET_ID = 'dataset1'
+TEST_DATASET_ID = f'projects/{TEST_PROJECT_NUMBER}/datasets/dataset1'
+DATASET_PREFIX = tests.data.gcp.bigquery.DATASET_PREFIX
 
 TEST_WORKSPACE_ID = '1223344'
 
@@ -39,8 +41,8 @@ def test_load_bigquey_dataset(neo4j_session):
     )
 
     expected_nodes = {
-        "dataset1",
-        "dataset2",
+        f"{DATASET_PREFIX}/dataset1",
+        f"{DATASET_PREFIX}/dataset2",
     }
 
     nodes = neo4j_session.run(
@@ -64,8 +66,8 @@ def test_load_bigquery_tables(neo4j_session):
     )
 
     expected_nodes = {
-        "table1",
-        "table2",
+        f"{DATASET_PREFIX}/dataset1/tables/table1",
+        f"{DATASET_PREFIX}/dataset2/tables/table2",
     }
 
     nodes = neo4j_session.run(
@@ -101,8 +103,8 @@ def test_bigquery_dataset_relationship(neo4j_session):
     )
 
     expected = {
-        (TEST_PROJECT_NUMBER, 'dataset1'),
-        (TEST_PROJECT_NUMBER, 'dataset2'),
+        (TEST_PROJECT_NUMBER, f'{DATASET_PREFIX}/dataset1'),
+        (TEST_PROJECT_NUMBER, f'{DATASET_PREFIX}/dataset2'),
     }
 
     # Fetch relationships
@@ -139,8 +141,8 @@ def test_bigquey_dataset_table_relationship(neo4j_session):
     )
 
     expected = {
-        ('dataset1', 'table1'),
-        ('dataset2', 'table2'),
+        (f'{DATASET_PREFIX}/dataset1', f'{DATASET_PREFIX}/dataset1/tables/table1'),
+        (f'{DATASET_PREFIX}/dataset2', f'{DATASET_PREFIX}/dataset2/tables/table2'),
     }
 
     # Fetch relationships
@@ -163,7 +165,9 @@ def test_cloud_function(neo4j_session):
     cartography.intel.gcp.bigquery.load_bigquery_datasets(neo4j_session, data, TEST_PROJECT_NUMBER, TEST_UPDATE_TAG)
     accesses_data = tests.data.gcp.bigquery.TEST_ACCESSES
 
-    cartography.intel.gcp.bigquery.attach_dataset_to_accesses(neo4j_session, TEST_DATASET_ID, accesses_data, TEST_UPDATE_TAG)
+    cartography.intel.gcp.bigquery.attach_dataset_to_accesses(
+        neo4j_session, TEST_DATASET_ID, accesses_data, TEST_UPDATE_TAG, TEST_PROJECT_NUMBER,
+    )
 
     query1 = """
     MATCH (access:GCPAcl)-[a:APPLIES_TO]->(dataset:GCPBigqueryDataset)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE dataset.exposed_internet=true
@@ -186,7 +190,7 @@ def test_cloud_function(neo4j_session):
     expected_nodes = {
 
         (
-            'dataset1',
+            TEST_DATASET_ID,
             True,
             'allAuthenticatedUsers',
         ),
@@ -194,3 +198,111 @@ def test_cloud_function(neo4j_session):
     }
 
     assert actual_nodes == expected_nodes
+
+
+BQ_PARAMS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-bq', 'GCP_ORGANIZATION_ID': 'org-bq',
+    'GCP_PROJECT_ID': 'proj-bq', 'LIMIT_SIZE': 1000,
+}
+
+
+def test_dataset_exposure_reads_iam_members_and_special_groups(neo4j_session):
+    project = BQ_PARAMS['GCP_PROJECT_ID']
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:GCPOrganization{id: $org})-[:OWNER]->(:GCPProject{id: $p})",
+        ws=BQ_PARAMS['WORKSPACE_ID'], org=BQ_PARAMS['GCP_ORGANIZATION_ID'], p=project,
+    )
+    accesses = {
+        # datasets.get returns allUsers as an iamMember entry; allAuthenticatedUsers is a specialGroup.
+        'bq-all-users': [{'role': 'READER', 'iamMember': 'allUsers'}],
+        'bq-all-authenticated': [{'role': 'READER', 'specialGroup': 'allAuthenticatedUsers'}],
+        # Same role for an ordinary user and allUsers: both entries must survive.
+        'bq-shared-role': [{'role': 'READER', 'iamMember': 'allUsers'}, {'role': 'READER', 'userByEmail': 'a@x.io'}],
+        'bq-private': [
+            {'role': 'READER', 'specialGroup': 'projectReaders'}, {'role': 'OWNER', 'userByEmail': 'a@x.io'},
+        ],
+    }
+    datasets = [{'id': d, 'uniqueId': f'projects/{project}/datasets/{d}', 'details': {}} for d in accesses]
+    cartography.intel.gcp.bigquery.load_bigquery_datasets(neo4j_session, datasets, project, TEST_UPDATE_TAG)
+    for dataset_id, entries in accesses.items():
+        rows = cartography.intel.gcp.bigquery.transform_dataset_accesses(entries, dataset_id, project)
+        cartography.intel.gcp.bigquery.attach_dataset_to_accesses(
+            neo4j_session, dataset_id, rows, TEST_UPDATE_TAG, project,
+        )
+    cartography.intel.gcp.bigquery.load_bigquery_tables(
+        neo4j_session, [
+            {'id': f'{d}-table', 'uniqueId': f'{d}-table', 'datasetId': d, 'details': {}}
+            for d in ('bq-all-users', 'bq-private')
+        ], project, TEST_UPDATE_TAG,
+    )
+    # A table flagged while its dataset was public; the dataset is private now.
+    neo4j_session.run(
+        "MATCH (t:GCPBigqueryTable{id: 'bq-private-table'}) "
+        "SET t.exposed_internet = true, t.exposed_internet_type = ['allUsers']",
+    )
+
+    run_analysis_job('gcp_bigquery_dataset_analysis.json', neo4j_session, BQ_PARAMS)
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $p})-[:RESOURCE]->(d:GCPBigqueryDataset)
+        OPTIONAL MATCH (d)-[:HAS_TABLE]->(t:GCPBigqueryTable)
+        WITH [n IN [d, t] WHERE n IS NOT NULL AND n.exposed_internet] AS exposed
+        UNWIND exposed AS n
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        p=project,
+    )
+    assert {r['id']: r['types'] for r in rows} == {
+        'bq-all-users': ['allUsers'],
+        'bq-all-users-table': ['allUsers'],
+        'bq-all-authenticated': ['allAuthenticatedUsers'],
+        'bq-shared-role': ['allUsers'],
+    }
+
+
+def test_unread_dataset_access_keeps_entries_and_reads_unknown(neo4j_session, mocker):
+    project = 'proj-bq-unread'
+    params = {**BQ_PARAMS, 'GCP_PROJECT_ID': project, 'service_labels': []}
+    neo4j_session.run(
+        "MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(:GCPOrganization{id: $org})-[:OWNER]->(:GCPProject{id: $p})",
+        ws=params['WORKSPACE_ID'], org=params['GCP_ORGANIZATION_ID'], p=project,
+    )
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(
+        module, 'get_bigquery_dataset',
+        return_value=[{'datasetReference': {'datasetId': d}} for d in ('bq-read', 'bq-unread')],
+    )
+    mocker.patch.object(module, 'get_dataset_info', return_value={})
+    mocker.patch.object(module, 'get_bigquery_tables', return_value=[])
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+
+    def sync(tag, entries):
+        mocker.patch.object(module, 'get_dataset_access_info', side_effect=lambda _b, d, _p: entries[d]())
+        module.sync(neo4j_session, None, project, tag, {**params, 'UPDATE_TAG': tag}, [])
+
+    def open_access():
+        return [{'role': 'READER', 'iamMember': 'allUsers'}]
+
+    sync(TEST_UPDATE_TAG, {'bq-read': open_access, 'bq-unread': open_access})
+    # Next sync: bq-read no longer grants allUsers; bq-unread's datasets.get is denied.
+    sync(TEST_UPDATE_TAG + 1, {'bq-read': list, 'bq-unread': lambda: None})
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $p})-[:RESOURCE]->(d:GCPBigqueryDataset)
+        OPTIONAL MATCH (a:GCPAcl)-[:APPLIES_TO]->(d)
+        RETURN d.id AS id, d.iam_policy_status AS status, collect(a.iam_member) AS members
+        """,
+        p=project,
+    )
+    read, unread = (f'projects/{project}/datasets/{d}' for d in ('bq-read', 'bq-unread'))
+    assert {r['id']: (r['status'], r['members']) for r in rows} == {
+        read: ('resolved', []),
+        unread: ('unresolved', ['allUsers']),
+    }
+    auth = access.compute(neo4j_session, params)['GCPBigqueryDataset']
+    assert auth[read]['access_auth'] == 'required'
+    assert (auth[unread]['access_auth'], auth[unread]['access_auth_reasons']) == (
+        'unknown', ['dataset_access_not_read'],
+    )

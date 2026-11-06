@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.common import is_resource_policy_internet_accessible
 from cartography.util import aws_handle_regions
 from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
@@ -43,8 +44,10 @@ def transform_subscriptions(subs: List[Dict], region: str) -> List[Dict]:
     for subscription in subs:
         # subscription arn - arn:aws:sns:<region>:<account_id>:<topic_name>:<subscription_id>
         subscription['arn'] = subscription['SubscriptionArn']
-        # subscription['consolelink'] = aws_console_link.get_console_link(arn=subscription['arn'])
-        subscription['consolelink'] = ''
+        # Unconfirmed subscriptions carry "PendingConfirmation" instead of an ARN.
+        subscription['consolelink'] = None
+        if subscription['arn'].startswith('arn:'):
+            subscription['consolelink'] = aws_console_link.get_console_link(arn=subscription['arn'])
         subscription['region'] = region
         subscription['name'] = subscription['SubscriptionArn'].split(':')[-1]
         subscriptions.append(subscription)
@@ -81,9 +84,11 @@ def transform_topics(boto3_session: boto3.session.Session, tps: List[Dict], regi
         for topic in tps:
             topic['region'] = region
             topic['name'] = topic['TopicArn'].split(':')[-1]
-            # topic['consolelink'] = aws_console_link.get_console_link(arn=topic['TopicArn'])
-            topic['consolelink'] = ''
+            topic['consolelink'] = aws_console_link.get_console_link(arn=topic['TopicArn'])
             topic['attributes'] = client.get_topic_attributes(TopicArn=topic['TopicArn']).get('Attributes', {})
+            topic['policy_internet_accessible'] = is_resource_policy_internet_accessible(
+                topic['attributes'].get('Policy'),
+            )
             topic['subscriptions'] = list(filter(lambda s: s['TopicArn'] == topic['TopicArn'], subscriptions))
             topics.append(topic)
 
@@ -113,7 +118,8 @@ def _load_sns_topic_tx(tx: neo4j.Transaction, topics: List[Dict], current_aws_ac
         topic.subscriptions_deleted = record.attributes.SubscriptionsDeleted,
         topic.owner = record.attributes.Owner,
         topic.subscriptions_pending = record.attributes.SubscriptionsPending,
-        topic.kms_master_key_id = record.attributes.KmsMasterKeyId
+        topic.kms_master_key_id = record.attributes.KmsMasterKeyId,
+        topic.policy_internet_accessible = record.policy_internet_accessible
     WITH topic
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(topic)
@@ -135,12 +141,20 @@ def cleanup_sns_topic(neo4j_session: neo4j.Session, common_job_parameters: Dict)
 
 
 @timeit
-def load_sns_subscription_topic(session: neo4j.Session, subscriptions: List[Dict], topic_arn: str, aws_update_tag: int) -> None:
-    session.execute_write(_load_sns_topic_subscription_tx, subscriptions, topic_arn, aws_update_tag)
+def load_sns_subscription_topic(
+    session: neo4j.Session, subscriptions: List[Dict], topic_arn: str, current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
+    session.execute_write(
+        _load_sns_topic_subscription_tx, subscriptions, topic_arn, current_aws_account_id, aws_update_tag,
+    )
 
 
 @timeit
-def _load_sns_topic_subscription_tx(tx: neo4j.Transaction, subscriptions: List[Dict], topic_arn: str, aws_update_tag: int) -> None:
+def _load_sns_topic_subscription_tx(
+    tx: neo4j.Transaction, subscriptions: List[Dict], topic_arn: str, current_aws_account_id: str,
+    aws_update_tag: int,
+) -> None:
     query: str = """
     UNWIND $Records as record
     MERGE (sub:AWSSNSTopicSubscription{id: record.SubscriptionArn})
@@ -154,7 +168,7 @@ def _load_sns_topic_subscription_tx(tx: neo4j.Transaction, subscriptions: List[D
         sub.Protocol = record.Protocol,
         sub.owner = record.Owner
     WITH sub
-    MATCH (owner:AWSSNSTopic{id: $Topic_ARN})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(owner:AWSSNSTopic{id: $Topic_ARN})
     MERGE (owner)-[r:RESOURCE]->(sub)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
@@ -164,6 +178,7 @@ def _load_sns_topic_subscription_tx(tx: neo4j.Transaction, subscriptions: List[D
         query,
         Records=subscriptions,
         Topic_ARN=topic_arn,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -194,7 +209,9 @@ def sync(
     load_sns_topic(neo4j_session, topics, current_aws_account_id, update_tag)
 
     for topic in topics:
-        load_sns_subscription_topic(neo4j_session, topic['subscriptions'], topic['TopicArn'], update_tag)
+        load_sns_subscription_topic(
+            neo4j_session, topic['subscriptions'], topic['TopicArn'], current_aws_account_id, update_tag,
+        )
 
     cleanup_sns_topic_subscription(neo4j_session, common_job_parameters)
     cleanup_sns_topic(neo4j_session, common_job_parameters)

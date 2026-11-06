@@ -78,7 +78,9 @@ class TestWorkspace:
         session = MagicMock()
         members = [{"id": "member-1", "type": "USER"}]
 
-        workspace.load_groups_members(session, {"id": "g1"}, members, TEST_UPDATE_TAG)
+        workspace.load_groups_members(
+            session, {"id": "g1"}, members, TEST_UPDATE_TAG, {"WORKSPACE_ID": "ws-1", "GCP_ORGANIZATION_ID": "org-1"},
+        )
 
         session.run.assert_not_called()
         assert session.execute_write.call_count >= 1

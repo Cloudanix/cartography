@@ -47,8 +47,8 @@ def test_match_precedes_merge():
 
 def test_every_nested_path_has_cleanup_coverage():
     cleanup = (
-        Path(__file__).resolve().parents[5]
-        / 'cartography' / 'data' / 'jobs' / 'cleanup' / 'gcp_labels_cleanup.json'
+        Path(__file__).resolve().parents[5] /
+        'cartography' / 'data' / 'jobs' / 'cleanup' / 'gcp_labels_cleanup.json'
     ).read_text()
-    for service_label in label.OWNERSHIP_PATHS:
-        assert f'(m:{service_label})<-[:RESOURCE]-' in cleanup, service_label
+    for service_label, path in label.OWNERSHIP_PATHS.items():
+        assert f'(m:{service_label}){path}(:GCPProject' in cleanup, service_label

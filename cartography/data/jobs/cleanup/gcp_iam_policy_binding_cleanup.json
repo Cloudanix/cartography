@@ -17,6 +17,18 @@
             "iterative": true,
             "iterationsize": 100,
             "__comment__": "Remove GCP GCPRole-to-Project relationships that are out of date."
+        },
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(org:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(project:GCPProject{id: $GCP_PROJECT_ID}) MATCH (role:GCPRole)-[r:TRUSTS_GCP_PRINCIPAL{account_id: $GCP_PROJECT_ID}]->(:GCPExternalPrincipal) WHERE r.lastupdated <> $UPDATE_TAG AND ((org)-[:RESOURCE]->(role) OR (project)-[:RESOURCE]->(role)) WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100,
+            "__comment__": "Remove this project's stale grants to external principals: one TRUSTS_GCP_PRINCIPAL edge per granting project (account_id), from an organization or project role of this tenant. The principal node is shared by every tenant that grants it, so only the edge goes here."
+        },
+        {
+            "query": "MATCH (n:GCPExternalPrincipal) WHERE NOT (n)--() AND n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100,
+            "__comment__": "Orphan sweep, tenant-independent: delete an external principal once no tenant's role trusts it."
         }
     ],
     "name": "Cleanup GCP IAM policy bindings."

@@ -12,6 +12,7 @@ from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.common import is_resource_policy_internet_accessible
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -95,6 +96,7 @@ def load_sqs_queues(
             queue.content_based_deduplication = sqs_queue.ContentBasedDeduplication,
             queue.deduplication_scope = sqs_queue.DeduplicationScope,
             queue.fifo_throughput_limit = sqs_queue.FifoThroughputLimit,
+            queue.policy_internet_accessible = sqs_queue.policy_internet_accessible,
             queue.lastupdated = $aws_update_tag
         WITH queue
         MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -111,6 +113,7 @@ def load_sqs_queues(
         queue['CreatedTimestamp'] = int(queue['CreatedTimestamp'])
         queue['LastModifiedTimestamp'] = int(queue['LastModifiedTimestamp'])
         queue['consolelink'] = aws_console_link.get_console_link(arn=queue['QueueArn'])
+        queue['policy_internet_accessible'] = is_resource_policy_internet_accessible(queue.get('Policy'))
         redrive_policy = queue.get('RedrivePolicy')
         if redrive_policy:
             try:
@@ -134,17 +137,20 @@ def load_sqs_queues(
         aws_update_tag=aws_update_tag,
     )
 
-    _attach_dead_letter_queues(neo4j_session, dead_letter_queues, aws_update_tag)
+    _attach_dead_letter_queues(neo4j_session, dead_letter_queues, current_aws_account_id, aws_update_tag)
 
 
 @timeit
-def _attach_dead_letter_queues(neo4j_session: neo4j.Session, data: List[Dict[str, str]], aws_update_tag: int) -> None:
+def _attach_dead_letter_queues(
+    neo4j_session: neo4j.Session, data: List[Dict[str, str]], current_aws_account_id: str, aws_update_tag: int,
+) -> None:
     """
-    Attach deadletter queues to their queues.
+    Attach deadletter queues to their queues. A dead-letter queue is in its source queue's account and region.
     """
     attach_deadletter_to_queue = """
     UNWIND $DictList as relation
-        MATCH (queue:SQSQueue{id: relation.arn}), (deadletter:SQSQueue{id: relation.dead_letter_arn})
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(queue:SQSQueue{id: relation.arn})
+        MATCH (aa)-[:RESOURCE]->(deadletter:SQSQueue{id: relation.dead_letter_arn})
         MERGE (queue)-[r:HAS_DEADLETTER_QUEUE]->(deadletter)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -153,6 +159,7 @@ def _attach_dead_letter_queues(neo4j_session: neo4j.Session, data: List[Dict[str
         neo4j_session,
         attach_deadletter_to_queue,
         data,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 

@@ -8,6 +8,7 @@ from typing import Dict
 from typing import List
 
 import neo4j
+from cloudconsolelink.clouds.gcp import GCPLinker
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
@@ -16,6 +17,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+gcp_console_link = GCPLinker()
 
 
 @timeit
@@ -98,7 +100,8 @@ def load_gcp_organizations(neo4j_session: neo4j.Session, data: List[Dict], gcp_u
     org.lifecyclestate = $LifecycleState,
     org.lastupdated = $gcp_update_tag,
     org.directory_customer_id = $DirectoryCustomerId,
-    org.is_cloudanix_generated = $IsCloudanixGenerated
+    org.is_cloudanix_generated = $IsCloudanixGenerated,
+    org.consolelink = $consolelink
     WITH w, org
     MERGE (w)-[o:OWNER]->(org)
     ON CREATE SET o.firstseen = timestamp()
@@ -115,17 +118,23 @@ def load_gcp_organizations(neo4j_session: neo4j.Session, data: List[Dict], gcp_u
             LifecycleState=org_object.get('lifecycleState', None),
             DirectoryCustomerId=org_object.get('owner', {}).get('directoryCustomerId', None),
             IsCloudanixGenerated=org_object.get('IsCloudanixGenerated', None),
+            consolelink=gcp_console_link.get_console_link(
+                resource_name='organization', organization_id=org_object['name'],
+            ),
             gcp_update_tag=gcp_update_tag,
         )
 
 
 @timeit
-def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_tag: int) -> None:
+def load_gcp_folders(
+    neo4j_session: neo4j.Session, data: List[Dict], gcp_update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
     Ingest the GCP folders to Neo4j
     :param neo4j_session: The Neo4j session
     :param data: List of folders; output from crm.get_gcp_folders()
     :param gcp_update_tag: The timestamp value to set our new Neo4j nodes with
+    :param common_job_parameters: The sync's WORKSPACE_ID; a folder hangs only off an organization it owns
     :return: Nothing
     """
     for folder in data:
@@ -133,7 +142,8 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
         # Parents of folders can only be GCPOrganizations or other folders, see
         # https://cloud.google.com/resource-manager/docs/cloud-platform-resource-hierarchy
         if folder['parent'].startswith("organizations"):
-            query = "MATCH (parent:GCPOrganization{id: $ParentId})"
+            # The parent id is API data: reach the organization from the syncing workspace.
+            query = "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(parent:GCPOrganization{id: $ParentId})"
         elif folder['parent'].startswith("folders"):
             query = """
             MERGE (parent:GCPFolder{id: $ParentId})
@@ -148,6 +158,7 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
         folder.displayname = $DisplayName,
         folder.lifecyclestate = $LifecycleState,
         folder.parent_id = $ParentId,
+        folder.consolelink = $consolelink,
         folder.lastupdated = $gcp_update_tag
         WITH parent, folder
         MERGE (parent)-[r:RESOURCE]->(folder)
@@ -158,10 +169,12 @@ def load_gcp_folders(neo4j_session: neo4j.Session, data: List[Dict], gcp_update_
             neo4j_session,
             query,
             ParentId=folder['parent'],
+            WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
             FolderName=folder['name'],
             DisplayName=folder.get('displayName', None),
             region="global",
             LifecycleState=folder.get('lifecycleState', None),
+            consolelink=gcp_console_link.get_console_link(resource_name='folder', folder_id=folder['name']),
             gcp_update_tag=gcp_update_tag,
         )
 
@@ -190,11 +203,22 @@ def load_gcp_projects(
     project.displayname = $DisplayName,
     project.lifecyclestate = $LifecycleState,
     project.accountid = $WorkspaceAccountId,
+    project.consolelink = $consolelink,
     project.lastupdated = $gcp_update_tag
     WITH w, project
     MERGE (w)-[o:OWNER]->(project)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $gcp_update_tag
+    // Workspaces that sync this project, as a set. Several workspaces can own the same org node, so the
+    // workspace -> org -> project path can't tell whose project it is. A list, not a workspace -> project
+    // OWNER edge: gcp_crm_project_cleanup and gcp_logging_metrics_cleanup already walk that edge (never
+    // written today) and would start deleting. Ids of workspaces that no longer own the org are dropped.
+    WITH project
+    SET project.workspace_ids = [
+        ws IN coalesce(project.workspace_ids, [])
+        WHERE ws <> $WorkspaceId
+        AND EXISTS { MATCH (:CloudanixWorkspace{id: ws})-[:OWNER]->(:GCPOrganization)-[:OWNER]->(project) }
+    ] + $WorkspaceId
     """
 
     for project in data:
@@ -210,6 +234,8 @@ def load_gcp_projects(
             LifecycleState=project.get('lifecycleState', None),
             region="global",
             WorkspaceAccountId=project['projectId'],
+            WorkspaceId=common_job_parameters['WORKSPACE_ID'],
+            consolelink=gcp_console_link.get_console_link(resource_name='project', project_id=project['projectId']),
             gcp_update_tag=gcp_update_tag,
         )
         if project.get('parent'):
@@ -334,7 +360,7 @@ def sync_gcp_folders(
     tic = time.perf_counter()
     logger.debug("Syncing GCP folders")
     folders = get_gcp_folders(crm_v2)
-    load_gcp_folders(neo4j_session, folders, gcp_update_tag)
+    load_gcp_folders(neo4j_session, folders, gcp_update_tag, common_job_parameters)
     cleanup_gcp_folders(neo4j_session, common_job_parameters)
     logger.info(f"Time to process GCP CRM folders ({len(folders)} folders): {time.perf_counter() - tic:0.4f} seconds")
 

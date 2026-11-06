@@ -5,12 +5,15 @@ from typing import Dict
 import boto3
 import botocore.exceptions
 import neo4j
+from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import run_write_query
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+aws_console_link = AWSLinker()
 
 
 def get_account_from_arn(arn: str) -> str:
@@ -114,6 +117,7 @@ def load_aws_accounts(
     SET org.lastupdated = $UPDATE_TAG,
     org.organizationId = $rawOrganizationId,
     org.arn = $organizationArn,
+    org.consolelink = $consolelink,
     org.masterAccountArn = $masterAccountArn,
     org.masterAccountId = $masterAccountId,
     org.masterAccountEmail = $masterAccountEmail,
@@ -140,8 +144,9 @@ def load_aws_accounts(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UPDATE_TAG;
     """
+    partition = get_partition_from_params(common_job_parameters)
     for account_name, account_id in aws_accounts.items():
-        root_arn = f'arn:aws:iam::{account_id}:root'
+        root_arn = f'arn:{partition}:iam::{account_id}:root'
 
         if not organization.get("IsCloudanixGenerated"):
             org_id = f"{common_job_parameters['WORKSPACE_ID']}/{organization.get('Id')}"
@@ -162,6 +167,7 @@ def load_aws_accounts(
             rawOrganizationId=organization.get("Id"),
             isSystemGenerated=organization.get("IsSystemGenerated", None),
             organizationArn=organization.get("Arn", None),
+            consolelink=aws_console_link.get_console_link(arn=organization["Arn"]) if organization.get("Arn") else None,
             masterAccountArn=organization.get("MasterAccountArn", None),
             masterAccountId=organization.get("MasterAccountId", None),
             masterAccountEmail=organization.get("MasterAccountEmail", None),

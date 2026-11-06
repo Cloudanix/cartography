@@ -8,6 +8,7 @@ import neo4j
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
 from .common import cleanse_string
+from .common import get_console_link
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -41,6 +42,7 @@ def transform_projects(workspace_projects: List[Dict], workspace: str) -> List[D
             "project": cleanse_string(project["slug"]),
         }
         project['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="project")
+        project['consolelink'] = get_console_link("project", workspace=workspace, project_key=project["key"])
 
     return workspace_projects
 
@@ -67,10 +69,11 @@ def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_
     pro.owner=project.owner.display_name,
     pro.type=project.type,
     pro.updated_on=project.updated_on,
+    pro.consolelink = project.consolelink,
     pro.lastupdated = $UpdateTag
 
     WITH pro,project
-    MATCH (work:BitbucketWorkspace{id:project.workspace.uuid})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(work:BitbucketWorkspace{id:project.workspace.uuid})
     merge (work)-[o:RESOURCE]->(pro)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
@@ -80,6 +83,7 @@ def _load_projects_data(tx: neo4j.Transaction, project_data: List[Dict], common_
         ingest_workspace,
         projectData=project_data,
         UpdateTag=common_job_parameters['UPDATE_TAG'],
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
     )
 
 

@@ -19,6 +19,7 @@ ELB = {
     "region": "us-east-1",
     "Subnets": ["subnet-1", "subnet-2"],
     "SecurityGroups": ["sg-1"],
+    "VPCId": "vpc-1",
     "SourceSecurityGroup": {"GroupName": "default"},
     "Instances": [{"InstanceId": "i-1"}, {"InstanceId": "i-2"}],
     "ListenerDescriptions": [{"Listener": {"LoadBalancerPort": 80, "Protocol": "HTTP"}}],
@@ -29,7 +30,7 @@ class TestLoadLoadBalancers:
     def test_batched_writes(self):
         session = MagicMock()
 
-        load_balancers.load_load_balancers(session, [ELB, ELB], TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        load_balancers.load_load_balancers(session, [ELB, ELB], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws-1")
 
         # lbs + subnets + security groups + source security groups + instances +
         # listeners = 6 writes total (was ~7+ writes PER load balancer).
@@ -38,9 +39,17 @@ class TestLoadLoadBalancers:
             session.execute_write.call_args_list
 
         assert len(lb_call.kwargs["DictList"]) == 2
-        assert lb_call.kwargs["DictList"][0]["arn"].endswith(f"loadbalancer/{ELB['DNSName']}")
+        # Real classic ELB ARN (by name), the key evaluator findings use; the node id stays the DNS name.
+        assert lb_call.kwargs["DictList"][0]["arn"] == (
+            f"arn:aws:elasticloadbalancing:us-east-1:{TEST_ACCOUNT_ID}:loadbalancer/{ELB['LoadBalancerName']}"
+        )
+        assert lb_call.kwargs["DictList"][0]["id"] == ELB["DNSName"]
+        assert lb_call.kwargs["DictList"][0]["consolelink"].startswith("https://us-east-1.console.aws.amazon.com/ec2/")
+        assert "elb.consolelink = item.consolelink" in lb_call.args[1]
         assert len(subnet_call.kwargs["DictList"]) == 4  # 2 subnets x 2 lbs
         assert len(sg_call.kwargs["DictList"]) == 2
+        assert subnet_call.kwargs["WORKSPACE_ID"] == sg_call.kwargs["WORKSPACE_ID"] == "ws-1"
+        assert all(c.kwargs["AWS_ACCOUNT_ID"] == TEST_ACCOUNT_ID for c in session.execute_write.call_args_list)
         assert source_sg_call.kwargs["DictList"][0]["group_name"] == "default"
         assert len(instance_call.kwargs["DictList"]) == 4
         listener_rows = listener_call.kwargs["DictList"]
@@ -49,7 +58,7 @@ class TestLoadLoadBalancers:
 
     def test_empty_data_writes_nothing(self):
         session = MagicMock()
-        load_balancers.load_load_balancers(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        load_balancers.load_load_balancers(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws-1")
         session.execute_write.assert_not_called()
 
     def test_missing_optional_fields_produce_no_rows(self):
@@ -63,7 +72,7 @@ class TestLoadLoadBalancers:
             "ListenerDescriptions": [],
         }
 
-        load_balancers.load_load_balancers(session, [bare], TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+        load_balancers.load_load_balancers(session, [bare], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "ws-1")
 
         # only the lb node batch writes; empty row lists short-circuit
         assert session.execute_write.call_count == 1
@@ -82,8 +91,10 @@ ELBV2 = {
     "SecurityGroups": ["sg-1"],
     "Listeners": [{"ListenerArn": "arn:listener/1", "Port": 443, "Protocol": "HTTPS"}],
     "TargetGroups": [
-        {"TargetType": "instance", "TargetGroupArn": "arn:tg/1", "Port": 8080, "Protocol": "HTTP",
-         "Targets": ["i-1", "i-2"]},
+        {
+            "TargetType": "instance", "TargetGroupArn": "arn:tg/1", "Port": 8080, "Protocol": "HTTP",
+            "Targets": ["i-1", "i-2"],
+        },
         {"TargetType": "ip", "TargetGroupArn": "arn:tg/2", "Targets": ["10.0.0.1"]},
     ],
 }
@@ -93,15 +104,22 @@ class TestLoadLoadBalancerV2s:
     def test_batched_writes(self):
         session = MagicMock()
 
-        load_balancer_v2s.load_load_balancer_v2s(session, [ELBV2, ELBV2], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1")
+        load_balancer_v2s.load_load_balancer_v2s(
+            session, [ELBV2, ELBV2], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1", "ws",
+        )
 
         # lbs + subnets + security groups + listeners + target instances = 5 writes total
         assert session.execute_write.call_count == 5
         lb_call, subnet_call, sg_call, listener_call, instance_call = session.execute_write.call_args_list
         assert len(lb_call.kwargs["DictList"]) == 2
+        # all target groups, not only instance ones: Lambda exposure resolves ALB triggers by them
+        assert lb_call.kwargs["DictList"][0]["target_group_arns"] == ["arn:tg/1", "arn:tg/2"]
+        assert "elbv2.target_group_arns = item.target_group_arns" in lb_call.args[1]
         assert len(subnet_call.kwargs["DictList"]) == 4
         assert len(sg_call.kwargs["DictList"]) == 2
         assert len(listener_call.kwargs["DictList"]) == 2
+        # listeners have no console page; they reuse their load balancer's link
+        assert "l.consolelink = elbv2.consolelink" in listener_call.args[1]
         # non-instance target groups are skipped, exactly as before
         instance_rows = instance_call.kwargs["DictList"]
         assert len(instance_rows) == 4
@@ -111,7 +129,9 @@ class TestLoadLoadBalancerV2s:
     def test_per_lb_helpers_still_work(self):
         session = MagicMock()
 
-        load_balancer_v2s.load_load_balancer_v2_listeners(session, "lb-1", ELBV2["Listeners"], TEST_UPDATE_TAG)
+        load_balancer_v2s.load_load_balancer_v2_listeners(
+            session, "lb-1", ELBV2["Listeners"], TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
+        )
 
         assert session.execute_write.call_count == 1
         rows = session.execute_write.call_args.kwargs["DictList"]
@@ -119,5 +139,5 @@ class TestLoadLoadBalancerV2s:
 
     def test_empty_data_writes_nothing(self):
         session = MagicMock()
-        load_balancer_v2s.load_load_balancer_v2s(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1")
+        load_balancer_v2s.load_load_balancer_v2s(session, [], TEST_ACCOUNT_ID, TEST_UPDATE_TAG, "us-east-1", "ws")
         session.execute_write.assert_not_called()

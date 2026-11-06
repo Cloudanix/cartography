@@ -1,4 +1,5 @@
 import configparser
+import json
 import logging
 import time
 from datetime import datetime
@@ -17,9 +18,13 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from cartography.client.core.tx import load_graph_data
+from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import describe_request_error
-from cartography.intel.github.util import fetch_all
+from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_org_node_id
 from cartography.intel.github.util import get_retry_delay_seconds
+from cartography.intel.github.util import get_web_base_url
+from cartography.intel.github.util import handle_rate_limit_sleep
 from cartography.intel.github.util import is_retryable_request_error
 from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
@@ -118,6 +123,41 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
 # Note: In the above query, `HEAD` references the default branch.
 # See https://stackoverflow.com/questions/48935381/github-graphql-api-default-branch-in-repository
 
+# Branches of one repo, paginated. The repo listing itself comes from REST (see `get`); this
+# only adds what REST lacks: every branch with its head commit date, and the default branch ref id.
+GITHUB_REPO_BRANCHES_PAGINATED_GRAPHQL = """
+    query($owner: String!, $name: String!, $cursor: String) {
+        repository(owner: $owner, name: $name) {
+            defaultBranchRef {
+                name
+                id
+                target {
+                    ... on Commit {
+                        committedDate
+                    }
+                }
+            }
+            refs(first: 100, refPrefix: "refs/heads/", after: $cursor) {
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
+                edges {
+                    node {
+                        name
+                        id
+                        target {
+                            ... on Commit {
+                                committedDate
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+
 
 @timeit
 def get(token: str, api_url: str, organization: str) -> List[Dict]:
@@ -167,14 +207,93 @@ def get(token: str, api_url: str, organization: str) -> List[Dict]:
             if ((rest_repo.get("owner") or {}).get("login") or "").lower() == organization.lower()
         ]
 
-    return [_normalize_rest_repo(rest_repo) for rest_repo in rest_repos]
+    normalized = [_normalize_rest_repo(rest_repo) for rest_repo in rest_repos]
+    for repo in normalized:
+        _attach_branches(token, api_url, repo)
+    return normalized
 
 
-def transform(repos_json: List[Dict]) -> Dict:
+def _attach_branches(token: str, api_url: str, repo: Dict[str, Any]) -> None:
+    """
+    Fill `refs` and the default branch ref id on a REST-normalized repo, the shape
+    `_transform_branches` and `_transform_repo_objects` read. The REST repo listing carries
+    neither, so without this no GitHubBranch is linked to the repo (Bitbucket, GitLab and
+    Azure DevOps fetch their branches the same way, per repo). A failed fetch is logged and the
+    repo is synced without branches; one repo's branch list must not fail the org sync.
+    """
+    owner = (repo.get("owner") or {}).get("login")
+    if not owner:
+        return
+
+    try:
+        branch_refs = get_repo_branch_refs(token, api_url, owner, repo["name"])
+    except requests.exceptions.RequestException as err:
+        logger.warning(
+            f"GitHub branch listing failed for repo `{owner}/{repo['name']}` "
+            f"({describe_request_error(err)}); syncing it without branches.",
+        )
+        return
+    if branch_refs is None:
+        return
+
+    default_ref = branch_refs["defaultBranchRef"]
+    edges = branch_refs["edges"]
+    # The default branch is always kept by _transform_branches, so make sure it is listed.
+    if default_ref and all(edge["node"]["name"] != default_ref["name"] for edge in edges):
+        edges.append({"node": default_ref})
+    if default_ref:
+        repo["defaultBranchRef"] = {"name": default_ref["name"], "id": default_ref["id"]}
+    repo["refs"] = {"edges": edges}
+
+
+def get_repo_branch_refs(token: str, api_url: str, owner: str, name: str) -> Optional[Dict[str, Any]]:
+    """
+    List every branch of one repo with its head commit date, via GitHub GraphQL.
+    The REST branches endpoint has no commit date, which the 180-day activity filter in
+    `_transform_branches` needs.
+    ponytail: no page cap, same as Bitbucket's get_branches; cap it if a repo with thousands of
+    branches makes the sync slow.
+    :return: {"defaultBranchRef": ref or None, "edges": [{"node": ref}, ...]}, or None when GitHub
+    does not return the repository (e.g. access revoked mid-sync).
+    """
+    handle_rate_limit_sleep(token)
+    edges: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    while True:
+        repository = _fetch_branch_page(token, api_url, owner, name, cursor)
+        if repository is None:
+            return None
+
+        refs = repository.get("refs") or {}
+        edges.extend(refs.get("edges") or [])
+        page_info = refs.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            return {"defaultBranchRef": repository.get("defaultBranchRef"), "edges": edges}
+        cursor = page_info.get("endCursor")
+
+
+def _fetch_branch_page(
+    token: str, api_url: str, owner: str, name: str, cursor: Optional[str], retries: int = 5,
+) -> Optional[Dict[str, Any]]:
+    variables = json.dumps({"owner": owner, "name": name, "cursor": cursor})
+    attempt = 0
+    while True:
+        try:
+            response = call_github_api(GITHUB_REPO_BRANCHES_PAGINATED_GRAPHQL, variables, token, api_url)
+            return (response.get("data") or {}).get("repository")
+        except requests.exceptions.RequestException as err:
+            attempt += 1
+            if attempt >= retries or not is_retryable_request_error(err):
+                raise
+            time.sleep(get_retry_delay_seconds(err, attempt))
+
+
+def transform(repos_json: List[Dict], web_base_url: Optional[str] = None) -> Dict:
     """
     Parses the JSON returned from GitHub API to create data for graph ingestion
     :param repos_json: the list of individual repository nodes from GitHub. See tests.data.github.repos.GET_REPOS for
     data shape.
+    :param web_base_url: GitHub web host for console links (GitHub Enterprise); None means github.com.
     :return: Dict containing the repos, repo->language mapping, owners->repo mapping, outside collaborators->repo
     mapping, and Python requirements files (if any) in a repo.
     """
@@ -193,10 +312,10 @@ def transform(repos_json: List[Dict]) -> Dict:
     transformed_branches: List[Dict] = []
     for repo_object in repos_json:
         _transform_repo_languages(repo_object["url"], repo_object, transformed_repo_languages)
-        _transform_repo_objects(repo_object, transformed_repo_list)
-        _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners)
+        _transform_repo_objects(repo_object, transformed_repo_list, web_base_url)
+        _transform_repo_owners(repo_object["owner"]["url"], repo_object, transformed_repo_owners, web_base_url)
         _transform_collaborators(repo_object.get("collaborators"), repo_object["url"], transformed_collaborators)
-        _transform_branches(repo_object["url"], repo_object, transformed_branches)
+        _transform_branches(repo_object["url"], repo_object, transformed_branches, web_base_url)
         # _transform_requirements_txt(repo_object["requirements"], repo_object["url"], transformed_requirements_files)
         # _transform_setup_cfg_requirements(repo_object["setupCfg"], repo_object["url"], transformed_requirements_files)
 
@@ -240,7 +359,9 @@ def transform(repos_json: List[Dict]) -> Dict:
     return results
 
 
-def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Dict]) -> None:
+def _transform_branches(
+    repo_url: str, repo: Dict, transformed_branches: List[Dict], web_base_url: Optional[str] = None,
+) -> None:
     """
     Transform branch data and filter to include only:
     - Branches active in the last 180 days
@@ -251,12 +372,16 @@ def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Di
 
     default_branch = repo.get("defaultBranchRef", {}).get("name") if repo.get("defaultBranchRef") else None
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
+    owner = (repo.get("owner") or {}).get("login")
 
     for edge in (repo["refs"].get("edges") or []):
         node = edge["node"]
         branch_name = node["name"]
         target = node.get("target")
         committed_date_str = target.get("committedDate") if target else None
+        consolelink = get_console_link(
+            "branch", base_url=web_base_url, owner=owner, repo=repo.get("name"), branch=branch_name,
+        )
 
         # Always include default branch
         if branch_name == default_branch:
@@ -265,6 +390,7 @@ def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Di
                 "branch_id": f"{repo_url}:{node['id']}",
                 "name": branch_name,
                 "last_commit_timestamp": committed_date_str,
+                "consolelink": consolelink,
             })
             continue
 
@@ -277,6 +403,7 @@ def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Di
                     "branch_id": f"{repo_url}:{node['id']}",
                     "name": branch_name,
                     "last_commit_timestamp": committed_date_str,
+                    "consolelink": consolelink,
                 })
         else:
             # No date available, include the branch
@@ -285,6 +412,7 @@ def _transform_branches(repo_url: str, repo: Dict, transformed_branches: List[Di
                 "branch_id": f"{repo_url}:{node['id']}",
                 "name": branch_name,
                 "last_commit_timestamp": committed_date_str,
+                "consolelink": consolelink,
             })
 
 
@@ -303,12 +431,15 @@ def _create_git_url_from_ssh_url(ssh_url: str) -> str:
     return ssh_url.replace("/", ":").replace("git@", "git://")
 
 
-def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) -> None:
+def _transform_repo_objects(
+    input_repo_object: Dict, out_repo_list: List[Dict], web_base_url: Optional[str] = None,
+) -> None:
     """
     Performs data transforms including creating necessary IDs for unique nodes in the graph related to GitHub repos,
     their default branches, and languages.
     :param input_repo_object: A repository node from GitHub; see tests.data.github.repos.GET_REPOS for data shape.
     :param out_repo_list: Out-param to append transformed repos to.
+    :param web_base_url: GitHub web host for the console link; None means github.com.
     :return: Nothing
     """
     # Create a unique ID for a GitHubBranch node representing the default branch of this repo object.
@@ -350,22 +481,32 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
             "sshurl": ssh_url,
             "updatedat": input_repo_object["updatedAt"],
             "pushedat": input_repo_object["pushedAt"],
+            "consolelink": get_console_link(
+                "repository",
+                base_url=web_base_url,
+                owner=(input_repo_object.get("owner") or {}).get("login"),
+                repo=input_repo_object["name"],
+            ),
         },
     )
 
 
-def _transform_repo_owners(owner_id: str, repo: Dict, repo_owners: List[Dict]) -> None:
+def _transform_repo_owners(
+    owner_id: str, repo: Dict, repo_owners: List[Dict], web_base_url: Optional[str] = None,
+) -> None:
     """
     Helper function to transform repo owners.
     :param owner_id: The URL of the owner object (either of type Organization or User).
     :param repo: The repo object; see tests.data.github.repos.GET_REPOS for data shape.
     :param repo_owners: Output array to append transformed results to.
+    :param web_base_url: GitHub web host the repo lives on; None means github.com.
     :return: Nothing.
     """
     repo_owners.append(
         {
             "repo_id": repo["url"],
             "owner": repo["owner"]["login"],
+            "owner_node_id": get_org_node_id(web_base_url, repo["owner"]["login"]),
             "owner_id": owner_id,
             "type": repo["owner"]["__typename"],
         },
@@ -390,7 +531,7 @@ def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Di
             )
 
 
-def _transform_collaborators(collaborators: Dict, repo_url: str, transformed_collaborators: Dict) -> None:
+def _transform_collaborators(collaborators: Optional[Dict], repo_url: str, transformed_collaborators: Dict) -> None:
     """
     Performs data adjustments for outside collaborators in a GitHub repo.
     Output data shape = [{permission, repo_url, url (the user's URL), login, name}, ...]
@@ -564,6 +705,7 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
     repo.updatedat = repository.updatedat,
     repo.last_activity_at = repository.last_activity_at,
     repo.last_activity_at_timestamp = repository.last_activity_at_timestamp,
+    repo.consolelink = repository.consolelink,
     repo.lastupdated = $UpdateTag
 
     WITH repo
@@ -586,12 +728,15 @@ def load_github_repos(neo4j_session: neo4j.Session, update_tag: int, repo_data: 
 
 
 @timeit
-def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_languages: List[Dict]) -> None:
+def load_github_languages(
+    neo4j_session: neo4j.Session, update_tag: int, repo_languages: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the relationships for repo languages
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param repo_languages: list of language to repo mappings
+    :param workspace_id: the syncing Cloudanix workspace; a language links only to a repo of its orgs
     :return: Nothing
     """
     ingest_languages = """
@@ -603,7 +748,8 @@ def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_la
         SET pl.lastupdated = $UpdateTag
         WITH pl, lang
 
-        MATCH (repo:GitHubRepository{id: lang.repo_id})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
+            -[:RESOURCE]->(repo:GitHubRepository{id: lang.repo_id})
         MERGE (pl)<-[r:LANGUAGE]-(repo)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $UpdateTag"""
@@ -613,22 +759,28 @@ def load_github_languages(neo4j_session: neo4j.Session, update_tag: int, repo_la
         ingest_languages,
         repo_languages,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
 @timeit
-def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owners: List[Dict]) -> None:
+def load_github_owners(
+    neo4j_session: neo4j.Session, update_tag: int, repo_owners: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the relationships for repo owners
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param repo_owners: list of owner to repo mappings
+    :param workspace_id: the syncing Cloudanix workspace; a repo is claimed only by an org this workspace owns
+        (organization.sync creates it first), never by an org node of another workspace
     :return: Nothing
     """
+    # The repo was MERGEd by load_github_repos in this sync (its id is the host-qualified repo url); this RESOURCE
+    # edge is its tenant claim, so it is the one lookup that cannot go through the org.
     ingest_owner_template = Template("""
         UNWIND $DictList AS item
-        MERGE (node:$account_type{id: item.owner})
-        ON CREATE SET node.firstseen = timestamp()
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(node:$account_type{id: item.owner_node_id})
         SET node.username = item.owner,
         node.lastupdated = $UpdateTag
         WITH node, item
@@ -644,7 +796,7 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
 
     for owner_type, type_label in account_type.items():
         rows = [
-            {"owner": owner["owner"], "repo_id": owner["repo_id"]}
+            {"owner": owner["owner"], "owner_node_id": owner["owner_node_id"], "repo_id": owner["repo_id"]}
             for owner in repo_owners
             if owner["type"] == owner_type
         ]
@@ -653,11 +805,12 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
             ingest_owner_template.safe_substitute(account_type=type_label),
             rows,
             UpdateTag=update_tag,
+            WORKSPACE_ID=workspace_id,
         )
 
 
 @timeit
-def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborators: Dict) -> None:
+def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborators: Dict, workspace_id: str) -> None:
     query = Template("""
     UNWIND $DictList as user
 
@@ -665,16 +818,18 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
     ON CREATE SET u.firstseen = timestamp()
     SET u.fullname = user.name,
     u.username = user.login,
-    u.permission = user.permission,
     u.email = user.email,
     u.company = user.company,
     u.lastupdated = $UpdateTag
+    // The user node is shared across repos and tenants: the per-repo permission goes on the collaborator edge.
+    REMOVE u.permission
 
     WITH u, user
-    MATCH (repo:GitHubRepository{id: user.repo_url})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
+        -[:RESOURCE]->(repo:GitHubRepository{id: user.repo_url})
     MERGE (repo)<-[o:$rel_label]-(u)
     ON CREATE SET o.firstseen = timestamp()
-    SET o.lastupdated = $UpdateTag
+    SET o.lastupdated = $UpdateTag, o.permission = user.permission
     """)
     for collab_type in collaborators.keys():
         relationship_label = f"OUTSIDE_COLLAB_{collab_type}"
@@ -683,26 +838,33 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
             query.safe_substitute(rel_label=relationship_label),
             collaborators[collab_type],
             UpdateTag=update_tag,
+            WORKSPACE_ID=workspace_id,
         )
 
 
 @timeit
 def load(neo4j_session: neo4j.Session, common_job_parameters: Dict, repo_data: Dict) -> None:
-    load_github_repos(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repos"])
-    load_github_branches(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["branches"])
-    load_github_owners(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_owners"])
-    load_github_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_languages"])
-    load_collaborators(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["repo_collaborators"])
-    load_python_requirements(neo4j_session, common_job_parameters["UPDATE_TAG"], repo_data["python_requirements"])
+    update_tag = common_job_parameters["UPDATE_TAG"]
+    workspace_id = common_job_parameters["WORKSPACE_ID"]
+    load_github_repos(neo4j_session, update_tag, repo_data["repos"])
+    # Owners first: the org's RESOURCE edge is what every later repo lookup is anchored through.
+    load_github_owners(neo4j_session, update_tag, repo_data["repo_owners"], workspace_id)
+    load_github_branches(neo4j_session, update_tag, repo_data["branches"], workspace_id)
+    load_github_languages(neo4j_session, update_tag, repo_data["repo_languages"], workspace_id)
+    load_collaborators(neo4j_session, update_tag, repo_data["repo_collaborators"], workspace_id)
+    load_python_requirements(neo4j_session, update_tag, repo_data["python_requirements"], workspace_id)
 
 
 @timeit
-def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_data: List[Dict]) -> None:
+def load_github_branches(
+    neo4j_session: neo4j.Session, update_tag: int, branch_data: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the GitHub branch information
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param branch_data: branch data objects
+    :param workspace_id: the syncing Cloudanix workspace; a branch links only to a repo of its orgs
     :return: None
     """
     ingest_branches = """
@@ -711,10 +873,12 @@ def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_d
     ON CREATE SET branch.firstseen = timestamp()
     SET branch.name = branch_info.name,
     branch.last_commit_timestamp = branch_info.last_commit_timestamp,
+    branch.consolelink = branch_info.consolelink,
     branch.lastupdated = $UpdateTag
 
     WITH branch, branch_info
-    MATCH (repo:GitHubRepository{id: branch_info.repo_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
+        -[:RESOURCE]->(repo:GitHubRepository{id: branch_info.repo_id})
     MERGE (repo)-[r:BRANCH]->(branch)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -724,11 +888,14 @@ def load_github_branches(neo4j_session: neo4j.Session, update_tag: int, branch_d
         ingest_branches,
         branch_data,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
 @timeit
-def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requirements_objects: List[Dict]) -> None:
+def load_python_requirements(
+    neo4j_session: neo4j.Session, update_tag: int, requirements_objects: List[Dict], workspace_id: str,
+) -> None:
     query = """
     UNWIND $DictList AS req
         MERGE (lib:PythonLibrary:Dependency{id: req.id})
@@ -738,7 +905,8 @@ def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requ
         lib.version = req.version
 
         WITH lib, req
-        MATCH (repo:GitHubRepository{id: req.repo_url})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GitHubOrganization)
+            -[:RESOURCE]->(repo:GitHubRepository{id: req.repo_url})
         MERGE (repo)-[r:REQUIRES]->(lib)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $UpdateTag,
@@ -749,6 +917,7 @@ def load_python_requirements(neo4j_session: neo4j.Session, update_tag: int, requ
         query,
         requirements_objects,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
@@ -974,10 +1143,14 @@ def sync(
     # repos_list = get_org_repos(organization, github_api_key)
     repos_json = get(github_api_key, github_url, organization)
 
-    repo_data = transform(repos_json)
+    repo_data = transform(repos_json, get_web_base_url(github_url))
     load(neo4j_session, common_job_parameters, repo_data)
 
     run_cleanup_job("github_repos_cleanup.json", neo4j_session, common_job_parameters)
+    # ProgrammingLanguage / PythonLibrary are catalog nodes every tenant's repos share, so the tenant cleanup above
+    # removes only this org's stale edges; this tenant-independent sweep deletes a catalog node once nothing links
+    # to it. Plain DELETE: a node another sync is linking at that moment fails this sweep, never loses the edge.
+    run_cleanup_job("github_repos_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process GitHub repositories: {toc - tic:0.4f} seconds")

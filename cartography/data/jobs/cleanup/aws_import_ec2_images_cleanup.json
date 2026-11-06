@@ -1,11 +1,7 @@
 {
 	"statements": [
 		{
-			"query": "MATCH (n:EC2Image)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100
-		},
-		{
+			"__comment": "An account's cleanup removes only its own stale edges. A legacy EC2Image node from before per-account image ids can still be RESOURCE-linked from other tenants, and its lastupdated is whichever tenant synced last, so a node-level delete here would drop it from their inventory. aws_ec2_image_orphan_cleanup.json removes nodes no edge refers to.",
 			"query": "MATCH (:EC2Image)<-[r:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100

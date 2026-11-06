@@ -159,6 +159,7 @@ def test_load_ecr_repository_images(neo4j_session):
         repo_images_list,
 
         TEST_UPDATE_TAG,
+        TEST_ACCOUNT_ID,
     )
 
     # Tuples of form (repo ARN, image tag)
@@ -197,6 +198,7 @@ def test_load_ecr_images(neo4j_session):
         neo4j_session,
         repo_images_list,
         TEST_UPDATE_TAG,
+        TEST_ACCOUNT_ID,
     )
 
     # Tuples of form (repo image ARN, image SHA)

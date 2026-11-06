@@ -1,7 +1,22 @@
+from typing import Optional
 from unittest.mock import Mock
 from unittest.mock import patch
 
+import pytest
+import requests
+
 from cartography.intel.github import repos
+
+
+# The real per-repo branch fetch, captured before the autouse fixture below stubs it out.
+REAL_GET_REPO_BRANCH_REFS = repos.get_repo_branch_refs
+
+
+@pytest.fixture(autouse=True)
+def mock_branch_refs():
+    """`get` lists each repo's branches over GraphQL; keep every test offline by default."""
+    with patch("cartography.intel.github.repos.get_repo_branch_refs", return_value=None) as mock:
+        yield mock
 
 
 @patch("cartography.intel.github.repos.get_org_repos")
@@ -207,6 +222,97 @@ def test_get_installation_repos_returns_none_when_the_token_is_not_an_installati
     mock_requests_get.return_value = Mock(status_code=403)
 
     assert repos.get_installation_repos("token", "https://api.github.com/graphql") is None
+
+
+def _ref(name: str, committed: str = "2099-01-01T00:00:00Z") -> dict:
+    return {"name": name, "id": f"ref-{name}", "target": {"committedDate": committed}}
+
+
+@patch("cartography.intel.github.repos.get_installation_repos")
+def test_get_links_every_branch_and_the_default_branch_id(
+    mock_get_installation_repos: Mock,
+    mock_branch_refs: Mock,
+) -> None:
+    mock_get_installation_repos.return_value = [_rest_repo("granted")]
+    mock_branch_refs.return_value = {
+        "defaultBranchRef": _ref("main"),
+        "edges": [{"node": _ref("main")}, {"node": _ref("feature/login")}],
+    }
+
+    result = repos.transform(repos.get("token", "https://api.github.com/graphql", "example-org"))
+
+    url = "https://github.com/example-org/granted"
+    mock_branch_refs.assert_called_once_with("token", "https://api.github.com/graphql", "example-org", "granted")
+    assert result["repos"][0]["defaultbranchid"] == f"{url}:ref-main"
+    assert result["repos"][0]["last_activity_at"] == "2099-01-01T00:00:00Z"
+    assert [(b["repo_id"], b["name"], b["branch_id"]) for b in result["branches"]] == [
+        (url, "main", f"{url}:ref-main"),
+        (url, "feature/login", f"{url}:ref-feature/login"),
+    ]
+
+
+@patch("cartography.intel.github.repos.get_installation_repos")
+def test_get_keeps_a_stale_default_branch_listed(mock_get_installation_repos: Mock, mock_branch_refs: Mock) -> None:
+    # Default branch outside the page set GitHub returned, and older than the 180-day window.
+    mock_get_installation_repos.return_value = [_rest_repo("granted")]
+    mock_branch_refs.return_value = {
+        "defaultBranchRef": _ref("main", "2020-01-01T00:00:00Z"),
+        "edges": [{"node": _ref("old", "2020-01-01T00:00:00Z")}],
+    }
+
+    result = repos.transform(repos.get("token", "https://api.github.com/graphql", "example-org"))
+
+    assert [b["name"] for b in result["branches"]] == ["main"]
+
+
+@patch("cartography.intel.github.repos.get_installation_repos")
+def test_get_syncs_a_repo_without_branches_when_listing_fails(
+    mock_get_installation_repos: Mock,
+    mock_branch_refs: Mock,
+) -> None:
+    mock_get_installation_repos.return_value = [_rest_repo("granted"), _rest_repo("other")]
+    mock_branch_refs.side_effect = [requests.exceptions.HTTPError("boom"), None]
+
+    result = repos.get("token", "https://api.github.com/graphql", "example-org")
+
+    assert [repo["name"] for repo in result] == ["granted", "other"]
+    assert all("refs" not in repo for repo in result)
+    assert result[0]["defaultBranchRef"] == {"name": "main", "id": None}
+
+
+@patch("cartography.intel.github.repos.handle_rate_limit_sleep")
+@patch("cartography.intel.github.repos.call_github_api")
+def test_get_repo_branch_refs_follows_pagination(mock_call: Mock, mock_sleep: Mock) -> None:
+    def page(names: list, has_next: bool, cursor: Optional[str] = None) -> dict:
+        return {
+            "data": {
+                "repository": {
+                    "defaultBranchRef": _ref("main"),
+                    "refs": {
+                        "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
+                        "edges": [{"node": _ref(n)} for n in names],
+                    },
+                },
+            },
+        }
+
+    mock_call.side_effect = [page(["main", "a"], True, "c1"), page(["b"], False)]
+
+    result = REAL_GET_REPO_BRANCH_REFS("token", "https://api.github.com/graphql", "example-org", "granted")
+
+    assert result is not None
+    assert [edge["node"]["name"] for edge in result["edges"]] == ["main", "a", "b"]
+    assert result["defaultBranchRef"]["id"] == "ref-main"
+    assert '"cursor": "c1"' in mock_call.call_args_list[1].args[1]
+    mock_sleep.assert_called_once_with("token")
+
+
+@patch("cartography.intel.github.repos.handle_rate_limit_sleep")
+@patch("cartography.intel.github.repos.call_github_api")
+def test_get_repo_branch_refs_returns_none_when_github_hides_the_repo(mock_call: Mock, mock_sleep: Mock) -> None:
+    mock_call.return_value = {"data": {"repository": None}, "errors": [{"type": "NOT_FOUND"}]}
+
+    assert REAL_GET_REPO_BRANCH_REFS("token", "https://api.github.com/graphql", "example-org", "gone") is None
 
 
 @patch("cartography.intel.github.repos.requests.get")

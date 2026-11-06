@@ -3,10 +3,14 @@ import time
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from urllib.parse import quote
 
 import neo4j
 
+from cartography.intel.gitlab.common import get_console_link
+from cartography.intel.gitlab.common import get_node_id
+from cartography.intel.gitlab.common import get_web_base_url
 from cartography.intel.gitlab.pagination import paginate_request
 from cartography.util import make_requests_url
 from cartography.util import run_cleanup_job
@@ -54,6 +58,14 @@ def get_namespace(hosted_domain: str, access_token: str, group_id: int) -> Dict:
     return response
 
 
+def transform_groups(groups: List[Dict], hosted_domain: Optional[str]) -> List[Dict]:
+    base_url = get_web_base_url(hosted_domain)
+    for grp in groups:
+        grp["node_id"] = get_node_id(hosted_domain, grp.get("full_path"))
+        grp["consolelink"] = get_console_link("group", base_url=base_url, group_path=grp.get("full_path"))
+    return groups
+
+
 def load_group_data(
     session: neo4j.Session,
     group_data: List[Dict],
@@ -71,7 +83,7 @@ def _load_group_data(
     UNWIND $groups AS grp
     WITH grp
     WHERE grp.id IS NOT NULL AND grp.name IS NOT NULL
-    MERGE (group:GitLabGroup{id: grp.full_path})
+    MERGE (group:GitLabGroup{id: grp.node_id})
     ON CREATE SET
         group.firstseen = timestamp(),
         group.created_at = grp.created_at,
@@ -92,6 +104,7 @@ def _load_group_data(
         group.plan = grp.plan,
         group.trial = grp.trial,
         group.projects_count = grp.projects_count,
+        group.consolelink = grp.consolelink,
         group.lastupdated = $UpdateTag
 
     WITH group
@@ -133,6 +146,7 @@ def sync(
     tic = time.perf_counter()
     logger.info("Syncing Groups at %s.", tic)
 
+    groups = transform_groups(groups, hosted_domain)
     load_group_data(neo4j_session, groups, common_job_parameters)
 
     cleanup(neo4j_session, common_job_parameters)

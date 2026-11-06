@@ -78,6 +78,9 @@ class EC2InstanceNodeProperties(CartographyNodeProperties):
     userdata: PropertyRef = PropertyRef("UserData")
     eksclustername: PropertyRef = PropertyRef("EksClusterName")
     eksnodegroupname: PropertyRef = PropertyRef("EksNodeGroupName")
+    # Instance.Operator: set only for EC2 managed instances (EKS Auto Mode, ECS Managed Instances, ...)
+    operatormanaged: PropertyRef = PropertyRef("OperatorManaged")
+    operatorprincipal: PropertyRef = PropertyRef("OperatorPrincipal")
 
 
 #    roleArn: PropertyRef = PropertyRef('RoleArn')
