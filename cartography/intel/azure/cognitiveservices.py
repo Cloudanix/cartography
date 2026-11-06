@@ -57,7 +57,8 @@ def transform_accounts(accounts: List[Dict], regions: List, common_job_parameter
         encryption = props.get('encryption', {}) or {}
         kv_props = encryption.get('key_vault_properties', {}) or {}
         account['key_source'] = encryption.get('key_source')
-        account['key_vault_uri'] = kv_props.get('key_vault_arm_id') or kv_props.get('key_vault_uri')
+        # KeyVaultProperties carries the vault URL only (no ARM id).
+        account['key_vault_uri'] = kv_props.get('key_vault_uri')
         try:
             account['consolelink'] = azure_console_link.get_console_link(
                 id=account['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
@@ -96,6 +97,7 @@ def _load_accounts_tx(
     i.custom_sub_domain_name = acc.custom_sub_domain_name,
     i.provisioning_state = acc.provisioning_state,
     i.key_source = acc.key_source,
+    i.key_vault_uri = acc.key_vault_uri,
     i.principal_id = acc.principal_id,
     i.resourcegroup = acc.resource_group,
     i.consolelink = acc.consolelink,
@@ -105,10 +107,12 @@ def _load_accounts_tx(
     MERGE (owner)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
-    FOREACH (_ IN CASE WHEN acc.key_vault_uri IS NULL THEN [] ELSE [1] END |
-        MERGE (kv:AzureKeyVault{id: acc.key_vault_uri})
-        ON CREATE SET kv.firstseen = timestamp()
-        SET kv.lastupdated = $update_tag
+    // Link only to this subscription's own vault, matched on its URL (key_vaults.py
+    // stores it as k.uri with a trailing slash); never MERGE the vault.
+    WITH i, acc
+    OPTIONAL MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(kv:AzureKeyVault)
+    WHERE toLower(kv.uri) IN [toLower(acc.key_vault_uri), toLower(acc.key_vault_uri) + '/']
+    FOREACH (_ IN CASE WHEN kv IS NULL THEN [] ELSE [1] END |
         MERGE (i)-[enc:ENCRYPTED_BY]->(kv)
         ON CREATE SET enc.firstseen = timestamp()
         SET enc.lastupdated = $update_tag
