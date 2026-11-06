@@ -63,7 +63,7 @@ Resources = namedtuple(
     "Resources",
     "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
     "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
-    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts serviceusage policyanalyzer",
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts vertexai serviceusage policyanalyzer",
 )
 
 # Mapping of service short names to their full names as in docs. See https://developers.google.com/apis-explorer,
@@ -72,7 +72,7 @@ Services = namedtuple(
     "Services",
     "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
     "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
-    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts serviceusage policyanalyzer",
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts vertexai serviceusage policyanalyzer",
 )
 service_names = Services(
     compute="compute.googleapis.com",
@@ -103,6 +103,7 @@ service_names = Services(
     pubsublite="pubsublite.googleapis.com",
     cloudtasks="cloudtasks.googleapis.com",
     artifacts="artifactregistry.googleapis.com",
+    vertexai="aiplatform.googleapis.com",
     serviceusage="serviceusage.googleapis.com",
     policyanalyzer="policyanalyzer.googleapis.com",
 )
@@ -464,6 +465,18 @@ def _get_pubsublite_resource(credentials: GoogleCredentials) -> Resource:
     return googleapiclient.discovery.build("pubsublite", "v1", credentials=credentials, cache_discovery=False)
 
 
+def _get_vertexai_resource(credentials: GoogleCredentials) -> Resource:
+    """
+    Instantiates a Vertex AI (aiplatform) resource object.
+    See: https://cloud.google.com/vertex-ai/docs/reference/rest
+    Bound to the global host; vertexai.sync builds one locational client per region from its http, since
+    regional resources are only served from {region}-aiplatform.googleapis.com.
+    :param credentials: The GoogleCredentials object
+    :return: An aiplatform v1 resource object
+    """
+    return googleapiclient.discovery.build("aiplatform", "v1", credentials=credentials, cache_discovery=False)
+
+
 def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Resource:
     """
     Create namedtuple of all resource objects necessary for GCP data gathering.
@@ -500,6 +513,7 @@ def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Res
         artifacts=_get_artifactregistry_resource(credentials),
         spanner=_get_spanner_resource(credentials),
         pubsublite=_get_pubsublite_resource(credentials),
+        vertexai=_get_vertexai_resource(credentials),
         policyanalyzer=_get_policyanalyzer_resource(credentials),
     )
 
@@ -866,6 +880,7 @@ _GATEABLE_SERVICE_APIS: Dict[str, str] = {
     "pubsublite": "pubsublite.googleapis.com",
     "cloudtasks": "cloudtasks.googleapis.com",
     "artifacts": "artifactregistry.googleapis.com",
+    "vertexai": "aiplatform.googleapis.com",
 }
 
 

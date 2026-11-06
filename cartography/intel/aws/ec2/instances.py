@@ -18,6 +18,7 @@ from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.graph.job import GraphJob
+from cartography.graph.statement import GraphStatement
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.ssm import get_instance_information
 from cartography.intel.aws.util.arns import DEFAULT_PARTITION
@@ -706,6 +707,28 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
     logger.debug("Running EC2 instance cleanup")
     GraphJob.from_node_schema(EC2ReservationSchema(), common_job_parameters).run(neo4j_session)
     GraphJob.from_node_schema(EC2InstanceSchema(), common_job_parameters).run(neo4j_session)
+
+    # Clean up stale EC2Instance -[:USES]-> AWSRole relationships. These are created by a
+    # raw MERGE in load_ec2_roles() and are not modeled on EC2InstanceSchema, so the
+    # schema-based cleanup above does not cover them.
+    cleanup_uses_query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})
+      -[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:EC2Instance)-[r:USES]->(:AWSRole)
+    WHERE r.lastupdated <> $UPDATE_TAG
+    WITH r LIMIT $LIMIT_SIZE DELETE r RETURN COUNT(*) AS TotalCompleted
+    """
+    # Iterative so a large backlog of stale edges is deleted in bounded transactions.
+    GraphStatement(
+        cleanup_uses_query,
+        {
+            'UPDATE_TAG': common_job_parameters['UPDATE_TAG'],
+            'AWS_ID': common_job_parameters['AWS_ID'],
+            'ORGANIZATION_ID': common_job_parameters['ORGANIZATION_ID'],
+            'WORKSPACE_ID': common_job_parameters['WORKSPACE_ID'],
+        },
+        iterative=True,
+        iterationsize=1000,
+    ).run(neo4j_session)
 
 
 @timeit

@@ -145,3 +145,64 @@ def test_get_models_list_is_newest_first_without_a_time_filter_and_capped(caplog
     assert len(pages_read) == cap // 100 + 1
     warning = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warning) == 1 and ACCOUNT_ID in warning[0] and 'us-east-1' in warning[0]
+
+
+CONFIG_ARN = 'arn:aws:sagemaker:us-east-1:111111111111:endpoint-config/'
+
+
+def test_get_endpoint_configs_list_is_newest_first_and_capped_before_describing(caplog):
+    def pages():
+        page = 0
+        while True:
+            page += 1
+            names = [f'config-{page}-{i}' for i in range(100)]
+            yield {'EndpointConfigs': [{'EndpointConfigName': n, 'EndpointConfigArn': CONFIG_ARN + n} for n in names]}
+
+    session, client = _session(lambda **params: pages())
+    client.describe_endpoint_config.return_value = {'ProductionVariants': [{'ModelName': 'm'}]}
+
+    with caplog.at_level(logging.WARNING):
+        configs = sagemaker.get_endpoint_configs_list(session, ACCOUNT_ID, 'us-east-1')
+
+    client.get_paginator.return_value.paginate.assert_called_once_with(
+        SortBy='CreationTime', SortOrder='Descending', PaginationConfig={'PageSize': 100},
+    )
+    cap = sagemaker.MAX_ENDPOINT_CONFIGS_PER_REGION
+    assert len(configs) == cap
+    # Only the kept configs are described.
+    assert client.describe_endpoint_config.call_count == cap
+    assert configs[0]['ModelNames'] == ['m']
+    warning = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning) == 1 and ACCOUNT_ID in warning[0]
+
+
+def test_get_model_packages_list_bounds_each_listing_and_caps_the_total(caplog):
+    def pages(**params):
+        prefix = params.get('ModelPackageGroupName', 'standalone')
+        page = 0
+        while True:
+            page += 1
+            arns = [f'arn:aws:sagemaker:us-east-1:111111111111:model-package/{prefix}/{page}-{i}' for i in range(100)]
+            yield {'ModelPackageSummaryList': [{'ModelPackageArn': a} for a in arns]}
+
+    session, client = _session(pages)
+
+    with caplog.at_level(logging.WARNING):
+        packages = sagemaker.get_model_packages_list(
+            session, ACCOUNT_ID, 'us-east-1', groups=[{'ModelPackageGroupName': 'g1', 'region': 'us-east-1'}],
+        )
+
+    cap = sagemaker.MAX_MODEL_PACKAGES_PER_REGION
+    assert len(packages) == cap
+    calls = [c.kwargs for c in client.get_paginator.return_value.paginate.call_args_list]
+    assert calls == [
+        {'SortBy': 'CreationTime', 'SortOrder': 'Descending', 'PaginationConfig': {'PageSize': 100}},
+        {
+            'ModelPackageGroupName': 'g1', 'SortBy': 'CreationTime', 'SortOrder': 'Descending',
+            'PaginationConfig': {'PageSize': 100},
+        },
+    ]
+    # ListModelPackageGroups is not called again: the groups listed for the region are passed in.
+    client.get_paginator.assert_called_with('list_model_packages')
+    warning = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning) == 1 and ACCOUNT_ID in warning[0]
