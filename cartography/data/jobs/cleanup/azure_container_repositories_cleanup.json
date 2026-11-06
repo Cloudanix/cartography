@@ -1,9 +1,15 @@
 {
     "statements": [
         {
-            "query": "MATCH (n:AzureContainerRepository)<-[:CONTAINS_REPOSITORY]-(r:AzureContainerRegistry)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "query": "MATCH (n:AzureContainerRepository)<-[:CONTAIN]-(:AzureContainerRegistry)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
             "iterative": true,
             "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AzureTenant{id: $AZURE_TENANT_ID})-[:RESOURCE]->(sub:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID}) MATCH (n:AzureContainerRepository{subscription_id: sub.id}) WHERE n.lastupdated <> $UPDATE_TAG AND NOT (n)<-[:CONTAIN]-(:AzureContainerRegistry) WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100,
+            "__comment": "Repositories no path reaches any more: their registry was deleted by the aks service's registry cleanup, or they were written by the pre-id loader (CONTAINS, no id). An orphan has no path from the subscription, so the statement is gated on the syncing subscription's tenant chain and matches its own nodes by subscription_id, which only this subscription's sync writes (from its sync parameter, never from API data)."
         }
     ],
     "name": "cleanup Azure Container Repository resources"

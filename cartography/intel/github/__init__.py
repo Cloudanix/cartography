@@ -17,6 +17,8 @@ from . import organization
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph.session import Session
+from cartography.intel.github.util import get_org_node_id
+from cartography.intel.github.util import get_web_base_url
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -66,11 +68,15 @@ def concurrent_execution(
 
 
 @timeit
-def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: Dict, common_job_parameters: Dict) -> None:
+def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: Dict, common_job_parameters: Dict) -> bool:
     _org_tic = time.perf_counter()
     _service_timings: Dict = {}
     _failed_services: Dict = {}
     try:
+        # Cleanup jobs anchor on the org's graph id, host-qualified off github.com (see get_org_node_id).
+        common_job_parameters["ORGANIZATION_ID"] = get_org_node_id(
+            get_web_base_url(auth_data["url"]), auth_data["name"],
+        )
         logger.info("Syncing Github Organization: %s", common_job_parameters["ORGANIZATION_ID"])
         organization.sync(neo4j_session, auth_data["token"], auth_data["name"], auth_data["url"], common_job_parameters)
 
@@ -177,6 +183,9 @@ def sync_organization(neo4j_session: neo4j.Session, config: Config, auth_data: D
             "failed_services": _failed_services,
         }),
     )
+    # Some services can fail and the rest are still worth publishing.
+    # Report nothing synced only when every service failed.
+    return bool(_service_timings)
 
 
 @timeit
@@ -189,7 +198,7 @@ def start_github_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     """
     if not config.github_config:
         logger.info('GitHub import is not configured - skipping this module. See docs to configure.')
-        return
+        return {"authFailed": True, "message": "github authentication failed: config is missing"}
 
     auth_tokens = json.loads(base64.b64decode(config.github_config).decode())
     common_job_parameters = {
@@ -199,7 +208,12 @@ def start_github_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
     }
 
     # run sync for the provided github tokens
+    synced = False
     for auth_data in auth_tokens['organization']:
-        sync_organization(neo4j_session, config, auth_data, common_job_parameters)
+        if sync_organization(neo4j_session, config, auth_data, common_job_parameters):
+            synced = True
+
+    if not synced:
+        return {"authFailed": True, "message": "github sync did not complete"}
 
     return common_job_parameters

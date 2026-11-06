@@ -8,6 +8,7 @@ import neo4j
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
 from .common import cleanse_string
+from .common import get_console_link
 from cartography.util import make_requests_url
 from cartography.util import timeit
 
@@ -47,6 +48,7 @@ def transform_workspaces(workspaces: List[Dict]) -> List[Dict]:
             "workspace": cleanse_string(workspace["slug"]),
         }
         workspace['uniqueId'] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="workspace")
+        workspace['consolelink'] = get_console_link("workspace", workspace=workspace["slug"])
 
     return workspaces
 
@@ -68,6 +70,7 @@ def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], comm
         work.name= $name,
         work.unique_id = $unique_id,
         work.is_private = $is_private,
+        work.consolelink = $consolelink,
         work.lastupdated = $UpdateTag
 
     WITH work
@@ -91,6 +94,7 @@ def _load_workspace_data(tx: neo4j.Transaction, workspace_data: List[Dict], comm
             type=workspace.get('type'),
             uuid=workspace.get('uuid'),
             is_private=workspace.get('is_private'),
+            consolelink=workspace.get('consolelink'),
             UpdateTag=common_job_parameters['UPDATE_TAG'],
             workspace_id=common_job_parameters['WORKSPACE_ID'],
         )

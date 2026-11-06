@@ -7,6 +7,7 @@ import boto3
 import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -33,9 +34,12 @@ def transform_trails(trails: List[Dict]) -> List[Dict]:
 
 
 @timeit
-def load_trails(neo4j_session: neo4j.Session, trails: List[Dict], current_aws_account_id: str, aws_update_tag: int) -> None:
+def load_trails(
+    neo4j_session: neo4j.Session, trails: List[Dict], current_aws_account_id: str, workspace_id: str,
+    aws_update_tag: int,
+) -> None:
     query: str = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (trail:AWSCloudTrailTrail{id: record.TrailARN})
     ON CREATE SET trail.firstseen = timestamp(),
         trail.arn = record.TrailARN
@@ -52,24 +56,27 @@ def load_trails(neo4j_session: neo4j.Session, trails: List[Dict], current_aws_ac
         trail.has_custom_event_selectors = record.HasCustomEventSelectors,
         trail.has_insight_selectors = record.HasInsightSelectors
     WITH trail
-    MERGE (bucket:S3Bucket{id: trail.s3bucket_name})
-    ON CREATE SET bucket.firstseen = timestamp()
-    SET bucket.lastupdated = $aws_update_tag
-    WITH trail, bucket
-    MERGE (bucket)<-[rel:HAS_BUCKET]-(trail)
-    ON CREATE SET rel.firstseen = timestamp()
-    SET rel.lastupdated = $aws_update_tag
-    WITH trail
     MATCH (owner:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (owner)-[r:RESOURCE]->(trail)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
+    WITH trail
+    // The log bucket often lives in another account (a central log archive), which may be another
+    // tenant's. Link it only when the workspace's S3 sync loaded it; never create or stamp it from here.
+    // The bucket name stays on the trail as s3bucket_name.
+    MATCH (bucket:S3Bucket{id: trail.s3bucket_name})<-[:RESOURCE]-(:AWSAccount)<-[:OWNER]-(:AWSOrganization)
+        <-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
+    MERGE (bucket)<-[rel:HAS_BUCKET]-(trail)
+    ON CREATE SET rel.firstseen = timestamp()
+    SET rel.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        Records=trails,
+        trails,
         AWS_ACCOUNT_ID=current_aws_account_id,
+        WORKSPACE_ID=workspace_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -98,7 +105,7 @@ def sync(
 
     trails = transform_trails(trails)
 
-    load_trails(neo4j_session, trails, current_aws_account_id, update_tag)
+    load_trails(neo4j_session, trails, current_aws_account_id, common_job_parameters['WORKSPACE_ID'], update_tag)
 
     cleanup(neo4j_session, common_job_parameters)
 

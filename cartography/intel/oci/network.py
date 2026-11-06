@@ -6,15 +6,71 @@ import logging
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
+import oci.apigateway
+import oci.load_balancer
 import oci.logging
+import oci.network_load_balancer
 
+from . import api_gateway
+from . import load_balancer
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
+
+INTERNET_CIDRS = ('0.0.0.0/0', '::/0')
+# ICMP / ICMPv6 protocol numbers. Every Default Security List admits ICMP type 3
+# (path MTU discovery) from 0.0.0.0/0; that reaches no service, so it is not exposure.
+ICMP_PROTOCOLS = ('1', '58')
+INTERNET_GATEWAY_OCID_PREFIX = 'ocid1.internetgateway.'
+# Rules carry destination ports under tcp-options (protocol 6) or udp-options (17).
+PORT_OPTIONS_BY_PROTOCOL = {'6': 'tcp-options', '17': 'udp-options'}
+MIN_PORT = 1
+MAX_PORT = 65535
+
+
+def is_internet_ingress_rule(rule: Dict[str, Any]) -> bool:
+    """
+    True when a security list ingress rule or NSG security rule admits non-ICMP
+    traffic from any internet address. Ports are not considered: any open port counts.
+    """
+    if rule.get("direction", "INGRESS") != "INGRESS":
+        return False
+    return rule.get("source") in INTERNET_CIDRS and rule.get("protocol") not in ICMP_PROTOCOLS
+
+
+def internet_ingress_port_range(rule: Dict[str, Any]) -> Optional[str]:
+    """
+    For a rule that admits internet ingress (see is_internet_ingress_rule), the protocol and
+    destination ports it opens as '<protocol>:<min>-<max>', e.g. '6:443-443', 'all:1-65535'.
+    None for any other rule. The exposure jobs match listener ports against these strings.
+    """
+    if not is_internet_ingress_rule(rule):
+        return None
+    # OCI rules always name a protocol; a missing one errs open.
+    protocol = rule.get("protocol") or "all"
+    options = rule.get(PORT_OPTIONS_BY_PROTOCOL.get(protocol, "")) or {}
+    port_range = options.get("destination-port-range") or {}
+    return f"{protocol}:{port_range.get('min') or MIN_PORT}-{port_range.get('max') or MAX_PORT}"
+
+
+def default_route_internet_gateway_ids(route_rules: List[Dict[str, Any]]) -> List[str]:
+    """
+    Internet gateways a route table's default route (0.0.0.0/0 or ::/0) points at.
+    Route rules still carrying the deprecated cidr-block field are read too.
+    """
+    return [
+        rule["network-entity-id"]
+        for rule in route_rules
+        if (rule.get("destination") or rule.get("cidr-block")) in INTERNET_CIDRS and
+        (rule.get("network-entity-id") or "").startswith(INTERNET_GATEWAY_OCID_PREFIX)
+    ]
 
 
 # ============================================================
@@ -65,9 +121,10 @@ def load_vcns(
         v.dns_label = vcn.dns_label,
         v.lifecycle_state = vcn.lifecycle_state,
         v.region = $REGION,
+        v.consolelink = vcn.consolelink,
         v.lastupdated = $oci_update_tag
         WITH v, vcn
-        MATCH (cc:OCICompartment{id: vcn.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: vcn.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(v)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -82,12 +139,13 @@ def load_vcns(
             "dns_label": vcn.get("dns-label", ""),
             "lifecycle_state": vcn.get("lifecycle-state"),
             "time_created": str(vcn.get("time-created", "")),
+            "consolelink": utils.get_console_link("vcn", region=region, ocid=vcn.get("id")),
         }
         for vcn in vcns
     ]
     load_graph_data(
         neo4j_session, ingest_vcn, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -108,6 +166,7 @@ def sync_vcns(
         data = get_vcn_list_data(network_client, compartment["ocid"])
         if data["Vcns"]:
             load_vcns(neo4j_session, data["Vcns"], tenancy_id, compartment["ocid"], region, oci_update_tag)
+            tags.sync_tags(neo4j_session, data["Vcns"], 'OCIVcn', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -164,9 +223,10 @@ def load_subnets(
         s.subnet_domain_name = subnet.subnet_domain_name,
         s.prohibit_public_ip_on_vnic = subnet.prohibit_public_ip,
         s.region = $REGION,
+        s.consolelink = subnet.consolelink,
         s.lastupdated = $oci_update_tag
         WITH s, subnet
-        MATCH (vcn:OCIVcn{id: subnet.vcn_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(vcn:OCIVcn{id: subnet.vcn_id})
         MERGE (vcn)-[r:OCI_SUBNET]->(s)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -187,12 +247,13 @@ def load_subnets(
             "subnet_domain_name": subnet.get("subnet-domain-name", ""),
             "prohibit_public_ip": subnet.get("prohibit-public-ip-on-vnic", False),
             "time_created": str(subnet.get("time-created", "")),
+            "consolelink": utils.get_console_link("subnet", region=region, ocid=subnet.get("id")),
         }
         for subnet in subnets
     ]
     load_graph_data(
         neo4j_session, ingest_subnet, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -213,6 +274,7 @@ def sync_subnets(
         data = get_subnet_list_data(network_client, compartment["ocid"])
         if data["Subnets"]:
             load_subnets(neo4j_session, data["Subnets"], tenancy_id, compartment["ocid"], region, oci_update_tag)
+            tags.sync_tags(neo4j_session, data["Subnets"], 'OCISubnet', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -263,10 +325,13 @@ def load_security_lists(
         s.lifecycle_state = sl.lifecycle_state,
         s.ingress_security_rules = sl.ingress_rules,
         s.egress_security_rules = sl.egress_rules,
+        s.allows_internet_ingress = sl.allows_internet_ingress,
+        s.internet_ingress_port_ranges = sl.internet_ingress_port_ranges,
         s.region = $REGION,
+        s.consolelink = sl.consolelink,
         s.lastupdated = $oci_update_tag
         WITH s, sl
-        MATCH (vcn:OCIVcn{id: sl.vcn_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(vcn:OCIVcn{id: sl.vcn_id})
         MERGE (vcn)-[r:OCI_SECURITY_LIST]->(s)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -284,11 +349,17 @@ def load_security_lists(
             "lifecycle_state": sl.get("lifecycle-state"),
             "ingress_rules": json.dumps(ingress_rules) if ingress_rules else "[]",
             "egress_rules": json.dumps(egress_rules) if egress_rules else "[]",
+            # Structured flag for the exposure jobs, which cannot parse the JSON rules.
+            "allows_internet_ingress": any(is_internet_ingress_rule(rule) for rule in ingress_rules or []),
+            "internet_ingress_port_ranges": [
+                port_range for port_range in map(internet_ingress_port_range, ingress_rules or []) if port_range
+            ],
             "time_created": str(sl.get("time-created", "")),
+            "consolelink": utils.get_console_link("security_list", region=region, ocid=sl.get("id")),
         })
     load_graph_data(
         neo4j_session, ingest_security_list, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -311,6 +382,7 @@ def sync_security_lists(
             load_security_lists(
                 neo4j_session, data["SecurityLists"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["SecurityLists"], 'OCISecurityList', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -360,9 +432,10 @@ def load_network_security_groups(
         g.vcn_id = nsg.vcn_id,
         g.lifecycle_state = nsg.lifecycle_state,
         g.region = $REGION,
+        g.consolelink = nsg.consolelink,
         g.lastupdated = $oci_update_tag
         WITH g, nsg
-        MATCH (vcn:OCIVcn{id: nsg.vcn_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(vcn:OCIVcn{id: nsg.vcn_id})
         MERGE (vcn)-[r:OCI_NETWORK_SECURITY_GROUP]->(g)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -376,12 +449,13 @@ def load_network_security_groups(
             "vcn_id": nsg.get("vcn-id", ""),
             "lifecycle_state": nsg.get("lifecycle-state"),
             "time_created": str(nsg.get("time-created", "")),
+            "consolelink": utils.get_console_link("network_security_group", region=region, ocid=nsg.get("id")),
         }
         for nsg in nsgs
     ]
     load_graph_data(
         neo4j_session, ingest_nsg, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -405,6 +479,7 @@ def sync_network_security_groups(
                 neo4j_session, data["NetworkSecurityGroups"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["NetworkSecurityGroups"], 'OCINetworkSecurityGroup', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -436,6 +511,7 @@ def load_nsg_security_rules(
     neo4j_session: neo4j.Session,
     rules: List[Dict[str, Any]],
     nsg_id: str,
+    tenancy_id: str,
     oci_update_tag: int,
 ) -> None:
     """
@@ -443,7 +519,7 @@ def load_nsg_security_rules(
     """
     ingest_rule = """
     UNWIND $DictList AS rule
-        MERGE (rl:OCINsgSecurityRule{id: rule.ocid})
+        MERGE (rl:OCINsgSecurityRule{id: rule.id})
         ON CREATE SET rl.firstseen = timestamp()
         SET rl.ocid = rule.ocid,
         rl.direction = rule.direction,
@@ -463,9 +539,12 @@ def load_nsg_security_rules(
         rl.udp_dest_port_max = rule.udp_dest_port_max,
         rl.icmp_type = rule.icmp_type,
         rl.icmp_code = rule.icmp_code,
+        rl.is_internet_ingress = rule.is_internet_ingress,
+        rl.internet_ingress_port_range = rule.internet_ingress_port_range,
         rl.lastupdated = $oci_update_tag
         WITH rl
-        MATCH (nsg:OCINetworkSecurityGroup{id: $NSG_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+            -[:OCI_NETWORK_SECURITY_GROUP]->(nsg:OCINetworkSecurityGroup{id: $NSG_ID})
         MERGE (nsg)-[r:OCI_NSG_RULE]->(rl)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -473,6 +552,8 @@ def load_nsg_security_rules(
 
     rows = []
     for rule in rules:
+        if not rule.get("id"):
+            continue
         # Extract TCP options
         tcp_options = rule.get("tcp-options", {}) or {}
         tcp_dest_range = tcp_options.get("destination-port-range", {}) or {}
@@ -486,6 +567,8 @@ def load_nsg_security_rules(
         icmp_options = rule.get("icmp-options", {}) or {}
 
         rows.append({
+            # The rule id is a short code ("04ABEC") unique only within its NSG, so key the node by NSG OCID + rule id.
+            "id": f"{nsg_id}/{rule.get('id')}",
             "ocid": rule.get("id"),
             "direction": rule.get("direction", ""),
             "protocol": rule.get("protocol", ""),
@@ -504,11 +587,13 @@ def load_nsg_security_rules(
             "udp_dest_port_max": udp_dest_range.get("max"),
             "icmp_type": icmp_options.get("type"),
             "icmp_code": icmp_options.get("code"),
+            "is_internet_ingress": is_internet_ingress_rule(rule),
+            "internet_ingress_port_range": internet_ingress_port_range(rule),
         })
 
     load_graph_data(
         neo4j_session, ingest_rule, rows,
-        NSG_ID=nsg_id, oci_update_tag=oci_update_tag,
+        NSG_ID=nsg_id, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
     )
 
 
@@ -528,16 +613,19 @@ def sync_nsg_security_rules(
     logger.debug("Syncing OCI NSG security rules for tenancy '%s', region '%s'.", tenancy_id, region)
     compartment_ocid = common_job_parameters.get("OCI_COMPARTMENT_ID", tenancy_id)
     query = (
-        "MATCH (:OCICompartment{id: $COMPARTMENT_ID})-[:RESOURCE]->(:OCIVcn)"
+        "MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})"
+        "-[:RESOURCE]->(:OCIVcn)"
         "-[:OCI_NETWORK_SECURITY_GROUP]->(nsg:OCINetworkSecurityGroup) "
         "WHERE nsg.region = $REGION "
         "RETURN nsg.ocid as ocid"
     )
-    nsgs = neo4j_session.run(query, COMPARTMENT_ID=compartment_ocid, REGION=region)
+    nsgs = neo4j_session.execute_read(
+        read_list_of_dicts_tx, query, TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment_ocid, REGION=region,
+    )
     for nsg in nsgs:
         data = get_nsg_security_rules_data(network_client, nsg["ocid"])
         if data["SecurityRules"]:
-            load_nsg_security_rules(neo4j_session, data["SecurityRules"], nsg["ocid"], oci_update_tag)
+            load_nsg_security_rules(neo4j_session, data["SecurityRules"], nsg["ocid"], tenancy_id, oci_update_tag)
 
 
 # ============================================================
@@ -588,9 +676,10 @@ def load_internet_gateways(
         igw.is_enabled = gw.is_enabled,
         igw.lifecycle_state = gw.lifecycle_state,
         igw.region = $REGION,
+        igw.consolelink = gw.consolelink,
         igw.lastupdated = $oci_update_tag
         WITH igw, gw
-        MATCH (vcn:OCIVcn{id: gw.vcn_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(vcn:OCIVcn{id: gw.vcn_id})
         MERGE (vcn)-[r:OCI_INTERNET_GATEWAY]->(igw)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -605,12 +694,13 @@ def load_internet_gateways(
             "is_enabled": gw.get("is-enabled", True),
             "lifecycle_state": gw.get("lifecycle-state"),
             "time_created": str(gw.get("time-created", "")),
+            "consolelink": utils.get_console_link("internet_gateway", region=region, ocid=gw.get("id")),
         }
         for gw in gateways
     ]
     load_graph_data(
         neo4j_session, ingest_igw, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -633,6 +723,7 @@ def sync_internet_gateways(
             load_internet_gateways(
                 neo4j_session, data["InternetGateways"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["InternetGateways"], 'OCIInternetGateway', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -683,9 +774,10 @@ def load_nat_gateways(
         nat.block_traffic = gw.block_traffic,
         nat.lifecycle_state = gw.lifecycle_state,
         nat.region = $REGION,
+        nat.consolelink = gw.consolelink,
         nat.lastupdated = $oci_update_tag
         WITH nat, gw
-        MATCH (vcn:OCIVcn{id: gw.vcn_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(vcn:OCIVcn{id: gw.vcn_id})
         MERGE (vcn)-[r:OCI_NAT_GATEWAY]->(nat)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -701,12 +793,13 @@ def load_nat_gateways(
             "block_traffic": gw.get("block-traffic", False),
             "lifecycle_state": gw.get("lifecycle-state"),
             "time_created": str(gw.get("time-created", "")),
+            "consolelink": utils.get_console_link("nat_gateway", region=region, ocid=gw.get("id")),
         }
         for gw in gateways
     ]
     load_graph_data(
         neo4j_session, ingest_nat, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -729,6 +822,7 @@ def sync_nat_gateways(
             load_nat_gateways(
                 neo4j_session, data["NatGateways"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["NatGateways"], 'OCINatGateway', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -778,10 +872,12 @@ def load_route_tables(
         t.vcn_id = rt.vcn_id,
         t.lifecycle_state = rt.lifecycle_state,
         t.route_rules = rt.route_rules,
+        t.default_route_igw_ids = rt.default_route_igw_ids,
         t.region = $REGION,
+        t.consolelink = rt.consolelink,
         t.lastupdated = $oci_update_tag
         WITH t, rt
-        MATCH (vcn:OCIVcn{id: rt.vcn_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(vcn:OCIVcn{id: rt.vcn_id})
         MERGE (vcn)-[r:OCI_ROUTE_TABLE]->(t)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -797,11 +893,14 @@ def load_route_tables(
             "vcn_id": rt.get("vcn-id", ""),
             "lifecycle_state": rt.get("lifecycle-state"),
             "route_rules": json.dumps(route_rules) if route_rules else "[]",
+            # Structured field for the subnet exposure job, which cannot parse the JSON rules.
+            "default_route_igw_ids": default_route_internet_gateway_ids(route_rules or []),
             "time_created": str(rt.get("time-created", "")),
+            "consolelink": utils.get_console_link("route_table", region=region, ocid=rt.get("id")),
         })
     load_graph_data(
         neo4j_session, ingest_rt, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -824,6 +923,7 @@ def sync_route_tables(
             load_route_tables(
                 neo4j_session, data["RouteTables"], tenancy_id, compartment["ocid"], region, oci_update_tag,
             )
+            tags.sync_tags(neo4j_session, data["RouteTables"], 'OCIRouteTable', oci_update_tag, common_job_parameters)
 
 
 # ============================================================
@@ -846,30 +946,37 @@ def sync_subnet_associations(
     logger.debug("Syncing OCI subnet associations for tenancy '%s', region '%s'.", tenancy_id, region)
     link_subnet_route_table = """
     UNWIND $DictList AS row
-        MATCH (subnet:OCISubnet{id: row.subnet_id})
-        MATCH (rt:OCIRouteTable{id: row.route_table_id})
+        MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+            -[:OCI_SUBNET]->(subnet:OCISubnet{id: row.subnet_id})
+        MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+            -[:OCI_ROUTE_TABLE]->(rt:OCIRouteTable{id: row.route_table_id})
         MERGE (subnet)-[r:OCI_ROUTE_TABLE]->(rt)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
     link_subnet_security_list = """
     UNWIND $DictList AS row
-        MATCH (subnet:OCISubnet{id: row.subnet_id})
-        MATCH (sl:OCISecurityList{id: row.security_list_id})
+        MATCH (t:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+            -[:OCI_SUBNET]->(subnet:OCISubnet{id: row.subnet_id})
+        MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+            -[:OCI_SECURITY_LIST]->(sl:OCISecurityList{id: row.security_list_id})
         MERGE (subnet)-[r:OCI_SECURITY_LIST]->(sl)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
     """
 
     query = (
-        "MATCH (:OCICompartment{id: $COMPARTMENT_ID})-[:RESOURCE]->(:OCIVcn)"
+        "MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})"
+        "-[:RESOURCE]->(:OCIVcn)"
         "-[:OCI_SUBNET]->(subnet:OCISubnet) "
         "WHERE subnet.region = $REGION "
         "RETURN subnet.ocid as ocid, subnet.route_table_id as route_table_id, "
         "subnet.security_list_ids as security_list_ids"
     )
     for compartment in compartments:
-        subnets = neo4j_session.run(query, COMPARTMENT_ID=compartment["ocid"], REGION=region)
+        subnets = neo4j_session.execute_read(
+            read_list_of_dicts_tx, query, TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment["ocid"], REGION=region,
+        )
         rt_rows = []
         sl_rows = []
         for subnet in subnets:
@@ -878,8 +985,12 @@ def sync_subnet_associations(
                 rt_rows.append({"subnet_id": subnet["ocid"], "route_table_id": route_table_id})
             for security_list_id in (subnet["security_list_ids"] or []):
                 sl_rows.append({"subnet_id": subnet["ocid"], "security_list_id": security_list_id})
-        load_graph_data(neo4j_session, link_subnet_route_table, rt_rows, oci_update_tag=oci_update_tag)
-        load_graph_data(neo4j_session, link_subnet_security_list, sl_rows, oci_update_tag=oci_update_tag)
+        load_graph_data(
+            neo4j_session, link_subnet_route_table, rt_rows, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
+        )
+        load_graph_data(
+            neo4j_session, link_subnet_security_list, sl_rows, TENANCY_ID=tenancy_id, oci_update_tag=oci_update_tag,
+        )
 
 
 # ============================================================
@@ -907,6 +1018,7 @@ def get_vnic_data(
 def load_vnics(
     neo4j_session: neo4j.Session,
     vnics: List[Dict[str, Any]],
+    tenancy_id: str,
     region: str,
     oci_update_tag: int,
 ) -> None:
@@ -926,22 +1038,27 @@ def load_vnics(
         v.lifecycle_state = vnic.lifecycle_state,
         v.private_ip = vnic.private_ip,
         v.public_ip = vnic.public_ip,
+        v.ipv6_addresses = vnic.ipv6_addresses,
         v.is_primary = vnic.is_primary,
         v.hostname_label = vnic.hostname_label,
         v.mac_address = vnic.mac_address,
         v.skip_source_dest_check = vnic.skip_source_dest_check,
         v.subnet_id = vnic.subnet_id,
+        v.nsg_ids = vnic.nsg_ids,
         v.region = $REGION,
+        v.consolelink = vnic.consolelink,
         v.lastupdated = $oci_update_tag
         WITH v, vnic
-        OPTIONAL MATCH (subnet:OCISubnet{id: vnic.subnet_id})
+        OPTIONAL MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+            -[:OCI_SUBNET]->(subnet:OCISubnet{id: vnic.subnet_id})
         FOREACH (_ IN CASE WHEN subnet IS NULL THEN [] ELSE [1] END |
             MERGE (subnet)-[rs:OCI_VNIC]->(v)
             ON CREATE SET rs.firstseen = timestamp()
             SET rs.lastupdated = $oci_update_tag
         )
         WITH v, vnic
-        OPTIONAL MATCH (attachment:OCIVnicAttachment{vnic_id: vnic.ocid})
+        OPTIONAL MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIInstance)
+            -[:OCI_VNIC_ATTACHMENT]->(attachment:OCIVnicAttachment{vnic_id: vnic.ocid})
         FOREACH (_ IN CASE WHEN attachment IS NULL THEN [] ELSE [1] END |
             MERGE (attachment)-[ra:OCI_VNIC]->(v)
             ON CREATE SET ra.firstseen = timestamp()
@@ -958,18 +1075,25 @@ def load_vnics(
             "lifecycle_state": vnic.get("lifecycle-state"),
             "private_ip": vnic.get("private-ip", ""),
             "public_ip": vnic.get("public-ip", ""),
+            # Already in the GetVnic response; the exposure walker's IPv6 path reads it.
+            "ipv6_addresses": vnic.get("ipv6-addresses") or [],
             "is_primary": vnic.get("is-primary", False),
             "hostname_label": vnic.get("hostname-label", ""),
             "mac_address": vnic.get("mac-address", ""),
             "skip_source_dest_check": vnic.get("skip-source-dest-check", False),
             "subnet_id": vnic.get("subnet-id", ""),
+            # NSGs attached to this VNIC; the instance exposure job reads their rules.
+            "nsg_ids": vnic.get("nsg-ids") or [],
             "time_created": str(vnic.get("time-created", "")),
+            "consolelink": utils.get_console_link(
+                "vnic", region=region, ocid=vnic.get("id"), instance_id=vnic.get("_instance_id", ""),
+            ),
         }
         for vnic in vnics
     ]
     load_graph_data(
         neo4j_session, ingest_vnic, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -988,20 +1112,24 @@ def sync_vnics(
     """
     logger.debug("Syncing OCI VNICs for tenancy '%s', region '%s'.", tenancy_id, region)
     query = (
-        "MATCH (:OCICompartment{id: $COMPARTMENT_ID})-[:RESOURCE]->(inst:OCIInstance)"
+        "MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $COMPARTMENT_ID})"
+        "-[:RESOURCE]->(inst:OCIInstance)"
         "-[:OCI_VNIC_ATTACHMENT]->(attachment:OCIVnicAttachment) "
         "WHERE attachment.vnic_id IS NOT NULL AND inst.region = $REGION "
-        "RETURN DISTINCT attachment.vnic_id as vnic_id"
+        "RETURN DISTINCT attachment.vnic_id as vnic_id, inst.id as instance_id"
     )
     for compartment in compartments:
-        attachments = neo4j_session.run(query, COMPARTMENT_ID=compartment["ocid"], REGION=region)
+        attachments = neo4j_session.execute_read(
+            read_list_of_dicts_tx, query, TENANCY_ID=tenancy_id, COMPARTMENT_ID=compartment["ocid"], REGION=region,
+        )
         vnics = []
         for attachment in attachments:
             vnic = get_vnic_data(network_client, attachment["vnic_id"])
             if vnic:
+                vnic["_instance_id"] = attachment.get("instance_id", "")
                 vnics.append(vnic)
         if vnics:
-            load_vnics(neo4j_session, vnics, region, oci_update_tag)
+            load_vnics(neo4j_session, vnics, tenancy_id, region, oci_update_tag)
 
 
 # ============================================================
@@ -1052,6 +1180,7 @@ def load_flow_logs(
     neo4j_session: neo4j.Session,
     logs: List[Dict[str, Any]],
     log_group_id: str,
+    tenancy_id: str,
     region: str,
     oci_update_tag: int,
 ) -> None:
@@ -1076,16 +1205,19 @@ def load_flow_logs(
         fl.source_category = log.source_category,
         fl.source_resource = log.source_resource,
         fl.region = $REGION,
+        fl.consolelink = log.consolelink,
         fl.lastupdated = $oci_update_tag
         WITH fl, log.source_resource as source_resource
-        OPTIONAL MATCH (subnet:OCISubnet{id: source_resource})
+        OPTIONAL MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+            -[:OCI_SUBNET]->(subnet:OCISubnet{id: source_resource})
         FOREACH (_ IN CASE WHEN subnet IS NULL THEN [] ELSE [1] END |
             MERGE (subnet)-[rs:OCI_FLOW_LOG]->(fl)
             ON CREATE SET rs.firstseen = timestamp()
             SET rs.lastupdated = $oci_update_tag
         )
         WITH fl, source_resource
-        OPTIONAL MATCH (vcn:OCIVcn{id: source_resource})
+        OPTIONAL MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(vcn:OCIVcn{id: source_resource})
         FOREACH (_ IN CASE WHEN vcn IS NULL THEN [] ELSE [1] END |
             MERGE (vcn)-[rv:OCI_FLOW_LOG]->(fl)
             ON CREATE SET rv.firstseen = timestamp()
@@ -1109,11 +1241,14 @@ def load_flow_logs(
             "source_category": source.get("category", ""),
             "source_resource": source.get("resource", ""),
             "time_created": str(log.get("time-created", "")),
+            "consolelink": utils.get_console_link(
+                "log", region=region, ocid=log.get("id"), log_group_id=log.get("log-group-id", log_group_id),
+            ),
         })
 
     load_graph_data(
         neo4j_session, ingest_flow_log, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -1144,7 +1279,7 @@ def sync_flow_logs(
                 if ((log.get("configuration", {}) or {}).get("source", {}) or {}).get("service") == "flowlogs"
             ]
             if flow_logs:
-                load_flow_logs(neo4j_session, flow_logs, log_group_id, region, oci_update_tag)
+                load_flow_logs(neo4j_session, flow_logs, log_group_id, tenancy_id, region, oci_update_tag)
 
 
 # ============================================================
@@ -1157,7 +1292,7 @@ def sync(
     tenancy_id: str,
     oci_update_tag: int,
     common_job_parameters: Dict[str, Any],
-    regions: List[str] = None,
+    regions: Optional[List[str]] = None,
 ) -> None:
     """
     Sync OCI Network resources for the compartment specified in common_job_parameters.
@@ -1178,11 +1313,34 @@ def sync(
         config=network.base_client.config,
         signer=getattr(network.base_client, "signer", None),
     )
+    # Load balancers sit in VCN subnets and are judged by the same security lists and NSGs.
+    lb_client = oci.load_balancer.LoadBalancerClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
+    nlb_client = oci.network_load_balancer.NetworkLoadBalancerClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
+    # API gateways also sit in a VCN subnet behind its security lists and NSGs.
+    gateway_client = oci.apigateway.GatewayClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
+    # Deployment specifications carry the route authentication the exposure layers read.
+    deployment_client = oci.apigateway.DeploymentClient(
+        config=network.base_client.config,
+        signer=getattr(network.base_client, "signer", None),
+    )
 
     for region in regions:
         logger.info("Syncing OCI Network in region '%s' for compartment '%s'.", region, compartment_ocid)
         network.base_client.set_region(region)
         logging_client.base_client.set_region(region)
+        lb_client.base_client.set_region(region)
+        nlb_client.base_client.set_region(region)
+        gateway_client.base_client.set_region(region)
+        deployment_client.base_client.set_region(region)
 
         # Sync VCNs first (parent of all other network resources)
         sync_vcns(neo4j_session, network, compartments, tenancy_id, region, oci_update_tag, common_job_parameters)
@@ -1235,6 +1393,23 @@ def sync(
         sync_flow_logs(
             neo4j_session, logging_client, compartments, tenancy_id, region, oci_update_tag, common_job_parameters,
         )
+
+        # A failure here must not cost the rest of the network sync.
+        try:
+            load_balancer.sync_load_balancers(
+                neo4j_session, lb_client, nlb_client, tenancy_id, compartment_ocid, region, oci_update_tag,
+                common_job_parameters,
+            )
+        except Exception as e:
+            logger.error("Error syncing OCI load balancers in region '%s': %s", region, e, exc_info=True)
+
+        try:
+            api_gateway.sync_gateways(
+                neo4j_session, gateway_client, tenancy_id, compartment_ocid, region, oci_update_tag,
+                common_job_parameters, deployment_client,
+            )
+        except Exception as e:
+            logger.error("Error syncing OCI API gateways in region '%s': %s", region, e, exc_info=True)
 
     # Cleanup stale network nodes
     run_cleanup_job('oci_import_network_cleanup.json', neo4j_session, common_job_parameters)

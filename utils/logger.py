@@ -6,6 +6,16 @@ from utils.sentry import capture_error
 from utils.sentry import capture_warning
 
 
+def _report(msg, extra, level):
+    # sys.exc_info() is always a 3-tuple (truthy); outside an except it is (None, None, None).
+    error = sys.exc_info()
+    if error[0] is not None:
+        capture_error(msg, error, extra=extra)
+
+    else:
+        capture_warning(msg, extra=extra, level=level)
+
+
 class Logger:
     def __init__(self, logLevel):
         self.logger = logging.getLogger(__name__)
@@ -89,12 +99,7 @@ class Logger:
                 extra = {"context": extra}
                 self.logger.warning(msg, *args, extra=extra, **kwargs)
 
-        error = sys.exc_info()
-        if error:
-            capture_error(msg, error, extra=extra)
-
-        else:
-            capture_warning(msg, extra=extra)
+        _report(msg, extra, "warning")
 
     def error(self, msg, *args, extra=None, **kwargs):
         """
@@ -119,12 +124,7 @@ class Logger:
                 extra = {"context": extra}
                 self.logger.error(msg, *args, extra=extra, **kwargs)
 
-        error = sys.exc_info()
-        if error:
-            capture_error(msg, error, extra=extra)
-
-        else:
-            capture_warning(msg, extra=extra)
+        _report(msg, extra, "error")
 
     def exception(self, msg, *args, extra=None, **kwargs):
         """
@@ -149,12 +149,7 @@ class Logger:
                 extra = {"context": extra}
                 self.logger.exception(msg, *args, extra=extra, **kwargs)
 
-        error = sys.exc_info()
-        if error:
-            capture_error(msg, error, extra=extra)
-
-        else:
-            capture_warning(msg, extra=extra)
+        _report(msg, extra, "error")
 
     def critical(self, msg, *args, extra=None, **kwargs):
         """
@@ -179,12 +174,7 @@ class Logger:
                 extra = {"context": extra}
                 self.logger.critical(msg, *args, extra=extra, **kwargs)
 
-        error = sys.exc_info()
-        if error:
-            capture_error(msg, error, extra=extra)
-
-        else:
-            capture_warning(msg, extra=extra)
+        _report(msg, extra, "fatal")
 
 
 log_client = None

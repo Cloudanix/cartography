@@ -8,20 +8,24 @@ import neo4j
 
 from .util import call_azure_devops_api
 from .util import call_azure_devops_api_pagination
+from .util import get_console_link
 from .util import validate_user_data
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 
 
-def transform_user(user_data: Dict) -> Dict:
+def transform_user(user_data: Dict, consolelink: Optional[str] = None) -> Dict:
     """
     Transforms the user data from the API into a flattened dictionary.
+    consolelink: the organization's users page; Azure DevOps has no per-user page.
     """
     transformed = {
         "id": user_data.get("id"),
         "lastAccessedDate": user_data.get("lastAccessedDate"),
+        "consolelink": consolelink,
     }
 
     user = user_data.get("user", {})
@@ -87,11 +91,12 @@ def get_users(api_url: str, organization_name: str, access_token: str) -> List[D
 def load_users(
     neo4j_session: neo4j.Session,
     user_data: List[Dict],
-    org_name: str,
+    org_node_id: str,
     common_job_parameters: Dict[str, Any],
 ) -> None:
     """
-    Load Azure DevOps user data into Neo4j with comprehensive properties.
+    Load Azure DevOps user data into Neo4j with comprehensive properties, as members of the organization whose
+    graph id is org_node_id (common_job_parameters["ORGANIZATION_ID"]).
     - id: User ID (unique identifier)
     - name: Display name
     - principalName: Principal name (email/UPN)
@@ -104,7 +109,7 @@ def load_users(
     - groupEntitlements: Group entitlements (if available)
     """
     query = """
-    UNWIND $UserData as user
+    UNWIND $DictList as user
 
     MERGE (u:AzureDevOpsUser{id: user.id})
     ON CREATE SET u.firstseen = timestamp()
@@ -117,6 +122,7 @@ def load_users(
         u.status = user.status,
         u.member = user.member,
         u.group_entitlements = user.groupEntitlements,
+        u.consolelink = user.consolelink,
         u.lastupdated = $UpdateTag
     WITH u
 
@@ -125,10 +131,11 @@ def load_users(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        UserData=user_data,
-        OrganizationName=org_name,
+        user_data,
+        OrganizationName=org_node_id,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
@@ -137,6 +144,12 @@ def load_users(
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     run_cleanup_job(
         "azure_devops_members_cleanup.json", neo4j_session, common_job_parameters,
+    )
+    # An AzureDevOpsUser can be a member of several tenants' organizations, so the tenant cleanup above removes
+    # only this org's stale MEMBER_OF edges; this tenant-independent sweep deletes a user once no org links to it.
+    # Plain DELETE: a user another sync is linking at that moment fails this sweep instead of losing the edge.
+    run_cleanup_job(
+        "azure_devops_members_orphan_cleanup.json", neo4j_session, common_job_parameters,
     )
 
 
@@ -154,7 +167,8 @@ def sync(
     logger.info(f"Syncing users for organization '{org_name}'")
     users = get_users(url, org_name, access_token)
     if users:
-        transformed_users = [transform_user(user_data) for user_data in users]
-        load_users(neo4j_session, transformed_users, org_name, common_job_parameters)
+        users_link = get_console_link("user", base_url=url, organization=org_name)
+        transformed_users = [transform_user(user_data, users_link) for user_data in users]
+        load_users(neo4j_session, transformed_users, common_job_parameters["ORGANIZATION_ID"], common_job_parameters)
         cleanup(neo4j_session, common_job_parameters)
     logger.info(f"Processed {len(users) if users else 0} users for org '{org_name}'")

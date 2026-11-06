@@ -1,27 +1,26 @@
 {
-	"statements": [
-		{
-			"query": "MATCH (keyring:GCPKMSKeyRing{exposed_internet:true})<-[r:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WITH keyring LIMIT $LIMIT_SIZE REMOVE keyring.exposed_internet, keyring.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 1000
-		},
-		{
-			"query": "MATCH (crypto_key:GCPKMSCryptoKey)<-[r:RESOURCE]-(keyring:GCPKMSKeyRing)<-[:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WITH crypto_key LIMIT $LIMIT_SIZE REMOVE crypto_key.exposed_internet, crypto_key.exposed_internet_type return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 1000
-		},
-		{
-			"query": "MATCH (binding:GCPBinding)<-[a:ATTACHED_BINDING]-(keyring:GCPKMSKeyRing)<-[r:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nWHERE 'allUsers' IN binding.members \nSET keyring.exposed_internet = true, (CASE WHEN NOT 'allUsers' IN  coalesce(keyring.exposed_internet_type , []) THEN keyring END).exposed_internet_type = coalesce(keyring.exposed_internet_type, []) + 'allUsers'",
-			"iterative": false
-		},
-		{
-			"query": "MATCH (binding:GCPBinding)<-[a:ATTACHED_BINDING]-(keyring:GCPKMSKeyRing)<-[r:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nWHERE 'allAuthenticatedUsers' IN binding.members \nSET keyring.exposed_internet = true, (CASE WHEN NOT 'allAuthenticatedUsers' IN  coalesce(keyring.exposed_internet_type , []) THEN keyring END).exposed_internet_type = coalesce(keyring.exposed_internet_type, []) + 'allAuthenticatedUsers'",
-			"iterative": false
-		},
-		{
-			"query": "MATCH (crypto_key:GCPKMSCryptoKey)<-[r:RESOURCE]-(keyring:GCPKMSKeyRing)<-[:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nWHERE keyring.exposed_internet = true \nSET crypto_key.exposed_internet = true, crypto_key.exposed_internet_type = keyring.exposed_internet_type",
-			"iterative": false
-		}
-	],
-	"name": "GCP Keyring public policy exposure analysis"
+    "statements": [
+        {
+            "query": "MATCH (keyring:GCPKMSKeyRing{exposed_internet:true})<-[r:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WITH keyring LIMIT $LIMIT_SIZE REMOVE keyring.exposed_internet, keyring.exposed_internet_type return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 1000
+        },
+        {
+            "__comment": "The WHERE matters: an iterative statement stops at the first batch with no updates, so without it only the first LIMIT_SIZE keys were ever reset.",
+            "query": "MATCH (crypto_key:GCPKMSCryptoKey)<-[r:RESOURCE]-(keyring:GCPKMSKeyRing)<-[:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE crypto_key.exposed_internet IS NOT NULL OR crypto_key.exposed_internet_type IS NOT NULL WITH crypto_key LIMIT $LIMIT_SIZE REMOVE crypto_key.exposed_internet, crypto_key.exposed_internet_type return COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 1000
+        },
+        {
+            "__comment": "Key ring IAM binding (any role) to allUsers / allAuthenticatedUsers.",
+            "query": "MATCH (binding:GCPBinding)<-[a:ATTACHED_BINDING]-(keyring:GCPKMSKeyRing)<-[r:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nUNWIND [m IN binding.members WHERE m IN ['allUsers', 'allAuthenticatedUsers']] AS member\nSET keyring.exposed_internet = true, (CASE WHEN NOT member IN coalesce(keyring.exposed_internet_type, []) THEN keyring END).exposed_internet_type = coalesce(keyring.exposed_internet_type, []) + member",
+            "iterative": false
+        },
+        {
+            "__comment": "A crypto key is public through its key ring's policy (inherited) or its own IAM policy (any role) granting allUsers / allAuthenticatedUsers.",
+            "query": "MATCH (crypto_key:GCPKMSCryptoKey)<-[r:RESOURCE]-(keyring:GCPKMSKeyRing)<-[:RESOURCE]-(location:GCPLocation)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nWITH crypto_key, coalesce(keyring.exposed_internet_type, []) + reduce(acc = [], members IN [(crypto_key)-[:ATTACHED_BINDING]->(b:GCPBinding) | b.members] | acc + members) AS members\nUNWIND [m IN members WHERE m IN ['allUsers', 'allAuthenticatedUsers']] AS member\nSET crypto_key.exposed_internet = true, (CASE WHEN NOT member IN coalesce(crypto_key.exposed_internet_type, []) THEN crypto_key END).exposed_internet_type = coalesce(crypto_key.exposed_internet_type, []) + member",
+            "iterative": false
+        }
+    ],
+    "name": "GCP Keyring public policy exposure analysis"
 }

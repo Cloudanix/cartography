@@ -39,7 +39,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (sa:AzureStorageAccount{networkRuleDefaultAction: 'Allow'})<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET sa.exposed_internet = true, (CASE WHEN NOT 'default_allow_action' IN  coalesce(sa.exposed_internet_type , []) THEN sa END).exposed_internet_type = coalesce(sa.exposed_internet_type , []) + 'default_allow_action';",
+      "query": "MATCH (sa:AzureStorageAccount)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(sa.publicNetworkAccess, '') <> 'Disabled' AND coalesce(sa.networkRuleDefaultAction, 'Allow') = 'Allow' SET sa.exposed_internet = true, (CASE WHEN NOT 'default_allow_action' IN  coalesce(sa.exposed_internet_type , []) THEN sa END).exposed_internet_type = coalesce(sa.exposed_internet_type , []) + 'default_allow_action';",
       "iterative": false
     },
     {
@@ -71,7 +71,7 @@
       "iterative": false
     },
     {
-      "query": "MATCH (sa:AzureStorageAccount)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE sa.exposed_internet = true WITH sa SET sa.publicContext = apoc.convert.toJson([{resource: sa.id, resourceType: 'azure-storage-account', context: [{accountId: sa.id, accountName: sa.name, networkRuleDefaultAction: sa.networkRuleDefaultAction, allowBlobPublicAccess: coalesce(sa.allowBlobPublicAccess, false), exposureTypes: sa.exposed_internet_type, location: sa.location, kind: sa.kind}]}])",
+      "query": "MATCH (sa:AzureStorageAccount)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE sa.exposed_internet = true WITH sa SET sa.publicContext = apoc.convert.toJson([{resource: sa.id, resourceType: 'azure-storage-account', context: [{accountId: sa.id, accountName: sa.name, networkRuleDefaultAction: sa.networkRuleDefaultAction, publicNetworkAccess: sa.publicNetworkAccess, allowBlobPublicAccess: coalesce(sa.allowBlobPublicAccess, false), exposureTypes: sa.exposed_internet_type, location: sa.location, kind: sa.kind}]}])",
       "iterative": false
     },
     {

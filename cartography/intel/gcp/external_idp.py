@@ -100,7 +100,7 @@ def sync_identites_from_bucket(
     load_groups(neo4j_session, data["Groups"], gcp_organization_id, gcp_update_tag)
 
     for group, members in data.get("Memberships", {}).items():
-        load_groups_members(neo4j_session, {"id": group}, members, gcp_update_tag)
+        load_groups_members(neo4j_session, {"id": group}, members, gcp_update_tag, common_job_parameters)
 
     cleanup_users(neo4j_session, common_job_parameters)
     cleanup_groups(neo4j_session, common_job_parameters)

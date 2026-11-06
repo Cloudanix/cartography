@@ -2,12 +2,14 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Set
 
 import boto3
 import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.stats import get_stats_client
 from cartography.util import aws_handle_regions
@@ -39,6 +41,18 @@ def transform_elasticache_topics(cluster_data: List[Dict]) -> List[Dict]:
     return topics
 
 
+def _cluster_port(cluster: Dict) -> Optional[int]:
+    """Memcached exposes a configuration endpoint; Redis only per-node endpoints."""
+    endpoint = cluster.get('ConfigurationEndpoint') or {}
+    if endpoint.get('Port'):
+        return endpoint['Port']
+    for node in cluster.get('CacheNodes') or []:
+        port = (node.get('Endpoint') or {}).get('Port')
+        if port:
+            return port
+    return None
+
+
 @timeit
 @aws_handle_regions
 def get_elasticache_clusters(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
@@ -46,11 +60,15 @@ def get_elasticache_clusters(boto3_session: boto3.session.Session, region: str) 
     client = boto3_session.client('elasticache', region_name=region, config=get_botocore_config())
     paginator = client.get_paginator('describe_cache_clusters')
     clusters: List[Dict] = []
-    for page in paginator.paginate():
+    # ShowCacheNodeInfo adds node endpoints (port) to the same call.
+    for page in paginator.paginate(ShowCacheNodeInfo=True):
         clusters.extend(page['CacheClusters'])
     for cluster in clusters:
         cluster['region'] = region
+        cluster['port'] = _cluster_port(cluster)
         cluster['consolelink'] = aws_console_link.get_console_link(arn=cluster['ARN'])
+        topic_arn = (cluster.get('NotificationConfiguration') or {}).get('TopicArn')
+        cluster['topic_consolelink'] = aws_console_link.get_console_link(arn=topic_arn) if topic_arn else None
     return clusters
 
 
@@ -60,7 +78,7 @@ def load_elasticache_clusters(
     aws_account_id: str, update_tag: int,
 ) -> None:
     query = """
-    UNWIND $clusters as elasticache_cluster
+    UNWIND $DictList as elasticache_cluster
         MERGE (cluster:ElasticacheCluster{id:elasticache_cluster.ARN})
         ON CREATE SET cluster.firstseen = timestamp(),
             cluster.arn = elasticache_cluster.ARN,
@@ -68,7 +86,13 @@ def load_elasticache_clusters(
             cluster.cache_cluster_id = elasticache_cluster.CacheClusterId,
             cluster.region = elasticache_cluster.region
         SET cluster.lastupdated = $aws_update_tag,
-            cluster.consolelink = elasticache_cluster.consolelink
+            cluster.consolelink = elasticache_cluster.consolelink,
+            cluster.engine = elasticache_cluster.Engine,
+            cluster.engine_version = elasticache_cluster.EngineVersion,
+            cluster.port = elasticache_cluster.port,
+            cluster.auth_token_enabled = elasticache_cluster.AuthTokenEnabled,
+            cluster.transit_encryption_enabled = elasticache_cluster.TransitEncryptionEnabled,
+            cluster.replication_group_id = elasticache_cluster.ReplicationGroupId
 
         WITH cluster, elasticache_cluster
         MATCH (owner:AWSAccount{id: $aws_account_id})
@@ -82,7 +106,8 @@ def load_elasticache_clusters(
         ON CREATE SET topic.firstseen = timestamp(),
             topic.arn = elasticache_cluster.NotificationConfiguration.TopicArn
         SET topic.lastupdated = $aws_update_tag,
-            topic.status = elasticache_cluster.NotificationConfiguration.Status
+            topic.status = elasticache_cluster.NotificationConfiguration.Status,
+            topic.consolelink = elasticache_cluster.topic_consolelink
 
         MERGE (topic)-[r:CACHE_CLUSTER]->(cluster)
         ON CREATE SET r.firstseen = timestamp()
@@ -93,20 +118,23 @@ def load_elasticache_clusters(
         ON CREATE SET r2.firstseen = timestamp()
         SET r2.lastupdated = $aws_update_tag
     """
-    logger.info(f"Loading f{len(clusters)} ElastiCache clusters into graph.")
-    neo4j_session.run(
+    logger.info(f"Loading {len(clusters)} ElastiCache clusters into graph.")
+    load_graph_data(
+        neo4j_session,
         query,
-        clusters=clusters,
+        clusters,
         aws_update_tag=update_tag,
         aws_account_id=aws_account_id,
     )
 
 
 @timeit
-def attach_elasticache_clusters_to_security_groups(neo4j_session: neo4j.Session, clusters: List[Dict], update_tag: int) -> None:
+def attach_elasticache_clusters_to_security_groups(
+    neo4j_session: neo4j.Session, clusters: List[Dict], current_aws_account_id: str, update_tag: int,
+) -> None:
     query = """
-    UNWIND $clusters as elasticache_cluster
-        MATCH (cluster:ElasticacheCluster{id:elasticache_cluster.ARN})
+    UNWIND $DictList as elasticache_cluster
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(cluster:ElasticacheCluster{id:elasticache_cluster.ARN})
         UNWIND elasticache_cluster.SecurityGroups as sg
             MERGE (security_group:EC2SecurityGroup{id: sg.SecurityGroupId})
             ON CREATE SET security_group.firstseen = timestamp()
@@ -116,9 +144,11 @@ def attach_elasticache_clusters_to_security_groups(neo4j_session: neo4j.Session,
             ON CREATE SET r.firstseen = timestamp()
             SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        clusters=clusters,
+        clusters,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=update_tag,
     )
 
@@ -149,7 +179,7 @@ def sync(
     logger.info(f"Total Elasticache Clusters: {len(clusters)}")
 
     load_elasticache_clusters(neo4j_session, clusters, current_aws_account_id, update_tag)
-    attach_elasticache_clusters_to_security_groups(neo4j_session, clusters, update_tag)
+    attach_elasticache_clusters_to_security_groups(neo4j_session, clusters, current_aws_account_id, update_tag)
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

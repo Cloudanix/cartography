@@ -9,6 +9,9 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -23,7 +26,7 @@ def get_reserved_instances(boto3_session: boto3.session.Session, region: str) ->
     reserved_instances = []
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
     try:
-        reserved_instances = client.describe_reserved_instances()['ReservedInstances']
+        reserved_instances = client.describe_reserved_instances(Filters=[{'Name': 'state', 'Values': ['active']}])['ReservedInstances']
 
     except Exception as e:
         logger.warning(f"Failed retrieve reserved instances for region - {region}. Error - {e}")
@@ -34,10 +37,10 @@ def get_reserved_instances(boto3_session: boto3.session.Session, region: str) ->
 @timeit
 def load_reserved_instances(
         neo4j_session: neo4j.Session, data: List[Dict], region: str,
-        current_aws_account_id: str, update_tag: int,
+        current_aws_account_id: str, update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_reserved_instances = """
-    UNWIND $reserved_instances_list as res
+    UNWIND $DictList as res
     MERGE (ri:EC2ReservedInstance{id: res.ReservedInstancesId})
     ON CREATE SET ri.firstseen = timestamp()
     SET ri.lastupdated = $update_tag, ri.availabilityzone = res.AvailabilityZone, ri.duration = res.Duration,
@@ -45,7 +48,7 @@ def load_reserved_instances(
     ri.productdescription = res.ProductDescription, ri.state = res.State, ri.currencycode = res.CurrencyCode,
     ri.instancetenancy = res.InstanceTenancy, ri.offeringclass = res.OfferingClass,
     ri.offeringtype = res.OfferingType, ri.scope = res.Scope, ri.fixedprice = res.FixedPrice, ri.region=$Region,
-    ri.arn = ri.Arn
+    ri.arn = res.Arn
     WITH ri
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(ri)
@@ -58,12 +61,16 @@ def load_reserved_instances(
     for r_instance in data:
         r_instance['Start'] = str(r_instance['Start'])
         r_instance['End'] = str(r_instance['End'])
-        r_instance['Arn'] = f"arn:aws:ec2:{region}:{current_aws_account_id}:reserved-instances/{r_instance['ReservedInstancesId']}"
+        r_instance['Arn'] = (
+            f"arn:{partition}:ec2:{region}:{current_aws_account_id}"
+            f":reserved-instances/{r_instance['ReservedInstancesId']}"
+        )
         r_instance['consolelink'] = aws_console_link.get_console_link(arn=r_instance['Arn'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_reserved_instances,
-        reserved_instances_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         Region=region,
         update_tag=update_tag,
@@ -89,13 +96,14 @@ def sync_ec2_reserved_instances(
 
     logger.info("Syncing EC2 Reserved Instances for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.debug("Syncing reserved instances for region '%s' in account '%s'.", region, current_aws_account_id)
         data = get_reserved_instances(boto3_session, region)
 
         logger.info(f"Total EBS Reserved Instances: {len(data)} for {region}")
 
-        load_reserved_instances(neo4j_session, data, region, current_aws_account_id, update_tag)
+        load_reserved_instances(neo4j_session, data, region, current_aws_account_id, update_tag, partition=partition)
     cleanup_reserved_instances(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

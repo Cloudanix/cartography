@@ -9,14 +9,25 @@ import neo4j
 from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
-from cartography.client.core.tx import load
-from cartography.graph.job import GraphJob
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
-from cartography.models.aws.ec2.images import EC2ImageSchema
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
+from cartography.intel.aws.util.common import build_trusted_accounts
+from cartography.intel.aws.util.common import is_cross_account_statement
 from cartography.util import aws_handle_regions
+from cartography.util import run_cleanup_job
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+# Applied at describe_images so non-available AMIs never leave the API.
+EC2_IMAGE_FILTERS = [{
+    'Name': 'state',
+    'Values': ['available'],
+}]
 
 
 def get_images_in_use(neo4j_session: neo4j.Session, region: str, current_aws_account_id: str) -> List[str]:
@@ -35,7 +46,10 @@ def get_images_in_use(neo4j_session: neo4j.Session, region: str, current_aws_acc
     WITH images + new_ltv_images AS images
     RETURN images
     """
-    results = neo4j_session.run(get_images_query, AWS_ACCOUNT_ID=current_aws_account_id, Region=region)
+    results = neo4j_session.execute_read(
+        read_list_of_dicts_tx, get_images_query,
+        AWS_ACCOUNT_ID=current_aws_account_id, Region=region,
+    )
     images = []
     for r in results:
         images.extend(r['images'])
@@ -48,7 +62,10 @@ def get_images(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
     images = []
     try:
-        self_images = client.describe_images(Owners=['self'])['Images']
+        self_images = client.describe_images(
+            Owners=['self'],
+            Filters=EC2_IMAGE_FILTERS,
+        )['Images']
         images.extend(self_images)
     except ClientError as e:
         logger.warning(f"Failed retrieve images for region - {region}. Error - {e}")
@@ -56,7 +73,84 @@ def get_images(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
 
 
 @timeit
-def transform_images(boto3_session: boto3.session.Session, imags: List[Dict], image_ids: List[str], region: str, account_id: str) -> List[Dict]:
+def get_image_launch_permissions(
+    boto3_session: boto3.session.Session, image_id: str, region: str,
+) -> List[Dict]:
+    """
+    Fetch launch permissions for a given AMI using describe_image_attribute.
+    Returns a list of permission dicts, e.g.:
+      [{"UserId": "123456789012"}, {"Group": "all"}]
+    """
+    client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
+    try:
+        response = client.describe_image_attribute(
+            Attribute='launchPermission',
+            ImageId=image_id,
+        )
+        return response.get('LaunchPermissions', [])
+    except ClientError as e:
+        logger.debug(f"Failed to get launch permissions for image {image_id} in {region}: {e}")
+        return []
+
+
+@timeit
+def check_image_cross_account_access(
+    launch_permissions: List[Dict],
+    current_aws_account_id: str,
+    internal_accounts: List[str],
+    image_arn: str = "",
+) -> bool:
+    """
+    Determine if an AMI has cross-account access based on its launch permissions.
+
+    A launch permission grants cross-account access if:
+    - Group is 'all' (public AMI)
+    - UserId references an account outside the trusted set
+
+    Args:
+        launch_permissions: List of launch permission dicts from describe_image_attribute.
+        current_aws_account_id: The AWS account that owns the image.
+        internal_accounts: List of internal/trusted account IDs.
+        image_arn: The ARN of the image (used for trusted account resolution).
+
+    Returns:
+        True if the image has cross-account access.
+    """
+    if not launch_permissions:
+        return False
+
+    trusted = build_trusted_accounts(
+        aws_ids_arns=[current_aws_account_id],
+        internal_accounts=internal_accounts,
+        resource_arn=image_arn,
+        own_account=current_aws_account_id,
+    )
+
+    for permission in launch_permissions:
+        group = permission.get("Group", "")
+        user_id = permission.get("UserId", "")
+
+        # Public AMI - cross-account by definition
+        if group == "all":
+            return True
+
+        # Check if the UserId is a cross-account reference
+        if user_id:
+            stmt = {
+                "Effect": "Allow",
+                "Principal": {"AWS": user_id},
+            }
+            if is_cross_account_statement(stmt, trusted):
+                return True
+
+    return False
+
+
+@timeit
+def transform_images(
+    boto3_session: boto3.session.Session, imags: List[Dict], image_ids: List[str], region: str, account_id: str,
+    partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     images = []
     client = boto3_session.client('ec2', region_name=region, config=get_botocore_config())
     try:
@@ -66,21 +160,38 @@ def transform_images(boto3_session: boto3.session.Session, imags: List[Dict], im
             _ids = [image["ImageId"] for image in imags]
             for image in images_in_use:
                 if image["ImageId"] not in _ids:
-                    console_arn = f"arn:aws:ec2:{region}:{account_id}:image/{image['ImageId']}"
+                    console_arn = f"arn:{partition}:ec2:{region}:{account_id}:image/{image['ImageId']}"
                     image['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
                     image['region'] = region
+                    # Images in use but not self-owned don't need cross-account check
+                    # (they are already external images being used by this account)
+                    image['has_cross_account_access'] = None
                     images.append(image)
     except ClientError as e:
         logger.warning(f"Failed retrieve images for region - {region}. Error - {e}")
     return images
 
 
+def image_node_id(image: Dict, current_aws_account_id: str) -> str:
+    """
+    EC2Image node id. AMI ids are unique per region, so an image the syncing account owns keeps
+    "ImageId|region" (only its owner loads it). An image the account only uses (public, marketplace,
+    shared by another account) is many tenants' asset at once, and each tenant writes its own arn,
+    consolelink and has_cross_account_access, so it gets one node per using account.
+    """
+    node_id = f"{image['ImageId']}|{image.get('region', '')}"
+    if image.get('OwnerId') == current_aws_account_id:
+        return node_id
+    return f"{node_id}|{current_aws_account_id}"
+
+
 @timeit
 def load_images(
         neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_images = """
-    UNWIND $images_list as image
+    UNWIND $DictList as image
     MERGE (i:EC2Image{id: image.ID})
     ON CREATE SET i.firstseen = timestamp(), i.imageid = image.ImageId, i.name = image.Name,
     i.creationdate = image.CreationDate
@@ -95,7 +206,8 @@ def load_images(
     i.sriov_net_support = image.SriovNetSupport,
     i.bootmode = image.BootMode, i.owner = image.OwnerId, i.image_owner_alias = image.ImageOwnerAlias,
     i.kernel_id = image.KernelId, i.ramdisk_id = image.RamdiskId,
-    i.region=image.region, i.arn=image.arn
+    i.region=image.region, i.arn=image.arn,
+    i.has_cross_account_access = image.has_cross_account_access
     WITH i
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(i)
@@ -103,14 +215,16 @@ def load_images(
     SET r.lastupdated = $update_tag
     """
 
-    # AMI IDs are unique to each AWS Region. Hence we make an 'ID' string that is a combo of ImageId and region
     for image in data:
-        image['ID'] = image['ImageId'] + '|' + image.get('region', '')
-        image['arn'] = f"arn:aws:ec2:{image.get('region', '')}:{current_aws_account_id}:image/{image['ImageId']}"
+        image['ID'] = image_node_id(image, current_aws_account_id)
+        image['arn'] = (
+            f"arn:{partition}:ec2:{image.get('region', '')}:{current_aws_account_id}:image/{image['ImageId']}"
+        )
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_images,
-        images_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
@@ -118,15 +232,18 @@ def load_images(
 
 @timeit
 def cleanup_images(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
-    cleanup_job = GraphJob.from_node_schema(EC2ImageSchema(), common_job_parameters)
-    cleanup_job.run(neo4j_session)
+    # Not the EC2ImageSchema node cleanup: that deletes stale nodes, and a node still linked from
+    # another tenant must only lose this account's edge. Nodes left with no edge are swept after.
+    run_cleanup_job('aws_import_ec2_images_cleanup.json', neo4j_session, common_job_parameters)
+    run_cleanup_job('aws_ec2_image_orphan_cleanup.json', neo4j_session, common_job_parameters)
 
 
 @timeit
-def link_ec2_instances_to_images(neo4j_session: neo4j.Session, update_tag: int) -> None:
+def link_ec2_instances_to_images(neo4j_session: neo4j.Session, current_aws_account_id: str, update_tag: int) -> None:
     """
-    Create EC2Instance -[:CHILDREN]-> EC2Image relationships for all instances
-    whose ImageId matches a loaded EC2Image node.
+    Create EC2Instance -[:CHILDREN]-> EC2Image relationships for the account's instances, to the
+    account's own image node in the instance's region, then drop the account's stale CHILDREN edges
+    (including old ones to another tenant's image node).
 
     This must run AFTER both EC2Instance nodes (from ec2:instance sync) and
     EC2Image nodes (from ec2:images sync) are present in the graph.  That is
@@ -134,14 +251,28 @@ def link_ec2_instances_to_images(neo4j_session: neo4j.Session, update_tag: int) 
     sync_ec2_images(), not inside instances.py (which runs earlier).
     """
     ingest_instance_image_rel = """
-    MATCH (img:EC2Image)
-    MATCH (i:EC2Instance {imageid: img.imageid})
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(i:EC2Instance)
+    MATCH (aa)-[:RESOURCE]->(img:EC2Image{imageid: i.imageid})
+    WHERE img.region = i.region
     MERGE (i)-[r:CHILDREN]->(img)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_instance_image_rel,
+        AWS_ACCOUNT_ID=current_aws_account_id,
+        update_tag=update_tag,
+    )
+    stale_instance_image_rel = """
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:EC2Instance)-[r:CHILDREN]->(:EC2Image)
+    WHERE r.lastupdated <> $update_tag
+    DELETE r
+    """
+    run_write_query(
+        neo4j_session,
+        stale_instance_image_rel,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
@@ -155,23 +286,43 @@ def sync_ec2_images(
 
     logger.info("Syncing images for account '%s', at %s.", current_aws_account_id, tic)
 
+    internal_accounts = common_job_parameters.get("INTERNAL_ACCOUNTS", [])
+    partition = get_partition_from_params(common_job_parameters)
+
     data = []
     for region in regions:
         logger.info("Syncing images for region '%s' in account '%s'.", region, current_aws_account_id)
         images_in_use = get_images_in_use(neo4j_session, region, current_aws_account_id)
         imgs = get_images(boto3_session, region)
-        data.extend(transform_images(boto3_session, imgs, images_in_use, region, current_aws_account_id))
+
+        # Check cross-account access for self-owned images
+        for image in imgs:
+            image['region'] = region
+            console_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:image/{image['ImageId']}"
+            image['consolelink'] = aws_console_link.get_console_link(arn=console_arn)
+            launch_permissions = get_image_launch_permissions(boto3_session, image['ImageId'], region)
+            image['has_cross_account_access'] = check_image_cross_account_access(
+                launch_permissions,
+                current_aws_account_id,
+                internal_accounts,
+                image_arn=console_arn,
+            )
+
+        data.extend(imgs)
+        data.extend(
+            transform_images(boto3_session, imgs, images_in_use, region, current_aws_account_id, partition=partition),
+        )
 
     logger.info(f"Total EC2 Images: {len(data)}")
 
-    load_images(neo4j_session, data, current_aws_account_id, update_tag)
+    load_images(neo4j_session, data, current_aws_account_id, update_tag, partition=partition)
     cleanup_images(neo4j_session, common_job_parameters)
 
     # Link EC2Instances to their EC2Image nodes via CHILDREN relationship.
     # This runs after both node types are guaranteed to exist in the graph.
     # (ec2:instance syncs before ec2:images, so the call in instances.py
     # may find no EC2Image nodes yet — this call here is the reliable one.)
-    link_ec2_instances_to_images(neo4j_session, update_tag)
+    link_ec2_instances_to_images(neo4j_session, current_aws_account_id, update_tag)
 
     toc = time.perf_counter()
     logger.info(f"Time to process Images: {toc - tic:0.4f} seconds")

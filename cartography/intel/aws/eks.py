@@ -9,6 +9,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load
+from cartography.client.core.tx import load_graph_data
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.models.aws.eks.clusters import EKSClusterSchema
@@ -83,15 +84,19 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
     run_cleanup_job('aws_import_eks_cleanup.json', neo4j_session, common_job_parameters)
 
 
-def transform(cluster_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+def transform(cluster_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     transformed_list = []
     for cluster_dict in cluster_data:
         transformed_dict = cluster_dict.copy()
         transformed_dict['clusterLogging'] = _process_logging(transformed_dict)
-        transformed_dict['consolelink'] = aws_console_link.get_console_link(arn=transformed_dict.get('arn'))
-        transformed_dict['clusterEndpointPublic'] = transformed_dict.get('resourcesVpcConfig', {}).get(
-            'endpointPublicAccess',
+        transformed_dict['consolelink'] = (
+            aws_console_link.get_console_link(arn=transformed_dict['arn']) if transformed_dict.get('arn') else None
         )
+        vpc_config = transformed_dict.get('resourcesVpcConfig', {})
+        transformed_dict['clusterEndpointPublic'] = vpc_config.get('endpointPublicAccess')
+        transformed_dict['clusterEndpointPrivate'] = vpc_config.get('endpointPrivateAccess')
+        # aws_eks_asset_exposure.json treats a public endpoint as internet-exposed only when these allow any address.
+        transformed_dict['publicAccessCidrs'] = vpc_config.get('publicAccessCidrs')
         if 'createdAt' in transformed_dict:
             transformed_dict['created_at'] = str(transformed_dict['createdAt'])
         transformed_list.append(transformed_dict)
@@ -156,22 +161,28 @@ def get_auto_scaling_groups(boto3_session: boto3.session.Session, region: str, a
 
 
 @timeit
-def attact_autoscaling_groups_to_nodegroups(neo4j_session: neo4j.Session, nodegroup_arn: str, auto_scalin_groups: List[Dict], update_tag: int) -> None:
+def attact_autoscaling_groups_to_nodegroups(
+    neo4j_session: neo4j.Session, nodegroup_arn: str, auto_scalin_groups: List[Dict], current_aws_account_id: str,
+    update_tag: int,
+) -> None:
     attach_autoscaling = """
-    UNWIND $auto_scalin_groups as agroup
+    UNWIND $DictList as agroup
     MERGE (g:AutoScalingGroup{arn: agroup.AutoScalingGroupARN})
     ON CREATE SET g.firstseen = timestamp()
     SET g.lastupdated = $update_tag
     WITH g
-    MATCH (ngroup:EKSClusterNodeGroup{arn: $GROUPARN})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(:EKSCluster)
+        <-[:ASSOCIATED_WITH]-(ngroup:EKSClusterNodeGroup{arn: $GROUPARN})
     MERGE (g)-[r:ASSOCIATED_WITH]->(ngroup)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         attach_autoscaling,
-        auto_scalin_groups=auto_scalin_groups,
+        auto_scalin_groups,
         GROUPARN=nodegroup_arn,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
@@ -181,6 +192,7 @@ def sync_eks_cluster_nodegroups(
         neo4j_session: neo4j.Session,
         boto3_session: boto3.session.Session,
         clusters_data: List[Dict],
+        current_aws_account_id: str,
         update_tag: int,
 ) -> None:
     for cluster in clusters_data:
@@ -192,7 +204,9 @@ def sync_eks_cluster_nodegroups(
                 auto_scalin_groups.append(auto_scalin_group["name"])
             if auto_scalin_groups:
                 auto_scalin_groups = get_auto_scaling_groups(boto3_session, cluster['region'], auto_scalin_groups)
-                attact_autoscaling_groups_to_nodegroups(neo4j_session, nodegroup["nodegroupArn"], auto_scalin_groups, update_tag)
+                attact_autoscaling_groups_to_nodegroups(
+                    neo4j_session, nodegroup["nodegroupArn"], auto_scalin_groups, current_aws_account_id, update_tag,
+                )
 
 
 @timeit
@@ -224,7 +238,7 @@ def sync(
 
     load_eks_clusters(neo4j_session, cluster_data, current_aws_account_id, update_tag)
 
-    sync_eks_cluster_nodegroups(neo4j_session, boto3_session, cluster_data, update_tag)
+    sync_eks_cluster_nodegroups(neo4j_session, boto3_session, cluster_data, current_aws_account_id, update_tag)
 
     cleanup(neo4j_session, common_job_parameters)
 

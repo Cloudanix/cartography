@@ -6,6 +6,7 @@ from enum import auto
 from enum import Enum
 from typing import Dict
 from typing import List
+from typing import Optional
 
 from cartography.models.core.common import PropertyRef
 
@@ -85,6 +86,27 @@ def make_target_node_matcher(key_ref_dict: Dict[str, PropertyRef]) -> TargetNode
 
 
 @dataclass(frozen=True)
+class SourceNodeMatcher:
+    """
+    Identical shape to TargetNodeMatcher but used to match the *source* node of a
+    relationship. Only used with load_matchlinks() operations, where a relationship is
+    drawn between two nodes that already exist in the graph. It has no effect on
+    CartographyRelSchema objects composed into a CartographyNodeSchema.
+    See `make_source_node_matcher()`.
+    """
+    pass
+
+
+def make_source_node_matcher(key_ref_dict: Dict[str, PropertyRef]) -> SourceNodeMatcher:
+    """
+    :param key_ref_dict: A Dict mapping keys present on the node to PropertyRef objects.
+    :return: A SourceNodeMatcher used for load_matchlinks() to match the source node.
+    """
+    fields = [(key, PropertyRef, field(default=prop_ref)) for key, prop_ref in key_ref_dict.items()]
+    return make_dataclass(SourceNodeMatcher.__name__, fields, frozen=True)()
+
+
+@dataclass(frozen=True)
 class CartographyRelSchema(abc.ABC):
     """
     Abstract base dataclass that represents a cartography relationship.
@@ -131,6 +153,24 @@ class CartographyRelSchema(abc.ABC):
         :return: The LinkDirection of the query. Please see the `LinkDirection` docs for a detailed explanation.
         """
         pass
+
+    @property
+    def source_node_label(self) -> Optional[str]:
+        """
+        Only used with load_matchlinks(), where a relationship is drawn between two
+        existing nodes: the label of the source node. Ignored (None) for rel schemas
+        composed into a CartographyNodeSchema.
+        """
+        return None
+
+    @property
+    def source_node_matcher(self) -> Optional[SourceNodeMatcher]:
+        """
+        Only used with load_matchlinks(): how to find the source node of the
+        relationship. See `make_source_node_matcher()`. Ignored (None) for rel schemas
+        composed into a CartographyNodeSchema.
+        """
+        return None
 
 
 @dataclass(frozen=True)

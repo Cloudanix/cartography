@@ -17,17 +17,20 @@ def test_transform_gcp_vpcs():
     assert vpc['routing_config_routing_mode'] == 'REGIONAL'
 
 
-def test_transform_gcp_subnets():
+def test_transform_gcp_subnets(mocker):
     """
     Ensure that transform_gcp_subnets() returns a list of subnets with correct partial_uris and tests for the presence
     of some key members.
     """
-    subnet_list = cartography.intel.gcp.compute.transform_gcp_subnets(VPC_SUBNET_RESPONSE)
+    mocker.patch.object(cartography.intel.gcp.compute, 'get_default_vpc', return_value=None)
+    subnet_list = cartography.intel.gcp.compute.transform_gcp_subnets(
+        VPC_SUBNET_RESPONSE, 'project-abc', mocker.MagicMock(),
+    )
     assert len(subnet_list) == 1
 
     subnet = subnet_list[0]
     assert subnet['ip_cidr_range'] == '10.0.0.0/20'
-    assert subnet['partial_uri'] == 'projects/project-abc/regions/europe-west2/subnetworks/default'
+    assert subnet['partial_uri'] == 'projects/project-abc/locations/europe-west2/subnetworks/default'
     assert subnet['region'] == 'europe-west2'
     assert not subnet['private_ip_google_access']
 
@@ -43,6 +46,22 @@ def test_parse_compute_full_uri_to_partial_uri():
         'projects/project-abc/zones/europe-west2-b/disks/instance-1'
     assert cartography.intel.gcp.compute._parse_compute_full_uri_to_partial_uri(vpc_uri) == \
         'projects/project-abc/global/networks/default'
+
+
+def test_gcp_subnet_id_is_the_subnet_loader_key(mocker):
+    gcp_subnet_id = cartography.intel.gcp.compute._gcp_subnet_id
+    self_link = VPC_SUBNET_RESPONSE['items'][0]['selfLink']
+    mocker.patch.object(cartography.intel.gcp.compute, 'get_default_vpc', return_value=None)
+    loaded = cartography.intel.gcp.compute.transform_gcp_subnets(VPC_SUBNET_RESPONSE, 'project-abc', None)[0]
+
+    # A NIC / forwarding rule self-link resolves to the id the subnet loader writes.
+    assert gcp_subnet_id(self_link) == loaded['id'] == 'projects/project-abc/locations/europe-west2/subnetworks/default'
+    assert gcp_subnet_id('projects/host/regions/us-east1/subnetworks/shared') == \
+        'projects/host/locations/us-east1/subnetworks/shared'
+    # Already a subnet id, or not a regional subnetwork: the partial URI, unchanged.
+    assert gcp_subnet_id(loaded['id']) == loaded['id']
+    assert gcp_subnet_id('https://www.googleapis.com/compute/v1/projects/p/global/networks/n') == \
+        'projects/p/global/networks/n'
 
 
 def test_transform_gcp_firewall():
@@ -63,3 +82,25 @@ def test_transform_gcp_firewall():
     assert sample_fw_icmp_rule['fromport'] is None
     assert sample_fw_icmp_rule['toport'] is None
     assert sample_fw_icmp_rule['protocol'] == 'icmp'
+
+
+def test_sync_compute_disks_syncs_labels(mocker):
+    """Disk labels must flow into label.sync_labels as GCPLabel nodes."""
+    from unittest.mock import MagicMock
+
+    compute_mod = cartography.intel.gcp.compute
+    disks = [{'id': 'projects/p/disks/d1', 'labels': {'env': 'prod'}}]
+    mocker.patch.object(compute_mod, 'get_compute_disks', return_value=disks)
+    mocker.patch.object(compute_mod, 'load_compute_disks')
+    mocker.patch.object(compute_mod, 'cleanup_compute_disks')
+    sync_labels = mocker.patch.object(compute_mod.label, 'sync_labels')
+
+    compute_mod.sync_compute_disks(
+        MagicMock(), MagicMock(), 'p', [{'name': 'us-east1-b'}], 1,
+        {'service_labels': []},
+    )
+
+    sync_labels.assert_called_once()
+    args = sync_labels.call_args[0]
+    assert args[1] == disks
+    assert args[5] == 'GCPComputeDisk'

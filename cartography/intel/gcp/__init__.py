@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Set
 
 import googleapiclient.discovery
@@ -20,29 +21,39 @@ from neo4j import GraphDatabase
 from oauth2client.client import ApplicationDefaultCredentialsError
 from oauth2client.client import GoogleCredentials
 
+from . import compute
+from . import exposure_layers
 from . import label
+from . import loadbalancer
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
+from cartography.graph import write_timer
 from cartography.graph.session import Session
+from cartography.intel.exposure import step as exposure_step
 from cartography.intel.gcp import crm
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
-from cartography.util import run_analysis_job
+from cartography.intel.gcp.util.errors import is_permission_error
+from cartography.intel.gcp.util.errors import is_service_not_enabled_error as _is_service_not_enabled_error
+from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 Resources = namedtuple(
     "Resources",
-    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun  \
-        iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer",
+    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
+    "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts serviceusage policyanalyzer",
 )
 
 # Mapping of service short names to their full names as in docs. See https://developers.google.com/apis-explorer,
 # and https://cloud.google.com/service-usage/docs/reference/rest/v1/services#ServiceConfig
 Services = namedtuple(
     "Services",
-    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn loadbalancer bigquery dataflow spanner pubsublite cloudtasks serviceusage policyanalyzer",
+    "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
+    "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts serviceusage policyanalyzer",
 )
 service_names = Services(
     compute="compute.googleapis.com",
@@ -72,6 +83,7 @@ service_names = Services(
     spanner="spanner.googleapis.com",
     pubsublite="pubsublite.googleapis.com",
     cloudtasks="cloudtasks.googleapis.com",
+    artifacts="artifactregistry.googleapis.com",
     serviceusage="serviceusage.googleapis.com",
     policyanalyzer="policyanalyzer.googleapis.com",
 )
@@ -402,6 +414,17 @@ def _get_cloudtasks_resource(credentials: GoogleCredentials) -> Resource:
     return googleapiclient.discovery.build("cloudtasks", "v2", credentials=credentials, cache_discovery=False)
 
 
+def _get_artifactregistry_resource(credentials: GoogleCredentials) -> Resource:
+    """
+    Instantiates an Artifact Registry resource object. Also serves gcr.io: Container Registry is shut down and its
+    hosts are now Artifact Registry repositories.
+    See: https://cloud.google.com/artifact-registry/docs/reference/rest
+    :param credentials: The GoogleCredentials object
+    :return: An artifactregistry resource object
+    """
+    return googleapiclient.discovery.build("artifactregistry", "v1", credentials=credentials, cache_discovery=False)
+
+
 def _get_spanner_resource(credentials: GoogleCredentials) -> Resource:
     """
     Instantiates a spanner resource object.
@@ -455,6 +478,7 @@ def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Res
         bigquery=_get_bigquery_resource(credentials),
         dataflow=_get_dataflow_resource(credentials),
         cloudtasks=_get_cloudtasks_resource(credentials),
+        artifacts=_get_artifactregistry_resource(credentials),
         spanner=_get_spanner_resource(credentials),
         pubsublite=_get_pubsublite_resource(credentials),
         policyanalyzer=_get_policyanalyzer_resource(credentials),
@@ -509,6 +533,7 @@ def concurrent_execution(
     shared_neo4j_driver=None,
 ):
     tic = time.perf_counter()
+    _gw0 = write_timer.total()
     _status = "success"
     _err: Dict = {}
     _result = None
@@ -570,6 +595,7 @@ def concurrent_execution(
             "service": service,
             "run_mode": "parallel",
             "duration_seconds": _elapsed,
+            "graph_write_seconds": round(write_timer.total() - _gw0, 4),
             "status": _status,
         }
         if _err:
@@ -603,18 +629,7 @@ def _sync_single_project(
     _failed_services: Dict = {}
     logger.info(f"gcp project={project_id}: starting full sync")
     all_regions = get_all_regions(resources.compute, project_id)
-
-    regions = []
-    if len(config.params.get("regions", [])) > 0:
-        input_regions = config.params.get("regions", [])
-
-        # INFO: if it's an invalid region in input parameters, ignore those
-        for region in input_regions:
-            if region in all_regions:
-                regions.append(region)
-
-    else:
-        regions = all_regions
+    regions = _resolve_sync_regions(all_regions, config.params.get("regions", []))
 
     if os.environ.get("LOCAL_RUN", "0") == "1":
         # BEGIN - Sequential Run
@@ -623,6 +638,7 @@ def _sync_single_project(
             if func_name in RESOURCE_FUNCTIONS:
                 logger.info(f"Processing {func_name}")
                 _svc_tic = time.perf_counter()
+                _svc_gw0 = write_timer.total()
                 _svc_status = "success"
                 _svc_err: Dict = {}
                 try:
@@ -671,6 +687,7 @@ def _sync_single_project(
                         "service": func_name,
                         "run_mode": "sequential",
                         "duration_seconds": _svc_elapsed,
+                        "graph_write_seconds": round(write_timer.total() - _svc_gw0, 4),
                         "status": _svc_status,
                     }
                     if _svc_err:
@@ -753,6 +770,23 @@ def _sync_single_project(
 
         # END - Parallel Run
 
+    # GKE node links need both GCP instances and GKE clusters loaded; those syncs run in parallel.
+    if "compute" in requested_syncs or "gke" in requested_syncs:
+        try:
+            compute.sync_gke_node_links(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to link GKE nodes for project {project_id} - {e}")
+
+    # Load balancer backend members need backend services (cloudcdn), instance groups and NEGs (loadbalancer),
+    # instances (compute) and functions (cloudfunction) loaded; those syncs run in parallel.
+    if "cloudcdn" in requested_syncs or "loadbalancer" in requested_syncs:
+        try:
+            loadbalancer.sync_external_backend_members(
+                neo4j_session, resources.compute, project_id, common_job_parameters,
+            )
+        except Exception as e:
+            logger.warning(f"error to resolve load balancer backend members for project {project_id} - {e}")
+
     for service_name in common_job_parameters["service_labels"]:
         common_job_parameters["service_label"] = service_name
 
@@ -772,44 +806,6 @@ def _sync_single_project(
     )
 
 
-def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpError) -> bool:
-    """
-    Return True when the HttpError is GCP reporting that the API is not enabled / has never been used on the project.
-
-    GCP signals this inconsistently across services, so all known shapes are matched centrally:
-      - 403 with reason `accessNotConfigured` in the legacy `errors[]` array (e.g. Compute).
-      - 403 PERMISSION_DENIED with reason `SERVICE_DISABLED` in the newer `details[]` (ErrorInfo) array.
-      - 400 reason `invalid` with a "...has not enabled <API>" message (e.g. BigQuery).
-      - any message saying the API "has not been used in project ... or it is disabled".
-
-    Any other error returns False so it is re-raised / logged as an error and not silently swallowed.
-    """
-    try:
-        error = json.loads(http_error.content.decode("utf-8")).get("error", {})
-    except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
-        return False
-
-    # Reason codes live in `errors[]` (legacy) and/or `details[]` (ErrorInfo) depending on the API.
-    reason_entries = (error.get("errors") or []) + (error.get("details") or [])
-    reasons = {entry.get("reason") for entry in reason_entries if isinstance(entry, dict)}
-    if reasons & {"accessNotConfigured", "SERVICE_DISABLED"}:
-        return True
-
-    # Fall back to message text for APIs that don't set a recognizable reason code.
-    message = error.get("message", "")
-    if not message:
-        return False
-    return any(
-        needle in message
-        for needle in (
-            "has not been used in project",
-            "is disabled",
-            "has not enabled",
-            "has not been enabled",
-        )
-    )
-
-
 # Map a sync func name (key in RESOURCE_FUNCTIONS) to the single ServiceUsage API it needs, so we can proactively
 # skip a service whose API is known-disabled instead of making a call we know will 403/400. Derived from the
 # googleapiclient.discovery.build(...) call each _get_<svc>_resource uses: build's first arg + ".googleapis.com" is
@@ -819,7 +815,6 @@ def _is_service_not_enabled_error(http_error: googleapiclient.discovery.HttpErro
 #   - "admin" (workspace): Admin SDK is org/directory-scoped, not a per-project ServiceUsage API.
 #   - "iam": needs several APIs (iam + cloudresourcemanager + policyanalyzer + apikeys); a single-key gate could
 #     wrongly skip it. It is core and almost always enabled.
-#   - "artifacts" (containerregistry): ambiguous API name and no matching Resources field; not confident enough.
 _GATEABLE_SERVICE_APIS: Dict[str, str] = {
     "compute": "compute.googleapis.com",
     "cloudcdn": "compute.googleapis.com",
@@ -843,6 +838,7 @@ _GATEABLE_SERVICE_APIS: Dict[str, str] = {
     "dataflow": "dataflow.googleapis.com",
     "pubsublite": "pubsublite.googleapis.com",
     "cloudtasks": "cloudtasks.googleapis.com",
+    "artifacts": "artifactregistry.googleapis.com",
 }
 
 
@@ -854,7 +850,7 @@ def _gated_out_services(requested_syncs: List[str], enabled_services: Set[str]) 
       - `enabled_services` is non-empty. An empty set means the ServiceUsage lookup returned nothing or failed
         (it swallows HttpError and returns set()); treating that as "skip everything" would silently drop an entire
         project, so an empty set disables the gate entirely.
-      - the func is in `_GATEABLE_SERVICE_APIS`. Unmapped funcs (iam, workspace, artifacts) are never gated.
+      - the func is in `_GATEABLE_SERVICE_APIS`. Unmapped funcs (iam, workspace) are never gated.
       - its mapped API is absent from `enabled_services`.
 
     Anything not skipped here still runs and is protected by the reactive `_is_service_not_enabled_error` catch, so a
@@ -881,16 +877,35 @@ def get_all_regions(compute: Resource, project_id: str):
 
             req = compute.regions().list_next(previous_request=req, previous_response=res)
     except googleapiclient.discovery.HttpError as http_error:
-        # Only swallow the "Compute Engine API not enabled" case. Log at `info` so it is not reported to Sentry as an
-        # error (CDX-CARTOGRAPHY-INVENTORY-25B); without the API there are no regions/compute resources to sync. Any
-        # other HttpError is unexpected and re-raised so it still surfaces.
-        if not _is_service_not_enabled_error(http_error):
-            raise
-        logger.info(
-            f"Compute Engine API not enabled on project {project_id}; skipping region lookup. Details: {http_error}",
-        )
+        # A missing API/permission is a project configuration issue and is safely downgraded. Transient 403s like
+        # quota/rate-limit responses are not permission denials and must keep surfacing so the sync does not silently
+        # skip an entire project's regions.
+        try:
+            err = json.loads(http_error.content.decode("utf-8")).get("error", {})
+        except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
+            err = {}
+
+        if _is_service_not_enabled_error(http_error) or is_permission_error(http_error, err):
+            logger.info(
+                f"Could not list regions on project {project_id}; skipping region lookup. Details: {http_error}",
+            )
+            return regions
+
+        raise
 
     return regions
+
+
+def _resolve_sync_regions(all_regions: List[str], input_regions: List[str]) -> List[str]:
+    """
+    Regions to sync: the provided ones that exist, else all. When the region lookup came back empty (denied or
+    disabled) the provided regions are kept as-is, since empty means "could not determine", not "no regions".
+    """
+    if not input_regions:
+        return all_regions
+    if not all_regions:
+        return list(input_regions)
+    return [region for region in input_regions if region in all_regions]
 
 
 def _sync_multiple_projects(
@@ -933,51 +948,12 @@ def _sync_multiple_projects(
         )
         if config.refresh_entitlements:
             run_cleanup_job("gcp_unused_cleanup.json", neo4j_session, common_job_parameters)
-        run_analysis_job(
-            "gcp_storage_bucket_policy_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_bigquery_dataset_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_compute_firewall_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_cloud_function_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_compute_instance_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_kms_keyring_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_cloud_function_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
-        run_analysis_job(
-            "gcp_sql_instance_analysis.json",
-            neo4j_session,
-            common_job_parameters,
-        )
+        # Analysis jobs run once, in start_gcp_ingestion, for this same project.
     del common_job_parameters["GCP_PROJECT_ID"]
 
 
 @timeit
-def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
+def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optional[Dict]:
     """
     Starts the GCP ingestion process by initializing Google Application Default Credentials, creating the necessary
     resource objects, listing all GCP organizations and projects available to the GCP identity, and supplying that
@@ -1018,7 +994,7 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             ),
             e,
         )
-        return
+        return None
 
     requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
     if config.gcp_requested_syncs:
@@ -1064,12 +1040,6 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     )
 
     run_analysis_job(
-        "gcp_compute_asset_inet_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
         "gcp_compute_firewall_analysis.json",
         neo4j_session,
         common_job_parameters,
@@ -1100,6 +1070,19 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     )
 
     run_analysis_job(
+        "gcp_load_balancer_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
+    # After the load balancer job: a service behind an external load balancer is read off the flagged NEG.
+    run_analysis_job(
+        "gcp_cloudrun_service_exposure.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+
+    run_analysis_job(
         "gcp_sql_instance_analysis.json",
         neo4j_session,
         common_job_parameters,
@@ -1109,6 +1092,11 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "gcp_storage_bucket_policy_analysis.json",
         neo4j_session,
         common_job_parameters,
+    )
+
+    # Reads what the sync and the jobs above wrote; runs only when requested (see exposure/step.py).
+    exposure_step.run_if_requested(
+        exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
     )
 
     del common_job_parameters["service_labels"]

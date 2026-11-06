@@ -1,0 +1,52 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset logging analysis properties on OCI audit configuration in scope",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(n:OCIAuditConfiguration) WHERE n.logging_risk IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.logging_risk, n.logging_risk_type RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Reset logging analysis properties on OCI logging configuration in scope",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(n:OCILoggingConfiguration) WHERE n.logging_risk IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.logging_risk, n.logging_risk_type RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Flag audit configuration with retention period less than 365 days (CIS 3.1)",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(ac:OCIAuditConfiguration) WHERE ac.retention_period_days < 365 SET ac.logging_risk = true, (CASE WHEN NOT 'audit_retention_insufficient' IN coalesce(ac.logging_risk_type, []) THEN ac END).logging_risk_type = coalesce(ac.logging_risk_type, []) + 'audit_retention_insufficient'",
+      "iterative": false
+    },
+    {
+      "__comment": "Flag logging configuration with no log groups configured",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(lc:OCILoggingConfiguration{has_log_groups: false}) SET lc.logging_risk = true, (CASE WHEN NOT 'no_log_groups' IN coalesce(lc.logging_risk_type, []) THEN lc END).logging_risk_type = coalesce(lc.logging_risk_type, []) + 'no_log_groups'",
+      "iterative": false
+    },
+    {
+      "__comment": "Flag logging configuration with no enabled logs",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(lc:OCILoggingConfiguration{has_enabled_logs: false}) SET lc.logging_risk = true, (CASE WHEN NOT 'no_enabled_logs' IN coalesce(lc.logging_risk_type, []) THEN lc END).logging_risk_type = coalesce(lc.logging_risk_type, []) + 'no_enabled_logs'",
+      "iterative": false
+    },
+    {
+      "__comment": "Flag individual logs that are disabled",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(:OCILogGroup)-[:OCI_LOG]->(l:OCILog{is_enabled: false}) SET l.logging_risk = true, (CASE WHEN NOT 'log_disabled' IN coalesce(l.logging_risk_type, []) THEN l END).logging_risk_type = coalesce(l.logging_risk_type, []) + 'log_disabled'",
+      "iterative": false
+    },
+    {
+      "__comment": "Flag Object Storage buckets with write logging not enabled",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(b:OCIStorageBucket{write_logging_enabled: false}) SET b.logging_risk = true, (CASE WHEN NOT 'bucket_write_logging_missing' IN coalesce(b.logging_risk_type, []) THEN b END).logging_risk_type = coalesce(b.logging_risk_type, []) + 'bucket_write_logging_missing'",
+      "iterative": false
+    },
+    {
+      "__comment": "Flag Object Storage buckets with read logging not enabled",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(b:OCIStorageBucket{read_logging_enabled: false}) SET b.logging_risk = true, (CASE WHEN NOT 'bucket_read_logging_missing' IN coalesce(b.logging_risk_type, []) THEN b END).logging_risk_type = coalesce(b.logging_risk_type, []) + 'bucket_read_logging_missing'",
+      "iterative": false
+    },
+    {
+      "__comment": "Flag compartments with no log groups (logging gap)",
+      "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(comp:OCICompartment{id: $OCI_COMPARTMENT_ID}) WHERE NOT (comp)-[:RESOURCE]->(:OCILogGroup) SET comp.logging_gap = true",
+      "iterative": false
+    }
+  ],
+  "name": "OCI logging and audit analysis"
+}

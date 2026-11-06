@@ -11,6 +11,8 @@ from googleapiclient.discovery import Resource
 
 from . import iam
 from . import label
+from cartography.client.core.tx import run_write_query
+from cartography.intel.gcp.util.principals import ORG_PRINCIPAL_MATCH
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -164,14 +166,16 @@ def transform_keryring_policy_bindings(response_objects: List[Dict], keyring_id:
 
 
 @timeit
-def attach_keyring_to_binding(session: neo4j.Session, keyring_id: str, bindings: List[Dict], gcp_update_tag: int) -> None:
-    session.execute_write(attach_keyring_to_bindings_tx, bindings, keyring_id, gcp_update_tag)
+def attach_keyring_to_binding(
+    session: neo4j.Session, keyring_id: str, bindings: List[Dict], gcp_update_tag: int, project_id: str,
+) -> None:
+    session.execute_write(attach_keyring_to_bindings_tx, bindings, keyring_id, gcp_update_tag, project_id)
 
 
 @timeit
 def attach_keyring_to_bindings_tx(
     tx: neo4j.Transaction, bindings: List[Dict],
-    keyring_id: str, gcp_update_tag: int,
+    keyring_id: str, gcp_update_tag: int, project_id: str,
 ) -> None:
 
     query = """
@@ -184,7 +188,7 @@ def attach_keyring_to_bindings_tx(
         binding.members = record.members,
         binding.role = record.role
     WITH binding
-    MATCH (keyring:GCPKMSKeyRing{id: $KeyringId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(:GCPLocation)-[:RESOURCE]->(keyring:GCPKMSKeyRing{id: $KeyringId})
     MERGE (keyring)-[a:ATTACHED_BINDING]->(binding)
     ON CREATE SET
         a.firstseen = timestamp()
@@ -194,6 +198,62 @@ def attach_keyring_to_bindings_tx(
         query,
         Records=bindings,
         KeyringId=keyring_id,
+        ProjectId=project_id,
+        gcp_update_tag=gcp_update_tag,
+    )
+
+
+@timeit
+def get_crypto_key_policy_bindings(kms: Resource, crypto_key: Dict, project_id: str) -> List[Dict]:
+    """
+    Bindings of a crypto key's own IAM policy (keys are usually shared on the key, not the key ring).
+    One cryptoKeys.getIamPolicy call per key; [] when the caller may not read it.
+    """
+    try:
+        iam_policy = kms.projects().locations().keyRings().cryptoKeys().getIamPolicy(
+            resource=crypto_key['name'],
+        ).execute()
+        return iam_policy.get('bindings', [])
+    except HttpError as e:
+        err = json.loads(e.content.decode('utf-8'))['error']
+        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+            logger.warning(
+                "Could not retrieve iam policy of crypto key %s on project %s due to permissions issues. Code: %s",
+                crypto_key['name'], project_id, err.get('code'),
+            )
+            return []
+        raise
+
+
+def transform_crypto_key_policy_bindings(bindings: List[Dict], crypto_key_id: str, project_id: str) -> List[Dict]:
+    for binding in bindings:
+        binding['id'] = f"projects/{project_id}/cryptokey/{crypto_key_id}/role/{binding['role']}"
+    return bindings
+
+
+@timeit
+def attach_crypto_key_to_bindings(
+    session: neo4j.Session, crypto_key_id: str, bindings: List[Dict], gcp_update_tag: int, project_id: str,
+) -> None:
+    query = """
+    UNWIND $Records as record
+    MERGE (binding:GCPBinding{id: record.id})
+    ON CREATE SET
+        binding.firstseen = timestamp()
+    SET
+        binding.lastupdated = $gcp_update_tag,
+        binding.members = record.members,
+        binding.role = record.role
+    WITH binding
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(:GCPLocation)-[:RESOURCE]->(:GCPKMSKeyRing)
+        -[:RESOURCE]->(crypto_key:GCPKMSCryptoKey{id: $CryptoKeyId})
+    MERGE (crypto_key)-[a:ATTACHED_BINDING]->(binding)
+    ON CREATE SET
+        a.firstseen = timestamp()
+    SET a.lastupdated = $gcp_update_tag
+    """
+    run_write_query(
+        session, query, Records=bindings, CryptoKeyId=crypto_key_id, ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -333,7 +393,7 @@ def _load_kms_key_rings_tx(
         keyring.consolelink = keyr.consolelink,
         keyring.lastupdated = $gcp_update_tag
     WITH keyring, keyr
-    MATCH (location:GCPLocation{id:keyr.loc_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(location:GCPLocation{id:keyr.loc_id})
     MERGE (location)-[r:RESOURCE]->(keyring)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -348,12 +408,16 @@ def _load_kms_key_rings_tx(
 
 
 @timeit
-def load_keyring_entity_relation(session: neo4j.Session, keyring: Dict, update_tag: int) -> None:
-    session.execute_write(load_keyring_entity_relation_tx, keyring, update_tag)
+def load_keyring_entity_relation(
+    session: neo4j.Session, keyring: Dict, update_tag: int, common_job_parameters: Dict,
+) -> None:
+    session.execute_write(load_keyring_entity_relation_tx, keyring, update_tag, common_job_parameters)
 
 
 @timeit
-def load_keyring_entity_relation_tx(tx: neo4j.Transaction, keyring: Dict, gcp_update_tag: int) -> None:
+def load_keyring_entity_relation_tx(
+    tx: neo4j.Transaction, keyring: Dict, gcp_update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
         :type neo4j_session: Neo4j session object
         :param neo4j session: The Neo4j session object
@@ -372,16 +436,20 @@ def load_keyring_entity_relation_tx(tx: neo4j.Transaction, keyring: Dict, gcp_up
     """
     ingest_entities = """
     UNWIND $entities AS entity
-    MATCH (principal:GCPPrincipal{email:entity.email})
-    WITH principal
-    MATCH (keyring:GCPKMSKeyRing{id: $keyring_id})
+    """ + ORG_PRINCIPAL_MATCH + """
+    WITH DISTINCT principal
+    MATCH (:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPLocation)
+        -[:RESOURCE]->(keyring:GCPKMSKeyRing{id: $keyring_id})
     MERGE (principal)-[r:USES]->(keyring)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag    """
     tx.run(
         ingest_entities,
         keyring_id=keyring.get('id', None),
+        GCP_PROJECT_ID=common_job_parameters['GCP_PROJECT_ID'],
         entities=keyring.get('entities', []),
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -425,7 +493,8 @@ def _load_kms_crypto_keys_tx(
         crypto_key.consolelink = ck.consolelink,
         crypto_key.lastupdated = $gcp_update_tag
     WITH crypto_key, ck
-    MATCH (key_ring:GCPKMSKeyRing{id:ck.keyring_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(:GCPLocation)
+        -[:RESOURCE]->(key_ring:GCPKMSKeyRing{id:ck.keyring_id})
     MERGE (key_ring)-[r:RESOURCE]->(crypto_key)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -494,13 +563,21 @@ def sync(
     key_rings = get_kms_keyrings(kms, locations, project_id)
     load_kms_key_rings(neo4j_session, key_rings, project_id, gcp_update_tag)
     for key_ring in key_rings:
-        load_keyring_entity_relation(neo4j_session, key_ring, gcp_update_tag)
+        load_keyring_entity_relation(neo4j_session, key_ring, gcp_update_tag, common_job_parameters)
         bindings = get_keyring_policy_bindings(kms, key_ring, project_id)
         bindings_list = transform_keryring_policy_bindings(bindings, key_ring['id'], project_id)
-        attach_keyring_to_binding(neo4j_session, key_ring['id'], bindings_list, gcp_update_tag)
+        attach_keyring_to_binding(neo4j_session, key_ring['id'], bindings_list, gcp_update_tag, project_id)
     label.sync_labels(neo4j_session, key_rings, gcp_update_tag, common_job_parameters, 'keyrings', 'GCPKMSKeyRing')
     crypto_keys = get_kms_crypto_keys(kms, key_rings, project_id)
     load_kms_crypto_keys(neo4j_session, crypto_keys, project_id, gcp_update_tag)
+    for crypto_key in crypto_keys:
+        key_bindings = get_crypto_key_policy_bindings(kms, crypto_key, project_id)
+        key_bindings = transform_crypto_key_policy_bindings(key_bindings, crypto_key["id"], project_id)
+        attach_crypto_key_to_bindings(neo4j_session, crypto_key["id"], key_bindings, gcp_update_tag, project_id)
+    label.sync_labels(
+        neo4j_session, crypto_keys, gcp_update_tag, common_job_parameters,
+        'crypto_keys', 'GCPKMSCryptoKey',
+    )
     cleanup_gcp_kms(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

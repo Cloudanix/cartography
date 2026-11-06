@@ -1,3 +1,44 @@
-build/
-*.egg-info/
+# VCS / CI
+.git
+.github
+
+# virtualenvs & caches
+.venv*
+venv*
 venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.cache/
+.coverage
+.code-review-graph/
+
+# build artifacts
+build/
+dist/
+*.egg-info/
+package/
+function.zip
+*.log
+
+# not needed in images
+docs/
+tmp/
+scripts/
+node_modules/
+.vscode/
+.idea/
+.kiro/
+.DS_Store
+
+# secrets — never bake into an image (Dockerfile does COPY . .)
+.env*
+env.dev.json
+env.prod.json
+
+# docker meta
+Dockerfile*
+docker-compose.yml
+.dockerignore

@@ -95,6 +95,7 @@ def test_load_server_relationships(neo4j_session):
 def test_load_server_dns_aliases(neo4j_session):
     sql._load_server_dns_aliases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_DNS_ALIASES,
         TEST_UPDATE_TAG,
     )
@@ -126,6 +127,7 @@ def test_load_server_dns_aliases_relationships(neo4j_session):
 
     sql._load_server_dns_aliases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_DNS_ALIASES,
         TEST_UPDATE_TAG,
     )
@@ -156,6 +158,7 @@ def test_load_server_dns_aliases_relationships(neo4j_session):
 def test_load_server_ad_admins(neo4j_session):
     sql._load_server_ad_admins(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_AD_ADMINS,
         TEST_UPDATE_TAG,
     )
@@ -187,6 +190,7 @@ def test_load_server_ad_admins_relationships(neo4j_session):
 
     sql._load_server_ad_admins(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_AD_ADMINS,
         TEST_UPDATE_TAG,
     )
@@ -217,6 +221,7 @@ def test_load_server_ad_admins_relationships(neo4j_session):
 def test_load_recoverable_databases(neo4j_session):
     sql._load_recoverable_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_RECOVERABLE_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -247,6 +252,7 @@ def test_load_recoverable_databases_relationships(neo4j_session):
 
     sql._load_recoverable_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_RECOVERABLE_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -277,6 +283,7 @@ def test_load_recoverable_databases_relationships(neo4j_session):
 def test_load_restorable_dropped_databases(neo4j_session):
     sql._load_restorable_dropped_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_RESTORABLE_DROPPED_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -308,6 +315,7 @@ def test_load_restorable_dropped_databases_relationships(neo4j_session):
 
     sql._load_restorable_dropped_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_RESTORABLE_DROPPED_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -338,6 +346,7 @@ def test_load_restorable_dropped_databases_relationships(neo4j_session):
 def test_load_failover_groups(neo4j_session):
     sql._load_failover_groups(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_FAILOVER_GROUPS,
         TEST_UPDATE_TAG,
     )
@@ -369,6 +378,7 @@ def test_load_failover_groups_relationships(neo4j_session):
 
     sql._load_failover_groups(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_FAILOVER_GROUPS,
         TEST_UPDATE_TAG,
     )
@@ -399,6 +409,7 @@ def test_load_failover_groups_relationships(neo4j_session):
 def test_load_elastic_pools(neo4j_session):
     sql._load_elastic_pools(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_ELASTIC_POOLS,
         TEST_UPDATE_TAG,
     )
@@ -430,6 +441,7 @@ def test_load_elastic_pools_relationships(neo4j_session):
 
     sql._load_elastic_pools(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_ELASTIC_POOLS,
         TEST_UPDATE_TAG,
     )
@@ -460,6 +472,7 @@ def test_load_elastic_pools_relationships(neo4j_session):
 def test_load_databases(neo4j_session):
     sql._load_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -490,6 +503,7 @@ def test_load_databases_relationships(neo4j_session):
 
     sql._load_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_DATABASES,
         TEST_UPDATE_TAG,
     )
@@ -520,6 +534,7 @@ def test_load_databases_relationships(neo4j_session):
 def test_load_replication_links(neo4j_session):
     sql._load_replication_links(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_REPLICATION_LINKS,
         TEST_UPDATE_TAG,
     )
@@ -544,12 +559,14 @@ def test_load_replication_links_relationships(neo4j_session):
     # Create Test Azure Database
     sql._load_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_DATABASES,
         TEST_UPDATE_TAG,
     )
 
     sql._load_replication_links(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_REPLICATION_LINKS,
         TEST_UPDATE_TAG,
     )
@@ -580,6 +597,7 @@ def test_load_replication_links_relationships(neo4j_session):
 def test_load_db_threat_detection_policies(neo4j_session):
     sql._load_db_threat_detection_policies(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_THREAT_DETECTION_POLICY,
         TEST_UPDATE_TAG,
     )
@@ -604,12 +622,14 @@ def test_load_db_threat_detection_policies_relationships(neo4j_session):
     # Create Test Azure Database
     sql._load_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_DATABASES,
         TEST_UPDATE_TAG,
     )
 
     sql._load_db_threat_detection_policies(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_THREAT_DETECTION_POLICY,
         TEST_UPDATE_TAG,
     )
@@ -640,6 +660,7 @@ def test_load_db_threat_detection_policies_relationships(neo4j_session):
 def test_load_restore_points(neo4j_session):
     sql._load_restore_points(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_RESTORE_POINTS,
         TEST_UPDATE_TAG,
     )
@@ -664,12 +685,14 @@ def test_load_restore_points_relationships(neo4j_session):
     # Create Test Azure Database
     sql._load_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_DATABASES,
         TEST_UPDATE_TAG,
     )
 
     sql._load_restore_points(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_RESTORE_POINTS,
         TEST_UPDATE_TAG,
     )
@@ -700,6 +723,7 @@ def test_load_restore_points_relationships(neo4j_session):
 def test_load_transparent_data_encryptions(neo4j_session):
     sql._load_transparent_data_encryptions(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TRANSPARENT_DATA_ENCRYPTIONS,
         TEST_UPDATE_TAG,
     )
@@ -724,12 +748,14 @@ def test_load_transparent_data_encryptions_relationships(neo4j_session):
     # Create Test Azure Database
     sql._load_databases(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_DATABASES,
         TEST_UPDATE_TAG,
     )
 
     sql._load_transparent_data_encryptions(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_TRANSPARENT_DATA_ENCRYPTIONS,
         TEST_UPDATE_TAG,
     )
@@ -784,9 +810,12 @@ def test_sql_server_analysis_public_exposure(neo4j_session):
         TEST_UPDATE_TAG,
     )
 
-    sql._load_firewall_rules(neo4j_session, DESCRIBE_FIREWALL_RULES, TEST_UPDATE_TAG)
+    sql._load_firewall_rules(neo4j_session, TEST_SUBSCRIPTION_ID, DESCRIBE_FIREWALL_RULES, TEST_UPDATE_TAG)
+    sql._load_firewall_rules_fetched(
+        neo4j_session, TEST_SUBSCRIPTION_ID, [{'id': s['id'], 'fetched': True} for s in DESCRIBE_SERVERS],
+    )
 
-    sql.load_server_private_endpoint_connection(neo4j_session, DESCRIBE_SERVERS, TEST_UPDATE_TAG)
+    sql.load_server_private_endpoint_connection(neo4j_session, TEST_SUBSCRIPTION_ID, DESCRIBE_SERVERS, TEST_UPDATE_TAG)
 
     run_analysis_job(
         'azure_sql_asset_exposure.json',
@@ -794,22 +823,52 @@ def test_sql_server_analysis_public_exposure(neo4j_session):
         common_job_parameters,
     )
 
+    # testSQL1 only allows Azure services (0.0.0.0-0.0.0.0) and testSQL2 has no wide
+    # range: neither is internet-exposed (missing private endpoints no longer counts).
     expected_nodes = {
         (
             '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Sql/servers/testSQL1',
-            'unrestricted_firewall',
-        ),
-        (
-            '/subscriptions/00-00-00-00/resourceGroups/TestRG/providers/Microsoft.Sql/servers/testSQL2',
-            'no_private_endpoints',
+            'azure_services_allowed',
         ),
     }
 
     nodes = neo4j_session.run(
         """
-        MATCH (r:AzureSQLServer{exposed_internet: true}) RETURN r.id, r.exposed_internet_type;
+        MATCH (r:AzureSQLServer) WHERE r.id STARTS WITH '/subscriptions/00-00-00-00/'
+        AND r.exposed_internet_type IS NOT NULL AND r.exposed_internet IS NULL
+        RETURN r.id, r.exposed_internet_type;
         """,
     )
     actual_nodes = {(n['r.id'], ",".join(n['r.exposed_internet_type'])) for n in nodes}
 
     assert actual_nodes == expected_nodes
+    assert neo4j_session.run(
+        "MATCH (r:AzureSQLServer{exposed_internet: true}) WHERE r.id STARTS WITH '/subscriptions/00-00-00-00/' "
+        "RETURN count(r) AS c",
+    ).single()['c'] == 0
+
+
+def test_load_server_private_endpoint_connection(neo4j_session):
+    server_id = '/subscriptions/00-00/resourceGroups/pe-rg/providers/Microsoft.Sql/servers/pe-server'
+    pec_id = f'{server_id}/privateEndpointConnections/pec1'
+    # A resource group is resolved by name only under the subscription being synced.
+    neo4j_session.run(
+        "MERGE (s:AzureSubscription{id: $sub}) MERGE (s)-[:RESOURCE]->(:AzureResourceGroup{name: 'pe-rg'})",
+        sub=TEST_SUBSCRIPTION_ID,
+    )
+    sql.load_server_data(neo4j_session, TEST_SUBSCRIPTION_ID, [{'id': server_id, 'name': 'pe-server'}], TEST_UPDATE_TAG)
+    server = {
+        'id': server_id,
+        'private_endpoint_connections': [
+            {'id': pec_id, 'properties': {'provisioning_state': 'Ready', 'private_endpoint': {'id': 'pe1'}}},
+        ],
+    }
+
+    sql.load_server_private_endpoint_connection(neo4j_session, TEST_SUBSCRIPTION_ID, [server], TEST_UPDATE_TAG)
+
+    row = neo4j_session.run(
+        'MATCH (:AzureSQLServer{id: $server})-[:HAS]->(p:AzureServerPrivateEndpointConnection)'
+        '-[:RESOURCE_GROUP]->(rg:AzureResourceGroup) RETURN p.private_endpoint AS pe, rg.name AS rg',
+        server=server_id,
+    ).single()
+    assert (row['pe'], row['rg']) == ('pe1', 'pe-rg')

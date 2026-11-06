@@ -6,40 +6,42 @@ from typing import List
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.compute import ComputeManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
 from . import vmss
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
-def load_vm_extensions(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_vm_extensions_tx, data_list, update_tag)
+def load_vm_extensions(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
+    session.execute_write(_load_vm_extensions_tx, subscription_id, data_list, update_tag)
 
 
-def load_vm_available_sizes(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_vm_available_sizes_tx, data_list, update_tag)
+def load_vm_available_sizes(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
+    session.execute_write(_load_vm_available_sizes_tx, subscription_id, data_list, update_tag)
 
 
 def load_vm_scale_sets(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
     session.execute_write(_load_vm_scale_sets_tx, subscription_id, data_list, update_tag)
 
 
-def load_vm_scale_sets_extensions(session: neo4j.Session, data_list: List[Dict], update_tag: int) -> None:
-    session.execute_write(_load_vm_scale_sets_extensions_tx, data_list, update_tag)
+def load_vm_scale_sets_extensions(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
+    session.execute_write(_load_vm_scale_sets_extensions_tx, subscription_id, data_list, update_tag)
 
 
-def load_vm_security_groups_relationship(session: neo4j.Session, vm_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
-    session.execute_write(_load_vm_security_groups_relationship, vm_id, data_list, update_tag)
+def load_vm_security_groups_relationship(session: neo4j.Session, subscription_id: str, vm_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
+    session.execute_write(_load_vm_security_groups_relationship, subscription_id, vm_id, data_list, update_tag)
 
 
-def load_vm_network_interfaces_relationship(session: neo4j.Session, vm_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
-    session.execute_write(_load_vm_network_interfaces_relationship, vm_id, data_list, update_tag)
+def load_vm_network_interfaces_relationship(session: neo4j.Session, subscription_id: str, vm_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
+    session.execute_write(_load_vm_network_interfaces_relationship, subscription_id, vm_id, data_list, update_tag)
 
 
 def get_client(credentials: Credentials, subscription_id: str) -> ComputeManagementClient:
@@ -60,21 +62,46 @@ def _extract_aks_tags(tags_dict) -> Dict:
     }
 
 
+def _get_vm_power_state(client: ComputeManagementClient, resource_group: str, vm_name: str) -> str:
+    """
+    Fetch the current power state of a VM from its instance view.
+
+    The virtual_machines.list_all() response does not include power state, so we have to
+    call the instance view separately. Instance view returns a list of statuses; the power
+    state is the one whose code starts with 'PowerState/' (e.g. 'PowerState/running',
+    'PowerState/deallocated', 'PowerState/stopped'). We return the normalized value after
+    the slash (e.g. 'running') so it can be filtered the same way as AWS state and GCP status.
+
+    Returns None if the resource group / vm name is missing or the lookup fails, so a single
+    VM problem never breaks the whole sync.
+    """
+    if not resource_group or not vm_name:
+        return None
+    try:
+        instance_view = client.virtual_machines.instance_view(resource_group, vm_name)
+        for status in (instance_view.statuses or []):
+            code = getattr(status, 'code', None) or ''
+            if code.startswith('PowerState/'):
+                return code.split('/', 1)[1]
+    except HttpResponseError as e:
+        logger.warning(f"Could not fetch power state for VM {vm_name} in {resource_group} - {e}")
+    return None
+
+
 def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
         vm_data_raw = []
         for x in client.virtual_machines.list_all():
             try:
-                vm_data_raw.append(x.as_dict())
+                vm_data_raw.append(as_legacy_dict(x))
             except (KeyError, AttributeError) as e:
                 logger.warning("Skipping VM due to serialization error: %s", e)
         vm_data = []
         for vm in vm_data_raw:
             vm['resource_group'] = get_azure_resource_group_name(vm.get('id'))
-            vm['consolelink'] = azure_console_link.get_console_link(
-                id=vm['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            vm['power_state'] = _get_vm_power_state(client, vm['resource_group'], vm.get('name'))
+            vm['consolelink'] = safe_console_link(vm['id'], common_job_parameters)
             aks_tags = _extract_aks_tags(vm.get('tags', {}))
             vm['aks_cluster_name'] = aks_tags['aks_cluster_name']
             vm['aks_pool_name'] = aks_tags['aks_pool_name']
@@ -137,14 +164,13 @@ def get_vm_list(credentials: Credentials, subscription_id: str, regions: list, c
 
 def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[Dict], update_tag: int) -> None:
     ingest_vm = """
-    UNWIND $vms AS vm
+    UNWIND $DictList AS vm
     MERGE (v:AzureVirtualMachine{id: vm.id})
     ON CREATE SET v.firstseen = timestamp(),
     v.type = vm.type, v.location = vm.location,
     v.region = vm.location,
-    v.consolelink = vm.consolelink,
     v.resourcegroup = vm.resource_group
-    SET v:VirtualMachine
+    SET v.consolelink = coalesce(vm.consolelink, v.consolelink), v:VirtualMachine
     SET v.lastupdated = $update_tag, v.name = vm.name,
     v.vm_id = vm.vm_id,
     v.plan = vm.plan.product, v.size = vm.hardware_profile.vm_size,
@@ -163,6 +189,7 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     v.os_disk_name=vm.os_disk_name,
     v.vm_os=vm.os,
     v.os_version=vm.os_version,
+    v.power_state=vm.power_state,
     v.aks_cluster_name = vm.aks_cluster_name,
     v.aks_pool_name = vm.aks_pool_name,
     v.aks_cluster_rg = vm.aks_cluster_rg
@@ -173,9 +200,10 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_vm,
-        vms=vm_list,
+        vm_list,
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
@@ -183,28 +211,34 @@ def load_vms(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[D
     for vm in vm_list:
         storage_profile = vm.get('storage_profile') or {}
         if storage_profile.get('os_disk'):
-            load_vm_os_disk(neo4j_session, vm['id'], storage_profile['os_disk'], update_tag)
+            load_vm_os_disk(neo4j_session, subscription_id, vm['id'], storage_profile['os_disk'], update_tag)
         if storage_profile.get('data_disks'):
-            load_vm_data_disks(neo4j_session, vm['id'], storage_profile['data_disks'], update_tag)
+            load_vm_data_disks(neo4j_session, subscription_id, vm['id'], storage_profile['data_disks'], update_tag)
 
         if vm.get('network_security_group', []) != []:
-            load_vm_security_groups_relationship(neo4j_session, vm['id'], vm.get('network_security_group'), update_tag)
+            load_vm_security_groups_relationship(
+                neo4j_session, subscription_id, vm['id'], vm.get('network_security_group'), update_tag,
+            )
 
         if vm.get('network_interfaces', []) != []:
-            load_vm_network_interfaces_relationship(neo4j_session, vm['id'], vm.get('network_interfaces'), update_tag)
+            load_vm_network_interfaces_relationship(
+                neo4j_session, subscription_id, vm['id'], vm.get('network_interfaces'), update_tag,
+            )
         if vm.get("user_assigned_identities"):
-            load_vm_managed_identities(neo4j_session, vm['id'], vm.get("user_assigned_identities"), update_tag)
+            load_vm_managed_identities(
+                neo4j_session, subscription_id, vm['id'], vm.get("user_assigned_identities"), update_tag,
+            )
         resource_group = get_azure_resource_group_name(vm.get('id'))
-        _attach_vm_resource_group(neo4j_session, vm['id'], resource_group, update_tag)
-        _attach_vm_properties_public_ip(neo4j_session, vm['id'], update_tag)
-        _attach_vm_properties_private_ip(neo4j_session, vm['id'], update_tag)
+        _attach_vm_resource_group(neo4j_session, subscription_id, vm['id'], resource_group, update_tag)
+        _attach_vm_properties_public_ip(neo4j_session, subscription_id, vm['id'], update_tag)
+        _attach_vm_properties_private_ip(neo4j_session, subscription_id, vm['id'], update_tag)
 
-    load_vm_image_relations(neo4j_session, vm_list, update_tag)
+    load_vm_image_relations(neo4j_session, subscription_id, vm_list, update_tag)
 
 
-def load_vm_image_relations(neo4j_session: neo4j.Session, vm_list: List[Dict], update_tag: int) -> None:
+def load_vm_image_relations(neo4j_session: neo4j.Session, subscription_id: str, vm_list: List[Dict], update_tag: int) -> None:  # noqa: E501
     ingest_vm_image = """
-    UNWIND $vms AS vm
+    UNWIND $DictList AS vm
     WITH vm
     WHERE vm.image_reference_id IS NOT NULL
     MERGE (img:AzureImage {id: vm.image_reference_id})
@@ -215,52 +249,59 @@ def load_vm_image_relations(neo4j_session: neo4j.Session, vm_list: List[Dict], u
         img.sku = vm.image_sku,
         img.version = vm.image_version
     WITH img, vm
-    MATCH (v:AzureVirtualMachine {id: vm.id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(v:AzureVirtualMachine {id: vm.id})
     MERGE (v)-[:HAS]->(img)
     MERGE (v)-[rel:HAS]->(img)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_vm_image,
-        vms=vm_list,
+        vm_list,
+        SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
 
 
-def _attach_vm_properties_public_ip(tx: neo4j.Transaction, vm_id: str, update_tag) -> None:
+def _attach_vm_properties_public_ip(tx: neo4j.Transaction, subscription_id: str, vm_id: str, update_tag) -> None:
     ingest_vm_properties = """
-    MATCH (vm:AzureVirtualMachine{id: $vm_id})-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)-[:MEMBER_PUBLIC_IP_ADDRESS]->(ip:AzurePublicIPAddress)
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(vm:AzureVirtualMachine{id: $vm_id})
+    MATCH (vm)-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)
+        -[:MEMBER_PUBLIC_IP_ADDRESS]->(ip:AzurePublicIPAddress)
     SET vm.public_ip=ip.ipAddress,
     vm.is_static_ip=ip.isStaticIp,
     vm.lastupdated= $update_tag
     """
     tx.run(
         ingest_vm_properties,
+        subscription_id=subscription_id,
         vm_id=vm_id,
         update_tag=update_tag,
     )
 
 
-def _attach_vm_properties_private_ip(tx: neo4j.Transaction, vm_id: str, update_tag) -> None:
+def _attach_vm_properties_private_ip(tx: neo4j.Transaction, subscription_id: str, vm_id: str, update_tag) -> None:
     ingest_vm_properties = """
-    MATCH (vm:AzureVirtualMachine{id: $vm_id})-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)-[:CONTAINS]->(ip:AzureNetworkInterfaceIPConfiguration)
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(vm:AzureVirtualMachine{id: $vm_id})
+    MATCH (vm)-[:MEMBER_NETWORK_INTERFACE]->(:AzureNetworkInterface)
+        -[:CONTAINS]->(ip:AzureNetworkInterfaceIPConfiguration)
     SET vm.private_ip=ip.private_ip_address,
     vm.lastupdated = $update_tag
     """
     tx.run(
         ingest_vm_properties,
+        subscription_id=subscription_id,
         vm_id=vm_id,
         update_tag=update_tag,
     )
 
 
-def _load_vm_security_groups_relationship(tx: neo4j.Transaction, vm_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
+def _load_vm_security_groups_relationship(tx: neo4j.Transaction, subscription_id: str, vm_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
     ingest_vm_sg = """
-    UNWIND $sg_list AS sg
-    MATCH (sg:AzureNetworkSecurityGroup{id: sg.id})
-    WITH sg
-    MATCH (v:AzureVirtualMachine{id: $vm_id})
+    UNWIND $sg_list AS item
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(v:AzureVirtualMachine{id: $vm_id})
+    MATCH (sub)-[:RESOURCE]->(sg:AzureNetworkSecurityGroup{id: item.id})
     MERGE (v)-[r:MEMBER_NETWORK_SECURITY_GROUP]->(sg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -268,41 +309,44 @@ def _load_vm_security_groups_relationship(tx: neo4j.Transaction, vm_id: str, dat
 
     tx.run(
         ingest_vm_sg,
+        subscription_id=subscription_id,
         sg_list=data_list,
         vm_id=vm_id,
         update_tag=update_tag,
     )
 
 
-def _load_vm_network_interfaces_relationship(tx: neo4j.Transaction, vm_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
+def _load_vm_network_interfaces_relationship(tx: neo4j.Transaction, subscription_id: str, vm_id: str, data_list: List[Dict], update_tag: int) -> None:  # noqa: E501
     ingest_vm_ni = """
     UNWIND $ni_list AS ni
-    MATCH (n:AzureNetworkInterface{id: ni.id})
-    WITH n
-    MATCH (v:AzureVirtualMachine{id: $vm_id})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(v:AzureVirtualMachine{id: $vm_id})
+    MATCH (sub)-[:RESOURCE]->(n:AzureNetworkInterface{id: ni.id})
     MERGE (v)-[r:MEMBER_NETWORK_INTERFACE]->(n)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
     tx.run(
         ingest_vm_ni,
+        subscription_id=subscription_id,
         ni_list=data_list,
         vm_id=vm_id,
         update_tag=update_tag,
     )
 
 
-def _attach_vm_resource_group(tx: neo4j.Transaction, vm_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_vm_resource_group(
+    tx: neo4j.Transaction, subscription_id: str, vm_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_vm = """
-    match (vm:AzureVirtualMachine{id: $vm_id})
-    with vm
-    MATCH (res:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(vm:AzureVirtualMachine{id: $vm_id})
+    MATCH (sub)-[:RESOURCE]->(res:AzureResourceGroup{name: $resource_group})
     MERGE (vm)-[r:RESOURCE_GROUP]->(res)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
     tx.run(
         ingest_vm,
+        subscription_id=subscription_id,
         resource_group=resource_group,
         vm_id=vm_id,
         update_tag=update_tag,
@@ -324,7 +368,7 @@ def get_vm_extensions_list(vm_list: List[Dict], client: ComputeManagementClient,
                 'id': extension.id,
                 'resource_group': get_azure_resource_group_name(extension.id),
                 'vm_id': extension.id[:extension.id.index("/extensions")],
-                'consolelink': azure_console_link.get_console_link(id=vm['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name']),  # noqa: E501
+                'consolelink': safe_console_link(extension.id, common_job_parameters),
                 'type': extension.type,
                 'name': extension.name,
                 'location': extension.location,
@@ -337,17 +381,18 @@ def get_vm_extensions_list(vm_list: List[Dict], client: ComputeManagementClient,
         return []
 
 
-def _load_vm_extensions_tx(tx: neo4j.Transaction, vm_extensions_list: List[Dict], update_tag: int) -> None:
+def _load_vm_extensions_tx(
+    tx: neo4j.Transaction, subscription_id: str, vm_extensions_list: List[Dict], update_tag: int,
+) -> None:
     ingest_vm_extension = """
     UNWIND $vm_extensions_list AS extension
     MERGE (v:AzureVirtualMachineExtension{id: extension.id})
     ON CREATE SET v.firstseen = timestamp(), v.location = extension.location,
-    v.consolelink = extension.consolelink,
     v.region = extension.location
-    SET v.lastupdated = $update_tag, v.name = extension.name,
-    v.type = extension.type
+    SET v.consolelink = coalesce(extension.consolelink, v.consolelink), v.lastupdated = $update_tag,
+    v.name = extension.name, v.type = extension.type
     WITH v,extension
-    MATCH (owner:AzureVirtualMachine{id: extension.vm_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(owner:AzureVirtualMachine{id: extension.vm_id})
     MERGE (owner)-[r:CONTAIN]->(v)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -355,25 +400,27 @@ def _load_vm_extensions_tx(tx: neo4j.Transaction, vm_extensions_list: List[Dict]
 
     tx.run(
         ingest_vm_extension,
+        subscription_id=subscription_id,
         vm_extensions_list=vm_extensions_list,
         update_tag=update_tag,
     )
     for vm_extension in vm_extensions_list:
         resource_group = get_azure_resource_group_name(vm_extension.get('id'))
-        _attach_resource_group_vm_extensions(tx, vm_extension['id'], resource_group, update_tag)
+        _attach_resource_group_vm_extensions(tx, subscription_id, vm_extension['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_vm_extensions(tx: neo4j.Transaction, vm_extension_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
+def _attach_resource_group_vm_extensions(tx: neo4j.Transaction, subscription_id: str, vm_extension_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
     ingest_resource_group = """
-    MATCH (v:AzureVirtualMachineExtension{id: $vm_extension_id})
-    WITH v
-    MATCH(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureVirtualMachine)
+        -[:CONTAIN]->(v:AzureVirtualMachineExtension{id: $vm_extension_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (v)-[res:RESOURCE_GROUP]->(rg)
         ON CREATE SET res.firstseen = timestamp()
         SET res.lastupdated = $update_tag
     """
     tx.run(
         ingest_resource_group,
+        subscription_id=subscription_id,
         vm_extension_id=vm_extension_id,
         resource_group=resource_group,
         update_tag=update_tag,
@@ -385,11 +432,11 @@ def cleanup_virtual_machine_extensions(neo4j_session: neo4j.Session, common_job_
 
 
 def sync_virtual_machine_extensions(
-    neo4j_session: neo4j.Session, client: ComputeManagementClient, vm_list: List[Dict], update_tag: int,
-    common_job_parameters: Dict,
+    neo4j_session: neo4j.Session, client: ComputeManagementClient, subscription_id: str, vm_list: List[Dict],
+    update_tag: int, common_job_parameters: Dict,
 ) -> None:
     vm_extensions_list = get_vm_extensions_list(vm_list, client, common_job_parameters)
-    load_vm_extensions(neo4j_session, vm_extensions_list, update_tag)
+    load_vm_extensions(neo4j_session, subscription_id, vm_extensions_list, update_tag)
     cleanup_virtual_machine_extensions(neo4j_session, common_job_parameters)
 
 
@@ -399,7 +446,7 @@ def get_vm_available_sizes_list(vm_list: List[Dict], client: ComputeManagementCl
         for vm in vm_list:
             vm_available_size_list = list(
                 map(
-                    lambda x: x.as_dict(), client.virtual_machines.list_available_sizes(
+                    as_legacy_dict, client.virtual_machines.list_available_sizes(
                         resource_group_name=vm['resource_group'], vm_name=vm['name'],
                     ),
                 ),
@@ -419,7 +466,9 @@ def get_vm_available_sizes_list(vm_list: List[Dict], client: ComputeManagementCl
         return []
 
 
-def _load_vm_available_sizes_tx(tx: neo4j.Transaction, vm_available_sizes_list: List[Dict], update_tag: int) -> None:
+def _load_vm_available_sizes_tx(
+    tx: neo4j.Transaction, subscription_id: str, vm_available_sizes_list: List[Dict], update_tag: int,
+) -> None:
     ingest_vm_size = """
     UNWIND $vm_available_sizes_list AS size
     MERGE (v:AzureVirtualMachineAvailableSize{id: size.id})
@@ -431,7 +480,7 @@ def _load_vm_available_sizes_tx(tx: neo4j.Transaction, vm_available_sizes_list: 
     v.memoryInMB=size.memoryInMB,
     v.maxDataDiskCount=size.maxDataDiskCount
     WITH v,size
-    MATCH (owner:AzureVirtualMachine{id: size.vm_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(owner:AzureVirtualMachine{id: size.vm_id})
     MERGE (owner)-[r:CONTAIN]->(v)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -439,19 +488,22 @@ def _load_vm_available_sizes_tx(tx: neo4j.Transaction, vm_available_sizes_list: 
 
     tx.run(
         ingest_vm_size,
+        subscription_id=subscription_id,
         vm_available_sizes_list=vm_available_sizes_list,
         update_tag=update_tag,
     )
     for vm_available_size in vm_available_sizes_list:
         resource_group = get_azure_resource_group_name(vm_available_size.get('id'))
-        _attach_resource_group_vm_available_size(tx, vm_available_size['id'], resource_group, update_tag)
+        _attach_resource_group_vm_available_size(
+            tx, subscription_id, vm_available_size['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_vm_available_size(tx: neo4j.Transaction, vm_available_size_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
+def _attach_resource_group_vm_available_size(tx: neo4j.Transaction, subscription_id: str, vm_available_size_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
     ingest_vm_size = """
-    MATCH (v:AzureVirtualMachineAvailableSize{id: $size_id})
-    WITH v
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureVirtualMachine)
+        -[:CONTAIN]->(v:AzureVirtualMachineAvailableSize{id: $size_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (v)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -459,6 +511,7 @@ def _attach_resource_group_vm_available_size(tx: neo4j.Transaction, vm_available
 
     tx.run(
         ingest_vm_size,
+        subscription_id=subscription_id,
         size_id=vm_available_size_id,
         resource_group=resource_group,
         update_tag=update_tag,
@@ -473,29 +526,77 @@ def cleanup_virtual_machine_available_sizes(neo4j_session: neo4j.Session, common
 
 
 def sync_virtual_machine_available_sizes(
-    neo4j_session: neo4j.Session, client: ComputeManagementClient, vm_list: List[Dict], update_tag: int,
-    common_job_parameters: Dict,
+    neo4j_session: neo4j.Session, client: ComputeManagementClient, subscription_id: str, vm_list: List[Dict],
+    update_tag: int, common_job_parameters: Dict,
 ) -> None:
     vm_available_sizes_list = get_vm_available_sizes_list(vm_list, client)
-    load_vm_available_sizes(neo4j_session, vm_available_sizes_list, update_tag)
+    load_vm_available_sizes(neo4j_session, subscription_id, vm_available_sizes_list, update_tag)
     cleanup_virtual_machine_available_sizes(neo4j_session, common_job_parameters)
+
+
+def _vmss_front_doors(scale_set: Dict) -> Dict:
+    """
+    What can reach a scale set's instances from outside, read from its network profile:
+    a per-instance public IP, load balancer backend pools, inbound NAT pools and Application
+    Gateway backend pools. Uniform scale set instances are not listed as VMs, so this is the
+    only exposure input for them.
+    Ids are lowercased to match AzureNetworkLoadBalancer.inbound_backend_pool_ids.
+    Subnet and NSG ids feed the exposure layers' NSG walk for instances the graph has no NIC for.
+    """
+    network_profile = (scale_set.get('virtual_machine_profile') or {}).get('network_profile') or {}
+    nic_configurations = network_profile.get('network_interface_configurations') or []
+    ip_configurations = [
+        ip_configuration
+        for nic in nic_configurations
+        for ip_configuration in nic.get('ip_configurations') or []
+    ]
+    pool_ids = {
+        pool['id'].lower()
+        for ip_configuration in ip_configurations
+        for pool in ip_configuration.get('load_balancer_backend_address_pools') or []
+        if pool.get('id')
+    }
+    nat_lb_ids = {
+        pool['id'].lower().split('/inboundnatpools/')[0]
+        for ip_configuration in ip_configurations
+        for pool in ip_configuration.get('load_balancer_inbound_nat_pools') or []
+        if pool.get('id')
+    }
+    appgw_pool_ids = {
+        pool['id'].lower()
+        for ip_configuration in ip_configurations
+        for pool in ip_configuration.get('application_gateway_backend_address_pools') or []
+        if pool.get('id')
+    }
+    return {
+        'public_ip_per_instance': any(c.get('public_ip_address_configuration') for c in ip_configurations),
+        'lb_backend_pool_ids': sorted(pool_ids),
+        'appgw_backend_pool_ids': sorted(appgw_pool_ids),
+        'lb_inbound_nat_lb_ids': sorted(nat_lb_ids),
+        'subnet_ids': sorted({
+            c['subnet']['id'].lower() for c in ip_configurations if (c.get('subnet') or {}).get('id')
+        }),
+        'nsg_ids': sorted({
+            n['network_security_group']['id'].lower()
+            for n in nic_configurations if (n.get('network_security_group') or {}).get('id')
+        }),
+    }
 
 
 def get_vm_scale_sets_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
-        vm_scale_sets_list = list(map(lambda x: x.as_dict(), client.virtual_machine_scale_sets.list_all()))
+        vm_scale_sets_list = list(map(as_legacy_dict, client.virtual_machine_scale_sets.list_all()))
         sets_list = []
         for set in vm_scale_sets_list:
             x = set['id'].split('/')
             set['resource_group'] = x[x.index('resourceGroups') + 1]
-            set['consolelink'] = azure_console_link.get_console_link(
-                id=set['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            set['consolelink'] = safe_console_link(set['id'], common_job_parameters)
             aks_tags = _extract_aks_tags(set.get('tags', {}))
             set['aks_cluster_name'] = aks_tags['aks_cluster_name']
             set['aks_pool_name'] = aks_tags['aks_pool_name']
             set['aks_cluster_rg'] = aks_tags['aks_cluster_rg']
+            set.update(_vmss_front_doors(set))
             if regions is None:
                 sets_list.append(set)
             else:
@@ -518,14 +619,20 @@ def _load_vm_scale_sets_tx(
     a.type = set.type,
     a.location = set.location,
     a.region = set.location,
-    a.consolelinke = set.consolelink,
     a.resourcegroup = set.resource_group
     SET a:AzureVMScaleSet
     SET a.lastupdated = $update_tag,
+    a.consolelink = coalesce(set.consolelink, a.consolelink),
     a.name = set.name,
     a.aks_cluster_name = set.aks_cluster_name,
     a.aks_pool_name = set.aks_pool_name,
     a.aks_cluster_rg = set.aks_cluster_rg,
+    a.public_ip_per_instance = set.public_ip_per_instance,
+    a.lb_backend_pool_ids = set.lb_backend_pool_ids,
+    a.lb_inbound_nat_lb_ids = set.lb_inbound_nat_lb_ids,
+    a.appgw_backend_pool_ids = set.appgw_backend_pool_ids,
+    a.subnet_ids = set.subnet_ids,
+    a.nsg_ids = set.nsg_ids,
     a.subscription_id = $SUBSCRIPTION_ID,
     a.name = set.name
     WITH a
@@ -543,20 +650,20 @@ def _load_vm_scale_sets_tx(
     )
     for vm_scale_set in vm_scale_sets_list:
         resource_group = get_azure_resource_group_name(vm_scale_set.get('id'))
-        _attach_resource_group_vm_scale_sets(tx, vm_scale_set['id'], resource_group, update_tag)
+        _attach_resource_group_vm_scale_sets(tx, subscription_id, vm_scale_set['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_vm_scale_sets(tx: neo4j.Transaction, vm_scale_set_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
+def _attach_resource_group_vm_scale_sets(tx: neo4j.Transaction, subscription_id: str, vm_scale_set_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
     ingest_resource_group = """
-        MATCH (a:AzureVirtualMachineScaleSet{id: $set_id})
-        with a
-        MATCH(rg:AzureResourceGroup{name:$resource_group})
+        MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(a:AzureVirtualMachineScaleSet{id: $set_id})
+        MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (a)-[res:RESOURCE_GROUP]->(rg)
         ON CREATE SET res.firstseen = timestamp()
         SET res.lastupdated = $update_tag
         """
     tx.run(
         ingest_resource_group,
+        subscription_id=subscription_id,
         set_id=vm_scale_set_id,
         resource_group=resource_group,
         update_tag=update_tag,
@@ -586,7 +693,7 @@ def sync_vm_scale_sets(
     )
     cleanup_vm_scale_sets(neo4j_session, common_job_parameters)
     sync_virtual_machine_scale_sets_extensions(
-        neo4j_session, client, vm_scale_sets_list, update_tag, common_job_parameters,
+        neo4j_session, client, subscription_id, vm_scale_sets_list, update_tag, common_job_parameters,
     )
     logger.info(f"compute sub={subscription_id}: VMSS Neo4j write done in {time.perf_counter() - t0:.2f}s")
 
@@ -597,7 +704,7 @@ def get_vm_scale_sets_extensions_list(vm_scale_sets_list: List[Dict], client: Co
         for set in vm_scale_sets_list:
             extensions_list = list(
                 map(
-                    lambda x: x.as_dict(), client.virtual_machine_scale_set_extensions.list(
+                    as_legacy_dict, client.virtual_machine_scale_set_extensions.list(
                         resource_group_name=set['resource_group'], vm_scale_set_name=set['name'],
                     ),
                 ),
@@ -607,9 +714,7 @@ def get_vm_scale_sets_extensions_list(vm_scale_sets_list: List[Dict], client: Co
                 x = extension['id'].split('/')
                 extension['resource_group'] = x[x.index('resourceGroups') + 1]
                 extension['set_id'] = extension['id'][:extension['id'].index("/extensions")]
-                extension['consolelink'] = azure_console_link.get_console_link(
-                    id=extension['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                extension['consolelink'] = safe_console_link(extension['id'], common_job_parameters)
 
             vm_scale_sets_extensions_list.extend(extensions_list)
 
@@ -621,7 +726,7 @@ def get_vm_scale_sets_extensions_list(vm_scale_sets_list: List[Dict], client: Co
 
 
 def _load_vm_scale_sets_extensions_tx(
-    tx: neo4j.Transaction, vm_scale_sets_extensions_list: List[Dict], update_tag: int,
+    tx: neo4j.Transaction, subscription_id: str, vm_scale_sets_extensions_list: List[Dict], update_tag: int,
 ) -> None:
     ingest_vm_scale_sets_extension = """
     UNWIND $vm_scale_sets_extensions_list AS extension
@@ -630,10 +735,11 @@ def _load_vm_scale_sets_extensions_tx(
     SET v.lastupdated = $update_tag, v.name = extension.name,
     v.location = extension.location,
     v.region = extension.location,
-    v.consolelink = extension.consolelink,
+    v.consolelink = coalesce(extension.consolelink, v.consolelink),
     v.type = extension.type
     WITH v,extension
-    MATCH (owner:AzureVirtualMachineScaleSet{id: extension.set_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->
+        (owner:AzureVirtualMachineScaleSet{id: extension.set_id})
     MERGE (owner)-[r:CONTAIN]->(v)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -641,25 +747,29 @@ def _load_vm_scale_sets_extensions_tx(
 
     tx.run(
         ingest_vm_scale_sets_extension,
+        subscription_id=subscription_id,
         vm_scale_sets_extensions_list=vm_scale_sets_extensions_list,
         update_tag=update_tag,
     )
     for vm_scale_sets_extension in vm_scale_sets_extensions_list:
         resource_group = get_azure_resource_group_name(vm_scale_sets_extension.get('id'))
-        _attach_resource_group_vm_scale_sets_extension(tx, vm_scale_sets_extension['id'], resource_group, update_tag)
+        _attach_resource_group_vm_scale_sets_extension(
+            tx, subscription_id, vm_scale_sets_extension['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_vm_scale_sets_extension(tx: neo4j.Transaction, vm_scale_sets_extension_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
+def _attach_resource_group_vm_scale_sets_extension(tx: neo4j.Transaction, subscription_id: str, vm_scale_sets_extension_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
     ingest_vm_scale_sets_extension_resource_group = """
-    MATCH (v:AzureVirtualMachineScaleSetExtension{id: $extension_id})
-    WITH v
-    MATCH(rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureVirtualMachineScaleSet)
+        -[:CONTAIN]->(v:AzureVirtualMachineScaleSetExtension{id: $extension_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (v)-[res:RESOURCE_GROUP]->(rg)
         ON CREATE SET res.firstseen = timestamp()
         SET res.lastupdated = $update_tag
     """
     tx.run(
         ingest_vm_scale_sets_extension_resource_group,
+        subscription_id=subscription_id,
         extension_id=vm_scale_sets_extension_id,
         resource_group=resource_group,
         update_tag=update_tag,
@@ -675,17 +785,19 @@ def cleanup_virtual_machine_scale_sets_extensions(neo4j_session: neo4j.Session, 
 
 
 def sync_virtual_machine_scale_sets_extensions(
-    neo4j_session: neo4j.Session, client: ComputeManagementClient, vm_list: List[Dict], update_tag: int,
-    common_job_parameters: Dict,
+    neo4j_session: neo4j.Session, client: ComputeManagementClient, subscription_id: str, vm_list: List[Dict],
+    update_tag: int, common_job_parameters: Dict,
 ) -> None:
     vm_scale_sets_extensions_list = get_vm_scale_sets_extensions_list(vm_list, client, common_job_parameters)
-    load_vm_scale_sets_extensions(neo4j_session, vm_scale_sets_extensions_list, update_tag)
+    load_vm_scale_sets_extensions(neo4j_session, subscription_id, vm_scale_sets_extensions_list, update_tag)
     cleanup_virtual_machine_scale_sets_extensions(neo4j_session, common_job_parameters)
 
 
-def load_vm_data_disks(neo4j_session: neo4j.Session, vm_id: str, data_disks: List[Dict], update_tag: int) -> None:
+def load_vm_data_disks(
+    neo4j_session: neo4j.Session, subscription_id: str, vm_id: str, data_disks: List[Dict], update_tag: int,
+) -> None:
     ingest_data_disk = """
-    UNWIND $disks AS disk
+    UNWIND $DictList AS disk
     MERGE (d:AzureDisk:AzureDataDisk{id: disk.managed_disk.id})
     ON CREATE SET d.firstseen = timestamp(), d.lun = disk.lun
     SET d.lastupdated = $update_tag, d.name = disk.name,
@@ -696,44 +808,50 @@ def load_vm_data_disks(neo4j_session: neo4j.Session, vm_id: str, data_disks: Lis
     d.createoption = disk.create_option, d.write_accelerator_enabled=disk.write_accelerator_enabled,
     d.managed_disk_storage_type=disk.managed_disk.storage_account_type, d.disk_type = 'datadisk'
     WITH d
-    MATCH (owner:AzureVirtualMachine{id: $VM_ID})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(owner:AzureVirtualMachine{id: $VM_ID})
     MERGE (owner)-[r:ATTACHED_TO]->(d)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
 
     # for disk in data_disks:
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_data_disk,
-        disks=data_disks,
+        data_disks,
+        SUBSCRIPTION_ID=subscription_id,
         VM_ID=vm_id,
         update_tag=update_tag,
     )
 
 
-def load_vm_managed_identities(neo4j_session: neo4j.Session, vm_id: str, managed_identities: List[str], update_tag: int) -> None:  # noqa: E501
+def load_vm_managed_identities(neo4j_session: neo4j.Session, subscription_id: str, vm_id: str, managed_identities: List[str], update_tag: int) -> None:  # noqa: E501
     ingest_managed_identity = """
-    UNWIND $managed_identities AS ua
+    UNWIND $DictList AS ua
     MERGE (i:AzureManagedIdentity{id: toLower(ua)})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp()
     SET i.lastupdated = $update_tag
     WITH i
-    MATCH (v:AzureVirtualMachine{id: $VM_ID})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(v:AzureVirtualMachine{id: $VM_ID})
     MERGE (v)-[rel:HAS]->(i)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_managed_identity,
-        managed_identities=managed_identities,
+        managed_identities,
+        SUBSCRIPTION_ID=subscription_id,
         VM_ID=vm_id,
         update_tag=update_tag,
     )
 
 
-def load_vm_os_disk(neo4j_session: neo4j.Session, vm_id: str, os_disk: Dict, update_tag: int) -> None:
+def load_vm_os_disk(
+    neo4j_session: neo4j.Session, subscription_id: str, vm_id: str, os_disk: Dict, update_tag: int,
+) -> None:
     ingest_os_disk = """
     MERGE (d:AzureDisk{id: $disk.managed_disk.id})
     ON CREATE SET d.firstseen = timestamp()
@@ -743,32 +861,41 @@ def load_vm_os_disk(neo4j_session: neo4j.Session, vm_id: str, os_disk: Dict, upd
     d.createoption = $disk.create_option, d.write_accelerator_enabled=$disk.write_accelerator_enabled,
     d.managed_disk_storage_type=$disk.managed_disk.storage_account_type, d.disk_type = 'osdisk'
     WITH d
-    MATCH (owner:AzureVirtualMachine{id: $VM_ID})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(owner:AzureVirtualMachine{id: $VM_ID})
     MERGE (owner)-[r:ATTACHED_TO]->(d)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_os_disk,
         disk=os_disk,
+        SUBSCRIPTION_ID=subscription_id,
         VM_ID=vm_id,
         update_tag=update_tag,
     )
 
 
-def _attach_snapshot_disk(neo4j_session: neo4j.Session, snapshot_id: str, disk_id: str, update_tag: int):
+def _attach_snapshot_disk(
+    neo4j_session: neo4j.Session, subscription_id: str, workspace_id: str, snapshot_id: str, disk_id: str,
+    update_tag: int,
+):
+    # The source disk can sit in another subscription of the same tenant (a cross-subscription copy), so it
+    # is looked up in any subscription this workspace owns, never outside it.
     attach_snapshot_disk = """
-    MATCH (s:AzureSnapshot{id: $snapshot_id})
-    WITH s
-    MATCH (d:AzureDisk{id: $disk_id})
-    WITH s, d
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSnapshot{id: $snapshot_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AzureTenant)-[:RESOURCE]->(:AzureSubscription)
+        -[:RESOURCE]->(d:AzureDisk{id: $disk_id})
     MERGE (d)-[r:HAS]->(s)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         attach_snapshot_disk,
+        subscription_id=subscription_id,
+        WORKSPACE_ID=workspace_id,
         snapshot_id=snapshot_id,
         disk_id=disk_id,
         update_tag=update_tag,
@@ -782,14 +909,12 @@ def cleanup_virtual_machine(neo4j_session: neo4j.Session, common_job_parameters:
 def get_disks(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         client = get_client(credentials, subscription_id)
-        disk_list = list(map(lambda x: x.as_dict(), client.disks.list()))
+        disk_list = list(map(as_legacy_dict, client.disks.list()))
         disk_data = []
         for disk in disk_list:
             x = disk['id'].split('/')
             disk['resource_group'] = x[x.index('resourceGroups') + 1]
-            disk['consolelink'] = azure_console_link.get_console_link(
-                id=disk['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            disk['consolelink'] = safe_console_link(disk['id'], common_job_parameters)
             if regions is None:
                 disk_data.append(disk)
             else:
@@ -804,14 +929,13 @@ def get_disks(credentials: Credentials, subscription_id: str, regions: list, com
 
 def load_disks(neo4j_session: neo4j.Session, subscription_id: str, disk_list: List[Dict], update_tag: int) -> None:
     ingest_disks = """
-    UNWIND $disks AS disk
+    UNWIND $DictList AS disk
     MERGE (d:AzureDisk{id: disk.id})
     ON CREATE SET d.firstseen = timestamp(),
     d.type = disk.type, d.location = disk.location,
     d.region = disk.location,
-    d.consolelink = disk.consolelink,
     d.resourcegroup = disk.resource_group
-    SET d.lastupdated = $update_tag, d.name = disk.name,
+    SET d.consolelink = coalesce(disk.consolelink, d.consolelink), d.lastupdated = $update_tag, d.name = disk.name,
     d.createoption = disk.creation_data.create_option, d.disksizegb = disk.disk_size_gb,
     d.encryption = disk.encryption_settings_collection.enabled, d.maxshares = disk.max_shares,
     d.network_access_policy = disk.network_access_policy,
@@ -823,28 +947,30 @@ def load_disks(neo4j_session: neo4j.Session, subscription_id: str, disk_list: Li
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag"""
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_disks,
-        disks=disk_list,
+        disk_list,
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
     for disk in disk_list:
         resource_group = get_azure_resource_group_name(disk.get('id'))
-        _attach_resource_group_disk(neo4j_session, disk['id'], resource_group, update_tag)
+        _attach_resource_group_disk(neo4j_session, subscription_id, disk['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_disk(neo4j_session: neo4j.Session, disk_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
+def _attach_resource_group_disk(neo4j_session: neo4j.Session, subscription_id: str, disk_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
     ingest_disks = """
-    MATCH (d:AzureDisk{id: $disk_id})
-    WITH d
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(d:AzureDisk{id: $disk_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (d)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_disks,
+        subscription_id=subscription_id,
         disk_id=disk_id,
         resource_group=resource_group,
         update_tag=update_tag,
@@ -858,14 +984,12 @@ def cleanup_disks(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> 
 def get_snapshots_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:  # noqa: E501
     try:
         client = get_client(credentials, subscription_id)
-        snapshots = list(map(lambda x: x.as_dict(), client.snapshots.list()))
+        snapshots = list(map(as_legacy_dict, client.snapshots.list()))
         snapshot_list = []
         for snapshot in snapshots:
             x = snapshot['id'].split('/')
             snapshot['resource_group'] = x[x.index('resourceGroups') + 1]
-            snapshot['consolelink'] = azure_console_link.get_console_link(
-                id=snapshot['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            snapshot['consolelink'] = safe_console_link(snapshot['id'], common_job_parameters)
             if regions is None:
                 snapshot_list.append(snapshot)
             else:
@@ -880,14 +1004,14 @@ def get_snapshots_list(credentials: Credentials, subscription_id: str, regions: 
 
 def load_snapshots(neo4j_session: neo4j.Session, subscription_id: str, snapshots: List[Dict], update_tag: int) -> None:
     ingest_snapshots = """
-    UNWIND $snapshots as snapshot
+    UNWIND $DictList as snapshot
     MERGE (s:AzureSnapshot{id: snapshot.id})
     ON CREATE SET s.firstseen = timestamp(),
     s.resourcegroup = snapshot.resource_group,
     s.type = snapshot.type, s.location = snapshot.location,
-    s.consolelink = snapshot.consolelink,
     s.region = snapshot.location
-    SET s.lastupdated = $update_tag, s.name = snapshot.name, s.time_created = snapshot.time_created,
+    SET s.consolelink = coalesce(snapshot.consolelink, s.consolelink),
+    s.lastupdated = $update_tag, s.name = snapshot.name, s.time_created = snapshot.time_created,
     s.createoption = snapshot.creation_data.create_option, s.disksizegb = snapshot.disk_size_gb,
     s.encryption = snapshot.encryption_settings_collection.enabled, s.incremental = snapshot.incremental,
     s.network_access_policy = snapshot.network_access_policy, s.ostype = snapshot.os_type,
@@ -898,28 +1022,30 @@ def load_snapshots(neo4j_session: neo4j.Session, subscription_id: str, snapshots
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag"""
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_snapshots,
-        snapshots=snapshots,
+        snapshots,
         SUBSCRIPTION_ID=subscription_id,
         update_tag=update_tag,
     )
     for snapshot in snapshots:
         resource_group = get_azure_resource_group_name(snapshot.get('id'))
-        _attach_resource_group_disk_snapshot(neo4j_session, snapshot['id'], resource_group, update_tag)
+        _attach_resource_group_disk_snapshot(neo4j_session, subscription_id, snapshot['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_disk_snapshot(neo4j_session: neo4j.Session, snapshot_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
+def _attach_resource_group_disk_snapshot(neo4j_session: neo4j.Session, subscription_id: str, snapshot_id: str, resource_group: str, update_tag: int) -> None:  # noqa: E501
     ingest_snapshots = """
-    MATCH (s:AzureSnapshot{id: $snapshot_id})
-    WITH s
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSnapshot{id: $snapshot_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (s)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_snapshots,
+        subscription_id=subscription_id,
         snapshot_id=snapshot_id,
         resource_group=resource_group,
         update_tag=update_tag,
@@ -940,8 +1066,8 @@ def sync_virtual_machine(
     logger.info(f"compute sub={subscription_id}: VM fetch done — {len(vm_list)} VMs in {time.perf_counter() - t0:.2f}s")
     t0 = time.perf_counter()
     load_vms(neo4j_session, subscription_id, vm_list, update_tag)
-    # sync_virtual_machine_extensions(neo4j_session, client, vm_list, update_tag, common_job_parameters)
-    # sync_virtual_machine_available_sizes(neo4j_session, client, vm_list, update_tag, common_job_parameters)
+    # sync_virtual_machine_extensions(neo4j_session, client, subscription_id, vm_list, update_tag, common_job_parameters)  # noqa: E501
+    # sync_virtual_machine_available_sizes(neo4j_session, client, subscription_id, vm_list, update_tag, common_job_parameters)  # noqa: E501
 
     cleanup_virtual_machine(neo4j_session, common_job_parameters)
     logger.info(f"compute sub={subscription_id}: VM Neo4j write done in {time.perf_counter() - t0:.2f}s")
@@ -972,7 +1098,7 @@ def sync_snapshot(
     for snapshot in snapshots:
         if (snapshot.get("creation_data") or {}).get("create_option", "") == "Copy":
             _attach_snapshot_disk(
-                neo4j_session, snapshot["id"],
+                neo4j_session, subscription_id, common_job_parameters['WORKSPACE_ID'], snapshot["id"],
                 snapshot["creation_data"]["source_resource_id"], update_tag,
             )
 
@@ -981,45 +1107,70 @@ def sync_snapshot(
 
 
 @timeit
-def link_compute_to_aks(neo4j_session: neo4j.Session, update_tag: int) -> None:
-    """Links Azure VMs and VM Scale Sets to AKS Clusters and Node Pools based on tags."""
+def link_compute_to_aks(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    Links Azure VMs and VM Scale Sets to AKS Clusters and Agent Pools.
 
-    # AzureVirtualMachine and AzureVirtualMachineScaleSet are both AKS node types. The old query
-    # used `MATCH (node) WHERE node:A OR node:B`, which is an AllNodesScan (no anchoring label).
-    # Run one labelled query per type instead so the planner uses the label index.
+    A node belongs to a cluster when it sits in the cluster's node resource group (MC_*), or,
+    as a fallback, when its aks-managed-cluster-name/-rg tags name the cluster. AKS puts the
+    cluster-name/-rg tags on the MC_* resource group, not always on the VMSS, so the node
+    resource group is the primary match. Resource group names are compared lowercased: the
+    cluster's comes from the lowercased resource id, tags and VMSS keep the original case.
+
+    Scoped to this workspace's tenant and subscription: names and resource groups are only
+    unique per subscription, so an unscoped match links nodes across tenants.
+
+    Reads only graph state, so it must run after both the `aks` and `compute` syncs have loaded
+    (see sync_aks_node_links).
+    """
+    # AzureVirtualMachine and AzureVirtualMachineScaleSet are both AKS node types. One labelled
+    # query per type so the planner uses the label index instead of an AllNodesScan.
     # ponytail: template + loop, not UNION — Cypher forbids UNION around write clauses (MERGE).
     # Labels are trusted module constants, so str.format injection is safe.
     aks_node_labels = ("AzureVirtualMachine", "AzureVirtualMachineScaleSet")
 
-    # 1. Link VMs / VM Scale Sets to the AKS Cluster
-    cluster_query = """
-    MATCH (node:{label})
-    WHERE node.aks_cluster_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
-    MATCH (c:AzureCluster {{name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg}})
+    query = """
+    MATCH (:CloudanixWorkspace{{id: $WORKSPACE_ID}})-[:OWNER]->(:AzureTenant{{id: $AZURE_TENANT_ID}})
+        -[:RESOURCE]->(s:AzureSubscription{{id: $AZURE_SUBSCRIPTION_ID}})
+    MATCH (s)-[:RESOURCE]->(c:AzureCluster)
+    MATCH (s)-[:RESOURCE]->(node:{label})
+    WHERE toLower(node.resourcegroup) = c.node_resource_group
+       OR (node.aks_cluster_name = c.name AND toLower(node.aks_cluster_rg) = toLower(c.resourcegroup))
     MERGE (c)-[r:HAS_NODE]->(node)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
-    """
-
-    # 2. Link VMs / VM Scale Sets to the AKS Node Pool (Agent Pool)
-    pool_query = """
-    MATCH (node:{label})
-    WHERE node.aks_cluster_name IS NOT NULL AND node.aks_pool_name IS NOT NULL AND node.aks_cluster_rg IS NOT NULL
-    MATCH (c:AzureCluster {{name: node.aks_cluster_name, resourcegroup: node.aks_cluster_rg}})-[:HAS]->(p:AzureClusterAgentPool {{name: node.aks_pool_name}})
-    MERGE (p)-[r:HAS_NODE]->(node)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    SET r.lastupdated = $UPDATE_TAG
+    WITH c, node WHERE node.aks_pool_name IS NOT NULL
+    MATCH (c)-[:HAS]->(p:AzureClusterAgentPool)
+    WHERE toLower(p.name) = toLower(node.aks_pool_name)
+    MERGE (p)-[r2:HAS_NODE]->(node)
+    ON CREATE SET r2.firstseen = timestamp()
+    SET r2.lastupdated = $UPDATE_TAG
     """
 
     for label in aks_node_labels:
-        neo4j_session.run(cluster_query.format(label=label), update_tag=update_tag)
-        neo4j_session.run(pool_query.format(label=label), update_tag=update_tag)
+        run_write_query(
+            neo4j_session,
+            query.format(label=label),
+            WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+            AZURE_TENANT_ID=common_job_parameters['AZURE_TENANT_ID'],
+            AZURE_SUBSCRIPTION_ID=common_job_parameters['AZURE_SUBSCRIPTION_ID'],
+            UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
+        )
 
 
 @timeit
 def cleanup_aks_compute_links(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     """Removes stale HAS_NODE relationships between AKS resources and Compute resources."""
     run_cleanup_job('azure_aks_compute_links_cleanup.json', neo4j_session, common_job_parameters)
+
+
+def sync_aks_node_links(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    Post-sync step: `aks` and `compute` run in parallel, so linking inside either sync misses
+    nodes the other has not loaded yet. The subscription orchestrator calls this after both.
+    """
+    link_compute_to_aks(neo4j_session, common_job_parameters)
+    cleanup_aks_compute_links(neo4j_session, common_job_parameters)
 
 
 @timeit
@@ -1033,5 +1184,4 @@ def sync(
     sync_vm_scale_sets(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
     sync_disk(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
     sync_snapshot(neo4j_session, credentials, subscription_id, update_tag, common_job_parameters, regions)
-    link_compute_to_aks(neo4j_session, update_tag)
-    cleanup_aks_compute_links(neo4j_session, common_job_parameters)
+    # AKS -> VM/VMSS HAS_NODE links are made by sync_aks_node_links after the parallel run.

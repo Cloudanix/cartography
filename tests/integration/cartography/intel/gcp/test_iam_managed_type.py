@@ -51,6 +51,10 @@ def test_service_account_keys_managed_type(neo4j_session):
         ('abc@gmail.com/key123', 'custom'),       # USER_MANAGED
         ('defg@gmail.com/key456', 'predefined'),  # SYSTEM_MANAGED
     }
+    assert check_nodes(neo4j_session, 'GCPServiceAccountKey', ['id', 'displayname']) == {
+        ('abc@gmail.com/key123', 'abc'),
+        ('defg@gmail.com/key456', 'defg'),
+    }
 
 
 def test_api_keys_managed_type(neo4j_session):

@@ -9,8 +9,12 @@ Run:
 The neo4j_session fixture is provided by cartography's conftest.py.
 GKE_CLUSTERS is imported from tests/data/gke.py.
 """
+import pytest
+
+from cartography.intel.gcp.compute import link_gke_nodes
 from cartography.intel.gcp.compute import load_gcp_instances
 from cartography.intel.gcp.compute import transform_gcp_instances
+from cartography.intel.gcp.gke import get_gke_clusters
 from cartography.intel.gcp.gke import load_gke_clusters
 from cartography.intel.gcp.gke import load_gke_node_pools
 from tests.data.gcp.gke import GKE_CLUSTERS
@@ -18,6 +22,10 @@ from tests.data.gcp.gke import GKE_CLUSTERS
 TEST_PROJECT_ID = "test-cluster"
 TEST_UPDATE_TAG = 123456789
 TEST_UPDATE_TAG_2 = 999999999
+LINK_PARAMS = {
+    "GCP_PROJECT_ID": TEST_PROJECT_ID, "UPDATE_TAG": TEST_UPDATE_TAG, "WORKSPACE_ID": "ws-gke",
+    "GCP_ORGANIZATION_ID": "organizations/gke",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -221,10 +229,19 @@ def test_load_gke_node_pools_cluster_missing_node_pools_key(neo4j_session):
 # Tests: transform_gcp_instances – GKE label extraction
 # ---------------------------------------------------------------------------
 
-def test_transform_gcp_instances_extracts_gke_labels(mocker):
+@pytest.mark.parametrize(
+    "cluster_key,pool_key",
+    [
+        # Labels GKE actually puts on node VMs.
+        ("goog-k8s-cluster-name", "goog-k8s-node-pool-name"),
+        # Legacy keys, kept as a fallback.
+        ("goog-gke-cluster-name", "goog-gke-nodepool"),
+    ],
+)
+def test_transform_gcp_instances_extracts_gke_labels(mocker, cluster_key, pool_key):
     """
-    transform_gcp_instances must read goog-gke-cluster-name and goog-gke-nodepool
-    from instance labels and expose them as gke_cluster_name / gke_node_pool_name.
+    transform_gcp_instances must read the GKE cluster/node-pool labels from instance
+    labels and expose them as gke_cluster_name / gke_node_pool_name.
     """
     raw_instance = {
         "id": "11111",
@@ -239,8 +256,8 @@ def test_transform_gcp_instances_extracts_gke_labels(mocker):
         ),
         "status": "RUNNING",
         "labels": {
-            "goog-gke-cluster-name": "test-cluster",
-            "goog-gke-nodepool": "default-111-111-111-111-gke-17",
+            cluster_key: "test-cluster",
+            pool_key: "default-111-111-111-111-gke-17",
         },
         "networkInterfaces": [
             {
@@ -321,7 +338,8 @@ def test_load_gcp_instances_links_gke_node_to_cluster(neo4j_session):
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
     load_gke_clusters(neo4j_session, GKE_CLUSTERS, TEST_PROJECT_ID, TEST_UPDATE_TAG)
 
-    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
+    link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run(
         "MATCH (c:GKECluster{id: $ClusterId})-[:HAS_NODE]->(i:GCPInstance) RETURN i.instancename AS name",
@@ -338,7 +356,8 @@ def test_load_gcp_instances_links_gke_node_to_pool(neo4j_session):
     load_gke_clusters(neo4j_session, GKE_CLUSTERS, TEST_PROJECT_ID, TEST_UPDATE_TAG)
     load_gke_node_pools(neo4j_session, GKE_CLUSTERS, TEST_PROJECT_ID, TEST_UPDATE_TAG)
 
-    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
+    link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run(
         "MATCH (p:GKENodePool{id: $PoolId})-[:HAS_NODE]->(i:GCPInstance) RETURN i.instancename AS name",
@@ -353,7 +372,8 @@ def test_load_gcp_instances_no_gke_links_for_plain_vms(neo4j_session):
     """Plain VMs must not produce any HAS_NODE relationships."""
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
 
-    load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
+    link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     result = neo4j_session.run("MATCH ()-[r:HAS_NODE]->() RETURN r").data()
     assert len(result) == 0
@@ -363,12 +383,13 @@ def test_load_gcp_instances_gke_link_skipped_when_cluster_missing(neo4j_session)
     """
     If the GKE sync has not run (cluster node absent), HAS_NODE links must be
     silently skipped rather than raising an error.
-    The MATCH-not-MERGE pattern in _link_instance_to_gke_cluster guarantees this.
+    The MATCH-not-MERGE pattern in link_gke_nodes guarantees this.
     """
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
     # Deliberately do NOT call load_gke_clusters
 
-    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
+    link_gke_nodes(neo4j_session, LINK_PARAMS)
 
     instances = neo4j_session.run("MATCH (i:GCPInstance) RETURN i").data()
     assert len(instances) == 1
@@ -381,7 +402,7 @@ def test_load_gcp_instances_gke_properties_stored_on_node(neo4j_session):
     """gke_cluster_name and gke_node_pool_name must be persisted on the GCPInstance."""
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
 
-    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_gke_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
 
     result = neo4j_session.run(
         "MATCH (i:GCPInstance) RETURN i.gke_cluster_name AS cn, i.gke_node_pool_name AS pn",
@@ -396,7 +417,7 @@ def test_load_gcp_instances_plain_vm_gke_properties_are_null(neo4j_session):
     """Plain VMs must have null gke_cluster_name and gke_node_pool_name on the node."""
     neo4j_session.run("MERGE (p:GCPProject{id: $Id})", Id=TEST_PROJECT_ID)
 
-    load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG)
+    load_gcp_instances(neo4j_session, [_make_plain_instance()], TEST_UPDATE_TAG, LINK_PARAMS)
 
     result = neo4j_session.run(
         "MATCH (i:GCPInstance) RETURN i.gke_cluster_name AS cn, i.gke_node_pool_name AS pn",
@@ -405,3 +426,159 @@ def test_load_gcp_instances_plain_vm_gke_properties_are_null(neo4j_session):
     assert len(result) == 1
     assert result[0]["cn"] is None
     assert result[0]["pn"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_gke_clusters – resourceLabels → labels mapping
+# ---------------------------------------------------------------------------
+
+def _mock_container(mocker, clusters):
+    container = mocker.MagicMock()
+    (
+        container.projects.return_value
+        .zones.return_value
+        .clusters.return_value
+        .list.return_value
+        .execute.return_value
+    ) = {"clusters": clusters}
+    return container
+
+
+def test_get_gke_clusters_maps_resource_labels(mocker):
+    """
+    GKE returns cluster labels under resourceLabels; label.sync_labels reads
+    'labels', so get_gke_clusters must remap or GKE labels are silently dropped.
+    """
+    mocker.patch(
+        "cartography.intel.gcp.gke.gcp_console_link.get_console_link",
+        return_value="https://console.cloud.google.com/fake",
+    )
+    raw = {
+        "name": "test-cluster",
+        "location": "europe-west2",
+        "zone": "europe-west2-a",
+        "resourceLabels": {"env": "prod", "team": "platform"},
+    }
+    container = _mock_container(mocker, [raw])
+
+    clusters = get_gke_clusters(container, TEST_PROJECT_ID, [], {})
+
+    assert len(clusters) == 1
+    assert clusters[0]["labels"] == {"env": "prod", "team": "platform"}
+
+
+def test_get_gke_clusters_no_resource_labels(mocker):
+    """Clusters without resourceLabels must get an empty labels dict, not raise."""
+    mocker.patch(
+        "cartography.intel.gcp.gke.gcp_console_link.get_console_link",
+        return_value="https://console.cloud.google.com/fake",
+    )
+    raw = {
+        "name": "test-cluster",
+        "location": "europe-west2",
+        "zone": "europe-west2-a",
+    }
+    container = _mock_container(mocker, [raw])
+
+    clusters = get_gke_clusters(container, TEST_PROJECT_ID, [], {})
+
+    assert len(clusters) == 1
+    assert clusters[0]["labels"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests: control-plane access fields written by load_gke_clusters
+# ---------------------------------------------------------------------------
+
+def _loaded_access_fields(mocker, **cluster_fields):
+    """Load one cluster through a mocked writer and return the access fields it stores."""
+    write = mocker.patch("cartography.intel.gcp.gke.run_write_query")
+    cluster = {
+        "id": "c1", "name": "c1", "selfLink": "link", "createTime": "t", "location": "us-central1",
+        **cluster_fields,
+    }
+    load_gke_clusters(mocker.MagicMock(), [cluster], TEST_PROJECT_ID, TEST_UPDATE_TAG)
+    kwargs = write.call_args.kwargs
+    return {
+        "private_nodes": kwargs["ClusterPrivateNodes"],
+        "private_endpoint_enabled": kwargs["ClusterPrivateEndpointEnabled"],
+        "master_authorized_networks": kwargs["ClusterMasterAuthorizedNetworks"],
+        "cidr_blocks": kwargs["ClusterMasterAuthorizedCidrBlocks"],
+        "gcp_public_cidrs": kwargs["ClusterGcpPublicCidrsAccessEnabled"],
+    }
+
+
+def test_access_fields_public_cluster_without_private_config(mocker):
+    # The API omits false booleans: a plain public cluster has no privateClusterConfig at all.
+    assert _loaded_access_fields(mocker) == {
+        "private_nodes": False, "private_endpoint_enabled": False, "master_authorized_networks": False,
+        "cidr_blocks": [], "gcp_public_cidrs": None,
+    }
+
+
+def test_access_fields_legacy_shape(mocker):
+    fields = _loaded_access_fields(
+        mocker,
+        privateClusterConfig={"enablePrivateNodes": True, "enablePrivateEndpoint": True},
+        masterAuthorizedNetworksConfig={
+            "enabled": True,
+            "cidrBlocks": [{"displayName": "office", "cidrBlock": "203.0.113.0/24"}, {"displayName": "no-cidr"}],
+            "gcpPublicCidrsAccessEnabled": True,
+        },
+    )
+    assert fields == {
+        "private_nodes": True, "private_endpoint_enabled": True, "master_authorized_networks": True,
+        "cidr_blocks": ["203.0.113.0/24"], "gcp_public_cidrs": True,
+    }
+
+
+def test_access_fields_legacy_private_nodes_public_endpoint(mocker):
+    # Private nodes with the public endpoint on: enablePrivateEndpoint is omitted, so it was NULL before.
+    fields = _loaded_access_fields(mocker, privateClusterConfig={"enablePrivateNodes": True})
+    assert fields["private_nodes"] is True
+    assert fields["private_endpoint_enabled"] is False
+
+
+def test_access_fields_control_plane_endpoints_shape(mocker):
+    fields = _loaded_access_fields(
+        mocker,
+        networkConfig={"defaultEnablePrivateNodes": True},
+        controlPlaneEndpointsConfig={
+            "ipEndpointsConfig": {
+                "enabled": True,
+                "enablePublicEndpoint": False,
+                "authorizedNetworksConfig": {
+                    "enabled": True,
+                    "cidrBlocks": [{"cidrBlock": "0.0.0.0/0"}],
+                    "gcpPublicCidrsAccessEnabled": False,
+                },
+            },
+        },
+    )
+    assert fields == {
+        "private_nodes": True, "private_endpoint_enabled": True, "master_authorized_networks": True,
+        "cidr_blocks": ["0.0.0.0/0"], "gcp_public_cidrs": False,
+    }
+
+
+def test_access_fields_new_shape_wins_over_legacy(mocker):
+    fields = _loaded_access_fields(
+        mocker,
+        privateClusterConfig={"enablePrivateNodes": True, "enablePrivateEndpoint": True},
+        networkConfig={"defaultEnablePrivateNodes": False},
+        controlPlaneEndpointsConfig={"ipEndpointsConfig": {"enabled": True, "enablePublicEndpoint": True}},
+        masterAuthorizedNetworksConfig={"enabled": True, "cidrBlocks": [{"cidrBlock": "10.0.0.0/8"}]},
+    )
+    assert fields["private_nodes"] is False
+    assert fields["private_endpoint_enabled"] is False
+    # The new shape carries no authorizedNetworksConfig here, so the legacy one still applies.
+    assert fields["master_authorized_networks"] is True
+    assert fields["cidr_blocks"] == ["10.0.0.0/8"]
+
+
+def test_access_fields_ip_endpoints_disabled_is_private(mocker):
+    # DNS-based endpoint only: no IP endpoint exists, every request is IAM-authorized.
+    fields = _loaded_access_fields(
+        mocker, controlPlaneEndpointsConfig={"ipEndpointsConfig": {"enabled": False}},
+    )
+    assert fields["private_endpoint_enabled"] is True

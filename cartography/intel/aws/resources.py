@@ -1,24 +1,34 @@
 from typing import Dict
+from typing import List
 
 from . import apigateway
+from . import appsync
+from . import backup
 from . import bedrock
 from . import cloudformation
 from . import cloudfront
 from . import cloudtrail
 from . import cloudwatch
 from . import config
+from . import dms
 from . import dynamodb
 from . import ecr
 from . import ecs
+from . import efs
 from . import eks
 from . import elasticache
+from . import elasticbeanstalk
 from . import elasticsearch
 from . import emr
+from . import fsx
 from . import iam
 from . import identitystore
 from . import inspector
+from . import kinesis
 from . import kms
 from . import lambda_function
+from . import mq
+from . import msk
 from . import permission_relationships
 from . import rds
 from . import redshift
@@ -42,6 +52,7 @@ from .ec2.key_pairs import sync_ec2_key_pairs
 from .ec2.launch_templates import sync_ec2_launch_templates
 from .ec2.load_balancer_v2s import sync_load_balancer_v2s
 from .ec2.load_balancers import sync_load_balancers
+from .ec2.network_acls import sync_network_acls
 from .ec2.network_interfaces import sync_network_interfaces
 from .ec2.reserved_instances import sync_ec2_reserved_instances
 from .ec2.route_tables import sync_route_tables
@@ -52,6 +63,7 @@ from .ec2.tgw import sync_transit_gateways
 from .ec2.volumes import sync_ebs_volumes
 from .ec2.vpc import sync_vpc
 from .ec2.vpc_peerings import sync_vpc_peerings
+from cartography.intel.exposure.step import EXPOSURE_LAYERS_SYNC
 
 RESOURCE_FUNCTIONS: Dict = {
     'identitystore': identitystore.sync,
@@ -64,7 +76,9 @@ RESOURCE_FUNCTIONS: Dict = {
     'eks': eks.sync,
     'emr': emr.sync,
     'kms': kms.sync,
+    'kinesis': kinesis.sync,
     'apigateway': apigateway.sync,
+    'appsync': appsync.sync,
     'secretsmanager': secretsmanager.sync,
     'sqs': sqs.sync,
     'sns': sns.sync,
@@ -85,6 +99,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'ec2:internet_gateway': sync_internet_gateways,
     'ec2:tgw': sync_transit_gateways,
     'ec2:route_table': sync_route_tables,
+    'ec2:network_acl': sync_network_acls,
     # `ec2:instance` must be included before `ssm` and `ec2:images`,
     # they rely on EC2Instance data provided by this module.
     'ec2:instance': sync_ec2_instances,
@@ -97,15 +112,40 @@ RESOURCE_FUNCTIONS: Dict = {
     'ec2:network_interface': sync_network_interfaces,
     'waf': waf.sync,
     'rds': rds.sync,
+    'dms': dms.sync,
     'redshift': redshift.sync,
     'elasticache': elasticache.sync,
+    'elasticbeanstalk': elasticbeanstalk.sync,
     'elasticsearch': elasticsearch.sync,
+    'mq': mq.sync,
+    'msk': msk.sync,
     'elastic_ip_addresses': sync_elastic_ip_addresses,
     'ssm': ssm.sync,
     'route53': route53.sync,
     'inspector': inspector.sync,
     'config': config.sync,
     'securityhub': securityhub.sync,
+    'backup': backup.sync,
+    'efs': efs.sync,
+    'fsx': fsx.sync,
     'permission_relationships': permission_relationships.sync,
     'resourcegroupstaggingapi': resourcegroupstaggingapi.sync,
 }
+
+
+def parse_and_validate_aws_requested_syncs(aws_requested_syncs: str) -> List[str]:
+    validated_resources: List[str] = []
+    for resource in aws_requested_syncs.split(","):
+        resource = resource.strip()
+
+        if resource in RESOURCE_FUNCTIONS or resource == EXPOSURE_LAYERS_SYNC:
+            validated_resources.append(resource)
+        else:
+            valid_syncs: str = ", ".join(RESOURCE_FUNCTIONS.keys())
+            raise ValueError(
+                f'Error parsing `aws-requested-syncs`. You specified "{aws_requested_syncs}". '
+                f"Please check that your string is formatted properly. "
+                f'Example valid input looks like "s3,iam,rds" or "s3, ec2:instance, dynamodb". '
+                f"Our full list of valid values is: {valid_syncs}.",
+            )
+    return validated_resources

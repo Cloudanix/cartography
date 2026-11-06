@@ -10,6 +10,8 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.client.core.tx import load_graph_data
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -43,7 +45,7 @@ def get_dns_zones(dns: Resource, project_id: str, common_job_parameters) -> List
         return zones
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve DNS zones on project %s due to permissions issues. Code: %s, Message: %s"
@@ -95,7 +97,7 @@ def get_dns_rrs(dns: Resource, zone: Dict, project_id: str) -> List[Resource]:
         return rrs
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve DNS RRS on project %s due to permissions issues. Code: %s, Message: %s"
@@ -115,6 +117,7 @@ def transform_rrs(rrsets: List, zone: Dict, project_id: str):
         resource_record_set['zone'] = zone['id']
         resource_record_set['consolelink'] = gcp_console_link.get_console_link(
             resource_name='dns_resource_record_set', project_id=project_id, dns_zone_name=zone['name'], dns_rrset_name=resource_record_set['name'],
+            dns_type=resource_record_set.get('type'),
         )
         resource_record_set[
             "id"
@@ -152,7 +155,7 @@ def get_dns_keys(dns: Resource, zone: Dict, project_id: str) -> List[Resource]:
         return dns_keys
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve DNS Keys on project %s due to permissions issues. Code: %s, Message: %s"
@@ -170,7 +173,9 @@ def transform_dns_keys(dnsKeys: List, project_id: str, zone: Dict):
 
     for key in dnsKeys:
         key['zone'] = zone['id']
-        key['consolelink'] = gcp_console_link.get_console_link(project_id=project_id, resource_name='dns_home')
+        key['consolelink'] = gcp_console_link.get_console_link(
+            project_id=project_id, resource_name='dns_zone', dns_zone_name=zone['name'],
+        )
         key['id'] = f"projects/{project_id}/managedZones/{zone['name']}/dnsKeys/{key['id']}"
         list_keys.append(key)
 
@@ -203,7 +208,7 @@ def get_dns_policies(dns: Resource, project_id: str, common_job_parameters) -> L
         return policies
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve DNS policies on project %s due to permissions issues. Code: %s, Message: %s"
@@ -251,7 +256,7 @@ def load_dns_zones(neo4j_session: neo4j.Session, dns_zones: List[Dict], project_
     """
 
     ingest_records = """
-    UNWIND $records as record
+    UNWIND $DictList as record
     MERGE (zone:GCPDNSZone{id:record.id})
     ON CREATE SET
         zone.firstseen = timestamp(),
@@ -273,9 +278,10 @@ def load_dns_zones(neo4j_session: neo4j.Session, dns_zones: List[Dict], project_
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        records=dns_zones,
+        dns_zones,
         region="global",
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
@@ -304,7 +310,7 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
     """
 
     ingest_records = """
-    UNWIND $records as record
+    UNWIND $DictList as record
     MERGE (rrs:GCPRecordSet{id:record.id})
     ON CREATE SET
         rrs.firstseen = timestamp()
@@ -317,16 +323,18 @@ def load_rrs(neo4j_session: neo4j.Session, dns_rrs: List[Resource], project_id: 
         rrs.consolelink = record.consolelink,
         rrs.lastupdated = $gcp_update_tag
     WITH rrs, record
-    MATCH (zone:GCPDNSZone{id:record.zone})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(zone:GCPDNSZone{id:record.zone})
     MERGE (zone)-[r:HAS_RECORD]->(rrs)
     ON CREATE SET
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        records=dns_rrs,
+        dns_rrs,
         region="global",
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -352,7 +360,7 @@ def load_dns_polices(neo4j_session: neo4j.Session, policies: List[Dict], project
     :return: Nothing
     """
     ingest_policies = """
-    UNWIND $DNSPolicies as policy
+    UNWIND $DictList as policy
     MERGE (pol:GCPDNSPolicy{id:policy.id})
     ON CREATE SET
         pol.firstseen = timestamp()
@@ -371,9 +379,10 @@ def load_dns_polices(neo4j_session: neo4j.Session, policies: List[Dict], project
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_policies,
-        DNSPolicies=policies,
+        policies,
         region="global",
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
@@ -401,7 +410,7 @@ def load_dns_keys(neo4j_session: neo4j.Session, dns_keys: List[Dict], project_id
     :return: Nothing
     """
     ingest_keys = """
-    UNWIND $DNSKeys as key
+    UNWIND $DictList as key
     MERGE (ky:GCPDNSKey{id:key.id})
     ON CREATE SET
         ky.firstseen = timestamp()
@@ -414,15 +423,16 @@ def load_dns_keys(neo4j_session: neo4j.Session, dns_keys: List[Dict], project_id
         ky.isActive = key.isActive,
         ky.lastupdated = $gcp_update_tag
     WITH ky, key
-    MATCH (zone:GCPDNSZone{id:key.zone})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(zone:GCPDNSZone{id:key.zone})
     MERGE (zone)-[r:HAS_KEY]->(ky)
     ON CREATE SET
         r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_keys,
-        DNSKeys=dns_keys,
+        dns_keys,
         region="global",
         ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,

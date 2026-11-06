@@ -1,6 +1,12 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import cartography.intel.gcp.compute
+import cartography.intel.gcp.crm
 import tests.data.gcp.compute
 from cartography.util import run_analysis_job
+from cartography.util import run_cleanup_job
 
 TEST_WORKSPACE_ID = '1223344'
 TEST_PROJECT_ID = 'project-abc'
@@ -10,6 +16,7 @@ common_job_parameters = {
     "UPDATE_TAG": TEST_UPDATE_TAG,
     "WORKSPACE_ID": '1223344',
     "GCP_PROJECT_ID": TEST_PROJECT_ID,
+    "GCP_ORGANIZATION_ID": 'organizations/1223344',
 }
 
 
@@ -18,6 +25,7 @@ def _ensure_local_neo4j_has_test_instance_data(neo4j_session):
         neo4j_session,
         tests.data.gcp.compute.TRANSFORMED_GCP_INSTANCES,
         TEST_UPDATE_TAG,
+        common_job_parameters,
     )
 
 
@@ -55,6 +63,7 @@ def _ensure_local_neo4j_has_test_firewall_data(neo4j_session):
         neo4j_session,
         tests.data.gcp.compute.TRANSFORMED_FW_LIST,
         TEST_UPDATE_TAG,
+        TEST_PROJECT_ID,
     )
 
 
@@ -126,7 +135,7 @@ def test_transform_and_load_gcp_forwarding_rules(neo4j_session):
     """
     fwd_res = tests.data.gcp.compute.LIST_FORWARDING_RULES_RESPONSE
     fwd_list = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(fwd_res)
-    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, fwd_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, fwd_list, TEST_UPDATE_TAG, TEST_PROJECT_ID)
 
     fwd_query = """
     MATCH(f:GCPForwardingRule)
@@ -196,7 +205,9 @@ def test_transform_and_load_gcp_instances_and_nics(neo4j_session):
     """
     instance_responses = tests.data.gcp.compute.GCP_LIST_INSTANCES_RESPONSE
     instance_list = cartography.intel.gcp.compute.transform_gcp_instances(instance_responses.get("items", []), compute=None)
-    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instance_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instance_list, TEST_UPDATE_TAG, common_job_parameters,
+    )
 
     instance_id1 = 'projects/project-abc/zones/europe-west2-b/instances/instance-1-test'
     instance_id2 = 'projects/project-abc/zones/europe-west2-b/instances/instance-1'
@@ -250,7 +261,7 @@ def test_transform_and_load_firewalls(neo4j_session):
     :return:
     """
     fw_list = cartography.intel.gcp.compute.transform_gcp_firewall(tests.data.gcp.compute.LIST_FIREWALLS_RESPONSE)
-    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, TEST_UPDATE_TAG, TEST_PROJECT_ID)
 
     query = """
     MATCH (vpc:GCPVpc)-[r:RESOURCE]->(fw:GCPFirewall)
@@ -326,7 +337,7 @@ def test_vpc_to_subnets(neo4j_session):
     expected_nodes = {
         (
             'projects/project-abc/global/networks/default',
-            'projects/project-abc/regions/europe-west2/subnetworks/default',
+            'projects/project-abc/locations/europe-west2/subnetworks/default',
             'europe-west2',
             '10.0.0.1',
             '10.0.0.0/20',
@@ -388,7 +399,7 @@ def test_nic_to_subnets(neo4j_session):
     expected_nodes = {(
         'projects/project-abc/zones/europe-west2-b/instances/instance-1-test/networkinterfaces/nic0',
         '10.0.0.3',
-        'projects/project-abc/regions/europe-west2/subnetworks/default',
+        'projects/project-abc/locations/europe-west2/subnetworks/default',
         '10.0.0.1',
         '10.0.0.0/20',
     )}
@@ -498,7 +509,9 @@ def test_compute_network_interfaces(neo4j_session):
 
     instance_responses = tests.data.gcp.compute.GCP_LIST_INSTANCES_RESPONSE
     instance_list = cartography.intel.gcp.compute.transform_gcp_instances(instance_responses.get("items", []), compute=None)
-    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instance_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instance_list, TEST_UPDATE_TAG, common_job_parameters,
+    )
     instance_id1 = 'projects/project-abc/zones/europe-west2-b/instances/instance-1'
     instance_id2 = 'projects/project-abc/zones/europe-west2-b/instances/instance-1-test'
 
@@ -543,10 +556,12 @@ def test_compute_firewalls(neo4j_session):
     cloudanix_workspace_to_gcp_project(neo4j_session)
     fw_responses = tests.data.gcp.compute.LIST_FIREWALLS_RESPONSE
     fw_list = cartography.intel.gcp.compute.transform_gcp_firewall(fw_responses)
-    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, TEST_UPDATE_TAG, TEST_PROJECT_ID)
     instance_responses = tests.data.gcp.compute.GCP_LIST_INSTANCES_RESPONSE
     instance_list = cartography.intel.gcp.compute.transform_gcp_instances(instance_responses.get("items", []), compute=None)
-    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instance_list, TEST_UPDATE_TAG)
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instance_list, TEST_UPDATE_TAG, common_job_parameters,
+    )
 
     firewall_query = """
     MATCH (rng:IpRange)-[m:MEMBER_OF_IP_RULE]->(rule:IpRule:IpPermissionInbound:GCPIpRule)-[r:ALLOWED_BY]->(fw:GCPFirewall)<-[:RESOURCE]-(vpc:GCPVpc)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) \nWHERE fw.direction='INGRESS' AND fw.disabled=FALSE AND rng.id='0.0.0.0/0' AND rule.protocol IN ['tcp','udp'] AND rule.fromport IN [80,443,23,3389,25,465,587,3306,5432,1521,1433,135,137,138,139,445,0,53,20,21,22] AND rule.toport IN [80,443,23,3389,25,465,587,3306,5432,1521,1433,135,137,138,139,445,53,20,21,22,65535]
@@ -590,3 +605,982 @@ def test_compute_firewalls(neo4j_session):
     }
 
     assert actual_nodes == expected_nodes
+
+
+CLEANUP_PROJECT_ID = 'proj-fw-cleanup'
+CLEANUP_OLD_TAG = 100
+CLEANUP_NEW_TAG = 200
+CLEANUP_JOB_PARAMETERS = {
+    'UPDATE_TAG': CLEANUP_NEW_TAG,
+    'WORKSPACE_ID': 'ws-fw-cleanup',
+    'GCP_ORGANIZATION_ID': 'org-fw-cleanup',
+    'GCP_PROJECT_ID': CLEANUP_PROJECT_ID,
+}
+CLEANUP_VPC_ID = f'projects/{CLEANUP_PROJECT_ID}/global/networks/default'
+CLEANUP_FW_ID = f'projects/{CLEANUP_PROJECT_ID}/global/firewalls/allow-ssh'
+
+
+def _seed_cleanup_project(neo4j_session):
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(o:GCPOrganization{id: $org_id})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project_id})
+        MERGE (p)-[:RESOURCE]->(:GCPVpc{id: $vpc_id})
+        """,
+        workspace_id=CLEANUP_JOB_PARAMETERS['WORKSPACE_ID'], org_id=CLEANUP_JOB_PARAMETERS['GCP_ORGANIZATION_ID'],
+        project_id=CLEANUP_PROJECT_ID, vpc_id=CLEANUP_VPC_ID,
+    )
+
+
+def _load_firewall(neo4j_session, source_ranges, ports, target_tags, update_tag):
+    response = {
+        'id': f'projects/{CLEANUP_PROJECT_ID}/global/firewalls',
+        'items': [{
+            'name': 'allow-ssh', 'direction': 'INGRESS', 'disabled': False, 'priority': 1000,
+            'network': f'https://www.googleapis.com/compute/v1/{CLEANUP_VPC_ID}',
+            'selfLink': f'https://www.googleapis.com/compute/v1/{CLEANUP_FW_ID}',
+            'allowed': [{'IPProtocol': 'tcp', 'ports': ports}],
+            'sourceRanges': source_ranges, 'targetTags': target_tags,
+        }],
+    }
+    fw_list = cartography.intel.gcp.compute.transform_gcp_firewall(response)
+    cartography.intel.gcp.compute.load_gcp_ingress_firewalls(neo4j_session, fw_list, update_tag, CLEANUP_PROJECT_ID)
+
+
+def test_firewall_cleanup_removes_stale_rules_ranges_and_target_tags(neo4j_session):
+    _seed_cleanup_project(neo4j_session)
+    # Last sync: SSH open to the internet on instances tagged "web". The customer then narrowed it.
+    _load_firewall(neo4j_session, ['0.0.0.0/0'], ['22'], ['web'], CLEANUP_OLD_TAG)
+    _load_firewall(neo4j_session, ['10.0.0.0/8'], ['443'], ['db'], CLEANUP_NEW_TAG)
+
+    run_cleanup_job('gcp_compute_firewall_cleanup.json', neo4j_session, CLEANUP_JOB_PARAMETERS)
+
+    ranges = neo4j_session.run(
+        """
+        MATCH (rng)-[:MEMBER_OF_IP_RULE]->(rule:GCPIpRule)-[:ALLOWED_BY]->(:GCPFirewall{id: $fw_id})
+        RETURN rule.id AS rule, rng.id AS rng
+        """,
+        fw_id=CLEANUP_FW_ID,
+    )
+    assert {(r['rule'], r['rng']) for r in ranges} == {(f'{CLEANUP_FW_ID}/allow/443tcp', '10.0.0.0/8')}
+    stale_rules = neo4j_session.run(
+        "MATCH (rule:GCPIpRule) WHERE rule.id STARTS WITH $fw_id AND rule.lastupdated <> $tag RETURN rule.id",
+        fw_id=CLEANUP_FW_ID, tag=CLEANUP_NEW_TAG,
+    )
+    assert [r['rule.id'] for r in stale_rules] == []
+    tags = neo4j_session.run(
+        "MATCH (:GCPFirewall{id: $fw_id})-[:TARGET_TAG]->(t:GCPNetworkTag) RETURN t.value AS value",
+        fw_id=CLEANUP_FW_ID,
+    )
+    assert {t['value'] for t in tags} == {'db'}
+    # IpRange nodes are shared by every tenant's rules: only this firewall's edge goes, never the node.
+    assert neo4j_session.run("MATCH (r:IpRange{id: '0.0.0.0/0'}) RETURN count(r) AS n").single()['n'] == 1
+
+
+def test_instance_cleanup_removes_stale_network_tags(neo4j_session):
+    _seed_cleanup_project(neo4j_session)
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project_id})
+        MERGE (p)-[pr:RESOURCE]->(i:GCPInstance{id: 'cleanup-vm'})
+        SET i.lastupdated = $new, pr.lastupdated = $new
+        MERGE (i)-[old:TAGGED]->(:GCPNetworkTag{id: 'cleanup-web', value: 'web'})
+        SET old.lastupdated = $old
+        MERGE (i)-[cur:TAGGED]->(:GCPNetworkTag{id: 'cleanup-db', value: 'db'})
+        SET cur.lastupdated = $new
+        """,
+        project_id=CLEANUP_PROJECT_ID, old=CLEANUP_OLD_TAG, new=CLEANUP_NEW_TAG,
+    )
+
+    run_cleanup_job('gcp_compute_instance_cleanup.json', neo4j_session, CLEANUP_JOB_PARAMETERS)
+
+    tags = neo4j_session.run(
+        "MATCH (:GCPInstance{id: 'cleanup-vm'})-[:TAGGED]->(t:GCPNetworkTag) RETURN t.value AS value",
+    )
+    assert {t['value'] for t in tags} == {'db'}
+
+
+VM_PROJECT_ID = 'proj-vm-exposure'
+VM_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG,
+    'WORKSPACE_ID': 'ws-vm-exposure',
+    'GCP_ORGANIZATION_ID': 'org-vm-exposure',
+    'GCP_PROJECT_ID': VM_PROJECT_ID,
+}
+
+
+def _seed_vm_firewalls(neo4j_session, firewalls):
+    # Shapes as load_gcp_ingress_firewalls writes them: (range)-[:MEMBER_OF_IP_RULE]->(rule)-[:ALLOWED_BY]->(fw).
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $workspace_id})-[:OWNER]->(o:GCPOrganization{id: $org_id})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project_id})
+        SET p.workspace_ids = [$workspace_id]
+        WITH p
+        UNWIND $firewalls AS f
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: f.vpc})
+        MERGE (vpc)-[:RESOURCE]->(fw:GCPFirewall{id: f.id})
+        SET fw.direction = 'INGRESS', fw.disabled = coalesce(f.disabled, false),
+            fw.has_target_service_accounts = coalesce(f.target_sa, false)
+        MERGE (rule:GCPIpRule:IpRule:IpPermissionInbound{id: f.id + '/rule'})
+        SET rule.protocol = f.protocol, rule.fromport = f.fromport, rule.toport = f.toport
+        MERGE (rule)-[:ALLOWED_BY]->(fw)
+        MERGE (rng:IpRange{id: f.source})
+        MERGE (rng)-[:MEMBER_OF_IP_RULE]->(rule)
+        FOREACH (tag IN coalesce(f.tags, []) | MERGE (fw)-[:TARGET_TAG]->(:GCPNetworkTag{id: f.vpc + '/' + tag}))
+        """,
+        workspace_id=VM_JOB_PARAMETERS['WORKSPACE_ID'], org_id=VM_JOB_PARAMETERS['GCP_ORGANIZATION_ID'],
+        project_id=VM_PROJECT_ID, firewalls=firewalls,
+    )
+
+
+def _seed_vms(neo4j_session, vms):
+    # Shapes as load_gcp_instances writes them (natIP, status, MEMBER_OF_GCP_VPC, TAGGED).
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project_id})
+        UNWIND $vms AS v
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.natIP = v.nat_ip, i.status = coalesce(v.status, 'RUNNING'), i.exposed_internet = v.exposed_before,
+            i.exposed_internet_type = CASE WHEN v.exposed_before THEN ['nat_ip'] END
+        // The project's own networks: their firewalls (if any) are known.
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: coalesce(v.vpc, 'vpc-none')})
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        FOREACH (tag IN coalesce(v.tags, []) | MERGE (t:GCPNetworkTag{id: v.vpc + '/' + tag}) MERGE (i)-[:TAGGED]->(t))
+        """,
+        project_id=VM_PROJECT_ID, vms=vms,
+    )
+
+
+def test_instance_exposure_firewall_paths(neo4j_session):
+    anywhere = '0.0.0.0/0'
+    _seed_vm_firewalls(
+        neo4j_session, [
+            # No target tags or service accounts: applies to every instance in the network.
+            {
+                'id': 'fw-default-ssh', 'vpc': 'vpc-a', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': anywhere,
+            },
+            {
+                'id': 'fw-sa-target', 'vpc': 'vpc-c', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': anywhere, 'target_sa': True,
+            },
+            {
+                'id': 'fw-disabled', 'vpc': 'vpc-d', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': anywhere, 'disabled': True,
+            },
+            {
+                'id': 'fw-internal', 'vpc': 'vpc-e', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': '10.0.0.0/8',
+            },
+            # Target-tagged firewalls; port ranges that contain a sensitive port, protocol all, and none.
+            {
+                'id': 'fw-web-range', 'vpc': 'vpc-f', 'protocol': 'tcp', 'fromport': 1, 'toport': 1000,
+                'source': anywhere, 'tags': ['web'],
+            },
+            {'id': 'fw-all', 'vpc': 'vpc-f', 'protocol': 'all', 'source': anywhere, 'tags': ['any']},
+            {
+                'id': 'fw-high', 'vpc': 'vpc-f', 'protocol': 'tcp', 'fromport': 8080, 'toport': 8090,
+                'source': anywhere, 'tags': ['app'],
+            },
+            {
+                'id': 'fw-ssh-tag', 'vpc': 'vpc-f', 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+                'source': anywhere, 'tags': ['ssh'],
+            },
+        ],
+    )
+    ext = '34.1.1.1'
+    _seed_vms(
+        neo4j_session, [
+            {'id': 'vm-default-ssh', 'nat_ip': ext, 'vpc': 'vpc-a'},
+            {'id': 'vm-no-ext-ip', 'vpc': 'vpc-a'},
+            {'id': 'vm-stopped', 'nat_ip': ext, 'vpc': 'vpc-a', 'status': 'TERMINATED'},
+            # An external IP alone is not reachable: GCP denies ingress unless a firewall allows it.
+            {'id': 'vm-no-firewall', 'nat_ip': ext, 'vpc': 'vpc-b'},
+            {'id': 'vm-sa-target', 'nat_ip': ext, 'vpc': 'vpc-c'},
+            {'id': 'vm-disabled-fw', 'nat_ip': ext, 'vpc': 'vpc-d'},
+            {'id': 'vm-internal-src', 'nat_ip': ext, 'vpc': 'vpc-e'},
+            {'id': 'vm-tag-range', 'nat_ip': ext, 'vpc': 'vpc-f', 'tags': ['web']},
+            {'id': 'vm-tag-all', 'nat_ip': ext, 'vpc': 'vpc-f', 'tags': ['any']},
+            {'id': 'vm-tag-high', 'nat_ip': ext, 'vpc': 'vpc-f', 'tags': ['app']},
+            {'id': 'vm-tag-ssh', 'nat_ip': ext, 'vpc': 'vpc-f', 'tags': ['ssh']},
+            {'id': 'vm-untagged', 'nat_ip': ext, 'vpc': 'vpc-f'},
+        ],
+    )
+    # Flagged by an earlier run, nothing exposes them now. One sits at each end of a project with more
+    # instances than one reset batch (1000), so it falls outside the first batch whichever way it is scanned.
+    _seed_vms(neo4j_session, [{'id': 'reset-first', 'exposed_before': True}])
+    _seed_vms(neo4j_session, [{'id': f'reset-clean-{n}'} for n in range(1200)])
+    _seed_vms(neo4j_session, [{'id': 'reset-last', 'exposed_before': True}])
+
+    run_analysis_job('gcp_compute_instance_analysis.json', neo4j_session, VM_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $project_id})-[:RESOURCE]->(i:GCPInstance)
+        WHERE i.exposed_internet IS NOT NULL OR i.exposed_internet_type IS NOT NULL
+        RETURN i.id AS id, i.exposed_internet_type AS types
+        """,
+        project_id=VM_PROJECT_ID,
+    )
+    assert {n['id']: n['types'] for n in nodes} == {
+        'vm-default-ssh': ['unrestricted_access_from_firewall'],
+        'vm-tag-range': ['unrestricted_access_from_firewall'],
+        'vm-tag-all': ['unrestricted_access_from_firewall'],
+        'vm-tag-ssh': ['unrestricted_access_from_firewall'],
+    }
+
+
+SYNC_WORKSPACE_ID = 'ws-vm-sync'
+SYNC_ORG_ID = 'org-vm-sync'
+SYNC_PROJECT_ID = 'proj-vm-sync'
+SYNC_OLD_TAG = 100
+SYNC_TAG = 200
+
+
+def _seed_sync_project(neo4j_session):
+    # Shapes as compute ingestion writes them, plus state a previous sync's analysis left behind.
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        SET p.workspace_ids = [$ws]
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: 'sync-vpc'})
+        MERGE (vpc)-[:RESOURCE]->(fw_ssh:GCPFirewall{id: 'sync-fw-ssh'})
+        SET fw_ssh.name = 'allow-ssh', fw_ssh.direction = 'INGRESS', fw_ssh.disabled = false,
+            fw_ssh.has_target_service_accounts = false, fw_ssh.priority = 1000
+        MERGE (fw_ssh)-[:TARGET_TAG]->(ssh:GCPNetworkTag{id: 'sync-vpc/ssh'})
+        MERGE (r_ssh:GCPIpRule:IpRule:IpPermissionInbound{id: 'sync-r-ssh'})
+        MERGE (:IpRange{id: '0.0.0.0/0'})-[:MEMBER_OF_IP_RULE]->(r_ssh)
+        SET r_ssh.protocol = 'tcp', r_ssh.fromport = 22, r_ssh.toport = 22
+        MERGE (r_ssh)-[:ALLOWED_BY]->(fw_ssh)
+        MERGE (vpc)-[:RESOURCE]->(fw_office:GCPFirewall{id: 'sync-fw-office'})
+        SET fw_office.name = 'allow-office', fw_office.direction = 'INGRESS', fw_office.disabled = false,
+            fw_office.has_target_service_accounts = false, fw_office.priority = 1000
+        MERGE (fw_office)-[:TARGET_TAG]->(office:GCPNetworkTag{id: 'sync-vpc/office'})
+        MERGE (r_office:GCPIpRule:IpRule:IpPermissionInbound{id: 'sync-r-office'})
+        MERGE (:IpRange{id: '203.0.113.0/24'})-[:MEMBER_OF_IP_RULE]->(r_office)
+        SET r_office.protocol = 'tcp', r_office.fromport = 22, r_office.toport = 22
+        MERGE (r_office)-[:ALLOWED_BY]->(fw_office)
+        WITH p, vpc, ssh, office, fw_ssh
+        UNWIND [
+            {id: 'sync-vm-open', ip: '34.1.1.1', tag: 'ssh'},
+            {id: 'sync-vm-remediated', ip: '34.1.1.2', tag: 'office'}
+        ] AS v
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.name = v.id, i.natIP = v.ip, i.status = 'RUNNING', i.zone_name = 'us-central1-a',
+            i.machine_type = 'e2-small', i.networkIP = '10.0.0.' + right(v.ip, 1)
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        MERGE (i)-[:NETWORK_INTERFACE]->(nic:GCPNetworkInterface{id: v.id + '/nic0'})
+        MERGE (nic)-[:RESOURCE]->(:GCPNicAccessConfig{id: v.id + '/nic0/ac', public_ip: v.ip})
+        FOREACH (_ IN CASE WHEN v.tag = 'ssh' THEN [1] ELSE [] END | MERGE (i)-[:TAGGED]->(ssh))
+        FOREACH (_ IN CASE WHEN v.tag = 'office' THEN [1] ELSE [] END |
+            MERGE (i)-[:TAGGED]->(office)
+            // Flagged by the previous sync, when it was still tagged ssh.
+            SET i.exposed_internet = true, i.exposed_internet_type = ['unrestricted_access_from_firewall'],
+                i.publicContext = '[{"resource": "stale"}]'
+            MERGE (fw_ssh)-[stale:FIREWALL_INGRESS]->(i) SET stale.lastupdated = $old)
+        """,
+        ws=SYNC_WORKSPACE_ID, org=SYNC_ORG_ID, project=SYNC_PROJECT_ID, old=SYNC_OLD_TAG,
+    )
+
+
+def _run_gcp_sync_analysis(neo4j_session):
+    """Run start_gcp_ingestion with every API call stubbed, so all GCP analysis jobs run in production order."""
+    config = SimpleNamespace(
+        update_tag=SYNC_TAG, refresh_entitlements=False, gcp_requested_syncs=None,
+        params={'workspace': {'id_string': SYNC_WORKSPACE_ID, 'account_id': SYNC_PROJECT_ID}},
+        credentials={'token_uri': 'uri', 'account_email': 'sa@example.com'},
+    )
+
+    def _set_org(session, crm_v1, update_tag, common_job_parameters):
+        common_job_parameters['GCP_ORGANIZATION_ID'] = SYNC_ORG_ID
+
+    gcp = 'cartography.intel.gcp'
+    with patch(f'{gcp}.AuthHelper'), patch(f'{gcp}._initialize_resources'), \
+            patch(f'{gcp}.crm.sync_gcp_organizations', side_effect=_set_org), \
+            patch(f'{gcp}.crm.sync_gcp_folders'), patch(f'{gcp}.crm.sync_gcp_projects'), \
+            patch(f'{gcp}.crm.get_gcp_projects', return_value=[{'projectId': SYNC_PROJECT_ID}]), \
+            patch(f'{gcp}._sync_single_project'):
+        cartography.intel.gcp.start_gcp_ingestion(neo4j_session, config)
+
+
+def test_instance_flags_and_public_context_agree_after_a_full_sync(neo4j_session):
+    _seed_sync_project(neo4j_session)
+
+    _run_gcp_sync_analysis(neo4j_session)
+
+    rows = neo4j_session.run(
+        """
+        MATCH (:GCPProject{id: $project})-[:RESOURCE]->(i:GCPInstance)
+        WHERE i.exposed_internet IS NOT NULL OR i.publicContext IS NOT NULL
+        RETURN i.id AS id, i.exposed_internet AS exposed, i.exposed_internet_type AS types, i.publicContext AS ctx
+        """,
+        project=SYNC_PROJECT_ID,
+    ).data()
+    # The remediated VM keeps neither the flag nor the context the previous sync wrote.
+    assert [r['id'] for r in rows] == ['sync-vm-open']
+    row = rows[0]
+    assert row['exposed'] is True
+    assert row['types'] == ['unrestricted_access_from_firewall']
+    context = json.loads(row['ctx'])[0]['context'][0]
+    assert context['exposureTypes'] == row['types']
+    assert context['publicIp'] == '34.1.1.1'
+    assert context['privateIp'] == '10.0.0.1'
+    assert context['zone'] == 'us-central1-a'
+    assert [(r['firewallId'], r['fromPort']) for r in context['firewallRules']] == [('sync-fw-ssh', 22)]
+    # FIREWALL_INGRESS edges from an earlier sync are removed once the firewall no longer applies.
+    stale = neo4j_session.run(
+        "MATCH (:GCPFirewall)-[r:FIREWALL_INGRESS]->(:GCPInstance{id: 'sync-vm-remediated'}) "
+        "WHERE r.lastupdated <> $tag RETURN count(r) AS n",
+        tag=SYNC_TAG,
+    ).single()['n']
+    assert stale == 0
+
+
+SHARED_WORKSPACE_ID = 'ws-shared-vpc'
+SHARED_ORG_ID = 'org-shared-vpc'
+SHARED_HOST_PROJECT = 'proj-host'
+SHARED_SVC_PROJECT = 'proj-svc'
+SHARED_VPC_ID = f'projects/{SHARED_HOST_PROJECT}/global/networks/shared'
+SHARED_OWN_VPC_ID = f'projects/{SHARED_SVC_PROJECT}/global/networks/own'
+
+
+def _shared_vpc_params(project_id, update_tag):
+    return {
+        'UPDATE_TAG': update_tag, 'WORKSPACE_ID': SHARED_WORKSPACE_ID,
+        'GCP_ORGANIZATION_ID': SHARED_ORG_ID, 'GCP_PROJECT_ID': project_id, 'LIMIT_SIZE': 1000,
+    }
+
+
+def _transformed_instance(project_id, name, vpc_id, region='us-central1'):
+    """The fields load_gcp_instances reads, shaped as transform_gcp_instances returns them."""
+    network = f'https://www.googleapis.com/compute/v1/{vpc_id}'
+    subnet = f'projects/{vpc_id.split("/")[1]}/locations/{region}/subnetworks/default'
+    return {
+        'name': name, 'status': 'RUNNING', 'natIP': '34.9.9.9', 'project_id': project_id,
+        'partial_uri': f'projects/{project_id}/zones/{region}-a/instances/{name}',
+        'networkInterfaces': [{
+            'name': 'nic0', 'network': network, 'vpc_partial_uri': vpc_id,
+            'subnet_partial_uri': subnet, 'accessConfigs': [],
+        }],
+    }
+
+
+def test_instances_join_the_vpc_of_their_nic_network(neo4j_session):
+    # The host project's sync wrote the shared VPC and its firewall at an earlier tag. Subnets are
+    # stored as projects/<p>/locations/<r>/subnetworks/<s>, which a NIC's .../regions/... subnet never matches.
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(host:GCPProject{id: $host})
+        MERGE (o)-[:OWNER]->(svc:GCPProject{id: $svc})
+        MERGE (host)-[:RESOURCE]->(vpc:GCPVpc{id: $vpc}) SET vpc.lastupdated = $old
+        MERGE (vpc)-[:RESOURCE]->(:GCPFirewall{id: $vpc + '/fw'})
+        MERGE (svc)-[:RESOURCE]->(own:GCPVpc{id: $own})
+        MERGE (own)-[:RESOURCE]->(:GCPSubnet{id: 'projects/proj-svc/locations/us-central1/subnetworks/default'})
+        """,
+        ws=SHARED_WORKSPACE_ID, org=SHARED_ORG_ID, host=SHARED_HOST_PROJECT, svc=SHARED_SVC_PROJECT,
+        vpc=SHARED_VPC_ID, own=SHARED_OWN_VPC_ID, old=100,
+    )
+    instances = [
+        _transformed_instance(SHARED_SVC_PROJECT, 'svc-vm-shared', SHARED_VPC_ID),
+        _transformed_instance(SHARED_SVC_PROJECT, 'svc-vm-own', SHARED_OWN_VPC_ID),
+    ]
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instances, 200, _shared_vpc_params(SHARED_SVC_PROJECT, 200),
+    )
+    # The next service-project sync cleans VPCs before it reloads instances.
+    run_cleanup_job('gcp_compute_vpc_cleanup.json', neo4j_session, _shared_vpc_params(SHARED_SVC_PROJECT, 300))
+    cartography.intel.gcp.compute.load_gcp_instances(
+        neo4j_session, instances, 300, _shared_vpc_params(SHARED_SVC_PROJECT, 300),
+    )
+
+    members = neo4j_session.run(
+        "MATCH (i:GCPInstance)-[:MEMBER_OF_GCP_VPC]->(v:GCPVpc) WHERE i.project_id = $svc "
+        "RETURN i.instancename AS vm, v.id AS vpc",
+        svc=SHARED_SVC_PROJECT,
+    ).data()
+    assert sorted((m['vm'], m['vpc']) for m in members) == [
+        ('svc-vm-own', SHARED_OWN_VPC_ID), ('svc-vm-shared', SHARED_VPC_ID),
+    ]
+    # The service project's cleanup must not delete the host project's VPC or cut it from its firewalls.
+    owned = neo4j_session.run(
+        "MATCH (:GCPProject{id: $host})-[:RESOURCE]->(v:GCPVpc{id: $vpc})-[:RESOURCE]->(fw:GCPFirewall) "
+        "RETURN count(fw) AS n",
+        host=SHARED_HOST_PROJECT, vpc=SHARED_VPC_ID,
+    ).single()['n']
+    assert owned == 1
+
+
+def _seed_network_with_open_ssh(neo4j_session, workspace_id, org_id, project_id, vpc_id, target_tag=None):
+    """A project's VPC with an enabled 0.0.0.0/0 tcp:22 allow rule, as compute ingestion writes it."""
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        SET p.workspace_ids = [w IN coalesce(p.workspace_ids, []) WHERE w <> $ws] + $ws
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: $vpc})
+        MERGE (vpc)-[:RESOURCE]->(fw:GCPFirewall{id: $vpc + '/fw-ssh'})
+        SET fw.direction = 'INGRESS', fw.disabled = false, fw.has_target_service_accounts = false, fw.priority = 1000
+        MERGE (rule:GCPIpRule:IpRule:IpPermissionInbound{id: $vpc + '/fw-ssh/allow/22tcp'})
+        SET rule.protocol = 'tcp', rule.fromport = 22, rule.toport = 22
+        MERGE (rule)-[:ALLOWED_BY]->(fw)
+        MERGE (rng:IpRange{id: '0.0.0.0/0'})
+        MERGE (rng)-[:MEMBER_OF_IP_RULE]->(rule)
+        FOREACH (tag IN CASE WHEN $tag IS NULL THEN [] ELSE [$tag] END |
+            MERGE (fw)-[:TARGET_TAG]->(:GCPNetworkTag{id: $vpc + '/tags/' + tag}))
+        """,
+        ws=workspace_id, org=org_id, project=project_id, vpc=vpc_id, tag=target_tag,
+    )
+
+
+def test_shared_vpc_firewalls_apply_only_within_the_workspace_and_org(neo4j_session):
+    ws, org, svc = 'ws-xproj', 'org-xproj', 'proj-xproj-svc'
+    host_vpc = 'projects/proj-xproj-host/global/networks/shared'
+    foreign_vpc = 'projects/proj-other-tenant/global/networks/shared'
+    # Host project of this org (Shared VPC): untargeted and tagged open rules apply to service-project VMs.
+    _seed_network_with_open_ssh(neo4j_session, ws, org, 'proj-xproj-host', host_vpc)
+    _seed_network_with_open_ssh(neo4j_session, ws, org, 'proj-xproj-host', host_vpc + '-tagged', target_tag='web')
+    # Same network shapes, but only another workspace synced the project that owns them.
+    _seed_network_with_open_ssh(neo4j_session, 'ws-other', 'org-other', 'proj-other-tenant', foreign_vpc)
+    _seed_network_with_open_ssh(
+        neo4j_session, 'ws-other', 'org-other', 'proj-other-tenant', foreign_vpc + '-tagged', target_tag='web',
+    )
+    neo4j_session.run(
+        """
+        MATCH (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $svc})
+        WITH p
+        UNWIND $vms AS v
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.natIP = '34.8.8.8', i.status = 'RUNNING'
+        WITH i, v
+        MATCH (vpc:GCPVpc{id: v.vpc})
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        FOREACH (_ IN CASE WHEN v.tagged THEN [1] ELSE [] END |
+            MERGE (t:GCPNetworkTag{id: v.vpc + '/tags/web'}) MERGE (i)-[:TAGGED]->(t))
+        """,
+        ws=ws, org=org, svc=svc, vms=[
+            {'id': 'xproj-vm-host', 'vpc': host_vpc},
+            {'id': 'xproj-vm-host-tagged', 'vpc': host_vpc + '-tagged', 'tagged': True},
+            {'id': 'xproj-vm-foreign', 'vpc': foreign_vpc},
+            {'id': 'xproj-vm-foreign-tagged', 'vpc': foreign_vpc + '-tagged', 'tagged': True},
+        ],
+    )
+
+    run_analysis_job(
+        'gcp_compute_instance_analysis.json', neo4j_session,
+        {'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': ws, 'GCP_ORGANIZATION_ID': org, 'GCP_PROJECT_ID': svc},
+    )
+
+    open_fw, unresolved = 'unrestricted_access_from_firewall', 'public_ip_unresolved_firewall'
+    # The networks only another workspace synced are unresolved here: public by the fail-safe, not by their rules.
+    assert _exposed_types(neo4j_session, svc) == {
+        'xproj-vm-host': [open_fw], 'xproj-vm-host-tagged': [open_fw],
+        'xproj-vm-foreign': [unresolved], 'xproj-vm-foreign-tagged': [unresolved],
+    }
+    edges = neo4j_session.run(
+        "MATCH (fw:GCPFirewall)-[:FIREWALL_INGRESS]->(i:GCPInstance) WHERE i.id STARTS WITH 'xproj-' "
+        "RETURN i.id AS id",
+    ).value()
+    assert sorted(edges) == ['xproj-vm-host', 'xproj-vm-host-tagged']
+
+
+DENY_PARAMS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-deny', 'GCP_ORGANIZATION_ID': 'org-deny',
+    'GCP_PROJECT_ID': 'proj-deny',
+}
+
+
+def _seed_firewall_rules(neo4j_session, params, rules):
+    """Allow and deny firewalls as compute ingestion writes them, each on its own VPC owned by the project."""
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(p:GCPProject{id: $project})
+        SET p.workspace_ids = [$ws]
+        WITH p
+        UNWIND $rules AS f
+        MERGE (p)-[:RESOURCE]->(vpc:GCPVpc{id: f.vpc})
+        MERGE (vpc)-[:RESOURCE]->(fw:GCPFirewall{id: f.vpc + '/' + f.id})
+        SET fw.direction = 'INGRESS', fw.disabled = coalesce(f.disabled, false), fw.priority = f.priority,
+            fw.has_target_service_accounts = coalesce(f.target_sa, false)
+        MERGE (rule:GCPIpRule:IpRule:IpPermissionInbound{id: fw.id + '/rule'})
+        SET rule.protocol = f.protocol, rule.fromport = f.fromport, rule.toport = f.toport
+        FOREACH (_ IN CASE WHEN f.action = 'deny' THEN [1] ELSE [] END | MERGE (rule)-[:DENIED_BY]->(fw))
+        FOREACH (_ IN CASE WHEN f.action = 'allow' THEN [1] ELSE [] END | MERGE (rule)-[:ALLOWED_BY]->(fw))
+        FOREACH (src IN [s IN f.sources WHERE s CONTAINS '.'] |
+            MERGE (rng:IpRange{id: src}) MERGE (rng)-[:MEMBER_OF_IP_RULE]->(rule))
+        FOREACH (src IN [s IN f.sources WHERE s CONTAINS ':'] |
+            MERGE (rng:Ipv6Range{id: src}) MERGE (rng)-[:MEMBER_OF_IP_RULE]->(rule))
+        FOREACH (tag IN coalesce(f.tags, []) | MERGE (fw)-[:TARGET_TAG]->(:GCPNetworkTag{id: f.vpc + '/tags/' + tag}))
+        """,
+        ws=params['WORKSPACE_ID'], org=params['GCP_ORGANIZATION_ID'], project=params['GCP_PROJECT_ID'], rules=rules,
+    )
+
+
+def _seed_running_vms(neo4j_session, params, vms):
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: $project})
+        UNWIND $vms AS v
+        MERGE (p)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.natIP = v.nat_ip, i.ipv6_nat_ip = v.ipv6, i.status = 'RUNNING'
+        WITH i, v
+        MATCH (vpc:GCPVpc{id: v.vpc})
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        FOREACH (tag IN coalesce(v.tags, []) |
+            MERGE (t:GCPNetworkTag{id: v.vpc + '/tags/' + tag}) MERGE (i)-[:TAGGED]->(t))
+        """,
+        project=params['GCP_PROJECT_ID'], vms=vms,
+    )
+
+
+def _exposed_types(neo4j_session, project_id):
+    rows = neo4j_session.run(
+        "MATCH (:GCPProject{id: $project})-[:RESOURCE]->(i:GCPInstance) WHERE i.exposed_internet "
+        "RETURN i.id AS id, i.exposed_internet_type AS types",
+        project=project_id,
+    )
+    return {r['id']: r['types'] for r in rows}
+
+
+def test_higher_priority_deny_cancels_an_open_allow_only_when_it_fully_covers_it(neo4j_session):
+    anywhere = ['0.0.0.0/0']
+    ssh_allow = {
+        'id': 'allow-ssh', 'action': 'allow', 'priority': 1000, 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+        'sources': anywhere,
+    }
+    range_allow = dict(ssh_allow, id='allow-range', fromport=1, toport=1000)
+    all_allow = dict(ssh_allow, id='allow-all', protocol='all', fromport=None, toport=None)
+    ssh_deny = dict(ssh_allow, id='deny-ssh', action='deny', priority=900)
+    cases = {
+        # vm id: (rules in its VPC, VM tags)
+        'deny-covers': ([ssh_allow, ssh_deny], []),
+        'deny-all-protocols': ([range_allow, dict(ssh_deny, protocol='all', fromport=None, toport=None)], []),
+        'deny-wider-range': ([ssh_allow, dict(ssh_deny, fromport=0, toport=65535)], []),
+        'deny-on-vm-tag': ([ssh_allow, dict(ssh_deny, tags=['locked'])], ['locked']),
+        # GCP: on equal priority a deny overrides an allow.
+        'deny-same-priority': ([ssh_allow, dict(ssh_deny, priority=1000)], []),
+        'deny-lower-priority': ([ssh_allow, dict(ssh_deny, priority=1100)], []),
+        'deny-partial-ports': ([range_allow, ssh_deny], []),
+        'deny-tcp-vs-allow-all': ([all_allow, dict(ssh_deny, fromport=0, toport=65535)], []),
+        'deny-udp': ([ssh_allow, dict(ssh_deny, protocol='udp')], []),
+        'deny-office-source': ([ssh_allow, dict(ssh_deny, sources=['203.0.113.0/24'])], []),
+        'deny-other-tag': ([ssh_allow, dict(ssh_deny, tags=['locked'])], []),
+        'deny-service-account': ([ssh_allow, dict(ssh_deny, target_sa=True)], []),
+        'deny-disabled': ([ssh_allow, dict(ssh_deny, disabled=True)], []),
+    }
+    rules, vms = [], []
+    for vm, (vm_rules, tags) in cases.items():
+        rules.extend(dict(r, vpc=f'vpc-{vm}') for r in vm_rules)
+        vms.append({'id': vm, 'vpc': f'vpc-{vm}', 'nat_ip': '34.7.7.7', 'tags': tags})
+    _seed_firewall_rules(neo4j_session, DENY_PARAMS, rules)
+    _seed_running_vms(neo4j_session, DENY_PARAMS, vms)
+
+    run_analysis_job('gcp_compute_instance_analysis.json', neo4j_session, DENY_PARAMS)
+
+    assert set(_exposed_types(neo4j_session, DENY_PARAMS['GCP_PROJECT_ID'])) == {
+        'deny-lower-priority', 'deny-partial-ports', 'deny-tcp-vs-allow-all', 'deny-udp',
+        'deny-office-source', 'deny-other-tag', 'deny-service-account', 'deny-disabled',
+    }
+
+
+def test_ipv6_exposure_needs_an_external_ipv6_and_a_firewall_open_to_any_ipv6(neo4j_session):
+    params = dict(DENY_PARAMS, WORKSPACE_ID='ws-ipv6', GCP_ORGANIZATION_ID='org-ipv6', GCP_PROJECT_ID='proj-ipv6')
+    v6_allow = {
+        'id': 'allow-ssh-v6', 'action': 'allow', 'priority': 1000, 'protocol': 'tcp', 'fromport': 22, 'toport': 22,
+        'sources': ['::/0'],
+    }
+    v4_allow = dict(v6_allow, id='allow-ssh-v4', sources=['0.0.0.0/0'])
+    cases = {
+        # vm id: (rules in its VPC, natIP, external IPv6)
+        'v6-open': ([v6_allow], None, '2600:1900::1'),
+        'v6-no-firewall': ([], None, '2600:1900::2'),
+        'v6-only-v4-rule': ([v4_allow], None, '2600:1900::3'),
+        'v4-only-v6-rule': ([v6_allow], '34.6.6.6', None),
+        'v6-denied': ([v6_allow, dict(v6_allow, id='deny-v6', action='deny', priority=900)], None, '2600:1900::4'),
+        'v6-v4-deny': ([v6_allow, dict(v4_allow, id='deny-v4', action='deny', priority=900)], None, '2600:1900::5'),
+        'dual-open': ([v6_allow, v4_allow], '34.6.6.7', '2600:1900::6'),
+    }
+    rules, vms = [], []
+    for vm, (vm_rules, nat_ip, ipv6) in cases.items():
+        rules.extend(dict(r, vpc=f'vpc-{vm}') for r in vm_rules)
+        neo4j_session.run("MERGE (:GCPVpc{id: $vpc})", vpc=f'vpc-{vm}')
+        vms.append({'id': vm, 'vpc': f'vpc-{vm}', 'nat_ip': nat_ip, 'ipv6': ipv6})
+    _seed_firewall_rules(neo4j_session, params, rules)
+    neo4j_session.run(
+        "MATCH (p:GCPProject{id: $project}) UNWIND $vpcs AS v MATCH (vpc:GCPVpc{id: v}) MERGE (p)-[:RESOURCE]->(vpc)",
+        project=params['GCP_PROJECT_ID'], vpcs=[v['vpc'] for v in vms],
+    )
+    _seed_running_vms(neo4j_session, params, vms)
+
+    run_analysis_job('gcp_compute_instance_analysis.json', neo4j_session, params)
+
+    v6_type = 'unrestricted_ipv6_access_from_firewall'
+    assert _exposed_types(neo4j_session, params['GCP_PROJECT_ID']) == {
+        'v6-open': [v6_type],
+        'v6-v4-deny': [v6_type],
+        'dual-open': ['unrestricted_access_from_firewall', v6_type],
+    }
+
+
+TENANT_ORG = 'org-two-workspaces'
+
+
+def _load_project_for(neo4j_session, workspace_id, project_id, update_tag=TEST_UPDATE_TAG):
+    """What a workspace's sync writes for its org and project (the org edge as load_gcp_organizations writes it)."""
+    params = {'WORKSPACE_ID': workspace_id, 'GCP_ORGANIZATION_ID': TENANT_ORG, 'GCP_PROJECT_ID': project_id}
+    neo4j_session.run(
+        "MERGE (w:CloudanixWorkspace{id: $ws}) MERGE (o:GCPOrganization{id: $org}) MERGE (w)-[:OWNER]->(o)",
+        ws=workspace_id, org=TENANT_ORG,
+    )
+    # The installed cloudconsolelink has no GCP project link; the link is irrelevant here.
+    with patch('cartography.intel.gcp.crm.gcp_console_link.get_console_link', return_value=''):
+        cartography.intel.gcp.crm.load_gcp_projects(
+            neo4j_session, [{'projectId': project_id, 'projectNumber': 1}], update_tag, params, None,
+        )
+
+
+def test_project_workspace_ids_are_a_set_and_drop_workspaces_that_left_the_org(neo4j_session):
+    _load_project_for(neo4j_session, 'ws-tenant-a', 'proj-tenant-shared')
+    _load_project_for(neo4j_session, 'ws-tenant-a', 'proj-tenant-shared')
+    _load_project_for(neo4j_session, 'ws-tenant-b', 'proj-tenant-shared')
+    ids = neo4j_session.run("MATCH (p:GCPProject{id: 'proj-tenant-shared'}) RETURN p.workspace_ids AS ids").single()
+    assert sorted(ids['ids']) == ['ws-tenant-a', 'ws-tenant-b']
+
+    # Workspace B no longer owns the org (its organization cleanup removed the edge):
+    # its id is dropped on the next load.
+    neo4j_session.run("MATCH (:CloudanixWorkspace{id: 'ws-tenant-b'})-[r:OWNER]->(:GCPOrganization) DELETE r")
+    _load_project_for(neo4j_session, 'ws-tenant-a', 'proj-tenant-shared')
+    ids = neo4j_session.run("MATCH (p:GCPProject{id: 'proj-tenant-shared'}) RETURN p.workspace_ids AS ids").single()
+    assert ids['ids'] == ['ws-tenant-a']
+
+
+def test_shared_vpc_firewalls_of_another_workspace_never_apply(neo4j_session):
+    # Workspaces A and B onboarded different projects of the same GCP organization, so they share its org node.
+    for ws, project in (('ws-iso-a', 'proj-iso-svc'), ('ws-iso-a', 'proj-iso-host-a'), ('ws-iso-b', 'proj-iso-host-b')):
+        _load_project_for(neo4j_session, ws, project)
+    host_a = 'projects/proj-iso-host-a/global/networks/shared'
+    host_b = 'projects/proj-iso-host-b/global/networks/shared'
+    _seed_network_with_open_ssh(neo4j_session, 'ws-iso-a', TENANT_ORG, 'proj-iso-host-a', host_a)
+    _seed_network_with_open_ssh(neo4j_session, 'ws-iso-b', TENANT_ORG, 'proj-iso-host-b', host_b)
+    neo4j_session.run(
+        """
+        MATCH (p:GCPProject{id: 'proj-iso-svc'}), (va:GCPVpc{id: $host_a}), (vb:GCPVpc{id: $host_b})
+        MERGE (p)-[:RESOURCE]->(a:GCPInstance:Instance{id: 'iso-vm-host-a'})
+        MERGE (p)-[:RESOURCE]->(b:GCPInstance:Instance{id: 'iso-vm-host-b'})
+        MERGE (p)-[:RESOURCE]->(both:GCPInstance:Instance{id: 'iso-vm-both'})
+        SET a.natIP = '34.5.5.1', b.natIP = '34.5.5.2', both.natIP = '34.5.5.3',
+            a.status = 'RUNNING', b.status = 'RUNNING', both.status = 'RUNNING'
+        MERGE (a)-[:MEMBER_OF_GCP_VPC]->(va)
+        MERGE (b)-[:MEMBER_OF_GCP_VPC]->(vb)
+        MERGE (both)-[:MEMBER_OF_GCP_VPC]->(va)
+        MERGE (both)-[:MEMBER_OF_GCP_VPC]->(vb)
+        WITH both, vb
+        // Left behind by a run that matched B's firewall.
+        MATCH (vb)-[:RESOURCE]->(fw:GCPFirewall)
+        MERGE (fw)-[e:FIREWALL_INGRESS]->(both) SET e.lastupdated = 1
+        """,
+        host_a=host_a, host_b=host_b,
+    )
+
+    run_analysis_job(
+        'gcp_compute_instance_analysis.json', neo4j_session,
+        {
+            'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-iso-a', 'GCP_ORGANIZATION_ID': TENANT_ORG,
+            'GCP_PROJECT_ID': 'proj-iso-svc',
+        },
+    )
+
+    rows = neo4j_session.run(
+        "MATCH (:GCPProject{id: 'proj-iso-svc'})-[:RESOURCE]->(i:GCPInstance) WHERE i.exposed_internet "
+        "RETURN i.id AS id, i.exposed_internet_type AS types, i.publicContext AS ctx",
+    ).data()
+    # B's host network counts as unresolved for workspace A (its firewalls are never read), never as matched.
+    open_fw, unresolved = 'unrestricted_access_from_firewall', 'public_ip_unresolved_firewall'
+    assert {r['id']: r['types'] for r in rows} == {
+        'iso-vm-host-a': [open_fw], 'iso-vm-both': [open_fw, unresolved], 'iso-vm-host-b': [unresolved],
+    }
+    for r in rows:
+        # A set: earlier tests in this module MERGE duplicate 0.0.0.0/0 IpRange nodes, which repeats rows.
+        firewalls = {f['firewallId'] for f in json.loads(r['ctx'])[0]['context'][0]['firewallRules']}
+        assert firewalls == (set() if r['id'] == 'iso-vm-host-b' else {host_a + '/fw-ssh'})
+    edges = neo4j_session.run(
+        "MATCH (fw:GCPFirewall)-[:FIREWALL_INGRESS]->(i:GCPInstance) WHERE i.id STARTS WITH 'iso-' RETURN fw.id AS fw",
+    ).value()
+    assert set(edges) == {host_a + '/fw-ssh'}
+
+
+def test_vm_with_external_ip_on_a_network_whose_firewalls_we_cannot_see_is_public(neo4j_session):
+    _load_project_for(neo4j_session, 'ws-unres-a', 'proj-unres-svc')
+    _load_project_for(neo4j_session, 'ws-unres-b', 'proj-unres-host-b')
+    neo4j_session.run(
+        """
+        MATCH (svc:GCPProject{id: 'proj-unres-svc'}), (hb:GCPProject{id: 'proj-unres-host-b'})
+        MERGE (svc)-[:RESOURCE]->(own:GCPVpc{id: 'projects/proj-unres-svc/global/networks/own'})
+        MERGE (hb)-[:RESOURCE]->(other:GCPVpc{id: 'projects/proj-unres-host-b/global/networks/shared'})
+        // Host project not onboarded anywhere: only the stub the instance loader merges.
+        MERGE (stub:GCPVpc{id: 'projects/proj-unres-unsynced/global/networks/shared'})
+        WITH svc, own, other, stub
+        UNWIND [
+            {id: 'unres-own-net', vpc: own, nat: '34.4.4.1'},
+            {id: 'unres-other-workspace', vpc: other, nat: '34.4.4.2'},
+            {id: 'unres-unsynced-ipv6', vpc: stub, ipv6: '2600:1900::9'},
+            {id: 'unres-no-external-ip', vpc: stub},
+            {id: 'unres-stopped', vpc: stub, nat: '34.4.4.3', status: 'TERMINATED'}
+        ] AS v
+        MERGE (svc)-[:RESOURCE]->(i:GCPInstance:Instance{id: v.id})
+        SET i.natIP = v.nat, i.ipv6_nat_ip = v.ipv6, i.status = coalesce(v.status, 'RUNNING')
+        WITH i, v.vpc AS vpc
+        MERGE (i)-[:MEMBER_OF_GCP_VPC]->(vpc)
+        """,
+    )
+
+    run_analysis_job(
+        'gcp_compute_instance_analysis.json', neo4j_session,
+        {
+            'UPDATE_TAG': TEST_UPDATE_TAG, 'WORKSPACE_ID': 'ws-unres-a', 'GCP_ORGANIZATION_ID': TENANT_ORG,
+            'GCP_PROJECT_ID': 'proj-unres-svc',
+        },
+    )
+
+    assert _exposed_types(neo4j_session, 'proj-unres-svc') == {
+        'unres-other-workspace': ['public_ip_unresolved_firewall'],
+        'unres-unsynced-ipv6': ['public_ip_unresolved_firewall'],
+    }
+
+
+# NIC -> subnet keys. The subnet loader keys GCPSubnet as projects/<p>/locations/<r>/subnetworks/<s>; NICs and
+# forwarding rules name their subnet by self-link (.../projects/<p>/regions/<r>/subnetworks/<s>).
+NIC_WORKSPACE_ID = 'ws-nic-subnet'
+NIC_ORG_ID = 'org-nic-subnet'
+NIC_HOST_PROJECT = 'proj-nic-host'
+NIC_SVC_PROJECT = 'proj-nic-svc'
+NIC_REGION = 'us-central1'
+COMPUTE_API = 'https://www.googleapis.com/compute/v1'
+
+
+def _nic_params(project_id, update_tag):
+    return {
+        'UPDATE_TAG': update_tag, 'WORKSPACE_ID': NIC_WORKSPACE_ID,
+        'GCP_ORGANIZATION_ID': NIC_ORG_ID, 'GCP_PROJECT_ID': project_id, 'LIMIT_SIZE': 1000,
+    }
+
+
+def _vpc_self_link(project_id):
+    return f'{COMPUTE_API}/projects/{project_id}/global/networks/main'
+
+
+def _subnet_self_link(project_id):
+    return f'{COMPUTE_API}/projects/{project_id}/regions/{NIC_REGION}/subnetworks/app'
+
+
+def _real_subnet_id(project_id):
+    return f'projects/{project_id}/locations/{NIC_REGION}/subnetworks/app'
+
+
+def _seed_nic_org(neo4j_session):
+    # The session is module scoped: start each test from a graph without the previous test's nodes.
+    neo4j_session.run("MATCH (n) WHERE n.id CONTAINS 'proj-nic-' DETACH DELETE n")
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: $ws})-[:OWNER]->(o:GCPOrganization{id: $org})
+        MERGE (o)-[:OWNER]->(:GCPProject{id: $host})
+        MERGE (o)-[:OWNER]->(:GCPProject{id: $svc})
+        """,
+        ws=NIC_WORKSPACE_ID, org=NIC_ORG_ID, host=NIC_HOST_PROJECT, svc=NIC_SVC_PROJECT,
+    )
+
+
+def _sync_vpc_and_subnet(neo4j_session, project_id, update_tag):
+    """The project's VPC + subnet sync, from list API responses through the real transforms."""
+    vpc_res = {
+        'id': f'projects/{project_id}/global/networks',
+        'items': [{'name': 'main', 'selfLink': _vpc_self_link(project_id), 'autoCreateSubnetworks': False}],
+    }
+    subnet_res = {
+        'id': f'projects/{project_id}/regions/{NIC_REGION}/subnetworks',
+        'items': [{
+            'name': 'app', 'region': f'{COMPUTE_API}/projects/{project_id}/regions/{NIC_REGION}',
+            'network': _vpc_self_link(project_id), 'ipCidrRange': '10.8.0.0/24', 'gatewayAddress': '10.8.0.1',
+            'selfLink': _subnet_self_link(project_id),
+        }],
+    }
+    compute = cartography.intel.gcp.compute
+    compute.load_gcp_vpcs(neo4j_session, compute.transform_gcp_vpcs(vpc_res), update_tag)
+    with patch.object(compute, 'get_default_vpc', return_value=None):
+        subnets = compute.transform_gcp_subnets(subnet_res, project_id, None)
+    compute.load_gcp_subnets(neo4j_session, subnets, update_tag)
+
+
+def _sync_instance(neo4j_session, project_id, name, network_project, update_tag):
+    """The project's instance sync of one VM whose NIC is on network_project's subnet, as the list API returns it."""
+    raw = {
+        'id': f'{name}-id', 'name': name, 'status': 'RUNNING', 'disks': [],
+        'zone': f'{COMPUTE_API}/projects/{project_id}/zones/{NIC_REGION}-a',
+        'networkInterfaces': [{
+            'name': 'nic0', 'networkIP': '10.8.0.5', 'accessConfigs': [],
+            'network': _vpc_self_link(network_project), 'subnetwork': _subnet_self_link(network_project),
+        }],
+    }
+    instances = cartography.intel.gcp.compute.transform_gcp_instances([raw], compute=None)
+    cartography.intel.gcp.compute.load_gcp_instances(neo4j_session, instances, update_tag)
+
+
+def _nic_subnets(neo4j_session, name):
+    """(subnet id, the subnet's VPC id or None) for each subnet the VM's NICs are part of."""
+    return neo4j_session.run(
+        """
+        MATCH (:GCPInstance{instancename: $name})-[:NETWORK_INTERFACE]->(:GCPNetworkInterface)
+            -[:PART_OF_SUBNET]->(s:GCPSubnet)
+        OPTIONAL MATCH (vpc:GCPVpc)-[:RESOURCE]->(s)
+        RETURN s.id AS subnet, vpc.id AS vpc, s.ip_cidr_range AS cidr
+        """,
+        name=name,
+    ).data()
+
+
+def _stub_subnet_ids(neo4j_session):
+    return sorted(
+        r['id'] for r in neo4j_session.run(
+            "MATCH (s:GCPSubnet) WHERE s.id CONTAINS '/proj-nic-' AND NOT (:GCPVpc)-[:RESOURCE]->(s) RETURN s.id AS id",
+        )
+    )
+
+
+def test_instance_nic_links_to_the_real_subnet_not_a_stub(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_SVC_PROJECT, 100)
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-own-vm', NIC_SVC_PROJECT, 100)
+
+    assert _nic_subnets(neo4j_session, 'nic-own-vm') == [{
+        'subnet': _real_subnet_id(NIC_SVC_PROJECT),
+        'vpc': f'projects/{NIC_SVC_PROJECT}/global/networks/main',
+        'cidr': '10.8.0.0/24',
+    }]
+    assert _stub_subnet_ids(neo4j_session) == []
+
+
+def test_shared_vpc_nic_links_to_the_host_project_subnet_once_the_host_is_synced(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    # The service project syncs first: the host's subnet is not in the graph yet, so a stub is merged under the
+    # host subnet's own key ...
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-shared-vm', NIC_HOST_PROJECT, 100)
+    assert _nic_subnets(neo4j_session, 'nic-shared-vm') == [
+        {'subnet': _real_subnet_id(NIC_HOST_PROJECT), 'vpc': None, 'cidr': None},
+    ]
+    # ... which the host project's subnet sync then completes in place: one node, with its VPC and CIDR.
+    _sync_vpc_and_subnet(neo4j_session, NIC_HOST_PROJECT, 100)
+    assert _nic_subnets(neo4j_session, 'nic-shared-vm') == [{
+        'subnet': _real_subnet_id(NIC_HOST_PROJECT),
+        'vpc': f'projects/{NIC_HOST_PROJECT}/global/networks/main',
+        'cidr': '10.8.0.0/24',
+    }]
+    assert _stub_subnet_ids(neo4j_session) == []
+
+
+def test_host_project_subnet_cleanup_keeps_service_project_nics(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_HOST_PROJECT, 100)
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-shared-vm', NIC_HOST_PROJECT, 100)
+    neo4j_session.run(
+        "MATCH (:GCPInstance{instancename: 'nic-shared-vm'})-[:NETWORK_INTERFACE]->(nic) "
+        "MERGE (nic)-[r:RESOURCE]->(ac:GCPNicAccessConfig{id: nic.id + '/accessconfigs/ONE_TO_ONE_NAT'}) "
+        "SET ac.public_ip = '34.1.2.3', ac.lastupdated = 100, r.lastupdated = 100",
+    )
+
+    # A later host project sync (subnets reloaded, then the subnet cleanup) must leave the service project's
+    # NIC, its access config and its subnet edge alone: they belong to the service project's instance sync.
+    _sync_vpc_and_subnet(neo4j_session, NIC_HOST_PROJECT, 200)
+    run_cleanup_job('gcp_compute_vpc_subnet_cleanup.json', neo4j_session, _nic_params(NIC_HOST_PROJECT, 200))
+
+    assert [s['subnet'] for s in _nic_subnets(neo4j_session, 'nic-shared-vm')] == [_real_subnet_id(NIC_HOST_PROJECT)]
+    public_ips = neo4j_session.run(
+        "MATCH (:GCPInstance{instancename: 'nic-shared-vm'})-[:NETWORK_INTERFACE]->()-[:RESOURCE]->(ac) "
+        "RETURN collect(ac.public_ip) AS ips",
+    ).single()['ips']
+    assert public_ips == ['34.1.2.3']
+
+
+def test_instance_cleanup_drops_stale_stub_subnet_edges_and_access_configs(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_SVC_PROJECT, 100)
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-legacy-vm', NIC_SVC_PROJECT, 100)
+    # Written by the previous release: the NIC hangs off a parentless stub keyed by its .../regions/... self-link,
+    # and has an access config for an external IP since removed from the VM.
+    legacy_stub = f'projects/{NIC_SVC_PROJECT}/regions/{NIC_REGION}/subnetworks/app'
+    neo4j_session.run(
+        "MATCH (:GCPInstance{instancename: 'nic-legacy-vm'})-[:NETWORK_INTERFACE]->(nic)-[real:PART_OF_SUBNET]->() "
+        "DELETE real "
+        "MERGE (nic)-[p:PART_OF_SUBNET]->(:GCPSubnet{id: $stub}) SET p.lastupdated = 100 "
+        "MERGE (nic)-[r:RESOURCE]->(ac:GCPNicAccessConfig{id: nic.id + '/accessconfigs/ONE_TO_ONE_NAT'}) "
+        "SET ac.public_ip = '34.1.2.3', ac.lastupdated = 100, r.lastupdated = 100",
+        stub=legacy_stub,
+    )
+
+    _sync_vpc_and_subnet(neo4j_session, NIC_SVC_PROJECT, 200)
+    run_cleanup_job('gcp_compute_vpc_subnet_cleanup.json', neo4j_session, _nic_params(NIC_SVC_PROJECT, 200))
+    _sync_instance(neo4j_session, NIC_SVC_PROJECT, 'nic-legacy-vm', NIC_SVC_PROJECT, 200)
+    run_cleanup_job('gcp_compute_instance_cleanup.json', neo4j_session, _nic_params(NIC_SVC_PROJECT, 200))
+
+    assert [s['subnet'] for s in _nic_subnets(neo4j_session, 'nic-legacy-vm')] == [_real_subnet_id(NIC_SVC_PROJECT)]
+    stale_configs = neo4j_session.run("MATCH (ac:GCPNicAccessConfig{public_ip: '34.1.2.3'}) RETURN count(ac) AS n")
+    assert stale_configs.single()['n'] == 0
+    # The stub is left with no edges: the rollout's batched delete removes exactly such nodes.
+    assert _stub_subnet_ids(neo4j_session) == [legacy_stub]
+    deleted = neo4j_session.run(
+        "MATCH (s:GCPSubnet) WHERE NOT (s)--() WITH s LIMIT 10000 DETACH DELETE s RETURN count(*) AS n",
+    ).single()['n']
+    assert deleted >= 1
+    assert _stub_subnet_ids(neo4j_session) == []
+
+
+def _sync_internal_forwarding_rule(neo4j_session, project_id, network_project, update_tag):
+    response = {
+        'id': f'projects/{project_id}/regions/{NIC_REGION}/forwardingRules',
+        'items': [{
+            'name': 'ilb', 'region': f'{COMPUTE_API}/projects/{project_id}/regions/{NIC_REGION}',
+            'IPAddress': '10.8.0.9', 'IPProtocol': 'TCP', 'loadBalancingScheme': 'INTERNAL',
+            'selfLink': f'{COMPUTE_API}/projects/{project_id}/regions/{NIC_REGION}/forwardingRules/ilb',
+            'network': _vpc_self_link(network_project), 'subnetwork': _subnet_self_link(network_project),
+        }],
+    }
+    rules = cartography.intel.gcp.compute.transform_gcp_forwarding_rules(response)
+    cartography.intel.gcp.compute.load_gcp_forwarding_rules(neo4j_session, rules, update_tag)
+
+
+def _rule_subnets(neo4j_session, project_id):
+    return neo4j_session.run(
+        """
+        MATCH (s:GCPSubnet)-[:RESOURCE]->(f:GCPForwardingRule{project_id: $project})
+        OPTIONAL MATCH (vpc:GCPVpc)-[:RESOURCE]->(s)
+        RETURN s.id AS subnet, vpc.id AS vpc, f.subnetwork AS subnetwork
+        """,
+        project=project_id,
+    ).data()
+
+
+def test_internal_forwarding_rule_links_to_the_real_subnet(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_SVC_PROJECT, 100)
+    _sync_internal_forwarding_rule(neo4j_session, NIC_SVC_PROJECT, NIC_SVC_PROJECT, 100)
+
+    assert _rule_subnets(neo4j_session, NIC_SVC_PROJECT) == [{
+        'subnet': _real_subnet_id(NIC_SVC_PROJECT),
+        'vpc': f'projects/{NIC_SVC_PROJECT}/global/networks/main',
+        'subnetwork': _real_subnet_id(NIC_SVC_PROJECT),
+    }]
+    assert _stub_subnet_ids(neo4j_session) == []
+
+
+def test_host_project_forwarding_rule_cleanup_keeps_service_project_rules(neo4j_session):
+    _seed_nic_org(neo4j_session)
+    _sync_vpc_and_subnet(neo4j_session, NIC_HOST_PROJECT, 100)
+    # An internal load balancer of the service project, on the host project's shared subnet.
+    _sync_internal_forwarding_rule(neo4j_session, NIC_SVC_PROJECT, NIC_HOST_PROJECT, 100)
+
+    run_cleanup_job('gcp_compute_forwarding_rules_cleanup.json', neo4j_session, _nic_params(NIC_HOST_PROJECT, 200))
+
+    assert [r['subnet'] for r in _rule_subnets(neo4j_session, NIC_SVC_PROJECT)] == [_real_subnet_id(NIC_HOST_PROJECT)]

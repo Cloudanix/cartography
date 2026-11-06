@@ -1,11 +1,13 @@
 import ipaddress
 import logging
+import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from typing import Dict
 from typing import Generator
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import neo4j
@@ -19,25 +21,30 @@ from azure.mgmt.rdbms.postgresql_flexibleservers import PostgreSQLManagementClie
 from azure.mgmt.sql import SqlManagementClient
 from azure.mgmt.sql.models import SecurityAlertPolicyName
 from azure.mgmt.sql.models import TransparentDataEncryptionName
-from cloudconsolelink.clouds.azure import AzureLinker
 from msrestazure.azure_exceptions import CloudError
 from netaddr import *
 
 from . import network
+from . import tag as azure_tag
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from .util.timing import get_timing_policy
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 PORT_MAP = {
     "microsoft.sql": 1433,
     "microsoft.dbforpostgresql": 5432,
     "microsoft.dbformysql": 3306,
 }
+# Widest firewall range (a /24) expanded into one public IP node per address.
+MAX_EXPANDED_FIREWALL_ADDRESSES = 256
 
 
 @timeit
@@ -79,6 +86,43 @@ def _extract_engine_info(server: Dict) -> Tuple[str, str, int]:
     return engine, version, port
 
 
+def _resolve_dns(hostname: str) -> List[str]:
+    """
+    Resolve a hostname to all IP addresses (IPv4 + IPv6).
+    """
+    if not hostname:
+        return []
+    ip_addresses = set()
+    try:
+        results = socket.getaddrinfo(hostname, None)
+        for result in results:
+            ip = result[4][0]
+            ip_addresses.add(ip)
+    except socket.gaierror:
+        return []
+    return list(ip_addresses)
+
+
+def _check_ip_type(ip: str) -> Dict[str, Any]:
+    """
+    Check whether an IP is private or public.
+    """
+    ip_obj = ipaddress.ip_address(ip)
+    return {
+        "ip": ip,
+        "is_private": ip_obj.is_private,
+        "is_public": not ip_obj.is_private,
+    }
+
+
+def _dns_lookup_with_ip_type(hostname: str) -> List[Dict[str, Any]]:
+    """
+    Resolve DNS and classify each IP as public or private.
+    """
+    ips = _resolve_dns(hostname)
+    return [_check_ip_type(ip) for ip in ips]
+
+
 def _extract_endpoint_info(
     server: Dict,
     credentials: Credentials,
@@ -86,10 +130,22 @@ def _extract_endpoint_info(
 ) -> Dict:
     endpoint_info = {
         'public_endpoint': None,
+        'public_ip': None,
+        'private_ip': None,
     }
 
     # Public endpoint - fully qualified domain name
-    endpoint_info['public_endpoint'] = server.get('fully_qualified_domain_name')
+    fqdn = server.get('fully_qualified_domain_name')
+    endpoint_info['public_endpoint'] = fqdn
+
+    # Resolve the FQDN to actual IP addresses and classify them
+    if fqdn:
+        ips = _dns_lookup_with_ip_type(fqdn)
+        for ip_info in ips:
+            if ip_info.get("is_private") and not endpoint_info['private_ip']:
+                endpoint_info['private_ip'] = ip_info.get("ip")
+            if ip_info.get("is_public") and not endpoint_info['public_ip']:
+                endpoint_info['public_ip'] = ip_info.get("ip")
 
     return endpoint_info
 
@@ -128,7 +184,7 @@ def _get_sql_database_servers(credentials: Credentials, subscription_id: str) ->
     """
     try:
         client = get_client(credentials, subscription_id)
-        sql_servers = list(map(lambda x: x.as_dict(), client.servers.list()))
+        sql_servers = list(map(as_legacy_dict, client.servers.list()))
         logger.debug(f"Retrieved {len(sql_servers)} SQL Database servers")
         return sql_servers
     except ClientAuthenticationError as e:
@@ -145,8 +201,10 @@ def _get_postgresql_flexible_servers(credentials: Credentials, subscription_id: 
     Get Azure Database for PostgreSQL Flexible Servers.
     """
     try:
-        pg_flex_client = PostgreSQLFlexibleServersManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        pg_flex_servers = list(map(lambda x: x.as_dict(), pg_flex_client.servers.list()))
+        pg_flex_client = PostgreSQLFlexibleServersManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        pg_flex_servers = list(map(as_legacy_dict, pg_flex_client.servers.list()))
         logger.debug(f"Retrieved {len(pg_flex_servers)} PostgreSQL Flexible Servers")
         return pg_flex_servers
     except ClientAuthenticationError as e:
@@ -165,8 +223,10 @@ def _get_mysql_flexible_servers(credentials: Credentials, subscription_id: str) 
     Get Azure Database for MySQL Flexible Servers.
     """
     try:
-        mysql_flex_client = MySQLFlexibleServersManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        mysql_flex_servers = list(map(lambda x: x.as_dict(), mysql_flex_client.servers.list()))
+        mysql_flex_client = MySQLFlexibleServersManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        mysql_flex_servers = list(map(as_legacy_dict, mysql_flex_client.servers.list()))
         logger.debug(f"Retrieved {len(mysql_flex_servers)} MySQL Flexible Servers")
         return mysql_flex_servers
     except ClientAuthenticationError as e:
@@ -185,8 +245,10 @@ def _get_postgresql_rdbms_servers(credentials: Credentials, subscription_id: str
     Get Azure Database for PostgreSQL (Regular RDBMS) servers.
     """
     try:
-        pg_rdbms_client = PostgreSQLManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        pg_rdbms_servers = list(map(lambda x: x.as_dict(), pg_rdbms_client.servers.list()))
+        pg_rdbms_client = PostgreSQLManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        pg_rdbms_servers = list(map(as_legacy_dict, pg_rdbms_client.servers.list()))
         logger.debug(f"Retrieved {len(pg_rdbms_servers)} PostgreSQL RDBMS Servers")
         return pg_rdbms_servers
     except ClientAuthenticationError as e:
@@ -205,8 +267,10 @@ def _get_mysql_rdbms_servers(credentials: Credentials, subscription_id: str) -> 
     Get Azure Database for MySQL (Regular RDBMS) servers.
     """
     try:
-        mysql_rdbms_client = MySQLManagementClient(credentials, subscription_id, per_call_policies=[get_timing_policy()])
-        mysql_rdbms_servers = list(map(lambda x: x.as_dict(), mysql_rdbms_client.servers.list()))
+        mysql_rdbms_client = MySQLManagementClient(
+            credentials, subscription_id, per_call_policies=[get_timing_policy()],
+        )
+        mysql_rdbms_servers = list(map(as_legacy_dict, mysql_rdbms_client.servers.list()))
         logger.debug(f"Retrieved {len(mysql_rdbms_servers)} MySQL RDBMS Servers")
         return mysql_rdbms_servers
     except ClientAuthenticationError as e:
@@ -220,6 +284,17 @@ def _get_mysql_rdbms_servers(credentials: Credentials, subscription_id: str) -> 
     return []
 
 
+def _azure_ad_only(server: Dict) -> bool:
+    """
+    True when the server refuses SQL / password logins: Azure SQL "Microsoft Entra-only
+    authentication" or a PostgreSQL flexible server with password auth disabled.
+    Both come in the list response; MySQL flexible servers expose no such flag.
+    """
+    if (server.get('administrators') or {}).get('azure_ad_only_authentication'):
+        return True
+    return str((server.get('auth_config') or {}).get('password_auth') or '').lower() == 'disabled'
+
+
 def _enrich_server_data(
     server: Dict,
     credentials: Credentials,
@@ -230,10 +305,19 @@ def _enrich_server_data(
     Enrich server data with additional metadata.
     """
     server['resourceGroup'] = get_azure_resource_group_name(server.get('id'))
-    server['publicNetworkAccess'] = server.get('properties', {}).get('public_network_access', 'Disabled')
-    server['consolelink'] = azure_console_link.get_console_link(
-        id=server['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+    # Flexible servers nest it under network. None (unknown) is not 'Disabled', so the
+    # exposure job keeps an unknown server public.
+    server['publicNetworkAccess'] = (
+        server.get('public_network_access') or (server.get('network') or {}).get('public_network_access')
     )
+    # A flexible server in private access mode lives in a delegated subnet and has no public endpoint.
+    server['vnetIntegrated'] = bool((server.get('network') or {}).get('delegated_subnet_resource_id'))
+    server['azureADOnlyAuthentication'] = _azure_ad_only(server)
+    server['consolelink'] = safe_console_link(server['id'], common_job_parameters)
+    for private_endpoint_connection in server.get('private_endpoint_connections') or []:
+        private_endpoint_connection['consolelink'] = safe_console_link(
+            private_endpoint_connection.get('id'), common_job_parameters,
+        )
 
     engine, engine_version, port = _extract_engine_info(server)
     server['engine'] = engine
@@ -243,6 +327,8 @@ def _enrich_server_data(
 
     endpoint_info = _extract_endpoint_info(server, credentials, subscription_id)
     server['endpoint'] = endpoint_info['public_endpoint']
+    server['public_ip'] = endpoint_info['public_ip']
+    server['private_ip'] = endpoint_info['private_ip']
 
     return server
 
@@ -265,7 +351,7 @@ def load_server_data(
     Ingest the server details into neo4j.
     """
     ingest_server = """
-    UNWIND $server_list as server
+    UNWIND $DictList as server
     MERGE (s:AzureSQLServer{id: server.id})
     ON CREATE SET s.firstseen = timestamp(),
     s.resourcegroup = server.resourceGroup,
@@ -274,13 +360,17 @@ def load_server_data(
     SET s.lastupdated = $azure_update_tag,
     s.name = server.name,
     s.publicNetworkAccess = server.publicNetworkAccess,
-    s.consolelink = server.consolelink,
+    s.vnetIntegrated = server.vnetIntegrated,
+    s.azureADOnlyAuthentication = server.azureADOnlyAuthentication,
+    s.consolelink = coalesce(server.consolelink, s.consolelink),
     s.kind = server.kind,
     s.state = server.state,
     s.version = server.version,
     s.engine = server.engine,
     s.engineVersion = server.engineVersion,
     s.endpoint = server.endpoint,
+    s.public_ip = server.public_ip,
+    s.private_ip = server.private_ip,
     s.port = server.port
     WITH s
     MATCH (owner:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})
@@ -289,75 +379,94 @@ def load_server_data(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_server,
-        server_list=server_list,
+        server_list,
         AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=azure_update_tag,
     )
     for server in server_list:
         resource_group = get_azure_resource_group_name(server.get('id'))
-        _attach_resource_group_server(neo4j_session, server.get('id'), resource_group, azure_update_tag)
+        _attach_resource_group_server(
+            neo4j_session, subscription_id, server.get('id'), resource_group, azure_update_tag,
+        )
 
 
-def _attach_resource_group_server(neo4j_session: neo4j.Session, server_id: str, server_resource_group: str, azure_update_tag: int) -> None:
+def _attach_resource_group_server(
+    neo4j_session: neo4j.Session, subscription_id: str, server_id: str, server_resource_group: str,
+    azure_update_tag: int,
+) -> None:
     ingest_server = """
-    MATCH (s:AzureSQLServer{id: $server_id})
-    WITH s
-    MATCH (rg:AzureResourceGroup{name: $server_resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: $server_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $server_resource_group})
     MERGE (s)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_server,
         server_id=server_id,
         server_resource_group=server_resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=azure_update_tag,
     )
 
 
-def load_server_private_endpoint_connection(neo4j_session: neo4j.Session, server_list: List[Dict], azure_update_tag: int) -> None:
+def load_server_private_endpoint_connection(
+    neo4j_session: neo4j.Session, subscription_id: str, server_list: List[Dict], azure_update_tag: int,
+) -> None:
     """
     Ingest & attach server private endpoint connection
     """
     ingest_attach_private_endpoint_connection = """
-    MATCH (s:AzureSQLServer{id: $server_id})
-    UNWIND $private_endpoint_connections as pec
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: $server_id})
+    UNWIND $DictList as pec
     MERGE (aspec:AzureServerPrivateEndpointConnection{id: pec.id})
     ON CREATE SET aspec.firstseen = timestamp()
     SET aspec.provisioning_state = pec.properties.provisioning_state,
     aspec.private_endpoint = pec.properties.private_endpoint.id,
+    aspec.consolelink = coalesce(pec.consolelink, aspec.consolelink),
     aspec.lastupdated = $azure_update_tag
     MERGE (s)-[r:HAS]->(aspec)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
     for server in server_list:
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_attach_private_endpoint_connection,
+            server.get('private_endpoint_connections', []),
+            subscription_id=subscription_id,
             server_id=server.get('id'),
-            private_endpoint_connections=server.get('private_endpoint_connections', []),
             azure_update_tag=azure_update_tag,
         )
         for private_endpoint_connection in server.get('private_endpoint_connections', []):
             resource_group = get_azure_resource_group_name(private_endpoint_connection.get('id'))
-            _attach_resource_group_server_private_endpoint_connections(neo4j_session, private_endpoint_connection['id'], resource_group, azure_update_tag)
+            _attach_resource_group_server_private_endpoint_connections(
+                neo4j_session, subscription_id, private_endpoint_connection['id'], resource_group, azure_update_tag,
+            )
 
 
-def _attach_resource_group_server_private_endpoint_connections(neo4j_session: neo4j.Session, private_endpoint_connection_id: str, resource_group: str, azure_update_tag: int) -> None:
+def _attach_resource_group_server_private_endpoint_connections(
+    neo4j_session: neo4j.Session, subscription_id: str, private_endpoint_connection_id: str, resource_group: str,
+    azure_update_tag: int,
+) -> None:
     ingest_attach_private_endpoint_connection = """
-    MATCH (aspec:AzureServerPrivateEndpointConnection{id: $aspec_id})
-    WITH aspec,
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:HAS]->(aspec:AzureServerPrivateEndpointConnection{id: $aspec_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (aspec)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_attach_private_endpoint_connection,
         aspec_id=private_endpoint_connection_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=azure_update_tag,
     )
 
@@ -401,7 +510,7 @@ def get_dns_aliases(credentials: Credentials, subscription_id: str, server: Dict
         client = get_client(credentials, subscription_id)
         dns_aliases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.server_dns_aliases.list_by_server(server['resourceGroup'], server['name']),
             ),
         )
@@ -429,7 +538,7 @@ def get_ad_admins(credentials: Credentials, subscription_id: str, server: Dict) 
         client = get_client(credentials, subscription_id)
         ad_admins = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.server_azure_ad_administrators.list_by_server(
                     server['resourceGroup'],
                     server['name'],
@@ -461,7 +570,7 @@ def get_recoverable_databases(credentials: Credentials, subscription_id: str, se
         client = get_client(credentials, subscription_id)
         recoverable_databases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.recoverable_databases.list_by_server(
                     server['resourceGroup'],
                     server['name'],
@@ -494,7 +603,7 @@ def get_restorable_dropped_databases(credentials: Credentials, subscription_id: 
         client = get_client(credentials, subscription_id)
         restorable_dropped_databases = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.restorable_dropped_databases.list_by_server(
                     server['resourceGroup'], server['name'],
                 ),
@@ -522,7 +631,7 @@ def get_failover_groups(credentials: Credentials, subscription_id: str, server: 
     try:
         client = get_client(credentials, subscription_id)
         failover_groups = list(
-            map(lambda x: x.as_dict(), client.failover_groups.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.failover_groups.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -546,7 +655,7 @@ def get_elastic_pools(credentials: Credentials, subscription_id: str, server: Di
     try:
         client = get_client(credentials, subscription_id)
         elastic_pools = list(
-            map(lambda x: x.as_dict(), client.elastic_pools.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.elastic_pools.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -570,7 +679,7 @@ def get_databases(credentials: Credentials, subscription_id: str, server: Dict) 
     try:
         client = get_client(credentials, subscription_id)
         databases = list(
-            map(lambda x: x.as_dict(), client.databases.list_by_server(server['resourceGroup'], server['name'])),
+            map(as_legacy_dict, client.databases.list_by_server(server['resourceGroup'], server['name'])),
         )
 
     except ClientAuthenticationError as e:
@@ -602,60 +711,49 @@ def load_server_details(
     elastic_pools = []
     databases = []
     fw_rules = []
+    fw_rules_fetched = []
 
     for server_id, name, rg, dns_alias, ad_admin, r_database, rd_database, fg, elastic_pool, database, firewall_rules in details:
         if len(dns_alias) > 0:
             for alias in dns_alias:
                 alias['server_name'] = name
                 alias['server_id'] = server_id
-                alias['consolelink'] = azure_console_link.get_console_link(
-                    id=alias['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                alias['consolelink'] = safe_console_link(alias['id'], common_job_parameters)
                 dns_aliases.append(alias)
 
         if len(ad_admin) > 0:
             for admin in ad_admin:
                 admin['server_name'] = name
                 admin['server_id'] = server_id
-                admin['consolelink'] = azure_console_link.get_console_link(
-                    id=admin['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                admin['consolelink'] = safe_console_link(admin['id'], common_job_parameters)
                 ad_admins.append(admin)
 
         if len(r_database) > 0:
             for rdb in r_database:
                 rdb['server_name'] = name
                 rdb['server_id'] = server_id
-                rdb['consolelink'] = azure_console_link.get_console_link(
-                    id=rdb['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                rdb['consolelink'] = safe_console_link(rdb['id'], common_job_parameters)
                 recoverable_databases.append(rdb)
 
         if len(rd_database) > 0:
             for rddb in rd_database:
                 rddb['server_name'] = name
                 rddb['server_id'] = server_id
-                rddb['consolelink'] = azure_console_link.get_console_link(
-                    id=rddb['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                rddb['consolelink'] = safe_console_link(rddb['id'], common_job_parameters)
                 restorable_dropped_databases.append(rddb)
 
         if len(fg) > 0:
             for group in fg:
                 group['server_name'] = name
                 group['server_id'] = server_id
-                group['consolelink'] = azure_console_link.get_console_link(
-                    id=group['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                group['consolelink'] = safe_console_link(group['id'], common_job_parameters)
                 failover_groups.append(group)
 
         if len(elastic_pool) > 0:
             for pool in elastic_pool:
                 pool['server_name'] = name
                 pool['server_id'] = server_id
-                pool['consolelink'] = azure_console_link.get_console_link(
-                    id=pool['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                pool['consolelink'] = safe_console_link(pool['id'], common_job_parameters)
                 elastic_pools.append(pool)
 
         if len(database) > 0:
@@ -663,29 +761,27 @@ def load_server_details(
                 db['server_name'] = name
                 db['server_id'] = server_id
                 db['resource_group_name'] = rg
-                db['consolelink'] = azure_console_link.get_console_link(
-                    id=db['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                db['consolelink'] = safe_console_link(db['id'], common_job_parameters)
                 databases.append(db)
 
-        if len(firewall_rules) > 0:
-            for rules in firewall_rules:
-                rules['server_name'] = name
-                rules['server_id'] = server_id
-                rules['resource_group_name'] = rg
-                rules['consolelink'] = azure_console_link.get_console_link(
-                    id=rules['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
-                fw_rules.append(rules)
+        fw_rules_fetched.append({'id': server_id, 'fetched': firewall_rules is not None})
+        for rules in firewall_rules or []:
+            rules['server_name'] = name
+            rules['server_id'] = server_id
+            rules['resource_group_name'] = rg
+            rules['consolelink'] = safe_console_link(rules['id'], common_job_parameters)
+            fw_rules.append(rules)
 
-    _load_server_dns_aliases(neo4j_session, dns_aliases, update_tag)
-    _load_server_ad_admins(neo4j_session, ad_admins, update_tag)
-    _load_recoverable_databases(neo4j_session, recoverable_databases, update_tag)
-    _load_restorable_dropped_databases(neo4j_session, restorable_dropped_databases, update_tag)
-    _load_failover_groups(neo4j_session, failover_groups, update_tag)
-    _load_elastic_pools(neo4j_session, elastic_pools, update_tag)
-    _load_databases(neo4j_session, databases, update_tag)
-    _load_firewall_rules(neo4j_session, fw_rules, update_tag)
+    _load_server_dns_aliases(neo4j_session, subscription_id, dns_aliases, update_tag)
+    _load_server_ad_admins(neo4j_session, subscription_id, ad_admins, update_tag)
+    _load_recoverable_databases(neo4j_session, subscription_id, recoverable_databases, update_tag)
+    _load_restorable_dropped_databases(neo4j_session, subscription_id, restorable_dropped_databases, update_tag)
+    _load_failover_groups(neo4j_session, subscription_id, failover_groups, update_tag)
+    _load_elastic_pools(neo4j_session, subscription_id, elastic_pools, update_tag)
+    _load_databases(neo4j_session, subscription_id, databases, update_tag)
+    _load_database_tags(neo4j_session, databases, update_tag, common_job_parameters)
+    _load_firewall_rules(neo4j_session, subscription_id, fw_rules, update_tag)
+    _load_firewall_rules_fetched(neo4j_session, subscription_id, fw_rules_fetched)
 
     network_client = network.get_network_client(credentials, subscription_id)
     public_ips = [ip.get('ip_address') for ip in network.get_public_ip_addresses_list(network_client, None, common_job_parameters) if ip.get('ip_address')]
@@ -702,141 +798,228 @@ def load_server_details(
             elif end_ip == "255.255.255.255":
                 ip_range = public_ips
 
-        if len(ip_range) == 0:
+        address_count = _firewall_rule_address_count(fw_rule)
+        if len(ip_range) == 0 and (address_count is None or address_count > MAX_EXPANDED_FIREWALL_ADDRESSES):
+            # One write per address would run for hours on a wide range. Link only the
+            # subscription's own public IPs inside it; exposure reads address_count instead.
+            ip_range = [ip for ip in public_ips if _ip_in_range(str(ip), start_ip, end_ip)]
+        elif len(ip_range) == 0:
             ip_range = iter_iprange(start_ip, end_ip)
 
         for ip in ip_range:
             if str(ip) in public_ips:
-                attach_firewall_rule_to_public_ip(neo4j_session, fw_rule, str(ip), "Azure", "Internal", update_tag)
+                attach_firewall_rule_to_public_ip(
+                    neo4j_session, fw_rule, str(ip), "Azure", "Internal", update_tag, subscription_id,
+                )
             elif not ipaddress.ip_address(str(ip)).is_private:
-                attach_firewall_rule_to_public_ip(neo4j_session, fw_rule, str(ip), "Azure", "External", update_tag)
+                attach_firewall_rule_to_public_ip(
+                    neo4j_session, fw_rule, str(ip), "Azure", "External", update_tag, subscription_id,
+                )
 
     sync_database_details(neo4j_session, credentials, subscription_id, databases, update_tag, common_job_parameters)
 
 
 @timeit
 def _load_server_dns_aliases(
-        neo4j_session: neo4j.Session, dns_aliases: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, dns_aliases: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the DNS Alias details into neo4j.
     """
     ingest_dns_aliases = """
-    UNWIND $dns_aliases_list as dns_alias
+    UNWIND $DictList as dns_alias
     MERGE (alias:AzureServerDNSAlias{id: dns_alias.id})
     ON CREATE SET alias.firstseen = timestamp()
     SET alias.name = dns_alias.name,
     alias.location = dns_alias.location,
     alias.region = dns_alias.location,
-    alias.consolelink = dns_alias.consolelink,
+    alias.consolelink = coalesce(dns_alias.consolelink, alias.consolelink),
     alias.dnsrecord = dns_alias.azure_dns_record,
     alias.lastupdated = $azure_update_tag
     WITH alias, dns_alias
-    MATCH (s:AzureSQLServer{id: dns_alias.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: dns_alias.server_id})
     MERGE (s)-[r:USED_BY]->(alias)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_dns_aliases,
-        dns_aliases_list=dns_aliases,
+        dns_aliases,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for dns_aliases in dns_aliases:
         resource_group = get_azure_resource_group_name(dns_aliases.get('id'))
-        _attach_resource_group_dns_alias(neo4j_session, dns_aliases['id'], resource_group, update_tag)
+        _attach_resource_group_dns_alias(neo4j_session, subscription_id, dns_aliases['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_dns_alias(neo4j_session: neo4j.Session, dns_alias_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_dns_alias(
+    neo4j_session: neo4j.Session, subscription_id: str, dns_alias_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_dns_aliases = """
-    MATCH (alias:AzureServerDNSAlias{id: $dns_alias_id})
-    WITH alias
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:USED_BY]->(alias:AzureServerDNSAlias{id: $dns_alias_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (alias)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_dns_aliases,
         dns_alias_id=dns_alias_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
+def _firewall_rule_address_count(fw_rule: Dict) -> Optional[int]:
+    """
+    Number of IPv4 addresses a server firewall rule admits (end - start + 1), so the
+    exposure job can tell an internet-wide range from an office IP. None if unparseable.
+    """
+    try:
+        start = ipaddress.IPv4Address(fw_rule.get('start_ip_address'))
+        end = ipaddress.IPv4Address(fw_rule.get('end_ip_address'))
+    except ValueError:
+        return None
+    return int(end) - int(start) + 1
+
+
+def _load_firewall_rules_fetched(neo4j_session: neo4j.Session, subscription_id: str, servers: List[Dict]) -> None:
+    """
+    Record on each server whether its firewall rules were read this sync, so the exposure
+    job can tell "no rules" (not public) from "rules unknown" (kept public).
+    """
+    query = """
+    UNWIND $DictList as server
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: server.id})
+    SET s.firewall_rules_fetched = server.fetched
+    """
+    load_graph_data(neo4j_session, query, servers, subscription_id=subscription_id)
+
+
+def _ip_in_range(ip: str, start_ip: str, end_ip: str) -> bool:
+    """True if ip lies in the IPv4 range start_ip-end_ip; False if any of them is unparseable."""
+    try:
+        return ipaddress.IPv4Address(start_ip) <= ipaddress.IPv4Address(ip) <= ipaddress.IPv4Address(end_ip)
+    except ValueError:
+        return False
+
+
 @timeit
-def _load_firewall_rules(neo4j_session: neo4j.Session, fw_rules: List[Dict], update_tag: int) -> None:
+def _load_firewall_rules(
+    neo4j_session: neo4j.Session, subscription_id: str, fw_rules: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest the firewall rules into neo4j.
     """
+    for fw_rule in fw_rules:
+        fw_rule['address_count'] = _firewall_rule_address_count(fw_rule)
     ingest_firewall_rules = """
-    UNWIND $fw_rules as fw_rule
+    UNWIND $DictList as fw_rule
     MERGE (rule:AzureFirewallRule{id: fw_rule.id})
     ON CREATE SET rule.firstseen = timestamp()
     SET rule.name = fw_rule.name,
     rule.region = fw_rule.location,
     rule.start_ip_address = fw_rule.start_ip_address,
     rule.end_ip_address = fw_rule.end_ip_address,
+    rule.address_count = fw_rule.address_count,
+    rule.consolelink = coalesce(fw_rule.consolelink, rule.consolelink),
     rule.lastupdated = $azure_update_tag
     WITH rule, fw_rule
-    MATCH (s: AzureSQLServer{id: fw_rule.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: fw_rule.server_id})
     MERGE (s)-[r:HAS]->(rule)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_firewall_rules,
-        fw_rules=fw_rules,
+        fw_rules,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for fw_rule in fw_rules:
         resource_group = get_azure_resource_group_name(fw_rule.get('id'))
-        _attach_resource_group_fw_rule(neo4j_session, fw_rule['id'], resource_group, update_tag)
+        _attach_resource_group_fw_rule(neo4j_session, subscription_id, fw_rule['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_fw_rule(neo4j_session: neo4j.Session, fw_rule_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_fw_rule(
+    neo4j_session: neo4j.Session, subscription_id: str, fw_rule_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_firewall_rules = """
-    MATCH (rule:AzureFirewallRule{id: $fw_rule_id})
-    WITH rule
-    MATCH (rg: AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:HAS]->(rule:AzureFirewallRule{id: $fw_rule_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (rule)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_firewall_rules,
         fw_rule_id=fw_rule_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
-def attach_firewall_rule_to_public_ip(session: neo4j.Session, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int) -> None:
-    session.execute_write(_attach_firewall_rule_to_public_ip_tx, fw_rule, public_ip, source, type, update_tag)
+def attach_firewall_rule_to_public_ip(
+    session: neo4j.Session, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int,
+    subscription_id: str,
+) -> None:
+    session.execute_write(
+        _attach_firewall_rule_to_public_ip_tx, fw_rule, public_ip, source, type, update_tag, subscription_id,
+    )
 
 
-def _attach_firewall_rule_to_public_ip_tx(tx: neo4j.Transaction, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int) -> None:
-    ingest_address = """
-    MATCH (fwr:AzureFirewallRule{id: $fw_rule})
-    WITH fwr
-    MERGE (ip:AzurePublicIPAddress{ipAddress: $public_ip})
-    ON CREATE SET ip.firstseen = timestamp()
-    SET
-        ip.id =$public_ip,
-        ip.name=$public_ip,
-        ip.source =$source,
-        ip.type=$type,
-        ip.resource=$resource,
-        ip.ipAddress=$public_ip
-    MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+def _attach_firewall_rule_to_public_ip_tx(
+    tx: neo4j.Transaction, fw_rule: Dict, public_ip: str, source: str, type: str, update_tag: int,
+    subscription_id: str,
+) -> None:
     """
+    Link a firewall rule to the public IP it admits. An Internal IP is this subscription's
+    own AzurePublicIPAddress, matched through the subscription and never modified (it is
+    owned by the network sync). An External IP gets its own node keyed by subscription, so
+    a rule can never rewrite, or let the SQL cleanup delete, another subscription's node
+    that happens to hold the same address.
+    """
+    if type == "Internal":
+        query = """
+        MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+        -[:HAS]->(fwr:AzureFirewallRule{id: $fw_rule})
+        MATCH (sub)-[:RESOURCE]->(ip:AzurePublicIPAddress{ipAddress: $public_ip})
+        MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
+        """
+    else:
+        query = """
+        MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+        -[:HAS]->(fwr:AzureFirewallRule{id: $fw_rule})
+        MERGE (ip:AzurePublicIPAddress{id: $ip_id})
+        ON CREATE SET ip.firstseen = timestamp()
+        SET ip.name = $public_ip,
+            ip.ipAddress = $public_ip,
+            ip.source = $source,
+            ip.type = $type,
+            ip.resource = $resource,
+            ip.lastupdated = $update_tag
+        MERGE (fwr)-[r:MEMBER_PUBLIC_IP_ADDRESS]->(ip)
+        ON CREATE SET r.firstseen = timestamp()
+        SET r.lastupdated = $update_tag
+        """
     tx.run(
-        ingest_address,
+        query,
         fw_rule=fw_rule['id'],
+        subscription_id=subscription_id,
+        ip_id=f"/subscriptions/{subscription_id}/sqlFirewallExternalIp/{public_ip}",
         public_ip=public_ip,
         source=source,
         type=type,
@@ -847,125 +1030,140 @@ def _attach_firewall_rule_to_public_ip_tx(tx: neo4j.Transaction, fw_rule: Dict, 
 
 @timeit
 def _load_server_ad_admins(
-        neo4j_session: neo4j.Session, ad_admins: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, ad_admins: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the Server AD Administrators details into neo4j.
     """
     ingest_ad_admins = """
-    UNWIND $ad_admins_list as ad_admin
+    UNWIND $DictList as ad_admin
     MERGE (a:AzureServerADAdministrator{id: ad_admin.id})
     ON CREATE SET a.firstseen = timestamp()
     SET a.name = ad_admin.name,
     a.administratortype = ad_admin.administrator_type,
-    a.consolelink = ad_admin.consolelink,
+    a.consolelink = coalesce(ad_admin.consolelink, a.consolelink),
     a.login = ad_admin.login,
     a.location = ad_admin.location,
     a.region = ad_admin.location,
     a.lastupdated = $azure_update_tag
     WITH a, ad_admin
-    MATCH (s:AzureSQLServer{id: ad_admin.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: ad_admin.server_id})
     MERGE (s)-[r:ADMINISTERED_BY]->(a)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_ad_admins,
-        ad_admins_list=ad_admins,
+        ad_admins,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for ad_admin in ad_admins:
         resource_group = get_azure_resource_group_name(ad_admin.get('id'))
-        _attach_resource_group_ad_admin(neo4j_session, ad_admin['id'], resource_group, update_tag)
+        _attach_resource_group_ad_admin(neo4j_session, subscription_id, ad_admin['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_ad_admin(neo4j_session: neo4j.Session, ad_admin_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_ad_admin(
+    neo4j_session: neo4j.Session, subscription_id: str, ad_admin_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_ad_admins = """
-    MATCH (a:AzureServerADAdministrator{id: $ad_admin_id})
-    WITH a
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:ADMINISTERED_BY]->(a:AzureServerADAdministrator{id: $ad_admin_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (a)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_ad_admins,
         ad_admin_id=ad_admin_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_recoverable_databases(
-        neo4j_session: neo4j.Session, recoverable_databases: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, recoverable_databases: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the recoverable database details into neo4j.
     """
     ingest_recoverable_databases = """
-    UNWIND $recoverable_databases_list as rec_db
+    UNWIND $DictList as rec_db
     MERGE (rd:AzureRecoverableDatabase{id: rec_db.id})
     ON CREATE SET rd.firstseen = timestamp()
     SET rd.name = rec_db.name,
     rd.region = $region,
     rd.edition = rec_db.edition,
-    rd.consolelink = rec_db.consolelink,
+    rd.consolelink = coalesce(rec_db.consolelink, rd.consolelink),
     rd.servicelevelobjective = rec_db.service_level_objective,
     rd.lastbackupdate = rec_db.last_available_backup_date,
     rd.lastupdated = $azure_update_tag
     WITH rd, rec_db
-    MATCH (s:AzureSQLServer{id: rec_db.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: rec_db.server_id})
     MERGE (s)-[r:RESOURCE]->(rd)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_recoverable_databases,
-        recoverable_databases_list=recoverable_databases,
+        recoverable_databases,
         region='global',
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for recoverable_database in recoverable_databases:
         resource_group = get_azure_resource_group_name(recoverable_database.get('id'))
-        _attach_resource_group_recoverable_database(neo4j_session, recoverable_database['id'], resource_group, update_tag)
+        _attach_resource_group_recoverable_database(
+            neo4j_session, subscription_id, recoverable_database['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_recoverable_database(neo4j_session: neo4j.Session, recoverable_database_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_recoverable_database(
+    neo4j_session: neo4j.Session, subscription_id: str, recoverable_database_id: str, resource_group: str,
+    update_tag: int,
+) -> None:
     ingest_recoverable_databases = """
-    MATCH (rd:AzureRecoverableDatabase{id: $rec_db_id})
-    WITH rd
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(rd:AzureRecoverableDatabase{id: $rec_db_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (rd)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_recoverable_databases,
         rec_db_id=recoverable_database_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_restorable_dropped_databases(
-        neo4j_session: neo4j.Session, restorable_dropped_databases: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, restorable_dropped_databases: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the restorable dropped database details into neo4j.
     """
     ingest_restorable_dropped_databases = """
-    UNWIND $restorable_dropped_databases_list as res_dropped_db
+    UNWIND $DictList as res_dropped_db
     MERGE (rdd:AzureRestorableDroppedDatabase{id: res_dropped_db.id})
     ON CREATE SET rdd.firstseen = timestamp(), rdd.location = res_dropped_db.location,
     rdd.region = res_dropped_db.location
     SET rdd.name = res_dropped_db.name,
     rdd.databasename = res_dropped_db.database_name,
     rdd.creationdate = res_dropped_db.creation_date,
-    rdd.consolelink = res_dropped_db.consolelink,
+    rdd.consolelink = coalesce(res_dropped_db.consolelink, rdd.consolelink),
     rdd.deletiondate = res_dropped_db.deletion_date,
     rdd.restoredate = res_dropped_db.earliest_restore_date,
     rdd.edition = res_dropped_db.edition,
@@ -973,103 +1171,120 @@ def _load_restorable_dropped_databases(
     rdd.maxsizebytes = res_dropped_db.max_size_bytes,
     rdd.lastupdated = $azure_update_tag
     WITH rdd, res_dropped_db
-    MATCH (s:AzureSQLServer{id: res_dropped_db.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: res_dropped_db.server_id})
     MERGE (s)-[r:RESOURCE]->(rdd)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_restorable_dropped_databases,
-        restorable_dropped_databases_list=restorable_dropped_databases,
+        restorable_dropped_databases,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for restorable_dropped_database in restorable_dropped_databases:
         resource_group = get_azure_resource_group_name(restorable_dropped_database.get('id'))
-        _attach_resource_group_restorable_dropped_database(neo4j_session, restorable_dropped_database['id'], resource_group, update_tag)
+        _attach_resource_group_restorable_dropped_database(
+            neo4j_session, subscription_id, restorable_dropped_database['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restorable_dropped_database(neo4j_session: neo4j.Session, restorable_dropped_database_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restorable_dropped_database(
+    neo4j_session: neo4j.Session, subscription_id: str, restorable_dropped_database_id: str, resource_group: str,
+    update_tag: int,
+) -> None:
     ingest_restorable_dropped_databases = """
-    MATCH (rdd:AzureRestorableDroppedDatabase{id: $res_dropped_db_id})
-    WITH rdd
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(rdd:AzureRestorableDroppedDatabase{id: $res_dropped_db_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (rdd)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_restorable_dropped_databases,
         res_dropped_db_id=restorable_dropped_database_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_failover_groups(
-        neo4j_session: neo4j.Session, failover_groups: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, failover_groups: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the failover groups details into neo4j.
     """
     ingest_failover_groups = """
-    UNWIND $failover_groups_list as fg
+    UNWIND $DictList as fg
     MERGE (f:AzureFailoverGroup{id: fg.id})
     ON CREATE SET f.firstseen = timestamp(), f.location = fg.location
     SET f.name = fg.name,
-    f.consolelink = fg.consolelink,
+    f.consolelink = coalesce(fg.consolelink, f.consolelink),
     f.replicationrole = fg.replication_role,
     f.replicationstate = fg.replication_state,
     f.lastupdated = $azure_update_tag
     WITH f, fg
-    MATCH (s:AzureSQLServer{id: fg.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: fg.server_id})
     MERGE (s)-[r:RESOURCE]->(f)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_failover_groups,
-        failover_groups_list=failover_groups,
+        failover_groups,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for failover_group in failover_groups:
         resource_group = get_azure_resource_group_name(failover_group.get('id'))
-        _attach_resource_group_restorable_failover_group(neo4j_session, failover_group['id'], resource_group, update_tag)
+        _attach_resource_group_restorable_failover_group(
+            neo4j_session, subscription_id, failover_group['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restorable_failover_group(neo4j_session: neo4j.Session, failover_group_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restorable_failover_group(
+    neo4j_session: neo4j.Session, subscription_id: str, failover_group_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_failover_groups = """
-    MATCH (f:AzureFailoverGroup{id: $fg_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(f:AzureFailoverGroup{id: $fg_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_failover_groups,
         fg_id=failover_group_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_elastic_pools(
-        neo4j_session: neo4j.Session, elastic_pools: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, elastic_pools: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the elastic pool details into neo4j.
     """
     ingest_elastic_pools = """
-    UNWIND $elastic_pools_list as ep
+    UNWIND $DictList as ep
     MERGE (e:AzureElasticPool{id: ep.id})
     ON CREATE SET e.firstseen = timestamp(), e.location = ep.location,
     e.region = ep.location
     SET e.name = ep.name,
-    e.consolelink = ep.consolelink,
+    e.consolelink = coalesce(ep.consolelink, e.consolelink),
     e.kind = ep.kind,
     e.creationdate = ep.creation_date,
     e.state = ep.state,
@@ -1078,53 +1293,61 @@ def _load_elastic_pools(
     e.zoneredundant = ep.zone_redundant,
     e.lastupdated = $azure_update_tag
     WITH e, ep
-    MATCH (s:AzureSQLServer{id: ep.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: ep.server_id})
     MERGE (s)-[r:RESOURCE]->(e)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_elastic_pools,
-        elastic_pools_list=elastic_pools,
+        elastic_pools,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for elastic_pool in elastic_pools:
         resource_group = get_azure_resource_group_name(elastic_pool.get('id'))
-        _attach_resource_group_restorable_elastic_pool(neo4j_session, elastic_pool['id'], resource_group, update_tag)
+        _attach_resource_group_restorable_elastic_pool(
+            neo4j_session, subscription_id, elastic_pool['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restorable_elastic_pool(neo4j_session: neo4j.Session, elastic_pool_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restorable_elastic_pool(
+    neo4j_session: neo4j.Session, subscription_id: str, elastic_pool_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_elastic_pools = """
-    MATCH (e:AzureElasticPool{id: $ep_id})
-    WITH e
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(e:AzureElasticPool{id: $ep_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (e)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_elastic_pools,
         ep_id=elastic_pool_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_databases(
-        neo4j_session: neo4j.Session, databases: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, databases: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest the database details into neo4j.
     """
     ingest_databases = """
-    UNWIND $databases_list as az_database
+    UNWIND $DictList as az_database
     MERGE (d:AzureSQLDatabase{id: az_database.id})
     ON CREATE SET d.firstseen = timestamp(), d.location = az_database.location,
     d.region = az_database.location
     SET d.name = az_database.name,
-    d.consolelink = az_database.consolelink,
+    d.consolelink = coalesce(az_database.consolelink, d.consolelink),
     d.kind = az_database.kind,
     d.creationdate = az_database.creation_date,
     d.databaseid = az_database.database_id,
@@ -1139,35 +1362,66 @@ def _load_databases(
     d.recoverabledbid = az_database.recoverable_database_id,
     d.lastupdated = $azure_update_tag
     WITH d, az_database
-    MATCH (s:AzureSQLServer{id: az_database.server_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(s:AzureSQLServer{id: az_database.server_id})
     MERGE (s)-[r:RESOURCE]->(d)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_databases,
-        databases_list=databases,
+        databases,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for database in databases:
         resource_group = get_azure_resource_group_name(database.get('id'))
-        _attach_resource_group_restorable_database(neo4j_session, database['id'], resource_group, update_tag)
+        _attach_resource_group_restorable_database(
+            neo4j_session, subscription_id, database['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restorable_database(neo4j_session: neo4j.Session, database_id: str, resource_group: str, update_tag: int) -> None:
+@timeit
+def _load_database_tags(
+        neo4j_session: neo4j.Session, databases: List[Dict], update_tag: int, common_job_parameters: Dict,
+) -> None:
+    """
+    SQL databases are ARM child resources, so tag.py's resource-group crawl
+    never sees them; harvest their tags from the list_by_server payload here.
+    """
+    tags_list: List[Dict] = []
+    for db in databases:
+        for tag_name, tag_value in (db.get('tags') or {}).items():
+            tags_list.append({
+                'id': db['id'] + "/providers/Microsoft.Resources/tags/" + tag_name,
+                'key': tag_name,
+                'value': tag_value,
+                'type': 'Microsoft.Resources/tags',
+                'resource_id': db['id'],
+                'resource_group': db.get('resource_group_name'),
+            })
+    if tags_list:
+        azure_tag.load_tags(neo4j_session, tags_list, update_tag, common_job_parameters)
+
+
+def _attach_resource_group_restorable_database(
+    neo4j_session: neo4j.Session, subscription_id: str, database_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_databases = """
-    MATCH (d:AzureSQLDatabase{id: $database_id})
-    WITH d
-    MATCH (s:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: $database_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (d)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_databases,
         database_id=database_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -1178,7 +1432,7 @@ def sync_database_details(
         subscription_id: str, databases: List[Dict], update_tag: int, common_job_parameters: Dict,
 ) -> None:
     db_details = get_database_details(credentials, subscription_id, databases)
-    load_database_details(neo4j_session, db_details, update_tag, common_job_parameters)
+    load_database_details(neo4j_session, subscription_id, db_details, update_tag, common_job_parameters)
 
 
 @timeit
@@ -1207,7 +1461,7 @@ def get_replication_links(credentials: Credentials, subscription_id: str, databa
         client = get_client(credentials, subscription_id)
         replication_links = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.replication_links.list_by_database(
                     database['resource_group_name'],
                     database['server_name'],
@@ -1264,7 +1518,7 @@ def get_restore_points(credentials: Credentials, subscription_id: str, database:
         client = get_client(credentials, subscription_id)
         restore_points_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.restore_points.list_by_database(
                     database['resource_group_name'],
                     database['server_name'],
@@ -1312,31 +1566,55 @@ def get_transparent_data_encryptions(credentials: Credentials, subscription_id: 
     return transparent_data_encryptions_list
 
 
+def _firewall_rules_client(credentials: Credentials, subscription_id: str, server_id: str) -> Optional[Any]:
+    """
+    The management client that owns this server type's firewall rules: SQL, or the
+    PostgreSQL/MySQL flexible or single server client. None for an unknown server type.
+    """
+    server_id = server_id.lower()
+    if '/providers/microsoft.sql/servers/' in server_id:
+        return get_client(credentials, subscription_id)
+    rdbms_clients = [
+        ('/providers/microsoft.dbforpostgresql/flexibleservers/', PostgreSQLFlexibleServersManagementClient),
+        ('/providers/microsoft.dbforpostgresql/servers/', PostgreSQLManagementClient),
+        ('/providers/microsoft.dbformysql/flexibleservers/', MySQLFlexibleServersManagementClient),
+        ('/providers/microsoft.dbformysql/servers/', MySQLManagementClient),
+    ]
+    for marker, client_class in rdbms_clients:
+        if marker in server_id:
+            return client_class(credentials, subscription_id, per_call_policies=[get_timing_policy()])
+    return None
+
+
 @timeit
-def get_firewall_rules(credentials: Credentials, subscription_id: str, server: Dict) -> List[Dict]:
+def get_firewall_rules(credentials: Credentials, subscription_id: str, server: Dict) -> Optional[List[Dict]]:
+    """
+    Firewall rules of an Azure SQL, PostgreSQL or MySQL server.
+
+    :return: the rules, or None if they could not be read. None is "not evaluated",
+        which keeps a PostgreSQL/MySQL server public; [] means the server has no rules.
+    """
+    client = _firewall_rules_client(credentials, subscription_id, server['id'])
+    if client is None:
+        logger.warning(f"No firewall rules client for server {server['id']}")
+        return None
     try:
-        client = get_client(credentials, subscription_id)
-        firewall_rules = list(
+        return list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.firewall_rules.list_by_server(server['resourceGroup'], server['name']),
             ),
         )
-    except ClientAuthenticationError as e:
-        logger.warning(f"Client Authentication Error while retrieving Firewall Rules - {e}")
-        return []
-    except ResourceNotFoundError as e:
-        logger.warning(f"Firewall Rules resource not found error - {e}")
-        return []
     except HttpResponseError as e:
-        logger.warning(f"Error while retrieving Azure Server Firewall Rules - {e}")
-        return []
-    return firewall_rules
+        # Also covers ClientAuthenticationError and ResourceNotFoundError.
+        logger.warning(f"Error while retrieving firewall rules for server {server['id']} - {e}")
+        return None
 
 
 @timeit
 def load_database_details(
-        neo4j_session: neo4j.Session, details: List[Tuple[Any, Any, Any, Any, Any]], update_tag: int, common_job_parameters: Dict,
+        neo4j_session: neo4j.Session, subscription_id: str, details: List[Tuple[Any, Any, Any, Any, Any]],
+        update_tag: int, common_job_parameters: Dict,
 ) -> None:
     """
     Create dictionaries for every resource in a database so we can import them in a single query
@@ -1349,53 +1627,45 @@ def load_database_details(
     for databaseId, replication_link, db_threat_detection_policy, restore_point, transparent_data_encryption in details:
         if len(replication_link) > 0:
             for link in replication_link:
-                link['consolelink'] = azure_console_link.get_console_link(
-                    id=link['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                link['consolelink'] = safe_console_link(link['id'], common_job_parameters)
                 link['database_id'] = databaseId
                 replication_links.append(link)
 
         if len(db_threat_detection_policy) > 0:
             db_threat_detection_policy['database_id'] = databaseId
-            db_threat_detection_policy['consolelink'] = azure_console_link.get_console_link(
-                id=db_threat_detection_policy['id'],
-                primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+            db_threat_detection_policy['consolelink'] = safe_console_link(
+                db_threat_detection_policy['id'], common_job_parameters,
             )
             threat_detection_policies.append(db_threat_detection_policy)
 
         if len(restore_point) > 0:
             for point in restore_point:
                 point['database_id'] = databaseId
-                point['consolelink'] = azure_console_link.get_console_link(
-                    id=point['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                point['consolelink'] = safe_console_link(point['id'], common_job_parameters)
                 restore_points.append(point)
 
         if len(transparent_data_encryption) > 0:
             transparent_data_encryption['database_id'] = databaseId
-            transparent_data_encryption['consolelink'] = azure_console_link.get_console_link(
-                id=transparent_data_encryption['id'],
-                primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
+            transparent_data_encryption['consolelink'] = safe_console_link(
+                transparent_data_encryption['id'], common_job_parameters,
             )
             encryptions_list.append(transparent_data_encryption)
 
-    _load_replication_links(neo4j_session, replication_links, update_tag)
-    _load_db_threat_detection_policies(neo4j_session, threat_detection_policies, update_tag)
-    _load_restore_points(neo4j_session, restore_points, update_tag)
-    _load_transparent_data_encryptions(neo4j_session, encryptions_list, update_tag)
+    _load_replication_links(neo4j_session, subscription_id, replication_links, update_tag)
+    _load_db_threat_detection_policies(neo4j_session, subscription_id, threat_detection_policies, update_tag)
+    _load_restore_points(neo4j_session, subscription_id, restore_points, update_tag)
+    _load_transparent_data_encryptions(neo4j_session, subscription_id, encryptions_list, update_tag)
 
 
 @timeit
 def _load_replication_links(
-        neo4j_session: neo4j.Session, replication_links: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, replication_links: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest replication links into neo4j.
     """
     ingest_replication_links = """
-    UNWIND $replication_links_list as replication_link
+    UNWIND $DictList as replication_link
     MERGE (rl:AzureReplicationLink{id: replication_link.id})
     ON CREATE SET rl.firstseen = timestamp(),
     rl.location = replication_link.location,
@@ -1403,7 +1673,7 @@ def _load_replication_links(
     SET rl.name = replication_link.name,
     rl.partnerdatabase = replication_link.partner_database,
     rl.partnerlocation = replication_link.partner_location,
-    rl.consolelink = replication_link.consolelink,
+    rl.consolelink = coalesce(replication_link.consolelink, rl.consolelink),
     rl.partnerrole = replication_link.partner_role,
     rl.partnerserver = replication_link.partner_server,
     rl.mode = replication_link.replication_mode,
@@ -1414,55 +1684,65 @@ def _load_replication_links(
     rl.terminationallowed = replication_link.is_termination_allowed,
     rl.lastupdated = $azure_update_tag
     WITH rl, replication_link
-    MATCH (d:AzureSQLDatabase{id: replication_link.database_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: replication_link.database_id})
     MERGE (d)-[r:CONTAINS]->(rl)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_replication_links,
-        replication_links_list=replication_links,
+        replication_links,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for replication_link in replication_links:
         resource_group = get_azure_resource_group_name(replication_link.get('id'))
-        _attach_resource_group_replication_link(neo4j_session, replication_link['id'], resource_group, update_tag)
+        _attach_resource_group_replication_link(
+            neo4j_session, subscription_id, replication_link['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_replication_link(neo4j_session: neo4j.Session, replication_link_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_replication_link(
+    neo4j_session: neo4j.Session, subscription_id: str, replication_link_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_replication_links = """
-    MATCH (rl:AzureReplicationLink{id: $replication_link_id})
-    WITH rl
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(:AzureSQLDatabase)
+    -[:CONTAINS]->(rl:AzureReplicationLink{id: $replication_link_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (rl)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_replication_links,
         replication_link_id=replication_link_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_db_threat_detection_policies(
-        neo4j_session: neo4j.Session, threat_detection_policies: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, threat_detection_policies: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest threat detection policy into neo4j.
     """
     ingest_threat_detection_policies = """
-    UNWIND $threat_detection_policies_list as tdp
+    UNWIND $DictList as tdp
     MERGE (policy:AzureDatabaseThreatDetectionPolicy{id: tdp.id})
     ON CREATE SET policy.firstseen = timestamp(),
     policy.location = tdp.location
     SET policy.name = tdp.name,
     policy.location = tdp.location,
     policy.region = tdp.location,
-    policy.consolelink = tdp.consolelink,
+    policy.consolelink = coalesce(tdp.consolelink, policy.consolelink),
     policy.kind = tdp.kind,
     policy.emailadmins = tdp.email_account_admins,
     policy.emailaddresses = tdp.email_addresses,
@@ -1473,48 +1753,58 @@ def _load_db_threat_detection_policies(
     policy.disabledalerts = tdp.disabled_alerts,
     policy.lastupdated = $azure_update_tag
     WITH policy, tdp
-    MATCH (d:AzureSQLDatabase{id: tdp.database_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: tdp.database_id})
     MERGE (d)-[r:CONTAINS]->(policy)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_threat_detection_policies,
-        threat_detection_policies_list=threat_detection_policies,
+        threat_detection_policies,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for threat_detection in threat_detection_policies:
         resource_group = get_azure_resource_group_name(threat_detection.get('id'))
-        _attach_resource_group_threat_detection(neo4j_session, threat_detection['id'], resource_group, update_tag)
+        _attach_resource_group_threat_detection(
+            neo4j_session, subscription_id, threat_detection['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_threat_detection(neo4j_session: neo4j.Session, threat_detection_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_threat_detection(
+    neo4j_session: neo4j.Session, subscription_id: str, threat_detection_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_threat_detection_policies = """
-    MATCH (policy:AzureDatabaseThreatDetectionPolicy{id: $threat_detection_id})
-    WITH policy
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(:AzureSQLDatabase)
+    -[:CONTAINS]->(policy:AzureDatabaseThreatDetectionPolicy{id: $threat_detection_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (policy)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_threat_detection_policies,
         threat_detection_id=threat_detection_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_restore_points(
-        neo4j_session: neo4j.Session, restore_points: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, restore_points: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest restore points into neo4j.
     """
     ingest_restore_points = """
-    UNWIND $restore_points_list as rp
+    UNWIND $DictList as rp
     MERGE (point:AzureRestorePoint{id: rp.id})
     ON CREATE SET point.firstseen = timestamp(),
     point.location = rp.location,
@@ -1522,90 +1812,108 @@ def _load_restore_points(
     SET point.name = rp.name,
     point.restoredate = rp.earliest_restore_date,
     point.restorepointtype = rp.restore_point_type,
-    point.consolelink = rp.consolelink,
+    point.consolelink = coalesce(rp.consolelink, point.consolelink),
     point.creationdate = rp.restore_point_creation_date,
     point.lastupdated = $azure_update_tag
     WITH point, rp
-    MATCH (d:AzureSQLDatabase{id: rp.database_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: rp.database_id})
     MERGE (d)-[r:CONTAINS]->(point)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_restore_points,
-        restore_points_list=restore_points,
+        restore_points,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for restore_point in restore_points:
         resource_group = get_azure_resource_group_name(restore_point.get('id'))
-        _attach_resource_group_restore_point(neo4j_session, restore_point['id'], resource_group, update_tag)
+        _attach_resource_group_restore_point(
+            neo4j_session, subscription_id, restore_point['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_group_restore_point(neo4j_session: neo4j.Session, restore_point_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_restore_point(
+    neo4j_session: neo4j.Session, subscription_id: str, restore_point_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_restore_points = """
-    MATCH (point:AzureRestorePoint{id: $restore_point_id})
-    WITH point
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(:AzureSQLDatabase)
+    -[:CONTAINS]->(point:AzureRestorePoint{id: $restore_point_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (point)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_restore_points,
         restore_point_id=restore_point_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
 def _load_transparent_data_encryptions(
-        neo4j_session: neo4j.Session, encryptions_list: List[Dict], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, encryptions_list: List[Dict], update_tag: int,
 ) -> None:
     """
     Ingest transparent data encryptions into neo4j.
     """
     ingest_data_encryptions = """
-    UNWIND $transparent_data_encryptions_list as e
+    UNWIND $DictList as e
     MERGE (tae:AzureTransparentDataEncryption{id: e.id})
     ON CREATE SET tae.firstseen = timestamp(),
     tae.location = e.location,
     tae.region = e.location
     SET tae.name = e.name,
     tae.status = e.status,
-    tae.consolelink = tae.consolelink,
+    tae.consolelink = coalesce(e.consolelink, tae.consolelink),
     tae.lastupdated = $azure_update_tag
     WITH tae, e
-    MATCH (d:AzureSQLDatabase{id: e.database_id})
+    MATCH (:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(d:AzureSQLDatabase{id: e.database_id})
     MERGE (d)-[r:CONTAINS]->(tae)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_data_encryptions,
-        transparent_data_encryptions_list=encryptions_list,
+        encryptions_list,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
     for encryption in encryptions_list:
         resource_group = get_azure_resource_group_name(encryption.get('id'))
-        _attach_resource_group_encryption(neo4j_session, encryption['id'], resource_group, update_tag)
+        _attach_resource_group_encryption(neo4j_session, subscription_id, encryption['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_encryption(neo4j_session: neo4j.Session, encryption_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_encryption(
+    neo4j_session: neo4j.Session, subscription_id: str, encryption_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_data_encryptions = """
-    MATCH (tae:AzureTransparentDataEncryption{id: $encryption_id})
-    WITH tae
-    MATCH (d:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureSQLServer)
+    -[:RESOURCE]->(:AzureSQLDatabase)
+    -[:CONTAINS]->(tae:AzureTransparentDataEncryption{id: $encryption_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (tae)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_data_encryptions,
         encryption_id=encryption_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -1628,7 +1936,7 @@ def sync(
     logger.info(f"sql sub={subscription_id}: server fetch done — {len(server_list)} servers in {time.perf_counter() - t0:.2f}s")
     t0 = time.perf_counter()
     load_server_data(neo4j_session, subscription_id, server_list, sync_tag)
-    load_server_private_endpoint_connection(neo4j_session, server_list, sync_tag)
+    load_server_private_endpoint_connection(neo4j_session, subscription_id, server_list, sync_tag)
     logger.info(f"sql sub={subscription_id}: server load done in {time.perf_counter() - t0:.2f}s")
     t0 = time.perf_counter()
     sync_server_details(neo4j_session, credentials, subscription_id, server_list, sync_tag, common_job_parameters)

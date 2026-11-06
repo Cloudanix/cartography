@@ -1,15 +1,18 @@
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import cartography.intel.aws.ec2.instances
 import cartography.intel.aws.ec2.route_tables
 import cartography.intel.aws.ec2.subnets
 import cartography.intel.aws.iam
-import tests.data.aws.ec2.instances
 import tests.data.aws.ec2.route_tables
 import tests.data.aws.ec2.subnets
 import tests.data.aws.iam
 from cartography.util import run_analysis_job
 from tests.data.aws.ec2.instances import DESCRIBE_INSTANCES
+from tests.integration.cartography.intel.aws.common import create_test_org_account
+from tests.integration.cartography.intel.aws.common import create_test_security_group_rule
+from tests.integration.cartography.intel.aws.common import exposure_job_parameters
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
@@ -17,19 +20,28 @@ TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'us-east-1'
 TEST_UPDATE_TAG = 123456789
 TEST_WORKSPACE_ID = '123'
+TEST_ORG_ID = 'o-ec2-instances'
 
 
-@patch.object(cartography.intel.aws.ec2.instances, 'get_ec2_instances', return_value=DESCRIBE_INSTANCES['Reservations'])
-def test_sync_ec2_instances(mock_get_instances, neo4j_session):
+@patch.object(cartography.intel.aws.ec2.instances, 'get_roles_from_instance_profile', return_value=[])
+def _load_instances(neo4j_session, _mock_roles):
+    """Load DESCRIBE_INSTANCES the way sync_ec2_instances does: transform, then load."""
+    data = cartography.intel.aws.ec2.instances.transform_ec2_instances(
+        MagicMock(), DESCRIBE_INSTANCES['Reservations'], TEST_REGION, TEST_ACCOUNT_ID,
+    )
+    cartography.intel.aws.ec2.instances.load_ec2_instance_data(
+        neo4j_session, TEST_REGION, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
+        data.reservation_list, data.instance_list, data.subnet_list, data.sg_list,
+        data.keypair_list, data.network_interface_list, data.instance_ebs_volumes_list,
+    )
+
+
+def test_sync_ec2_instances(neo4j_session):
     """
     Ensure that instances actually get loaded and have their key fields
     """
-    data = tests.data.aws.ec2.instances.DESCRIBE_INSTANCES['Reservations']
-    cartography.intel.aws.ec2.instances.load_ec2_instances(
-        neo4j_session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
-    )
+    _load_instances(neo4j_session)
 
-    # Assert EC2 instances exist
     assert check_nodes(neo4j_session, 'EC2Instance', ['id', 'instanceid']) == {
         ("i-01", "i-01"),
         ("i-02", "i-02"),
@@ -37,48 +49,18 @@ def test_sync_ec2_instances(mock_get_instances, neo4j_session):
         ("i-04", "i-04"),
     }
 
-    nodes = neo4j_session.run(
-        """
-        MATCH (i:EC2Instance) return i.id, i.instanceid
-        """,
-    )
-    actual_nodes = {
-        (
-            n['i.id'],
-            n['i.instanceid'],
-        )
-        for n in nodes
-    }
-    assert actual_nodes == expected_nodes
-
 
 def test_ec2_reservations_to_instances(neo4j_session, *args):
     """
     Ensure that instances are connected to their expected reservations
     """
-    data = tests.data.aws.ec2.instances.DESCRIBE_INSTANCES['Reservations']
-    cartography.intel.aws.ec2.instances.load_ec2_instances(
-        neo4j_session, data, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
-    )
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORG_ID, TEST_ACCOUNT_ID)
+    _load_instances(neo4j_session)
 
-    expected_nodes = {
-        (
-            "r-01",
-            "i-01",
-        ),
-        (
-            "r-02",
-            "i-02",
-        ),
-        (
-            "r-03",
-            "i-03",
-        ),
-        (
-            "r-03",
-            "i-04",
-        ),
-    }
+    assert check_rels(
+        neo4j_session, 'EC2Reservation', 'reservationid', 'EC2Instance', 'id', 'MEMBER_OF_EC2_RESERVATION',
+        rel_direction_right=False,
+    ) == {("r-01", "i-01"), ("r-02", "i-02"), ("r-03", "i-03"), ("r-03", "i-04")}
 
     # Assert network interface to instances
     assert check_rels(
@@ -222,9 +204,11 @@ def test_ec2_reservations_to_instances(neo4j_session, *args):
         'PART_OF_SUBNET',
         rel_direction_right=False,
     ) == {
-        ('SOME_SUBNET_1', 'i-02'),
-        ('SOME_SUBNET_1', 'i-03'),
-        ('SOME_SUBNET_1', 'i-04'),
+        # The instance's own SubnetId (its primary ENI's subnet), not its ENIs' subnets.
+        ('SOME_SUBNET_1', 'i-01'),
+        ('subnet-020b2f3928f190ce8', 'i-02'),
+        ('subnet-0fa9c8fa7cb241479', 'i-03'),
+        ('subnet-0773409557644dca4', 'i-04'),
     }
 
     # Assert EC2 Subnet to AWS account
@@ -238,6 +222,9 @@ def test_ec2_reservations_to_instances(neo4j_session, *args):
         rel_direction_right=False,
     ) == {
         ('SOME_SUBNET_1', '000000000000'),
+        ('subnet-020b2f3928f190ce8', '000000000000'),
+        ('subnet-0fa9c8fa7cb241479', '000000000000'),
+        ('subnet-0773409557644dca4', '000000000000'),
     }
 
     # Assert EBS Volume to EC2 Instance
@@ -273,35 +260,16 @@ def test_ec2_reservations_to_instances(neo4j_session, *args):
     }
 
 
-@patch.object(cartography.intel.aws.ec2.instances, 'get_ec2_instances', return_value=DESCRIBE_INSTANCES['Reservations'])
-def test_ec2_iaminstanceprofiles(mock_get_instances, neo4j_session):
+def test_ec2_iaminstanceprofiles(neo4j_session):
     """
     Ensure that EC2Instances are attached to the IAM Roles that they can assume due to their IAM instance profiles
     """
-    neo4j_session.run(
-        """
-        MERGE (aws:AWSAccount{id: $aws_account_id})<-[:OWNER]-(:CloudanixWorkspace{id: $workspace_id})
-        ON CREATE SET aws.firstseen = timestamp()
-        SET aws.lastupdated = $aws_update_tag
-        """,
-        aws_account_id=TEST_ACCOUNT_ID,
-        aws_update_tag=TEST_UPDATE_TAG,
-        workspace_id=TEST_WORKSPACE_ID,
-    )
-
-    data_instances = tests.data.aws.ec2.instances.DESCRIBE_INSTANCES['Reservations']
-    data_iam = tests.data.aws.iam.INSTACE['Roles']
-
-    cartography.intel.aws.ec2.instances.load_ec2_instances(
-        neo4j_session, data_instances, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
-    )
-    cartography.intel.aws.iam.load_roles(
-        neo4j_session, data_iam, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
-    )
-    common_job_parameters = {
-        "UPDATE_TAG": TEST_UPDATE_TAG,
-        "WORKSPACE_ID": TEST_WORKSPACE_ID,
-    }
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORG_ID, TEST_ACCOUNT_ID)
+    _load_instances(neo4j_session)
+    # transform_roles adds ExternalAccountPrincipals in the real sync; none of these roles has any.
+    roles = [{**role, 'ExternalAccountPrincipals': []} for role in tests.data.aws.iam.INSTACE['Roles']]
+    cartography.intel.aws.iam.load_roles(neo4j_session, roles, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+    common_job_parameters = exposure_job_parameters(TEST_WORKSPACE_ID, TEST_ORG_ID, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
 
     # Act
     run_analysis_job(
@@ -327,26 +295,15 @@ def test_ec2_iaminstanceprofiles(mock_get_instances, neo4j_session):
 
 
 def test_ec2_asset_exposure(neo4j_session):
-    neo4j_session.run(
-        """
-        MERGE (aws:AWSAccount{id: $aws_account_id})<-[:OWNER]-(:CloudanixWorkspace{id: $workspace_id})
-        ON CREATE SET aws.firstseen = timestamp()
-        SET aws.lastupdated = $aws_update_tag
-        """,
-        aws_account_id=TEST_ACCOUNT_ID,
-        aws_update_tag=TEST_UPDATE_TAG,
-        workspace_id=TEST_WORKSPACE_ID,
-    )
-
-    neo4j_session.run(
-        """
-        MERGE (:AWSVpc{id : 'vpc-025873e026b9e8ee6'})
-        """,
-    )
-    data_instances = tests.data.aws.ec2.instances.DESCRIBE_INSTANCES['Reservations']
-    cartography.intel.aws.ec2.instances.load_ec2_instance_data(
-        neo4j_session, data_instances, TEST_ACCOUNT_ID, TEST_UPDATE_TAG,
-    )
+    """
+    End to end from the real EC2 loader through the jobs the AWS sync runs: catches property or
+    relationship renames in the loader that the hand-built graphs of the tests below would miss.
+    """
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, TEST_ORG_ID, TEST_ACCOUNT_ID)
+    neo4j_session.run("MERGE (:AWSVpc{id : 'vpc-025873e026b9e8ee6'})")
+    _load_instances(neo4j_session)
+    # Every test instance is in SOME_GROUP_ID_2 and has a public IPv4 address.
+    create_test_security_group_rule(neo4j_session, 'SOME_GROUP_ID_2', '0.0.0.0/0', 'tcp', 22, 22)
 
     data = tests.data.aws.ec2.route_tables.DESCRIBE_ROUTE_TABLES
     cartography.intel.aws.ec2.route_tables.load_route_tables(
@@ -361,11 +318,10 @@ def test_ec2_asset_exposure(neo4j_session):
         data,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_WORKSPACE_ID,
     )
     common_job_parameters = {
-        "UPDATE_TAG": TEST_UPDATE_TAG + 1,
-        "WORKSPACE_ID": TEST_WORKSPACE_ID,
-        "AWS_ID": TEST_ACCOUNT_ID,
+        **exposure_job_parameters(TEST_WORKSPACE_ID, TEST_ORG_ID, TEST_ACCOUNT_ID, TEST_UPDATE_TAG + 1),
         "PUBLIC_PORTS": ['20', '21', '22', '3306', '3389', '4333'],
     }
 
@@ -394,10 +350,10 @@ def test_ec2_asset_exposure(neo4j_session):
     )
 
     expected_nodes = {
-        ('i-03', 'public_ip, public_subnet_ipv4'),
-        ('i-04', 'public_ip, public_subnet_ipv6'),
-        ('i-02', 'public_ip, public_subnet_ipv4'),
-        ('i-01', 'public_ip, public_subnet_ipv6'),
+        ('i-01', 'direct_inbound_ipv4'),
+        ('i-02', 'direct_inbound_ipv4'),
+        ('i-03', 'direct_inbound_ipv4'),
+        ('i-04', 'direct_inbound_ipv4'),
     }
 
     nodes = neo4j_session.run(
@@ -415,3 +371,163 @@ def test_ec2_asset_exposure(neo4j_session):
     }
 
     assert actual_nodes == expected_nodes
+
+
+EXPOSURE_ACCOUNT_ID = '111111111111'
+EXPOSURE_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': EXPOSURE_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-ec2-exposure',
+    'WORKSPACE_ID': 'ws-ec2-exposure',
+    'LIMIT_SIZE': 100,
+}
+
+
+def test_ec2_instance_direct_exposure_requires_a_public_ip(neo4j_session):
+    create_test_org_account(
+        neo4j_session, EXPOSURE_JOB_PARAMETERS['WORKSPACE_ID'], EXPOSURE_JOB_PARAMETERS['ORGANIZATION_ID'],
+        EXPOSURE_ACCOUNT_ID,
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (open4:EC2SecurityGroup{id: 'sg-exp-open4'})
+        MERGE (:IpRange{id: '0.0.0.0/0', range: '0.0.0.0/0'})-[:MEMBER_OF_IP_RULE]->
+              (:IpPermissionInbound{ruleid: 'sg-exp-open4/tcp/22'})-[:MEMBER_OF_EC2_SECURITY_GROUP]->(open4)
+        MERGE (open6:EC2SecurityGroup{id: 'sg-exp-open6'})
+        MERGE (:Ipv6Range{id: '::/0', range: '::/0'})-[:MEMBER_OF_IP_RULE]->
+              (:IpPermissionInbound{ruleid: 'sg-exp-open6/tcp/22'})-[:MEMBER_OF_EC2_SECURITY_GROUP]->(open6)
+        MERGE (:EC2SecurityGroup{id: 'sg-exp-closed'})
+        WITH aa
+        UNWIND $instances AS i
+        MERGE (aa)-[:RESOURCE]->(n:EC2Instance{id: i.id})
+        SET n.state = 'running', n.publicipaddress = i.public_ip, n.ipv6address = i.ipv6,
+            n.exposed_internet = i.stale
+        WITH n, i
+        MATCH (sg:EC2SecurityGroup{id: i.sg})
+        MERGE (n)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
+        FOREACH (_ IN CASE WHEN i.eni_ip IS NULL THEN [] ELSE [1] END |
+            MERGE (n)-[:NETWORK_INTERFACE]->(:NetworkInterface{id: i.id + '-eni', public_ip: i.eni_ip}))
+        FOREACH (_ IN CASE WHEN i.eni_ipv6 IS NULL THEN [] ELSE [1] END |
+            MERGE (n)-[:NETWORK_INTERFACE]->(:NetworkInterface{id: i.id + '-eni6', ipv6_addresses: i.eni_ipv6}))
+        FOREACH (_ IN CASE WHEN i.secondary_ip IS NULL THEN [] ELSE [1] END |
+            MERGE (n)-[:NETWORK_INTERFACE]->(eni:NetworkInterface{id: i.id + '-eni2'})
+            MERGE (eni)-[:PRIVATE_IP_ADDRESS]->(:EC2PrivateIp{id: i.id + '-ip2', public_ip: i.secondary_ip}))
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID, instances=[
+            # Open SG but no public address: nothing on the internet can route to it.
+            {'id': 'exp-no-ip', 'sg': 'sg-exp-open4', 'stale': True},
+            {'id': 'exp-public-ip', 'sg': 'sg-exp-open4', 'public_ip': '54.0.0.1'},
+            # Public IP only on an attached ENI or on a secondary private IP (Elastic IP).
+            {'id': 'exp-eni-ip', 'sg': 'sg-exp-open4', 'eni_ip': '54.0.0.2'},
+            {'id': 'exp-secondary-ip', 'sg': 'sg-exp-open4', 'secondary_ip': '54.0.0.3'},
+            {'id': 'exp-public-ip-closed-sg', 'sg': 'sg-exp-closed', 'public_ip': '54.0.0.4'},
+            # Behind an internet-facing load balancer whose SG is open: public through the LB.
+            {'id': 'exp-behind-lb', 'sg': 'sg-exp-closed'},
+            # ::/0 ingress only reaches an instance that has an IPv6 address (own or on an attached ENI).
+            {'id': 'exp-ipv6-no-address', 'sg': 'sg-exp-open6', 'stale': True},
+            {'id': 'exp-ipv6-open', 'sg': 'sg-exp-open6', 'ipv6': '2600:1f18::1'},
+            {'id': 'exp-ipv6-eni', 'sg': 'sg-exp-open6', 'eni_ipv6': ['2600:1f18::2']},
+            {'id': 'exp-ipv6-eni-empty', 'sg': 'sg-exp-open6', 'eni_ipv6': []},
+            {'id': 'exp-ipv6-closed-sg', 'sg': 'sg-exp-closed', 'ipv6': '2600:1f18::3'},
+        ],
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id}), (n:EC2Instance{id: 'exp-behind-lb'})
+        MATCH (sg:EC2SecurityGroup{id: 'sg-exp-open4'})
+        MERGE (aa)-[:RESOURCE]->(lb:LoadBalancerV2{id: 'exp-lb', scheme: 'internet-facing'})-[:EXPOSE]->(n)
+        MERGE (lb)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID,
+    )
+
+    run_analysis_job('aws_ec2_instance_asset_exposure.json', neo4j_session, EXPOSURE_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(n:EC2Instance{exposed_internet: true})
+        WHERE n.id STARTS WITH 'exp-'
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        account_id=EXPOSURE_ACCOUNT_ID,
+    )
+    assert {n['id']: sorted(n['types']) for n in nodes} == {
+        'exp-public-ip': ['direct_inbound_ipv4'],
+        'exp-eni-ip': ['direct_inbound_ipv4'],
+        'exp-secondary-ip': ['direct_inbound_ipv4'],
+        'exp-behind-lb': ['unrestricted_inbound_traffic_ipv4'],
+        'exp-ipv6-open': ['direct_inbound_ipv6'],
+        'exp-ipv6-eni': ['direct_inbound_ipv6'],
+    }
+
+
+NLB_ACCOUNT_ID = '111111112222'
+NLB_JOB_PARAMETERS = {
+    'UPDATE_TAG': TEST_UPDATE_TAG + 1,
+    'AWS_ID': NLB_ACCOUNT_ID,
+    'ORGANIZATION_ID': 'o-ec2-nlb',
+    'WORKSPACE_ID': 'ws-ec2-nlb',
+    'LIMIT_SIZE': 100,
+}
+
+
+def test_ec2_instance_exposed_through_internet_facing_nlb_without_security_group(neo4j_session):
+    # NLBs created before August 2023 have no security group: the LB forwards every listener port from
+    # anywhere, so the SG-based LB statements never match the instances behind it.
+    create_test_org_account(
+        neo4j_session, NLB_JOB_PARAMETERS['WORKSPACE_ID'], NLB_JOB_PARAMETERS['ORGANIZATION_ID'], NLB_ACCOUNT_ID,
+    )
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        MERGE (:EC2SecurityGroup{id: 'sg-nlb-closed'})
+        WITH aa
+        UNWIND $lbs AS l
+        MERGE (aa)-[:RESOURCE]->(lb:LoadBalancerV2{id: l.id})
+        SET lb.scheme = l.scheme, lb.type = l.type
+        MERGE (aa)-[:RESOURCE]->(n:EC2Instance{id: l.instance})
+        // No public address: the LB path does not need one.
+        SET n.state = l.state
+        MERGE (lb)-[:EXPOSE]->(n)
+        WITH lb, n, l
+        MATCH (closed:EC2SecurityGroup{id: 'sg-nlb-closed'})
+        MERGE (n)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(closed)
+        FOREACH (_ IN CASE WHEN l.sg THEN [1] ELSE [] END | MERGE (lb)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(closed))
+        """,
+        account_id=NLB_ACCOUNT_ID, lbs=[
+            {
+                'id': 'nlb-public', 'scheme': 'internet-facing', 'type': 'network', 'instance': 'nlb-i-public',
+                'state': 'running',
+            },
+            {
+                'id': 'nlb-internal', 'scheme': 'internal', 'type': 'network', 'instance': 'nlb-i-internal',
+                'state': 'running',
+            },
+            {
+                'id': 'nlb-public-stopped', 'scheme': 'internet-facing', 'type': 'network',
+                'instance': 'nlb-i-stopped', 'state': 'stopped',
+            },
+            # An NLB with a security group goes through the SG statements: this one allows nothing.
+            {
+                'id': 'nlb-public-closed-sg', 'scheme': 'internet-facing', 'type': 'network',
+                'instance': 'nlb-i-closed-sg', 'state': 'running', 'sg': True,
+            },
+            # An ALB always has a security group; one that looks SG-less is missing data, not open.
+            {
+                'id': 'alb-public-no-sg', 'scheme': 'internet-facing', 'type': 'application',
+                'instance': 'nlb-i-alb', 'state': 'running',
+            },
+        ],
+    )
+
+    run_analysis_job('aws_ec2_instance_asset_exposure.json', neo4j_session, NLB_JOB_PARAMETERS)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(n:EC2Instance{exposed_internet: true})
+        RETURN n.id AS id, n.exposed_internet_type AS types
+        """,
+        account_id=NLB_ACCOUNT_ID,
+    )
+    assert {n['id']: sorted(n['types']) for n in nodes} == {'nlb-i-public': ['internet_facing_nlb']}

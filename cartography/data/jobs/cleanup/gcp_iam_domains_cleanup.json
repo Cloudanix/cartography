@@ -1,16 +1,16 @@
 {
 	"statements": [
 		{
-			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(n:GCPDomain) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100,
-			"__comment__": "Delete GCP IAM Domains that no longer exist and detach them from all previously connected nodes."
-		},
-		{
 			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[r:RESOURCE]->(:GCPDomain) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
-			"__comment__": "Remove GCP Customer to IAM Domains relationships that are out of date"
+			"__comment__": "Remove GCP Customer to IAM Domains relationships that are out of date. A GCPDomain node (keyed by the domain name) is shared by every tenant that grants that domain a role, and its lastupdated is the last tenant's tag: only this project's edge is removed here."
+		},
+		{
+			"query": "MATCH (n:GCPDomain) WHERE NOT (n)--() AND n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Orphan sweep, tenant-independent: delete a domain only once no tenant links it any more (role grants are removed by gcp_iam_policy_binding_cleanup.json)."
 		}
 	],
 	"name": "cleanup GCP IAM Domains"

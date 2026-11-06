@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from cartography.graph import write_timer
 from cartography.intel.azure.util.timing import AzureTimingPolicy
 from cartography.intel.azure.util.timing import get_current_context
 from cartography.intel.azure.util.timing import get_timing_policy
@@ -37,7 +38,10 @@ class TestServiceTimingContext:
 
     def test_initial_counts_are_zero(self):
         with ServiceTimingContext("svc") as ctx:
-            assert ctx.to_dict() == {"request_count": 0, "throttle_count": 0, "retry_count": 0}
+            assert ctx.to_dict() == {
+                "request_count": 0, "throttle_count": 0, "retry_count": 0,
+                "graph_write_seconds": 0.0,
+            }
 
     def test_to_dict_reflects_mutations(self):
         with ServiceTimingContext("svc") as ctx:
@@ -45,7 +49,23 @@ class TestServiceTimingContext:
             ctx.throttle_count = 2
             ctx.retry_count = 1
             d = ctx.to_dict()
-        assert d == {"request_count": 5, "throttle_count": 2, "retry_count": 1}
+        assert d == {
+            "request_count": 5, "throttle_count": 2, "retry_count": 1,
+            "graph_write_seconds": 0.0,
+        }
+
+    def test_graph_write_seconds_measures_write_timer_delta(self):
+        write_timer.add(1.0)  # activity before the context must not count
+        with ServiceTimingContext("svc") as ctx:
+            write_timer.add(2.5)
+            assert ctx.graph_write_seconds == 2.5
+
+    def test_graph_write_seconds_frozen_at_exit(self):
+        with ServiceTimingContext("svc") as ctx:
+            write_timer.add(1.5)
+        write_timer.add(9.0)  # later activity on this thread must not leak in
+        assert ctx.graph_write_seconds == 1.5
+        assert ctx.to_dict()["graph_write_seconds"] == 1.5
 
     def test_nested_context_replaces_outer(self):
         with ServiceTimingContext("outer") as outer_ctx:

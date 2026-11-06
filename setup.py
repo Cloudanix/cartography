@@ -33,10 +33,11 @@ setup(
     },
     dependency_links=[],
     install_requires=[
-        "cloudconsolelink>=4.0.1",
+        "cloudconsolelink>=4.3.1",
         "backoff>=2.1.2",
-        "boto3>=1.15.1",
-        "botocore>=1.18.1",
+        # get_partition_for_region (util/arns.py) needs boto3 1.19.5 / botocore 1.22.5.
+        "boto3>=1.19.5",
+        "botocore>=1.22.5",
         "dnspython>=1.15.0",
         "neo4j>=5.0.0,<6.0.0",
         "policyuniverse>=1.1.0.0",
@@ -60,6 +61,7 @@ setup(
         "azure-mgmt-sql<=1.0.0",
         "azure-identity>=1.5.0",
         "azure-mgmt-containerinstance>=1.5.0",
+        "azure-containerregistry~=1.2.0",
         "azure-mgmt-containerregistry>=2.8.0",
         "azure-mgmt-containerservice>=4.4.0",
         "azure-mgmt-keyvault>=1.1.0",
@@ -67,9 +69,10 @@ setup(
         "azure-mgmt-authorization==0.50.0",
         "azure-mgmt-resource>=10.2.0",
         "azure-mgmt-network>=2.7.0",
+        "azure-mgmt-redis~=14.5.0",
         "azure-mgmt-web>=0.35.0",
-        "msgraph-sdk==1.1.0",
-        "kubernetes==22.6.0",
+        "msgraph-sdk>=1.62.0,<2.0.0",
+        "kubernetes>=36.0.0,<37.0.0",
         "pdpyras>=4.3.0",
         "crowdstrike-falconpy>=0.5.1",
         "python-dateutil",
@@ -77,11 +80,8 @@ setup(
         "duo-client",
         "azure-devops>=7.0.0,<8.0.0",
     ],
-    extras_require={
-        ':python_version<"3.7"': [
-            "importlib-resources",
-        ],
-    },
+    python_requires=">=3.14",
+    extras_require={},
     entry_points={
         "console_scripts": [
             "cartography = cartography.cli:main",
@@ -95,7 +95,7 @@ setup(
         "Natural Language :: English",
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.14",
         "Topic :: Security",
         "Topic :: Software Development :: Libraries",
         "Topic :: Software Development :: Libraries :: Python Modules",

@@ -7,7 +7,9 @@ import requests
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.resource import SubscriptionClient
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -86,6 +88,8 @@ def get_tenant_id(credentials: Credentials) -> str:
 def load_azure_tenant(
     neo4j_session: neo4j.Session, tenant_obj: Dict, current_user: str, update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    # One login (or a multi-tenant app's client id) can connect several customers' tenants, so the
+    # principal node is shared: its object id and name differ per tenant and live on the tenant's edge.
     query = """
     MERGE (w:CloudanixWorkspace{id: $workspaceId})
     SET w.lastupdated = $update_tag
@@ -99,7 +103,8 @@ def load_azure_tenant(
     at.displayName = $displayName,
     at.country = $country,
     at.countryCode = $countryCode,
-    at.defaultDomain = $defaultDomain
+    at.defaultDomain = $defaultDomain,
+    at.consolelink = coalesce($consolelink, at.consolelink)
     WITH w, at
     MERGE (w)-[o:OWNER]->(at)
     ON CREATE SET o.firstseen = timestamp()
@@ -107,14 +112,15 @@ def load_azure_tenant(
     WITH at
     MERGE (ap:AzurePrincipal{id: $userEmail})
     ON CREATE SET ap.email = $userEmail, ap.firstseen = timestamp()
-    SET ap.lastupdated = $update_tag,
-    ap.name=$userName, ap.userid=$userId
+    SET ap.lastupdated = $update_tag
     WITH at, ap
     MERGE (at)-[r:RESOURCE]->(ap)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag;
+    SET r.lastupdated = $update_tag,
+    r.name = $userName, r.userid = $userId;
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         query,
         workspaceId=common_job_parameters['WORKSPACE_ID'],
         id=tenant_obj['id'],
@@ -125,6 +131,7 @@ def load_azure_tenant(
         country=tenant_obj['country'],
         countryCode=tenant_obj['countryCode'],
         defaultDomain=tenant_obj['defaultDomain'],
+        consolelink=safe_console_link(tenant_obj.get('tenantId'), common_job_parameters, iam_entity_type='tenant'),
         userEmail=current_user.get('email'),
         userId=current_user.get('id'),
         userName=current_user.get('name'),

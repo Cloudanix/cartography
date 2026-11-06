@@ -1,0 +1,18 @@
+{
+  "statements": [
+    {
+      "query": "MATCH ((n:AzureFunctionApp)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})) WHERE n.exposed_internet IS NOT NULL OR n.exposed_internet_type IS NOT NULL OR n.publicContext IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "query": "MATCH (site:AzureFunctionApp)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(site.hostNamesDisabled, false) = false AND coalesce(site.publicNetworkAccess, '') <> 'Disabled' AND NOT (coalesce(site.ipSecurityRestrictionsDefaultAction, '') = 'Deny' AND coalesce(site.openAccessRestriction, true) = false) SET site.exposed_internet = true, site.exposed_internet_type = ['public_endpoint'];",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (site:AzureFunctionApp)<-[:RESOURCE]-(:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})<-[:RESOURCE]-(:AzureTenant{id: $AZURE_TENANT_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE site.exposed_internet = true SET site.publicContext = apoc.convert.toJson([{resource: site.id, resourceType: 'azure-compute-azurefunctionapp-functionapp', context: [{siteId: site.id, siteName: site.name, defaultHostName: site.default_host_name, publicNetworkAccess: site.publicNetworkAccess, accessRestrictionDefaultAction: site.ipSecurityRestrictionsDefaultAction, openAccessRestriction: site.openAccessRestriction, exposureTypes: site.exposed_internet_type, location: site.location}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "Azure App Service site asset internet exposure"
+}

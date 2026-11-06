@@ -44,3 +44,206 @@ def test_transform_tags():
     assert 'resource_id' not in get_resources_response[0]
     rgta.transform_tags(get_resources_response, 'ec2:instance')
     assert 'resource_id' in get_resources_response[0]
+
+
+def test_mappings_reachable_from_account():
+    """
+    The default load query requires a direct (:AWSAccount)-[:RESOURCE]->
+    edge. Sub-resources (ECS tasks/container instances, ELBV2 listeners) hang
+    off their parent, so they must declare an explicit 'path' or their tags
+    are fetched from AWS and silently dropped.
+    """
+    sub_resource_labels = {'ECSTask', 'ECSContainerInstance', 'ELBV2Listener'}
+    for resource_type, mapping in rgta.TAG_RESOURCE_TYPE_MAPPINGS.items():
+        if mapping['label'] in sub_resource_labels:
+            assert 'path' in mapping, f"{resource_type} needs an explicit path"
+            assert mapping['path'].startswith('-[:RESOURCE]->')
+
+
+def test_elbv2_listener_mapping_matches_node_id():
+    # ELBV2Listener nodes are created with id = ListenerArn, so the mapping
+    # must key the full ARN on 'id' (no id_func shortening)
+    for resource_type in ('elasticloadbalancing:listener/app', 'elasticloadbalancing:listener/net'):
+        mapping = rgta.TAG_RESOURCE_TYPE_MAPPINGS[resource_type]
+        assert mapping['property'] == 'id'
+        assert 'id_func' not in mapping
+        arn = 'arn:aws:elasticloadbalancing:us-east-1:1234:listener/app/foo/abc/def'
+        assert rgta.compute_resource_id({'ResourceARN': arn}, resource_type) == arn
+
+
+def test_get_hosted_zone_id_from_arn():
+    arn = 'arn:aws:route53:::hostedzone/Z0ABCDEF'
+    assert rgta.get_hosted_zone_id_from_arn(arn) == '/hostedzone/Z0ABCDEF'
+
+
+def test_get_log_group_arn_with_wildcard():
+    arn = 'arn:aws:logs:us-east-1:1234:log-group:/aws/lambda/foo'
+    assert rgta.get_log_group_arn_with_wildcard(arn) == arn + ':*'
+    assert rgta.get_log_group_arn_with_wildcard(arn + ':*') == arn + ':*'
+
+
+def test_expanded_mappings_present():
+    # phase-2 coverage additions — data stores, workloads, edge, AI/ML, governance
+    expected = {
+        'kinesis:stream': 'KinesisStream',
+        'ec2:snapshot': 'EBSSnapshot',
+        'ec2:image': 'EC2Image',
+        'ec2:route-table': 'EC2RouteTable',
+        'ec2:launch-template': 'LaunchTemplate',
+        'ecs:service': 'ECSService',
+        'eks:nodegroup': 'EKSClusterNodeGroup',
+        'cloudformation:stack': 'AWSCloudformationStack',
+        'cloudfront:distribution': 'AWSCloudfrontDistribution',
+        'cloudtrail:trail': 'AWSCloudTrailTrail',
+        'config:config-rule': 'AWSConfigRule',
+        'logs:log-group': 'AWSCloudWatchLogGroup',
+        'route53:hostedzone': 'AWSDNSZone',
+        'ses:identity': 'AWSSESIdentity',
+        'sns': 'AWSSNSTopic',
+        'wafv2': 'AWSWAFv2WebACL',
+        'waf-regional:webacl': 'AWSWAFClassicWebACL',
+        'sagemaker:notebook-instance': 'AWSSagemakerNotebookInstance',
+        'sagemaker:endpoint': 'AWSSagemakerEndpoint',
+        'sagemaker:model': 'AWSSagemakerModel',
+        'sagemaker:domain': 'AWSSagemakerDomain',
+        'sagemaker:cluster': 'AWSSagemakerCluster',
+        'sagemaker:training-job': 'AWSSagemakerTrainingJob',
+        'bedrock:agent': 'AWSBedrockAgent',
+        'bedrock:custom-model': 'AWSBedrockCustomModel',
+        'bedrock:guardrail': 'AWSBedrockGuardRail',
+        'bedrock:model-customization-job': 'AWSBedrockCustomisationJob',
+    }
+    for resource_type, label in expected.items():
+        assert resource_type in rgta.TAG_RESOURCE_TYPE_MAPPINGS, resource_type
+        assert rgta.TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['label'] == label
+
+
+def test_every_mapping_has_label_and_property():
+    for resource_type, mapping in rgta.TAG_RESOURCE_TYPE_MAPPINGS.items():
+        assert mapping.get('label'), resource_type
+        assert mapping.get('property') in ('id', 'arn', 'name', 'subnetid', 'zoneid', 'attachment_id'), resource_type
+
+
+def test_tgw_attachment_tags_match_on_attachment_id():
+    # Peering / client-vpn attachment nodes are keyed per account (<attachment id>|<account>); every attachment
+    # node carries the bare id in attachment_id, which is what the tagging API returns.
+    assert rgta.TAG_RESOURCE_TYPE_MAPPINGS['ec2:transit-gateway-attachment']['property'] == 'attachment_id'
+
+
+def test_untaggable_types_removed():
+    # ecs:container and classic elasticloadbalancing:listener are not taggable
+    # resource types; keeping them only wasted API calls every sync
+    assert 'ecs:container' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+    assert 'elasticloadbalancing:listener' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+    # Reserved instances are low-value for tagging and can be large in RGT results
+    assert 'ec2:reserved-instances' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+    assert 'rds:ri' not in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+
+
+def test_global_resource_types_synced_once_in_us_east_1(mocker, monkeypatch):
+    """
+    Global services (CloudFront, Route53) are reported by the tagging API only
+    in us-east-1 — one sync per account, not one per region.
+    """
+    monkeypatch.setenv('LOCAL_RUN', '1')
+    sync_tags = mocker.patch.object(rgta, 'sync_tags')
+    mocker.patch.object(rgta, 'cleanup')
+    mappings = {
+        'sqs': {'label': 'SQSQueue', 'property': 'id'},
+        'cloudfront:distribution': {'label': 'AWSCloudfrontDistribution', 'property': 'id'},
+        'route53:hostedzone': {'label': 'AWSDNSZone', 'property': 'zoneid'},
+    }
+
+    rgta.sync(
+        mocker.MagicMock(), mocker.MagicMock(), mocker.MagicMock(),
+        ['us-east-1', 'eu-west-1'], '1234', 111, {},
+        tag_resource_type_mappings=mappings,
+    )
+
+    calls = [(c.args[2], c.args[3]) for c in sync_tags.call_args_list]
+    assert calls.count(('us-east-1', 'sqs')) == 1
+    assert calls.count(('eu-west-1', 'sqs')) == 1
+    assert [c for c in calls if c[1] == 'cloudfront:distribution'] == [('us-east-1', 'cloudfront:distribution')]
+    assert [c for c in calls if c[1] == 'route53:hostedzone'] == [('us-east-1', 'route53:hostedzone')]
+
+
+def test_load_query_uses_mapping_path(mocker):
+    tx = mocker.MagicMock()
+    tag_data = [{
+        'ResourceARN': 'arn:aws:ecs:us-east-1:1234:task/cluster/abc',
+        'resource_id': 'arn:aws:ecs:us-east-1:1234:task/cluster/abc',
+        'Tags': [{'Key': 'k', 'Value': 'v'}],
+    }]
+    rgta._load_tags_tx(tx, tag_data, 'ecs:task', 'us-east-1', '1234', 111)
+    query = tx.run.call_args[0][0]
+    assert '-[:RESOURCE]->(:ECSCluster)-[:HAS_TASK]->(resource:ECSTask' in query
+
+    rgta._load_tags_tx(tx, tag_data, 'ec2:instance', 'us-east-1', '1234', 111)
+    query = tx.run.call_args[0][0]
+    assert '-[res:RESOURCE]->(resource:EC2Instance' in query
+
+
+def test_phase2_remainder_mappings_present():
+    # remaining taggable types added after the first phase-2 batch
+    expected = {
+        'cloudwatch:alarm': 'AWSCloudWatchAlarm',
+        'events:rule': 'AWSEventBridgeRule',
+        'events:event-bus': 'AWSEventBridgeEventBus',
+        'securityhub:hub': 'SecurityHub',
+    }
+    for resource_type, label in expected.items():
+        assert resource_type in rgta.TAG_RESOURCE_TYPE_MAPPINGS, resource_type
+        assert rgta.TAG_RESOURCE_TYPE_MAPPINGS[resource_type]['label'] == label
+
+
+def test_iam_role_is_a_global_resource_type():
+    # get_role_tags() is region-independent, so running it per region is wasted work
+    assert 'iam:role' in rgta.GLOBAL_RESOURCE_TYPES
+    assert 'iam:role' in rgta.TAG_RESOURCE_TYPE_MAPPINGS
+
+
+def test_iam_role_tags_fetched_once_per_account(mocker, monkeypatch):
+    monkeypatch.setenv('LOCAL_RUN', '1')
+    sync_tags = mocker.patch.object(rgta, 'sync_tags')
+    mocker.patch.object(rgta, 'cleanup')
+    mappings = {
+        'sqs': {'label': 'SQSQueue', 'property': 'id'},
+        'iam:role': {'label': 'AWSRole', 'property': 'arn'},
+    }
+
+    rgta.sync(
+        mocker.MagicMock(), mocker.MagicMock(), mocker.MagicMock(),
+        ['us-east-1', 'eu-west-1'], '1234', 111, {},
+        tag_resource_type_mappings=mappings,
+    )
+
+    calls = [(c.args[2], c.args[3]) for c in sync_tags.call_args_list]
+    assert [c for c in calls if c[1] == 'iam:role'] == [('us-east-1', 'iam:role')]
+
+
+def test_sync_tags_streams_pages_without_buffering(mocker):
+    """Each tagging-API page is transform+load'd immediately; pages are not accumulated."""
+    pages = [
+        [{'ResourceARN': 'arn:aws:ec2:us-east-1:1234:instance/i-1', 'Tags': [{'Key': 'a', 'Value': '1'}]}],
+        [{'ResourceARN': 'arn:aws:ec2:us-east-1:1234:instance/i-2', 'Tags': [{'Key': 'b', 'Value': '2'}]}],
+    ]
+    mocker.patch.object(rgta, 'iter_tag_pages', return_value=iter(pages))
+    transform = mocker.patch.object(rgta, 'transform_tags')
+    load = mocker.patch.object(rgta, 'load_tags')
+
+    rgta.sync_tags(mocker.MagicMock(), mocker.MagicMock(), 'us-east-1', 'ec2:instance', '1234', 111)
+
+    assert transform.call_count == 2
+    assert load.call_count == 2
+    assert transform.call_args_list[0].args[0] is pages[0]
+    assert transform.call_args_list[1].args[0] is pages[1]
+    assert load.call_args_list[0].kwargs['tag_data'] is pages[0]
+    assert load.call_args_list[1].kwargs['tag_data'] is pages[1]
+
+
+def test_get_tags_collects_all_pages(mocker):
+    pages = [[{'ResourceARN': 'a'}], [{'ResourceARN': 'b'}]]
+    mocker.patch.object(rgta, 'iter_tag_pages', return_value=iter(pages))
+    assert rgta.get_tags(mocker.MagicMock(), 'ec2:instance', 'us-east-1') == [
+        {'ResourceARN': 'a'}, {'ResourceARN': 'b'},
+    ]

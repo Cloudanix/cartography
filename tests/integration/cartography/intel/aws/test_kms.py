@@ -1,5 +1,6 @@
 import cartography.intel.aws.kms
 import tests.data.aws.kms
+from tests.integration.cartography.intel.aws.common import create_test_account
 
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'eu-west-1'
@@ -73,6 +74,7 @@ def test_load_kms_key_aliases(neo4j_session):
     cartography.intel.aws.kms._load_kms_key_aliases(
         neo4j_session,
         data,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -92,6 +94,7 @@ def test_load_kms_key_aliases(neo4j_session):
 
 
 def test_load_kms_key_aliases_relationships(neo4j_session):
+    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
     # Load Test KMS Key
     data_kms = tests.data.aws.kms.DESCRIBE_KEYS
     cartography.intel.aws.kms.load_kms_keys(
@@ -106,6 +109,7 @@ def test_load_kms_key_aliases_relationships(neo4j_session):
     cartography.intel.aws.kms._load_kms_key_aliases(
         neo4j_session,
         data_alias,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -157,6 +161,7 @@ def test_load_kms_key_grants(neo4j_session):
 
 
 def test_load_kms_key_grants_relationships(neo4j_session):
+    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
     # Load Test KMS Key
     data_kms = tests.data.aws.kms.DESCRIBE_KEYS
     cartography.intel.aws.kms.load_kms_keys(

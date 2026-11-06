@@ -1,0 +1,26 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OCI container repositories in scope",
+      "query": "MATCH (n:OCIContainerRepository)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Mark container repositories as exposed if they are public (anonymous pull allowed)",
+      "query": "MATCH (repo:OCIContainerRepository{is_public: true})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET repo.exposed_internet = true, (CASE WHEN NOT 'public_repository' IN coalesce(repo.exposed_internet_type, []) THEN repo END).exposed_internet_type = coalesce(repo.exposed_internet_type, []) + 'public_repository'",
+      "iterative": false
+    },
+    {
+      "__comment": "Additionally flag public repositories that are mutable (tags can be overwritten - image tampering risk)",
+      "query": "MATCH (repo:OCIContainerRepository{is_public: true, is_immutable: false})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET repo.exposed_internet = true, (CASE WHEN NOT 'mutable_public_repository' IN coalesce(repo.exposed_internet_type, []) THEN repo END).exposed_internet_type = coalesce(repo.exposed_internet_type, []) + 'mutable_public_repository'",
+      "iterative": false
+    },
+    {
+      "__comment": "Build publicContext JSON for exposed container repositories with image details",
+      "query": "MATCH (repo:OCIContainerRepository)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE repo.exposed_internet = true WITH repo OPTIONAL MATCH (repo)-[:OCI_CONTAINER_IMAGE]->(img:OCIContainerImage) WITH repo, collect(DISTINCT {imageId: img.ocid, digest: img.digest, version: img.version}) as images SET repo.publicContext = apoc.convert.toJson([{resource: repo.ocid, resourceType: 'oci-containerregistry-repository', context: [{repositoryId: repo.ocid, repositoryName: repo.display_name, namespace: repo.namespace, isPublic: repo.is_public, isImmutable: repo.is_immutable, imageCount: repo.image_count, lifecycleState: repo.lifecycle_state, exposureTypes: repo.exposed_internet_type, images: images, region: repo.region}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "OCI container registry asset internet exposure"
+}

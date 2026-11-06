@@ -6,11 +6,13 @@
             "iterationsize": 1000
         },
         {
-            "query": "MATCH (binding:GCPBucketPolicyBinding)<-[:ATTACHED_BINDING]-(bucket:GCPBucket)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nWHERE 'allUsers' IN binding.members \nSET bucket.exposed_internet = true, bucket.exposed_internet_type = coalesce(bucket.exposed_internet_type, []) + 'allUsers'",
+            "__comment": "An IAM binding (any role) to allUsers / allAuthenticatedUsers makes the bucket public, unless public access prevention is enforced on the bucket: then such grants have no effect. A prevention enforced only by the org policy shows as 'inherited' and is not known here, so the bucket stays public (fail-safe).",
+            "query": "MATCH (binding:GCPBucketPolicyBinding)<-[:ATTACHED_BINDING]-(bucket:GCPBucket)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nWHERE coalesce(bucket.public_access_prevention, '') <> 'enforced'\nUNWIND [m IN binding.members WHERE m IN ['allUsers', 'allAuthenticatedUsers']] AS member\nSET bucket.exposed_internet = true, (CASE WHEN NOT member IN coalesce(bucket.exposed_internet_type, []) THEN bucket END).exposed_internet_type = coalesce(bucket.exposed_internet_type, []) + member",
             "iterative": false
         },
         {
-            "query": "MATCH (binding:GCPBucketPolicyBinding)<-[:ATTACHED_BINDING]-(bucket:GCPBucket)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nWHERE 'allAuthenticatedUsers' IN binding.members \nSET bucket.exposed_internet = true, bucket.exposed_internet_type = coalesce(bucket.exposed_internet_type, []) + 'allAuthenticatedUsers'",
+            "__comment": "A legacy bucket or default object ACL entry for allUsers / allAuthenticatedUsers makes the bucket public when ACLs are in force (uniform bucket-level access off) and public access prevention is not enforced on the bucket.",
+            "query": "MATCH (bucket:GCPBucket)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})\nWHERE size(coalesce(bucket.public_acl_entities, [])) > 0 AND coalesce(bucket.uniform_bucket_level_access, false) = false AND coalesce(bucket.public_access_prevention, '') <> 'enforced'\nUNWIND bucket.public_acl_entities AS member\nSET bucket.exposed_internet = true, (CASE WHEN NOT member IN coalesce(bucket.exposed_internet_type, []) THEN bucket END).exposed_internet_type = coalesce(bucket.exposed_internet_type, []) + member",
             "iterative": false
         }
     ],

@@ -35,12 +35,12 @@ def capture_error(
         pass
 
 
-def capture_warning(message: str, extra: dict | None = None):
+def capture_warning(message: str, extra: dict | None = None, level: str = "warning"):
     if os.getenv("CDX_APP_ENV") == "PRODUCTION":
         if extra:
             sentry_sdk.set_context("context", extra)
 
-        capture_message(message)
+        capture_message(message, level=level)
 
     else:
         pass

@@ -98,6 +98,72 @@ def test__get_role_tags_no_tags(mocker):
     assert result == []
 
 
+def test_get_external_access_roles_filters_active_findings(mocker):
+    session = mocker.Mock()
+    client = session.client.return_value
+    client.list_analyzers.return_value = {"analyzers": [{"arn": "analyzer-arn"}]}
+    paginator = client.get_paginator.return_value
+    paginator.paginate.return_value = [{"findings": [{"resource": "role-arn"}]}]
+
+    result = iam.get_external_access_roles(session, {"DEFAULT_REGION": "us-east-1"})
+
+    assert result == [{"resource": "role-arn"}]
+    paginator.paginate.assert_called_once_with(
+        analyzerArn="analyzer-arn",
+        filter={
+            "resourceType": {"eq": ["AWS::IAM::Role"]},
+            "status": {"eq": ["ACTIVE"]},
+        },
+    )
+
+
+def test_transform_roles_paginates_organization_accounts(mocker):
+    session = mocker.Mock()
+    paginator = session.client.return_value.get_paginator.return_value
+    paginator.paginate.return_value = [
+        {"Accounts": [{"Id": "111111111111"}]},
+        {"Accounts": [{"Id": "222222222222"}]},
+    ]
+    roles = [
+        {
+            "Arn": "arn:aws:iam::000000000000:role/example",
+            "AssumeRolePolicyDocument": {
+                "Statement": [
+                    {
+                        "Principal": {
+                            "AWS": [
+                                "arn:aws:iam::222222222222:root",
+                                "arn:aws:iam::333333333333:root",
+                            ],
+                        },
+                    },
+                ],
+            },
+        },
+    ]
+
+    result = iam.transform_roles(
+        session,
+        roles,
+        [{"resource": roles[0]["Arn"]}],
+        {"AWS_ACCOUNT_ID": "000000000000", "AWS_INTERNAL_ACCOUNTS": []},
+    )
+
+    assert result["Roles"][0]["ExternalAccountPrincipals"] == [
+        {
+            "access_type": "CrossAccount",
+            "account_id": "222222222222",
+            "principal": "arn:aws:iam::222222222222:root",
+        },
+        {
+            "access_type": "ThirdParty",
+            "account_id": "333333333333",
+            "principal": "arn:aws:iam::333333333333:root",
+        },
+    ]
+    session.client.return_value.get_paginator.assert_called_once_with("list_accounts")
+
+
 def test_transform_policy_data_correctly_creates_lists_of_statements():
     # "pol-name" is a policy containing a single statement
     # See https://github.com/lyft/cartography/issues/1102

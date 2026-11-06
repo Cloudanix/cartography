@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -9,16 +10,32 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.client.core.tx import run_write_query
 from cartography.intel.gcp import compute
+from cartography.intel.gcp.util.errors import POLICY_RESOLVED
+from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
 
+# IAM members and ACL entities that mean "anyone on the internet" (with or without a Google account).
+PUBLIC_MEMBERS = ("allUsers", "allAuthenticatedUsers")
+
+
+def _list_buckets(storage: Resource, project_id: str, projection: str) -> List[Dict]:
+    buckets_list: List[Dict] = []
+    req = storage.buckets().list(project=project_id, projection=projection)
+    while req is not None:
+        res = req.execute()
+        buckets_list.extend(res.get('items', []))
+        req = storage.buckets().list_next(previous_request=req, previous_response=res)
+    return buckets_list
+
 
 @timeit
-def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -> Dict:
+def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters: Dict) -> List[Dict]:
     """
     Returns a list of storage objects within some given project
 
@@ -32,45 +49,52 @@ def get_gcp_buckets(storage: Resource, project_id: str, common_job_parameters) -
     :return: Storage response object
     """
     try:
-        buckets_list = []
-        req = storage.buckets().list(project=project_id)
-        while req is not None:
-            res = req.execute()
-            if res.get('items', []):
-                buckets_list.extend(res.get('items', []))
-            req = storage.buckets().list_next(previous_request=req, previous_response=res)
-
-        return buckets_list
+        # projection=full adds the legacy ACLs (acl, defaultObjectAcl), which the exposure job reads.
+        return _list_buckets(storage, project_id, 'full')
     except HttpError as e:
-        reason = compute._get_error_reason(e)
-        if reason == 'invalid':
-            logger.warning(
-                (
-                    "The project %s is invalid - returned a 400 invalid error."
-                    "Full details: %s"
-                ),
-                project_id,
-                e,
-            )
-            return buckets_list
-        elif reason == 'forbidden':
-            logger.warning(
-                (
-                    "You do not have storage.bucket.list access to the project %s. "
-                    "Full details: %s"
-                ), project_id, e, )
-            return buckets_list
-        else:
-            raise
+        if compute._get_error_reason(e) != 'forbidden':
+            return _handle_bucket_list_error(e, project_id)
+        logger.warning(
+            "Listing buckets with ACLs (projection=full) was denied on project %s; listing without ACLs. %s",
+            project_id, e,
+        )
+    try:
+        return _list_buckets(storage, project_id, 'noAcl')
+    except HttpError as e:
+        return _handle_bucket_list_error(e, project_id)
+
+
+def _handle_bucket_list_error(e: HttpError, project_id: str) -> List[Dict]:
+    reason = compute._get_error_reason(e)
+    if reason == 'invalid':
+        logger.warning(
+            (
+                "The project %s is invalid - returned a 400 invalid error."
+                "Full details: %s"
+            ),
+            project_id,
+            e,
+        )
+        return []
+    elif reason == 'forbidden':
+        logger.warning(
+            (
+                "You do not have storage.bucket.list access to the project %s. "
+                "Full details: %s"
+            ), project_id, e, )
+        return []
+    else:
+        raise e
 
 
 @timeit
-def transform_gcp_buckets(bucket_res: Dict, project_id: str, regions: list) -> List[Dict]:
+def transform_gcp_buckets(bucket_res: List[Dict], project_id: str, regions: list) -> List[Dict]:
     '''
     Transform the GCP Storage Bucket response object for Neo4j ingestion
 
-    :type bucket_res: The GCP storage resource object (https://cloud.google.com/storage/docs/json_api/v1/buckets)
-    :param bucket_res: The return data
+    :type bucket_res: List of GCP storage bucket resource objects
+        (https://cloud.google.com/storage/docs/json_api/v1/buckets)
+    :param bucket_res: The bucket items returned by get_gcp_buckets()
 
     :rtype: list
     :return: List of buckets ready for ingestion to Neo4j
@@ -84,7 +108,7 @@ def transform_gcp_buckets(bucket_res: Dict, project_id: str, regions: list) -> L
             b.get('iamConfiguration', {}).get('bucketPolicyOnly', {}).get('enabled', None)
         bucket['id'] = f"projects/{project_id}/locations/{str(b['location']).lower()}/buckets/{b['name']}"
         bucket['name'] = b['name']
-        bucket['labels'] = [(key, val) for (key, val) in b.get('labels', {}).items()]
+        bucket['labels'] = b.get('labels', {})
         bucket['owner_entity'] = b.get('owner', {}).get('entity')
         bucket['owner_entity_id'] = b.get('owner', {}).get('entityId')
         bucket['kind'] = b.get('kind')
@@ -105,6 +129,12 @@ def transform_gcp_buckets(bucket_res: Dict, project_id: str, regions: list) -> L
         bucket['uniform_bucket_level_access'] = b.get('iamConfiguration', {}).get(
             'uniformBucketLevelAccess', {},
         ).get('enabled', None)
+        bucket['public_access_prevention'] = b.get('iamConfiguration', {}).get('publicAccessPrevention')
+        # Legacy ACL grants to everyone (only present with projection=full, and only when uniform access is off).
+        bucket['public_acl_entities'] = sorted({
+            entry.get('entity') for entry in b.get('acl', []) + b.get('defaultObjectAcl', [])
+            if entry.get('entity') in PUBLIC_MEMBERS
+        })
         bucket['versioning_enabled'] = b.get('versioning', {}).get('enabled', None)
         bucket['default_event_based_hold'] = b.get('defaultEventBasedHold', None)
         bucket['retention_period'] = b.get('retentionPolicy', {}).get('retentionPeriod', None)
@@ -161,6 +191,8 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
     bucket.entity = $Entity,
     bucket.defaultentity = $DefaultEntity,
     bucket.uniform_bucket_level_access = $UniformBucketLevelAccess,
+    bucket.public_access_prevention = $PublicAccessPrevention,
+    bucket.public_acl_entities = $PublicAclEntities,
     bucket.retention_period = $RetentionPeriod,
     bucket.iam_config_bucket_policy_only = $IamConfigBucketPolicyOnly,
     bucket.owner_entity = $OwnerEntity,
@@ -170,6 +202,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
     bucket.requester_pays = $RequesterPays,
     bucket.default_kms_key_name = $DefaultKmsKeyName,
     bucket.consolelink = $consolelink,
+    bucket.iam_policy_status = $IamPolicyStatus,
     bucket.lastupdated = $gcp_update_tag
 
     MERGE (p)-[r:RESOURCE]->(bucket)
@@ -177,7 +210,8 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
     SET r.lastupdated = $gcp_update_tag
     """
     for bucket in buckets:
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             query,
             ProjectId=project_id,
             BucketId=bucket['id'],
@@ -193,6 +227,8 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
             Entity=bucket['entity'],
             DefaultEntity=bucket['defaultentity'],
             UniformBucketLevelAccess=bucket['uniform_bucket_level_access'],
+            PublicAccessPrevention=bucket['public_access_prevention'],
+            PublicAclEntities=bucket['public_acl_entities'],
             RetentionPeriod=bucket['retention_period'],
             IamConfigBucketPolicyOnly=bucket['iam_config_bucket_policy_only'],
             OwnerEntity=bucket['owner_entity'],
@@ -202,6 +238,7 @@ def load_gcp_buckets(neo4j_session: neo4j.Session, buckets: List[Dict], project_
             RequesterPays=bucket['requester_pays'],
             DefaultKmsKeyName=bucket['default_kms_key_name'],
             consolelink=bucket['consolelink'],
+            IamPolicyStatus=bucket.get('iam_policy_status'),
             name=bucket['name'],
             gcp_update_tag=gcp_update_tag,
         )
@@ -225,7 +262,8 @@ def cleanup_gcp_buckets(neo4j_session: neo4j.Session, common_job_parameters: Dic
 
 
 @timeit
-def get_gcp_bucket_iam_policy(storage: Resource, bucket: str) -> Dict:
+def get_gcp_bucket_iam_policy(storage: Resource, bucket: str) -> Optional[Dict]:
+    """The bucket's IAM policy; None when it could not be read (no access, or the bucket is invalid)."""
     try:
         req = storage.buckets().getIamPolicy(bucket=bucket)
         res = req.execute()
@@ -241,32 +279,38 @@ def get_gcp_bucket_iam_policy(storage: Resource, bucket: str) -> Dict:
                 bucket,
                 e,
             )
-            return {}
+            return None
         elif reason == 'forbidden':
             logger.warning(
                 (
                     "You do not have storage.bucket.getIamPolicy access to the bucket %s. "
                     "Full details: %s"
                 ), bucket, e, )
-            return {}
+            return None
         else:
             raise
 
 
 @timeit
-def transform_gcp_bucket_iam_policy_bindings(bindings: Dict, project_id: str, bucket_id: str) -> List[Dict]:
+def transform_gcp_bucket_iam_policy_bindings(
+    bindings: List[Dict], project_id: str, bucket_id: str,
+) -> List[Dict]:
     for binding in bindings:
         binding['id'] = f"projects/{project_id}/buckets/{bucket_id}/role/{binding['role']}"
     return bindings
 
 
 @timeit
-def load_bucket_iam_policy_bindings(session: neo4j.Session, data_list: List[Dict], bucket_id: str, update_tag: int) -> None:
-    session.execute_write(_load_bucket_iam_policy_bindings_tx, data_list, bucket_id, update_tag)
+def load_bucket_iam_policy_bindings(
+    session: neo4j.Session, data_list: List[Dict], bucket_id: str, update_tag: int, project_id: str,
+) -> None:
+    session.execute_write(_load_bucket_iam_policy_bindings_tx, data_list, bucket_id, update_tag, project_id)
 
 
 @timeit
-def _load_bucket_iam_policy_bindings_tx(tx: neo4j.Transaction, data_list: List[Dict], bucket_id: str, gcp_update_tag: int) -> None:
+def _load_bucket_iam_policy_bindings_tx(
+    tx: neo4j.Transaction, data_list: List[Dict], bucket_id: str, gcp_update_tag: int, project_id: str,
+) -> None:
     ingest_bucket_iam_policy_bindings = """
     UNWIND $policy_bindings as binding
     MERGE (u:GCPBucketPolicyBinding{id:binding.id})
@@ -277,7 +321,7 @@ def _load_bucket_iam_policy_bindings_tx(tx: neo4j.Transaction, data_list: List[D
         u.role = binding.role,
         u.lastupdated = $gcp_update_tag
     WITH u
-    MATCH (i:GCPBucket{id:$bucket_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPBucket{id:$bucket_id})
     MERGE (i)-[r:ATTACHED_BINDING]->(u)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -287,6 +331,7 @@ def _load_bucket_iam_policy_bindings_tx(tx: neo4j.Transaction, data_list: List[D
         ingest_bucket_iam_policy_bindings,
         policy_bindings=data_list,
         bucket_id=bucket_id,
+        ProjectId=project_id,
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -324,12 +369,17 @@ def sync(
     logger.info("Syncing Storage objects for project %s.", project_id)
     storage_res = get_gcp_buckets(storage, project_id, common_job_parameters)
     bucket_list = transform_gcp_buckets(storage_res, project_id, regions)
+    # Read policies first so iam_policy_status lands with the bucket; the bindings cleanup keeps an
+    # unresolved bucket's last-read bindings.
+    policies = {bucket['id']: get_gcp_bucket_iam_policy(storage, bucket['name']) for bucket in bucket_list}
+    for bucket in bucket_list:
+        bucket['iam_policy_status'] = POLICY_UNRESOLVED if policies[bucket['id']] is None else POLICY_RESOLVED
     load_gcp_buckets(neo4j_session, bucket_list, project_id, gcp_update_tag)
 
     for bucket in bucket_list:
-        bucket_iam_policy = get_gcp_bucket_iam_policy(storage, bucket['name'])
-        bindings = transform_gcp_bucket_iam_policy_bindings(bucket_iam_policy['bindings'], project_id, bucket['id'])
-        load_bucket_iam_policy_bindings(neo4j_session, bindings, bucket['id'], gcp_update_tag)
+        policy = policies[bucket['id']] or {}
+        bindings = transform_gcp_bucket_iam_policy_bindings(policy.get('bindings', []), project_id, bucket['id'])
+        load_bucket_iam_policy_bindings(neo4j_session, bindings, bucket['id'], gcp_update_tag, project_id)
 
     # TODO scope the cleanup to the current project - https://github.com/lyft/cartography/issues/381
     cleanup_gcp_buckets(neo4j_session, common_job_parameters)

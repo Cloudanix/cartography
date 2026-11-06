@@ -1,0 +1,24 @@
+{
+  "statements": [
+    {
+      "query": "MATCH (cluster:MSKCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE cluster.exposed_internet IS NOT NULL WITH cluster LIMIT $LIMIT_SIZE REMOVE cluster.exposed_internet, cluster.exposed_internet_type, cluster.publicContext return COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Only provisioned clusters can turn on public access (SERVICE_PROVIDED_EIPS); serverless clusters have no such setting and are never public. A public cluster is reachable when one of its security groups admits 0.0.0.0/0 or ::/0 over TCP on a public broker port: 9194 TLS, 9196 SASL/SCRAM, 9198 IAM, and 20094/20096/20098 for their IPv6 (dual-stack) bootstrap strings.",
+      "query": "MATCH (cidr)-[:MEMBER_OF_IP_RULE]->(rule:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(cluster:MSKCluster{cluster_type: 'PROVISIONED'})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE cluster.public_access_type IS NOT NULL AND cluster.public_access_type <> 'DISABLED' AND ((cidr:IpRange AND cidr.range = '0.0.0.0/0') OR (cidr:Ipv6Range AND cidr.range = '::/0')) AND (rule.protocol IS NULL OR rule.protocol IN ['-1', 'tcp', '6']) AND (rule.protocol = '-1' OR any(port IN [9194, 9196, 9198, 20094, 20096, 20098] WHERE coalesce(rule.fromport, 0) <= port AND port <= coalesce(rule.toport, 65535))) WITH cluster, collect(DISTINCT CASE WHEN cidr:IpRange THEN 'direct_ipv4' ELSE 'direct_ipv6' END) AS types SET cluster.exposed_internet = true, cluster.exposed_internet_type = types",
+      "iterative": false
+    },
+    {
+      "__comment": "Fail-safe: a public cluster whose security groups are not all in the graph (none listed, or not synced: a synced group has a name) cannot be resolved, so it stays public.",
+      "query": "MATCH (cluster:MSKCluster{cluster_type: 'PROVISIONED'})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE cluster.public_access_type IS NOT NULL AND cluster.public_access_type <> 'DISABLED' OPTIONAL MATCH (cluster)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup) WHERE sg.id IN coalesce(cluster.security_groups, []) AND sg.name IS NOT NULL WITH cluster, count(DISTINCT sg) AS resolved WHERE size(coalesce(cluster.security_groups, [])) = 0 OR resolved < size(cluster.security_groups) SET cluster.exposed_internet = true, cluster.exposed_internet_type = [t IN coalesce(cluster.exposed_internet_type, []) WHERE t <> 'public_access_unresolved_security_group'] + 'public_access_unresolved_security_group'",
+      "iterative": false
+    },
+    {
+      "query": "MATCH (cluster:MSKCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE cluster.exposed_internet = true WITH cluster OPTIONAL MATCH (cidr)-[:MEMBER_OF_IP_RULE]->(rule:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:MEMBER_OF_EC2_SECURITY_GROUP]-(cluster) WHERE (cidr:IpRange AND cidr.range = '0.0.0.0/0') OR (cidr:Ipv6Range AND cidr.range = '::/0') WITH cluster, [r IN collect(DISTINCT {securityGroupId: sg.id, fromPort: rule.fromport, toPort: rule.toport, protocol: rule.protocol, ipRange: cidr.range}) WHERE r.securityGroupId IS NOT NULL] AS securityRules SET cluster.publicContext = apoc.convert.toJson([{resource: cluster.arn, resourceType: 'aws-applicationintegration-msk-cluster', context: [{clusterArn: cluster.arn, clusterName: cluster.name, publicAccessType: cluster.public_access_type, kafkaVersion: cluster.kafka_version, iamAuth: cluster.iam_auth_enabled, scramAuth: cluster.scram_auth_enabled, tlsAuth: cluster.tls_auth_enabled, securityGroups: cluster.security_groups, exposureTypes: cluster.exposed_internet_type, securityRules: securityRules}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "aws MSK cluster internet exposure"
+}

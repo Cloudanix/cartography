@@ -8,6 +8,7 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -48,7 +49,7 @@ def load_launch_configurations(
         neo4j_session: neo4j.Session, data: List[Dict], region: str, current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_lc = """
-    UNWIND $launch_configurations as lc
+    UNWIND $DictList as lc
         MERGE (config:LaunchConfiguration{id: lc.LaunchConfigurationARN})
         ON CREATE SET config.firstseen = timestamp(), config.name = lc.LaunchConfigurationName,
         config.arn = lc.LaunchConfigurationARN,
@@ -77,9 +78,10 @@ def load_launch_configurations(
         lc['CreatedTime'] = str(int(lc['CreatedTime'].timestamp()))
         lc['consolelink'] = aws_console_link.get_console_link(arn=lc['LaunchConfigurationARN'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_lc,
-        launch_configurations=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         Region=region,
         update_tag=update_tag,
@@ -91,7 +93,7 @@ def load_ec2_auto_scaling_groups(
     neo4j_session: neo4j.Session, data: List[Dict], region: str, current_aws_account_id: str, update_tag: int,
 ) -> None:
     ingest_group = """
-    UNWIND $autoscaling_groups_list as ag
+    UNWIND $DictList as ag
         MERGE (group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
         ON CREATE SET group.firstseen = timestamp(),
         group.createdtime = ag.CreatedTime
@@ -116,24 +118,24 @@ def load_ec2_auto_scaling_groups(
     """
 
     ingest_vpc = """
-    UNWIND $vpc_id_list as vpc_id
+    UNWIND $DictList as vpc_id
     MERGE (subnet:EC2Subnet{subnetid: vpc_id})
     ON CREATE SET subnet.firstseen = timestamp()
     SET subnet.lastupdated = $update_tag
     WITH subnet
-    MATCH (group:AutoScalingGroup{arn: $GROUPARN})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AutoScalingGroup{arn: $GROUPARN})
     MERGE (subnet)<-[r:VPC_IDENTIFIER]-(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
 
     ingest_instance = """
-    UNWIND $instances_list as i
+    UNWIND $DictList as i
     MERGE (instance:Instance:EC2Instance{id: i.InstanceId})
     ON CREATE SET instance.firstseen = timestamp()
     SET instance.lastupdated = $update_tag, instance.region=$Region
     WITH instance
-    MATCH (group:AutoScalingGroup{arn: $GROUPARN})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AutoScalingGroup{arn: $GROUPARN})
     MERGE (instance)-[r:MEMBER_AUTO_SCALE_GROUP]->(group)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -145,18 +147,20 @@ def load_ec2_auto_scaling_groups(
     """
 
     ingest_lts = """
-    UNWIND $autoscaling_groups_list as ag
-        MATCH (group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
-        MATCH (template:LaunchTemplate{id: ag.LaunchTemplate.LaunchTemplateId})
+    UNWIND $DictList as ag
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
+        MATCH (aa)-[:RESOURCE]->(template:LaunchTemplate{id: ag.LaunchTemplate.LaunchTemplateId})
         MERGE (group)-[r:HAS_LAUNCH_TEMPLATE]->(template)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
     """
 
+    # The group names its launch configuration, and names are unique only per account and region
+    # (the ARN carries a random id): resolve it inside the syncing account and region.
     ingest_lcs = """
-    UNWIND $autoscaling_groups_list as ag
-        MATCH (group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
-        MATCH (config:LaunchConfiguration{name: ag.LaunchConfigurationName})
+    UNWIND $DictList as ag
+        MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(group:AutoScalingGroup{arn: ag.AutoScalingGroupARN})
+        MATCH (aa)-[:RESOURCE]->(config:LaunchConfiguration{name: ag.LaunchConfigurationName, region: $Region})
         MERGE (group)-[r:HAS_LAUNCH_CONFIG]->(config)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $update_tag
@@ -173,23 +177,26 @@ def load_ec2_auto_scaling_groups(
         group['CreatedTime'] = str(group['CreatedTime'])
         group['consolelink'] = aws_console_link.get_console_link(arn=group['AutoScalingGroupARN'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_group,
-        autoscaling_groups_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         Region=region,
         update_tag=update_tag,
     )
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_lcs,
-        autoscaling_groups_list=launch_configs,
+        launch_configs,
         AWS_ACCOUNT_ID=current_aws_account_id,
         Region=region,
         update_tag=update_tag,
     )
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_lts,
-        autoscaling_groups_list=launch_templates,
+        launch_templates,
         AWS_ACCOUNT_ID=current_aws_account_id,
         Region=region,
         update_tag=update_tag,
@@ -200,23 +207,23 @@ def load_ec2_auto_scaling_groups(
         if group.get('VPCZoneIdentifier'):
             vpclist = group["VPCZoneIdentifier"]
 
-            if ',' in vpclist:
-                data = vpclist.split(',')
-            else:
-                data = vpclist
+            data = vpclist.split(',')
 
-            neo4j_session.run(
+            load_graph_data(
+                neo4j_session,
                 ingest_vpc,
-                vpc_id_list=data,
+                data,
                 GROUPARN=group_arn,
+                AWS_ACCOUNT_ID=current_aws_account_id,
                 update_tag=update_tag,
             )
 
         if group.get("Instances"):
             data = group["Instances"]
-            neo4j_session.run(
+            load_graph_data(
+                neo4j_session,
                 ingest_instance,
-                instances_list=data,
+                data,
                 GROUPARN=group_arn,
                 AWS_ACCOUNT_ID=current_aws_account_id,
                 Region=region,

@@ -1,6 +1,6 @@
 GET_ELASTIC_IP_ADDRESSES = [
     {
-        'PublicIp': '192.168.1.1',
+        'PublicIp': '34.201.17.55',
         'AllocationId': 'eipalloc-00000000000000000',
         'AssociationId': 'eipassoc-00000000000000000',
         'Domain': 'vpc',

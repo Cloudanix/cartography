@@ -45,3 +45,11 @@ test-requirements.txt
 
 tmp
 scripts
+
+.venv*
+.mypy_cache
+.ruff_cache
+
+.code-review-graph
+.code-review-graph/
+

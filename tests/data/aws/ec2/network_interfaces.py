@@ -106,7 +106,7 @@ DESCRIBE_NETWORK_INTERFACES = [
             },
         ],
         "InterfaceType": "interface",
-        "Ipv6Addresses": [],
+        "Ipv6Addresses": [{"Ipv6Address": "2600:1f18:4f3:8a00::5"}],
         "MacAddress": "06:25:81:d1:86:e4",
         "NetworkInterfaceId": "eni-04b4289e1be7634e4",
         "OwnerId": "000000000000",

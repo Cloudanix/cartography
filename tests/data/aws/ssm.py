@@ -12,6 +12,7 @@ INSTANCE_INFORMATION = [
         'PlatformName': 'Amazon Linux',
         'PlatformVersion': '2',
         'ResourceType': 'EC2Instance',
+        'Name': 'test-managed-01',
         'IPAddress': '10.0.0.1',
         'ComputerName': 'ip-10-0-0-1.us-east-1.compute.internal',
         'AssociationStatus': 'Pending',
@@ -26,6 +27,10 @@ INSTANCE_INFORMATION = [
         },
         'SourceId': 'i-01',
         'SourceType': 'AWS::EC2::Instance',
+        'SourceLocation': None,
+        'ActivationId': None,
+        'IamRole': 'SSMInstanceProfile',
+        'RegistrationDate': datetime.datetime(2022, 3, 1, 0, 0, 0, tzinfo=tz.utc),
     },
     {
         'InstanceId': 'i-02',
@@ -37,6 +42,7 @@ INSTANCE_INFORMATION = [
         'PlatformName': 'Amazon Linux',
         'PlatformVersion': '2',
         'ResourceType': 'EC2Instance',
+        'Name': 'test-managed-02',
         'IPAddress': '10.0.0.2',
         'ComputerName': 'ip-10-0-0-2.us-east-1.compute.internal',
         'AssociationStatus': 'Pending',
@@ -51,6 +57,10 @@ INSTANCE_INFORMATION = [
         },
         'SourceId': 'i-02',
         'SourceType': 'AWS::EC2::Instance',
+        'SourceLocation': None,
+        'ActivationId': None,
+        'IamRole': 'SSMInstanceProfile',
+        'RegistrationDate': datetime.datetime(2022, 3, 1, 0, 0, 0, tzinfo=tz.utc),
     },
 ]
 

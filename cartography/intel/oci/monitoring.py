@@ -11,8 +11,10 @@ import oci.events
 import oci.monitoring
 import oci.ons
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -69,9 +71,10 @@ def load_alarms(
         a.metric_compartment_id = alarm.metric_compartment_id,
         a.destinations = alarm.destinations,
         a.region = $REGION,
+        a.consolelink = alarm.consolelink,
         a.lastupdated = $oci_update_tag
         WITH a, alarm
-        MATCH (cc:OCICompartment{id: alarm.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: alarm.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(a)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -89,12 +92,13 @@ def load_alarms(
             "lifecycle_state": alarm.get("lifecycle-state"),
             "metric_compartment_id": alarm.get("metric-compartment-id", ""),
             "destinations": alarm.get("destinations", []),
+            "consolelink": utils.get_console_link("alarm", region=region, ocid=alarm.get("id")),
         }
         for alarm in alarms
     ]
     load_graph_data(
         neo4j_session, ingest_alarm, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -114,6 +118,10 @@ def sync_alarms(
             load_alarms(
                 neo4j_session, data["Alarms"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
+            )
+            tags.sync_tags(
+                neo4j_session, data["Alarms"], 'OCIMonitoringAlarm',
+                oci_update_tag, common_job_parameters,
             )
 
 
@@ -159,21 +167,28 @@ def load_cloud_guard(
     cg.status = $STATUS,
     cg.reporting_region = $REPORTING_REGION,
     cg.region = $REGION,
+    cg.consolelink = $CONSOLELINK,
     cg.lastupdated = $oci_update_tag
     WITH cg
-    MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+    MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (cc)-[r:RESOURCE]->(cg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_cg,
         CONFIG_ID=f"oci.cloudguard.{compartment_id}.{region}",
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         STATUS=config_data.get("status", "DISABLED"),
         REPORTING_REGION=config_data.get("reporting-region", ""),
         REGION=region,
+        # Cloud Guard is managed from its reporting region.
+        CONSOLELINK=utils.get_console_link(
+            "cloud_guard", region=config_data.get("reporting-region") or region,
+        ),
         oci_update_tag=oci_update_tag,
     )
 
@@ -246,9 +261,10 @@ def load_event_rules(
         er.lifecycle_state = rule.lifecycle_state,
         er.description = rule.description,
         er.region = $REGION,
+        er.consolelink = rule.consolelink,
         er.lastupdated = $oci_update_tag
         WITH er, rule
-        MATCH (cc:OCICompartment{id: rule.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: rule.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(er)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -264,12 +280,13 @@ def load_event_rules(
             "lifecycle_state": rule.get("lifecycle-state"),
             "description": rule.get("description", ""),
             "time_created": str(rule.get("time-created", "")),
+            "consolelink": utils.get_console_link("events_rule", region=region, ocid=rule.get("id")),
         }
         for rule in rules
     ]
     load_graph_data(
         neo4j_session, ingest_rule, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -289,6 +306,10 @@ def sync_event_rules(
             load_event_rules(
                 neo4j_session, data["Rules"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
+            )
+            tags.sync_tags(
+                neo4j_session, data["Rules"], 'OCIEventRule',
+                oci_update_tag, common_job_parameters,
             )
 
 
@@ -341,9 +362,10 @@ def load_notification_topics(
         t.description = topic.description,
         t.api_endpoint = topic.api_endpoint,
         t.region = $REGION,
+        t.consolelink = topic.consolelink,
         t.lastupdated = $oci_update_tag
         WITH t, topic
-        MATCH (cc:OCICompartment{id: topic.compartment_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: topic.compartment_id})
         MERGE (cc)-[r:RESOURCE]->(t)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -359,12 +381,15 @@ def load_notification_topics(
             "description": topic.get("description", ""),
             "api_endpoint": topic.get("api-endpoint", ""),
             "time_created": str(topic.get("time-created", "")),
+            "consolelink": utils.get_console_link(
+                "notification_topic", region=region, ocid=topic.get("topic-id", topic.get("id", "")),
+            ),
         }
         for topic in topics
     ]
     load_graph_data(
         neo4j_session, ingest_topic, rows,
-        REGION=region, oci_update_tag=oci_update_tag,
+        TENANCY_ID=tenancy_id, REGION=region, oci_update_tag=oci_update_tag,
     )
 
 
@@ -387,6 +412,10 @@ def sync_notification_topics(
             load_notification_topics(
                 neo4j_session, data["Topics"], tenancy_id,
                 compartment["ocid"], region, oci_update_tag,
+            )
+            tags.sync_tags(
+                neo4j_session, data["Topics"], 'OCINotificationTopic',
+                oci_update_tag, common_job_parameters,
             )
 
 

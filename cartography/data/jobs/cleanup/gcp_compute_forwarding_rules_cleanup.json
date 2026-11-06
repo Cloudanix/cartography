@@ -1,16 +1,10 @@
 {
 	"statements": [
 		{
-			"query": "MATCH (n:GCPForwardingRule)<-[:RESOURCE]-(:GCPSubnet)<-[:RESOURCE]-(:GCPVpc)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"query": "MATCH (:GCPSubnet)-[r:RESOURCE]->(:GCPForwardingRule)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
 			"iterative": true,
 			"iterationsize": 100,
-			"__comment__": "Remove GCP Subnetwork-to-Forwarding Rules relationships that are out of date."
-		},
-		{
-			"query": "MATCH (:GCPForwardingRule)<-[r:RESOURCE]-(:GCPSubnet)<-[:RESOURCE]-(:GCPVpc)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
-			"iterative": true,
-			"iterationsize": 100,
-			"__comment__": "Remove GCP Subnetwork-to-Forwarding Rules relationships that are out of date."
+			"__comment__": "Remove GCP Subnetwork-to-Forwarding Rules relationships that are out of date, anchored on the rule's own project: a rule may sit in a Shared VPC host project's subnet, whose sync must not touch it. Stale rule nodes are deleted below through their project."
 		},
 		{
 			"query": "MATCH (n:GCPForwardingRule)<-[:RESOURCE]-(:GCPVpc)<-[r:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
@@ -23,6 +17,18 @@
 			"iterative": true,
 			"iterationsize": 100,
 			"__comment__": "Remove GCP VPC-to-Forwarding Rules relationships that are out of date."
+		},
+		{
+			"query": "MATCH (n:GCPForwardingRule)<-[:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.lastupdated <> $UPDATE_TAG WITH n LIMIT $LIMIT_SIZE DETACH DELETE (n) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Delete GCP Forwarding Rules of this project that no longer exist (every rule hangs off its project; global external rules have no VPC)."
+		},
+		{
+			"query": "MATCH (:GCPForwardingRule)<-[r:RESOURCE]-(:GCPProject{id: $GCP_PROJECT_ID})<-[:OWNER]-(:GCPOrganization{id:$GCP_ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove GCP Project-to-Forwarding Rules relationships that are out of date."
 		}
 	],
 	"name": "cleanup GCP Forwarding Rules"

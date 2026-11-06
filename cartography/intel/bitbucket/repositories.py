@@ -6,11 +6,15 @@ from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from clouduniqueid.clouds.bitbucket import BitbucketUniqueId
 
 from .common import cleanse_string
+from .common import get_console_link
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import make_requests_url
 from cartography.util import normalize_datetime
 from cartography.util import run_cleanup_job
@@ -21,19 +25,59 @@ logger = logging.getLogger(__name__)
 bitbucket_linker = BitbucketUniqueId()
 
 
+class BitbucketAuthError(Exception):
+    """The repository list could not be read, so this sync has no repository data."""
+
+
+def ensure_repository_list_readable(access_token: str, workspace: str) -> None:
+    """Raise when the repository list itself cannot be read.
+
+    A later page or a single repository can still fail after this. Callers
+    that already have at least one repository should keep going.
+    """
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=1"
+    _, status = _repository_page(url, access_token)
+    if status != 200:
+        raise BitbucketAuthError(f"bitbucket repository list failed: HTTP {status}")
+
+
+def _repository_page(url: str, access_token: str) -> tuple:
+    body, status = make_requests_url(url, access_token, return_status=True)
+    if not isinstance(body, dict):
+        body = {}
+    return body, status
+
+
 @timeit
-def get_repos(access_token: str, workspace: str) -> List[Dict]:
+def get_repos(access_token: str, workspace: str) -> tuple:
+    """Return repositories and whether every page was read.
+
+    The first page must be readable. A later page can fail; the repositories
+    already read are still returned and list_complete is False so cleanup is skipped.
+    """
     # https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-workspace-get
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=100"
 
-    response = make_requests_url(url, access_token)
-    repositories = response.get("values", [])
+    response, status = _repository_page(url, access_token)
+    if status != 200:
+        raise BitbucketAuthError(f"bitbucket repository list failed: HTTP {status}")
 
-    while "next" in response:
-        response = make_requests_url(response.get("next"), access_token)
+    repositories = response.get("values", [])
+    list_complete = True
+
+    while response.get("next"):
+        response, status = _repository_page(response.get("next"), access_token)
+        if status != 200:
+            list_complete = False
+            logger.warning(
+                "bitbucket repository page failed after %s repositories were read: HTTP %s",
+                len(repositories),
+                status,
+            )
+            break
         repositories.extend(response.get("values", []))
 
-    return repositories
+    return repositories, list_complete
 
 
 @timeit
@@ -86,6 +130,7 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
         }
 
         repo["uniqueId"] = bitbucket_linker.get_unique_id(service="bitbucket", data=data, resource_type="repository")
+        repo["consolelink"] = get_console_link("repository", workspace=workspace, repo=repo["slug"])
         transformed_repo_list.append(repo)
 
     return {
@@ -94,7 +139,13 @@ def transform_repos(workspace_repos: List[Dict], workspace: str) -> Dict:
     }
 
 
-def transform_branches(branches: List[Dict], repo_id: str, default_branch: str = None) -> List[Dict]:
+def transform_branches(
+    branches: List[Dict],
+    repo_id: str,
+    default_branch: str = None,
+    workspace: Optional[str] = None,
+    repo_slug: Optional[str] = None,
+) -> List[Dict]:
     """
     Transform branch data and filter to include only branches active in the last 6 months (180 days).
     The default branch is always included regardless of activity date.
@@ -106,6 +157,7 @@ def transform_branches(branches: List[Dict], repo_id: str, default_branch: str =
         branch_name = branch["name"]
         target = branch.get("target", {})
         date_str = target.get("date")
+        consolelink = get_console_link("branch", workspace=workspace, repo=repo_slug, branch=branch_name)
 
         # Always include default branch
         if branch_name == default_branch:
@@ -114,6 +166,7 @@ def transform_branches(branches: List[Dict], repo_id: str, default_branch: str =
                 "id": f"{repo_id}:{branch_name}",
                 "name": branch_name,
                 "date": date_str,
+                "consolelink": consolelink,
             })
             continue
 
@@ -127,6 +180,7 @@ def transform_branches(branches: List[Dict], repo_id: str, default_branch: str =
                         "id": f"{repo_id}:{branch_name}",
                         "name": branch_name,
                         "date": date_str,
+                        "consolelink": consolelink,
                     })
             except (ValueError, AttributeError):
                 pass
@@ -151,10 +205,12 @@ def _load_branches(tx: neo4j.Transaction, branches_data: List[Dict], common_job_
     ON CREATE SET br.firstseen = timestamp()
     SET br.name = branch.name,
     br.date = branch.date,
+    br.consolelink = branch.consolelink,
     br.lastupdated = $UpdateTag
 
     WITH br, branch
-    MATCH (repo:BitbucketRepository{id:branch.repo_id})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)-[:RESOURCE]->(:BitbucketProject)
+        -[:RESOURCE]->(repo:BitbucketRepository{id:branch.repo_id})
     MERGE (repo)-[r:BRANCH]->(br)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -163,20 +219,24 @@ def _load_branches(tx: neo4j.Transaction, branches_data: List[Dict], common_job_
     tx.run(
         ingest_branches,
         branchesData=branches_data,
+        WORKSPACE_ID=common_job_parameters["WORKSPACE_ID"],
         UpdateTag=common_job_parameters["UPDATE_TAG"],
     )
 
 
 @timeit
-def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_language: List[Dict]) -> None:
+def load_languages(
+    neo4j_session: neo4j.Session, update_tag: int, repo_primary_language: List[Dict], workspace_id: str,
+) -> None:
     """
     Ingest the relationships for repo languages
     :param neo4j_session: Neo4J session object for server communication
     :param update_tag: Timestamp used to determine data freshness
     :param repo_primary_language: list of primary language to repo mappings
+    :param workspace_id: the syncing Cloudanix workspace; a language links only to a repo of its workspaces
     """
     ingest_languages = """
-        UNWIND $Languages as lang
+        UNWIND $DictList as lang
 
         MERGE (pl:ProgrammingLanguage{id: lang.primary_language})
         ON CREATE SET pl.firstseen = timestamp(),
@@ -184,16 +244,19 @@ def load_languages(neo4j_session: neo4j.Session, update_tag: int, repo_primary_l
         SET pl.lastupdated = $UpdateTag
         WITH pl, lang
 
-        MATCH (repo:BitbucketRepository{id: lang.repo_id})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)-[:RESOURCE]->(:BitbucketProject)
+            -[:RESOURCE]->(repo:BitbucketRepository{id: lang.repo_id})
         MERGE (repo)-[r:PRIMARY_LANGUAGE]->(pl)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $UpdateTag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_languages,
-        Languages=repo_primary_language,
+        repo_primary_language,
         UpdateTag=update_tag,
+        WORKSPACE_ID=workspace_id,
     )
 
 
@@ -221,11 +284,13 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
     re.updated_on = repo.updated_on,
     re.visibility = repo.visibility,
     re.lastupdated = $UpdateTag,
-    re.console_link = repo.console_link
+    re.console_link = repo.console_link,
+    re.consolelink = repo.consolelink
 
     WITH re, repo
-    MATCH (project:BitbucketProject{id:repo.project.uuid})
-    MERGE (project)<-[o:RESOURCE]-(re)
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)
+        -[:RESOURCE]->(project:BitbucketProject{id:repo.project.uuid})
+    MERGE (project)-[o:RESOURCE]->(re)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
     """
@@ -234,6 +299,7 @@ def _load_repositories_data(tx: neo4j.Transaction, repos_data: List[Dict], commo
         ingest_repositories,
         reposData=repos_data,
         UpdateTag=common_job_parameters["UPDATE_TAG"],
+        WORKSPACE_ID=common_job_parameters["WORKSPACE_ID"],
     )
 
 
@@ -242,10 +308,12 @@ def _update_repo_last_activity(
     repo_id: str,
     branches: List[Dict],
     default_branch: str,
+    workspace_id: str,
 ) -> None:
     """
     Compute and store last_activity_at for a Bitbucket repository from its branch commit dates.
     Priority: (1) default branch commit date, (2) max commit date across all branches.
+    :param workspace_id: the syncing Cloudanix workspace; only a repo of its Bitbucket workspaces is updated
     """
     last_activity_at = None
     # Priority 1: default branch commit date
@@ -262,9 +330,15 @@ def _update_repo_last_activity(
 
     if last_activity_at is not None:
         iso_str, ts_ms = normalize_datetime(last_activity_at)
-        neo4j_session.run(
-            "MATCH (r:BitbucketRepository{id: $RepoId}) SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs",
+        run_write_query(
+            neo4j_session,
+            """
+            MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:BitbucketWorkspace)
+                -[:RESOURCE]->(:BitbucketProject)-[:RESOURCE]->(r:BitbucketRepository{id: $RepoId})
+            SET r.last_activity_at = $LastActivity, r.last_activity_at_timestamp = $LastActivityTs
+            """,
             RepoId=repo_id,
+            WORKSPACE_ID=workspace_id,
             LastActivity=iso_str,
             LastActivityTs=ts_ms,
         )
@@ -293,7 +367,7 @@ def sync(
     )
 
     logger.info("Syncing Bitbucket All Repositories")
-    workspace_repos = get_repos(bitbucket_access_token, workspace_name)
+    workspace_repos, list_complete = get_repos(bitbucket_access_token, workspace_name)
     transformed_data = transform_repos(workspace_repos, workspace_name)
 
     # Load repositories
@@ -307,14 +381,24 @@ def sync(
 
         branches = get_branches(bitbucket_access_token, workspace_name, repo_slug)
         default_branch = repo.get("default_branch")
-        transformed_branches = transform_branches(branches, repo["uuid"], default_branch)
+        transformed_branches = transform_branches(branches, repo["uuid"], default_branch, workspace_name, repo_slug)
         load_branches(neo4j_session, transformed_branches, common_job_parameters)
-        _update_repo_last_activity(neo4j_session, repo["uuid"], transformed_branches, default_branch)
+        _update_repo_last_activity(
+            neo4j_session, repo["uuid"], transformed_branches, default_branch, common_job_parameters["WORKSPACE_ID"],
+        )
 
     # Load languages
-    load_languages(neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"])
+    load_languages(
+        neo4j_session, common_job_parameters["UPDATE_TAG"], transformed_data["repo_primary_language"],
+        common_job_parameters["WORKSPACE_ID"],
+    )
 
-    cleanup(neo4j_session, common_job_parameters)
+    if list_complete:
+        cleanup(neo4j_session, common_job_parameters)
+    else:
+        logger.warning(
+            "skipping Bitbucket repository cleanup because a later page failed; repositories already read are kept",
+        )
 
     toc = time.perf_counter()
     logger.info(

@@ -21,6 +21,26 @@ def _ensure_load_instances(neo4j_session):
     )
 
 
+def _ensure_ec2_instances_with_region(neo4j_session):
+    """Create EC2Instance nodes linked to the test account, with region set for SSM status matching."""
+    neo4j_session.run(
+        """
+        MATCH (aws:AWSAccount{id: $aws_account_id})
+        UNWIND $instance_ids AS instance_id
+        MERGE (i:EC2Instance{id: instance_id})
+        ON CREATE SET i.firstseen = timestamp()
+        SET i.instanceid = instance_id,
+            i.region = $region,
+            i.lastupdated = $aws_update_tag
+        MERGE (aws)-[:RESOURCE]->(i)
+        """,
+        aws_account_id=TEST_ACCOUNT_ID,
+        instance_ids=['i-01', 'i-02', 'i-03', 'i-04'],
+        region=TEST_REGION,
+        aws_update_tag=TEST_UPDATE_TAG,
+    )
+
+
 @patch.object(cartography.intel.aws.ec2.instances, 'get_ec2_instances', return_value=DESCRIBE_INSTANCES['Reservations'])
 def test_load_instance_information(mock_get_instances, neo4j_session):
     # Arrange
@@ -140,3 +160,40 @@ def test_load_instance_patches(mock_get_instances, neo4j_session):
     )
     actual_nodes = {n["n.id"] for n in nodes}
     assert actual_nodes == {"i-02-test.x86_64:0:4.2.46-34.amzn2"}
+
+
+def test_load_ec2_ssm_status(neo4j_session):
+    """EC2 instances returned by DescribeInstanceInformation get ssmenabled=true and agent version;
+    queried instances missing from the response get ssmenabled=false."""
+    create_test_account(neo4j_session, TEST_ACCOUNT_ID, TEST_UPDATE_TAG)
+    _ensure_ec2_instances_with_region(neo4j_session)
+
+    instance_ids = ['i-01', 'i-02', 'i-03', 'i-04']
+    status_list = cartography.intel.aws.ssm.transform_ec2_ssm_status(
+        instance_ids,
+        tests.data.aws.ssm.INSTANCE_INFORMATION,
+    )
+    cartography.intel.aws.ssm.load_ec2_ssm_status(
+        neo4j_session,
+        status_list,
+        TEST_REGION,
+        TEST_ACCOUNT_ID,
+    )
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(i:EC2Instance)
+        RETURN i.id AS id, i.ssmenabled AS ssmenabled, i.ssmagentversion AS ssmagentversion
+        """,
+        account_id=TEST_ACCOUNT_ID,
+    )
+    actual_nodes = {
+        (n["id"], n["ssmenabled"], n["ssmagentversion"])
+        for n in nodes
+    }
+    assert actual_nodes == {
+        ("i-01", True, "3.1.1004.1"),
+        ("i-02", True, "3.1.1004.0"),
+        ("i-03", False, None),
+        ("i-04", False, None),
+    }

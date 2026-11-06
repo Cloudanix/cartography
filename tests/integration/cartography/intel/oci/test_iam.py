@@ -124,6 +124,7 @@ def test_load_group_memberships(neo4j_session):
 def test_load_group_memberships_links_users(neo4j_session):
     # Load users and the group first, then membership edges; assert both users
     # are wired to the group via MEMBER_OCID_GROUP through the batched loader.
+    neo4j_session.run("MERGE (:OCITenancy{id: $id})", id=TEST_TENANCY_ID)
     iam.load_users(
         neo4j_session, tests.data.oci.iam.LIST_USERS['Users'], TEST_TENANCY_ID, TEST_UPDATE_TAG,
     )
@@ -134,6 +135,7 @@ def test_load_group_memberships_links_users(neo4j_session):
     iam.load_group_memberships(
         neo4j_session,
         {group_ocid: tests.data.oci.iam.LIST_GROUP_MEMBERSHIPS},
+        TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
     )
     assert check_rels(

@@ -7,6 +7,7 @@ import boto3
 import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import dict_date_to_epoch
@@ -23,7 +24,9 @@ def get_secret_list(boto3_session: boto3.session.Session, region: str) -> List[D
     client = boto3_session.client('secretsmanager', region_name=region, config=get_botocore_config())
     paginator = client.get_paginator('list_secrets')
     secrets: List[Dict] = []
-    for page in paginator.paginate():
+    # IncludePlannedDeletion=False is the API default; pass explicitly so
+    # secrets scheduled for deletion never leave Secrets Manager.
+    for page in paginator.paginate(IncludePlannedDeletion=False):
         secrets.extend(page['SecretList'])
     return secrets
 
@@ -37,7 +40,7 @@ def load_secrets(
     aws_update_tag: int,
 ) -> None:
     ingest_secrets = """
-    UNWIND $Secrets as secret
+    UNWIND $DictList as secret
         MERGE (s:SecretsManagerSecret{id: secret.ARN})
         ON CREATE SET s.firstseen = timestamp()
         SET s.name = secret.Name, s.description = secret.Description, s.kms_key_id = secret.KmsKeyId,
@@ -63,9 +66,10 @@ def load_secrets(
         secret['CreatedDate'] = dict_date_to_epoch(secret, 'CreatedDate')
         secret['consolelink'] = aws_console_link.get_console_link(arn=secret['ARN'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_secrets,
-        Secrets=data,
+        data,
         Region=region,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,

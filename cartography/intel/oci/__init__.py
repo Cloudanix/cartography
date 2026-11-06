@@ -9,24 +9,55 @@ from typing import Dict
 from typing import List
 
 import neo4j
-import oci
+import oci.artifacts
+import oci.key_management
+import oci.logging
+import oci.monitoring
 from oci.exceptions import ConfigFileNotFound
 from oci.exceptions import InvalidConfig
 from oci.exceptions import ProfileNotFound
 
 from . import compartment
+from . import database
+from . import exposure_layers
 from . import iam
+from . import oke
 from . import organizations
 from . import storage
+from . import tags
 from . import utils
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
+from cartography.intel.exposure import step as exposure_step
 from cartography.intel.oci.util.common import parse_and_validate_oci_requested_syncs
-# from cartography.util import run_analysis_job
+from cartography.util import run_analysis_job_logged as run_analysis_job
 # from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
-Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging')
+Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging containerregistry database')
+
+# Analysis jobs run per compartment after all resource syncs, in this order.
+OCI_ANALYSIS_JOBS = [
+    'oci_subnet_asset_exposure.json',
+    # Reads the subnet job's exposed_internet.
+    'oci_security_list_asset_exposure.json',
+    'oci_load_balancer_asset_exposure.json',
+    'oci_instance_asset_exposure.json',
+    # Reads the instance job's exposed_internet.
+    'oci_boot_volume_asset_exposure.json',
+    'oci_db_system_asset_exposure.json',
+    'oci_iam_user_analysis.json',
+    'oci_iam_policy_analysis.json',
+    'oci_encryption_analysis.json',
+    'oci_monitoring_analysis.json',
+    'oci_containerregistry_asset_exposure.json',
+    'oci_object_storage_asset_exposure.json',
+    'oci_file_storage_asset_exposure.json',
+    'oci_autonomous_database_asset_exposure.json',
+    'oci_oke_cluster_asset_exposure.json',
+    'oci_api_gateway_asset_exposure.json',
+    'oci_logging_analysis.json',
+]
 
 
 def _sync_one_compartment(
@@ -90,7 +121,7 @@ def _sync_one_compartment(
 
     # Run remaining resource syncs (skip IAM since it's already handled above)
     for func_name in requested_syncs:
-        if func_name == "iam":
+        if func_name in ("iam", exposure_step.EXPOSURE_LAYERS_SYNC):
             continue
         if func_name in RESOURCE_FUNCTIONS:
             logger.info("Syncing OCI %s for compartment '%s'.", func_name, compartment_id)
@@ -128,6 +159,16 @@ def _sync_one_compartment(
             logger.warning(
                 'OCI sync function "%s" was specified but does not exist. Did you misspell it?', func_name,
             )
+
+    # Run analysis jobs after all resource syncs complete
+    for job_file in OCI_ANALYSIS_JOBS:
+        run_analysis_job(job_file, neo4j_session, common_job_parameters)
+
+    # Reads what the syncs and jobs above wrote; runs only when requested (see exposure/step.py).
+    exposure_step.run_if_requested(
+        exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
+    )
+
     logger.info(
         json.dumps({
             "event": "oci_compartment_timing_summary",
@@ -176,6 +217,21 @@ def _sync_multiple_compartments(
         )
 
         del common_job_parameters["OCI_COMPARTMENT_ID"]
+
+    # OKE pools and their worker instances can sit in different compartments, which sync one
+    # after another; link nodes only once every compartment has been synced.
+    if "oke" in requested_syncs or "compute" in requested_syncs:
+        try:
+            oke.sync_oke_node_links(neo4j_session, common_job_parameters)
+        except Exception as e:
+            logger.error("Error linking OCI OKE nodes: %s", e, exc_info=True)
+
+    # Tags cleanup is tenancy-wide, so it must run only after every compartment
+    # in this run has been synced with the current update tag.
+    try:
+        tags.cleanup_tags(neo4j_session, common_job_parameters)
+    except Exception as e:
+        logger.error("Error cleaning up OCI tags: %s", e, exc_info=True)
 
 
 def _get_network_resource(credentials: Dict[str, Any]) -> oci.core.virtual_network_client.VirtualNetworkClient:
@@ -240,6 +296,16 @@ def _get_logging_resource(credentials: Dict[str, Any]) -> oci.logging.LoggingMan
     return oci.logging.LoggingManagementClient(credentials)
 
 
+def _get_containerregistry_resource(credentials: Dict[str, Any]) -> oci.artifacts.ArtifactsClient:
+    """
+    Instantiates an OCI ArtifactsClient resource object to call the Container Registry API.
+    See https://docs.oracle.com/en-us/iaas/Content/Registry/Concepts/registryoverview.htm.
+    :param credentials: OCI Credentials object
+    :return: An ArtifactsClient resource object
+    """
+    return oci.artifacts.ArtifactsClient(credentials)
+
+
 def _get_storage_resource(credentials: Dict[str, Any]) -> storage.OCIStorageClients:
     """
     Bundle the three OCI SDK clients used by the storage sync (Object Storage,
@@ -266,6 +332,17 @@ def _get_oke_resource(credentials: Dict[str, Any]) -> oci.container_engine.Conta
     return oci.container_engine.ContainerEngineClient(credentials)
 
 
+def _get_database_resource(credentials: Dict[str, Any]) -> oci.database.DatabaseClient:
+    """
+    Instantiates a OCI DatabaseClient resource object to call the Database
+    service API (Autonomous Database, Base Database System, DB Homes / Nodes).
+    See https://docs.oracle.com/en-us/iaas/Content/Database/Concepts/databaseoverview.htm.
+    :param credentials: The OCI Credentials object
+    :return: A DatabaseClient resource object
+    """
+    return oci.database.DatabaseClient(credentials)
+
+
 def _initialize_resources(credentials: Dict[str, Any]) -> Resources:
     """
     Create namedtuple of all resource objects necessary for OCI data gathering.
@@ -274,6 +351,7 @@ def _initialize_resources(credentials: Dict[str, Any]) -> Resources:
     """
     return Resources(
         compute=_get_compute_resource(credentials),
+        containerregistry=_get_containerregistry_resource(credentials),
         encryption=_get_encryption_resource(credentials),
         iam=_get_iam_resource(credentials),
         logging=_get_logging_resource(credentials),
@@ -281,6 +359,7 @@ def _initialize_resources(credentials: Dict[str, Any]) -> Resources:
         network=_get_network_resource(credentials),
         storage=_get_storage_resource(credentials),
         oke=_get_oke_resource(credentials),
+        database=_get_database_resource(credentials),
     )
 
 

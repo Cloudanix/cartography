@@ -13,15 +13,37 @@ from azure.core.exceptions import ClientAuthenticationError
 from azure.core.exceptions import HttpResponseError
 from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.cosmosdb import CosmosDBManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
+
+# The IP rule the portal adds for "Accept connections from within public Azure datacenters".
+AZURE_DATACENTERS_IP_RULE = '0.0.0.0'
+# Azure portal middleware IPs ("Add Azure Portal Middleware IPs"), current and legacy, for
+# Azure Public, 21Vianet and US Government. They let the portal's Data Explorer reach the
+# account, they do not open it to the internet. Source, 2026-07-27:
+# https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-configure-firewall
+AZURE_PORTAL_MIDDLEWARE_IPS = frozenset({
+    # Azure Public: All, MongoDB only, Apache Cassandra only
+    '13.91.105.215', '4.210.172.107', '13.88.56.148', '40.91.218.243',
+    '20.245.81.54', '40.118.23.126', '40.80.152.199', '13.95.130.121',
+    '40.113.96.14', '104.42.11.145', '137.117.230.240', '168.61.72.237',
+    # 21Vianet
+    '163.228.137.6', '143.64.170.142', '52.131.240.99', '143.64.61.130', '40.73.99.146', '143.64.62.47',
+    # US Government
+    '52.247.163.6', '52.244.134.181', '52.244.176.112', '52.247.148.42', '52.244.50.101', '52.227.165.24',
+    # Legacy middleware, all three clouds
+    '104.42.195.92', '40.76.54.131', '52.176.6.30', '52.169.50.45', '52.187.184.26', '139.217.8.252',
+    '52.244.48.71',
+})
 
 
 @timeit
@@ -35,13 +57,15 @@ def get_client(credentials: Credentials, subscription_id: str) -> CosmosDBManage
 
 
 @timeit
-def get_database_account_list(credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
+def get_database_account_list(
+    credentials: Credentials, subscription_id: str, regions: list, common_job_parameters: Dict,
+) -> List[Dict]:
     """
     Get a list of all database accounts.
     """
     try:
         client = get_client(credentials, subscription_id)
-        database_account_list = list(map(lambda x: x.as_dict(), client.database_accounts.list()))
+        database_account_list = list(map(as_legacy_dict, client.database_accounts.list()))
 
     # ClientAuthenticationError and ResourceNotFoundError are subclasses under HttpResponseError
     except ClientAuthenticationError:
@@ -56,12 +80,9 @@ def get_database_account_list(credentials: Credentials, subscription_id: str, re
     account_list = []
     for database_account in database_account_list:
         database_account['resourceGroup'] = get_azure_resource_group_name(database_account.get('id'))
-        database_account['publicNetworkAccess'] = database_account.get(
-            'properties', {},
-        ).get('public_network_access', 'Disabled')
-        database_account['consolelink'] = azure_console_link.get_console_link(
-            id=database_account['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        # None (unknown) is not 'Disabled', so the exposure job keeps an unknown account public.
+        database_account['publicNetworkAccess'] = database_account.get('public_network_access')
+        database_account['consolelink'] = safe_console_link(database_account['id'], common_job_parameters)
         database_account['location'] = database_account.get('location', '').replace(" ", "").lower()
         if regions is None:
             account_list.append(database_account)
@@ -69,6 +90,20 @@ def get_database_account_list(credentials: Credentials, subscription_id: str, re
             if database_account.get('location') in regions or database_account.get('location') == 'global':
                 account_list.append(database_account)
     return account_list
+
+
+def _is_public_ip_rule(ip_rule: str) -> bool:
+    """
+    True if a Cosmos IP rule (an address or a CIDR range) admits public addresses.
+    0.0.0.0 is not an address: it is the "accept connections from within Azure
+    datacenters" switch. An unparseable rule counts as public (fail-safe).
+    """
+    if ip_rule == AZURE_DATACENTERS_IP_RULE:
+        return False
+    try:
+        return not ipaddress.ip_network(str(ip_rule), strict=False).is_private
+    except ValueError:
+        return True
 
 
 @timeit
@@ -83,7 +118,10 @@ def transform_database_account_data(database_account_list: List[Dict]) -> List[D
             capabilities = [x['name'] for x in database_account['capabilities']]
         if 'ip_rules' in database_account and len(database_account['ip_rules']) > 0:
             iprules = [x['ip_address_or_range'] for x in database_account['ip_rules']]
-        database_account['ipruleslist'] = [ip for ip in iprules if not ipaddress.ip_address(str(ip)).is_private]
+        database_account['ipruleslist'] = [ip for ip in iprules if _is_public_ip_rule(ip)]
+        # Every rule, including 0.0.0.0: any rule at all means the account is not open to every network.
+        database_account['iprulecount'] = len(iprules)
+        database_account['allowAzureDatacenters'] = AZURE_DATACENTERS_IP_RULE in iprules
         database_account['list_of_capabilities'] = capabilities
 
     return database_account_list
@@ -97,7 +135,7 @@ def load_database_account_data(
     Ingest data of all database accounts into neo4j.
     """
     ingest_database_account = """
-    UNWIND $database_accounts_list AS da
+    UNWIND $DictList AS da
     MERGE (d:AzureCosmosDBAccount{id: da.id})
     ON CREATE SET d.firstseen = timestamp(),
     d.type = da.type, d.resourcegroup = da.resourceGroup,
@@ -107,6 +145,8 @@ def load_database_account_data(
     d.kind = da.kind,
     d.name = da.name,
     d.ipranges = da.ipruleslist,
+    d.iprulecount = da.iprulecount,
+    d.allowAzureDatacenters = da.allowAzureDatacenters,
     d.capabilities = da.list_of_capabilities,
     d.publicNetworkAccess = da.publicNetworkAccess,
     d.documentendpoint = da.document_endpoint,
@@ -116,9 +156,10 @@ def load_database_account_data(
     d.multiplewritelocations = da.enable_multiple_write_locations,
     d.accountoffertype = da.database_account_offer_type,
     d.publicnetworkaccess = da.public_network_access,
+    d.disableLocalAuth = da.disable_local_auth,
     d.enablecassandraconnector = da.enable_cassandra_connector,
     d.connectoroffer = da.connector_offer,
-    d.consolelink = da.consolelink,
+    d.consolelink = coalesce(da.consolelink, d.consolelink),
     d.disablekeybasedmetadatawriteaccess = da.disable_key_based_metadata_write_access,
     d.keyvaulturi = da.key_vault_key_uri,
     d.enablefreetier = da.enable_free_tier,
@@ -133,30 +174,37 @@ def load_database_account_data(
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_database_account,
-        database_accounts_list=database_account_list,
+        database_account_list,
         AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=azure_update_tag,
     )
     for database_account in database_account_list:
         resource_group = get_azure_resource_group_name(database_account.get('id'))
-        _attach_resource_group_database_account(neo4j_session, database_account['id'], resource_group, azure_update_tag)
+        _attach_resource_group_database_account(
+            neo4j_session, subscription_id, database_account['id'], resource_group, azure_update_tag,
+        )
 
 
-def _attach_resource_group_database_account(neo4j_session: neo4j.Session, database_account_id: str, resource_group: str, azure_update_tag: int) -> None:
+def _attach_resource_group_database_account(
+    neo4j_session: neo4j.Session, subscription_id: str,
+    database_account_id: str, resource_group: str, azure_update_tag: int,
+) -> None:
     ingest_database_account = """
-    MATCH (d:AzureCosmosDBAccount{id: $database_account_id})
-    WITH d
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(d:AzureCosmosDBAccount{id: $database_account_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (d)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_database_account,
         database_account_id=database_account_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=azure_update_tag,
     )
 
@@ -171,66 +219,75 @@ def sync_database_account_data_resources(
     response (like cors policy, failover policy, private endpoint connections, virtual network rules and locations).
     """
     for database_account in database_account_list:
-        _load_cosmosdb_cors_policy(neo4j_session, database_account, azure_update_tag)
-        _load_cosmosdb_failover_policies(neo4j_session, database_account, azure_update_tag)
-        _load_cosmosdb_private_endpoint_connections(neo4j_session, database_account, azure_update_tag)
-        _load_cosmosdb_virtual_network_rules(neo4j_session, database_account, azure_update_tag, common_job_parameters)
-        _load_database_account_write_locations(neo4j_session, database_account, azure_update_tag)
-        _load_database_account_read_locations(neo4j_session, database_account, azure_update_tag)
-        _load_database_account_associated_locations(neo4j_session, database_account, azure_update_tag)
-        _load_database_account_associated_iprules(neo4j_session, database_account, azure_update_tag)
+        _load_cosmosdb_cors_policy(neo4j_session, subscription_id, database_account, azure_update_tag)
+        _load_cosmosdb_failover_policies(neo4j_session, subscription_id, database_account, azure_update_tag)
+        _load_cosmosdb_private_endpoint_connections(neo4j_session, subscription_id, database_account, azure_update_tag)
+        _load_cosmosdb_virtual_network_rules(
+            neo4j_session, subscription_id, database_account, azure_update_tag, common_job_parameters,
+        )
+        _load_database_account_write_locations(neo4j_session, subscription_id, database_account, azure_update_tag)
+        _load_database_account_read_locations(neo4j_session, subscription_id, database_account, azure_update_tag)
+        _load_database_account_associated_locations(neo4j_session, subscription_id, database_account, azure_update_tag)
+        _load_database_account_associated_iprules(neo4j_session, subscription_id, database_account, azure_update_tag)
 
 
 @timeit
 def _load_database_account_associated_iprules(
-    neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
+    neo4j_session: neo4j.Session, subscription_id: str, database_account: Dict, azure_update_tag: int,
 ) -> None:
-    """Relationship between Azure Cosmos DB And Public Ip Addresses in Cartography """
+    """
+    Relationship between Azure Cosmos DB and the public IPs its firewall allows.
+    Rule and IP nodes are keyed by the account id: keyed on the bare IP they were
+    shared across accounts and tenants and could attach to another subscription's
+    own AzurePublicIPAddress, which the cosmos cleanup could then delete.
+    """
     ingest_iprules = """
-        UNWIND $ip_rules_list as ip_rule
-        MERGE (rule:AzureFirewallRule{id: ip_rule})
-        ON CREATE SET
-        rule.firstseen = timestamp(),
-        rule.name=ip_rule,
-        rule.id=ip_rule,
-        rule.ipAddress=ip_rule,
-        rule.source='Azure' ,
-        rule.type='External',
-        rule.resource=$resourceType
-        WITH rule
-        MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        UNWIND $DictList as ip_rule
+        MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+        (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MERGE (rule:AzureFirewallRule{id: $DatabaseAccountId + '/ipRules/' + ip_rule})
+        ON CREATE SET rule.firstseen = timestamp()
+        SET rule.name = ip_rule,
+        rule.ipAddress = ip_rule,
+        rule.source = 'Azure',
+        rule.type = 'External',
+        rule.resource = $resourceType,
+        rule.azure_portal_middleware = ip_rule IN $portal_ips,
+        rule.lastupdated = $azure_update_tag
         MERGE (d)-[r:FIREWALL_RULE]->(rule)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
-        with rule
-        MERGE (ip:AzurePublicIPAddress{ipAddress:rule.id})
-        ON CREATE SET
-        ip.firstseen = timestamp(),
-        ip.name=rule.name,
-        ip.id=rule.id,
-        ip.ipAddress=rule.ipAddress,
-        ip.type=rule.type,
-        ip.resource=rule.resource,
-        ip.source=rule.source
-        with ip,rule
+        WITH rule
+        MERGE (ip:AzurePublicIPAddress{id: rule.id + '/publicIp'})
+        ON CREATE SET ip.firstseen = timestamp()
+        SET ip.name = rule.name,
+        ip.ipAddress = rule.ipAddress,
+        ip.type = rule.type,
+        ip.resource = rule.resource,
+        ip.source = rule.source,
+        ip.lastupdated = $azure_update_tag
+        WITH ip, rule
         MERGE (rule)-[r1:MEMBER_OF_PUBLIC_IP]->(ip)
         ON CREATE SET r1.firstseen = timestamp()
         SET r1.lastupdated = $azure_update_tag
 
         """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_iprules,
-        ip_rules_list=database_account.get('ipruleslist', []),
+        database_account.get('ipruleslist', []),
         DatabaseAccountId=database_account.get('id'),
+        AZURE_SUBSCRIPTION_ID=subscription_id,
         resourceType=database_account.get('type'),
+        portal_ips=list(AZURE_PORTAL_MIDDLEWARE_IPS),
         azure_update_tag=azure_update_tag,
     )
 
 
 @timeit
 def _load_database_account_write_locations(
-        neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, database_account: Dict, azure_update_tag: int,
 ) -> None:
     """
     Ingest the details of location with write permission enabled.
@@ -243,7 +300,7 @@ def _load_database_account_write_locations(
             location["location_name"] = location.get("location_name", "").replace(" ", "").lower()
 
         ingest_write_location = """
-        UNWIND $write_locations_list as wl
+        UNWIND $DictList as wl
         MERGE (loc:AzureCosmosDBLocation{id: wl.id})
         ON CREATE SET loc.firstseen = timestamp()
         SET loc.lastupdated = $azure_update_tag,
@@ -254,23 +311,26 @@ def _load_database_account_write_locations(
         loc.failoverpriority = wl.failover_priority,
         loc.iszoneredundant = wl.is_zone_redundant
         WITH loc
-        MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+        (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
         MERGE (d)-[r:CAN_WRITE_FROM]->(loc)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_write_location,
-            write_locations_list=write_locations,
+            write_locations,
             DatabaseAccountId=database_account_id,
+            AZURE_SUBSCRIPTION_ID=subscription_id,
             azure_update_tag=azure_update_tag,
         )
 
 
 @timeit
 def _load_database_account_read_locations(
-        neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, database_account: Dict, azure_update_tag: int,
 ) -> None:
     """
     Ingest the details of location with read permission enabled.
@@ -283,7 +343,7 @@ def _load_database_account_read_locations(
             location["location_name"] = location.get("location_name", "").replace(" ", "").lower()
 
         ingest_read_location = """
-        UNWIND $read_locations_list as rl
+        UNWIND $DictList as rl
         MERGE (loc:AzureCosmosDBLocation{id: rl.id})
         ON CREATE SET loc.firstseen = timestamp()
         SET loc.lastupdated = $azure_update_tag,
@@ -294,23 +354,26 @@ def _load_database_account_read_locations(
         loc.failoverpriority = rl.failover_priority,
         loc.iszoneredundant = rl.is_zone_redundant
         WITH loc
-        MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+        (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
         MERGE (d)-[r:CAN_READ_FROM]->(loc)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_read_location,
-            read_locations_list=read_locations,
+            read_locations,
             DatabaseAccountId=database_account_id,
+            AZURE_SUBSCRIPTION_ID=subscription_id,
             azure_update_tag=azure_update_tag,
         )
 
 
 @timeit
 def _load_database_account_associated_locations(
-        neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, database_account: Dict, azure_update_tag: int,
 ) -> None:
     """
     Ingest the details of enabled location for the database account.
@@ -323,7 +386,7 @@ def _load_database_account_associated_locations(
             location["location_name"] = location.get("location_name", "").replace(" ", "").lower()
 
         ingest_associated_location = """
-        UNWIND $associated_locations_list as al
+        UNWIND $DictList as al
         MERGE (loc:AzureCosmosDBLocation{id: al.id})
         ON CREATE SET loc.firstseen = timestamp()
         SET loc.lastupdated = $azure_update_tag,
@@ -334,16 +397,19 @@ def _load_database_account_associated_locations(
         loc.failoverpriority = al.failover_priority,
         loc.iszoneredundant = al.is_zone_redundant
         WITH loc
-        MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+        (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
         MERGE (d)-[r:ASSOCIATED_WITH]->(loc)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_associated_location,
-            associated_locations_list=associated_locations,
+            associated_locations,
             DatabaseAccountId=database_account_id,
+            AZURE_SUBSCRIPTION_ID=subscription_id,
             azure_update_tag=azure_update_tag,
         )
 
@@ -362,7 +428,7 @@ def transform_cosmosdb_cors_policy(database_account: Dict) -> Dict:
 
 @timeit
 def _load_cosmosdb_cors_policy(
-        neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, database_account: Dict, azure_update_tag: int,
 ) -> None:
     """
     Ingest the details of the Cors Policy of the database account.
@@ -373,7 +439,7 @@ def _load_cosmosdb_cors_policy(
         cors_policies = database_account['cors']
 
         ingest_cors_policy = """
-        UNWIND $cors_policies_list AS cp
+        UNWIND $DictList AS cp
         MERGE (corspolicy:AzureCosmosDBCorsPolicy{id: cp.cors_policy_unique_id})
         ON CREATE SET corspolicy.firstseen = timestamp(),
         corspolicy.allowedorigins = cp.allowed_origins
@@ -384,16 +450,19 @@ def _load_cosmosdb_cors_policy(
         corspolicy.exposedheaders = cp.exposed_headers,
         corspolicy.maxageinseconds = cp.max_age_in_seconds
         WITH corspolicy
-        MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+        (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
         MERGE (d)-[r:CONTAINS]->(corspolicy)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_cors_policy,
-            cors_policies_list=cors_policies,
+            cors_policies,
             DatabaseAccountId=database_account_id,
+            AZURE_SUBSCRIPTION_ID=subscription_id,
             region="global",
             azure_update_tag=azure_update_tag,
         )
@@ -401,7 +470,7 @@ def _load_cosmosdb_cors_policy(
 
 @timeit
 def _load_cosmosdb_failover_policies(
-        neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, database_account: Dict, azure_update_tag: int,
 ) -> None:
     """
     Ingest the details of the Failover Policies of the database account.
@@ -413,7 +482,7 @@ def _load_cosmosdb_failover_policies(
             policy["id"] = f'{database_account_id}/failoverPolicies/{policy["id"]}'
 
         ingest_failover_policies = """
-        UNWIND $failover_policies_list AS fp
+        UNWIND $DictList AS fp
         MERGE (fpolicy:AzureCosmosDBAccountFailoverPolicy{id: fp.id})
         ON CREATE SET fpolicy.firstseen = timestamp()
         SET fpolicy.lastupdated = $azure_update_tag,
@@ -421,23 +490,26 @@ def _load_cosmosdb_failover_policies(
         fpolicy.region = fp.location_name,
         fpolicy.failoverpriority = fp.failover_priority
         WITH fpolicy
-        MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+        (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
         MERGE (d)-[r:CONTAINS]->(fpolicy)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_failover_policies,
-            failover_policies_list=failover_policies,
+            failover_policies,
             DatabaseAccountId=database_account_id,
+            AZURE_SUBSCRIPTION_ID=subscription_id,
             azure_update_tag=azure_update_tag,
         )
 
 
 @timeit
 def _load_cosmosdb_private_endpoint_connections(
-        neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, database_account: Dict, azure_update_tag: int,
 ) -> None:
     """
     Ingest the details of the Private Endpoint Connections of the database account.
@@ -449,7 +521,7 @@ def _load_cosmosdb_private_endpoint_connections(
         private_endpoint_connections = database_account['private_endpoint_connections']
 
         ingest_private_endpoint_connections = """
-        UNWIND $private_endpoint_connections_list AS connection
+        UNWIND $DictList AS connection
         MERGE (pec:AzureCDBPrivateEndpointConnection{id: connection.id})
         ON CREATE SET pec.firstseen = timestamp()
         SET pec.lastupdated = $azure_update_tag,
@@ -459,44 +531,55 @@ def _load_cosmosdb_private_endpoint_connections(
         pec.status = connection.private_link_service_connection_state.status,
         pec.actionrequired = connection.private_link_service_connection_state.actions_required
         WITH pec
-        MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+        (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
         MERGE (d)-[r:CONFIGURED_WITH]->(pec)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_private_endpoint_connections,
-            private_endpoint_connections_list=private_endpoint_connections,
+            private_endpoint_connections,
             DatabaseAccountId=database_account_id,
+            AZURE_SUBSCRIPTION_ID=subscription_id,
             region=database_account.get("location", "global"),
             azure_update_tag=azure_update_tag,
         )
         for private_endpoint_connection in private_endpoint_connections:
             resource_group = get_azure_resource_group_name(private_endpoint_connection.get('id'))
-            _attach_resource_group_private_endpoint_connection(neo4j_session, private_endpoint_connection['id'], resource_group, azure_update_tag)
+            _attach_resource_group_private_endpoint_connection(
+                neo4j_session, subscription_id, private_endpoint_connection['id'], resource_group, azure_update_tag,
+            )
 
 
-def _attach_resource_group_private_endpoint_connection(neo4j_session: neo4j.Session, private_endpoint_connection_id: str, resource_group: str, azure_update_tag: int) -> None:
+def _attach_resource_group_private_endpoint_connection(
+    neo4j_session: neo4j.Session, subscription_id: str,
+    private_endpoint_connection_id: str, resource_group: str, azure_update_tag: int,
+) -> None:
     ingest_endpoint_connections = """
-        MATCH (pec:AzureCDBPrivateEndpointConnection{id: $connection_id})
-        WITH pec
-        MATCH (rg:AzureResourceGroup{name: $resource_group})
+        MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureCosmosDBAccount)-[:CONFIGURED_WITH]->
+        (pec:AzureCDBPrivateEndpointConnection{id: $connection_id})
+        MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
         MERGE (pec)-[r:RESOURCE_GROUP]->(rg)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_endpoint_connections,
         connection_id=private_endpoint_connection_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=azure_update_tag,
     )
 
 
 @timeit
 def _load_cosmosdb_virtual_network_rules(
-        neo4j_session: neo4j.Session, database_account: Dict, azure_update_tag: int, common_job_parameters: Dict,
+        neo4j_session: neo4j.Session, subscription_id: str,
+        database_account: Dict, azure_update_tag: int, common_job_parameters: Dict,
 ) -> None:
     """
     Ingest the details of the Virtual Network Rules of the database account.
@@ -505,27 +588,30 @@ def _load_cosmosdb_virtual_network_rules(
         database_account_id = database_account['id']
         virtual_network_rules = database_account['virtual_network_rules']
         for network_rule in virtual_network_rules:
-            network_rule['consolelink'] = azure_console_link.get_console_link(id=network_rule['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+            network_rule['consolelink'] = safe_console_link(network_rule['id'], common_job_parameters)
 
         ingest_virtual_network_rules = """
-        UNWIND $virtual_network_rules_list AS vnr
+        UNWIND $DictList AS vnr
         MERGE (rules:AzureCosmosDBVirtualNetworkRule{id: vnr.id})
         ON CREATE SET rules.firstseen = timestamp(),
         rules.region = $region
         SET rules.lastupdated = $azure_update_tag,
         rules.ignoremissingvnetserviceendpoint = vnr.ignore_missing_v_net_service_endpoint,
-        rules.consolelink = vnr.consolelink
+        rules.consolelink = coalesce(vnr.consolelink, rules.consolelink)
         WITH rules
-        MATCH (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
+        MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+        (d:AzureCosmosDBAccount{id: $DatabaseAccountId})
         MERGE (d)-[r:CONFIGURED_WITH]->(rules)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $azure_update_tag
         """
 
-        neo4j_session.run(
+        load_graph_data(
+            neo4j_session,
             ingest_virtual_network_rules,
-            virtual_network_rules_list=virtual_network_rules,
+            virtual_network_rules,
             DatabaseAccountId=database_account_id,
+            AZURE_SUBSCRIPTION_ID=subscription_id,
             region=database_account.get("location", "global"),
             azure_update_tag=azure_update_tag,
         )
@@ -567,7 +653,7 @@ def get_sql_databases(credentials: Credentials, subscription_id: str, database_a
         client = get_client(credentials, subscription_id)
         sql_database_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.sql_resources.list_sql_databases(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -597,7 +683,7 @@ def get_cassandra_keyspaces(credentials: Credentials, subscription_id: str, data
         client = get_client(credentials, subscription_id)
         cassandra_keyspace_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.cassandra_resources.list_cassandra_keyspaces(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -627,7 +713,7 @@ def get_mongodb_databases(credentials: Credentials, subscription_id: str, databa
         client = get_client(credentials, subscription_id)
         mongodb_database_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.mongo_db_resources.list_mongo_db_databases(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -657,7 +743,7 @@ def get_table_resources(credentials: Credentials, subscription_id: str, database
         client = get_client(credentials, subscription_id)
         table_resources_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.table_resources.list_tables(
                     database_account['resourceGroup'],
                     database_account['name'],
@@ -689,10 +775,7 @@ def transform_database_account_resources(
         resource['database_account_name'] = name
         resource['database_account_id'] = account_id
         resource['resource_group_name'] = resource_group
-        resource['consolelink'] = azure_console_link.get_console_link(
-            id=resource['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        resource['consolelink'] = safe_console_link(resource['id'], common_job_parameters)
     return resources
 
 
@@ -727,14 +810,14 @@ def load_database_account_details(
             table_resources.extend(t)
 
     # Loading the table resources
-    _load_table_resources(neo4j_session, table_resources, update_tag)
+    _load_table_resources(neo4j_session, subscription_id, table_resources, update_tag)
     # Cleanup of table resources (done here because table resource doesn't have any other child resources in it)
     cleanup_table_resources(neo4j_session, common_job_parameters)
 
     # Loading SQL databases, Cassandra Keyspaces and MongoDB databases
-    _load_sql_databases(neo4j_session, sql_databases, update_tag)
-    _load_cassandra_keyspaces(neo4j_session, cassandra_keyspaces, update_tag)
-    _load_mongodb_databases(neo4j_session, mongodb_databases, update_tag)
+    _load_sql_databases(neo4j_session, subscription_id, sql_databases, update_tag)
+    _load_cassandra_keyspaces(neo4j_session, subscription_id, cassandra_keyspaces, update_tag)
+    _load_mongodb_databases(neo4j_session, subscription_id, mongodb_databases, update_tag)
 
     sync_sql_database_details(
         neo4j_session, credentials, subscription_id, sql_databases, update_tag,
@@ -751,142 +834,168 @@ def load_database_account_details(
 
 
 @timeit
-def _load_sql_databases(neo4j_session: neo4j.Session, sql_databases: List[Dict], update_tag: int) -> None:
+def _load_sql_databases(
+    neo4j_session: neo4j.Session, subscription_id: str, sql_databases: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest SQL Databases into neo4j.
     """
     ingest_sql_databases = """
-    UNWIND $sql_databases_list AS database
+    UNWIND $DictList AS database
     MERGE (sdb:AzureCosmosDBSqlDatabase{id: database.id})
     ON CREATE SET sdb.firstseen = timestamp(), sdb.type = database.type,
     sdb.location = database.location,
     sdb.region = database.location
     SET sdb.name = database.name,
     sdb.throughput = database.options.throughput,
-    sdb.consolelink = database.consolelink,
+    sdb.consolelink = coalesce(database.consolelink, sdb.consolelink),
     sdb.maxthroughput = database.options.autoscale_setting.max_throughput,
     sdb.lastupdated = $azure_update_tag
     WITH sdb, database
-    MATCH (d:AzureCosmosDBAccount{id: database.database_account_id})
+    MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+    (d:AzureCosmosDBAccount{id: database.database_account_id})
     MERGE (d)-[r:CONTAINS]->(sdb)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_sql_databases,
-        sql_databases_list=sql_databases,
+        sql_databases,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
-def _load_cassandra_keyspaces(neo4j_session: neo4j.Session, cassandra_keyspaces: List[Dict], update_tag: int) -> None:
+def _load_cassandra_keyspaces(
+    neo4j_session: neo4j.Session, subscription_id: str, cassandra_keyspaces: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest Cassandra keyspaces into neo4j.
     """
     ingest_cassandra_keyspaces = """
-    UNWIND $cassandra_keyspaces_list AS keyspace
+    UNWIND $DictList AS keyspace
     MERGE (ck:AzureCosmosDBCassandraKeySpace{id: keyspace.id})
     ON CREATE SET ck.firstseen = timestamp(), ck.type = keyspace.type,
     ck.location = keyspace.location,
     ck.region = keyspace.location
     SET ck.name = keyspace.name,
     ck.lastupdated = $azure_update_tag,
-    ck.consolelink = keyspace.consolelink,
+    ck.consolelink = coalesce(keyspace.consolelink, ck.consolelink),
     ck.throughput = keyspace.options.throughput,
     ck.maxthroughput = keyspace.options.autoscale_setting.max_throughput
     WITH ck, keyspace
-    MATCH (d:AzureCosmosDBAccount{id: keyspace.database_account_id})
+    MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+    (d:AzureCosmosDBAccount{id: keyspace.database_account_id})
     MERGE (d)-[r:CONTAINS]->(ck)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_cassandra_keyspaces,
-        cassandra_keyspaces_list=cassandra_keyspaces,
+        cassandra_keyspaces,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
-def _load_mongodb_databases(neo4j_session: neo4j.Session, mongodb_databases: List[Dict], update_tag: int) -> None:
+def _load_mongodb_databases(
+    neo4j_session: neo4j.Session, subscription_id: str, mongodb_databases: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest MongoDB databases into neo4j.
     """
     ingest_mongodb_databases = """
-    UNWIND $mongodb_databases_list AS database
+    UNWIND $DictList AS database
     MERGE (mdb:AzureCosmosDBMongoDBDatabase{id: database.id})
     ON CREATE SET mdb.firstseen = timestamp(), mdb.type = database.type,
     mdb.location = database.location,
     mdb.region = database.location
     SET mdb.name = database.name,
-    mdb.consolelink = database.consolelink,
+    mdb.consolelink = coalesce(database.consolelink, mdb.consolelink),
     mdb.throughput = database.options.throughput,
     mdb.maxthroughput = database.options.autoscale_setting.max_throughput,
     mdb.lastupdated = $azure_update_tag
     WITH mdb, database
-    MATCH (d:AzureCosmosDBAccount{id: database.database_account_id})
+    MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+    (d:AzureCosmosDBAccount{id: database.database_account_id})
     MERGE (d)-[r:CONTAINS]->(mdb)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_mongodb_databases,
-        mongodb_databases_list=mongodb_databases,
+        mongodb_databases,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
 
 
 @timeit
-def _load_table_resources(neo4j_session: neo4j.Session, table_resources: List[Dict], update_tag: int) -> None:
+def _load_table_resources(
+    neo4j_session: neo4j.Session, subscription_id: str, table_resources: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest Table resources into neo4j.
     """
     ingest_tables = """
-    UNWIND $table_resources_list AS table
+    UNWIND $DictList AS table
     MERGE (tr:AzureCosmosDBTableResource{id: table.id})
     ON CREATE SET tr.firstseen = timestamp(), tr.type = table.type,
     tr.location = table.location,
     tr.region = table.location
     SET tr.name = table.name,
-    tr.consolelink = table.consolelink,
+    tr.consolelink = coalesce(table.consolelink, tr.consolelink),
     tr.lastupdated = $azure_update_tag,
     tr.throughput = table.options.throughput,
     tr.maxthroughput = table.options.autoscale_setting.max_throughput
     WITH tr, table
-    MATCH (d:AzureCosmosDBAccount{id: table.database_account_id})
+    MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->
+    (d:AzureCosmosDBAccount{id: table.database_account_id})
     MERGE (d)-[r:CONTAINS]->(tr)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_tables,
-        table_resources_list=table_resources,
+        table_resources,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for table_resource in table_resources:
         resource_group = get_azure_resource_group_name(table_resource.get('id'))
-        _attach_resource_group_table_resource(neo4j_session, table_resource.get('id'), resource_group, update_tag)
+        _attach_resource_group_table_resource(
+            neo4j_session, subscription_id, table_resource.get('id'), resource_group, update_tag,
+        )
 
 
 @timeit
-def _attach_resource_group_table_resource(neo4j_session: neo4j.Session, table_resource_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_table_resource(
+    neo4j_session: neo4j.Session, subscription_id: str, table_resource_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_tables = """
-    MATCH (tr:AzureCosmosDBTableResource{id: $table_resource_id})
-    WITH tr
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureCosmosDBAccount)-[:CONTAINS]->
+    (tr:AzureCosmosDBTableResource{id: $table_resource_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (tr)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_tables,
         table_resource_id=table_resource_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -897,7 +1006,7 @@ def sync_sql_database_details(
         update_tag: int, common_job_parameters: Dict,
 ) -> None:
     sql_database_details = get_sql_database_details(credentials, subscription_id, sql_databases)
-    load_sql_database_details(neo4j_session, sql_database_details, update_tag, common_job_parameters)
+    load_sql_database_details(neo4j_session, subscription_id, sql_database_details, update_tag, common_job_parameters)
     cleanup_sql_database_details(neo4j_session, common_job_parameters)
 
 
@@ -922,7 +1031,7 @@ def get_sql_containers(credentials: Credentials, subscription_id: str, database:
         client = get_client(credentials, subscription_id)
         containers = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.sql_resources.list_sql_containers(
                     database['resource_group_name'],
                     database['database_account_name'],
@@ -945,7 +1054,10 @@ def get_sql_containers(credentials: Credentials, subscription_id: str, database:
 
 
 @timeit
-def load_sql_database_details(neo4j_session: neo4j.Session, details: List[Tuple[Any, Any]], update_tag: int, common_job_parameters: Dict) -> None:
+def load_sql_database_details(
+    neo4j_session: neo4j.Session, subscription_id: str,
+    details: List[Tuple[Any, Any]], update_tag: int, common_job_parameters: Dict,
+) -> None:
     """
     Create dictionary for SQL Containers
     """
@@ -955,22 +1067,21 @@ def load_sql_database_details(neo4j_session: neo4j.Session, details: List[Tuple[
         if len(container) > 0:
             for c in container:
                 c['database_id'] = database_id
-                c['consolelink'] = azure_console_link.get_console_link(
-                    id=c['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                c['consolelink'] = safe_console_link(c['id'], common_job_parameters)
             containers.extend(container)
 
-    _load_sql_containers(neo4j_session, containers, update_tag)
+    _load_sql_containers(neo4j_session, subscription_id, containers, update_tag)
 
 
 @timeit
-def _load_sql_containers(neo4j_session: neo4j.Session, containers: List[Dict], update_tag: int) -> None:
+def _load_sql_containers(
+    neo4j_session: neo4j.Session, subscription_id: str, containers: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest SQL Container details into neo4j.
     """
     ingest_containers = """
-    UNWIND $sql_containers_list AS container
+    UNWIND $DictList AS container
     MERGE (c:AzureCosmosDBSqlContainer{id: container.id})
     ON CREATE SET c.firstseen = timestamp(), c.type = container.type,
     c.location = container.location,
@@ -980,42 +1091,49 @@ def _load_sql_containers(neo4j_session: neo4j.Session, containers: List[Dict], u
     c.throughput = container.options.throughput,
     c.maxthroughput = container.options.autoscale_setting.max_throughput,
     c.container = container.resource.id,
-    c.consolelink = container.consolelink,
+    c.consolelink = coalesce(container.consolelink, c.consolelink),
     c.defaultttl = container.resource.default_ttl,
     c.analyticalttl = container.resource.analytical_storage_ttl,
     c.isautomaticindexingpolicy = container.resource.indexing_policy.automatic,
     c.indexingmode = container.resource.indexing_policy.indexing_mode,
     c.conflictresolutionpolicymode = container.resource.conflict_resolution_policy.mode
     WITH c, container
-    MATCH (sdb:AzureCosmosDBSqlDatabase{id: container.database_id})
+    MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->(:AzureCosmosDBAccount)-[:CONTAINS]->
+    (sdb:AzureCosmosDBSqlDatabase{id: container.database_id})
     MERGE (sdb)-[r:CONTAINS]->(c)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_containers,
-        sql_containers_list=containers,
+        containers,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for container in containers:
         resource_group = get_azure_resource_group_name(container.get('id'))
-        _attach_resource_container(neo4j_session, container['id'], resource_group, update_tag)
+        _attach_resource_container(neo4j_session, subscription_id, container['id'], resource_group, update_tag)
 
 
-def _attach_resource_container(neo4j_session: neo4j.Session, container_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_container(
+    neo4j_session: neo4j.Session, subscription_id: str, container_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_containers = """
-    MATCH (c:AzureCosmosDBSqlContainer{id: $container_id})
-    WITH c
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureCosmosDBAccount)-[:CONTAINS]->
+    (:AzureCosmosDBSqlDatabase)-[:CONTAINS]->(c:AzureCosmosDBSqlContainer{id: $container_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (c)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_containers,
         container_id=container_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -1026,7 +1144,9 @@ def sync_cassandra_keyspace_details(
         update_tag: int, common_job_parameters: Dict,
 ) -> None:
     cassandra_keyspace_details = get_cassandra_keyspace_details(credentials, subscription_id, cassandra_keyspaces)
-    load_cassandra_keyspace_details(neo4j_session, cassandra_keyspace_details, update_tag, common_job_parameters)
+    load_cassandra_keyspace_details(
+        neo4j_session, subscription_id, cassandra_keyspace_details, update_tag, common_job_parameters,
+    )
     cleanup_cassandra_keyspace_details(neo4j_session, common_job_parameters)
 
 
@@ -1051,7 +1171,7 @@ def get_cassandra_tables(credentials: Credentials, subscription_id: str, keyspac
         client = get_client(credentials, subscription_id)
         cassandra_tables = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.cassandra_resources.list_cassandra_tables(
                     keyspace['resource_group_name'],
                     keyspace['database_account_name'],
@@ -1075,7 +1195,8 @@ def get_cassandra_tables(credentials: Credentials, subscription_id: str, keyspac
 
 @timeit
 def load_cassandra_keyspace_details(
-        neo4j_session: neo4j.Session, details: List[Tuple[Any, Any]], update_tag: int, common_job_parameters: Dict,
+        neo4j_session: neo4j.Session, subscription_id: str,
+        details: List[Tuple[Any, Any]], update_tag: int, common_job_parameters: Dict,
 ) -> None:
     """
     Create a dictionary for Cassandra tables.
@@ -1085,65 +1206,73 @@ def load_cassandra_keyspace_details(
     for keyspace_id, cassandra_table in details:
         if len(cassandra_table) > 0:
             for t in cassandra_table:
-                t['consolelink'] = azure_console_link.get_console_link(
-                    id=t['id'],
-                    primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                t['consolelink'] = safe_console_link(t['id'], common_job_parameters)
                 t['keyspace_id'] = keyspace_id
             cassandra_tables.extend(cassandra_table)
 
-    _load_cassandra_tables(neo4j_session, cassandra_tables, update_tag)
+    _load_cassandra_tables(neo4j_session, subscription_id, cassandra_tables, update_tag)
 
 
 @timeit
-def _load_cassandra_tables(neo4j_session: neo4j.Session, cassandra_tables: List[Dict], update_tag: int) -> None:
+def _load_cassandra_tables(
+    neo4j_session: neo4j.Session, subscription_id: str, cassandra_tables: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest Cassandra Tables into neo4j.
     """
     ingest_cassandra_tables = """
-    UNWIND $cassandra_tables_list AS table
+    UNWIND $DictList AS table
     MERGE (ct:AzureCosmosDBCassandraTable{id: table.id})
     ON CREATE SET ct.firstseen = timestamp(), ct.type = table.type,
     ct.location = table.location,
     ct.region = table.location
     SET ct.name = table.name,
     ct.lastupdated = $azure_update_tag,
-    ct.consolelink = table.consolelink,
+    ct.consolelink = coalesce(table.consolelink, ct.consolelink),
     ct.throughput = table.options.throughput,
     ct.maxthroughput = table.options.autoscale_setting.max_throughput,
     ct.container = table.resource.id,
     ct.defaultttl = table.resource.default_ttl,
     ct.analyticalttl = table.resource.analytical_storage_ttl
     WITH ct, table
-    MATCH (ck:AzureCosmosDBCassandraKeySpace{id: table.keyspace_id})
+    MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->(:AzureCosmosDBAccount)-[:CONTAINS]->
+    (ck:AzureCosmosDBCassandraKeySpace{id: table.keyspace_id})
     MERGE (ck)-[r:CONTAINS]->(ct)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_cassandra_tables,
-        cassandra_tables_list=cassandra_tables,
+        cassandra_tables,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for cassandra_table in cassandra_tables:
         resource_group = get_azure_resource_group_name(cassandra_table.get('id'))
-        _attach_resource_cassandra_table(neo4j_session, cassandra_table['id'], resource_group, update_tag)
+        _attach_resource_cassandra_table(
+            neo4j_session, subscription_id, cassandra_table['id'], resource_group, update_tag,
+        )
 
 
-def _attach_resource_cassandra_table(neo4j_session: neo4j.Session, cassandra_table_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_cassandra_table(
+    neo4j_session: neo4j.Session, subscription_id: str, cassandra_table_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_cassandra_tables = """
-    MATCH (ct:AzureCosmosDBCassandraTable{id:$cassandra_table_id})
-    WITH ct
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureCosmosDBAccount)-[:CONTAINS]->
+    (:AzureCosmosDBCassandraKeySpace)-[:CONTAINS]->(ct:AzureCosmosDBCassandraTable{id: $cassandra_table_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (ct)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_cassandra_tables,
         cassandra_table_id=cassandra_table_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -1154,7 +1283,9 @@ def sync_mongodb_database_details(
         update_tag: int, common_job_parameters: Dict,
 ) -> None:
     mongodb_databases_details = get_mongodb_databases_details(credentials, subscription_id, mongodb_databases)
-    load_mongodb_databases_details(neo4j_session, mongodb_databases_details, update_tag, common_job_parameters)
+    load_mongodb_databases_details(
+        neo4j_session, subscription_id, mongodb_databases_details, update_tag, common_job_parameters,
+    )
     cleanup_mongodb_database_details(neo4j_session, common_job_parameters)
 
 
@@ -1179,7 +1310,7 @@ def get_mongodb_collections(credentials: Credentials, subscription_id: str, data
         client = get_client(credentials, subscription_id)
         collections = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.mongo_db_resources.list_mongo_db_collections(
                     database['resource_group_name'],
                     database['database_account_name'],
@@ -1203,7 +1334,7 @@ def get_mongodb_collections(credentials: Credentials, subscription_id: str, data
 
 @timeit
 def load_mongodb_databases_details(
-        neo4j_session: neo4j.Session, details: List[Tuple[Any, Any]], update_tag: int,
+        neo4j_session: neo4j.Session, subscription_id: str, details: List[Tuple[Any, Any]], update_tag: int,
         common_job_parameters: Dict,
 ) -> None:
     """
@@ -1214,61 +1345,70 @@ def load_mongodb_databases_details(
     for database_id, collection in details:
         if len(collection) > 0:
             for c in collection:
-                c['consolelink'] = azure_console_link.get_console_link(id=c['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+                c['consolelink'] = safe_console_link(c['id'], common_job_parameters)
                 c['database_id'] = database_id
             collections.extend(collection)
 
-    _load_collections(neo4j_session, collections, update_tag)
+    _load_collections(neo4j_session, subscription_id, collections, update_tag)
 
 
 @timeit
-def _load_collections(neo4j_session: neo4j.Session, collections: List[Dict], update_tag: int) -> None:
+def _load_collections(
+    neo4j_session: neo4j.Session, subscription_id: str, collections: List[Dict], update_tag: int,
+) -> None:
     """
     Ingest MongoDB Collections into neo4j.
     """
     ingest_collections = """
-    UNWIND $mongodb_collections_list AS collection
+    UNWIND $DictList AS collection
     MERGE (col:AzureCosmosDBMongoDBCollection{id: collection.id})
     ON CREATE SET col.firstseen = timestamp(), col.type = collection.type,
     col.location = collection.location,
     col.region = collection.location
     SET col.name = collection.name,
     col.lastupdated = $azure_update_tag,
-    col.consolelink = collection.consolelink,
+    col.consolelink = coalesce(collection.consolelink, col.consolelink),
     col.throughput = collection.options.throughput,
     col.maxthroughput = collection.options.autoscale_setting.max_throughput,
     col.collectionname = collection.resource.id,
     col.analyticalttl = collection.resource.analytical_storage_ttl
     WITH col, collection
-    MATCH (mdb:AzureCosmosDBMongoDBDatabase{id: collection.database_id})
+    MATCH (:AzureSubscription{id: $AZURE_SUBSCRIPTION_ID})-[:RESOURCE]->(:AzureCosmosDBAccount)-[:CONTAINS]->
+    (mdb:AzureCosmosDBMongoDBDatabase{id: collection.database_id})
     MERGE (mdb)-[r:CONTAINS]->(col)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_collections,
-        mongodb_collections_list=collections,
+        collections,
+        AZURE_SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for collection in collections:
         resource_group = get_azure_resource_group_name(collection.get('id'))
-        _attach_resource_group_collection(neo4j_session, collection['id'], resource_group, update_tag)
+        _attach_resource_group_collection(neo4j_session, subscription_id, collection['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_collection(neo4j_session: neo4j.Session, collection_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_collection(
+    neo4j_session: neo4j.Session, subscription_id: str, collection_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_collections = """
-    MATCH (col:AzureCosmosDBMongoDBCollection{id: $collection_id})
-    WITH col
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureCosmosDBAccount)-[:CONTAINS]->
+    (:AzureCosmosDBMongoDBDatabase)-[:CONTAINS]->(col:AzureCosmosDBMongoDBCollection{id: $collection_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (col)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
     """
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         ingest_collections,
         collection_id=collection_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 

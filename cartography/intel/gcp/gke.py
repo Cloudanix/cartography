@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -10,6 +11,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -18,7 +20,7 @@ gcp_console_link = GCPLinker()
 
 
 @timeit
-def get_gke_clusters(container: Resource, project_id: str, regions: list, common_job_parameters) -> List[Dict]:
+def get_gke_clusters(container: Resource, project_id: str, regions: list, common_job_parameters: Dict) -> List[Dict]:
     """
     Returns a processed list of GKE cluster dicts for the given project.
 
@@ -36,6 +38,8 @@ def get_gke_clusters(container: Resource, project_id: str, regions: list, common
         for item in res.get("clusters", []):
             item["region"] = get_region_from_location(item["location"])
             item["id"] = f"projects/{project_id}/locations/{item['region']}/clusters/{item['name']}"
+            # GKE returns cluster labels as resourceLabels; label.sync_labels reads 'labels'
+            item["labels"] = item.get("resourceLabels", {})
             item["consolelink"] = gcp_console_link.get_console_link(
                 resource_name="gke_cluster",
                 project_id=project_id,
@@ -63,7 +67,7 @@ def get_gke_clusters(container: Resource, project_id: str, regions: list, common
             raise
 
 
-def get_region_from_location(location):
+def get_region_from_location(location: Optional[str]) -> Optional[str]:
     if not location:
         return location
 
@@ -120,6 +124,8 @@ def load_gke_clusters(
         cluster.database_encryption = $ClusterDatabaseEncryption,
         cluster.network_policy = $ClusterNetworkPolicy,
         cluster.master_authorized_networks = $ClusterMasterAuthorizedNetworks,
+        cluster.master_authorized_cidr_blocks = $ClusterMasterAuthorizedCidrBlocks,
+        cluster.gcp_public_cidrs_access_enabled = $ClusterGcpPublicCidrsAccessEnabled,
         cluster.masterGlobalAccessConfig = $ClusterMasterGlobalAccessConfig,
         cluster.legacy_abac = $ClusterAbac,
         cluster.shielded_nodes = $ClusterShieldedNodes,
@@ -141,7 +147,8 @@ def load_gke_clusters(
     for cluster in cluster_resp:
         cluster["region"] = get_region_from_location(cluster.get("location"))
 
-        neo4j_session.run(
+        run_write_query(
+            neo4j_session,
             query,
             ProjectId=project_id,
             ClusterId=cluster["id"],
@@ -164,11 +171,9 @@ def load_gke_clusters(
             ClusterServicesIPv4Cidr=cluster.get("servicesIpv4Cidr"),
             ClusterDatabaseEncryption=cluster.get("databaseEncryption", {}).get("state"),
             ClusterNetworkPolicy=_process_network_policy(cluster),
-            ClusterMasterAuthorizedNetworks=cluster.get("masterAuthorizedNetworksConfig", {}).get("enabled", False),
             ClusterAbac=cluster.get("legacyAbac", {}).get("enabled"),
             ClusterShieldedNodes=cluster.get("shieldedNodes", {}).get("enabled"),
-            ClusterPrivateNodes=cluster.get("privateClusterConfig", {}).get("enablePrivateNodes"),
-            ClusterPrivateEndpointEnabled=cluster.get("privateClusterConfig", {}).get("enablePrivateEndpoint"),
+            **_control_plane_access(cluster),
             ClusterPrivateEndpoint=cluster.get("privateClusterConfig", {}).get("privateEndpoint"),
             ClusterMasterGlobalAccessConfig=cluster.get("privateClusterConfig", {})
             .get("masterGlobalAccessConfig", {})
@@ -204,7 +209,7 @@ def load_gke_node_pools(
     :param clusters: Processed cluster list from get_gke_clusters(). Each dict must
                      have an "id" key (set by get_gke_clusters) and a "nodePools" list.
     :type project_id: str
-    :param project_id: The GCP project ID (used only for logging)
+    :param project_id: The syncing GCP project; pools attach only to its clusters (also logging, console links)
     :type gcp_update_tag: int
     :param gcp_update_tag: Timestamp to stamp on all upserted nodes and relationships
     :rtype: NoneType
@@ -215,6 +220,7 @@ def load_gke_node_pools(
     pool_records = []
     for cluster in clusters:
         cluster_id = cluster["id"]
+        location = cluster.get("location") or cluster.get("zone")
         for pool in cluster.get("nodePools", []):
             config = pool.get("config", {})
             pool_records.append(
@@ -232,6 +238,13 @@ def load_gke_node_pools(
                     "auto_repair": pool.get("management", {}).get("autoRepair"),
                     "max_pods_per_node": pool.get("maxPodsConstraint", {}).get("maxPodsPerNode"),
                     "self_link": pool.get("selfLink"),
+                    "consolelink": gcp_console_link.get_console_link(
+                        resource_name="gke_node_pool",
+                        project_id=project_id,
+                        zone=location,
+                        gke_cluster_name=cluster["name"],
+                        node_pool_name=pool["name"],
+                    ) if location else None,
                 },
             )
 
@@ -240,10 +253,12 @@ def load_gke_node_pools(
         return
 
     logger.info("Loading %d GKE node pools for project %s.", len(pool_records), project_id)
-    neo4j_session.execute_write(_load_gke_node_pools_tx, pool_records, gcp_update_tag)
+    neo4j_session.execute_write(_load_gke_node_pools_tx, pool_records, project_id, gcp_update_tag)
 
 
-def _load_gke_node_pools_tx(tx: neo4j.Transaction, pool_records: List[Dict], gcp_update_tag: int) -> None:
+def _load_gke_node_pools_tx(
+    tx: neo4j.Transaction, pool_records: List[Dict], project_id: str, gcp_update_tag: int,
+) -> None:
     """
     Write transaction for load_gke_node_pools.
 
@@ -270,14 +285,50 @@ def _load_gke_node_pools_tx(tx: neo4j.Transaction, pool_records: List[Dict], gcp
         p.auto_repair = pool.auto_repair,
         p.max_pods_per_node = pool.max_pods_per_node,
         p.self_link = pool.self_link,
+        p.consolelink = pool.consolelink,
         p.lastupdated = $gcp_update_tag
     WITH p, pool
-    MATCH (cluster:GKECluster{id: pool.cluster_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(cluster:GKECluster{id: pool.cluster_id})
     MERGE (cluster)-[r:HAS_NODE_POOL]->(p)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $gcp_update_tag
     """
-    tx.run(query, PoolRecords=pool_records, gcp_update_tag=gcp_update_tag)
+    tx.run(query, PoolRecords=pool_records, ProjectId=project_id, gcp_update_tag=gcp_update_tag)
+
+
+def _control_plane_access(cluster: Dict) -> Dict:
+    """
+    Resolve who can reach the cluster's control plane, as load_gke_clusters query parameters.
+
+    GKE moved these settings from privateClusterConfig / masterAuthorizedNetworksConfig to
+    controlPlaneEndpointsConfig.ipEndpointsConfig and networkConfig.defaultEnablePrivateNodes. The
+    legacy booleans are omitted when false, which left private_endpoint_enabled NULL; every field
+    here is a definite value. The newer shape wins when it carries the setting.
+    """
+    private_config = cluster.get("privateClusterConfig", {})
+    ip_endpoints = cluster.get("controlPlaneEndpointsConfig", {}).get("ipEndpointsConfig", {})
+    authorized = ip_endpoints.get("authorizedNetworksConfig") or cluster.get("masterAuthorizedNetworksConfig", {})
+
+    private_nodes = cluster.get("networkConfig", {}).get("defaultEnablePrivateNodes")
+    if private_nodes is None:
+        private_nodes = private_config.get("enablePrivateNodes", False)
+
+    public_endpoint = ip_endpoints.get("enablePublicEndpoint")
+    if ip_endpoints.get("enabled") is False:
+        # No IP endpoint at all: only the DNS-based endpoint, where every request is IAM-authorized.
+        public_endpoint = False
+    if public_endpoint is None:
+        public_endpoint = not private_config.get("enablePrivateEndpoint", False)
+
+    return {
+        "ClusterPrivateNodes": bool(private_nodes),
+        "ClusterPrivateEndpointEnabled": not public_endpoint,
+        "ClusterMasterAuthorizedNetworks": authorized.get("enabled", False),
+        "ClusterMasterAuthorizedCidrBlocks": [
+            block["cidrBlock"] for block in authorized.get("cidrBlocks", []) if block.get("cidrBlock")
+        ],
+        "ClusterGcpPublicCidrsAccessEnabled": authorized.get("gcpPublicCidrsAccessEnabled"),
+    }
 
 
 def _process_network_policy(cluster: Dict) -> bool:

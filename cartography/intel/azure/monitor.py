@@ -8,15 +8,14 @@ from azure.core.exceptions import ClientAuthenticationError
 from azure.core.exceptions import HttpResponseError
 from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.monitor import MonitorManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 
 def load_monitor_log_profiles(session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int) -> None:
@@ -47,13 +46,11 @@ def get_log_profiles_list(client: MonitorManagementClient, regions: List, common
 
 
 @timeit
-def transform_log_profiles(log_profiles: List[Dict], regions: List, common_job_parameters: str):
+def transform_log_profiles(log_profiles: List[Dict], regions: List, common_job_parameters: Dict):
     log_profiles_data = []
     for log in log_profiles:
         log['resource_group'] = get_azure_resource_group_name(log.get('id'))
-        log['consolelink'] = azure_console_link.get_console_link(
-            id=log['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        log['consolelink'] = safe_console_link(log['id'], common_job_parameters)
         log['location'] = log.get('location', '').replace(" ", "").lower()
         if regions is None:
             log_profiles_data.append(log)
@@ -74,13 +71,12 @@ def _load_monitor_log_profiles_tx(
     ON CREATE SET log.firstseen = timestamp(),
     log.type = l.type,
     log.name = l.name,
-    log.consolelink = l.consolelink,
     log.resourcegroup = l.resource_group,
     log.location = l.location,
     log.region = l.location,
     log.service_bus_rule_id = l.service_bus_rule_id,
     log.storage_account_id = l.storage_account_id
-    SET log.lastupdated = $update_tag,
+    SET log.consolelink = coalesce(l.consolelink, log.consolelink), log.lastupdated = $update_tag,
     log.name = l.name,
     log.region = l.location
     WITH log
@@ -97,20 +93,22 @@ def _load_monitor_log_profiles_tx(
     )
     for log_profile in log_profiles_list:
         resource_group=get_azure_resource_group_name(log_profile.get('id'))
-        _attach_resource_group_monitor_logs(tx,log_profile['id'],resource_group,update_tag)
+        _attach_resource_group_monitor_logs(tx, subscription_id, log_profile['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_monitor_logs(tx: neo4j.Transaction, log_profile_id:str,resource_group:str ,update_tag: int) -> None:
+def _attach_resource_group_monitor_logs(
+    tx: neo4j.Transaction, subscription_id: str, log_profile_id: str, resource_group: str, update_tag: int,
+) -> None:
     query = """
-    MATCH (log:AzureMonitorLogProfile{id: $log_profile_id})
-    WITH log
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(log:AzureMonitorLogProfile{id: $log_profile_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (log)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     """
     tx.run(
         query,
+        subscription_id=subscription_id,
         log_profile_id=log_profile_id,
         resource_group=resource_group,
         update_tag=update_tag,

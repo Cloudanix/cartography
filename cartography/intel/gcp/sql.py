@@ -10,6 +10,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -70,6 +71,14 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
                         (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIMARY"),
                         None,
                     )
+                    item["public_ip"] = next(
+                        (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIMARY"),
+                        None,
+                    )
+                    item["private_ip"] = next(
+                        (ip["ipAddress"] for ip in item.get("ipAddresses", []) if ip["type"] == "PRIVATE"),
+                        None,
+                    )
                     item["pscEnabled"] = False
                     if regions is None or len(regions) == 0:
                         sql_instances.append(item)
@@ -81,7 +90,7 @@ def get_sql_instances(sql: Resource, project_id: str, regions: list, common_job_
         return sql_instances
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 ("Could not retrieve Sql Instances on project %s due to permissions issues. Code: %s, Message: %s"),
                 project_id,
@@ -136,7 +145,7 @@ def get_sql_users(sql: Resource, sql_instances: List[Dict], project_id: str) -> 
                     request = None
         except HttpError as e:
             err = json.loads(e.content.decode("utf-8"))["error"]
-            if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+            if is_permission_error(e, err):
                 logger.warning(
                     (
                         "Could not retrieve Sql Instance Users on project %s due to permissions issues.\
@@ -185,14 +194,14 @@ def get_sql_databases(sql: Resource, instance: Dict, project_id: str) -> List[Di
                 item["id"] = f"projects/{project_id}/instances/{instance['name']}/databases/{item['name']}"
                 item["consolelink"] = gcp_console_link.get_console_link(
                     project_id=project_id,
-                    resource_name="sql_instance",
+                    resource_name="sql_database",
                     sql_instance_name=instance["name"],
                 )
                 sql_database.append(item)
 
     except HttpError as e:
         err = json.loads(e.content.decode("utf-8"))["error"]
-        if err.get("status", "") == "PERMISSION_DENIED" or err.get("message", "") == "Forbidden":
+        if is_permission_error(e, err):
             logger.warning(
                 (
                     "Could not retrieve Sql Instance database on project %s due to permissions issues.\
@@ -216,8 +225,9 @@ def load_sql_instances_vpc_network(
     data_list: List[Dict],
     project_id: str,
     update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
-    session.execute_write(_load_sql_instances_vpc_network_tx, data_list, project_id, update_tag)
+    session.execute_write(_load_sql_instances_vpc_network_tx, data_list, project_id, update_tag, common_job_parameters)
 
 
 def _load_sql_instances_vpc_network_tx(
@@ -225,12 +235,16 @@ def _load_sql_instances_vpc_network_tx(
     instances: List[Dict],
     project_id: str,
     gcp_update_tag: int,
+    common_job_parameters: Dict,
 ) -> None:
     ingest_sql_instances_vpc_network = """
     UNWIND $instances as instance
-    MATCH (i:GCPSQLInstance{id:instance.id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPSQLInstance{id:instance.id})
     WITH i
-        MATCH (vpc:GCPVpc {id: i.vpcNetworkID})
+        // A Shared VPC host project may be onboarded by another customer: only link a network of a project
+        // of the syncing workspace and organization (a host in the same organization still links).
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id: $GCP_ORGANIZATION_ID})
+            -[:OWNER]->(:GCPProject)-[:RESOURCE]->(vpc:GCPVpc {id: i.vpcNetworkID})
         MERGE (i)-[r:VPC_NETWORK]->(vpc)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $gcp_update_tag
@@ -239,6 +253,8 @@ def _load_sql_instances_vpc_network_tx(
         ingest_sql_instances_vpc_network,
         instances=instances,
         ProjectId=project_id,
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        GCP_ORGANIZATION_ID=common_job_parameters['GCP_ORGANIZATION_ID'],
         gcp_update_tag=gcp_update_tag,
     )
 
@@ -274,6 +290,8 @@ def _load_sql_instances_tx(tx: neo4j.Transaction, instances: List[Dict], project
         i.engine = instance.engine,
         i.engineVersion = instance.engineVersion,
         i.endpoint = instance.endpoint,
+        i.public_ip = instance.public_ip,
+        i.private_ip = instance.private_ip,
         i.pscEnabled = instance.pscEnabled,
         i.port = instance.port,
         i.name = instance.name,
@@ -337,7 +355,7 @@ def _load_sql_users_tx(tx: neo4j.Transaction, sql_users: List[Dict], project_id:
         u.consolelink = user.consolelink,
         u.lastupdated = $gcp_update_tag
     WITH u,user
-    MATCH (i:GCPSQLInstance{id:user.instance_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPSQLInstance{id:user.instance_id})
     MERGE (i)-[r:USED_BY]->(u)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -378,7 +396,7 @@ def _load_public_ip_address_tx(tx: neo4j.Transaction, instance: Dict, project_id
        p.resource='SQLInstance',
        p.lastupdated = $gcp_update_tag
     WITH p
-    MATCH (i:GCPSQLInstance{id:$instanceId})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPSQLInstance{id:$instanceId})
     MERGE (i)-[r:MEMBER_OF_PUBLIC_IP_ADDRESS]->(p)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -431,7 +449,7 @@ def _load_sql_databases_tx(
         d.consolelink = database.consolelink,
         d.lastupdated = $gcp_update_tag
     WITH d,database
-    MATCH (i:GCPSQLInstance{id:database.instance_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(i:GCPSQLInstance{id:database.instance_id})
     MERGE (i)-[r:HAS_DATABASE]->(d)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -466,6 +484,8 @@ def transform_sql_instances(sql_instances: List[Dict]) -> List[Dict]:
     transformed_instances = []
     for instance in sql_instances:
         transformed_instance = instance.copy()
+        # Cloud SQL returns labels at settings.userLabels; label.sync_labels reads 'labels'
+        transformed_instance["labels"] = instance.get("settings", {}).get("userLabels", {})
 
         if not instance.get("pscServiceAttachmentLink"):
             transformed_instance["pscEnabled"] = False
@@ -546,7 +566,7 @@ def sync(
     # logger.info("Transformed Cloud SQL Instances for project %s.", sql_instances)
 
     load_sql_instances(neo4j_session, sql_instances, project_id, gcp_update_tag)
-    load_sql_instances_vpc_network(neo4j_session, sql_instances, project_id, gcp_update_tag)
+    load_sql_instances_vpc_network(neo4j_session, sql_instances, project_id, gcp_update_tag, common_job_parameters)
     logger.info("Load GCP Cloud SQL Instances completed for project %s.", project_id)
     label.sync_labels(
         neo4j_session,

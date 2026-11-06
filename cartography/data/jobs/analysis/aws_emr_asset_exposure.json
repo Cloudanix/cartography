@@ -1,16 +1,14 @@
 {
   "statements": [
     {
-      "query": "MATCH (emr:EMRCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE emr.exposed_internet IS NOT NULL WITH emr LIMIT $LIMIT_SIZE REMOVE emr.exposed_internet, emr.exposed_internet_type, emr.publicContext return COUNT(*) as TotalCompleted",
+      "__comment": "Clears flags of an earlier run, including anonymous_access* left by the previous version of this job.",
+      "query": "MATCH (emr:EMRCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE emr.exposed_internet IS NOT NULL OR emr.anonymous_access IS NOT NULL OR emr.publicContext IS NOT NULL WITH emr LIMIT $LIMIT_SIZE REMOVE emr.exposed_internet, emr.exposed_internet_type, emr.anonymous_access, emr.anonymous_access_type, emr.publicContext return COUNT(*) as TotalCompleted",
       "iterative": true,
       "iterationsize": 100
     },
     {
-      "query": "MATCH (emr:EMRCluster{public_access_configuration: false})<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) SET emr.anonymous_access = true, (CASE WHEN NOT 'assign_public_ip' IN  coalesce(emr.anonymous_access_type , []) THEN emr END).anonymous_access_type = coalesce(emr.anonymous_access_type , []) + 'assign_public_ip';",
-      "iterative": false
-    },
-    {
-      "query": "MATCH (emr:EMRCluster)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE emr.anonymous_access = true WITH emr SET emr.publicContext = apoc.convert.toJson([{resource: emr.id, resourceType: 'aws-analytics-emr-cluster', context: [{clusterId: emr.id, clusterName: emr.name, state: emr.state, publicAccessConfiguration: emr.public_access_configuration, anonymousAccessType: coalesce(emr.anonymous_access_type, []), masterPublicDnsName: emr.master_public_dns_name}]}])",
+      "__comment": "The master node is reachable from the internet when it has a public DNS name (public IP in a public subnet) and one of its security groups admits 0.0.0.0/0 or ::/0. Account-level EMR Block Public Access says nothing about a given cluster.",
+      "query": "MATCH (account:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) MATCH (account)-[:RESOURCE]->(emr:EMRCluster) WHERE coalesce(emr.master_public_dns_name, '') <> '' MATCH (cidr)-[:MEMBER_OF_IP_RULE]->(rule:IpPermissionInbound)-[:MEMBER_OF_EC2_SECURITY_GROUP]->(sg:EC2SecurityGroup)<-[:RESOURCE]-(account) WHERE sg.id IN emr.master_security_group_ids AND ((cidr:IpRange AND cidr.range = '0.0.0.0/0') OR (cidr:Ipv6Range AND cidr.range = '::/0')) WITH emr, collect(DISTINCT {securityGroupId: sg.id, protocol: rule.protocol, fromPort: rule.fromport, toPort: rule.toport, ipRange: cidr.range}) AS securityRules SET emr.exposed_internet = true, emr.exposed_internet_type = ['master_public_open_sg'], emr.publicContext = apoc.convert.toJson([{resource: emr.id, resourceType: 'aws-analytics-emr-cluster', context: [{clusterId: emr.id, clusterName: emr.name, state: emr.state, masterPublicDnsName: emr.master_public_dns_name, exposureTypes: ['master_public_open_sg'], securityRules: securityRules}]}])",
       "iterative": false
     }
   ],

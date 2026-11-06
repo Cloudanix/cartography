@@ -9,6 +9,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -76,12 +78,14 @@ def get_route_tables_data(boto3_session: boto3.session.Session, region: str) -> 
 @timeit
 def load_route_tables(
     neo4j_session: neo4j.Session, data: List[Dict], aws_account_id: str,
-    aws_update_tag: int,
+    aws_update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     routes: List[Dict] = []
     associations: List[Dict] = []
     for route_table in data:
-        route_table['arn'] = f"arn:aws:ec2:{route_table['region']}:{aws_account_id}:route-table/{route_table['RouteTableId']}"
+        route_table['arn'] = (
+            f"arn:{partition}:ec2:{route_table['region']}:{aws_account_id}:route-table/{route_table['RouteTableId']}"
+        )
         route_table['consolelink'] = aws_console_link.get_console_link(arn=route_table['arn'])
         associations.extend(route_table['Associations'])
         for route in route_table['Routes']:
@@ -89,8 +93,8 @@ def load_route_tables(
             route['id'] = f"route_table/{route_table['RouteTableId']}/destination_cidr/{route.get('DestinationCidrBlock', route.get('DestinationIpv6CidrBlock'))}"
             routes.append(route)
     neo4j_session.execute_write(load_route_tables_tx, data, aws_account_id, aws_update_tag)
-    neo4j_session.execute_write(load_routes_tx, routes, aws_update_tag)
-    neo4j_session.execute_write(load_associations_tx, associations, aws_update_tag)
+    neo4j_session.execute_write(load_routes_tx, routes, aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(load_associations_tx, associations, aws_account_id, aws_update_tag)
 
 
 @timeit
@@ -107,17 +111,19 @@ def load_route_tables_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id
         rtab.owner_id = route_table.OwnerId,
         rtab.is_default = route_table.isDefault
 
+    // Claim first: the routes and associations below reach the table through this claim, whether or not
+    // this account's VPC node exists yet.
     WITH route_table, rtab
-    MATCH (vpc:AWSVpc{id: route_table.VpcId})
-    MERGE (rtab)-[r:MEMBER_OF_AWS_VPC]->(vpc)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $aws_update_tag
-
-    WITH rtab
     MATCH (aws:AWSAccount{id: $aws_account_id})
     MERGE (aws)-[rel:RESOURCE]->(rtab)
     ON CREATE SET rel.firstseen = timestamp()
     SET rel.lastupdated = $aws_update_tag
+
+    WITH route_table, rtab, aws
+    MATCH (aws)-[:RESOURCE]->(vpc:AWSVpc{id: route_table.VpcId})
+    MERGE (rtab)-[r:MEMBER_OF_AWS_VPC]->(vpc)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $aws_update_tag
     """
     tx.run(
         ingest_route_tables,
@@ -128,7 +134,7 @@ def load_route_tables_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id
 
 
 @timeit
-def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int):
+def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id: str, aws_update_tag: int):
     ingest_routes = """
     UNWIND $routes as route
     MERGE (rt: EC2Route{id: route.id})
@@ -140,9 +146,11 @@ def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int)
         rt.destination_ipv6_cidr_block = route.DestinationIpv6CidrBlock,
         rt.gateway_id = route.GatewayId,
         rt.state = route.State,
-        rt.nat_gateway_id = route.NatGatewayId
+        rt.nat_gateway_id = route.NatGatewayId,
+        rt.vpc_peering_connection_id = route.VpcPeeringConnectionId,
+        rt.transit_gateway_id = route.TransitGatewayId
     WITH route, rt
-    MATCH (rtab:EC2RouteTable{id: route.RouteTableId})
+    MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(rtab:EC2RouteTable{id: route.RouteTableId})
     MERGE (rtab)-[r:MEMBER_OF_ROUTE_TABLE]->(rt)
     ON CREATE SET
         r.firstseen = timestamp()
@@ -152,12 +160,13 @@ def load_routes_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int)
     tx.run(
         ingest_routes,
         routes=data,
+        aws_account_id=aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
 
 @timeit
-def load_associations_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag: int):
+def load_associations_tx(tx: neo4j.Transaction, data: List[Dict], aws_account_id: str, aws_update_tag: int):
     ingest_associations = """
     UNWIND $associations as assoc
     MERGE (asc:EC2RouteTableAssociation{id: assoc.RouteTableAssociationId})
@@ -168,7 +177,7 @@ def load_associations_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag
         asc.main = assoc.Main,
         asc.Gateway_id = assoc.GatewayId
     WITH assoc, asc
-    MATCH (rtab:EC2RouteTable{id: assoc.RouteTableId})
+    MATCH (:AWSAccount{id: $aws_account_id})-[:RESOURCE]->(rtab:EC2RouteTable{id: assoc.RouteTableId})
     MERGE (rtab)-[rel:HAS_ASSOCIATION]->(asc)
     ON CREATE SET
         rel.firstseen = timestamp()
@@ -191,6 +200,7 @@ def load_associations_tx(tx: neo4j.Transaction, data: List[Dict], aws_update_tag
     tx.run(
         ingest_associations,
         associations=data,
+        aws_account_id=aws_account_id,
         aws_update_tag=aws_update_tag,
     )
 
@@ -216,7 +226,10 @@ def sync_route_tables(
 
     logger.info(f"Total route tables: {len(data)}")
 
-    load_route_tables(neo4j_session, data, current_aws_account_id, update_tag)
+    load_route_tables(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
     cleanup_route_tables(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

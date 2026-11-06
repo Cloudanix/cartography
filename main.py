@@ -5,10 +5,6 @@ import json
 import logging
 import os
 
-import requests
-from requests import Response
-from requests.exceptions import RequestException
-
 import cartography.cli
 import utils.logger as lgr
 from libraries.pubsublibrary import PubSubLibrary
@@ -453,17 +449,7 @@ def bitbucket_process_request(logger, params):
             "mode": "verbose",
         },
         "bitbucket": {
-            "client_id": os.environ["CDX_BITBUCKET_CLIENT_ID"],
-            "client_secret": os.environ["CDX_BITBUCKET_CLIENT_SECRET"],
-            "refresh_token": params.get("refreshToken"),
-            # Prefer workspace access token (no OAuth refresh needed).
-            # Falls back to OAuth refresh token flow for legacy sources.
-            "access_token": params.get("workspaceAccessToken") or get_bitbucket_access_token(
-                logger,
-                os.environ["CDX_BITBUCKET_CLIENT_ID"],
-                os.environ["CDX_BITBUCKET_CLIENT_SECRET"],
-                params.get("refreshToken"),
-            ),
+            "access_token": params.get("accessToken"),
         },
         "params": {
             "sessionString": params.get("sessionString"),
@@ -600,28 +586,16 @@ def gitlab_process_request(logger, params):
     return {"status": "success"}
 
 
-def get_bitbucket_access_token(logger, client_id: str, client_secret: str, refresh_token: str):
-    try:
-        TOKEN_URL = "https://bitbucket.org/site/oauth2/access_token"
-        token_req_payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
-        response: Response = requests.post(
-            TOKEN_URL,
-            data=token_req_payload,
-            allow_redirects=False,
-            auth=(client_id, client_secret),
-        )
-        if response.status_code == requests.codes["ok"]:
-            output: dict = response.json()
-            return output.get("access_token")
-
-        return None
-
-    except RequestException as e:
-        logger.info(f"getting error access token{e}")
-        return None
-
-
 def publish_response(logger, body, resp, params):
+    if resp.get("authFailed"):
+        # Do not publish a snapshot or a failure. Rails errors the inventory
+        # run after five hours with no response, and does not deactivate assets.
+        logger.info(
+            "cartography did not complete; not publishing a dataset. "
+            f"eventId={params.get('eventId')} message={resp.get('message')}",
+        )
+        return
+
     payload = {
         "status": resp["status"],
         "params": body["params"],
@@ -638,6 +612,7 @@ def publish_response(logger, body, resp, params):
         "response": resp,
         "services": body.get("params", {}).get("services", []),
         "runTimestamp": resp.get("updateTag", None),
+        "dc": body.get("params", {}).get("workspace").get("data_center"),
     }
 
     pubsub_helper = PubSubLibrary()

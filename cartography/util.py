@@ -2,6 +2,8 @@ import asyncio
 import logging
 import re
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from datetime import timezone
 from functools import partial
@@ -14,9 +16,11 @@ from typing import Callable
 from typing import cast
 from typing import Dict
 from typing import Iterable
+from typing import Iterator
 from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
 from typing import TypeVar
 from typing import Union
 
@@ -81,6 +85,79 @@ def run_analysis_job(
         common_job_parameters,
         get_job_shortname(filename),
     )
+
+
+# Identifiers worth putting in a failed-analysis-job log line; whichever the provider sets are logged.
+ANALYSIS_SCOPE_KEYS = (
+    "WORKSPACE_ID",
+    "AWS_ID",
+    "GCP_PROJECT_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_SUBSCRIPTION_ID",
+    "OCI_TENANCY_ID",
+    "OCI_COMPARTMENT_ID",
+)
+
+# Analysis jobs that failed in the current sync, for the sync response. A ContextVar, not a module global, because one
+# process serves concurrent sync requests on separate threads; each thread sees only the list its own sync set.
+# Not common_job_parameters: that dict is passed to Neo4j as query parameters. Analysis jobs run on the sync's own
+# thread today; a job moved into a ThreadPoolExecutor worker would still be logged but not collected.
+_failed_analysis_jobs: ContextVar[Optional[List[Dict[str, Any]]]] = ContextVar("failed_analysis_jobs", default=None)
+
+
+@contextmanager
+def collect_failed_analysis_jobs() -> Iterator[List[Dict[str, Any]]]:
+    """
+    Collect the analysis jobs run_analysis_job_logged lets fail inside this block.
+    Yields the list it appends to; each entry is {"job": <job file>, "scope": {<ANALYSIS_SCOPE_KEYS that were set>}}.
+    """
+    failed: List[Dict[str, Any]] = []
+    token = _failed_analysis_jobs.set(failed)
+    try:
+        yield failed
+    finally:
+        _failed_analysis_jobs.reset(token)
+
+
+def run_analysis_job_logged(
+    filename: str,
+    neo4j_session: neo4j.Session,
+    common_job_parameters: Dict,
+    package: str = "cartography.data.jobs.analysis",
+) -> None:
+    """
+    Same as run_analysis_job, but a failure is logged at error level (job name, account/project ids, traceback) and
+    recorded for collect_failed_analysis_jobs instead of raised. Provider syncs run their analysis jobs in sequence, so
+    a raise from one job would skip every later job for that account and leave their exposure values stale. Statements
+    inside the failing job still stop at the first error (later statements can depend on earlier ones, e.g. reset then
+    set).
+    Integration tests call run_analysis_job directly, so they still see failures.
+    """
+    run_analysis_step_logged(
+        filename, lambda: run_analysis_job(filename, neo4j_session, common_job_parameters, package),
+        common_job_parameters,
+    )
+
+
+def run_analysis_step_logged(name: str, step: Callable[[], Any], common_job_parameters: Dict) -> None:
+    """
+    Run one post-sync analysis step (a job file or Python code such as the exposure layers). A failure is logged at
+    error level and recorded for collect_failed_analysis_jobs under `name` instead of raised, so the sync response
+    tells the caller which step failed for which account and later steps still run.
+    """
+    try:
+        step()
+    except Exception:
+        scope = {key: common_job_parameters[key] for key in ANALYSIS_SCOPE_KEYS if key in common_job_parameters}
+        logger.error(
+            "Analysis job '%s' failed for %s; continuing with the remaining analysis jobs.",
+            name,
+            scope,
+            exc_info=True,
+        )
+        failed = _failed_analysis_jobs.get()
+        if failed is not None:
+            failed.append({"job": name, "scope": scope})
 
 
 def run_analysis_and_ensure_deps(
@@ -152,7 +229,9 @@ def run_cleanup_job(
         )
 
     except Exception as e:
-        logger.warning(f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}")
+        logger.warning(
+            f"Failed to cleanup - {filename}. parameters - {common_job_parameters}, Error - {e}",
+        )
         # to handle deadlocks retry transaction
         if retry < 2:
             retry += 1
@@ -193,7 +272,9 @@ def merge_module_sync_metadata(
             n.lastupdated=$UPDATE_TAG
     """)
     neo4j_session.run(
-        template.safe_substitute(group_type=group_type, group_id=group_id, synced_type=synced_type),
+        template.safe_substitute(
+            group_type=group_type, group_id=group_id, synced_type=synced_type,
+        ),
         UPDATE_TAG=update_tag,
     )
     stat_handler.incr(f"{group_type}_{group_id}_{synced_type}_lastupdated", update_tag)
@@ -266,11 +347,53 @@ AWSGetFunc = TypeVar("AWSGetFunc", bound=Callable[..., List])
 # https://github.com/lyft/cartography/issues/25
 
 
+# Denials the customer controls (IAM policy, SCP, region not enabled). Expected,
+# so callers log them below error level to keep them out of Sentry.
+AWS_ACCESS_DENIED_CODES = {
+    "AccessDenied",
+    "AccessDeniedException",
+    "AuthFailure",
+    "AuthorizationError",
+    "Client.UnauthorizedOperation",
+    "OptInRequired",
+    "UnauthorizedOperation",
+    "UnrecognizedClientException",
+}
+SCP_DENY_PHRASE = "explicit deny in a service control policy"
+
+
+def is_aws_access_denied(e: Exception) -> bool:
+    """
+    True when `e` is a botocore ClientError caused by an IAM/SCP denial or a disabled region.
+    """
+    if not isinstance(e, botocore.exceptions.ClientError):
+        return False
+    error = e.response.get("Error", {})
+    return error.get(
+        "Code", "",
+    ) in AWS_ACCESS_DENIED_CODES or SCP_DENY_PHRASE in error.get("Message", "")
+
+
+def log_aws_error(log: logging.Logger, message: str, e: Exception) -> None:
+    """
+    Log a failed AWS call: info for customer IAM/SCP/region denials (expected, so they stay
+    out of Sentry), error for anything else.
+    """
+    if is_aws_access_denied(e):
+        log.info(message)
+        return
+    log.error(message, exc_info=True)
+
+
 def backoff_handler(details: Dict) -> None:
     """
     Handler that will be executed on exception by backoff mechanism
     """
-    logger.warning("Backing off {wait:0.1f} seconds after {tries} tries. Calling function {target}".format(**details))
+    logger.warning(
+        "Backing off {wait:0.1f} seconds after {tries} tries. Calling function {target}".format(
+            **details,
+        ),
+    )
 
 
 # TODO Move this to cartography.intel.aws.util.common
@@ -284,13 +407,9 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
 
     This should be used on `get_` functions that normally return a list of items.
     """
+    # Skipped on top of is_aws_access_denied, which covers the IAM/SCP/opt-in denials.
     ERROR_CODES = [
-        "AccessDenied",
-        "AccessDeniedException",
-        "AuthFailure",
         "InvalidClientTokenId",
-        "UnauthorizedOperation",
-        "UnrecognizedClientException",
         "InternalServerErrorException",
     ]
 
@@ -313,8 +432,12 @@ def aws_handle_regions(func: AWSGetFunc) -> AWSGetFunc:
         except botocore.exceptions.ClientError as e:
             # The account is not authorized to use this service in this region
             # so we can continue without raising an exception
-            if e.response["Error"]["Code"] in ERROR_CODES:
-                logger.warning("{} in this region. Skipping...".format(e.response["Error"]["Message"]))
+            if is_aws_access_denied(e) or e.response["Error"]["Code"] in ERROR_CODES:
+                logger.warning(
+                    "{} in this region. Skipping...".format(
+                        e.response["Error"]["Message"],
+                    ),
+                )
                 return []
             else:
                 raise
@@ -332,6 +455,18 @@ def dict_value_to_str(obj: Dict, key: str) -> Optional[str]:
         return str(value)
     else:
         return None
+
+
+def dict_value_to_iso(obj: Dict, key: str) -> Optional[str]:
+    """
+    ISO-8601 string of the datetime under key, to whole seconds ('2026-10-30T10:00:00+00:00'), or None if absent.
+    The AWS evaluator parses graph-sourced dates with '%Y-%m-%dT%H:%M:%S%z', which neither str(datetime) (space
+    separator) nor fractional seconds satisfy. Non-datetime values fall back to str().
+    """
+    value = obj.get(key)
+    if isinstance(value, datetime):
+        return value.replace(microsecond=0).isoformat()
+    return dict_value_to_str(obj, key)
 
 
 def dict_date_to_epoch(obj: Dict, key: str) -> Optional[int]:
@@ -364,9 +499,9 @@ def normalize_datetime(date_str: Optional[str]):
         return None, None
     try:
         # fromisoformat in Python < 3.11 does not handle 'Z' suffix
-        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         dt_utc = dt.astimezone(timezone.utc)
-        iso_str = dt_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        iso_str = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         timestamp_ms = int(dt_utc.timestamp() * 1000)
         return iso_str, timestamp_ms
     except (ValueError, TypeError):
@@ -433,7 +568,9 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
     # import nest_asyncio
     # nest_asyncio.apply()
     """
-    CartographyThrottlingException = type("CartographyThrottlingException", (Exception,), {})
+    CartographyThrottlingException = type(
+        "CartographyThrottlingException", (Exception,), {},
+    )
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> R:
@@ -445,7 +582,9 @@ def to_asynchronous(func: Callable[..., R], *args: Any, **kwargs: Any) -> Awaita
             raise
 
     # don't use @backoff as decorator, to preserve typing
-    wrapped = backoff.on_exception(backoff.expo, CartographyThrottlingException)(wrapper)
+    wrapped = backoff.on_exception(backoff.expo, CartographyThrottlingException)(
+        wrapper,
+    )
     call = partial(wrapped, *args, **kwargs)
     return asyncio.get_event_loop().run_in_executor(None, call)
 
@@ -477,7 +616,9 @@ def to_synchronous(*awaitables: Awaitable[Any]) -> List[Any]:
     return asyncio.get_event_loop().run_until_complete(asyncio.gather(*awaitables))
 
 
-def make_requests_url(url: str, access_token: str, return_raw: bool = False) -> Union[Dict, requests.Response]:
+def make_requests_url(
+    url: str, access_token: str, return_raw: bool = False, return_status: bool = False,
+) -> Union[Dict, requests.Response, Tuple[Union[Dict, requests.Response], Optional[int]]]:
     try:
         headers = {
             "Accept": "application/json",
@@ -491,13 +632,20 @@ def make_requests_url(url: str, access_token: str, return_raw: bool = False) -> 
         )
 
         if response.status_code != 200:
+            logger.warning(
+                f"non-200 response calling {url}: status={response.status_code} body={response.text[:100]!r}",
+            )
+            if return_status:
+                return {}, response.status_code
             return {}
 
-        if return_raw:
-            return response
-
-        return response.json()
+        payload: Union[Dict, requests.Response] = response if return_raw else response.json()
+        if return_status:
+            return payload, response.status_code
+        return payload
 
     except RequestException as e:
-        logger.info(f"failed to get response: {e}")
+        logger.info(f"failed to get response from {url}: {e}")
+        if return_status:
+            return {}, None
         return {}

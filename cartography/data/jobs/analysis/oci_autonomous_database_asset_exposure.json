@@ -1,0 +1,26 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OCI Autonomous Databases in scope",
+      "query": "MATCH (n:OCIAutonomousDatabase)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Mark Autonomous Databases as exposed if they have a public endpoint (no private endpoint subnet, is_public) and no access control list (whitelisted_ips empty = secure access from everywhere). Dedicated-infrastructure ADBs are only reachable from the customer's VCN and are skipped.",
+      "query": "MATCH (adb:OCIAutonomousDatabase{is_public: true})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(adb.is_dedicated, false) = false AND size(coalesce(adb.whitelisted_ips, [])) = 0 SET adb.exposed_internet = true, (CASE WHEN NOT 'public_endpoint_no_acl' IN coalesce(adb.exposed_internet_type, []) THEN adb END).exposed_internet_type = coalesce(adb.exposed_internet_type, []) + 'public_endpoint_no_acl'",
+      "iterative": false
+    },
+    {
+      "__comment": "Mark Autonomous Databases as exposed if they have a public endpoint and their access control list admits 0.0.0.0/0",
+      "query": "MATCH (adb:OCIAutonomousDatabase{is_public: true})<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE coalesce(adb.is_dedicated, false) = false AND '0.0.0.0/0' IN coalesce(adb.whitelisted_ips, []) SET adb.exposed_internet = true, (CASE WHEN NOT 'public_endpoint_open_acl' IN coalesce(adb.exposed_internet_type, []) THEN adb END).exposed_internet_type = coalesce(adb.exposed_internet_type, []) + 'public_endpoint_open_acl'",
+      "iterative": false
+    },
+    {
+      "__comment": "Build publicContext JSON for exposed Autonomous Databases",
+      "query": "MATCH (adb:OCIAutonomousDatabase)<-[:RESOURCE]-(c:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE adb.exposed_internet = true SET adb.publicContext = apoc.convert.toJson([{resource: adb.id, resourceType: 'oci-database-autonomous-database', context: [{autonomousDatabaseId: adb.id, displayName: adb.display_name, dbName: adb.db_name, compartmentId: c.id, whitelistedIps: coalesce(adb.whitelisted_ips, []), isMtlsConnectionRequired: adb.is_mtls_connection_required, exposureTypes: adb.exposed_internet_type, region: adb.region}]}])",
+      "iterative": false
+    }
+  ],
+  "name": "OCI Autonomous Database asset internet exposure"
+}

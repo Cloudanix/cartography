@@ -1,10 +1,12 @@
 import base64
+import json
 import logging
 import time
 from collections import namedtuple
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
@@ -12,9 +14,14 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.client.core.tx import load
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.graph.job import GraphJob
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.ssm import get_instance_information
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.models.aws.ec2.instances import EC2InstanceSchema
 from cartography.models.aws.ec2.keypairs import EC2KeyPairSchema
 from cartography.models.aws.ec2.networkinterface_instance import EC2NetworkInterfaceInstanceSchema
@@ -23,6 +30,8 @@ from cartography.models.aws.ec2.securitygroup_instance import EC2SecurityGroupIn
 from cartography.models.aws.ec2.subnet_instance import EC2SubnetInstanceSchema
 from cartography.models.aws.ec2.volumes import EBSVolumeInstanceSchema
 from cartography.util import aws_handle_regions
+from cartography.util import dict_date_to_epoch
+from cartography.util import log_aws_error
 from cartography.util import timeit
 
 aws_console_link = AWSLinker()
@@ -57,7 +66,7 @@ def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], r
             images = response.get("Images", [])
             image_details.update({image["ImageId"]: image for image in images})
         except ClientError as e:
-            logger.error(f"Error fetching image details for batch {i // 1000 + 1}: {e}")
+            log_aws_error(logger, f"Error fetching image details for batch {i // 1000 + 1}: {e}", e)
             continue
 
     return image_details
@@ -71,7 +80,10 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
     image_ids = []
     try:
         paginator = client.get_paginator("describe_instances")
-        for page in paginator.paginate():
+        # Since 2026-04-22 AWS hides service-managed instances (EKS Auto Mode, ECS/Lambda Managed
+        # Instances, ...) from DescribeInstances by default; ask for them so inventory sees them.
+        # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-managed-instances.html
+        for page in paginator.paginate(IncludeManagedResources=True):
             reservations.extend(page["Reservations"])
             for reservation in page["Reservations"]:
                 for instance in reservation["Instances"]:
@@ -147,6 +159,7 @@ def transform_ec2_instances(
     reservations: List[Dict[str, Any]],
     region: str,
     current_aws_account_id: str,
+    partition: str = DEFAULT_PARTITION,
 ) -> Ec2Data:
     reservation_list = []
     instance_list = []
@@ -172,7 +185,7 @@ def transform_ec2_instances(
                 instance.get("NetworkInterfaces") or [{}]
             )[0].get("Association", {}).get("IpOwnerId")
             is_static_ip = False if ip_owner_id == "amazon" else True if ip_owner_id else None
-            InstanceArn = f"arn:aws:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
+            InstanceArn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:instance/{instance_id}"
             launch_time = instance.get("LaunchTime")
             launch_time_unix = str(time.mktime(launch_time.timetuple())) if launch_time else None
             # user_data = get_instance_user_data(boto3_session, region, instance_id)
@@ -217,6 +230,8 @@ def transform_ec2_instances(
             vm_os_version = os_details.get("Name", "Unknown")
 
             is_spot_instance = str(instance.get("InstanceLifecycle", "")).lower() == "spot"
+            # Operator is only returned for service-managed instances; absent -> None -> property not set.
+            operator = instance.get("Operator") or {}
 
             instance_list.append(
                 {
@@ -248,13 +263,16 @@ def transform_ec2_instances(
                     "BootMode": instance.get("BootMode"),
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
                     "HibernationOptions": instance.get("HibernationOptions", {}).get("Configured"),
+                    **_default_ssm_instance_fields(),
                     "Region": region,
-                    "consolelink'": aws_console_link.get_console_link(arn=InstanceArn),
+                    "consolelink": aws_console_link.get_console_link(arn=InstanceArn),
                     "arn": InstanceArn,
                     "IamRoles": iam_roles,
                     # "UserData": user_data,
                     "EksClusterName": eks_cluster_name,
                     "EksNodeGroupName": eks_nodegroup_name,
+                    "OperatorManaged": operator.get("Managed"),
+                    "OperatorPrincipal": operator.get("Principal"),
                 },
             )
 
@@ -269,7 +287,7 @@ def transform_ec2_instances(
 
             if instance.get("KeyName"):
                 key_name = instance["KeyName"]
-                key_pair_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:key-pair/{key_name}"
+                key_pair_arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:key-pair/{key_name}"
                 keypair_list.append(
                     {
                         "KeyPairArn": key_pair_arn,
@@ -297,8 +315,12 @@ def transform_ec2_instances(
                             "Description": network_interface["Description"],
                             "PrivateDnsName": network_interface.get("PrivateDnsName"),
                             "PrivateIpAddress": network_interface.get("PrivateIpAddress"),
+                            # Read by the ::/0 statement of aws_ec2_instance_asset_exposure.json
+                            "Ipv6Addresses": [a["Ipv6Address"] for a in network_interface.get("Ipv6Addresses", [])],
                             "InstanceId": instance_id,
-                            "SubnetId": subnet_id,
+                            # An ENI lives in its own subnet; a secondary ENI can sit in a different
+                            # subnet from the instance's primary one.
+                            "SubnetId": network_interface.get("SubnetId"),
                             "GroupId": security_group["GroupId"],
                         },
                     )
@@ -464,44 +486,192 @@ def load_ec2_roles(
     update_tag: int,
 ) -> None:
     ingest_role_instance_relations = """
-    UNWIND $roles as role
-    MATCH (instance:EC2Instance {id: role.InstanceId}), (roleNode:AWSRole {arn: role.Arn})
+    UNWIND $DictList as role
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(instance:EC2Instance {id: role.InstanceId})
+    MATCH (aa)-[:RESOURCE]->(roleNode:AWSRole {arn: role.Arn})
     MERGE (instance)-[r:USES]->(roleNode)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_role_instance_relations,
-        roles=role_data,
+        role_data,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=update_tag,
     )
 
 
 @timeit
-def link_ec2_to_eks(neo4j_session: neo4j.Session, instance_list: List[Dict], update_tag: int) -> None:
-    """Links EC2 instances to EKS Clusters and Node Groups based on extracted tags."""
-    cluster_query = """
-    UNWIND $Instances as instance
-    WITH instance WHERE instance.EksClusterName IS NOT NULL
-    MATCH (i:EC2Instance{id: instance.InstanceId})
-    MATCH (c:EKSCluster{name: instance.EksClusterName})
+def link_ec2_to_eks(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    """
+    Links EC2 instances to EKS Clusters and Node Groups from the eks:* tags stored on EC2Instance.
+
+    Reads only graph state, so it must run after both the `ec2:instance` and `eks` syncs have
+    loaded (see sync_eks_node_links). Cluster names are unique only per account+region, so the
+    match is scoped to this workspace's account and the instance's region; a bare name match
+    would link nodes to another tenant's same-named cluster. Accounts are owned through the
+    AWSOrganization (organizations.sync); there is no direct Workspace->AWSAccount edge.
+    """
+    query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})
+        -[:OWNER]->(a:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(i:EC2Instance)
+    WHERE i.eksclustername IS NOT NULL
+    MATCH (a)-[:RESOURCE]->(c:EKSCluster{name: i.eksclustername, region: i.region})
     MERGE (c)-[r:HAS_NODE]->(i)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+    SET r.lastupdated = $UPDATE_TAG
+    WITH c, i WHERE i.eksnodegroupname IS NOT NULL
+    MATCH (c)<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup{name: i.eksnodegroupname})
+    MERGE (ng)-[r2:HAS_NODE]->(i)
+    ON CREATE SET r2.firstseen = timestamp()
+    SET r2.lastupdated = $UPDATE_TAG
     """
+    run_write_query(
+        neo4j_session,
+        query,
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        ORGANIZATION_ID=common_job_parameters['ORGANIZATION_ID'],
+        AWS_ID=common_job_parameters['AWS_ID'],
+        UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
+    )
 
-    nodegroup_query = """
-    UNWIND $Instances as instance
-    WITH instance WHERE instance.EksNodeGroupName IS NOT NULL AND instance.EksClusterName IS NOT NULL
-    MATCH (i:EC2Instance{id: instance.InstanceId})
-    MATCH (c:EKSCluster{name: instance.EksClusterName})<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup{name: instance.EksNodeGroupName})
-    MERGE (ng)-[r:HAS_NODE]->(i)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $update_tag
+
+@timeit
+def cleanup_eks_node_links(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    # Node groups have no account RESOURCE edge (only ASSOCIATED_WITH their cluster), so they
+    # are reached through this account's clusters.
+    cleanup_query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})
+        -[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(c:EKSCluster)
+    OPTIONAL MATCH (c)<-[:ASSOCIATED_WITH]-(ng:EKSClusterNodeGroup)
+    WITH c, collect(ng) + [c] AS owners
+    UNWIND owners AS s
+    MATCH (s)-[r:HAS_NODE]->(:EC2Instance)
+    WHERE r.lastupdated <> $UPDATE_TAG
+    DELETE r
     """
-    neo4j_session.run(cluster_query, Instances=instance_list, update_tag=update_tag)
-    neo4j_session.run(nodegroup_query, Instances=instance_list, update_tag=update_tag)
+    run_write_query(
+        neo4j_session,
+        cleanup_query,
+        UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
+        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
+        ORGANIZATION_ID=common_job_parameters['ORGANIZATION_ID'],
+        AWS_ID=common_job_parameters['AWS_ID'],
+    )
+
+
+def sync_eks_node_links(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    """
+    Post-sync step: `ec2:instance` and `eks` run in parallel, so linking inside either sync
+    misses nodes the other has not loaded yet. The account orchestrator calls this after both.
+    """
+    link_ec2_to_eks(neo4j_session, common_job_parameters)
+    cleanup_eks_node_links(neo4j_session, common_job_parameters)
+
+
+def _default_ssm_instance_fields() -> Dict[str, Any]:
+    """SSM DescribeInstanceInformation fields on an unmanaged EC2 instance."""
+    return {
+        "SsmEnabled": False,
+        "SsmAgentVersion": None,
+        "SsmPingStatus": None,
+        "SsmLastPingDateTime": None,
+        "SsmIsLatestVersion": None,
+        "SsmPlatformType": None,
+        "SsmPlatformName": None,
+        "SsmPlatformVersion": None,
+        "SsmActivationId": None,
+        "SsmIamRole": None,
+        "SsmRegistrationDate": None,
+        "SsmResourceType": None,
+        "SsmName": None,
+        "SsmIpAddress": None,
+        "SsmComputerName": None,
+        "SsmAssociationStatus": None,
+        "SsmLastAssociationExecutionDate": None,
+        "SsmLastSuccessfulAssociationExecutionDate": None,
+        "SsmAssociationOverviewDetailedStatus": None,
+        "SsmAssociationStatusAggregatedCount": None,
+        "SsmSourceId": None,
+        "SsmSourceType": None,
+        "SsmSourceLocation": None,
+    }
+
+
+def _to_epoch(info: Dict[str, Any], key: str) -> Optional[int]:
+    value = info.get(key)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    return dict_date_to_epoch(info, key)
+
+
+def _ssm_fields_from_instance_information(info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Map SSM InstanceInformation onto EC2Instance properties.
+
+    Keys are prefixed with Ssm so they do not overwrite EC2 DescribeInstances
+    fields (platform, private IP, IAM instance profile, name from tags).
+    AssociationOverview is flattened: Neo4j cannot store nested maps.
+    Datetimes are stored as epoch seconds, matching SSMInstanceInformation.
+    """
+    fields = _default_ssm_instance_fields()
+    if not info:
+        return fields
+
+    overview = info.get("AssociationOverview") or {}
+    aggregated = overview.get("InstanceAssociationStatusAggregatedCount")
+    fields.update(
+        {
+            "SsmEnabled": True,
+            "SsmAgentVersion": info.get("AgentVersion"),
+            "SsmPingStatus": info.get("PingStatus"),
+            "SsmLastPingDateTime": _to_epoch(info, "LastPingDateTime"),
+            "SsmIsLatestVersion": info.get("IsLatestVersion"),
+            "SsmPlatformType": info.get("PlatformType"),
+            "SsmPlatformName": info.get("PlatformName"),
+            "SsmPlatformVersion": info.get("PlatformVersion"),
+            "SsmActivationId": info.get("ActivationId"),
+            "SsmIamRole": info.get("IamRole"),
+            "SsmRegistrationDate": _to_epoch(info, "RegistrationDate"),
+            "SsmResourceType": info.get("ResourceType"),
+            "SsmName": info.get("Name"),
+            "SsmIpAddress": info.get("IPAddress"),
+            "SsmComputerName": info.get("ComputerName"),
+            "SsmAssociationStatus": info.get("AssociationStatus"),
+            "SsmLastAssociationExecutionDate": _to_epoch(info, "LastAssociationExecutionDate"),
+            "SsmLastSuccessfulAssociationExecutionDate": _to_epoch(
+                info, "LastSuccessfulAssociationExecutionDate",
+            ),
+            "SsmAssociationOverviewDetailedStatus": overview.get("DetailedStatus"),
+            "SsmAssociationStatusAggregatedCount": (
+                json.dumps(aggregated) if aggregated is not None else None
+            ),
+            "SsmSourceId": info.get("SourceId"),
+            "SsmSourceType": info.get("SourceType"),
+            "SsmSourceLocation": info.get("SourceLocation"),
+        },
+    )
+    return fields
+
+
+def enrich_ec2_instances_with_ssm_status(
+    instance_list: List[Dict[str, Any]],
+    instance_information: List[Dict[str, Any]],
+) -> None:
+    """
+    Copy DescribeInstanceInformation attributes onto each EC2 instance dict.
+
+    An instance is SSM-enabled when it appears in InstanceInformationList
+    (it is a Systems Manager managed node). See
+    https://docs.aws.amazon.com/boto3/latest/reference/services/ssm/client/describe_instance_information.html
+    """
+    info_by_id = {ii["InstanceId"]: ii for ii in instance_information}
+    for inst in instance_list:
+        inst.update(_ssm_fields_from_instance_information(info_by_id.get(inst["InstanceId"])))
 
 
 def load_ec2_instance_data(
@@ -526,7 +696,7 @@ def load_ec2_instance_data(
     load_ec2_network_interfaces(neo4j_session, nic_list, region, current_aws_account_id, update_tag)
     load_ec2_instance_ebs_volumes(neo4j_session, ebs_volumes_list, region, current_aws_account_id, update_tag)
     load_ec2_roles(neo4j_session, role_data, region, current_aws_account_id, update_tag)
-    link_ec2_to_eks(neo4j_session, instance_list, update_tag)
+    # Note: EC2 -> EKS HAS_NODE links are made by sync_eks_node_links after the parallel run.
     # Note: EC2Instance -[:CHILDREN]-> EC2Image relationship is created in images.py
     # (sync_ec2_images -> link_ec2_instances_to_images) after EC2Image nodes exist.
 
@@ -536,21 +706,6 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
     logger.debug("Running EC2 instance cleanup")
     GraphJob.from_node_schema(EC2ReservationSchema(), common_job_parameters).run(neo4j_session)
     GraphJob.from_node_schema(EC2InstanceSchema(), common_job_parameters).run(neo4j_session)
-    cleanup_query = """
-    MATCH (node:EC2Instance)<-[r:HAS_NODE]-(s)
-    WHERE (s:EKSCluster OR s:EKSClusterNodeGroup)
-      AND (s)<-[:RESOURCE]-(:AWSAccount{id: $AWS_ID})<-[:OWNER]-(:AWSOrganization{id: $ORGANIZATION_ID})
-        <-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID})
-      AND r.lastupdated <> $UPDATE_TAG
-    DELETE r
-    """
-    neo4j_session.run(
-        cleanup_query,
-        UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
-        AWS_ID=common_job_parameters['AWS_ID'],
-        ORGANIZATION_ID=common_job_parameters['ORGANIZATION_ID'],
-        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
-    )
 
     # Clean up stale EC2Instance -[:USES]-> AWSRole relationships. These are created by a
     # raw MERGE in load_ec2_roles() and are not modeled on EC2InstanceSchema, so the
@@ -580,10 +735,31 @@ def sync_ec2_instances(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     tic = time.perf_counter()
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.info("Syncing EC2 instances for region '%s' in account '%s'.", region, current_aws_account_id)
         reservations = get_ec2_instances(boto3_session, region)
-        ec2_data = transform_ec2_instances(boto3_session, reservations, region, current_aws_account_id)
+        ec2_data = transform_ec2_instances(
+            boto3_session, reservations, region, current_aws_account_id, partition=partition,
+        )
+        # DescribeInstanceInformation errors on terminated/shutting-down IDs (InvalidInstanceId).
+        instance_ids = [
+            inst["InstanceId"]
+            for inst in ec2_data.instance_list
+            if inst.get("State") not in ("terminated", "shutting-down")
+        ]
+        if instance_ids:
+            try:
+                ssm_info = get_instance_information(boto3_session, region, instance_ids)
+                enrich_ec2_instances_with_ssm_status(ec2_data.instance_list, ssm_info)
+            except Exception:
+                logger.warning(
+                    "Failed to get SSM instance information for region '%s' in account '%s'; "
+                    "loading EC2 instances with ssmenabled=false.",
+                    region,
+                    current_aws_account_id,
+                    exc_info=True,
+                )
         load_ec2_instance_data(
             neo4j_session,
             region,

@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from cartography.intel.oci import iam
+from tests.data.oci.iam import LIST_REGION_SUBSCRIPTIONS
 
 
 JSON_OCI_OBJECT = {
@@ -157,3 +158,70 @@ def test_oci_policy_managed_type():
     assert iam._oci_policy_managed_type({"name": "PSM-root-policy"}) == "predefined"
     assert iam._oci_policy_managed_type({"name": "dev_storage_use"}) == "custom"
     assert iam._oci_policy_managed_type({}) == "custom"
+
+
+FOREIGN_TENANCY = "ocid1.tenancy.oc1..foreignaaa"
+KNOWN_TENANCY = "ocid1.tenancy.oc1..knownbbb"
+
+
+def test_parse_external_tenancies_extracts_admit_endorse_define():
+    statements = [
+        "Allow group Administrators to manage all-resources in tenancy",  # no OCID -> ignored
+        f"Admit group NetworkAdmins of tenancy {FOREIGN_TENANCY} to manage virtual-network-family in compartment net",
+        f"Endorse group Auditors to read audit-events in tenancy {KNOWN_TENANCY}",
+        f"Define tenancy PartnerTenancy as {FOREIGN_TENANCY}",  # duplicate OCID -> deduped
+    ]
+
+    parsed = iam.parse_external_tenancies(statements)
+
+    principals = {p["principal"] for p in parsed}
+    assert principals == {FOREIGN_TENANCY, KNOWN_TENANCY}
+    verbs = {p["principal"]: p["statement_verb"] for p in parsed}
+    assert verbs[FOREIGN_TENANCY] == "admit"
+    assert verbs[KNOWN_TENANCY] == "endorse"
+
+
+def test_parse_external_tenancies_ignores_non_cross_tenancy_and_bad_input():
+    # A bare OCID mention without a cross-tenancy verb must not be treated as external.
+    bare_mention = f"Allow any-user to inspect tenancies where request.tenancy={FOREIGN_TENANCY}"
+    assert iam.parse_external_tenancies([bare_mention]) == []
+    assert iam.parse_external_tenancies([]) == []
+    assert iam.parse_external_tenancies([None, 123]) == []
+
+
+def test_oci_external_access_type_classifies_known_vs_third_party():
+    known = {KNOWN_TENANCY}
+    assert iam._oci_external_access_type(FOREIGN_TENANCY, KNOWN_TENANCY, known) == "ThirdParty"
+    assert iam._oci_external_access_type(KNOWN_TENANCY, "ocid1.tenancy.oc1..self", known) == "CrossAccount"
+    # Case-insensitive match against the customer's own tenancy id.
+    assert iam._oci_external_access_type(FOREIGN_TENANCY.upper(), FOREIGN_TENANCY, set()) == "CrossAccount"
+
+
+@patch.object(iam, "load_region_subscriptions")
+@patch.object(iam, "get_region_subscriptions_list_data")
+def test_sync_region_subscriptions_returns_home_region(mock_get, mock_load):
+    mock_get.return_value = LIST_REGION_SUBSCRIPTIONS
+    home = iam.sync_region_subscriptions(MagicMock(), MagicMock(), "ocid1.tenancy.oc1..a", 1, {})
+    assert home == "us-phoenix-1"
+    mock_load.assert_called_once()
+
+
+@patch.object(iam, "load_region_subscriptions")
+@patch.object(iam, "get_region_subscriptions_list_data")
+def test_sync_region_subscriptions_warns_without_a_home_region(mock_get, mock_load, caplog):
+    mock_get.return_value = {"RegionSubscriptions": [{"region-name": "us-ashburn-1", "is-home-region": False}]}
+
+    with caplog.at_level("WARNING", logger=iam.__name__):
+        assert iam.sync_region_subscriptions(MagicMock(), MagicMock(), "ocid1.tenancy.oc1..a", 1, {}) == ""
+    assert "No home region subscription" in caplog.text
+
+
+@patch.object(iam, "load_graph_data")
+def test_load_policies_sets_home_region_console_link(mock_load_graph_data):
+    policy = {
+        "id": "ocid1.policy.oc1..a", "name": "p", "compartment-id": "c", "description": "",
+        "statements": [], "time-created": "", "version-date": "",
+    }
+    iam.load_policies(MagicMock(), [policy], "ocid1.tenancy.oc1..a", 1, home_region="us-phoenix-1")
+    rows = mock_load_graph_data.call_args[0][2]
+    assert rows[0]["consolelink"] == "https://cloud.oracle.com/identity/policies/ocid1.policy.oc1..a?region=us-phoenix-1"

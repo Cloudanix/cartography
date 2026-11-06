@@ -99,9 +99,10 @@ class TestStartAzureDevOpsIngestion:
         start_azure_devops_ingestion(mock_session, mock_config)
         # Should return without error and without performing any actions
 
+    @patch("cartography.intel.azuredevops._organization_readable", return_value=True)
     @patch("cartography.intel.azuredevops.get_access_token")
     @patch("cartography.intel.azuredevops.sync_organization")
-    def test_start_azure_devops_ingestion_success(self, mock_sync_org, mock_get_token):
+    def test_start_azure_devops_ingestion_success(self, mock_sync_org, mock_get_token, _readable):
         """Test a successful ingestion run for a single organization."""
         mock_session = MagicMock()
         mock_config = MagicMock(spec=Config)
@@ -144,10 +145,11 @@ class TestStartAzureDevOpsIngestion:
         except Exception as e:
             pytest.fail(f"Ingestion with invalid config raised an exception: {e}")
 
+    @patch("cartography.intel.azuredevops._organization_readable", return_value=True)
     @patch("cartography.intel.azuredevops.get_access_token")
     @patch("cartography.intel.azuredevops.sync_organization")
     def test_start_azure_devops_ingestion_token_failure(
-        self, mock_sync_org, mock_get_token,
+        self, mock_sync_org, mock_get_token, _readable,
     ):
         """Test that ingestion continues to the next organization if one fails to get a token."""
         mock_session = MagicMock()
@@ -181,3 +183,30 @@ class TestStartAzureDevOpsIngestion:
 
         assert mock_get_token.call_count == 2
         mock_sync_org.assert_called_once()  # Only the second org should be synced
+
+    @patch("cartography.intel.azuredevops._organization_readable", return_value=False)
+    @patch("cartography.intel.azuredevops.get_access_token", return_value="access-token")
+    @patch("cartography.intel.azuredevops.sync_organization")
+    def test_unreadable_organization_is_not_synced_or_published(
+        self, mock_sync_org, _get_token, _readable,
+    ):
+        mock_config = MagicMock(spec=Config)
+        org_config = {
+            "organization": [
+                {
+                    "tenant_id": "tenant1",
+                    "client_id": "client1",
+                    "client_secret": "secret1",
+                    "url": "https://dev.azure.com",
+                    "name": "org1",
+                },
+            ],
+        }
+        mock_config.azure_devops_config = org_config
+        mock_config.params = {"workspace": {"id_string": "ws1", "account_id": "org1"}}
+        mock_config.update_tag = "update_tag"
+
+        result = start_azure_devops_ingestion(MagicMock(), mock_config)
+
+        mock_sync_org.assert_not_called()
+        assert result["authFailed"] is True

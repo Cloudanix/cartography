@@ -14,6 +14,10 @@ TEST_RESOURCE_GROUP = 'TestRG'
 TEST_UPDATE_TAG = 123456789
 
 
+def _seed_subscription(neo4j_session):
+    neo4j_session.run('MERGE (:AzureSubscription{id: $id})', id=TEST_SUBSCRIPTION_ID)
+
+
 def test_load_clusters(neo4j_session):
     aks.load_aks(
         neo4j_session,
@@ -147,6 +151,7 @@ def test_load_container_registry_relationships(neo4j_session):
 def test_load_container_registry_replications(neo4j_session):
     aks.load_container_registry_replications(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYREPLICATIONS,
         TEST_UPDATE_TAG,
     )
@@ -168,6 +173,8 @@ def test_load_container_registry_replications(neo4j_session):
 
 
 def test_load_container_registry_replication_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_registries(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -177,6 +184,7 @@ def test_load_container_registry_replication_relationships(neo4j_session):
 
     aks.load_container_registry_replications(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYREPLICATIONS,
         TEST_UPDATE_TAG,
     )
@@ -209,6 +217,7 @@ def test_load_container_registry_replication_relationships(neo4j_session):
 def test_load_container_registry_runs(neo4j_session):
     aks.load_container_registry_runs(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYRUNS,
         TEST_UPDATE_TAG,
     )
@@ -230,6 +239,8 @@ def test_load_container_registry_runs(neo4j_session):
 
 
 def test_load_container_registry_run_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_registries(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -239,6 +250,7 @@ def test_load_container_registry_run_relationships(neo4j_session):
 
     aks.load_container_registry_runs(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYRUNS,
         TEST_UPDATE_TAG,
     )
@@ -271,6 +283,7 @@ def test_load_container_registry_run_relationships(neo4j_session):
 def test_load_container_registry_tasks(neo4j_session):
     aks.load_container_registry_tasks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYTASKS,
         TEST_UPDATE_TAG,
     )
@@ -292,6 +305,8 @@ def test_load_container_registry_tasks(neo4j_session):
 
 
 def test_load_container_registry_task_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_registries(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -301,6 +316,7 @@ def test_load_container_registry_task_relationships(neo4j_session):
 
     aks.load_container_registry_tasks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYTASKS,
         TEST_UPDATE_TAG,
     )
@@ -333,6 +349,7 @@ def test_load_container_registry_task_relationships(neo4j_session):
 def test_load_container_registry_webhooks(neo4j_session):
     aks.load_container_registry_webhooks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYWEBHOOKS,
         TEST_UPDATE_TAG,
     )
@@ -354,6 +371,8 @@ def test_load_container_registry_webhooks(neo4j_session):
 
 
 def test_load_container_registry_webhook_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_registries(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -363,6 +382,7 @@ def test_load_container_registry_webhook_relationships(neo4j_session):
 
     aks.load_container_registry_webhooks(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERREGISTRYWEBHOOKS,
         TEST_UPDATE_TAG,
     )
@@ -460,6 +480,7 @@ def test_load_container_group_relationships(neo4j_session):
 def test_load_containers(neo4j_session):
     aks.load_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERS,
         TEST_UPDATE_TAG,
     )
@@ -479,6 +500,8 @@ def test_load_containers(neo4j_session):
 
 
 def test_load_container_relationships(neo4j_session):
+    _seed_subscription(neo4j_session)
+
     aks.load_container_groups(
         neo4j_session,
         TEST_SUBSCRIPTION_ID,
@@ -488,6 +511,7 @@ def test_load_container_relationships(neo4j_session):
 
     aks.load_containers(
         neo4j_session,
+        TEST_SUBSCRIPTION_ID,
         DESCRIBE_CONTAINERS,
         TEST_UPDATE_TAG,
     )
@@ -515,10 +539,12 @@ def test_load_container_relationships(neo4j_session):
     assert actual == expected
 
 
-def test_link_compute_to_aks(neo4j_session):
-    # Guards link_compute_to_aks: BOTH AzureVirtualMachine and AzureVirtualMachineScaleSet,
-    # when tagged with aks_cluster_name/_rg/_pool_name, must link via HAS_NODE to the AKS
-    # cluster and its agent pool. This fails if the per-label query rewrite drops a label.
+def test_sync_aks_node_links(neo4j_session):
+    # Guards sync_aks_node_links: BOTH AzureVirtualMachine and AzureVirtualMachineScaleSet link
+    # via HAS_NODE to the AKS cluster and its agent pool, matched by
+    #   - the cluster's node resource group (MC_*), case-insensitively, with no cluster tags, or
+    #   - the aks-managed-cluster-name/-rg tags, case-insensitively;
+    # and never across subscriptions/workspaces, even with identical names and tags.
     #
     #   (AzureCluster)-[:HAS_NODE]->(vm / vmss)
     #   (AzureCluster)-[:HAS]->(AzureClusterAgentPool)-[:HAS_NODE]->(vm / vmss)
@@ -526,38 +552,102 @@ def test_link_compute_to_aks(neo4j_session):
     # Unique ids so this is isolated from the other (module-scoped) tests in this file.
     neo4j_session.run(
         """
-        MERGE (c:AzureCluster {id: 'aks-link-cluster', name: 'AksLinkCluster', resourcegroup: 'AksLinkRG'})
-        MERGE (p:AzureClusterAgentPool {id: 'aks-link-pool', name: 'akslinkpool'})
-        MERGE (c)-[:HAS]->(p)
-        MERGE (:AzureVirtualMachine {
-            id: 'aks-link-vm',
-            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'akslinkpool'
+        MERGE (:CloudanixWorkspace {id: 'aksl-w1'})-[:OWNER]->(:AzureTenant {id: 'aksl-t1'})
+            -[:RESOURCE]->(s1:AzureSubscription {id: 'aksl-s1'})
+        MERGE (:CloudanixWorkspace {id: 'aksl-w2'})-[:OWNER]->(:AzureTenant {id: 'aksl-t2'})
+            -[:RESOURCE]->(s2:AzureSubscription {id: 'aksl-s2'})
+        MERGE (s1)-[:RESOURCE]->(c:AzureCluster {
+            id: 'aksl-cluster', name: 'AksLinkCluster', resourcegroup: 'akslinkrg',
+            node_resource_group: 'mc_akslinkrg_akslinkcluster_eastus'
         })
-        MERGE (:AzureVirtualMachineScaleSet {
-            id: 'aks-link-vmss',
-            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'akslinkpool'
+        MERGE (c)-[:HAS]->(:AzureClusterAgentPool {id: 'aksl-pool', name: 'nodepool1'})
+        MERGE (s1)-[:RESOURCE]->(:AzureVirtualMachineScaleSet {
+            id: 'aksl-vmss-noderg', resourcegroup: 'MC_AksLinkRG_AksLinkCluster_eastus', aks_pool_name: 'nodepool1'
         })
+        MERGE (s1)-[:RESOURCE]->(:AzureVirtualMachine {
+            id: 'aksl-vm-tags', resourcegroup: 'other',
+            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'NodePool1'
+        })
+        MERGE (s1)-[:RESOURCE]->(:AzureVirtualMachine {id: 'aksl-vm-unrelated', resourcegroup: 'other'})
+        MERGE (s2)-[:RESOURCE]->(:AzureVirtualMachineScaleSet {
+            id: 'aksl-vmss-foreign', resourcegroup: 'MC_AksLinkRG_AksLinkCluster_eastus',
+            aks_cluster_name: 'AksLinkCluster', aks_cluster_rg: 'AksLinkRG', aks_pool_name: 'nodepool1'
+        })
+        MERGE (s1)-[:RESOURCE]->(old:AzureVirtualMachine {id: 'aksl-vm-old', resourcegroup: 'other'})
+        MERGE (c)-[:HAS_NODE {lastupdated: 1}]->(old)
         """,
     )
 
-    compute.link_compute_to_aks(neo4j_session, TEST_UPDATE_TAG)
+    compute.sync_aks_node_links(
+        neo4j_session,
+        {
+            'WORKSPACE_ID': 'aksl-w1',
+            'AZURE_TENANT_ID': 'aksl-t1',
+            'AZURE_SUBSCRIPTION_ID': 'aksl-s1',
+            'UPDATE_TAG': TEST_UPDATE_TAG,
+        },
+    )
 
-    cluster_linked = {
-        r['nid'] for r in neo4j_session.run(
+    links = {
+        (r['s'], r['n']) for r in neo4j_session.run(
             """
-            MATCH (c:AzureCluster {id: 'aks-link-cluster'})-[:HAS_NODE]->(node)
-            RETURN node.id AS nid;
+            MATCH (s)-[:HAS_NODE]->(n) WHERE n.id STARTS WITH 'aksl-'
+            RETURN s.id AS s, n.id AS n
             """,
         )
     }
-    pool_linked = {
-        r['nid'] for r in neo4j_session.run(
-            """
-            MATCH (p:AzureClusterAgentPool {id: 'aks-link-pool'})-[:HAS_NODE]->(node)
-            RETURN node.id AS nid;
-            """,
-        )
+    assert links == {
+        ('aksl-cluster', 'aksl-vmss-noderg'),
+        ('aksl-cluster', 'aksl-vm-tags'),
+        ('aksl-pool', 'aksl-vmss-noderg'),
+        ('aksl-pool', 'aksl-vm-tags'),
     }
 
-    assert cluster_linked == {'aks-link-vm', 'aks-link-vmss'}
-    assert pool_linked == {'aks-link-vm', 'aks-link-vmss'}
+
+def test_agentpool_properties_refresh_on_every_sync(neo4j_session):
+    """Pool properties are re-set on every sync, not only when the node is created.
+
+    Pools first ingested while the SDK returned the raw REST shape got count=None;
+    with ON CREATE SET the next syncs never repaired it, so the console could not
+    size AKS clusters from pool counts. A changed count (autoscaling) must also land.
+    """
+    cluster_id = '/subscriptions/pc-sub/resourceGroups/pc-rg/providers/Microsoft.ContainerService/managedClusters/pc'
+    pool_id = f'{cluster_id}/agentPools/nodepool1'
+    neo4j_session.run(
+        """
+        MERGE (s:AzureSubscription {id: 'pc-sub'})
+        MERGE (s)-[:RESOURCE]->(:AzureCluster {id: $cluster_id})
+        """,
+        cluster_id=cluster_id,
+    )
+
+    def sync(count, max_pods, update_tag):
+        aks.load_aks_managed_cluster_agentpools(
+            neo4j_session, 'pc-sub', cluster_id,
+            [{
+                'id': pool_id, 'name': 'nodepool1', 'type': 'VirtualMachineScaleSets', 'count': count,
+                'max_pods': max_pods, 'resource_group': 'pc-rg', 'consolelink': None,
+            }],
+            update_tag,
+        )
+        return neo4j_session.run(
+            'MATCH (p:AzureClusterAgentPool {id: $id}) RETURN p.count AS count, p.max_pods AS max_pods, '
+            'p.firstseen AS firstseen',
+            id=pool_id,
+        ).single()
+
+    first = sync(None, None, 1)
+    assert first['count'] is None
+    # A sentinel, not timestamp(): two syncs in the same millisecond would hide an overwrite.
+    original_firstseen = 1
+    neo4j_session.run(
+        'MATCH (p:AzureClusterAgentPool {id: $id}) SET p.firstseen = $firstseen',
+        id=pool_id, firstseen=original_firstseen,
+    )
+
+    repaired = sync(3, 30, 2)
+    assert (repaired['count'], repaired['max_pods']) == (3, 30)
+    assert repaired['firstseen'] == original_firstseen
+
+    scaled = sync(7, 30, 3)
+    assert scaled['count'] == 7

@@ -10,8 +10,10 @@ from typing import Optional
 import neo4j
 import oci
 
+from . import tags
 from . import utils
 from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
@@ -201,6 +203,7 @@ def transform_clusters(
             "available_kubernetes_upgrades": [x for x in (merged.get("available-kubernetes-upgrades") or []) if x is not None],
             "time_created": str(merged.get("metadata", {}).get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link("oke_cluster", region=region, ocid=cluster_id),
         })
     return transformed
 
@@ -286,6 +289,9 @@ def transform_node_pools(
             ),
             "time_created": str(merged.get("metadata", {}).get("time-created", "")),
             "region": region,
+            "consolelink": utils.get_console_link(
+                "oke_node_pool", region=region, ocid=pool_id, cluster_id=merged.get("cluster-id") or "",
+            ),
             "nodes": node_records,
         })
     return transformed
@@ -298,6 +304,7 @@ def transform_node_pools(
 def load_clusters(
     neo4j_session: neo4j.Session,
     clusters: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -336,9 +343,10 @@ def load_clusters(
             cl.image_policy_kms_keys = c.image_policy_kms_keys,
             cl.available_kubernetes_upgrades = c.available_kubernetes_upgrades,
             cl.region = c.region,
+            cl.consolelink = c.consolelink,
             cl.lastupdated = $oci_update_tag
         WITH cl
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r:RESOURCE]->(cl)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -347,6 +355,7 @@ def load_clusters(
         neo4j_session,
         ingest_clusters,
         clusters,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
@@ -355,6 +364,7 @@ def load_clusters(
 def load_node_pools(
     neo4j_session: neo4j.Session,
     node_pools: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     oci_update_tag: int,
 ) -> None:
@@ -362,11 +372,9 @@ def load_node_pools(
     Batch-ingest OCIOKENodePool nodes, attach each to its owning OCICompartment
     via RESOURCE, and connect it to its parent OCIOKECluster via HAS_NODE_POOL.
 
-    Then in a second batch, link each node pool to the underlying OCIInstance
-    nodes via CONTAINS_NODE. Uses a MATCH (not MERGE) on OCIInstance so that
-    pools containing instances we have not yet synced (e.g. compute hasn't
-    run, or the instance is in a different compartment) silently no-op rather
-    than creating empty placeholder nodes.
+    The pool's worker instance OCIDs are stored as np.node_ids; the HAS_NODE
+    links to OCIInstance are made by sync_oke_node_links once every compartment
+    (and so every instance, wherever it lives) has been synced.
     """
     ingest_pools = """
     UNWIND $DictList AS p
@@ -397,14 +405,17 @@ def load_node_pools(
             np.eviction_grace_duration = p.eviction_grace_duration,
             np.is_force_delete_after_grace_duration = p.is_force_delete_after_grace_duration,
             np.region = p.region,
+            np.consolelink = p.consolelink,
+            np.node_ids = [n IN coalesce(p.nodes, []) WHERE n.ocid IS NOT NULL | n.ocid],
             np.lastupdated = $oci_update_tag
         WITH np, p
-        MATCH (cc:OCICompartment{id: $COMPARTMENT_ID})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(cc:OCICompartment{id: $COMPARTMENT_ID})
         MERGE (cc)-[r1:RESOURCE]->(np)
         ON CREATE SET r1.firstseen = timestamp()
         SET r1.lastupdated = $oci_update_tag
         WITH np, p
-        MATCH (cl:OCIOKECluster{id: p.cluster_id})
+        MATCH (:OCITenancy{id: $TENANCY_ID})-[:OWNER]->(:OCICompartment)
+            -[:RESOURCE]->(cl:OCIOKECluster{id: p.cluster_id})
         MERGE (cl)-[r2:HAS_NODE_POOL]->(np)
         ON CREATE SET r2.firstseen = timestamp()
         SET r2.lastupdated = $oci_update_tag
@@ -413,30 +424,10 @@ def load_node_pools(
         neo4j_session,
         ingest_pools,
         node_pools,
+        TENANCY_ID=tenancy_id,
         COMPARTMENT_ID=compartment_id,
         oci_update_tag=oci_update_tag,
     )
-
-    # Build (pool_ocid, node_ocid) pairs for the compute bridge so we can do
-    # one UNWIND-driven MATCH per pool/node pair.
-    node_links: List[Dict[str, str]] = []
-    for pool in node_pools:
-        pool_ocid = pool.get("ocid")
-        for node in pool.get("nodes") or []:
-            node_ocid = node.get("ocid")
-            if pool_ocid and node_ocid:
-                node_links.append({"pool_ocid": pool_ocid, "node_ocid": node_ocid})
-
-    if node_links:
-        link_compute = """
-        UNWIND $DictList AS link
-            MATCH (np:OCIOKENodePool{id: link.pool_ocid})
-            MATCH (i:OCIInstance{id: link.node_ocid})
-            MERGE (np)-[r:CONTAINS_NODE]->(i)
-            ON CREATE SET r.firstseen = timestamp()
-            SET r.lastupdated = $oci_update_tag
-        """
-        load_graph_data(neo4j_session, link_compute, node_links, oci_update_tag=oci_update_tag)
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +437,11 @@ def load_node_pools(
 def sync_clusters(
     neo4j_session: neo4j.Session,
     container_engine: oci.container_engine.ContainerEngineClient,
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetch -> transform -> load OKE clusters for a compartment in a region.
@@ -474,7 +467,9 @@ def sync_clusters(
 
     clusters = transform_clusters(summaries, details_by_id, region)
     if clusters:
-        load_clusters(neo4j_session, clusters, compartment_id, oci_update_tag)
+        load_clusters(neo4j_session, clusters, tenancy_id, compartment_id, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, summaries, 'OCIOKECluster', oci_update_tag, common_job_parameters)
     return clusters
 
 
@@ -482,9 +477,11 @@ def sync_node_pools(
     neo4j_session: neo4j.Session,
     container_engine: oci.container_engine.ContainerEngineClient,
     clusters: List[Dict[str, Any]],
+    tenancy_id: str,
     compartment_id: str,
     region: str,
     oci_update_tag: int,
+    common_job_parameters: Dict[str, Any] = None,
 ) -> None:
     """
     For each cluster fetched in this region, list its node pools, fetch each
@@ -518,13 +515,63 @@ def sync_node_pools(
 
     node_pools = transform_node_pools(all_summaries, pool_details_by_id, region)
     if node_pools:
-        load_node_pools(neo4j_session, node_pools, compartment_id, oci_update_tag)
+        load_node_pools(neo4j_session, node_pools, tenancy_id, compartment_id, oci_update_tag)
+        if common_job_parameters:
+            tags.sync_tags(neo4j_session, all_summaries, 'OCIOKENodePool', oci_update_tag, common_job_parameters)
 
 
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
     run_cleanup_job(
         'oci_import_oke_cleanup.json', neo4j_session, common_job_parameters,
     )
+
+
+def link_oke_nodes(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    """
+    Create (OCIOKENodePool)-[:HAS_NODE]->(OCIInstance) from the worker OCIDs stored on each
+    pool (np.node_ids), plus the direct (OCIOKECluster)-[:HAS_NODE]->(OCIInstance) edge.
+
+    Pools and instances are both reached from this workspace's tenancy (the worker OCIDs come
+    from API data), so the link stays in the tenancy even when the instance lives in another
+    compartment. MATCH, not MERGE: an instance that was not synced is skipped instead of
+    becoming a stub.
+    """
+    query = """
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(t:OCITenancy{id: $OCI_TENANCY_ID})
+        -[:OWNER]->(:OCICompartment)-[:RESOURCE]->(np:OCIOKENodePool)
+    WHERE np.node_ids IS NOT NULL
+    UNWIND np.node_ids AS node_id
+    MATCH (t)-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(i:OCIInstance{id: node_id})
+    MERGE (np)-[r:HAS_NODE]->(i)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UPDATE_TAG
+    WITH np, i
+    MATCH (cl:OCIOKECluster)-[:HAS_NODE_POOL]->(np)
+    MERGE (cl)-[r2:HAS_NODE]->(i)
+    ON CREATE SET r2.firstseen = timestamp()
+    SET r2.lastupdated = $UPDATE_TAG
+    """
+    run_write_query(
+        neo4j_session,
+        query,
+        WORKSPACE_ID=common_job_parameters["WORKSPACE_ID"],
+        OCI_TENANCY_ID=common_job_parameters["OCI_TENANCY_ID"],
+        UPDATE_TAG=common_job_parameters["UPDATE_TAG"],
+    )
+
+
+def cleanup_oke_node_links(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    run_cleanup_job('oci_oke_node_links_cleanup.json', neo4j_session, common_job_parameters)
+
+
+def sync_oke_node_links(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    """
+    Post-sync step: OKE pools and their worker instances can sit in different compartments,
+    and compartments sync one after another, so linking inside the OKE sync misses instances
+    from compartments not synced yet. The tenancy orchestrator calls this after all of them.
+    """
+    link_oke_nodes(neo4j_session, common_job_parameters)
+    cleanup_oke_node_links(neo4j_session, common_job_parameters)
 
 
 def sync(
@@ -556,7 +603,8 @@ def sync(
 
         try:
             clusters = sync_clusters(
-                neo4j_session, container_engine, compartment_id, region, oci_update_tag,
+                neo4j_session, container_engine, tenancy_id, compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI OKE clusters: %s", e, exc_info=True)
@@ -565,7 +613,8 @@ def sync(
         try:
             sync_node_pools(
                 neo4j_session, container_engine, clusters,
-                compartment_id, region, oci_update_tag,
+                tenancy_id, compartment_id, region, oci_update_tag,
+                common_job_parameters,
             )
         except Exception as e:
             logger.error("Error syncing OCI OKE node pools: %s", e, exc_info=True)

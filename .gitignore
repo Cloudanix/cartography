@@ -26,6 +26,7 @@ tmp
 node_modules
 .serverless
 .venv
+.venv*
 */venv_cartography_test/
 
 package/*
@@ -51,4 +52,13 @@ config/*
 !config/*.example.json
 
 # Added by code-review-graph
+.code-review-graph
 .code-review-graph/
+
+.ruff_cache
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/
+
+# Local secret-guard patterns (docs/upstream-merge/upstream-merge-flow.md). Never commit.
+.secret-patterns

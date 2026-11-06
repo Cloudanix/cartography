@@ -174,8 +174,9 @@ def test_load_inline_policy_data(neo4j_session):
         "arn:aws:iam::000000000000:group/example-group-0/example-group-0/inline_policy/group_inline_policy",
         "group_inline_policy",
         tests.data.aws.iam.INLINE_POLICY_STATEMENTS,
-        TEST_ACCOUNT_ID,
-        TEST_UPDATE_TAG,
+        aws_update_tag=TEST_UPDATE_TAG,
+        consolelink='',
+        aws_account_id=TEST_ACCOUNT_ID,
     )
 
 

@@ -19,7 +19,9 @@ from . import organization
 from . import projects
 from . import repos
 from .resources import RESOURCE_FUNCTIONS
+from .util import call_azure_devops_api
 from .util import get_access_token
+from .util import get_org_node_id
 from cartography.config import Config
 from cartography.graph.session import Session
 from cartography.util import timeit
@@ -142,6 +144,20 @@ def sync_organization(
     )
 
 
+def _organization_readable(url: str, org_name: str, access_token: str) -> bool:
+    """True when the project list answers, even if the organization has no projects.
+
+    A 401 or 403 here would otherwise sync as an empty organization and clean up
+    every project and repository.
+    """
+    response, _headers = call_azure_devops_api(
+        f"{url}/{org_name}/_apis/projects",
+        access_token,
+        params={"api-version": "7.1", "$top": 1},
+    )
+    return response is not None
+
+
 def validate_auth_config(auth_details: Dict) -> bool:
     """
     Validates the Azure DevOps authentication configuration.
@@ -200,7 +216,7 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
         logger.info(
             "Azure DevOps import is not configured - skipping this module. See docs to configure.",
         )
-        return
+        return {"authFailed": True, "message": "azure devops authentication failed: config is missing"}
 
     try:
         # Decode the base64-encoded configuration
@@ -209,12 +225,12 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
 
     except (json.JSONDecodeError, TypeError) as e:
         logger.error(f"Failed to parse Azure DevOps config: {e}", exc_info=True)
-        return
+        return {"authFailed": True, "message": "azure devops sync did not complete: config could not be parsed"}
 
     # Validate the configuration structure
     if not validate_auth_config(auth_details):
         logger.error("Invalid Azure DevOps configuration format")
-        return
+        return {"authFailed": True, "message": "azure devops sync did not complete: config is invalid"}
 
     common_job_parameters = {
         "WORKSPACE_ID": config.params["workspace"]["id_string"],
@@ -227,6 +243,7 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
     )
 
     # Process each organization configuration
+    synced = False
     for org_idx, org in enumerate(auth_details.get("organization", [])):
         try:
             logger.info(f"Processing organization {org_idx + 1}: {org.get('name')}")
@@ -255,15 +272,27 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
                 )
                 continue
 
+            if not _organization_readable(org["url"], org["name"], access_token):
+                logger.error(
+                    f"Azure DevOps organization {org['name']} is not readable with this token; skipping sync",
+                )
+                continue
+
             logger.info(f"Starting sync for organization: {org['name']}")
+            # Loaders and cleanups anchor on the org's graph id (host-qualified off dev.azure.com); a copy, so the
+            # account_id filter above still compares names for the next configured org.
+            org_job_parameters = {
+                **common_job_parameters, "ORGANIZATION_ID": get_org_node_id(org["url"], org["name"]),
+            }
             sync_organization(
                 neo4j_session,
                 config,
                 org["name"],
                 org["url"],
                 access_token,
-                common_job_parameters,
+                org_job_parameters,
             )
+            synced = True
 
         except Exception as e:
             logger.error(
@@ -271,6 +300,10 @@ def start_azure_devops_ingestion(neo4j_session: neo4j.Session, config: Config) -
                 exc_info=True,
             )
             continue
+
+    if not synced:
+        logger.info("Azure DevOps sync did not complete; no organization was synced")
+        return {"authFailed": True, "message": "azure devops sync did not complete"}
 
     logger.info("Azure DevOps ingestion completed")
     return common_job_parameters

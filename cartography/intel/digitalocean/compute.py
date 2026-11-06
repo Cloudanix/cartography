@@ -4,6 +4,7 @@ from typing import Optional
 import neo4j
 from digitalocean import Manager
 
+from cartography.client.core.tx import load_graph_data
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -82,29 +83,30 @@ def _get_project_id_for_droplet(droplet_id: int, project_resources: dict) -> Opt
 @timeit
 def load_droplets(neo4j_session: neo4j.Session, data: list, digitalocean_update_tag: int) -> None:
     query = """
-        MERGE (p:DOProject{id:$ProjectId})
+        UNWIND $DictList AS item
+        MERGE (p:DOProject{id:item.project_id})
         ON CREATE SET p.firstseen = timestamp()
         SET p.lastupdated = $digitalocean_update_tag
 
-        MERGE (d:DODroplet{id:$DropletId})
+        MERGE (d:DODroplet{id:item.id})
         ON CREATE SET d.firstseen = timestamp()
-        SET d.account_id = $AccountId,
-        d.name = $Name,
-        d.locked = $Locked,
-        d.status = $Status,
-        d.features = $Features,
-        d.region = $RegionSlug,
-        d.created_at = $CreatedAt,
-        d.image = $ImageSlug,
-        d.size = $SizeSlug,
-        d.kernel = $Kernel,
-        d.ip_address = $IpAddress,
-        d.private_ip_address = $PrivateIpAddress,
-        d.project_id = $ProjectId,
-        d.ip_v6_address = $IpV6Address,
-        d.tags = $Tags,
-        d.volumes = $Volumes,
-        d.vpc_uuid = $VpcUuid,
+        SET d.account_id = item.account_id,
+        d.name = item.name,
+        d.locked = item.locked,
+        d.status = item.status,
+        d.features = item.features,
+        d.region = item.region,
+        d.created_at = item.created_at,
+        d.image = item.image,
+        d.size = item.size,
+        d.kernel = item.kernel,
+        d.ip_address = item.ip_address,
+        d.private_ip_address = item.private_ip_address,
+        d.project_id = item.project_id,
+        d.ip_v6_address = item.ip_v6_address,
+        d.tags = item.tags,
+        d.volumes = item.volumes,
+        d.vpc_uuid = item.vpc_uuid,
         d.lastupdated = $digitalocean_update_tag
         WITH d, p
 
@@ -112,29 +114,7 @@ def load_droplets(neo4j_session: neo4j.Session, data: list, digitalocean_update_
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $digitalocean_update_tag
         """
-    for droplet in data:
-        neo4j_session.run(
-            query,
-            AccountId=droplet['account_id'],
-            DropletId=droplet['id'],
-            Name=droplet['name'],
-            Locked=droplet['locked'],
-            Status=droplet['status'],
-            Features=droplet['features'],
-            RegionSlug=droplet['region'],
-            CreatedAt=droplet['created_at'],
-            ImageSlug=droplet['image'],
-            SizeSlug=droplet['size'],
-            IpAddress=droplet['ip_address'],
-            PrivateIpAddress=droplet['private_ip_address'],
-            ProjectId=droplet['project_id'],
-            IpV6Address=droplet['ip_v6_address'],
-            Kernel=droplet['kernel'],
-            Tags=droplet['tags'],
-            Volumes=droplet['volumes'],
-            VpcUuid=droplet['vpc_uuid'],
-            digitalocean_update_tag=digitalocean_update_tag,
-        )
+    load_graph_data(neo4j_session, query, data, digitalocean_update_tag=digitalocean_update_tag)
     return
 
 

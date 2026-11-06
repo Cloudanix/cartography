@@ -1,0 +1,21 @@
+{
+    "statements": [
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIOKENodePool)-[r:HAS_NODE]->(:OCIInstance) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r)",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIOKECluster)-[r:HAS_NODE]->(:OCIInstance) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r)",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIOKENodePool)-[r:CONTAINS_NODE]->(:OCIInstance) WITH r LIMIT $LIMIT_SIZE DELETE (r)",
+            "iterative": true,
+            "iterationsize": 100,
+            "__comment__": "CONTAINS_NODE was replaced by HAS_NODE; drop any legacy edges."
+        }
+    ],
+    "name": "cleanup OCI OKE node links"
+}

@@ -10,6 +10,10 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -48,9 +52,9 @@ def get_ec2_vpcs(boto3_session: boto3.session.Session, region: str) -> List[Dict
 
 def _get_cidr_association_statement(block_type: str) -> str:
     INGEST_CIDR_TEMPLATE = Template("""
-    MATCH (vpc:AWSVpc{id: $VpcId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(vpc:AWSVpc{id: $VpcId})
     WITH vpc
-    UNWIND $CidrBlock as block_data
+    UNWIND $DictList as block_data
         MERGE (new_block:$block_label{id: $VpcId + '|' + block_data.$block_cidr})
         ON CREATE SET new_block.firstseen = timestamp()
         SET new_block.association_id = block_data.AssociationId,
@@ -84,8 +88,9 @@ def _get_cidr_association_statement(block_type: str) -> str:
 @timeit
 def load_cidr_association_set(
     neo4j_session: neo4j.Session, vpc_id: str, vpc_data: Dict, block_type: str,
-    update_tag: int,
+    update_tag: int, current_aws_account_id: str,
 ) -> None:
+    # Only this account's VPC: a VPC shared in through RAM gets its blocks from its owner's sync.
     ingest_statement = _get_cidr_association_statement(block_type)
 
     if block_type == "ipv6":
@@ -93,10 +98,12 @@ def load_cidr_association_set(
     else:
         data = vpc_data.get("CidrBlockAssociationSet", [])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_statement,
+        data,
         VpcId=vpc_id,
-        CidrBlock=data,
+        AWS_ACCOUNT_ID=current_aws_account_id,
         update_tag=update_tag,
     )
 
@@ -104,7 +111,7 @@ def load_cidr_association_set(
 @timeit
 def load_ec2_vpcs(
     neo4j_session: neo4j.Session, data: List[Dict], current_aws_account_id: str,
-    update_tag: int,
+    update_tag: int, partition: str = DEFAULT_PARTITION,
 ) -> None:
     # https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-vpcs.html
     # {
@@ -155,10 +162,21 @@ def load_ec2_vpcs(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag"""
 
+    # A VPC shared into this account through RAM belongs to OwnerId, maybe another tenant: no RESOURCE claim,
+    # and its owner's facts (name tag, is_default, state) are not overwritten with this account's view. The
+    # arn, built from OwnerId, is the same whoever writes it; it is SET so a node an older sync stamped with
+    # this account's arn stops passing aws_import_vpc_cleanup.json's owner check (which would delete it).
+    ingest_shared_vpc = """
+    MERGE (new_vpc:AWSVpc{id: $VpcId})
+    ON CREATE SET new_vpc.firstseen = timestamp(), new_vpc.vpcid = $VpcId, new_vpc.region = $Region,
+        new_vpc.primary_cidr_block = $PrimaryCIDRBlock, new_vpc.lastupdated = $update_tag
+    SET new_vpc.arn = $Arn, new_vpc.consolelink = $consolelink"""
+
     for vpc in data:
         region = vpc.get('region', '')
         vpc_id = vpc["VpcId"]  # fail if not present
-        vpc_arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:vpc/{vpc_id}"
+        owner_id = vpc.get("OwnerId", current_aws_account_id)
+        vpc_arn = f"arn:{partition}:ec2:{region}:{owner_id}:vpc/{vpc_id}"
         consolelink = aws_console_link.get_console_link(arn=vpc_arn)
         vpc_name = vpc_id
         for tag in vpc.get("Tags", []):
@@ -166,8 +184,9 @@ def load_ec2_vpcs(
                 vpc_name = tag.get("Value")
                 break
 
-        neo4j_session.run(
-            ingest_vpc,
+        run_write_query(
+            neo4j_session,
+            ingest_vpc if owner_id == current_aws_account_id else ingest_shared_vpc,
             VpcId=vpc_id,
             InstanceTenancy=vpc.get("InstanceTenancy", None),
             State=vpc.get("State", None),
@@ -189,6 +208,7 @@ def load_ec2_vpcs(
             block_type="ipv4",
             vpc_data=vpc,
             update_tag=update_tag,
+            current_aws_account_id=current_aws_account_id,
         )
 
         load_cidr_association_set(
@@ -197,6 +217,7 @@ def load_ec2_vpcs(
             block_type="ipv6",
             vpc_data=vpc,
             update_tag=update_tag,
+            current_aws_account_id=current_aws_account_id,
         )
 
 
@@ -221,7 +242,10 @@ def sync_vpc(
 
     logger.info(f"Total VPCs: {len(data)}")
 
-    load_ec2_vpcs(neo4j_session, data, current_aws_account_id, update_tag)
+    load_ec2_vpcs(
+        neo4j_session, data, current_aws_account_id, update_tag,
+        partition=get_partition_from_params(common_job_parameters),
+    )
     cleanup_ec2_vpcs(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

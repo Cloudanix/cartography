@@ -30,7 +30,10 @@ def test_load_network_interfaces(mock_get_network_interfaces, neo4j_session):
         [TEST_REGION],
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
-        {'UPDATE_TAG': TEST_UPDATE_TAG, 'AWS_ID': TEST_ACCOUNT_ID},
+        {
+            'UPDATE_TAG': TEST_UPDATE_TAG, 'AWS_ID': TEST_ACCOUNT_ID,
+            'ORGANIZATION_ID': 'o-eni', 'WORKSPACE_ID': 'ws-eni', 'LIMIT_SIZE': 100,
+        },
     )
 
     # Assert NetworkInterfaces were created
@@ -38,6 +41,14 @@ def test_load_network_interfaces(mock_get_network_interfaces, neo4j_session):
         ("eni-0e106a07c15ff7d14",),
         ("eni-0d9877f559c240362",),
         ("eni-04b4289e1be7634e4",),
+    }
+
+    # IPv6 addresses are stored as a list (read by the ::/0 statement of the instance exposure job)
+    ipv6 = neo4j_session.run("MATCH (n:NetworkInterface) RETURN n.id AS id, n.ipv6_addresses AS ipv6")
+    assert {r['id']: r['ipv6'] for r in ipv6} == {
+        "eni-0e106a07c15ff7d14": [],
+        "eni-0d9877f559c240362": [],
+        "eni-04b4289e1be7634e4": ["2600:1f18:4f3:8a00::5"],
     }
 
     # Assert EC2PrivateIps were created

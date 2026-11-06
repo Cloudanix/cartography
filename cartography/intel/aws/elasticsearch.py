@@ -11,9 +11,14 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.intel.dns import ingest_dns_record_by_fqdn
 from cartography.util import aws_handle_regions
+from cartography.util import log_aws_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -42,15 +47,20 @@ def _get_es_domains(client: botocore.client.BaseClient) -> List[Dict]:
 
 
 @timeit
-def transform_es_domains(dms: List[Dict], region: str, account_id: str) -> List[Dict]:
+def transform_es_domains(
+    dms: List[Dict], region: str, account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     domains = []
     for domain in dms:
-        domain['arn'] = f"arn:aws:es:{region if region else ''}:{account_id if account_id else ''}:domain/{domain['DomainName']}"
+        domain['arn'] = (
+            f"arn:{partition}:es:{region if region else ''}:{account_id if account_id else ''}"
+            f":domain/{domain['DomainName']}"
+        )
         domain['consolelink'] = aws_console_link.get_console_link(arn=domain['arn'])
         domain['region'] = region
-        domain['isPublicFacing'] = False
-        if not domain.get('VPCOptions', {}).get('VpcId'):
-            domain['isPublicFacing'] = True
+        # AWS returns VPCOptions.VPCId (botocore VPCDerivedInfo); VpcId is kept for older fixtures.
+        vpc_options = domain.get('VPCOptions') or {}
+        domain['isPublicFacing'] = not (vpc_options.get('VPCId') or vpc_options.get('VpcId'))
         domains.append(domain)
 
     return domains
@@ -59,6 +69,7 @@ def transform_es_domains(dms: List[Dict], region: str, account_id: str) -> List[
 @timeit
 def _load_es_domains(
     neo4j_session: neo4j.Session, domain_list: List[Dict], aws_account_id: str, aws_update_tag: int,
+    workspace_id: str,
 ) -> None:
     """
     Ingest Elastic Search domains
@@ -68,7 +79,7 @@ def _load_es_domains(
     :param domains: Domain list to ingest
     """
     ingest_records = """
-    UNWIND $Records as record
+    UNWIND $DictList as record
     MERGE (es:ESDomain{id: record.DomainId})
     ON CREATE SET es.firstseen = timestamp(), es.arn = record.ARN, es.domainid = record.DomainId
     SET es.lastupdated = $aws_update_tag, es.deleted = record.Deleted, es.created = record.created,
@@ -102,9 +113,10 @@ def _load_es_domains(
     for d in domain_list:
         del d['ServiceSoftwareOptions']
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_records,
-        Records=domain_list,
+        domain_list,
         AWS_ACCOUNT_ID=aws_account_id,
         aws_update_tag=aws_update_tag,
     )
@@ -112,8 +124,8 @@ def _load_es_domains(
     for domain in domain_list:
         domain_id = domain["DomainId"]
         _link_es_domains_to_dns(neo4j_session, domain_id, domain, aws_update_tag)
-        _link_es_domain_vpc(neo4j_session, domain_id, domain, aws_update_tag)
-        _process_access_policy(neo4j_session, domain_id, domain)
+        _link_es_domain_vpc(neo4j_session, domain_id, domain, aws_account_id, workspace_id, aws_update_tag)
+        _process_access_policy(neo4j_session, domain_id, domain, aws_account_id)
 
 
 @timeit
@@ -139,30 +151,38 @@ def _link_es_domains_to_dns(
 
 
 @timeit
-def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict, aws_update_tag: int) -> None:
+def _link_es_domain_vpc(
+    neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict, aws_account_id: str, workspace_id: str,
+    aws_update_tag: int,
+) -> None:
     """
     Link the ES domain to its DNS FQDN endpoint and create associated nodes in the graph
     if needed
+
+    The domain is this account's; its subnets and security groups can be shared in from another account of
+    the workspace (VPC sharing), never another customer's.
 
     :param neo4j_session: Neo4j session object
     :param domain_id: ES domain id
     :param domain_data: domain data
     """
     ingest_subnet = """
-    MATCH (es:ESDomain{id: $DomainId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(es:ESDomain{id: $DomainId})
     WITH es
-    UNWIND $SubnetList as subnet_id
-        MATCH (subnet_node:EC2Subnet{id: subnet_id})
+    UNWIND $DictList as subnet_id
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+            -[:RESOURCE]->(subnet_node:EC2Subnet{subnetid: subnet_id})
         MERGE (es)-[r:PART_OF_SUBNET]->(subnet_node)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
 
     ingest_sec_groups = """
-    MATCH (es:ESDomain{id: $DomainId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(es:ESDomain{id: $DomainId})
     WITH es
-    UNWIND $SecGroupList as ecsecgroup_id
-        MATCH (group_node:EC2SecurityGroup{id: ecsecgroup_id})
+    UNWIND $DictList as ecsecgroup_id
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization)-[:OWNER]->(:AWSAccount)
+            -[:RESOURCE]->(group_node:EC2SecurityGroup{id: ecsecgroup_id})
         MERGE (es)-[r:MEMBER_OF_EC2_SECURITY_GROUP]->(group_node)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
@@ -173,25 +193,30 @@ def _link_es_domain_vpc(neo4j_session: neo4j.Session, domain_id: str, domain_dat
         subnetList = vpc_data.get("SubnetIds", [])
         groupList = vpc_data.get("SecurityGroupIds", [])
 
-        if len(subnetList) > 0:
-            neo4j_session.run(
-                ingest_subnet,
-                DomainId=domain_id,
-                SubnetList=subnetList,
-                aws_update_tag=aws_update_tag,
-            )
-
-        if len(groupList) > 0:
-            neo4j_session.run(
-                ingest_sec_groups,
-                DomainId=domain_id,
-                SecGroupList=groupList,
-                aws_update_tag=aws_update_tag,
-            )
+        load_graph_data(
+            neo4j_session,
+            ingest_subnet,
+            subnetList,
+            DomainId=domain_id,
+            AWS_ACCOUNT_ID=aws_account_id,
+            WORKSPACE_ID=workspace_id,
+            aws_update_tag=aws_update_tag,
+        )
+        load_graph_data(
+            neo4j_session,
+            ingest_sec_groups,
+            groupList,
+            DomainId=domain_id,
+            AWS_ACCOUNT_ID=aws_account_id,
+            WORKSPACE_ID=workspace_id,
+            aws_update_tag=aws_update_tag,
+        )
 
 
 @timeit
-def _process_access_policy(neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict) -> None:
+def _process_access_policy(
+    neo4j_session: neo4j.Session, domain_id: str, domain_data: Dict, aws_account_id: str,
+) -> None:
     """
     Link the ES domain to its DNS FQDN endpoint and create associated nodes in the graph
     if needed
@@ -200,7 +225,10 @@ def _process_access_policy(neo4j_session: neo4j.Session, domain_id: str, domain_
     :param domain_id: ES domain id
     :param domain_data: domain data
     """
-    tag_es = "MATCH (es:ESDomain{id: $DomainId}) SET es.exposed_internet = $InternetExposed"
+    tag_es = """
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(es:ESDomain{id: $DomainId})
+    SET es.exposed_internet = $InternetExposed
+    """
 
     exposed_internet = False
 
@@ -209,7 +237,9 @@ def _process_access_policy(neo4j_session: neo4j.Session, domain_id: str, domain_
         if policy.is_internet_accessible():
             exposed_internet = True
 
-    neo4j_session.run(tag_es, DomainId=domain_id, InternetExposed=exposed_internet)
+    run_write_query(
+        neo4j_session, tag_es, DomainId=domain_id, InternetExposed=exposed_internet, AWS_ACCOUNT_ID=aws_account_id,
+    )
 
 
 @timeit
@@ -221,9 +251,16 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     )
 
 
+def filter_active_elasticsearch_reserved_instances(reserved_instances: List[Dict]) -> List[Dict]:
+    """Keep only reserved Elasticsearch instances in active state."""
+    return [ri for ri in reserved_instances if ri.get('State') == 'active']
+
+
 @timeit
 @aws_handle_regions
-def get_elasticsearch_reserved_instances(client: botocore.client.BaseClient, region: str, current_aws_account_id: str) -> List[Dict]:
+def get_elasticsearch_reserved_instances(
+    client: botocore.client.BaseClient, region: str, current_aws_account_id: str, partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     reserved_instances = []
     try:
         paginator = client.get_paginator('describe_reserved_elasticsearch_instances')
@@ -231,14 +268,19 @@ def get_elasticsearch_reserved_instances(client: botocore.client.BaseClient, reg
         page_iterator = paginator.paginate()
         for page in page_iterator:
             reserved_instances.extend(page.get('ReservedElasticsearchInstances', []))
+        reserved_instances = filter_active_elasticsearch_reserved_instances(reserved_instances)
         for reserved_instance in reserved_instances:
-            reserved_instance['arn'] = f"arn:aws:es:{region}:{current_aws_account_id}:reserved-instances/{reserved_instance['ReservedElasticsearchInstanceId']}"
+            reserved_instance['arn'] = (
+                f"arn:{partition}:es:{region}:{current_aws_account_id}"
+                f":reserved-instances/{reserved_instance['ReservedElasticsearchInstanceId']}"
+            )
             reserved_instance['region'] = region
+            reserved_instance['consolelink'] = aws_console_link.get_console_link(arn=reserved_instance['arn'])
 
         return reserved_instances
 
     except ClientError as e:
-        logger.error(f'Failed to call ES describe_reserved_elasticsearch_instances: {region} - {e}')
+        log_aws_error(logger, f'Failed to call ES describe_reserved_elasticsearch_instances: {region} - {e}', e)
         return reserved_instances
 
 
@@ -259,6 +301,7 @@ def _load_elasticsearch_reserved_instances_tx(tx: neo4j.Transaction, reserved_in
     SET instance.lastupdated = $aws_update_tag,
         instance.name = record.ReservedElasticsearchInstanceId,
         instance.region = record.region,
+        instance.consolelink = record.consolelink,
         instance.fixed_price = record.FixedPrice,
         instance.reserved_elasticsearch_instance_offering_id = record.ReservedElasticsearchInstanceOfferingId,
         instance.reservation_name = record.ReservationName,
@@ -299,24 +342,27 @@ def sync(
         logger.info("Syncing Elasticsearch Service for region '%s' in account '%s'.", region, current_aws_account_id)
         client = boto3_session.client('es', region_name=region, config=get_botocore_config())
         data = _get_es_domains(client)
-        _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag)
+        _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'])
 
     tic = time.perf_counter()
     logger.info("Syncing Elasticsearch Service for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     data = []
     reserved_instances = []
     for region in regions:
         client = boto3_session.client('es', region_name=region, config=get_botocore_config())
         domains = _get_es_domains(client)
-        data.extend(transform_es_domains(domains, region, current_aws_account_id))
-        reserved_instances.extend(get_elasticsearch_reserved_instances(client, region, current_aws_account_id))
+        data.extend(transform_es_domains(domains, region, current_aws_account_id, partition=partition))
+        reserved_instances.extend(
+            get_elasticsearch_reserved_instances(client, region, current_aws_account_id, partition=partition),
+        )
 
     logger.info(f"Total ElasticSearch Domains: {len(data)}")
 
     logger.info(f"Total ElasticSearch Reserved Instances: {len(data)}")
 
-    _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag)
+    _load_es_domains(neo4j_session, data, current_aws_account_id, update_tag, common_job_parameters['WORKSPACE_ID'])
 
     cleanup(neo4j_session, common_job_parameters)
 

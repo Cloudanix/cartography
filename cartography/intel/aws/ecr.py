@@ -8,6 +8,7 @@ import boto3
 import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import batch
@@ -76,15 +77,15 @@ def load_ecr_repositories(
     aws_update_tag: int,
 ) -> None:
     query = """
-    UNWIND $Repositories as ecr_repo
+    UNWIND $DictList as ecr_repo
         MERGE (repo:ECRRepository{id: ecr_repo.repositoryArn})
         ON CREATE SET repo.firstseen = timestamp(),
             repo.arn = ecr_repo.repositoryArn,
             repo.name = ecr_repo.repositoryName,
-            repo.consolelink = ecr_repo.consolelink,
             repo.region = ecr_repo.region,
             repo.created_at = ecr_repo.createdAt
         SET repo.lastupdated = $aws_update_tag,
+            repo.consolelink = ecr_repo.consolelink,
             repo.uri = ecr_repo.repositoryUri
         WITH repo
 
@@ -93,12 +94,13 @@ def load_ecr_repositories(
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $aws_update_tag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
-        Repositories=repos,
+        repos,
         aws_update_tag=aws_update_tag,
         AWS_ACCOUNT_ID=current_aws_account_id,
-    ).consume()  # See issue #440
+    )
 
 
 @timeit
@@ -126,6 +128,7 @@ def _load_ecr_repo_img_tx(
     tx: neo4j.Transaction,
     repo_images_list: List[Dict],
     aws_update_tag: int,
+    current_aws_account_id: str,
 ) -> None:
     query = """
     UNWIND $RepoList as repo_img
@@ -139,12 +142,12 @@ def _load_ecr_repo_img_tx(
             ri.consolelink = repo_img.consolelink
         WITH ri, repo_img
 
+        // ECRImage is keyed by digest alone: every account that pushed the same image shares it,
+        // so only the digest goes on the node; region and console link stay on ri (this account's).
         MERGE (img:ECRImage{id: repo_img.imageDigest})
         ON CREATE SET img.firstseen = timestamp(),
             img.digest = repo_img.imageDigest
-        SET img.lastupdated = $aws_update_tag,
-            img.region = repo_img.region,
-            img.consolelink = repo_img.consolelink
+        SET img.lastupdated = $aws_update_tag
         WITH ri, img, repo_img
 
         MERGE (ri)-[r1:IMAGE]->(img)
@@ -152,12 +155,14 @@ def _load_ecr_repo_img_tx(
         SET r1.lastupdated = $aws_update_tag
         WITH ri, repo_img
 
-        MATCH (repo:ECRRepository{uri: repo_img.repo_uri})
+        MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(repo:ECRRepository{uri: repo_img.repo_uri})
         MERGE (repo)-[r2:REPO_IMAGE]->(ri)
         ON CREATE SET r2.firstseen = timestamp()
         SET r2.lastupdated = $aws_update_tag
     """
-    tx.run(query, RepoList=repo_images_list, aws_update_tag=aws_update_tag)
+    tx.run(
+        query, RepoList=repo_images_list, aws_update_tag=aws_update_tag, AWS_ACCOUNT_ID=current_aws_account_id,
+    )
 
 
 @timeit
@@ -165,16 +170,19 @@ def load_ecr_repository_images(
     neo4j_session: neo4j.Session,
     repo_images_list: List[Dict],
     aws_update_tag: int,
+    current_aws_account_id: str,
 ) -> None:
     logger.info(f"Loading {len(repo_images_list)} ECR repository images into graph.")
     for repo_image_batch in batch(repo_images_list, size=500):
-        neo4j_session.execute_write(_load_ecr_repo_img_tx, repo_image_batch, aws_update_tag)
+        neo4j_session.execute_write(_load_ecr_repo_img_tx, repo_image_batch, aws_update_tag, current_aws_account_id)
 
 
 @timeit
 def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     logger.debug("Running ECR cleanup job.")
     run_cleanup_job("aws_import_ecr_cleanup.json", neo4j_session, common_job_parameters)
+    # ECRImage is shared across tenants: the account cleanup only drops its edges, this drops orphans.
+    run_cleanup_job("aws_ecr_image_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
 
 def _get_image_data(
@@ -231,7 +239,7 @@ def sync(
         image_data[repo["repositoryUri"]] = repo_image_obj
 
     repo_images_list = transform_ecr_repository_images(image_data)
-    load_ecr_repository_images(neo4j_session, repo_images_list, update_tag)
+    load_ecr_repository_images(neo4j_session, repo_images_list, update_tag, current_aws_account_id)
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

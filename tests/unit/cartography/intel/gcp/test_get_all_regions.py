@@ -35,6 +35,10 @@ REAL_PERMISSION_CONTENT = (
     b'{"error": {"code": 403, "message": "The caller does not have permission", '
     b'"errors": [{"reason": "forbidden"}]}}'
 )
+RATE_LIMIT_CONTENT = (
+    b'{"error": {"code": 403, "message": "Request is prohibited by quota or rate limit.", '
+    b'"errors": [{"reason": "rateLimitExceeded"}]}}'
+)
 NOT_FOUND_CONTENT = b'{"error": {"code": 404, "message": "Not found", "errors": [{"reason": "notFound"}]}}'
 
 
@@ -60,19 +64,36 @@ def test_get_all_regions_handles_disabled_compute_api():
     assert get_all_regions(compute, "canvas") == []
 
 
-def test_get_all_regions_reraises_other_http_errors():
-    # A non-"service disabled" error (e.g. real permission denial) must still surface, not be swallowed.
+def test_get_all_regions_handles_missing_permission():
+    # Regression for https://cloudanix.sentry.io/issues/CDX-CARTOGRAPHY-INVENTORY-25B: a project without
+    # compute.regions.list raised here and aborted the whole project sync, including services it can read.
     compute = MagicMock()
     req = MagicMock()
-    req.execute.side_effect = HttpError(
-        resp=MagicMock(status=403),
-        content=b'{"error": {"code": 403, "message": "The caller does not have permission", '
-        b'"errors": [{"reason": "forbidden"}]}}',
-    )
+    req.execute.side_effect = HttpError(resp=MagicMock(status=403), content=REAL_PERMISSION_CONTENT)
+    compute.regions().list.return_value = req
+
+    assert get_all_regions(compute, "no-perms") == []
+
+
+@pytest.mark.parametrize("content", [RATE_LIMIT_CONTENT])
+def test_get_all_regions_reraises_transient_403s(content):
+    compute = MagicMock()
+    req = MagicMock()
+    req.execute.side_effect = HttpError(resp=MagicMock(status=403), content=content)
     compute.regions().list.return_value = req
 
     with pytest.raises(HttpError):
-        get_all_regions(compute, "no-perms")
+        get_all_regions(compute, "quota")
+
+
+def test_get_all_regions_reraises_other_http_errors():
+    compute = MagicMock()
+    req = MagicMock()
+    req.execute.side_effect = HttpError(resp=MagicMock(status=404), content=NOT_FOUND_CONTENT)
+    compute.regions().list.return_value = req
+
+    with pytest.raises(HttpError):
+        get_all_regions(compute, "missing")
 
 
 @pytest.mark.parametrize(

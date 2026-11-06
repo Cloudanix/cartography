@@ -11,6 +11,7 @@ from requests import exceptions
 import cartography.intel.gitlab.group
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
+from cartography.intel.gitlab.common import get_node_id
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -165,7 +166,7 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
         logger.info(
             "gitlab import is not configured - skipping this module. See docs to configure.",
         )
-        return
+        return {"authFailed": True, "message": "gitlab authentication failed: access token is missing"}
 
     access_token = config.gitlab_access_token
     hosted_domain = config.gitlab_hosted_domain
@@ -174,11 +175,14 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
 
     if not isinstance(group_id, str) or not group_id:
         logger.error("GitLab 'group_id' must be configured and be a non-empty string.")
-        return
+        return {"authFailed": True, "message": "gitlab sync did not complete: group id is missing"}
 
     common_job_parameters = {
         "WORKSPACE_ID": workspace_id,
+        # The group's full path, used to call the API.
         "GITLAB_GROUP_ID": group_id,
+        # The group's graph id (host-qualified on self-managed instances); loaders and cleanups anchor on it.
+        "GITLAB_GROUP_NODE_ID": get_node_id(hosted_domain, group_id),
         "UPDATE_TAG": config.update_tag,
     }
 
@@ -234,7 +238,10 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
             logger.error(
                 f"No valid groups found for the id '{common_job_parameters['GITLAB_GROUP_ID']}'.",
             )
-            return
+            return {
+                "authFailed": True,
+                "message": "gitlab sync did not complete: group is not accessible",
+            }
 
         cartography.intel.gitlab.group.sync(
             neo4j_session,
@@ -255,5 +262,6 @@ def start_gitlab_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
 
     except exceptions.RequestException as e:
         logger.error("Could not complete request to the Gitlab API: %s", e)
+        return {"authFailed": True, "message": f"gitlab request failed before sync completed: {e}"}
 
     return common_job_parameters

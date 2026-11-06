@@ -1,0 +1,17 @@
+{
+  "statements": [
+    {
+      "__comment": "Reset exposed_internet properties on all OCI mount targets in scope. Mount targets only ever get private IPs, so nothing marks them exposed; the reset clears flags written by earlier versions of this job, which inferred exposure from the subnet, its route table, security lists and NSGs.",
+      "query": "MATCH (n:OCIMountTarget)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    },
+    {
+      "__comment": "Reset exposed_internet properties on all OCI file systems in scope. File systems are reachable only through mount targets, so nothing marks them exposed either.",
+      "query": "MATCH (n:OCIFileSystem)<-[:RESOURCE]-(:OCICompartment{id: $OCI_COMPARTMENT_ID})<-[:OWNER]-(:OCITenancy{id: $OCI_TENANCY_ID})<-[:OWNER]-(:CloudanixWorkspace{id: $WORKSPACE_ID}) WHERE n.exposed_internet IS NOT NULL WITH n LIMIT $LIMIT_SIZE REMOVE n.exposed_internet, n.exposed_internet_type, n.publicContext RETURN COUNT(*) as TotalCompleted",
+      "iterative": true,
+      "iterationsize": 100
+    }
+  ],
+  "name": "OCI file storage asset internet exposure"
+}

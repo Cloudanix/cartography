@@ -9,25 +9,26 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
 from typing import TypedDict
 from typing import Union
+from uuid import UUID
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.authorization import AuthorizationManagementClient
 from azure.mgmt.msi import ManagedServiceIdentityClient
-from cloudconsolelink.clouds.azure import AzureLinker
 from msgraph import GraphServiceClient
 from msgraph.generated.groups.groups_request_builder import GroupsRequestBuilder
 from msgraph.generated.users.users_request_builder import UsersRequestBuilder
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
 from .util.timing import get_current_context
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
 
 scopes = ["https://graph.microsoft.com/.default"]
 
@@ -47,10 +48,42 @@ def _azure_role_managed_type(role: Dict) -> str:
     return MANAGED_TYPE_CUSTOM
 
 
+def _graph_guid_str(value: Optional[UUID]) -> Optional[str]:
+    return str(value) if value is not None else None
+
+
 def _azure_service_principal_managed_type(app_owner_organization_id: Optional[str]) -> str:
     if (app_owner_organization_id or "").lower() == AZURE_MICROSOFT_TENANT_ID:
         return MANAGED_TYPE_PREDEFINED
     return MANAGED_TYPE_CUSTOM
+
+
+def azure_external_access_type(
+    home_tenant_id: Optional[str],
+    user_type: Optional[str],
+    tenant_id: str,
+) -> Optional[str]:
+    """Classify an assigned principal as external, or None if internal.
+
+    * A service principal whose home tenant (appOwnerOrganizationId) differs
+      from the customer tenant is a foreign multi-tenant app. Microsoft's own
+      first-party tenant is treated as a provider service (CrossAccount), any
+      other foreign tenant is ThirdParty.
+    * A Guest (B2B) user is an external identity federated from another tenant
+      (ThirdParty).
+    Returns "ThirdParty", "CrossAccount", or None (internal / same tenant).
+    """
+    home = (home_tenant_id or "").lower()
+    customer = (tenant_id or "").lower()
+    if home:
+        if home == customer:
+            return None
+        if home == AZURE_MICROSOFT_TENANT_ID:
+            return "CrossAccount"
+        return "ThirdParty"
+    if (user_type or "").lower() == "guest":
+        return "ThirdParty"
+    return None
 
 
 # A safe batch size for "in" filters with GUIDs to avoid 414 URI Too Long errors.
@@ -233,7 +266,7 @@ def transform_users(users_list: List[Dict], tenant_id: str) -> List[Dict]:
 
         # Custom properties we use internally
         custom_id = f"tenants/{tenant_id}/users/{user_id}"
-        consolelink = azure_console_link.get_console_link(id=user_id, iam_entity_type="user")
+        consolelink = safe_console_link(user_id, {}, iam_entity_type="user")
 
         # Map to our internal structure
         usr = {
@@ -268,7 +301,7 @@ def transform_user(user: Dict, tenant_id: str) -> Dict:
     # User properties - https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0
     return {
         "id": f"tenants/{tenant_id}/users/{user['object_id']}",
-        "consolelink": azure_console_link.get_console_link(id=user["object_id"], iam_entity_type="user"),
+        "consolelink": safe_console_link(user["object_id"], {}, iam_entity_type="user"),
         "object_id": user["object_id"],
         "user_principal_name": user["user_principal_name"],
         "email": user["mail"],
@@ -299,12 +332,11 @@ def _load_tenant_users_tx(
     MERGE (i:AzureUser{id: user.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.consolelink = user.consolelink,
     i.object_id = user.object_id,
     i.object_type = user.object_type,
     i.region = $region
     SET i.lastupdated = $update_tag,
-    i.consolelink = user.consolelink,
+    i.consolelink = coalesce(user.consolelink, i.consolelink),
     i.user_principal_name = user.user_principal_name,
     i.email = user.email,
     i.name = user.name,
@@ -433,10 +465,7 @@ async def get_tenant_groups_list(
             # Add tenant-specific ID for consistency with previous implementation
             group_dict["object_id"] = group_id
             group_dict["id"] = f"tenants/{tenant_id}/Groups/{group_id}"
-            group_dict["consolelink"] = azure_console_link.get_console_link(
-                iam_entity_type="group",
-                id=group_id,
-            )
+            group_dict["consolelink"] = safe_console_link(group_id, {}, iam_entity_type="group")
 
             tenant_groups_list.append(group_dict)
 
@@ -461,6 +490,7 @@ def _load_tenant_groups_tx(
     i.region = $region,
     i.name = group.display_name
     SET i.lastupdated = $update_tag,
+    i.consolelink = coalesce(group.consolelink, i.consolelink),
     i.mail = group.mail,
     i.object_id = group.object_id,
     i.visibility = group.visibility,
@@ -500,9 +530,22 @@ _GRAPH_DEFAULT_RETRY_AFTER = 10  # seconds to wait on 429 if Retry-After header 
 _IAM_TENANT_SYNC_KEY = "_iam_tenant_level_synced"  # key in common_job_parameters tracking per-cycle dedup
 
 
+class GraphAuthenticationExpiredError(Exception):
+    """Microsoft Graph rejected the request due to an invalid or expired access token."""
+
+
 def _is_throttle_error(e: Exception) -> bool:
     err_str = str(e)
     return "429" in err_str or "throttl" in err_str.lower() or "too many requests" in err_str.lower()
+
+
+def _is_graph_auth_expired_error(e: Exception) -> bool:
+    """True when Graph returns InvalidAuthenticationToken / expired access token."""
+    err_str = str(e)
+    if "InvalidAuthenticationToken" in err_str:
+        return True
+    lower = err_str.lower()
+    return "token is expired" in lower or "access token validation failed" in lower
 
 
 def _get_retry_after(e: Exception) -> float:
@@ -603,6 +646,16 @@ async def get_group_members(
 
         except Exception as e:
             ctx = get_current_context()
+            if _is_graph_auth_expired_error(e):
+                logger.error(
+                    f"get_group_members group_id={group_id}: Graph auth invalid/expired after "
+                    f"{time.perf_counter() - t0:.2f}s — aborting member fetch",
+                )
+                if ctx is not None:
+                    ctx.request_count += 1
+                raise GraphAuthenticationExpiredError(
+                    f"Microsoft Graph token invalid/expired while fetching members for {group_id}",
+                ) from e
             if _is_throttle_error(e):
                 retry_after = _get_retry_after(e)
                 if ctx is not None:
@@ -633,17 +686,65 @@ async def get_group_members(
     return members_data
 
 
-@timeit
-def load_group_memberships(neo4j_session: neo4j.Session, memberships: List[Dict], update_tag: int) -> None:
-    neo4j_session.execute_write(_load_group_memberships_tx, memberships, update_tag)
+async def _gather_group_members_fail_fast(
+    credentials: Credentials,
+    group_ids: List[str],
+    client: GraphServiceClient,
+    tenant_id: str,
+) -> Tuple[List[Any], bool]:
+    """
+    Fetch members for many groups with a shared auth circuit breaker.
+
+    Once GraphAuthenticationExpiredError is seen, remaining tasks skip Graph
+    calls so a dead token cannot burn an hour of 401s.
+    Returns (gather_results, auth_expired).
+    """
+    auth_expired = asyncio.Event()
+    member_semaphore = asyncio.Semaphore(3)
+    skipped_due_to_auth = 0
+
+    async def _bounded_get_members(group_id: str) -> List[Dict]:
+        nonlocal skipped_due_to_auth
+        if auth_expired.is_set():
+            skipped_due_to_auth += 1
+            return []
+        async with member_semaphore:
+            if auth_expired.is_set():
+                skipped_due_to_auth += 1
+                return []
+            try:
+                return await get_group_members(credentials, group_id, client=client)
+            except GraphAuthenticationExpiredError:
+                auth_expired.set()
+                raise
+
+    results = await asyncio.gather(
+        *[_bounded_get_members(group_id) for group_id in group_ids],
+        return_exceptions=True,
+    )
+    expired = any(isinstance(result, GraphAuthenticationExpiredError) for result in results)
+    if expired:
+        logger.error(
+            f"IAM tenant={tenant_id}: Graph access token invalid/expired during group member fetch; "
+            f"aborting remaining member fetches (skipped={skipped_due_to_auth}) to avoid a prolonged 401 storm",
+        )
+    return list(results), expired
 
 
 @timeit
-def _load_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], update_tag: int) -> None:
+def load_group_memberships(
+    neo4j_session: neo4j.Session, tenant_id: str, memberships: List[Dict], update_tag: int,
+) -> None:
+    neo4j_session.execute_write(_load_group_memberships_tx, tenant_id, memberships, update_tag)
+
+
+@timeit
+def _load_group_memberships_tx(tx: neo4j.Transaction, tenant_id: str, memberships: List[Dict], update_tag: int) -> None:
+    # Object ids are unique per directory, but the group and the member must both be this tenant's nodes.
     ingest_memberships = """
     UNWIND $memberships AS membership
-        MATCH (p:AzureGroup{id: membership.group_id})
-        MATCH (pr:AzurePrincipal{object_id: membership.id})
+        MATCH (t:AzureTenant{id: $tenant_id})-[:RESOURCE]->(p:AzureGroup{id: membership.group_id})
+        MATCH (t)-[:RESOURCE]->(pr:AzurePrincipal{object_id: membership.id})
         WITH p,pr
         MERGE (pr)-[r:MEMBER_AZURE_GROUP]->(p)
         ON CREATE SET
@@ -654,6 +755,7 @@ def _load_group_memberships_tx(tx: neo4j.Transaction, memberships: List[Dict], u
 
     tx.run(
         ingest_memberships,
+        tenant_id=tenant_id,
         memberships=memberships,
         update_tag=update_tag,
     )
@@ -680,28 +782,29 @@ async def sync_tenant_groups(
         f"IAM tenant={tenant_id}: group list fetch done — {len(tenant_groups_list)} groups in {time.perf_counter() - t0:.2f}s",
     )
 
-    # Fetch all group members concurrently (bounded) then write sequentially
-    _member_semaphore = asyncio.Semaphore(3)
-
-    async def _bounded_get_members(group_id: str) -> List[Dict]:
-        async with _member_semaphore:
-            return await get_group_members(credentials, group_id, client=client)
-
+    # Fetch all group members concurrently (bounded) then write sequentially.
+    # Abort remaining Graph calls if the access token expires mid-fanout.
     t0 = time.perf_counter()
-    membership_results = await asyncio.gather(
-        *[_bounded_get_members(group["id"]) for group in tenant_groups_list],
-        return_exceptions=True,
+    membership_results, auth_expired = await _gather_group_members_fail_fast(
+        credentials,
+        [group["id"] for group in tenant_groups_list],
+        client,
+        tenant_id,
     )
-    logger.info(f"IAM tenant={tenant_id}: group member fetch done in {time.perf_counter() - t0:.2f}s")
+    logger.info(
+        f"IAM tenant={tenant_id}: group member fetch done in {time.perf_counter() - t0:.2f}s "
+        f"(auth_expired={auth_expired})",
+    )
 
     t0 = time.perf_counter()
     load_tenant_groups(neo4j_session, tenant_id, tenant_groups_list, update_tag)
     for result in membership_results:
         if isinstance(result, Exception):
-            logger.warning(f"IAM tenant={tenant_id}: group member fetch error — {result}")
+            if not isinstance(result, GraphAuthenticationExpiredError):
+                logger.warning(f"IAM tenant={tenant_id}: group member fetch error — {result}")
             continue
         if result:
-            load_group_memberships(neo4j_session, result, update_tag)
+            load_group_memberships(neo4j_session, tenant_id, result, update_tag)
     cleanup_tenant_groups(neo4j_session, common_job_parameters)
     logger.info(f"IAM tenant={tenant_id}: group Neo4j write done in {time.perf_counter() - t0:.2f}s")
 
@@ -757,10 +860,7 @@ async def get_tenant_applications_list(client: GraphServiceClient, tenant_id: st
             # Add tenant-specific ID for consistency with previous implementation
             app_dict["object_id"] = app_dict.get("id")
             app_dict["id"] = f"tenants/{tenant_id}/Applications/{app_dict.get('id')}"
-            app_dict["consolelink"] = azure_console_link.get_console_link(
-                iam_entity_type="application",
-                id=app_dict.get("app_id"),
-            )
+            app_dict["consolelink"] = safe_console_link(app_dict.get("app_id"), {}, iam_entity_type="application")
 
             tenant_applications_list.append(app_dict)
 
@@ -784,9 +884,8 @@ def _load_tenant_applications_tx(
     i.firstseen = timestamp(),
     i.object_id = app.object_id,
     i.region = $region,
-    i.consolelink = app.consolelink,
     i.app_id = app.app_id
-    SET i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(app.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.name = app.display_name,
     i.publisher_domain = app.publisher_domain,
     i.sign_in_audience = app.sign_in_audience,
@@ -872,6 +971,8 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
                     "display_name": getattr(sp, "display_name", None),
                     "app_id": getattr(sp, "app_id", None),
                     "client_id": getattr(sp, "app_id", None),
+                    # msgraph-sdk returns Edm.Guid fields as uuid.UUID, which neo4j can't store
+                    "app_owner_organization_id": _graph_guid_str(getattr(sp, "app_owner_organization_id", None)),
                     "account_enabled": getattr(sp, "account_enabled", None),
                     "app_display_name": getattr(sp, "app_display_name", None),
                     "app_role_assignment_required": getattr(sp, "app_role_assignment_required", None),
@@ -891,16 +992,14 @@ async def get_tenant_service_accounts_list(client: GraphServiceClient, tenant_id
                     ),
                     "service_principal_type": getattr(sp, "service_principal_type", None),
                     "sign_in_audience": getattr(sp, "sign_on_audience", None),
-                    "token_encryption_key_id": getattr(sp, "token_encryption_key_id", None),
+                    "token_encryption_key_id": _graph_guid_str(getattr(sp, "token_encryption_key_id", None)),
                 }
 
             # Add tenant-specific ID for consistency with previous implementation
             sp_dict["object_id"] = sp_dict.get("id")
             sp_dict["id"] = f"tenants/{tenant_id}/ServiceAccounts/{sp_dict.get('id')}"
-            sp_dict["consolelink"] = azure_console_link.get_console_link(
-                id=sp_dict.get("id"),
-                app_id=sp_dict.get("app_id"),
-                iam_entity_type="service_principal",
+            sp_dict["consolelink"] = safe_console_link(
+                sp_dict.get("object_id"), {}, app_id=sp_dict.get("app_id") or "", iam_entity_type="service_principal",
             )
             sp_dict["managed_type"] = _azure_service_principal_managed_type(
                 sp_dict.get("app_owner_organization_id"),
@@ -926,10 +1025,9 @@ def _load_tenant_service_accounts_tx(
     MERGE (i:AzureServiceAccount{id: service.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.consolelink = service.consolelink,
     i.region = $region,
     i.object_id = service.object_id
-    SET i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(service.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.name = service.display_name,
     i.account_enabled = service.account_enabled,
     i.app_id = service.app_id,
@@ -1042,11 +1140,9 @@ async def get_tenant_domains_list(client: GraphServiceClient, tenant_id: str) ->
                     }
 
             # Add custom properties
+            # Graph's domain id is the domain name, which is what the portal link needs.
+            domain_dict["consolelink"] = safe_console_link(domain_dict.get("id"), {}, iam_entity_type="domain")
             domain_dict["id"] = f"tenants/{tenant_id}/domains/{domain_dict.get('id')}"
-            domain_dict["consolelink"] = azure_console_link.get_console_link(
-                id=domain_dict.get("id"),
-                iam_entity_type="domain",
-            )
 
             tenant_domains_list.append(domain_dict)
 
@@ -1068,10 +1164,9 @@ def _load_tenant_domains_tx(
     MERGE (i:AzureDomain{id: domain.id})
     ON CREATE SET i:AzurePrincipal,
     i.firstseen = timestamp(),
-    i.consolelink = domain.consolelink,
     i.region = $region,
     i.create_date = $createDate
-    SET i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(domain.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.authentication_type = domain.authentication_type,
     i.availability_status = domain.availability_status,
     i.is_admin_managed = domain.is_admin_managed,
@@ -1140,10 +1235,7 @@ def get_roles_list(
             role["managed_type"] = role["role_owner_type"]
 
             role["identity_id"] = role["id"].split("/")[-1]
-            role["consolelink"] = azure_console_link.get_console_link(
-                id=role["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            role["consolelink"] = safe_console_link(role["id"], common_job_parameters)
             permissions = []
             for permission in role.get("permissions", []):
                 for action in permission.get("actions", []):
@@ -1185,10 +1277,7 @@ def get_managed_identity_list(
         )
 
         for managed_identity in managed_identity_list:
-            managed_identity["consolelink"] = azure_console_link.get_console_link(
-                id=managed_identity["id"],
-                primary_ad_domain_name=common_job_parameters["Azure_Primary_AD_Domain_Name"],
-            )
+            managed_identity["consolelink"] = safe_console_link(managed_identity["id"], common_job_parameters)
             managed_identity["location"] = managed_identity.get("location", "").replace(" ", "").lower()
         return managed_identity_list
     except HttpResponseError as e:
@@ -1209,10 +1298,9 @@ def _load_roles_tx(
     MERGE (i:AzureRole{id: role.id})
     ON CREATE SET i.firstseen = timestamp(),
     i.name = role.role_name,
-    i.consolelink = role.consolelink,
     i.region = $region,
     i.create_date = $createDate
-    SET i.lastupdated = $update_tag,
+    SET i.consolelink = coalesce(role.consolelink, i.consolelink), i.lastupdated = $update_tag,
     i.roleName = role.role_name,
     i.permissions = role.permissions,
     i.type = role.type,
@@ -1227,7 +1315,7 @@ def _load_roles_tx(
     ON CREATE SET tr.firstseen = timestamp()
     SET tr.lastupdated = $update_tag
     WITH i,role
-    MATCH (sub:AzureSubscription{id: $SUBSCRIPTION_ID})
+    MATCH (:AzureTenant{id: $tenant_id})-[:RESOURCE]->(sub:AzureSubscription{id: $SUBSCRIPTION_ID})
     MERGE (sub)<-[sr:HAS_ACCESS]-(i)
     ON CREATE SET sr.firstseen = timestamp()
     SET sr.lastupdated = $update_tag
@@ -1245,9 +1333,9 @@ def _load_roles_tx(
 
     attach_role = """
     UNWIND $role_assignments AS ra
-    MATCH (principal:AzurePrincipal{object_id: ra.principal_id})
-    WITH principal, ra
-    MATCH (i:AzureRole{id: ra.role_id})
+    MATCH (t:AzureTenant{id: $TENANT_ID})-[:RESOURCE]->(principal:AzurePrincipal{object_id: ra.principal_id})
+    WITH t, principal, ra
+    MATCH (t)-[:RESOURCE]->(i:AzureRole{id: ra.role_id})
     MERGE (principal)-[r:ASSUME_ROLE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -1256,10 +1344,53 @@ def _load_roles_tx(
         {
             "role_id": ra.get("role_definition_id", ra.get("properties", {}).get("role_definition_id")),
             "principal_id": ra.get("principal_id", ra.get("properties", {}).get("principal_id")),
+            "principal_type": ra.get("principal_type", ra.get("properties", {}).get("principal_type")),
         }
         for ra in role_assignments_list
     ]
-    tx.run(attach_role, role_assignments=prepared_assignments, update_tag=update_tag)
+    tx.run(attach_role, role_assignments=prepared_assignments, update_tag=update_tag, TENANT_ID=tenant_id)
+
+    # Emit an AzureExternalPrincipal for any assigned principal homed outside the
+    # customer tenant (foreign multi-tenant service principal) or federated in as
+    # a Guest user, mirroring the AWS AWSExternalPrincipal model. The home tenant
+    # (app_owner_organization_id) and user_type live on the already-loaded
+    # principal nodes, so this joins against them rather than re-fetching.
+    attach_external_principals = """
+    UNWIND $role_assignments AS ra
+    MATCH (t:AzureTenant{id: $TENANT_ID})-[:RESOURCE]->(principal:AzurePrincipal{object_id: ra.principal_id})
+    MATCH (t)-[:RESOURCE]->(i:AzureRole{id: ra.role_id})
+    WITH principal, i,
+         toLower(coalesce(principal.app_owner_organization_id, '')) AS home_tenant,
+         toLower(coalesce(principal.user_type, '')) AS user_type
+    WHERE (home_tenant <> '' AND home_tenant <> $tenant_id)
+       OR user_type = 'guest'
+    WITH principal, i, home_tenant, user_type,
+         CASE
+            WHEN home_tenant = $ms_tenant_id THEN 'CrossAccount'
+            WHEN home_tenant <> '' THEN 'ThirdParty'
+            ELSE 'ThirdParty'
+         END AS access_type
+    MERGE (ep:AzureExternalPrincipal{principal: principal.object_id})
+    ON CREATE SET ep.firstseen = timestamp()
+    SET ep.lastupdated = $update_tag,
+        ep.access_type = access_type,
+        ep.home_tenant_id = home_tenant,
+        ep.app_id = principal.app_id,
+        ep.consolelink = coalesce(principal.consolelink, ep.consolelink),
+        ep.account_id = CASE WHEN home_tenant <> '' THEN home_tenant ELSE $tenant_id END,
+        ep.principal_type = CASE WHEN user_type = 'guest' THEN 'GuestUser' ELSE 'ServicePrincipal' END
+    MERGE (i)-[r:TRUSTS_AZURE_PRINCIPAL]->(ep)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $update_tag
+    """
+    tx.run(
+        attach_external_principals,
+        role_assignments=prepared_assignments,
+        update_tag=update_tag,
+        TENANT_ID=tenant_id,
+        tenant_id=(tenant_id or "").lower(),
+        ms_tenant_id=AZURE_MICROSOFT_TENANT_ID,
+    )
 
 
 def _load_managed_identities_tx(
@@ -1277,7 +1408,7 @@ def _load_managed_identities_tx(
     i.region = managed_identity.location
     SET i.lastupdated = $update_tag,
     i.name = managed_identity.name,
-    i.consolelink = managed_identity.consolelink,
+    i.consolelink = coalesce(managed_identity.consolelink, i.consolelink),
     i.location = managed_identity.location,
     i.region = managed_identity.location,
     i.type = managed_identity.type,
@@ -1427,28 +1558,28 @@ async def sync_scoped_users_and_groups(
     if not scoped_groups:
         return set()
 
-    # 2. Fetch members for all scoped groups concurrently (bounded by semaphore to avoid 429 floods)
+    # 2. Fetch members for all scoped groups concurrently (bounded by semaphore to avoid 429 floods).
+    # Abort remaining Graph calls if the access token expires mid-fanout.
     t0 = time.perf_counter()
     logger.info(
         f"IAM tenant={tenant_id}: fetching members for {len(scoped_groups)} groups concurrently",
     )
-    _member_semaphore = asyncio.Semaphore(3)
-
-    async def _bounded_get_members(group_id: str) -> List[Dict]:
-        async with _member_semaphore:
-            return await get_group_members(credentials, group_id, client=client)
+    membership_results, auth_expired = await _gather_group_members_fail_fast(
+        credentials,
+        [group["id"] for group in scoped_groups],
+        client,
+        tenant_id,
+    )
 
     all_memberships = []
     all_member_ids = set()
     member_fetch_errors = 0
     rate_limit_errors = 0
-    membership_results = await asyncio.gather(
-        *[_bounded_get_members(group["id"]) for group in scoped_groups],
-        return_exceptions=True,
-    )
     for memberships in membership_results:
         if isinstance(memberships, Exception):
             err_str = str(memberships)
+            if isinstance(memberships, GraphAuthenticationExpiredError):
+                continue
             if "429" in err_str or "throttl" in err_str.lower() or "too many requests" in err_str.lower():
                 rate_limit_errors += 1
             member_fetch_errors += 1
@@ -1458,10 +1589,15 @@ async def sync_scoped_users_and_groups(
             all_memberships.extend(memberships)
             for member in memberships:
                 all_member_ids.add(member["id"])
+    if auth_expired:
+        logger.error(
+            f"IAM tenant={tenant_id}: Graph token invalid/expired mid member-fetch; "
+            f"continuing with {len(all_memberships)} memberships gathered before abort",
+        )
     logger.info(
         f"IAM tenant={tenant_id}: member fetch done in {time.perf_counter() - t0:.2f}s — "
         f"memberships={len(all_memberships)} unique_members={len(all_member_ids)} "
-        f"errors={member_fetch_errors} rate_limit_errors={rate_limit_errors}",
+        f"errors={member_fetch_errors} rate_limit_errors={rate_limit_errors} auth_expired={auth_expired}",
     )
     ctx = get_current_context()
     if ctx is not None:
@@ -1496,7 +1632,7 @@ async def sync_scoped_users_and_groups(
     if scoped_users:
         load_tenant_users(neo4j_session, tenant_id, scoped_users, update_tag)
     if all_memberships:
-        load_group_memberships(neo4j_session, all_memberships, update_tag)
+        load_group_memberships(neo4j_session, tenant_id, all_memberships, update_tag)
     logger.info(
         f"IAM tenant={tenant_id}: Neo4j write done in {time.perf_counter() - t0:.2f}s",
     )

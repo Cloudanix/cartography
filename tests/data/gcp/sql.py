@@ -17,6 +17,10 @@ CLOUD_SQL_INSTANCES = [
             "ipConfiguration": {
                 "privateNetwork": "projects/project-abc/global/networks/default",
             },
+            "userLabels": {
+                "env": "prod",
+                "team": "data",
+            },
         },
         'authorizedNetworksList': [
             '0.0.0.0/0', '192.168.10.1',

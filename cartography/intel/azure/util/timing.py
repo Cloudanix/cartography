@@ -5,6 +5,8 @@ from typing import Optional
 
 from azure.core.pipeline.policies import SansIOHTTPPolicy
 
+from cartography.graph import write_timer
+
 _local = threading.local()
 
 
@@ -24,26 +26,43 @@ class ServiceTimingContext:
     retry_count    : number of responses that carried Retry-After / x-ms-retry-after-ms
     """
 
-    __slots__ = ('service_name', 'request_count', 'throttle_count', 'retry_count')
+    __slots__ = (
+        'service_name', 'request_count', 'throttle_count', 'retry_count',
+        '_graph_t0', '_graph_elapsed',
+    )
 
     def __init__(self, service_name: str) -> None:
         self.service_name = service_name
         self.request_count: int = 0
         self.throttle_count: int = 0
         self.retry_count: int = 0
+        self._graph_t0: float = 0.0
+        self._graph_elapsed: Optional[float] = None
 
     def __enter__(self) -> 'ServiceTimingContext':
         _local.ctx = self
+        self._graph_t0 = write_timer.total()
         return self
 
     def __exit__(self, *args: Any) -> None:
+        # Freeze the graph-write delta so to_dict() stays correct after this thread
+        # moves on to another service.
+        self._graph_elapsed = self.graph_write_seconds
         _local.ctx = None
 
-    def to_dict(self) -> Dict[str, int]:
+    @property
+    def graph_write_seconds(self) -> float:
+        """Seconds this thread spent in Neo4j calls since __enter__ (frozen at exit)."""
+        if self._graph_elapsed is not None:
+            return self._graph_elapsed
+        return round(write_timer.total() - self._graph_t0, 4)
+
+    def to_dict(self) -> Dict[str, Any]:
         return {
             'request_count': self.request_count,
             'throttle_count': self.throttle_count,
             'retry_count': self.retry_count,
+            'graph_write_seconds': self.graph_write_seconds,
         }
 
 

@@ -8,12 +8,18 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from .util import get_botocore_config
+from cartography.client.core.tx import load_graph_data
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+# Applied at describe_launch_template_versions — historical versions stay at the API.
+LAUNCH_TEMPLATE_VERSIONS = ['$Latest', '$Default']
 
 
 @timeit
@@ -29,7 +35,10 @@ def get_launch_templates(boto3_session: boto3.session.Session, region: str) -> L
         for template in templates:
             template_versions: List[Dict] = []
             v_paginator = client.get_paginator('describe_launch_template_versions')
-            for versions in v_paginator.paginate(LaunchTemplateId=template['LaunchTemplateId']):
+            for versions in v_paginator.paginate(
+                LaunchTemplateId=template['LaunchTemplateId'],
+                Versions=LAUNCH_TEMPLATE_VERSIONS,
+            ):
                 template_versions.extend(versions["LaunchTemplateVersions"])
             template["_template_versions"] = template_versions
 
@@ -42,9 +51,10 @@ def get_launch_templates(boto3_session: boto3.session.Session, region: str) -> L
 @timeit
 def load_launch_templates(
         neo4j_session: neo4j.Session, data: List[Dict], region: str, current_aws_account_id: str, update_tag: int,
+        partition: str = DEFAULT_PARTITION,
 ) -> None:
     ingest_lt = """
-    UNWIND $launch_templates as lt
+    UNWIND $DictList as lt
         MERGE (template:LaunchTemplate{id: lt.LaunchTemplateId})
         ON CREATE SET template.firstseen = timestamp(),
         template.name = lt.LaunchTemplateName,
@@ -92,14 +102,15 @@ def load_launch_templates(
     """
     for lt in data:
         lt['CreateTime'] = str(time.mktime(lt['CreateTime'].timetuple()))
-        arn = f"arn:aws:ec2:{region}:{current_aws_account_id}:launch-template/{lt['LaunchTemplateId']}"
+        arn = f"arn:{partition}:ec2:{region}:{current_aws_account_id}:launch-template/{lt['LaunchTemplateId']}"
         lt['consolelink'] = aws_console_link.get_console_link(arn=arn)
         for tv in lt.get("_template_versions", []):
             tv['CreateTime'] = str(time.mktime(tv['CreateTime'].timetuple()))
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_lt,
-        launch_templates=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         Region=region,
         update_tag=update_tag,
@@ -124,13 +135,14 @@ def sync_ec2_launch_templates(
 
     logger.info("Syncing EC2 Launch Templates for account '%s', at %s.", current_aws_account_id, tic)
 
+    partition = get_partition_from_params(common_job_parameters)
     for region in regions:
         logger.debug("Syncing launch templates for region '%s' in account '%s'.", region, current_aws_account_id)
         data = get_launch_templates(boto3_session, region)
 
         logger.info(f"Total EC2 Launch Templates: {len(data)} for {region}")
 
-        load_launch_templates(neo4j_session, data, region, current_aws_account_id, update_tag)
+        load_launch_templates(neo4j_session, data, region, current_aws_account_id, update_tag, partition=partition)
     cleanup_ec2_launch_templates(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

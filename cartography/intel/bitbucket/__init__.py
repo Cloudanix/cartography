@@ -10,6 +10,8 @@ from neo4j import GraphDatabase
 from requests import exceptions
 
 from . import workspace
+from .repositories import BitbucketAuthError
+from .repositories import ensure_repository_list_readable
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph.session import Session
@@ -17,6 +19,16 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+
+def _withhold_dataset(message: str) -> dict:
+    """A Bitbucket sync that did not authenticate or did not finish.
+
+    Callers must not run graph cleanup and must not publish an inventory
+    snapshot. An empty snapshot is what Rails treats as "these resources
+    were removed".
+    """
+    return {"authFailed": True, "message": message}
 
 
 def concurrent_execution(
@@ -64,6 +76,9 @@ def _sync_one_workspace(
     _ws_tic = time.perf_counter()
     _service_timings: Dict = {}
     _failed_services: Dict = {}
+    # No readable repository list means this run has nothing to publish.
+    # Stop before any service cleanup.
+    ensure_repository_list_readable(access_token, workspace_name)
     requested_syncs: List[str] = list(RESOURCE_FUNCTIONS.keys())
 
     sync_args = {
@@ -83,6 +98,10 @@ def _sync_one_workspace(
                 RESOURCE_FUNCTIONS[func_name](**sync_args)
                 _svc_elapsed = round(time.perf_counter() - _svc_tic, 4)
                 _service_timings[func_name] = _svc_elapsed
+            except BitbucketAuthError:
+                _svc_status = "error"
+                _svc_elapsed = round(time.perf_counter() - _svc_tic, 4)
+                raise
             except Exception as e:
                 _svc_status = "error"
                 _svc_elapsed = round(time.perf_counter() - _svc_tic, 4)
@@ -140,14 +159,15 @@ def _sync_multiple_workspaces(
 @timeit
 def start_bitbucket_ingestion(neo4j_session: neo4j.Session, config: Config) -> dict:
     """
-    If this module is configured, perform ingestion of bitbucket  data. Otherwise warn and exit
+    If this module is configured, perform ingestion of bitbucket data. Otherwise
+    return an auth failure and exit without writing or cleaning the graph.
     :param neo4j_session: Neo4J session for database interface
     :param config: A cartography.config object
-    :return: None
+    :return: Sync parameters, or an authFailed marker when no snapshot should be published.
     """
     if not config.bitbucket_access_token:
         logger.info('bitbucket import is not configured - skipping this module. See docs to configure.')
-        return {}
+        return _withhold_dataset("bitbucket authentication failed: access token is missing")
 
     access_token = config.bitbucket_access_token
     common_job_parameters = {
@@ -172,8 +192,11 @@ def start_bitbucket_ingestion(neo4j_session: neo4j.Session, config: Config) -> d
                 has_workspace_data = True
 
         if has_workspace_data is False:
-            logger.warning("Could not process. Bitbucket workspace(s) do not exist or unable to access them", extra={"workspace": common_job_parameters["WORKSPACE_ID"]})
-            return common_job_parameters
+            logger.warning(
+                "Could not process. Bitbucket workspace(s) do not exist or unable to access them",
+                extra={"workspace": common_job_parameters["WORKSPACE_ID"]},
+            )
+            return _withhold_dataset("bitbucket authentication failed: workspace is not accessible")
 
         workspace.sync(
             neo4j_session,
@@ -189,7 +212,12 @@ def start_bitbucket_ingestion(neo4j_session: neo4j.Session, config: Config) -> d
             config,
         )
 
+    except BitbucketAuthError as e:
+        logger.error("Bitbucket repository list was not readable: %s", e)
+        return _withhold_dataset(str(e))
+
     except exceptions.RequestException as e:
         logger.error("Could not complete request to the Bitbucket API: %s", e)
+        return _withhold_dataset(f"bitbucket request failed before sync completed: {e}")
 
     return common_job_parameters

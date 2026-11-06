@@ -1,11 +1,27 @@
 import cartography.intel.aws.ec2.load_balancer_v2s
 import tests.data.aws.ec2.load_balancers
 from cartography.util import run_analysis_job
+from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 TEST_ACCOUNT_ID = '000000000000'
 TEST_REGION = 'us-east-1'
 TEST_UPDATE_TAG = 123456789
 TEST_WORKSPACE_ID = '123'
+
+
+def _seed_account_load_balancer(neo4j_session, load_balancer_id):
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, f'{TEST_WORKSPACE_ID}-org', TEST_ACCOUNT_ID)
+    neo4j_session.run(
+        """
+        MATCH (aws:AWSAccount{id: $aws_account_id})
+        MERGE (aws)-[:RESOURCE]->(elbv2:LoadBalancerV2{id: $ID})
+        ON CREATE SET elbv2.firstseen = timestamp()
+        SET elbv2.lastupdated = $aws_update_tag
+        """,
+        ID=load_balancer_id,
+        aws_account_id=TEST_ACCOUNT_ID,
+        aws_update_tag=TEST_UPDATE_TAG,
+    )
 
 
 def test_load_load_balancer_v2s(neo4j_session, *args):
@@ -15,22 +31,20 @@ def test_load_load_balancer_v2s(neo4j_session, *args):
     sg_group_id_2 = 'sg-234567'
     load_balancer_id = "myawesomeloadbalancer.amazonaws.com"
 
-    # an ec2instance and AWSAccount must exist
+    # an ec2instance and the account's tenant chain must exist
+    create_test_org_account(neo4j_session, TEST_WORKSPACE_ID, f'{TEST_WORKSPACE_ID}-org', TEST_ACCOUNT_ID)
     neo4j_session.run(
         """
-        MERGE (ec2:EC2Instance{instanceid: $ec2_instance_id})
+        MATCH (aws:AWSAccount{id: $aws_account_id})
+        MERGE (aws)-[:RESOURCE]->(ec2:EC2Instance{instanceid: $ec2_instance_id})
         ON CREATE SET ec2.firstseen = timestamp()
         SET ec2.lastupdated = $aws_update_tag
 
-        MERGE (aws:AWSAccount{id: $aws_account_id})
-        ON CREATE SET aws.firstseen = timestamp()
-        SET aws.lastupdated = $aws_update_tag
-
-        MERGE (group:EC2SecurityGroup{groupid: $GROUP_ID_1})
+        MERGE (aws)-[:RESOURCE]->(group:EC2SecurityGroup{groupid: $GROUP_ID_1})
         ON CREATE SET group.firstseen = timestamp()
         SET group.last_updated = $aws_update_tag
 
-        MERGE (group2:EC2SecurityGroup{groupid: $GROUP_ID_2})
+        MERGE (aws)-[:RESOURCE]->(group2:EC2SecurityGroup{groupid: $GROUP_ID_2})
         ON CREATE SET group2.firstseen = timestamp()
         SET group2.last_updated = $aws_update_tag
         """,
@@ -53,6 +67,7 @@ def test_load_load_balancer_v2s(neo4j_session, *args):
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
         TEST_REGION,
+        TEST_WORKSPACE_ID,
     )
 
     # verify the db has (aa)-[r:RESOURCE]->(elbv2)-[r:ELBV2_LISTENER]->(l)
@@ -90,21 +105,14 @@ def test_load_load_balancer_v2_listeners(neo4j_session, *args):
     # creates ELBV2Listener
     # creates (elbv2)-[r:ELBV2_LISTENER]->(l)
     load_balancer_id = 'asadfmyloadbalancerid'
-    neo4j_session.run(
-        """
-        MERGE (elbv2:LoadBalancerV2{id: $ID})
-        ON CREATE SET elbv2.firstseen = timestamp()
-        SET elbv2.lastupdated = $aws_udpate_tag
-        """,
-        ID=load_balancer_id,
-        aws_udpate_tag=TEST_UPDATE_TAG,
-    )
+    _seed_account_load_balancer(neo4j_session, load_balancer_id)
 
     listener_data = tests.data.aws.ec2.load_balancers.LOAD_BALANCER_LISTENERS
     cartography.intel.aws.ec2.load_balancer_v2s.load_load_balancer_v2_listeners(
         neo4j_session,
         load_balancer_id,
         listener_data,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -140,22 +148,15 @@ def test_load_load_balancer_v2_target_groups(neo4j_session, *args):
 
     target_groups = tests.data.aws.ec2.load_balancers.TARGET_GROUPS
 
-    # an elbv2, ec2instance, and AWSAccount must exist or nothing will match
+    # an elbv2 and ec2instance of the account must exist or nothing will match
+    _seed_account_load_balancer(neo4j_session, load_balancer_id)
     neo4j_session.run(
         """
-        MERGE (elbv2:LoadBalancerV2{id: $load_balancer_id})
-        ON CREATE SET elbv2.firstseen = timestamp()
-        SET elbv2.lastupdated = $aws_update_tag
-
-        MERGE (ec2:EC2Instance{instanceid: $ec2_instance_id})
+        MATCH (aws:AWSAccount{id: $aws_account_id})
+        MERGE (aws)-[:RESOURCE]->(ec2:EC2Instance{instanceid: $ec2_instance_id})
         ON CREATE SET ec2.firstseen = timestamp()
         SET ec2.lastupdated = $aws_update_tag
-
-        MERGE (aws:AWSAccount{id: $aws_account_id})
-        ON CREATE SET aws.firstseen = timestamp()
-        SET aws.lastupdated = $aws_update_tag
         """,
-        load_balancer_id=load_balancer_id,
         ec2_instance_id=ec2_instance_id,
         aws_account_id=TEST_ACCOUNT_ID,
         aws_update_tag=TEST_UPDATE_TAG,
@@ -198,15 +199,7 @@ def test_load_load_balancer_v2_target_groups(neo4j_session, *args):
 def test_load_load_balancer_v2_subnets(neo4j_session, *args):
     # an elbv2 must exist or nothing will match.
     load_balancer_id = 'asadfmyloadbalancerid'
-    neo4j_session.run(
-        """
-        MERGE (elbv2:LoadBalancerV2{id: $ID})
-        ON CREATE SET elbv2.firstseen = timestamp()
-        SET elbv2.lastupdated = $aws_udpate_tag
-        """,
-        ID=load_balancer_id,
-        aws_udpate_tag=TEST_UPDATE_TAG,
-    )
+    _seed_account_load_balancer(neo4j_session, load_balancer_id)
 
     az_data = [
         {'SubnetId': 'mysubnetIdA'},
@@ -217,6 +210,7 @@ def test_load_load_balancer_v2_subnets(neo4j_session, *args):
         load_balancer_id,
         az_data,
         TEST_REGION,
+        TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
     )
 
@@ -267,6 +261,8 @@ def test_ec2_load_balancer_analysis(neo4j_session):
         load_balancer_data,
         TEST_ACCOUNT_ID,
         TEST_UPDATE_TAG,
+        TEST_REGION,
+        TEST_WORKSPACE_ID,
     )
 
     common_job_parameters = {

@@ -7,7 +7,11 @@ from typing import Tuple
 
 import neo4j
 
+from cartography.client.core.tx import load_graph_data
 from cartography.intel.github.util import fetch_all
+from cartography.intel.github.util import get_console_link
+from cartography.intel.github.util import get_org_node_id
+from cartography.intel.github.util import get_web_base_url
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_cleanup_job
@@ -67,6 +71,12 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
     return users.edges, org
 
 
+def transform_users(user_data: List[Dict], web_base_url: str) -> List[Dict]:
+    for user in user_data:
+        user["consolelink"] = get_console_link("user", base_url=web_base_url, login=user["node"].get("login"))
+    return user_data
+
+
 @timeit
 def load_organization_users(
     neo4j_session: neo4j.Session,
@@ -75,38 +85,41 @@ def load_organization_users(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     query = """
-    MERGE (org:GitHubOrganization{id: $OrgLogin})
+    MERGE (org:GitHubOrganization{id: $OrgNodeId})
     ON CREATE SET org.firstseen = timestamp()
     SET org.lastupdated = $UpdateTag
     WITH org
 
-    UNWIND $UserData as user
+    UNWIND $DictList as user
 
     MERGE (u:GitHubUser{id: user.node.url})
     ON CREATE SET u.firstseen = timestamp()
     SET u.fullname = user.node.name,
     u.username = user.node.login,
     u.has_2fa_enabled = user.hasTwoFactorEnabled,
-    u.role = user.role,
     u.is_site_admin = user.node.isSiteAdmin,
     u.email = user.node.email,
     u.company = user.node.company,
+    u.consolelink = user.consolelink,
     u.lastupdated = $UpdateTag
+    // The user node is shared by every org (and tenant) the user is in: the org role goes on this org's edge.
+    REMOVE u.role
 
     MERGE (u)-[r:MEMBER_OF]->(org)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
+    SET r.lastupdated = $UpdateTag, r.role = user.role
     WITH org
     match (owner:CloudanixWorkspace{id:$workspace_id})
     merge (org)<-[o:OWNER]-(owner)
     ON CREATE SET o.firstseen = timestamp()
     SET o.lastupdated = $UpdateTag
     """
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         query,
+        user_data,
         OrgUrl=org_data["url"],
-        OrgLogin=org_data["login"],
-        UserData=user_data,
+        OrgNodeId=org_data["node_id"],
         UpdateTag=common_job_parameters["UPDATE_TAG"],
         workspace_id=common_job_parameters["WORKSPACE_ID"],
     )
@@ -124,8 +137,11 @@ def sync(
     logger.info("Syncing GitHub Users in account %s - url %s", organization, github_url)
 
     user_data, org_data = get_users(github_api_key, github_url, organization)
+    web_base_url = get_web_base_url(github_url)
+    user_data = transform_users(user_data, web_base_url)
+    org_data["node_id"] = get_org_node_id(web_base_url, org_data["login"])
 
-    common_job_parameters["ORGANIZATION_ID"] = org_data.get("login")
+    common_job_parameters["ORGANIZATION_ID"] = org_data["node_id"]
 
     load_organization_users(neo4j_session, user_data, org_data, common_job_parameters)
     merge_module_sync_metadata(
@@ -138,6 +154,10 @@ def sync(
     )
 
     run_cleanup_job("github_users_cleanup.json", neo4j_session, common_job_parameters)
+    # A GitHubUser (keyed by profile URL) can belong to several tenants' orgs, so the tenant cleanup above removes
+    # only this org's stale edges; this tenant-independent sweep deletes a user once no org or repo links to it.
+    # Plain DELETE: a user another sync is linking at that moment fails this sweep, never loses the edge.
+    run_cleanup_job("github_users_orphan_cleanup.json", neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()
     logger.info(f"Time to process GitHub Users: {toc - tic:0.4f} seconds")

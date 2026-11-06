@@ -1,21 +1,30 @@
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.web import WebSiteManagementClient
-from cloudconsolelink.clouds.azure import AzureLinker
 from msrest.exceptions import DeserializationError
 
+from .util.console_link import safe_console_link
 from .util.credentials import Credentials
+from .util.sdk_models import as_legacy_dict
 from cartography.util import get_azure_resource_group_name
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-azure_console_link = AzureLinker()
+
+# Access restriction sources that admit the whole internet ('Internet' is the service tag form).
+# Azure Front Door is always internet-facing, so a site that admits it is reachable through it.
+OPEN_ACCESS_RESTRICTION_SOURCES = {'any', '0.0.0.0/0', '::/0', 'internet', 'azurefrontdoor.backend'}
+# Parallel per-site config reads; same order as the SQL server fetch pool.
+SITE_CONFIG_WORKERS = 5
+ALLOW_ANONYMOUS = 'AllowAnonymous'
 
 
 def load_function_apps(
@@ -29,75 +38,45 @@ def load_function_apps(
 
 
 def load_function_apps_configurations(
-    session: neo4j.Session,
-    data_list: List[Dict],
-    update_tag: int,
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
 ) -> None:
-    session.execute_write(
-        _load_function_apps_configurations_tx, data_list,
-        update_tag,
-    )
+    session.execute_write(_load_function_apps_configurations_tx, subscription_id, data_list, update_tag)
 
 
 def load_function_apps_functions(
-    session: neo4j.Session, data_list: List[Dict],
-    update_tag: int,
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
 ) -> None:
-    session.execute_write(
-        _load_function_apps_functions_tx, data_list,
-        update_tag,
-    )
+    session.execute_write(_load_function_apps_functions_tx, subscription_id, data_list, update_tag)
 
 
 def load_function_apps_deployments(
-    session: neo4j.Session,
-    data_list: List[Dict],
-    update_tag: int,
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
 ) -> None:
-    session.execute_write(
-        _load_function_apps_deployments_tx, data_list,
-        update_tag,
-    )
+    session.execute_write(_load_function_apps_deployments_tx, subscription_id, data_list, update_tag)
 
 
 def load_function_apps_backups(
-    session: neo4j.Session, data_list: List[Dict],
-    update_tag: int,
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
 ) -> None:
-    session.execute_write(
-        _load_function_apps_backups_tx, data_list,
-        update_tag,
-    )
+    session.execute_write(_load_function_apps_backups_tx, subscription_id, data_list, update_tag)
 
 
 def load_function_apps_processes(
-    session: neo4j.Session, data_list: List[Dict],
-    update_tag: int,
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
 ) -> None:
-    session.execute_write(
-        _load_function_apps_processes_tx, data_list,
-        update_tag,
-    )
+    session.execute_write(_load_function_apps_processes_tx, subscription_id, data_list, update_tag)
 
 
 def load_function_apps_snapshots(
-    session: neo4j.Session, data_list: List[Dict],
-    update_tag: int,
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
 ) -> None:
-    session.execute_write(
-        _load_function_apps_snapshots_tx, data_list,
-        update_tag,
-    )
+    session.execute_write(_load_function_apps_snapshots_tx, subscription_id, data_list, update_tag)
 
 
 def load_function_apps_webjobs(
-    session: neo4j.Session, data_list: List[Dict],
-    update_tag: int,
+    session: neo4j.Session, subscription_id: str, data_list: List[Dict], update_tag: int,
 ) -> None:
-    session.execute_write(
-        _load_function_apps_webjobs_tx, data_list,
-        update_tag,
-    )
+    session.execute_write(_load_function_apps_webjobs_tx, subscription_id, data_list, update_tag)
 
 
 @timeit
@@ -114,26 +93,104 @@ def get_client(
 def get_function_apps_list(client: WebSiteManagementClient, regions: list, common_job_parameters: Dict) -> List[Dict]:
     try:
         function_app_list = list(
-            map(lambda x: x.as_dict(), client.web_apps.list()),
+            map(as_legacy_dict, client.web_apps.list()),
         )
         function_list = []
         for function in function_app_list:
             function['resource_group'] = get_azure_resource_group_name(function.get('id'))
-            function['hostNamesDisabled'] = function.get('properties', {}).get('host_names_disabled', True)
+            function['hostNamesDisabled'] = function.get('host_names_disabled')
             function['location'] = function.get('location', '').replace(" ", "").lower()
-            function['consolelink'] = azure_console_link.get_console_link(
-                id=function['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            function['consolelink'] = safe_console_link(function['id'], common_job_parameters)
             if regions is None:
                 function_list.append(function)
             else:
                 if function.get('location') in regions or function.get('location') == 'global':
                     function_list.append(function)
-        return function_list
 
     except HttpResponseError as e:
         logger.warning(f"Error while retrieving function apps - {e}")
         return []
+
+    # The site list leaves siteConfig empty, so access restrictions need one read per site,
+    # and authentication (Easy Auth) another.
+    with ThreadPoolExecutor(max_workers=SITE_CONFIG_WORKERS) as pool:
+        configs = list(pool.map(lambda site: _get_site_config(client, site), function_list))
+        auths = list(pool.map(lambda site: _get_auth_settings(client, site), function_list))
+    for site, config, auth in zip(function_list, configs, auths):
+        _set_access_restrictions(site, config)
+        site.update(easy_auth_fields(auth))
+    return function_list
+
+
+def _get_auth_settings(client: WebSiteManagementClient, site: Dict) -> Optional[Dict]:
+    """
+    Read a site's App Service authentication settings (V2 shape).
+
+    Uses the "without secrets" GET (.../config/authsettingsV2, Microsoft.Web/sites/config/Read,
+    in Reader). get_auth_settings_v2 is GET .../config/authsettingsV2/list, which needs
+    Microsoft.Web/sites/config/list/Action and returns provider secrets: never call it.
+    :return: the settings as a legacy dict, or None if they could not be read.
+    """
+    try:
+        settings = client.web_apps.get_auth_settings_v2_without_secrets(site['resource_group'], site['name'])
+        return as_legacy_dict(settings)
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving authentication settings for {site.get('id')} - {e}")
+        return None
+
+
+def easy_auth_fields(settings: Optional[Dict]) -> Dict:
+    """
+    auth_enabled and the effective unauthenticated_client_action. Unread settings stay None, so
+    the exposure layers keep the site's auth unknown, never required.
+
+    requireAuthentication off lets every caller through, and excluded paths let callers through on
+    those paths, so both are stored as AllowAnonymous.
+    ponytail: one excluded health-check path downgrades the whole site to AllowAnonymous (unknown);
+    store the paths if per-path verdicts are ever needed.
+    """
+    if settings is None:
+        return {'auth_enabled': None, 'unauthenticated_client_action': None}
+    validation = settings.get('global_validation') or {}
+    action = validation.get('unauthenticated_client_action')
+    if not validation.get('require_authentication') or validation.get('excluded_paths'):
+        action = ALLOW_ANONYMOUS
+    return {
+        'auth_enabled': bool((settings.get('platform') or {}).get('enabled')),
+        'unauthenticated_client_action': action,
+    }
+
+
+def _get_site_config(client: WebSiteManagementClient, site: Dict) -> Optional[Dict]:
+    """
+    Read a site's web config, which holds its access restrictions.
+
+    :return: the config as a legacy dict, or None if it could not be read.
+    """
+    try:
+        return as_legacy_dict(client.web_apps.get_configuration(site['resource_group'], site['name']))
+    except HttpResponseError as e:
+        logger.warning(f"Error while retrieving access restrictions for {site.get('id')} - {e}")
+        return None
+
+
+def _set_access_restrictions(site: Dict, config: Optional[Dict]) -> None:
+    """
+    Store the network settings the exposure job reads. When the config could not be read,
+    the restriction fields stay None and the job keeps the site public.
+    """
+    site['publicNetworkAccess'] = site.get('public_network_access') or (config or {}).get('public_network_access')
+    if config is None:
+        site['ipSecurityRestrictionsDefaultAction'] = None
+        site['openAccessRestriction'] = None
+        return
+    site['ipSecurityRestrictionsDefaultAction'] = config.get('ip_security_restrictions_default_action')
+    # A rule without an action is treated as Allow, so an unclear rule keeps the site public.
+    site['openAccessRestriction'] = any(
+        (rule.get('action') or 'Allow').lower() == 'allow' and
+        (rule.get('ip_address') or '').lower() in OPEN_ACCESS_RESTRICTION_SOURCES
+        for rule in config.get('ip_security_restrictions') or []
+    )
 
 
 def _load_function_apps_tx(
@@ -148,13 +205,18 @@ def _load_function_apps_tx(
     f.type = function_app.type,
     f.location = function_app.location,
     f.region = function_app.location,
-    f.consolelink = function_app.consolelink,
-    f.hostNamesDisabled = function_app.hostNamesDisabled,
     f.resourcegroup = function_app.resource_group
-    SET f.lastupdated = $update_tag,
+    SET f.consolelink = coalesce(function_app.consolelink, f.consolelink), f.lastupdated = $update_tag,
     f.name = function_app.name,
+    f.hostNamesDisabled = function_app.hostNamesDisabled,
+    f.publicNetworkAccess = function_app.publicNetworkAccess,
+    f.ipSecurityRestrictionsDefaultAction = function_app.ipSecurityRestrictionsDefaultAction,
+    f.openAccessRestriction = function_app.openAccessRestriction,
+    f.auth_enabled = function_app.auth_enabled,
+    f.unauthenticated_client_action = function_app.unauthenticated_client_action,
     f.container_size = function_app.container_size,
     f.default_host_name=function_app.default_host_name,
+    f.enabled_host_names=function_app.enabled_host_names,
     f.last_modified_time_utc=function_app.last_modified_time_utc,
     f.state=function_app.state,
     f.repository_site_name=function_app.repository_site_name,
@@ -176,14 +238,15 @@ def _load_function_apps_tx(
     )
     for function_app in function_apps_list:
         resource_group = get_azure_resource_group_name(function_app.get('id'))
-        _attach_resource_group_function_apps(tx, function_app['id'], resource_group, update_tag)
+        _attach_resource_group_function_apps(tx, subscription_id, function_app['id'], resource_group, update_tag)
 
 
-def _attach_resource_group_function_apps(tx: neo4j.Transaction, function_app_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_function_apps(
+    tx: neo4j.Transaction, subscription_id: str, function_app_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_function_apps = """
-    MATCH (f:AzureFunctionApp{id: $function_app_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(f:AzureFunctionApp{id: $function_app_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
@@ -192,6 +255,7 @@ def _attach_resource_group_function_apps(tx: neo4j.Transaction, function_app_id:
         ingest_function_apps,
         function_app_id=function_app_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         update_tag=update_tag,
     )
 
@@ -266,7 +330,7 @@ def get_function_apps_configuration_list(
         for function in function_apps_list:
             apps_conf_list = list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.web_apps.list_configurations(
                         function['resource_group'], function['name'],
                     ),
@@ -279,11 +343,9 @@ def get_function_apps_configuration_list(
                     :conf['id'].
                     index("/config/web")
                 ]
-                conf['consolelink'] = azure_console_link.get_console_link(
-                    id=conf['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-                )
+                conf['consolelink'] = safe_console_link(conf['id'], common_job_parameters)
                 conf["location"] = function.get("location")
-                conf['publicNetworkAccess'] = conf.get('properties', {}).get('public_network_access', 'Disabled')
+                conf['publicNetworkAccess'] = conf.get('public_network_access', 'Disabled')
             function_apps_conf_list.extend(apps_conf_list)
         return function_apps_conf_list
 
@@ -296,6 +358,7 @@ def get_function_apps_configuration_list(
 
 def _load_function_apps_configurations_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     function_apps_conf_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -312,7 +375,7 @@ def _load_function_apps_configurations_tx(
     fc.php_version=function_conf.php_version,
     fc.location = function_conf.location,
     fc.region = function_conf.location,
-    fc.consolelink = function_conf.consolelink,
+    fc.consolelink = coalesce(function_conf.consolelink, fc.consolelink),
     fc.publicNetworkAccess = function_conf.publicNetworkAccess,
     fc.python_version=function_conf.python_version,
     fc.node_version=function_conf.node_version,
@@ -329,7 +392,8 @@ def _load_function_apps_configurations_tx(
     fc.pre_warmed_instance_count=function_conf.pre_warmed_instance_count,
     fc.health_check_path=function_conf.health_check_path
     WITH fc, function_conf
-    MATCH (s:AzureFunctionApp{id: function_conf.function_app_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(s:AzureFunctionApp{id: function_conf.function_app_id})
     MERGE (s)-[r:CONTAIN]->(fc)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -338,18 +402,27 @@ def _load_function_apps_configurations_tx(
     tx.run(
         ingest_function_apps_conf,
         function_apps_conf_list=function_apps_conf_list,
+        SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for function_apps_conf in function_apps_conf_list:
         resource_group = get_azure_resource_group_name(function_apps_conf.get('id'))
-        _attach_resource_group_function_apps_conf(tx, function_apps_conf['id'], resource_group, update_tag)
+        _attach_resource_group_function_apps_conf(
+            tx,
+            subscription_id,
+            function_apps_conf['id'],
+            resource_group,
+            update_tag,
+        )
 
 
-def _attach_resource_group_function_apps_conf(tx: neo4j.Transaction, function_apps_conf_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_function_apps_conf(
+    tx: neo4j.Transaction, subscription_id: str, function_apps_conf_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_function_apps_conf = """
-    MATCH (fc:AzureFunctionAppConfiguration{id: $function_conf_id})
-    WITH fc
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureFunctionApp)
+    -[:CONTAIN]->(fc:AzureFunctionAppConfiguration{id: $function_conf_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (fc)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -358,6 +431,7 @@ def _attach_resource_group_function_apps_conf(tx: neo4j.Transaction, function_ap
         ingest_function_apps_conf,
         function_conf_id=function_apps_conf_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -383,7 +457,7 @@ def sync_function_apps_conf(
         function_apps_list, client, common_job_parameters,
     )
     load_function_apps_configurations(
-        neo4j_session, function_app_conf_list,
+        neo4j_session, common_job_parameters['AZURE_SUBSCRIPTION_ID'], function_app_conf_list,
         update_tag,
     )
     cleanup_function_apps_conf(neo4j_session, common_job_parameters)
@@ -401,7 +475,7 @@ def get_function_apps_functions_list(
         try:
             functions_list = list(
                 map(
-                    lambda x: x.as_dict(),
+                    as_legacy_dict,
                     client.web_apps.list_functions(
                         function['resource_group'],
                         function['name'],
@@ -420,9 +494,7 @@ def get_function_apps_functions_list(
                 index("/functions")
             ]
             fun["location"] = function.get("location", "global")
-            fun['consolelink'] = azure_console_link.get_console_link(
-                id=fun['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-            )
+            fun['consolelink'] = safe_console_link(fun['id'], common_job_parameters)
 
         function_apps_functions_list.extend(functions_list)
 
@@ -431,6 +503,7 @@ def get_function_apps_functions_list(
 
 def _load_function_apps_functions_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     function_apps_function_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -445,11 +518,11 @@ def _load_function_apps_functions_tx(
     f.region = function.location,
     f.resource_group_name=function.resource_group,
     f.href=function.href,
-    f.consolelink = function.consolelink,
+    f.consolelink = coalesce(function.consolelink, f.consolelink),
     f.language=function.language,
     f.is_disabled=function.is_disabled
     WITH f, function
-    MATCH (s:AzureFunctionApp{id: function.function_app_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(s:AzureFunctionApp{id: function.function_app_id})
     MERGE (s)-[r:CONTAIN]->(f)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -458,18 +531,27 @@ def _load_function_apps_functions_tx(
     tx.run(
         ingest_function,
         function_apps_function_list=function_apps_function_list,
+        SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for function_apps_function in function_apps_function_list:
         resource_group = get_azure_resource_group_name(function_apps_function.get('id'))
-        _attach_resource_group_unction_apps_function(tx, function_apps_function['id'], resource_group, update_tag)
+        _attach_resource_group_unction_apps_function(
+            tx,
+            subscription_id,
+            function_apps_function['id'],
+            resource_group,
+            update_tag,
+        )
 
 
-def _attach_resource_group_unction_apps_function(tx: neo4j.Transaction, function_apps_function_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_unction_apps_function(
+    tx: neo4j.Transaction, subscription_id: str, function_apps_function_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_function = """
-    MATCH (f:AzureFunctionAppFunction{id: $function_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureFunctionApp)
+    -[:CONTAIN]->(f:AzureFunctionAppFunction{id: $function_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -478,6 +560,7 @@ def _attach_resource_group_unction_apps_function(tx: neo4j.Transaction, function
         ingest_function,
         function_id=function_apps_function_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -503,7 +586,7 @@ def sync_function_apps_functions(
         function_apps_list, client, common_job_parameters,
     )
     load_function_apps_functions(
-        neo4j_session, function_apps_function_list,
+        neo4j_session, common_job_parameters['AZURE_SUBSCRIPTION_ID'], function_apps_function_list,
         update_tag,
     )
     cleanup_function_apps_functions(neo4j_session, common_job_parameters)
@@ -516,7 +599,7 @@ def get_function_apps_deployments_list(
     try:
         deployments_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_deployments(
                     function['resource_group'],
                     function['name'],
@@ -535,10 +618,7 @@ def get_function_apps_deployments_list(
 def transform_deployments(deployments_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_deployments_list: List[Dict] = []
     for deployment in deployments_list:
-        deployment['consolelink'] = azure_console_link.get_console_link(
-            id=deployment['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        deployment['consolelink'] = safe_console_link(deployment['id'], common_job_parameters)
         deployment['resource_group'] = get_azure_resource_group_name(deployment.get('id'))
         deployment['function_app_id'] = deployment[
             'id'
@@ -551,6 +631,7 @@ def transform_deployments(deployments_list: List[Dict], function: Dict, common_j
 
 def _load_function_apps_deployments_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     function_apps_deployments_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -561,12 +642,13 @@ def _load_function_apps_deployments_tx(
     f.type = function_deploy.type
     SET f.name = function_deploy.name,
     f.lastupdated = $azure_update_tag,
-    f.consolelink = function_deploy.consolelink,
+    f.consolelink = coalesce(function_deploy.consolelink, f.consolelink),
     f.location = function_deploy.location,
     f.region = function_deploy.location,
     f.resource_group_name=function_deploy.resource_group
     WITH f, function_deploy
-    MATCH (s:AzureFunctionApp{id: function_deploy.function_app_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(s:AzureFunctionApp{id: function_deploy.function_app_id})
     MERGE (s)-[r:CONTAIN]->(f)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -575,18 +657,27 @@ def _load_function_apps_deployments_tx(
     tx.run(
         ingest_function_apps_deploy,
         function_apps_deployments_list=function_apps_deployments_list,
+        SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for function_apps_deployment in function_apps_deployments_list:
         resource_group = get_azure_resource_group_name(function_apps_deployment.get('id'))
-        _attach_resource_group_function_apps_deployments(tx, function_apps_deployment['id'], resource_group, update_tag)
+        _attach_resource_group_function_apps_deployments(
+            tx,
+            subscription_id,
+            function_apps_deployment['id'],
+            resource_group,
+            update_tag,
+        )
 
 
-def _attach_resource_group_function_apps_deployments(tx: neo4j.Transaction, function_apps_deployment_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_function_apps_deployments(
+    tx: neo4j.Transaction, subscription_id: str, function_apps_deployment_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_function_apps_deploy = """
-    MATCH (f:AzureFunctionAppDeployment{id: $function_deploy_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureFunctionApp)
+    -[:CONTAIN]->(f:AzureFunctionAppDeployment{id: $function_deploy_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -595,6 +686,7 @@ def _attach_resource_group_function_apps_deployments(tx: neo4j.Transaction, func
         ingest_function_apps_deploy,
         function_deploy_id=function_apps_deployment_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -622,7 +714,7 @@ def sync_function_apps_deployments(
         )
         function_apps_deployments_list = transform_deployments(deployments_list, function, common_job_parameters)
         load_function_apps_deployments(
-            neo4j_session,
+            neo4j_session, common_job_parameters['AZURE_SUBSCRIPTION_ID'],
             function_apps_deployments_list, update_tag,
         )
     cleanup_function_apps_deployments(neo4j_session, common_job_parameters)
@@ -635,7 +727,7 @@ def get_function_apps_backups_list(
     try:
         backups_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_backups(
                     function['resource_group'],
                     function['name'],
@@ -652,10 +744,7 @@ def get_function_apps_backups_list(
 def transform_backups(backups_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_backups_list: List[Dict] = []
     for backup in backups_list:
-        backup['consolelink'] = azure_console_link.get_console_link(
-            id=backup['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        backup['consolelink'] = safe_console_link(backup['id'], common_job_parameters)
         backup['resource_group'] = get_azure_resource_group_name(backup.get('id'))
         backup['function_app_id'] = backup['id'][
             :backup['id'].
@@ -669,6 +758,7 @@ def transform_backups(backups_list: List[Dict], function: Dict, common_job_param
 
 def _load_function_apps_backups_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     function_apps_backups_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -680,11 +770,12 @@ def _load_function_apps_backups_tx(
     f.region = function_backup.location,
     f.type = function_backup.type
     SET f.name = function_backup.name,
-    f.consolelink = function_backup.consolelink,
+    f.consolelink = coalesce(function_backup.consolelink, f.consolelink),
     f.lastupdated = $azure_update_tag,
     f.resource_group_name=function_backup.resource_group
     WITH f, function_backup
-    MATCH (s:AzureFunctionApp{id: function_backup.function_app_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(s:AzureFunctionApp{id: function_backup.function_app_id})
     MERGE (s)-[r:CONTAIN]->(f)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -693,18 +784,27 @@ def _load_function_apps_backups_tx(
     tx.run(
         ingest_function_apps_backup,
         function_apps_backups_list=function_apps_backups_list,
+        SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for function_apps_backup in function_apps_backups_list:
         resource_group = get_azure_resource_group_name(function_apps_backup.get('id'))
-        _attach_resource_group_function_apps_backups(tx, function_apps_backup['id'], resource_group, update_tag)
+        _attach_resource_group_function_apps_backups(
+            tx,
+            subscription_id,
+            function_apps_backup['id'],
+            resource_group,
+            update_tag,
+        )
 
 
-def _attach_resource_group_function_apps_backups(tx: neo4j.Transaction, function_apps_backup_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_function_apps_backups(
+    tx: neo4j.Transaction, subscription_id: str, function_apps_backup_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_function_apps_backup = """
-    MATCH (f:AzureFunctionAppBackup{id: $function_backup_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureFunctionApp)
+    -[:CONTAIN]->(f:AzureFunctionAppBackup{id: $function_backup_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -713,6 +813,7 @@ def _attach_resource_group_function_apps_backups(tx: neo4j.Transaction, function
         ingest_function_apps_backup,
         function_backup_id=function_apps_backup_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -740,7 +841,7 @@ def sync_function_apps_backups(
         )
         function_apps_backups_list = transform_backups(backups_list, function, common_job_parameters)
         load_function_apps_backups(
-            neo4j_session, function_apps_backups_list,
+            neo4j_session, common_job_parameters['AZURE_SUBSCRIPTION_ID'], function_apps_backups_list,
             update_tag,
         )
     cleanup_function_apps_backups(neo4j_session, common_job_parameters)
@@ -758,7 +859,7 @@ def get_function_apps_processes_list(
 
         processes_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 items,
             ),
         )
@@ -772,10 +873,7 @@ def get_function_apps_processes_list(
 def transform_processes(processes_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_processes_list: List[Dict] = []
     for process in processes_list:
-        process['consolelink'] = azure_console_link.get_console_link(
-            id=process['id'],
-            primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'],
-        )
+        process['consolelink'] = safe_console_link(process['id'], common_job_parameters)
         process['resource_group'] = get_azure_resource_group_name(process.get('id'))
         process['function_app_id'] = process['id'][
             :process['id'].
@@ -789,6 +887,7 @@ def transform_processes(processes_list: List[Dict], function: Dict, common_job_p
 
 def _load_function_apps_processes_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     function_apps_processes_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -800,11 +899,12 @@ def _load_function_apps_processes_tx(
     f.region = function_process.location,
     f.type = function_process.type
     SET f.name = function_process.name,
-    f.consolelink = function_process.consolelink,
+    f.consolelink = coalesce(function_process.consolelink, f.consolelink),
     f.lastupdated = $azure_update_tag,
     f.resource_group_name=function_process.resource_group
     WITH f, function_process
-    MATCH (s:AzureFunctionApp{id: function_process.function_app_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(s:AzureFunctionApp{id: function_process.function_app_id})
     MERGE (s)-[r:CONTAIN]->(f)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -813,18 +913,27 @@ def _load_function_apps_processes_tx(
     tx.run(
         ingest_function_apps_process,
         function_apps_processes_list=function_apps_processes_list,
+        SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for function_apps_process in function_apps_processes_list:
         resource_group = get_azure_resource_group_name(function_apps_process.get('id'))
-        _attach_resource_group_function_apps_processes(tx, function_apps_process['id'], resource_group, update_tag)
+        _attach_resource_group_function_apps_processes(
+            tx,
+            subscription_id,
+            function_apps_process['id'],
+            resource_group,
+            update_tag,
+        )
 
 
-def _attach_resource_group_function_apps_processes(tx: neo4j.Transaction, function_apps_process_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_function_apps_processes(
+    tx: neo4j.Transaction, subscription_id: str, function_apps_process_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_function_apps_process = """
-    MATCH (f:AzureFunctionAppProcess{id: $function_process_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureFunctionApp)
+    -[:CONTAIN]->(f:AzureFunctionAppProcess{id: $function_process_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -833,6 +942,7 @@ def _attach_resource_group_function_apps_processes(tx: neo4j.Transaction, functi
         ingest_function_apps_process,
         function_process_id=function_apps_process_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -860,7 +970,7 @@ def sync_function_apps_processes(
         )
         function_apps_processes_list = transform_processes(processes_list, function, common_job_parameters)
         load_function_apps_processes(
-            neo4j_session, function_apps_processes_list,
+            neo4j_session, common_job_parameters['AZURE_SUBSCRIPTION_ID'], function_apps_processes_list,
             update_tag,
         )
     cleanup_function_apps_processes(neo4j_session, common_job_parameters)
@@ -873,7 +983,7 @@ def get_function_apps_snapshots_list(
     try:
         snapshots_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_snapshots(
                     function['resource_group'],
                     function['name'],
@@ -891,7 +1001,7 @@ def get_function_apps_snapshots_list(
 def transform_snapshots(snapshots_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_snapshots_list: List[Dict] = []
     for snapshot in snapshots_list:
-        snapshot['consolelink'] = azure_console_link.get_console_link(id=snapshot['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+        snapshot['consolelink'] = safe_console_link(snapshot['id'], common_job_parameters)
         snapshot['resource_group'] = get_azure_resource_group_name(snapshot.get('id'))
         snapshot['function_app_id'] = snapshot['id'][
             :snapshot['id'].
@@ -905,6 +1015,7 @@ def transform_snapshots(snapshots_list: List[Dict], function: Dict, common_job_p
 
 def _load_function_apps_snapshots_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     function_apps_snapshots_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -916,11 +1027,12 @@ def _load_function_apps_snapshots_tx(
     f.region = function_snapshot.location,
     f.type = function_snapshot.type
     SET f.name = function_snapshot.name,
-    f.consolelink = function_snapshot.consolelink,
+    f.consolelink = coalesce(function_snapshot.consolelink, f.consolelink),
     f.lastupdated = $azure_update_tag,
     f.resource_group_name=function_snapshot.resource_group
     WITH f, function_snapshot
-    MATCH (s:AzureFunctionApp{id: function_snapshot.function_app_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(s:AzureFunctionApp{id: function_snapshot.function_app_id})
     MERGE (s)-[r:CONTAIN]->(f)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -929,18 +1041,27 @@ def _load_function_apps_snapshots_tx(
     tx.run(
         ingest_function_apps_snapshot,
         function_apps_snapshots_list=function_apps_snapshots_list,
+        SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for function_apps_snapshot in function_apps_snapshots_list:
         resource_group = get_azure_resource_group_name(function_apps_snapshot.get('id'))
-        _attach_resource_group_function_apps_snapshot(tx, function_apps_snapshot['id'], resource_group, update_tag)
+        _attach_resource_group_function_apps_snapshot(
+            tx,
+            subscription_id,
+            function_apps_snapshot['id'],
+            resource_group,
+            update_tag,
+        )
 
 
-def _attach_resource_group_function_apps_snapshot(tx: neo4j.Transaction, function_apps_snapshot_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_function_apps_snapshot(
+    tx: neo4j.Transaction, subscription_id: str, function_apps_snapshot_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_function_apps_snapshot = """
-    MATCH (f:AzureFunctionAppSnapshot{id: $function_snapshot_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name:$resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureFunctionApp)
+    -[:CONTAIN]->(f:AzureFunctionAppSnapshot{id: $function_snapshot_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -949,6 +1070,7 @@ def _attach_resource_group_function_apps_snapshot(tx: neo4j.Transaction, functio
         ingest_function_apps_snapshot,
         function_snapshot_id=function_apps_snapshot_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -976,7 +1098,7 @@ def sync_function_apps_snapshots(
         )
         function_apps_snapshots_list = transform_snapshots(snapshots_list, function, common_job_parameters)
         load_function_apps_snapshots(
-            neo4j_session, function_apps_snapshots_list,
+            neo4j_session, common_job_parameters['AZURE_SUBSCRIPTION_ID'], function_apps_snapshots_list,
             update_tag,
         )
     cleanup_function_apps_snapshots(neo4j_session, common_job_parameters)
@@ -989,7 +1111,7 @@ def get_function_apps_webjobs_list(
     try:
         webjobs_list = list(
             map(
-                lambda x: x.as_dict(),
+                as_legacy_dict,
                 client.web_apps.list_web_jobs(
                     function['resource_group'],
                     function['name'],
@@ -1006,7 +1128,7 @@ def get_function_apps_webjobs_list(
 def transform_webjobs(webjobs_list: List[Dict], function: Dict, common_job_parameters: Dict) -> List[Dict]:
     function_apps_webjobs_list: List[Dict] = []
     for webjob in webjobs_list:
-        webjob['consolelink'] = azure_console_link.get_console_link(id=webjob['id'], primary_ad_domain_name=common_job_parameters['Azure_Primary_AD_Domain_Name'])
+        webjob['consolelink'] = safe_console_link(webjob['id'], common_job_parameters)
         webjob['resource_group'] = get_azure_resource_group_name(webjob.get('id'))
         webjob['function_app_id'] = webjob['id'][
             :webjob['id'].
@@ -1020,6 +1142,7 @@ def transform_webjobs(webjobs_list: List[Dict], function: Dict, common_job_param
 
 def _load_function_apps_webjobs_tx(
     tx: neo4j.Transaction,
+    subscription_id: str,
     function_apps_webjobs_list: List[Dict],
     update_tag: int,
 ) -> None:
@@ -1031,11 +1154,12 @@ def _load_function_apps_webjobs_tx(
     f.region = function_webjob.location,
     f.type = function_webjob.type
     SET f.name = function_webjob.name,
-    f.consolelink = function_webjob.consolelink,
+    f.consolelink = coalesce(function_webjob.consolelink, f.consolelink),
     f.lastupdated = $azure_update_tag,
     f.resource_group_name=function_webjob.resource_group
     WITH f, function_webjob
-    MATCH (s:AzureFunctionApp{id: function_webjob.function_app_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})
+    -[:RESOURCE]->(s:AzureFunctionApp{id: function_webjob.function_app_id})
     MERGE (s)-[r:CONTAIN]->(f)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1044,18 +1168,27 @@ def _load_function_apps_webjobs_tx(
     tx.run(
         ingest_function_apps_webjob,
         function_apps_webjobs_list=function_apps_webjobs_list,
+        SUBSCRIPTION_ID=subscription_id,
         azure_update_tag=update_tag,
     )
     for function_apps_webjob in function_apps_webjobs_list:
         resource_group = get_azure_resource_group_name(function_apps_webjob.get('id'))
-        _attach_resource_group_function_apps_webjobs(tx, function_apps_webjob['id'], resource_group, update_tag)
+        _attach_resource_group_function_apps_webjobs(
+            tx,
+            subscription_id,
+            function_apps_webjob['id'],
+            resource_group,
+            update_tag,
+        )
 
 
-def _attach_resource_group_function_apps_webjobs(tx: neo4j.Transaction, function_apps_webjob_id: str, resource_group: str, update_tag: int) -> None:
+def _attach_resource_group_function_apps_webjobs(
+    tx: neo4j.Transaction, subscription_id: str, function_apps_webjob_id: str, resource_group: str, update_tag: int,
+) -> None:
     ingest_function_apps_webjob = """
-    MERGE (f:AzureFunctionAppWebJob{id: $function_webjob_id})
-    WITH f
-    MATCH (rg:AzureResourceGroup{name: $resource_group})
+    MATCH (sub:AzureSubscription{id: $subscription_id})-[:RESOURCE]->(:AzureFunctionApp)
+    -[:CONTAIN]->(f:AzureFunctionAppWebJob{id: $function_webjob_id})
+    MATCH (sub)-[:RESOURCE]->(rg:AzureResourceGroup{name: $resource_group})
     MERGE (f)-[r:RESOURCE_GROUP]->(rg)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $azure_update_tag
@@ -1064,6 +1197,7 @@ def _attach_resource_group_function_apps_webjobs(tx: neo4j.Transaction, function
         ingest_function_apps_webjob,
         function_webjob_id=function_apps_webjob_id,
         resource_group=resource_group,
+        subscription_id=subscription_id,
         azure_update_tag=update_tag,
     )
 
@@ -1091,7 +1225,7 @@ def sync_function_apps_webjobs(
         )
         function_apps_webjobs_list = transform_webjobs(webjobs_list, function, common_job_parameters)
         load_function_apps_webjobs(
-            neo4j_session, function_apps_webjobs_list,
+            neo4j_session, common_job_parameters['AZURE_SUBSCRIPTION_ID'], function_apps_webjobs_list,
             update_tag,
         )
     cleanup_function_apps_webjobs(neo4j_session, common_job_parameters)

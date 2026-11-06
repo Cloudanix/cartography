@@ -15,6 +15,8 @@ from botocore.exceptions import ClientError
 from cloudconsolelink.clouds.aws import AWSLinker
 from policyuniverse.policy import Policy
 
+from cartography.client.core.tx import load_graph_data
+from cartography.client.core.tx import run_write_query
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.util import aws_handle_regions
 from cartography.util import run_cleanup_job
@@ -22,6 +24,11 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+
+def filter_live_kms_keys(keys: List[Dict]) -> List[Dict]:
+    """Drop keys pending deletion; keep Enabled/Disabled (still security-relevant)."""
+    return [key for key in keys if key.get('KeyState') != 'PendingDeletion']
 
 
 @timeit
@@ -43,7 +50,7 @@ def get_kms_key_list(boto3_session: boto3.session.Session, region: str) -> List[
         response['region'] = region
         described_key_list.append(response)
 
-    return described_key_list
+    return filter_live_kms_keys(described_key_list)
 
 
 @timeit
@@ -118,27 +125,32 @@ def get_grants(key: Dict, client: botocore.client.BaseClient) -> List[Any]:
 
 
 @timeit
-def _load_kms_key_aliases(neo4j_session: neo4j.Session, aliases: List[Dict], update_tag: int) -> None:
+def _load_kms_key_aliases(
+    neo4j_session: neo4j.Session, aliases: List[Dict], aws_account_id: str, update_tag: int,
+) -> None:
     """
     Ingest KMS Aliases into neo4j.
     """
     ingest_aliases = """
-    UNWIND $alias_list AS alias
+    UNWIND $DictList AS alias
     MERGE (a:KMSAlias{id: alias.AliasArn})
     ON CREATE SET a.firstseen = timestamp(), a.targetkeyid = alias.TargetKeyId
     SET a.aliasname = alias.AliasName, a.lastupdated = $UpdateTag,
     a.region = alias.region,
+    a.consolelink = alias.consolelink,
     a.arn = alias.AliasArn
     WITH a, alias
-    MATCH (kmskey:KMSKey{id: alias.TargetKeyId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(kmskey:KMSKey{id: alias.TargetKeyId})
     MERGE (a)-[r:KNOWN_AS]->(kmskey)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_aliases,
-        alias_list=aliases,
+        aliases,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -151,7 +163,7 @@ def _load_kms_key_grants(
     Ingest KMS Key Grants into neo4j.
     """
     ingest_grants = """
-    UNWIND $grants AS grant
+    UNWIND $DictList AS grant
     MERGE (g:KMSGrant{id: grant.GrantId})
     ON CREATE SET g.firstseen = timestamp(), g.granteeprincipal = grant.GranteePrincipal,
     g.creationdate = grant.CreationDate
@@ -159,7 +171,7 @@ def _load_kms_key_grants(
     g.region=grant.region,
     g.lastupdated = $UpdateTag
     WITH g, grant
-    MATCH (kmskey:KMSKey{id: grant.KeyId})
+    MATCH (:AWSAccount{id: $AWS_ACCOUNT_ID})-[:RESOURCE]->(kmskey:KMSKey{id: grant.KeyId})
     MERGE (g)-[r:APPLIED_ON]->(kmskey)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $UpdateTag
@@ -170,31 +182,38 @@ def _load_kms_key_grants(
     for grant in grants_list:
         grant['CreationDate'] = str(grant['CreationDate'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_grants,
-        grants=grants_list,
+        grants_list,
+        AWS_ACCOUNT_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
 
 @timeit
-def _load_kms_key_policies(neo4j_session: neo4j.Session, policies: List[Dict], update_tag: int) -> None:
+def _load_kms_key_policies(
+    neo4j_session: neo4j.Session, policies: List[Dict], aws_account_id: str, update_tag: int,
+) -> None:
     """
     Ingest KMS Key policy results into neo4j.
     """
-    # NOTE we use the coalesce function so appending works when the value is null initially
+    # NOTE we use the coalesce function so appending works when the value is null initially.
+    # policy.kms_key is the KeyId (the KMSKey node id); resolve it among this account's keys only.
     ingest_policies = """
-    UNWIND $policies AS policy
-    MATCH (k:KMSKey) where k.name = policy.kms_key
+    UNWIND $DictList AS policy
+    MATCH (:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(k:KMSKey{id: policy.kms_key})
     SET k.anonymous_access = (coalesce(k.anonymous_access, false) OR policy.internet_accessible),
     k.region=policy.region,
     k.anonymous_actions = coalesce(k.anonymous_actions, []) + policy.accessible_actions,
     k.lastupdated = $UpdateTag
     """
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_policies,
-        policies=policies,
+        policies,
+        AWS_ID=aws_account_id,
         UpdateTag=update_tag,
     )
 
@@ -205,7 +224,8 @@ def _set_default_values(neo4j_session: neo4j.Session, aws_account_id: str) -> No
     SET kmskey.anonymous_access = false, kmskey.anonymous_actions = []
     """
 
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         set_defaults,
         AWS_ID=aws_account_id,
     )
@@ -230,6 +250,7 @@ def load_kms_key_details(
         if len(alias) > 0:
             for ali in alias:
                 ali['region'] = region
+                ali['consolelink'] = aws_console_link.get_console_link(arn=ali['AliasArn'])
             aliases.extend(alias)
         if len(grants) > 0:
             for grant in grants:
@@ -243,8 +264,8 @@ def load_kms_key_details(
         common_job_parameters,
     )
 
-    _load_kms_key_policies(neo4j_session, policies, update_tag)
-    _load_kms_key_aliases(neo4j_session, aliases, update_tag)
+    _load_kms_key_policies(neo4j_session, policies, aws_account_id, update_tag)
+    _load_kms_key_aliases(neo4j_session, aliases, aws_account_id, update_tag)
     _load_kms_key_grants(neo4j_session, grants, aws_account_id, update_tag)
     _set_default_values(neo4j_session, aws_account_id)
 
@@ -317,7 +338,7 @@ def load_kms_keys(
     aws_update_tag: int,
 ) -> None:
     ingest_keys = """
-    UNWIND $key_list AS k
+    UNWIND $DictList AS k
     MERGE (kmskey:KMSKey{id:k.KeyId})
     ON CREATE SET kmskey.firstseen = timestamp(),
     kmskey.arn = k.Arn, kmskey.creationdate = k.CreationDate
@@ -325,6 +346,8 @@ def load_kms_keys(
     kmskey.validto = k.ValidTo,
     kmskey.enabled = k.Enabled,
     kmskey.keystate = k.KeyState,
+    kmskey.keymanager = k.KeyManager,
+    kmskey.isdefault = CASE WHEN k.KeyManager = 'AWS' THEN true ELSE false END,
     kmskey.customkeystoreid = k.CustomKeyStoreId,
     kmskey.cloudhsmclusterid = k.CloudHsmClusterId,
     kmskey.lastupdated =$aws_update_tag,
@@ -345,9 +368,10 @@ def load_kms_keys(
         key['ValidTo'] = str(key.get('ValidTo'))
         key['consolelink'] = aws_console_link.get_console_link(arn=key['Arn'])
 
-    neo4j_session.run(
+    load_graph_data(
+        neo4j_session,
         ingest_keys,
-        key_list=data,
+        data,
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
