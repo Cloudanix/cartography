@@ -133,7 +133,8 @@ def get_qbusiness_indices_list(
                 index["region"] = region
                 index["applicationId"] = application_id
                 index["applicationArn"] = app_arn
-                index["id"] = f"{application_id}/{index['indexId']}"
+                # Child ids follow the Q Business ARN format under the (globally unique) application ARN.
+                index["id"] = f"{app_arn}/index/{index['indexId']}"
 
             indices.extend(app_indices)
         except Exception as e:
@@ -219,7 +220,7 @@ def get_qbusiness_data_sources_list(
                 ds["applicationId"] = application_id
                 ds["indexId"] = index_id
                 ds["indexNodeId"] = index_node_id
-                ds["id"] = f"{application_id}/{index_id}/{ds['dataSourceId']}"
+                ds["id"] = f"{index_node_id}/data-source/{ds['dataSourceId']}"
 
             data_sources.extend(index_data_sources)
         except Exception as e:
@@ -305,7 +306,7 @@ def get_qbusiness_retrievers_list(
                 retriever["region"] = region
                 retriever["applicationId"] = application_id
                 retriever["applicationArn"] = app_arn
-                retriever["id"] = f"{application_id}/{retriever['retrieverId']}"
+                retriever["id"] = f"{app_arn}/retriever/{retriever['retrieverId']}"
 
             retrievers.extend(app_retrievers)
         except Exception as e:
@@ -387,7 +388,7 @@ def get_qbusiness_plugins_list(
                 plugin["region"] = region
                 plugin["applicationId"] = application_id
                 plugin["applicationArn"] = app_arn
-                plugin["id"] = f"{application_id}/{plugin['pluginId']}"
+                plugin["id"] = f"{app_arn}/plugin/{plugin['pluginId']}"
 
             plugins.extend(app_plugins)
         except Exception as e:
