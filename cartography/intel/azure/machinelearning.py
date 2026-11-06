@@ -752,13 +752,14 @@ def transform_connections(connections: List[Dict], workspace: Dict, common_job_p
 @timeit
 def load_connections(
     neo4j_session: neo4j.Session, subscription_id: str, connections: List[Dict], update_tag: int,
+    workspace_id: str,
 ) -> None:
-    neo4j_session.execute_write(_load_connections_tx, subscription_id, connections, update_tag)
+    neo4j_session.execute_write(_load_connections_tx, subscription_id, connections, update_tag, workspace_id)
 
 
 @timeit
 def _load_connections_tx(
-    tx: neo4j.Transaction, subscription_id: str, connections: List[Dict], update_tag: int,
+    tx: neo4j.Transaction, subscription_id: str, connections: List[Dict], update_tag: int, workspace_id: str,
 ) -> None:
     ingest_connections = """
     UNWIND $connections AS conn
@@ -784,7 +785,11 @@ def _load_connections_tx(
     SET c.lastupdated = $update_tag
     WITH i, conn
     WHERE conn.target IS NOT NULL
-    OPTIONAL MATCH (acc:AzureCognitiveServicesAccount) WHERE acc.endpoint = conn.target
+    // Anchored to this workspace's tenants. Only custom-subdomain endpoints are unique:
+    // accounts without one share https://<region>.api.cognitive.microsoft.com/.
+    OPTIONAL MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AzureTenant)-[:RESOURCE]->(:AzureSubscription)
+        -[:RESOURCE]->(acc:AzureCognitiveServicesAccount)
+    WHERE acc.custom_sub_domain_name IS NOT NULL AND acc.endpoint = conn.target
     FOREACH (_ IN CASE WHEN acc IS NULL THEN [] ELSE [1] END |
         MERGE (i)-[ct:CONNECTS_TO]->(acc)
         ON CREATE SET ct.firstseen = timestamp()
@@ -795,6 +800,7 @@ def _load_connections_tx(
         ingest_connections,
         connections=connections,
         SUBSCRIPTION_ID=subscription_id,
+        WORKSPACE_ID=workspace_id,
         update_tag=update_tag,
     )
 
@@ -856,7 +862,9 @@ def sync(
 
         connections = get_connections_list(client, ws)
         connections = transform_connections(connections, ws, common_job_parameters)
-        load_connections(neo4j_session, subscription_id, connections, update_tag)
+        load_connections(
+            neo4j_session, subscription_id, connections, update_tag, common_job_parameters['WORKSPACE_ID'],
+        )
 
     cleanup(neo4j_session, common_job_parameters)
 
