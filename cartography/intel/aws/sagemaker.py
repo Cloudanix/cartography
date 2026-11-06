@@ -143,10 +143,11 @@ def _load_notebook_instances_tx(
         ON CREATE SET msg.firstseen = timestamp()
         SET msg.lastupdated = $aws_update_tag
     )
-    FOREACH (_ IN CASE WHEN instance.KmsKeyId IS NULL THEN [] ELSE [1] END |
-        MERGE (k:KMSKey{id: instance.KmsKeyId})
-        ON CREATE SET k.firstseen = timestamp()
-        SET k.lastupdated = $aws_update_tag
+    // KmsKeyId is whatever the user passed: key id, key ARN, alias name or alias ARN. Link the account's
+    // own key when it is a key id or ARN; an alias stays only in the kmskeyid property.
+    WITH i, instance, aa,
+        [(aa)-[:RESOURCE]->(k:KMSKey) WHERE k.id = instance.KmsKeyId OR k.arn = instance.KmsKeyId | k] AS keys
+    FOREACH (k IN keys |
         MERGE (i)-[enc:ENCRYPTED_BY]->(k)
         ON CREATE SET enc.firstseen = timestamp()
         SET enc.lastupdated = $aws_update_tag
@@ -483,10 +484,11 @@ def _load_domains_tx(
         ON CREATE SET insub.firstseen = timestamp()
         SET insub.lastupdated = $aws_update_tag
     )
-    FOREACH (_ IN CASE WHEN domain.KmsKeyId IS NULL THEN [] ELSE [1] END |
-        MERGE (k:KMSKey{id: domain.KmsKeyId})
-        ON CREATE SET k.firstseen = timestamp()
-        SET k.lastupdated = $aws_update_tag
+    // KmsKeyId is whatever the user passed: key id, key ARN, alias name or alias ARN. Link the account's
+    // own key when it is a key id or ARN; an alias stays only in the kmskeyid property.
+    WITH i, domain, aa,
+        [(aa)-[:RESOURCE]->(k:KMSKey) WHERE k.id = domain.KmsKeyId OR k.arn = domain.KmsKeyId | k] AS keys
+    FOREACH (k IN keys |
         MERGE (i)-[enc:ENCRYPTED_BY]->(k)
         ON CREATE SET enc.firstseen = timestamp()
         SET enc.lastupdated = $aws_update_tag
@@ -1378,10 +1380,11 @@ def _load_endpoint_configs_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    FOREACH (_ IN CASE WHEN config.KmsKeyId IS NULL THEN [] ELSE [1] END |
-        MERGE (k:KMSKey{id: config.KmsKeyId})
-        ON CREATE SET k.firstseen = timestamp()
-        SET k.lastupdated = $aws_update_tag
+    // KmsKeyId is whatever the user passed: key id, key ARN, alias name or alias ARN. Link the account's
+    // own key when it is a key id or ARN; an alias stays only in the kmskeyid property.
+    WITH i, config, aa,
+        [(aa)-[:RESOURCE]->(k:KMSKey) WHERE k.id = config.KmsKeyId OR k.arn = config.KmsKeyId | k] AS keys
+    FOREACH (k IN keys |
         MERGE (i)-[enc:ENCRYPTED_BY]->(k)
         ON CREATE SET enc.firstseen = timestamp()
         SET enc.lastupdated = $aws_update_tag
