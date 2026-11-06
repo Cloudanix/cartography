@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Any
 from typing import Dict
 from typing import List
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
 
-def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str):
+def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str) -> Any:
     client = boto3_session.client(service, region_name=region, config=get_botocore_config())
     return client
 
@@ -455,7 +456,7 @@ def cleanup_qbusiness(neo4j_session: neo4j.Session, common_job_parameters: Dict)
 
 @timeit
 def sync_qbusiness(
-    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: str, current_aws_account_id: str,
+    neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
     applications = []

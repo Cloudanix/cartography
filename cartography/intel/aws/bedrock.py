@@ -41,7 +41,7 @@ def get_boto3_client(boto3_session: boto3.session.Session, service: str, region:
 @timeit
 def get_bedrock_knowledge_bases_list(
     boto3_session: boto3.session.Session,
-    region: str
+    region: str,
 ) -> List[Dict]:
     knowledge_bases: List[Dict] = []
     try:
@@ -53,7 +53,7 @@ def get_bedrock_knowledge_bases_list(
         for kb in knowledge_bases:
             kb["region"] = region
             kb["consolelink"] = aws_console_link.get_console_link(arn=kb["knowledgeBaseArn"])
-            
+
             try:
                 detail = client.get_knowledge_base(knowledgeBaseId=kb["knowledgeBaseId"])
                 kb_detail = detail.get("knowledgeBase", {})
@@ -63,7 +63,8 @@ def get_bedrock_knowledge_bases_list(
                 kb["s3BucketArn"] = _extract_storage_s3_bucket_arn(storage_config)
             except Exception as e:
                 logger.warning(
-                    f"Could not get details for bedrock knowledge base {kb['knowledgeBaseId']}. skipping enrichment. - {e}",
+                    f"Could not get details for bedrock knowledge base {kb['knowledgeBaseId']}. "
+                    f"skipping enrichment. - {e}",
                 )
     except Exception as e:
         logger.warning(f"Could not list bedrock knowledge base, skipping... -{e}")
@@ -78,6 +79,7 @@ def _extract_storage_s3_bucket_arn(storage_config: Dict) -> str:
     """
     s3_vectors = storage_config.get("s3VectorsConfiguration", {})
     return s3_vectors.get("vectorBucketArn")
+
 
 @timeit
 def get_bedrock_data_sources_list(
@@ -116,6 +118,7 @@ def get_bedrock_data_sources_list(
             )
 
     return data_sources
+
 
 @timeit
 def get_bedrock_agents_list(
@@ -235,7 +238,7 @@ def get_bedrock_flows_list(
 @timeit
 def get_bedrock_foundation_models_list(
     boto3_session: boto3.session.Session,
-    region: str
+    region: str,
 ) -> List[Dict]:
     foundation_models: List[Dict] = []
     try:
@@ -381,7 +384,9 @@ def load_bedrock_knowledge_bases(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_bedrock_knowledge_bases_tx, bedrock_knowledge_bases, current_aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(
+        _load_bedrock_knowledge_bases_tx, bedrock_knowledge_bases, current_aws_account_id, aws_update_tag,
+    )
 
 
 @timeit
@@ -391,7 +396,9 @@ def load_bedrock_data_sources(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_bedrock_data_sources_tx, bedrock_data_sources, current_aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(
+        _load_bedrock_data_sources_tx, bedrock_data_sources, current_aws_account_id, aws_update_tag,
+    )
 
 
 @timeit
@@ -401,7 +408,10 @@ def load_bedrock_foundation_models(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_bedrock_foundation_models_tx, bedrock_foundation_models, current_aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(
+        _load_bedrock_foundation_models_tx, bedrock_foundation_models, current_aws_account_id, aws_update_tag,
+    )
+
 
 @timeit
 def _load_bedrock_foundation_models_tx(
@@ -449,7 +459,10 @@ def load_bedrock_provisioned_throughputs(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_bedrock_provisioned_throughputs_tx, bedrock_provisioned_throughputs, current_aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(
+        _load_bedrock_provisioned_throughputs_tx, bedrock_provisioned_throughputs, current_aws_account_id,
+        aws_update_tag,
+    )
 
 
 @timeit
@@ -504,7 +517,9 @@ def load_bedrock_agent_aliases(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_bedrock_agent_aliases_tx, bedrock_agent_aliases, current_aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(
+        _load_bedrock_agent_aliases_tx, bedrock_agent_aliases, current_aws_account_id, aws_update_tag,
+    )
 
 
 @timeit
@@ -555,7 +570,9 @@ def load_bedrock_flow_aliases(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_bedrock_flow_aliases_tx, bedrock_flow_aliases, current_aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(
+        _load_bedrock_flow_aliases_tx, bedrock_flow_aliases, current_aws_account_id, aws_update_tag,
+    )
 
 
 @timeit
@@ -684,6 +701,7 @@ def _load_bedrock_data_sources_tx(
         aws_update_tag=aws_update_tag,
     )
 
+
 @timeit
 def load_bedrock_agents(
     neo4j_session: neo4j.Session,
@@ -704,16 +722,16 @@ def _load_bedrock_knowledge_bases_tx(
     ingest_bedrock_knowledge_bases = """
     UNWIND $bedrock_knowledge_bases AS kb
     MERGE (i:AWSBedrockKnowledgeBase{arn:kb.knowledgeBaseArn})
-    ON CREATE SET i.firstseen = timestamp(), 
-    i.arn = kb.knowledgeBaseArn, 
+    ON CREATE SET i.firstseen = timestamp(),
+    i.arn = kb.knowledgeBaseArn,
     i.knowledgebaseid = kb.knowledgeBaseId
-    SET i.name = kb.name, 
-    i.status = kb.status, 
+    SET i.name = kb.name,
+    i.status = kb.status,
     i.updatedat = kb.updatedAt,
     i.rolearn = kb.roleArn,
     i.storagetype = kb.storageType,
-    i.lastupdated = $aws_update_tag, 
-    i.region = kb.region, 
+    i.lastupdated = $aws_update_tag,
+    i.region = kb.region,
     i.consolelink = kb.consolelink
     WITH i, kb
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
@@ -744,6 +762,7 @@ def _load_bedrock_knowledge_bases_tx(
         AWS_ACCOUNT_ID=current_aws_account_id,
         aws_update_tag=aws_update_tag,
     )
+
 
 @timeit
 def _load_bedrock_agents_tx(
@@ -787,7 +806,9 @@ def load_bedrock_agent_action_groups(
     current_aws_account_id: str,
     aws_update_tag: int,
 ) -> None:
-    neo4j_session.execute_write(_load_bedrock_agent_action_groups_tx, bedrock_action_groups, current_aws_account_id, aws_update_tag)
+    neo4j_session.execute_write(
+        _load_bedrock_agent_action_groups_tx, bedrock_action_groups, current_aws_account_id, aws_update_tag,
+    )
 
 
 @timeit
@@ -1207,7 +1228,9 @@ def sync_bedrock(
 
     logger.info(f"Total bedrock provisioned throughputs: {len(provisioned_throughputs_list)}")
 
-    load_bedrock_provisioned_throughputs(neo4j_session, provisioned_throughputs_list, current_aws_account_id, aws_update_tag)
+    load_bedrock_provisioned_throughputs(
+        neo4j_session, provisioned_throughputs_list, current_aws_account_id, aws_update_tag,
+    )
 
     agent_aliases_list = []
     for region in regions:
