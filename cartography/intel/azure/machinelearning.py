@@ -5,7 +5,7 @@ from typing import List
 
 import neo4j
 from azure.core.exceptions import HttpResponseError
-from azure.mgmt.machinelearningservices import AzureMachineLearningWorkspaces
+from azure.mgmt.machinelearningservices import MachineLearningServicesMgmtClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
 from .util.credentials import Credentials
@@ -18,16 +18,16 @@ azure_console_link = AzureLinker()
 
 
 @timeit
-def get_client(credentials: Credentials, subscription_id: str) -> AzureMachineLearningWorkspaces:
+def get_client(credentials: Credentials, subscription_id: str) -> MachineLearningServicesMgmtClient:
     from .util.timing import get_timing_policy
-    client = AzureMachineLearningWorkspaces(
+    client = MachineLearningServicesMgmtClient(
         credentials, subscription_id, per_call_policies=[get_timing_policy()],
     )
     return client
 
 
 @timeit
-def get_workspaces_list(client: AzureMachineLearningWorkspaces) -> List[Dict]:
+def get_workspaces_list(client: MachineLearningServicesMgmtClient) -> List[Dict]:
     try:
         workspaces = []
         for workspace in client.workspaces.list_by_subscription():
@@ -125,7 +125,7 @@ def _load_workspaces_tx(
 
 
 @timeit
-def get_models_list(client: AzureMachineLearningWorkspaces, workspace: Dict) -> List[Dict]:
+def get_models_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
     try:
         models = []
         for model in client.model_containers.list(
@@ -201,7 +201,7 @@ def _load_models_tx(
 
 
 @timeit
-def get_online_endpoints_list(client: AzureMachineLearningWorkspaces, workspace: Dict) -> List[Dict]:
+def get_online_endpoints_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
     try:
         endpoints = []
         for endpoint in client.online_endpoints.list(
@@ -289,7 +289,7 @@ def _load_online_endpoints_tx(
 
 @timeit
 def get_online_deployments_list(
-    client: AzureMachineLearningWorkspaces, workspace: Dict, endpoint_name: str,
+    client: MachineLearningServicesMgmtClient, workspace: Dict, endpoint_name: str,
 ) -> List[Dict]:
     try:
         deployments = []
@@ -378,7 +378,7 @@ def _load_online_deployments_tx(
 
 
 @timeit
-def get_batch_endpoints_list(client: AzureMachineLearningWorkspaces, workspace: Dict) -> List[Dict]:
+def get_batch_endpoints_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
     try:
         endpoints = []
         for endpoint in client.batch_endpoints.list(
@@ -462,7 +462,7 @@ def _load_batch_endpoints_tx(
 
 @timeit
 def get_batch_deployments_list(
-    client: AzureMachineLearningWorkspaces, workspace: Dict, endpoint_name: str,
+    client: MachineLearningServicesMgmtClient, workspace: Dict, endpoint_name: str,
 ) -> List[Dict]:
     try:
         deployments = []
@@ -549,7 +549,7 @@ def _load_batch_deployments_tx(
 
 
 @timeit
-def get_computes_list(client: AzureMachineLearningWorkspaces, workspace: Dict) -> List[Dict]:
+def get_computes_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
     try:
         computes = []
         for compute in client.compute.list(
@@ -634,7 +634,7 @@ def _load_computes_tx(
 
 
 @timeit
-def get_datastores_list(client: AzureMachineLearningWorkspaces, workspace: Dict) -> List[Dict]:
+def get_datastores_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
     try:
         datastores = []
         for datastore in client.datastores.list(
@@ -714,7 +714,7 @@ def _load_datastores_tx(
 
 
 @timeit
-def get_connections_list(client: AzureMachineLearningWorkspaces, workspace: Dict) -> List[Dict]:
+def get_connections_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
     try:
         connections = []
         for connection in client.workspace_connections.list(
