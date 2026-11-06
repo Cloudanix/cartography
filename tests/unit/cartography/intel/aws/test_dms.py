@@ -95,7 +95,9 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
     mocker.patch.object(cartography.intel.aws, '_resolve_sync_regions', return_value=['us-east-1'])
     mocker.patch.object(cartography.intel.aws, '_build_aws_sync_kwargs', return_value={})
     mocker.patch.object(cartography.intel.aws, 'run_cleanup_job')
-    mocker.patch.object(cartography.intel.aws, 'run_analysis_job', side_effect=lambda *_: order.append('analysis'))
+    mocker.patch.object(
+        cartography.intel.post_sync, 'run_analysis_job', side_effect=lambda *_: order.append('analysis'),
+    )
     mocker.patch.object(
         cartography.intel.aws, 'link_replication_instance_networks',
         side_effect=link_side_effect or (lambda *_: order.append('link')),

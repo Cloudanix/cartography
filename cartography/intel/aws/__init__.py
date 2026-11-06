@@ -24,17 +24,16 @@ from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
 from cartography.graph.session import Session
+from cartography.intel import post_sync
 from cartography.intel.aws.dms import link_replication_instance_networks
 from cartography.intel.aws.ec2.instances import sync_eks_node_links
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.elasticbeanstalk import link_environment_resources
 from cartography.intel.aws.util.arns import get_partition
 from cartography.intel.aws.util.arns import PARTITION_PARAM
-from cartography.intel.exposure import step as exposure_step
 from cartography.stats import get_stats_client
 from cartography.util import is_aws_access_denied
 from cartography.util import merge_module_sync_metadata
-from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -42,6 +41,56 @@ stat_handler = get_stats_client(__name__)
 logger = logging.getLogger(__name__)
 
 PARALLEL_PROCESSING_SERVICES = ["identitystore", "iam"]
+
+# Post-sync analysis of one account, in run order (see post_sync.Phases). Not run: aws_ec2_security_group_asset_exposure
+# and aws_ec2_asg_asset_exposure (security groups and auto scaling groups are not public on their own), and
+# aws_ec2_iaminstance (aws_ec2_iaminstanceprofile writes the same STS_ASSUMEROLE_ALLOW edges).
+AWS_PHASES = post_sync.Phases(
+    link=(
+        # EC2 instance -> IAM role it can assume; the exposure layers' blast radius reads it.
+        "aws_ec2_iaminstanceprofile.json",
+        "aws_lambda_ecr.json",
+        # Subnet -> route table of its VPC when no explicit association exists; subnet, ELB and RDS exposure read it.
+        "implicit_relationship_creation.json",
+    ),
+    exposure=(
+        "aws_ec2_subnet_asset_exposure.json",
+        "aws_ec2_elb_asset_exposure.json",
+        "aws_ec2_instance_asset_exposure.json",
+        # Connects EKS to subnets via CIDR. Public facing logic can be extended to use public subnets.
+        "aws_eks_asset_exposure.json",
+        "aws_s3_asset_exposure.json",
+        "aws_rds_asset_exposure.json",
+        # After RDS: a Neptune cluster is exposed through its RDSInstance members.
+        "aws_neptune_cluster_asset_exposure.json",
+        # After S3: reads the anonymous access the S3 job sets on the trail's bucket.
+        "aws_cloudtrail_asset_exposure.json",
+        "aws_apigateway_asset_exposure.json",
+        # After API Gateway and ELB: a Lambda behind an API Gateway or ALB trigger is public only when that is.
+        "aws_lambda_function_asset_exposure.json",
+        "aws_cloudfront_asset_exposure.json",
+        "aws_ebs_snapshot_asset_exposure.json",
+        "aws_elasticache_cluster_asset_exposure.json",
+        "aws_ecs_service_asset_exposure.json",
+        "aws_emr_asset_exposure.json",
+        "aws_sns_asset_exposure.json",
+        "aws_sqs_asset_exposure.json",
+        "aws_sagemaker_notebook_asset_exposure.json",
+        "aws_appsync_asset_exposure.json",
+        "aws_dms_asset_exposure.json",
+        # After ELB and EC2 instance: reads the exposure they set on the environment's load balancers / instances.
+        "aws_elasticbeanstalk_asset_exposure.json",
+        "aws_redshift_cluster_asset_exposure.json",
+        "aws_mq_broker_asset_exposure.json",
+        "aws_msk_cluster_asset_exposure.json",
+        "aws_internetgateway_asset_exposure.json",
+    ),
+    posture=(
+        "aws_ec2_keypair_analysis.json",
+        "aws_iam_user_analysis.json",
+        "aws_ec2_instance_analysis.json",
+    ),
+)
 
 
 def _build_aws_sync_kwargs(
@@ -322,199 +371,9 @@ def _sync_one_account(
     if config.refresh_entitlements:
         run_cleanup_job("aws_unused_cleanup.json", neo4j_session, common_job_parameters)
 
-    run_analysis_job(
-        "aws_ec2_iaminstanceprofile.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_lambda_ecr.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "implicit_relationship_creation.json",
-        neo4j_session,
-        common_job_parameters,
-    )  # NOTE temp solution (query has to be only executed after both subnet & route table is loaded)
-
-    # # INFO: This is not a valid implementation. Because Security Groups are not public in general. Commenting out for future review.
-    # run_analysis_job(
-    #     'aws_ec2_security_group_asset_exposure.json',
-    #     neo4j_session,
-    #     common_job_parameters
-    # )
-
-    run_analysis_job(
-        "aws_ec2_subnet_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_ec2_elb_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_ec2_instance_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    # # INFO: This is not a valid implementation. Because Auto Scaling Groups are not public in general. Commenting out for future review.
-    # run_analysis_job(
-    #     'aws_ec2_asg_asset_exposure.json',
-    #     neo4j_session,
-    #     common_job_parameters,
-    # )
-
-    run_analysis_job(
-        "aws_ec2_keypair_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    # INFO: connect EKS to subnets via CIDR. Public facing logic can be extended to use public Subnets.
-    run_analysis_job(
-        "aws_eks_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_s3_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_rds_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    # Must run after the RDS job: a Neptune cluster is exposed through its RDSInstance members.
-    run_analysis_job(
-        "aws_neptune_cluster_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_cloudtrail_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_apigateway_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    # Must run after the API Gateway (and ELB) jobs: a Lambda behind an API Gateway or ALB
-    # trigger is only public when that REST API / load balancer is.
-    run_analysis_job(
-        "aws_lambda_function_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_cloudfront_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_ebs_snapshot_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_elasticache_cluster_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_ecs_service_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_emr_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_sns_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_sqs_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_sagemaker_notebook_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_appsync_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_dms_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    # Reads the exposure the ELB and EC2 instance jobs above set on the environment's load balancers / instances.
-    run_analysis_job(
-        "aws_elasticbeanstalk_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_redshift_cluster_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_mq_broker_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-    run_analysis_job(
-        "aws_msk_cluster_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_internetgateway_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    # Reads what the jobs above and every sync wrote; runs only when requested (see exposure/step.py).
-    exposure_step.run_if_requested(
-        exposure_layers.run, neo4j_session, common_job_parameters, aws_requested_syncs, RESOURCE_FUNCTIONS.keys(),
-    )
-
-    run_analysis_job(
-        "aws_iam_user_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "aws_ec2_instance_analysis.json",
-        neo4j_session,
-        common_job_parameters,
+    post_sync.run(
+        AWS_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, aws_requested_syncs,
+        RESOURCE_FUNCTIONS.keys(), defer=post_sync.defer_requested(config.params),
     )
 
     merge_module_sync_metadata(
@@ -777,10 +636,10 @@ def _requested_syncs(services: List[Dict[str, Any]], common_job_parameters: Dict
             common_job_parameters["pagination"][name] = pagination
         names.append(name)
 
-    unknown = [name for name in names if name not in RESOURCE_FUNCTIONS]
+    known = [name for name in names if name in RESOURCE_FUNCTIONS or name in post_sync.POST_SYNC_SYNCS]
+    unknown = [name for name in names if name not in known]
     if unknown:
         logger.warning(f"Skipping AWS services this cartography build does not sync: {unknown}")
-    known = [name for name in names if name in RESOURCE_FUNCTIONS]
     if not known:
         return []
     return parse_and_validate_aws_requested_syncs(",".join(known))

@@ -124,10 +124,10 @@ def test_collect_failed_analysis_jobs_isolated_between_concurrent_syncs(mocker):
     }
 
 
-@pytest.mark.parametrize('provider', ['aws', 'gcp', 'azure', 'oci'])
-def test_provider_syncs_use_logged_analysis_runner(provider):
-    # Provider syncs call run_analysis_job by name; the import alias is what makes them continue past a failing job.
-    module = importlib.import_module(f'cartography.intel.{provider}')
+def test_post_sync_uses_logged_analysis_runner():
+    # Every provider runs its analysis jobs through post_sync, which calls run_analysis_job by name; the import alias
+    # is what makes a provider continue past a failing job.
+    module = importlib.import_module('cartography.intel.post_sync')
     assert module.run_analysis_job is util.run_analysis_job_logged
 
 
