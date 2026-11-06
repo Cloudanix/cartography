@@ -15,6 +15,9 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 gcp_console_link = GCPLinker()
+# cloudconsolelink has deep links only for models, endpoints and datasets (they need region + instance_name).
+# Custom jobs, training pipelines, batch prediction / pipeline jobs and reasoning engines get the Vertex AI home
+# page until cloudconsolelink registers them; an unregistered name raises ValueError.
 
 
 def _handle_http_error(e: HttpError, resource_name: str, project_id: str, region: str) -> List[Dict]:
@@ -55,6 +58,7 @@ def get_vertexai_models(vertexai: Resource, project_id: str, regions: List[str])
                     model['id'] = model['name']
                     model['consolelink'] = gcp_console_link.get_console_link(
                         project_id=project_id, resource_name='vertex_ai_model',
+                        region=region, instance_name=model['name'].split('/')[-1],
                     )
                     models.append(model)
                 req = vertexai.projects().locations().models().list_next(
@@ -117,6 +121,7 @@ def get_vertexai_endpoints(vertexai: Resource, project_id: str, regions: List[st
                     ]
                     endpoint['consolelink'] = gcp_console_link.get_console_link(
                         project_id=project_id, resource_name='vertex_ai_endpoint',
+                        region=region, instance_name=endpoint['name'].split('/')[-1],
                     )
                     endpoints.append(endpoint)
                 req = vertexai.projects().locations().endpoints().list_next(
@@ -182,6 +187,7 @@ def get_vertexai_datasets(vertexai: Resource, project_id: str, regions: List[str
                     dataset['id'] = dataset['name']
                     dataset['consolelink'] = gcp_console_link.get_console_link(
                         project_id=project_id, resource_name='vertex_ai_dataset',
+                        region=region, instance_name=dataset['name'].split('/')[-1],
                     )
                     datasets.append(dataset)
                 req = vertexai.projects().locations().datasets().list_next(
@@ -241,7 +247,7 @@ def get_vertexai_custom_jobs(vertexai: Resource, project_id: str, regions: List[
                     job['service_account'] = job.get('jobSpec', {}).get('serviceAccount')
                     job['network'] = job.get('jobSpec', {}).get('network')
                     job['consolelink'] = gcp_console_link.get_console_link(
-                        project_id=project_id, resource_name='vertex_ai_custom_job',
+                        project_id=project_id, resource_name='vertex_ai_home',
                     )
                     jobs.append(job)
                 req = vertexai.projects().locations().customJobs().list_next(
@@ -303,7 +309,7 @@ def get_vertexai_training_pipelines(vertexai: Resource, project_id: str, regions
                     pipeline['id'] = pipeline['name']
                     pipeline['model_to_upload'] = pipeline.get('modelToUpload', {}).get('name')
                     pipeline['consolelink'] = gcp_console_link.get_console_link(
-                        project_id=project_id, resource_name='vertex_ai_training_pipeline',
+                        project_id=project_id, resource_name='vertex_ai_home',
                     )
                     pipelines.append(pipeline)
                 req = vertexai.projects().locations().trainingPipelines().list_next(
@@ -372,7 +378,7 @@ def get_vertexai_batch_prediction_jobs(vertexai: Resource, project_id: str, regi
                     job['region'] = region
                     job['id'] = job['name']
                     job['consolelink'] = gcp_console_link.get_console_link(
-                        project_id=project_id, resource_name='vertex_ai_batch_prediction_job',
+                        project_id=project_id, resource_name='vertex_ai_home',
                     )
                     jobs.append(job)
                 req = vertexai.projects().locations().batchPredictionJobs().list_next(
@@ -441,7 +447,7 @@ def get_vertexai_pipeline_jobs(vertexai: Resource, project_id: str, regions: Lis
                     job['region'] = region
                     job['id'] = job['name']
                     job['consolelink'] = gcp_console_link.get_console_link(
-                        project_id=project_id, resource_name='vertex_ai_pipeline_job',
+                        project_id=project_id, resource_name='vertex_ai_home',
                     )
                     jobs.append(job)
                 req = vertexai.projects().locations().pipelineJobs().list_next(
@@ -504,7 +510,7 @@ def get_vertexai_reasoning_engines(vertexai: Resource, project_id: str, regions:
                     engine['region'] = region
                     engine['id'] = engine['name']
                     engine['consolelink'] = gcp_console_link.get_console_link(
-                        project_id=project_id, resource_name='vertex_ai_reasoning_engine',
+                        project_id=project_id, resource_name='vertex_ai_home',
                     )
                     engines.append(engine)
                 req = vertexai.projects().locations().reasoningEngines().list_next(
