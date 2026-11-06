@@ -474,8 +474,8 @@ def _load_bedrock_agent_aliases_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, alias
-    MATCH (agent:AWSBedrockAgent{arn: alias.agentArn})
+    WITH i, alias, aa
+    MATCH (aa)-[:RESOURCE]->(agent:AWSBedrockAgent{arn: alias.agentArn})
     MERGE (agent)-[haa:HAS_ALIAS]->(i)
     ON CREATE SET haa.firstseen = timestamp()
     SET haa.lastupdated = $aws_update_tag
@@ -526,8 +526,8 @@ def _load_bedrock_flow_aliases_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, alias
-    MATCH (flow:AWSBedrockFlow{arn: alias.flowArn})
+    WITH i, alias, aa
+    MATCH (aa)-[:RESOURCE]->(flow:AWSBedrockFlow{arn: alias.flowArn})
     MERGE (flow)-[hfa:HAS_ALIAS]->(i)
     ON CREATE SET hfa.firstseen = timestamp()
     SET hfa.lastupdated = $aws_update_tag
@@ -613,8 +613,8 @@ def _load_bedrock_data_sources_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, ds
-    MATCH (kb:AWSBedrockKnowledgeBase{arn: ds.knowledgeBaseArn})
+    WITH i, ds, aa
+    MATCH (aa)-[:RESOURCE]->(kb:AWSBedrockKnowledgeBase{arn: ds.knowledgeBaseArn})
     MERGE (kb)-[hds:HAS_DATA_SOURCE]->(i)
     ON CREATE SET hds.firstseen = timestamp()
     SET hds.lastupdated = $aws_update_tag
@@ -759,14 +759,13 @@ def _load_bedrock_agent_action_groups_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, ag
-    MATCH (agent:AWSBedrockAgent{arn: ag.agentArn})
+    WITH i, ag, aa
+    MATCH (aa)-[:RESOURCE]->(agent:AWSBedrockAgent{arn: ag.agentArn})
     MERGE (agent)-[hag:HAS_ACTION_GROUP]->(i)
     ON CREATE SET hag.firstseen = timestamp()
     SET hag.lastupdated = $aws_update_tag
-    WITH i, ag
+    WITH i, ag, aa
     // lambda_function syncs before bedrock. Another account's function, or one not synced, gets no edge.
-    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     OPTIONAL MATCH (aa)-[:RESOURCE]->(l:AWSLambda{id: ag.lambdaFunctionArn})
     FOREACH (_ IN CASE WHEN l IS NULL THEN [] ELSE [1] END |
         MERGE (i)-[inv:INVOKES]->(l)
