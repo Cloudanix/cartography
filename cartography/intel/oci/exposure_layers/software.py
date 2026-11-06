@@ -16,6 +16,7 @@ from cartography.intel.exposure.layers import SOURCE_MANAGED_CONFIG
 from cartography.intel.exposure.software import identity
 from cartography.intel.exposure.software import os_from_image_name
 from cartography.intel.oci.exposure_layers.network import COMPARTMENT
+from cartography.intel.oci.exposure_layers.network import TENANCY
 
 KUBERNETES = "kubernetes"
 ORACLE_DATABASE = "oracle-database"
@@ -66,7 +67,7 @@ RULES: Dict[str, Tuple[str, Extractor]] = {
     ),
     "OCIInstance": (
         f"""MATCH {COMPARTMENT}(n:OCIInstance)
-        OPTIONAL MATCH (:OCITenancy{{id: $OCI_TENANCY_ID}})-[:OWNER]->(:OCICompartment)
+        OPTIONAL MATCH {TENANCY}(:OCICompartment)
             -[:RESOURCE]->(img:OCIImage{{id: n.image_id}})
         RETURN n.id AS id, img.display_name AS image, n.vm_os AS os, n.vm_os_version AS os_version""",
         lambda r: ([instance_os(r)], SOURCE_IMAGE_NAME),

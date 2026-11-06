@@ -257,7 +257,7 @@ class Network:
 
 _SUBNET_QUERY = f"""
 MATCH {_VCN}-[:OCI_SUBNET]->(s:OCISubnet)
-OPTIONAL MATCH (:OCITenancy{{id: $OCI_TENANCY_ID}})-[:OWNER]->(:OCICompartment)-[:RESOURCE]->(:OCIVcn)
+OPTIONAL MATCH {_VCN}
     -[:OCI_ROUTE_TABLE]->(rt:OCIRouteTable{{id: s.route_table_id}})
 RETURN s.id AS id, s.vcn_id AS vcn_id, coalesce(s.security_list_ids, []) AS security_list_ids,
     s.route_table_id AS route_table_id,
