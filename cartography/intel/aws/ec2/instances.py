@@ -18,6 +18,7 @@ from cartography.client.core.tx import load_graph_data
 from cartography.client.core.tx import run_write_query
 from cartography.data.operating_systems import OPERATING_SYSTEMS
 from cartography.graph.job import GraphJob
+from cartography.graph.statement import GraphStatement
 from cartography.intel.aws.ec2.util import get_botocore_config
 from cartography.intel.aws.ssm import get_instance_information
 from cartography.intel.aws.util.arns import DEFAULT_PARTITION
@@ -714,15 +715,20 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any])
     MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})
       -[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:EC2Instance)-[r:USES]->(:AWSRole)
     WHERE r.lastupdated <> $UPDATE_TAG
-    DELETE r
+    WITH r LIMIT $LIMIT_SIZE DELETE r RETURN COUNT(*) AS TotalCompleted
     """
-    neo4j_session.run(
+    # Iterative so a large backlog of stale edges is deleted in bounded transactions.
+    GraphStatement(
         cleanup_uses_query,
-        UPDATE_TAG=common_job_parameters['UPDATE_TAG'],
-        AWS_ID=common_job_parameters['AWS_ID'],
-        ORGANIZATION_ID=common_job_parameters['ORGANIZATION_ID'],
-        WORKSPACE_ID=common_job_parameters['WORKSPACE_ID'],
-    )
+        {
+            'UPDATE_TAG': common_job_parameters['UPDATE_TAG'],
+            'AWS_ID': common_job_parameters['AWS_ID'],
+            'ORGANIZATION_ID': common_job_parameters['ORGANIZATION_ID'],
+            'WORKSPACE_ID': common_job_parameters['WORKSPACE_ID'],
+        },
+        iterative=True,
+        iterationsize=1000,
+    ).run(neo4j_session)
 
 
 @timeit
