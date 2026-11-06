@@ -85,7 +85,7 @@ def _load_search_services_tx(
     i.partition_count = svc.partition_count,
     i.principal_id = svc.principal_id,
     i.resourcegroup = svc.resource_group,
-    i.consolelink = svc.consolelink,
+    i.consolelink = coalesce(svc.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})

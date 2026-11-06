@@ -95,7 +95,7 @@ def _load_accounts_tx(
     i.key_vault_uri = acc.key_vault_uri,
     i.principal_id = acc.principal_id,
     i.resourcegroup = acc.resource_group,
-    i.consolelink = acc.consolelink,
+    i.consolelink = coalesce(acc.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, acc
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -185,7 +185,7 @@ def _load_deployments_tx(
     i.sku = dep.sku_name,
     i.sku_capacity = dep.sku_capacity,
     i.resourcegroup = dep.resource_group,
-    i.consolelink = dep.consolelink,
+    i.consolelink = coalesce(dep.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, dep
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -263,7 +263,7 @@ def _load_rai_policies_tx(
     i.base_policy_name = pol.base_policy_name,
     i.account_name = pol.account_name,
     i.resourcegroup = pol.resource_group,
-    i.consolelink = pol.consolelink,
+    i.consolelink = coalesce(pol.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, pol
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})

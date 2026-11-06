@@ -83,7 +83,7 @@ def _load_workspaces_tx(
     i.public_network_access = ws.public_network_access,
     i.principal_id = ws.principal_id,
     i.resourcegroup = ws.resource_group,
-    i.consolelink = ws.consolelink,
+    i.consolelink = coalesce(ws.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, ws
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -168,7 +168,7 @@ def _load_models_tx(
     i.type = model.type,
     i.latest_version = model.latest_version,
     i.resourcegroup = model.resource_group,
-    i.consolelink = model.consolelink,
+    i.consolelink = coalesce(model.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, model
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -251,7 +251,7 @@ def _load_online_endpoints_tx(
     i.public_network_access = ep.public_network_access,
     i.principal_id = ep.principal_id,
     i.resourcegroup = ep.resource_group,
-    i.consolelink = ep.consolelink,
+    i.consolelink = coalesce(ep.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, ep
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -337,7 +337,7 @@ def _load_online_deployments_tx(
     i.endpoint_compute_type = dep.endpoint_compute_type,
     i.provisioning_state = dep.provisioning_state,
     i.resourcegroup = dep.resource_group,
-    i.consolelink = dep.consolelink,
+    i.consolelink = coalesce(dep.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, dep
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -416,7 +416,7 @@ def _load_batch_endpoints_tx(
     i.auth_mode = ep.auth_mode,
     i.provisioning_state = ep.provisioning_state,
     i.resourcegroup = ep.resource_group,
-    i.consolelink = ep.consolelink,
+    i.consolelink = coalesce(ep.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, ep
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -500,7 +500,7 @@ def _load_batch_deployments_tx(
     i.compute = dep.compute,
     i.provisioning_state = dep.provisioning_state,
     i.resourcegroup = dep.resource_group,
-    i.consolelink = dep.consolelink,
+    i.consolelink = coalesce(dep.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, dep
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -581,7 +581,7 @@ def _load_computes_tx(
     i.provisioning_state = comp.provisioning_state,
     i.subnet_id = comp.subnet_id,
     i.resourcegroup = comp.resource_group,
-    i.consolelink = comp.consolelink,
+    i.consolelink = coalesce(comp.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, comp
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -657,7 +657,7 @@ def _load_datastores_tx(
     i.is_default = ds.is_default,
     i.credentials_type = ds.credentials_type,
     i.resourcegroup = ds.resource_group,
-    i.consolelink = ds.consolelink,
+    i.consolelink = coalesce(ds.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, ds
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
@@ -734,7 +734,7 @@ def _load_connections_tx(
     i.target = conn.target,
     i.auth_type = conn.auth_type,
     i.resourcegroup = conn.resource_group,
-    i.consolelink = conn.consolelink,
+    i.consolelink = coalesce(conn.consolelink, i.consolelink),
     i.lastupdated = $update_tag
     WITH i, conn
     MATCH (owner:AzureSubscription{id: $SUBSCRIPTION_ID})
