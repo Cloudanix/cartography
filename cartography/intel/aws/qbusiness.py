@@ -9,6 +9,8 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -26,6 +28,7 @@ def get_qbusiness_applications_list(
     boto3_session: boto3.session.Session,
     current_aws_account_id: str,
     region: str,
+    partition: str = DEFAULT_PARTITION,
 ) -> List[Dict]:
     applications: List[Dict] = []
     try:
@@ -36,7 +39,9 @@ def get_qbusiness_applications_list(
 
         for app in applications:
             app["region"] = region
-            app["arn"] = f"arn:aws:qbusiness:{region}:{current_aws_account_id}:application/{app['applicationId']}"
+            app["arn"] = (
+                f"arn:{partition}:qbusiness:{region}:{current_aws_account_id}:application/{app['applicationId']}"
+            )
             app["consolelink"] = aws_console_link.get_console_link(arn=app["arn"])
             # The list summary omits the IAM role; enrich with get_application.
             try:
@@ -460,9 +465,10 @@ def sync_qbusiness(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    partition = get_partition_from_params(common_job_parameters)
     applications = []
     for region in regions:
-        applications.extend(get_qbusiness_applications_list(boto3_session, current_aws_account_id, region))
+        applications.extend(get_qbusiness_applications_list(boto3_session, current_aws_account_id, region, partition))
 
     logger.info(f"Total qbusiness applications: {len(applications)}")
 
