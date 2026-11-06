@@ -5,7 +5,10 @@ from importlib.resources import read_text
 import cartography.intel.oci as oci_intel
 from cartography.intel.oci import iam
 from cartography.intel.oci import utils
+from cartography.intel.oci.exposure_layers import access as layers_access
+from cartography.intel.oci.exposure_layers import blast_radius as layers_blast_radius
 from cartography.intel.oci.exposure_layers import network as layers_network
+from cartography.intel.oci.exposure_layers import reach as layers_reach
 from cartography.intel.oci.exposure_layers import software as layers_software
 
 # The tenancy node is keyed by its OCID alone, so it is reachable from every workspace that onboarded
@@ -78,8 +81,8 @@ def test_unanchored_tenancy_matcher_flags_only_unchained_tenancy():
 
 
 def test_oci_analysis_jobs_chain_every_tenancy_match_to_the_workspace():
-    # Exposure jobs read network objects across compartments of the tenancy; those reads must
-    # still stay inside the syncing workspace.
+    # Every OCI analysis job reaches the tenancy through the syncing workspace; exposure jobs also
+    # stay inside the analysed compartment (see test_oci_exposure_jobs_read_only_the_analysed_compartment).
     offenders = {
         job_file: hits
         for job_file in oci_intel.OCI_ANALYSIS_JOBS
@@ -91,6 +94,34 @@ def test_oci_analysis_jobs_chain_every_tenancy_match_to_the_workspace():
 def test_oci_exposure_layer_queries_chain_every_tenancy_match_to_the_workspace():
     for module in (layers_network, layers_software):
         assert _unanchored_tenancy_matches(inspect.getsource(module)) == [], module.__name__
+
+
+# One compartment is one Cloudanix entity, synced on its own schedule: exposure reads stay in the
+# compartment being analysed, never another compartment of the same tenancy.
+_OTHER_COMPARTMENT = re.compile(r":OCICompartment(?!\s*\{\{?\s*id:\s*\$OCI_COMPARTMENT_ID\s*\}\}?\s*\))")
+_LAYER_MODULES = (layers_access, layers_blast_radius, layers_network, layers_reach, layers_software)
+
+
+def test_compartment_matcher_flags_any_compartment_but_the_analysed_one():
+    assert not _OTHER_COMPARTMENT.search("(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->(n)")
+    assert not _OTHER_COMPARTMENT.search("(c:OCICompartment{{id: $OCI_COMPARTMENT_ID}})")
+    assert _OTHER_COMPARTMENT.search("(:OCICompartment)-[:RESOURCE]->(n)")
+    assert _OTHER_COMPARTMENT.search("(c:OCICompartment)-[:RESOURCE]->(n) WHERE c.id = $OCI_COMPARTMENT_ID")
+
+
+def test_oci_exposure_jobs_read_only_the_analysed_compartment():
+    offenders = {
+        job_file: _OTHER_COMPARTMENT.findall(read_text('cartography.data.jobs.analysis', job_file))
+        for job_file in oci_intel.OCI_ANALYSIS_JOBS
+        if job_file.endswith('_asset_exposure.json') and
+        _OTHER_COMPARTMENT.search(read_text('cartography.data.jobs.analysis', job_file))
+    }
+    assert offenders == {}
+
+
+def test_oci_exposure_layers_read_only_the_analysed_compartment():
+    for module in _LAYER_MODULES:
+        assert not _OTHER_COMPARTMENT.search(inspect.getsource(module)), module.__name__
 
 
 def test_oci_iam_and_tenancy_lookup_queries_chain_every_tenancy_match_to_the_workspace():

@@ -1,8 +1,11 @@
 """
 Exposure-layer reads resolve ids only inside the syncing tenancy (AGENTS.md "Tenant isolation"): a
-route table or image id that tenancy B holds is unknown to tenancy A's evaluation.
+route table or image id that tenancy B holds is unknown to tenancy A's evaluation. Inside one tenancy
+they stay in the compartment being analysed: each compartment is its own Cloudanix entity.
 """
+from cartography.intel.oci.exposure_layers import blast_radius
 from cartography.intel.oci.exposure_layers import network as exposure_network
+from cartography.intel.oci.exposure_layers import reach
 from cartography.intel.oci.exposure_layers import software
 from tests.integration.cartography.intel.oci.common import seed_tenancy
 
@@ -46,3 +49,36 @@ def test_subnet_route_table_and_instance_image_resolve_only_inside_the_syncing_t
     identities = software.compute(neo4j_session, a)['OCIInstance']
     assert identities['a-inst']['software_identity'] == ['oracle-linux@8.9']
     assert identities['a-inst-foreign']['software_identity'] == []
+
+
+def test_layers_read_only_the_compartment_under_analysis(neo4j_session):
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+    app = seed_tenancy(neo4j_session, 'cmp')
+    network_compartment = 'ocid1.compartment.oc1..cmp-net'
+    # A shared network compartment of the same tenancy and workspace: another entity.
+    neo4j_session.run(
+        "MATCH (t:OCITenancy{id: $tenancy}) MERGE (t)-[:OWNER]->(:OCICompartment{id: $compartment})",
+        tenancy=app['OCI_TENANCY_ID'], compartment=network_compartment,
+    )
+    _seed(neo4j_session, 'cmp-app', app)
+    _seed(neo4j_session, 'cmp-net', {'OCI_COMPARTMENT_ID': network_compartment})
+    neo4j_session.run(
+        """
+        MATCH (app:OCICompartment{id: $app}), (net:OCICompartment{id: $net})
+        MATCH (app)-[:RESOURCE]->(av:OCIVcn{id: 'cmp-app-vcn'}), (net)-[:RESOURCE]->(nv:OCIVcn{id: 'cmp-net-vcn'})
+        MERGE (av)-[:OCI_SUBNET]->(:OCISubnet{id: 'app-subnet', route_table_id: 'cmp-app-rt'})
+        MERGE (nv)-[:OCI_SUBNET]->(:OCISubnet{id: 'shared-subnet', route_table_id: 'cmp-net-rt'})
+        MERGE (app)-[:RESOURCE]->(:OCILoadBalancer{id: 'app-lb'})
+        MERGE (net)-[:RESOURCE]->(:OCILoadBalancer{id: 'net-lb'})
+        MERGE (app)-[:RESOURCE]->(:OCIDbSystem{id: 'app-db'})
+        MERGE (net)-[:RESOURCE]->(:OCIDbSystem{id: 'net-db'})
+        MERGE (app)-[:RESOURCE]->(:OCIInstance{id: 'app-inst-net-image', image_id: 'cmp-net-image'})
+        """,
+        app=app['OCI_COMPARTMENT_ID'], net=network_compartment,
+    )
+
+    assert set(exposure_network.read_network(neo4j_session, app).subnets) == {'app-subnet'}
+    assert [r['id'] for r in neo4j_session.run(reach._LB_QUERY, **app)] == ['app-lb']
+    assert [r['id'] for r in neo4j_session.run(blast_radius.STORES['OCIDbSystem'], **app)] == ['app-db']
+    identities = software.compute(neo4j_session, app)['OCIInstance']
+    assert identities['app-inst-net-image']['software_identity'] == []

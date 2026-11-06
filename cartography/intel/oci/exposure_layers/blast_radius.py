@@ -35,7 +35,6 @@ from cartography.intel.exposure.ports import PortSet
 from cartography.intel.exposure.ports import TCP
 from cartography.intel.oci.exposure_layers.network import COMPARTMENT
 from cartography.intel.oci.exposure_layers.network import Network
-from cartography.intel.oci.exposure_layers.network import TENANCY
 
 INSTANCE_LABEL = "OCIInstance"
 DEFAULT_DB_LISTENER_PORT = 1521
@@ -45,21 +44,19 @@ AUTONOMOUS_DB_PORTS = (1521, 1522)
 VIA_NSG = "network_security_group"
 VIA_CIDR = "cidr"
 
-# label -> query returning id, subnet, nsgs, port_min, port_max, in_scope (in this compartment).
-# Databases are read tenancy-wide: an instance in this compartment may reach one in another.
+# label -> query returning id, subnet, nsgs, port_min, port_max. Data stores of this compartment only:
+# reach from an instance to a database in another compartment is not computed (network.py).
 STORES = {
     "OCIDbSystem": f"""
-        MATCH {TENANCY}(c:OCICompartment)-[:RESOURCE]->(n:OCIDbSystem)
-        WITH c, n, coalesce(n.listener_port, {DEFAULT_DB_LISTENER_PORT}) AS port
-        RETURN n.id AS id, n.subnet_id AS subnet, coalesce(n.nsg_ids, []) AS nsgs, port AS port_min, port AS port_max,
-            c.id = $OCI_COMPARTMENT_ID AS in_scope
+        MATCH {COMPARTMENT}(n:OCIDbSystem)
+        WITH n, coalesce(n.listener_port, {DEFAULT_DB_LISTENER_PORT}) AS port
+        RETURN n.id AS id, n.subnet_id AS subnet, coalesce(n.nsg_ids, []) AS nsgs, port AS port_min, port AS port_max
     """,
     "OCIAutonomousDatabase": f"""
-        MATCH {TENANCY}(c:OCICompartment)-[:RESOURCE]->(n:OCIAutonomousDatabase)
+        MATCH {COMPARTMENT}(n:OCIAutonomousDatabase)
         WHERE n.subnet_id IS NOT NULL
         RETURN n.id AS id, n.subnet_id AS subnet, coalesce(n.nsg_ids, []) AS nsgs,
-            {AUTONOMOUS_DB_PORTS[0]} AS port_min, {AUTONOMOUS_DB_PORTS[1]} AS port_max,
-            c.id = $OCI_COMPARTMENT_ID AS in_scope
+            {AUTONOMOUS_DB_PORTS[0]} AS port_min, {AUTONOMOUS_DB_PORTS[1]} AS port_max
     """,
 }
 
@@ -134,22 +131,21 @@ DELETE r
 
 def sync(session: neo4j.Session, params: Dict, net: Network, vnic_rows: List[Dict]) -> None:
     """
-    Write CAN_NETWORK_REACH from this compartment's instances and drop stale ones, then the
-    summaries: reachable data stores on every instance, reverse counts on this compartment's
-    data stores and on every store this compartment's instances reach (a store in a compartment
-    analysed earlier is recounted, so its count ends complete after the last compartment).
+    Write CAN_NETWORK_REACH from this compartment's instances to its data stores and drop stale
+    ones, then the summaries: reachable data stores on every instance, reverse counts on every
+    data store of the compartment.
     """
     tag = params["UPDATE_TAG"]
     computes = instances(vnic_rows, net)
     edges: List[Dict] = []
-    in_scope: Dict[str, List[str]] = {}
+    store_ids: Dict[str, List[str]] = {}
     for label, query in STORES.items():
         stores = [dict(r) for r in session.run(query, **params)]
         rows = reach_rows(computes, stores, net, label)
         merge_reach_edges(session, INSTANCE_LABEL, label, rows, tag)
         edges.extend(rows)
-        in_scope[label] = sorted({s["id"] for s in stores if s["in_scope"]} | {r["dst"] for r in rows})
+        store_ids[label] = sorted(s["id"] for s in stores)
     session.run(_CLEANUP, **params).consume()
     set_node_properties(session, INSTANCE_LABEL, reach_summaries([c["id"] for c in computes], edges), evaluated_at=tag)
-    for label, ids in in_scope.items():
+    for label, ids in store_ids.items():
         write_reach_counts(session, label, ids, tag)

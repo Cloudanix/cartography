@@ -52,10 +52,13 @@ from cartography.intel.exposure.rules import with_stateless_return
 TENANCY = (
     "(:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->"
 )
-# Nodes the layers write: resources of the compartment this run analyses.
+# Resources of the compartment this run analyses: every layer reads and writes only these. One
+# compartment is one Cloudanix entity, synced on its own schedule, so a read into another compartment
+# would mix in another entity's data from an older sync. A subnet in another compartment (a shared
+# network compartment) is not read: its route counts as unresolved and its security lists as absent,
+# so nothing opens through it. That false negative is the chosen cost of never crossing entities.
 COMPARTMENT = TENANCY + "(:OCICompartment{id: $OCI_COMPARTMENT_ID})-[:RESOURCE]->"
-# Network objects are read tenancy-wide: a VNIC may sit in a subnet of another compartment.
-_VCN = TENANCY + "(:OCICompartment)-[:RESOURCE]->(:OCIVcn)"
+_VCN = COMPARTMENT + "(:OCIVcn)"
 
 V4, V6 = "v4", "v6"
 WORLD_CIDR = {V4: "0.0.0.0/0", V6: "::/0"}
@@ -297,7 +300,7 @@ def _rows(session: neo4j.Session, query: str, params: Dict) -> List[Dict]:
 
 
 def read_network(session: neo4j.Session, params: Dict) -> Network:
-    """Subnets, gateways, security lists and NSGs of the whole tenancy."""
+    """Subnets, gateways, security lists and NSGs of the compartment."""
     subnets = {
         r["id"]: SubnetFacts(
             vcn_id=r["vcn_id"],

@@ -347,7 +347,8 @@ def test_boot_volume_inherits_exposure_from_attached_instance(neo4j_session):
         MATCH (c:OCICompartment{id: $compartment_id}), (ic:OCICompartment{id: 'ocid1.compartment.oc1..bv-instances'})
         MERGE (c)-[:RESOURCE]->(public:OCIInstance{id: 'bv-inst-public'}) SET public.exposed_internet = true
         MERGE (c)-[:RESOURCE]->(private:OCIInstance{id: 'bv-inst-private'})
-        // An exposed instance in another compartment whose boot volume lives in this one.
+        // An exposed instance in another compartment (another entity) whose boot volume lives in
+        // this one: not read, so the volume is not flagged.
         MERGE (ic)-[:RESOURCE]->(remote:OCIInstance{id: 'bv-inst-remote'}) SET remote.exposed_internet = true
         MERGE (c)-[:RESOURCE]->(bv1:OCIBootVolume{id: 'bv-public'})
         MERGE (c)-[:RESOURCE]->(bv2:OCIBootVolume{id: 'bv-private'})
@@ -367,7 +368,6 @@ def test_boot_volume_inherits_exposure_from_attached_instance(neo4j_session):
 
     assert _exposed(neo4j_session, 'OCIBootVolume', 'bv-') == {
         'bv-public': ['attached_instance_exposed'],
-        'bv-remote': ['attached_instance_exposed'],
     }
     row = neo4j_session.run(
         "MATCH (b:OCIBootVolume) WHERE b.id IN ['bv-public', 'bv-private'] "
@@ -680,7 +680,7 @@ def test_load_balancer_exposed_when_public_and_a_listener_port_is_open(neo4j_ses
 
 def test_instance_exposed_as_backend_of_exposed_load_balancer(neo4j_session):
     _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, COMPARTMENT_ID)
-    # The load balancers live in another compartment of the same tenancy.
+    # Another compartment of the same tenancy is another entity: its load balancer is not read.
     lb_compartment = 'ocid1.compartment.oc1..lbb-network'
     _seed_tenancy(neo4j_session, WORKSPACE_ID, TENANCY_ID, lb_compartment)
     _seed_tenancy(neo4j_session, OTHER_WORKSPACE_ID, OTHER_TENANCY_ID, OTHER_COMPARTMENT_ID)
@@ -695,18 +695,21 @@ def test_instance_exposed_as_backend_of_exposed_load_balancer(neo4j_session):
     _load_instance(neo4j_session, 'lbb-same-ip-other-vcn', 'lbb-subnet-2', None)
     _load_instance(neo4j_session, 'lbb-private-lb-backend', 'lbb-subnet', None)
     _load_instance(neo4j_session, 'lbb-other-tenancy-lb-backend', 'lbb-subnet', None)
+    _load_instance(neo4j_session, 'lbb-other-compartment-lb-backend', 'lbb-subnet', None)
     neo4j_session.run(
         """
         UNWIND [['lbb-ip-backend', '10.0.0.5'], ['lbb-same-ip-other-vcn', '10.0.0.5'],
-                ['lbb-private-lb-backend', '10.0.0.6'], ['lbb-other-tenancy-lb-backend', '10.0.0.7']] AS pair
+                ['lbb-private-lb-backend', '10.0.0.6'], ['lbb-other-tenancy-lb-backend', '10.0.0.7'],
+                ['lbb-other-compartment-lb-backend', '10.0.0.8']] AS pair
         MATCH (:OCIInstance{id: pair[0]})-[:OCI_VNIC_ATTACHMENT]->()-[:OCI_VNIC]->(v:OCIVnic)
         SET v.private_ip = pair[1]
         """,
     )
     lbs = [
-        ('lbb-public-lb', lb_compartment, True, ['10.0.0.5'], []),
-        ('lbb-public-nlb', lb_compartment, True, [], ['lbb-ocid-backend']),
-        ('lbb-private-lb', lb_compartment, False, ['10.0.0.6'], []),
+        ('lbb-public-lb', COMPARTMENT_ID, True, ['10.0.0.5'], []),
+        ('lbb-public-nlb', COMPARTMENT_ID, True, [], ['lbb-ocid-backend']),
+        ('lbb-private-lb', COMPARTMENT_ID, False, ['10.0.0.6'], []),
+        ('lbb-other-compartment-lb', lb_compartment, True, ['10.0.0.8'], []),
         ('lbb-other-tenancy-lb', OTHER_COMPARTMENT_ID, True, ['10.0.0.7'], ['lbb-ocid-backend']),
     ]
     for lb_id, compartment_id, exposed, backend_ips, backend_target_ids in lbs:
