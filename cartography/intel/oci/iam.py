@@ -61,7 +61,10 @@ def sync_compartments(
 ) -> None:
     logger.debug("Syncing IAM compartments for account '%s'.", current_tenancy_id)
     data = get_compartment_list_data(iam, current_tenancy_id)
-    load_compartments(neo4j_session, data['Compartments'], current_tenancy_id, oci_update_tag)
+    load_compartments(
+        neo4j_session, data['Compartments'], current_tenancy_id, oci_update_tag,
+        workspace_id=common_job_parameters["WORKSPACE_ID"],
+    )
     run_cleanup_job('oci_import_compartments_cleanup.json', neo4j_session, common_job_parameters)
 
 
@@ -95,6 +98,8 @@ def load_compartments(
     compartments: List[Dict[str, Any]],
     current_oci_tenancy_id: str,
     oci_update_tag: int,
+    *,
+    workspace_id: str,
 ) -> None:
     ingest_compartment = """
     UNWIND $DictList AS comp
@@ -106,7 +111,7 @@ def load_compartments(
         cnode.consolelink = comp.consolelink,
         cnode.lastupdated = $oci_update_tag
         WITH cnode
-        MATCH (tenancy:OCITenancy{id: $OCI_TENANCY_ID})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(tenancy:OCITenancy{id: $OCI_TENANCY_ID})
         MERGE (tenancy)-[r:OWNER]->(cnode)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -128,7 +133,7 @@ def load_compartments(
     ]
     load_graph_data(
         neo4j_session, ingest_compartment, rows,
-        OCI_TENANCY_ID=current_oci_tenancy_id, oci_update_tag=oci_update_tag,
+        WORKSPACE_ID=workspace_id, OCI_TENANCY_ID=current_oci_tenancy_id, oci_update_tag=oci_update_tag,
     )
 
 
@@ -137,6 +142,8 @@ def load_users(
     users: List[Dict[str, Any]],
     current_oci_tenancy_id: str,
     oci_update_tag: int,
+    *,
+    workspace_id: str,
 ) -> None:
     ingest_user = """
     UNWIND $DictList AS user
@@ -155,7 +162,7 @@ def load_users(
         unode.consolelink = user.consolelink,
         unode.lastupdated = $oci_update_tag
         WITH unode
-        MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(aa:OCITenancy{id: $OCI_TENANCY_ID})
         MERGE (aa)-[r:RESOURCE]->(unode)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -183,7 +190,7 @@ def load_users(
     ]
     load_graph_data(
         neo4j_session, ingest_user, rows,
-        OCI_TENANCY_ID=current_oci_tenancy_id, oci_update_tag=oci_update_tag,
+        WORKSPACE_ID=workspace_id, OCI_TENANCY_ID=current_oci_tenancy_id, oci_update_tag=oci_update_tag,
     )
 
 
@@ -205,7 +212,10 @@ def sync_users(
     tic = time.perf_counter()
     logger.debug("Syncing IAM users for account '%s'.", current_tenancy_id)
     data = get_user_list_data(iam, current_tenancy_id)
-    load_users(neo4j_session, data['Users'], current_tenancy_id, oci_update_tag)
+    load_users(
+        neo4j_session, data['Users'], current_tenancy_id, oci_update_tag,
+        workspace_id=common_job_parameters["WORKSPACE_ID"],
+    )
     run_cleanup_job('oci_import_users_cleanup.json', neo4j_session, common_job_parameters)
     logger.info(f"Time to process OCI IAM users for tenancy '{current_tenancy_id}' ({len(data['Users'])} users): {time.perf_counter() - tic:0.4f} seconds")
 
@@ -223,6 +233,8 @@ def load_groups(
     groups: List[Dict[str, Any]],
     current_tenancy_id: str,
     oci_update_tag: int,
+    *,
+    workspace_id: str,
 ) -> None:
     ingest_group = """
     UNWIND $DictList AS grp
@@ -234,7 +246,7 @@ def load_groups(
         gnode.consolelink = grp.consolelink,
         gnode.description = grp.description
         WITH gnode
-        MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(aa:OCITenancy{id: $OCI_TENANCY_ID})
         MERGE (aa)-[r:RESOURCE]->(gnode)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -254,7 +266,7 @@ def load_groups(
     ]
     load_graph_data(
         neo4j_session, ingest_group, rows,
-        OCI_TENANCY_ID=current_tenancy_id, oci_update_tag=oci_update_tag,
+        WORKSPACE_ID=workspace_id, OCI_TENANCY_ID=current_tenancy_id, oci_update_tag=oci_update_tag,
     )
 
 
@@ -268,7 +280,10 @@ def sync_groups(
     tic = time.perf_counter()
     logger.debug("Syncing IAM groups for account '%s'.", current_tenancy_id)
     data = get_group_list_data(iam, current_tenancy_id)
-    load_groups(neo4j_session, data["Groups"], current_tenancy_id, oci_update_tag)
+    load_groups(
+        neo4j_session, data["Groups"], current_tenancy_id, oci_update_tag,
+        workspace_id=common_job_parameters["WORKSPACE_ID"],
+    )
     run_cleanup_job('oci_import_groups_cleanup.json', neo4j_session, common_job_parameters)
     logger.info(f"Time to process OCI IAM groups for tenancy '{current_tenancy_id}' ({len(data['Groups'])} groups): {time.perf_counter() - tic:0.4f} seconds")
 
@@ -292,13 +307,14 @@ def sync_group_memberships(
     common_job_parameters: Dict[str, Any],
 ) -> None:
     logger.debug("Syncing IAM group membership for account '%s'.", current_tenancy_id)
-    query = "MATCH (group:OCIGroup)<-[:RESOURCE]-(:OCITenancy{id: $OCI_TENANCY_ID}) " \
-            "return group.name as name, group.ocid as ocid;"
-    groups = neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=current_tenancy_id)
+    workspace_id = common_job_parameters["WORKSPACE_ID"]
+    groups = utils.get_groups_in_tenancy(neo4j_session, current_tenancy_id, workspace_id)
     groups_membership = {
         group["ocid"]: get_group_membership_data(iam, group['ocid'], current_tenancy_id) for group in groups
     }
-    load_group_memberships(neo4j_session, groups_membership, current_tenancy_id, oci_update_tag)
+    load_group_memberships(
+        neo4j_session, groups_membership, current_tenancy_id, oci_update_tag, workspace_id=workspace_id,
+    )
     run_cleanup_job(
         'oci_import_groups_membership_cleanup.json',
         neo4j_session,
@@ -311,10 +327,13 @@ def load_group_memberships(
     group_memberships: Dict[str, Any],
     current_tenancy_id: str,
     oci_update_tag: int,
+    *,
+    workspace_id: str,
 ) -> None:
     ingest_membership = """
     UNWIND $DictList AS m
-        MATCH (t:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(group:OCIGroup{id: m.group_ocid})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(t:OCITenancy{id: $OCI_TENANCY_ID})
+            -[:RESOURCE]->(group:OCIGroup{id: m.group_ocid})
         WITH t, group, m
         MATCH (t)-[:RESOURCE]->(user:OCIUser{id: m.user_ocid})
         MERGE (user)-[r:MEMBER_OCID_GROUP]->(group)
@@ -330,6 +349,7 @@ def load_group_memberships(
             })
     load_graph_data(
         neo4j_session, ingest_membership, rows,
+        WORKSPACE_ID=workspace_id,
         OCI_TENANCY_ID=current_tenancy_id,
         oci_update_tag=oci_update_tag,
     )
@@ -341,6 +361,8 @@ def load_policies(
     current_tenancy_id: str,
     oci_update_tag: int,
     home_region: str = "",
+    *,
+    workspace_id: str,
 ) -> None:
     ingest_policy = """
     UNWIND $DictList AS policy
@@ -353,7 +375,7 @@ def load_policies(
         pnode.consolelink = policy.consolelink,
         pnode.updatedate = policy.policy_update, pnode.lastupdated = $oci_update_tag
         With pnode
-        MATCH (aa:OCITenancy{id: $OCI_TENANCY_ID})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(aa:OCITenancy{id: $OCI_TENANCY_ID})
         MERGE (aa)-[r:RESOURCE]->(pnode)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -376,7 +398,7 @@ def load_policies(
     ]
     load_graph_data(
         neo4j_session, ingest_policy, rows,
-        OCI_TENANCY_ID=current_tenancy_id, oci_update_tag=oci_update_tag,
+        WORKSPACE_ID=workspace_id, OCI_TENANCY_ID=current_tenancy_id, oci_update_tag=oci_update_tag,
     )
 
 
@@ -397,14 +419,18 @@ def sync_policies(
     home_region: str = "",
 ) -> None:
     logger.debug("Syncing IAM policies for account '%s'.", current_tenancy_id)
-    compartments = utils.get_compartments_in_tenancy(neo4j_session, current_tenancy_id)
+    workspace_id = common_job_parameters["WORKSPACE_ID"]
+    compartments = utils.get_compartments_in_tenancy(neo4j_session, current_tenancy_id, workspace_id)
     for compartment in compartments:
         logger.debug(
             "Syncing OCI policies for compartment '%s' in account '%s'.", compartment['ocid'], current_tenancy_id,
         )
         data = get_policy_list_data(iam, compartment["ocid"])
         if (data["Policies"]):
-            load_policies(neo4j_session, data["Policies"], current_tenancy_id, oci_update_tag, home_region)
+            load_policies(
+                neo4j_session, data["Policies"], current_tenancy_id, oci_update_tag, home_region,
+                workspace_id=workspace_id,
+            )
     run_cleanup_job('oci_import_policies_cleanup.json', neo4j_session, common_job_parameters)
 
 
@@ -414,9 +440,12 @@ def load_oci_policy_group_reference(
     group_id: str,
     tenancy_id: str,
     oci_update_tag: int,
+    *,
+    workspace_id: str,
 ) -> None:
     ingest_policy_group_reference = """
-    MATCH (t:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(aa:OCIPolicy{id: $POLICY_ID})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(t:OCITenancy{id: $OCI_TENANCY_ID})
+        -[:RESOURCE]->(aa:OCIPolicy{id: $POLICY_ID})
     MATCH (t)-[:RESOURCE]->(bb:OCIGroup{id: $GROUP_ID})
     MERGE (aa)-[r:OCI_POLICY_REFERENCE]->(bb)
     ON CREATE SET r.firstseen = timestamp()
@@ -425,6 +454,7 @@ def load_oci_policy_group_reference(
     run_write_query(
         neo4j_session,
         ingest_policy_group_reference,
+        WORKSPACE_ID=workspace_id,
         OCI_TENANCY_ID=tenancy_id,
         POLICY_ID=policy_id,
         GROUP_ID=group_id,
@@ -438,9 +468,12 @@ def load_oci_policy_compartment_reference(
     compartment_id: str,
     tenancy_id: str,
     oci_update_tag: int,
+    *,
+    workspace_id: str,
 ) -> None:
     ingest_policy_compartment_reference = """
-    MATCH (t:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(aa:OCIPolicy{id: $POLICY_ID})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(t:OCITenancy{id: $OCI_TENANCY_ID})
+        -[:RESOURCE]->(aa:OCIPolicy{id: $POLICY_ID})
     MATCH (t)-[:OWNER]->(bb:OCICompartment{id: $COMPARTMENT_ID})
     MERGE (aa)-[r:OCI_POLICY_REFERENCE]->(bb)
     ON CREATE SET r.firstseen = timestamp()
@@ -449,6 +482,7 @@ def load_oci_policy_compartment_reference(
     run_write_query(
         neo4j_session,
         ingest_policy_compartment_reference,
+        WORKSPACE_ID=workspace_id,
         OCI_TENANCY_ID=tenancy_id,
         POLICY_ID=policy_id,
         COMPARTMENT_ID=compartment_id,
@@ -520,6 +554,8 @@ def load_oci_external_principal(
     external_principal: Dict[str, str],
     tenancy_id: str,
     oci_update_tag: int,
+    *,
+    workspace_id: str,
 ) -> None:
     # One OCIExternalPrincipal per foreign tenancy OCID is shared by every customer that trusts it, so it
     # holds only global facts. access_type (relative to the trusting workspace) and statement_verb belong
@@ -530,7 +566,8 @@ def load_oci_external_principal(
     SET ep.lastupdated = $oci_update_tag,
     ep.account_id = $PRINCIPAL
     WITH ep
-    MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(p:OCIPolicy{id: $POLICY_ID})
+    MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})
+        -[:RESOURCE]->(p:OCIPolicy{id: $POLICY_ID})
     MERGE (p)-[r:TRUSTS_OCI_PRINCIPAL]->(ep)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $oci_update_tag,
@@ -540,6 +577,7 @@ def load_oci_external_principal(
     run_write_query(
         neo4j_session,
         ingest_external_principal,
+        WORKSPACE_ID=workspace_id,
         OCI_TENANCY_ID=tenancy_id,
         POLICY_ID=policy_id,
         PRINCIPAL=external_principal["principal"],
@@ -556,10 +594,11 @@ def sync_oci_policy_references(
     oci_update_tag: int,
     common_job_parameters: Dict[str, Any],
 ) -> None:
-    groups = list(utils.get_groups_in_tenancy(neo4j_session, tenancy_id))
-    compartments = list(utils.get_compartments_in_tenancy(neo4j_session, tenancy_id))
-    policies = list(utils.get_policies_in_tenancy(neo4j_session, tenancy_id))
-    known_tenancy_ids = _get_known_tenancy_ids(neo4j_session, common_job_parameters.get("WORKSPACE_ID", ""))
+    workspace_id = common_job_parameters["WORKSPACE_ID"]
+    groups = list(utils.get_groups_in_tenancy(neo4j_session, tenancy_id, workspace_id))
+    compartments = list(utils.get_compartments_in_tenancy(neo4j_session, tenancy_id, workspace_id))
+    policies = list(utils.get_policies_in_tenancy(neo4j_session, tenancy_id, workspace_id))
+    known_tenancy_ids = _get_known_tenancy_ids(neo4j_session, workspace_id)
     for policy in policies:
         check_compart = policy["compartmentid"]
         for statement in policy["statements"]:
@@ -569,6 +608,7 @@ def sync_oci_policy_references(
                     if group["name"].lower() == m.group(0).lower():
                         load_oci_policy_group_reference(
                             neo4j_session, policy["ocid"], group["ocid"], tenancy_id, oci_update_tag,
+                            workspace_id=workspace_id,
                         )
             m = re.search('(?<=compartment\\s)[^ ]*(?=$)', statement)
             if m:
@@ -579,6 +619,7 @@ def sync_oci_policy_references(
                         if compartment["name"].lower() == m.group(0).lower():
                             load_oci_policy_compartment_reference(
                                 neo4j_session, policy["ocid"], compartment['ocid'], tenancy_id, oci_update_tag,
+                                workspace_id=workspace_id,
                             )
         # Cross-tenancy (Admit/Endorse/Define) statements reference a foreign
         # tenancy OCID that no OCIGroup/OCICompartment node represents; emit an
@@ -589,6 +630,7 @@ def sync_oci_policy_references(
             )
             load_oci_external_principal(
                 neo4j_session, policy["ocid"], external_principal, tenancy_id, oci_update_tag,
+                workspace_id=workspace_id,
             )
 
 
@@ -605,6 +647,8 @@ def load_region_subscriptions(
     regions: List[Dict[str, Any]],
     tenancy_id: str,
     oci_update_tag: int,
+    *,
+    workspace_id: str,
 ) -> None:
     query = """
     UNWIND $DictList AS region
@@ -614,7 +658,7 @@ def load_region_subscriptions(
         aa.name = region.region_name,
         aa.managed_type = $MANAGED_TYPE
         WITH aa
-        MATCH (bb:OCITenancy{id: $OCI_TENANCY_ID})
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(bb:OCITenancy{id: $OCI_TENANCY_ID})
         MERGE (bb)-[r:OCI_REGION_SUBSCRIPTION]->(aa)
         ON CREATE SET r.firstseen = timestamp()
         SET r.lastupdated = $oci_update_tag
@@ -630,6 +674,7 @@ def load_region_subscriptions(
         neo4j_session, query, rows,
         MANAGED_TYPE=MANAGED_TYPE_PREDEFINED,
         oci_update_tag=oci_update_tag,
+        WORKSPACE_ID=workspace_id,
         OCI_TENANCY_ID=tenancy_id,
     )
 
@@ -644,7 +689,10 @@ def sync_region_subscriptions(
     """Load the tenancy's region subscriptions and return its home region name ('' if none)."""
     logger.debug("Syncing IAM region subscriptions for account '%s'.", current_tenancy_id)
     data = get_region_subscriptions_list_data(iam, current_tenancy_id)
-    load_region_subscriptions(neo4j_session, data["RegionSubscriptions"], current_tenancy_id, oci_update_tag)
+    load_region_subscriptions(
+        neo4j_session, data["RegionSubscriptions"], current_tenancy_id, oci_update_tag,
+        workspace_id=common_job_parameters["WORKSPACE_ID"],
+    )
     home_region = next(
         (r["region-name"] for r in data["RegionSubscriptions"] if r.get("is-home-region")),
         "",

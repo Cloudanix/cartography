@@ -274,8 +274,18 @@ def test_tenancy_lookups_return_only_the_tenancys_own_iam_objects(neo4j_session)
         a=tenancies['lk-a'],
     )
 
-    tenancy_a = tenancies['lk-a']
-    assert {g['ocid'] for g in utils.get_groups_in_tenancy(neo4j_session, tenancy_a)} == {'lk-a-group'}
-    assert {p['ocid'] for p in utils.get_policies_in_tenancy(neo4j_session, tenancy_a)} == {'lk-a-policy'}
-    assert {c['ocid'] for c in utils.get_compartments_in_tenancy(neo4j_session, tenancy_a)} == {'lk-a-compartment'}
-    assert {r['key'] for r in utils.get_regions_in_tenancy(neo4j_session, tenancy_a)} == {'IAD'}
+    tenancy_a, ws_a = tenancies['lk-a'], 'lk-a-ws'
+    assert {g['ocid'] for g in utils.get_groups_in_tenancy(neo4j_session, tenancy_a, ws_a)} == {'lk-a-group'}
+    assert {p['ocid'] for p in utils.get_policies_in_tenancy(neo4j_session, tenancy_a, ws_a)} == {'lk-a-policy'}
+    assert {
+        c['ocid'] for c in utils.get_compartments_in_tenancy(neo4j_session, tenancy_a, ws_a)
+    } == {'lk-a-compartment'}
+    assert {r['key'] for r in utils.get_regions_in_tenancy(neo4j_session, tenancy_a, ws_a)} == {'IAD'}
+
+    # Tenancy A looked up through a workspace that does not own it: nothing.
+    lookups = (
+        utils.get_groups_in_tenancy, utils.get_policies_in_tenancy,
+        utils.get_compartments_in_tenancy, utils.get_regions_in_tenancy,
+    )
+    for lookup in lookups:
+        assert lookup(neo4j_session, tenancy_a, 'lk-b-ws') == [], lookup.__name__

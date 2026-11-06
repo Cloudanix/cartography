@@ -391,9 +391,9 @@ account; stores without ingested subnets use their whole VPC's routes and CIDRs 
 
 ### 10.3 OCI (done)
 
-Runs per compartment after `OCI_ANALYSIS_JOBS`. Writes compartment resources; reads network
-objects (subnets, security lists, NSGs, gateways, LBs) tenancy-wide, since a VNIC or LB can sit in
-another compartment's network.
+Runs per compartment after `OCI_ANALYSIS_JOBS`. Reads and writes only that compartment (one
+compartment is one Cloudanix entity); a VNIC or LB using another compartment's network gets no path
+through it (false negative, chosen over reading another entity's data).
 
 | Layer | Labels |
 |---|---|
