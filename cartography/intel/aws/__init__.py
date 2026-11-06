@@ -346,8 +346,9 @@ def _sync_one_account(
         except Exception as e:
             logger.warning(f"error to link EKS nodes for account {current_aws_account_id} - {e}")
 
-    # DMS instances link to security groups and subnets, which other syncs load in parallel.
-    if "dms" in aws_requested_syncs:
+    # DMS instances link to security groups and subnets, which other syncs load in parallel - in cloudanix-web, in
+    # another subrun. Link after either side syncs, so whichever finishes last sees both (graph-only, idempotent).
+    if {"dms", "ec2:security_group", "ec2:subnet"} & set(aws_requested_syncs):
         try:
             link_replication_instance_networks(neo4j_session, common_job_parameters)
         except Exception as e:

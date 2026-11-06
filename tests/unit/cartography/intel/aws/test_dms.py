@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+import pytest
 from botocore.exceptions import EndpointConnectionError
 
 import cartography.intel.aws
@@ -120,8 +121,19 @@ def test_account_sync_links_dms_networks_after_the_syncs_and_before_analysis(moc
     assert order.index('link') < order.index('analysis')
 
 
-def test_account_sync_skips_dms_links_when_dms_not_requested(mocker, monkeypatch):
-    assert 'link' not in _sync_account(mocker, monkeypatch, ['ec2:security_group'])
+@pytest.mark.parametrize('requested', [['ec2:security_group'], ['ec2:subnet']])
+def test_account_sync_links_dms_networks_when_only_the_network_side_syncs(mocker, monkeypatch, requested):
+    # cloudanix-web syncs DMS and EC2 networking in different subruns. Whichever finishes last must link,
+    # or a replication instance misses the security groups / subnets the other subrun loaded after it.
+    mocker.patch.dict(cartography.intel.aws.RESOURCE_FUNCTIONS, {'ec2:subnet': lambda **_: None})
+
+    assert 'link' in _sync_account(mocker, monkeypatch, requested)
+
+
+def test_account_sync_skips_dms_links_when_neither_side_syncs(mocker, monkeypatch):
+    mocker.patch.dict(cartography.intel.aws.RESOURCE_FUNCTIONS, {'rds': lambda **_: None})
+
+    assert 'link' not in _sync_account(mocker, monkeypatch, ['rds'])
 
 
 def test_account_sync_continues_when_dms_links_fail(mocker, monkeypatch):
