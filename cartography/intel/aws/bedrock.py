@@ -96,9 +96,8 @@ def get_bedrock_data_sources_list(
 
             for ds in kb_data_sources:
                 ds["region"] = region
-                # Data sources have no standalone ARN; use a composite id of
-                # knowledgeBaseId/dataSourceId as the node key.
-                ds["id"] = f"{ds['knowledgeBaseId']}/{ds['dataSourceId']}"
+                # Data sources have no ARN; key them under the parent knowledge base ARN (globally unique).
+                ds["id"] = f"{kb_arn}/data-source/{ds['dataSourceId']}"
                 ds["knowledgeBaseArn"] = kb_arn
                 # Data sources have no console page of their own; link to the parent knowledge base.
                 ds["consolelink"] = aws_console_link.get_console_link(arn=kb_arn)
@@ -176,8 +175,8 @@ def get_bedrock_agent_action_groups_list(
                 ag["agentId"] = agent_id
                 ag["agentVersion"] = agent_version
                 ag["agentArn"] = agent_arn
-                # Action groups have no ARN; use a composite id as the node key.
-                ag["id"] = f"{agent_id}/{agent_version}/{ag['actionGroupId']}"
+                # Action groups have no ARN; key them under the parent agent ARN (globally unique).
+                ag["id"] = f"{agent_arn}/action-group/{agent_version}/{ag['actionGroupId']}"
                 # Action groups have no console page of their own; link to the parent agent.
                 ag["consolelink"] = aws_console_link.get_console_link(arn=agent_arn)
                 # The list summary omits the executor; enrich with get_agent_action_group
@@ -283,8 +282,9 @@ def get_bedrock_agent_aliases_list(
                 alias["region"] = region
                 alias["agentId"] = agent_id
                 alias["agentArn"] = agent_arn
-                # Agent aliases have no ARN in the summary; use a composite id.
-                alias["id"] = f"{agent_id}/{alias['agentAliasId']}"
+                # The summary has no ARN; build it (agent-alias/<agentId>/<aliasId>). agentAliasId alone is
+                # TSTALIASID for every agent's test alias.
+                alias["id"] = f"{agent_arn.replace(':agent/', ':agent-alias/')}/{alias['agentAliasId']}"
                 alias["consolelink"] = aws_console_link.get_console_link(arn=agent_arn)
 
             agent_aliases.extend(agent_alias_list)

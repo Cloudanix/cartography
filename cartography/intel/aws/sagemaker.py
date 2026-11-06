@@ -12,6 +12,8 @@ import neo4j
 from cloudconsolelink.clouds.aws import AWSLinker
 
 from cartography.intel.aws.ec2.util import get_botocore_config
+from cartography.intel.aws.util.arns import DEFAULT_PARTITION
+from cartography.intel.aws.util.arns import get_partition_from_params
 from cartography.intel.aws.util.common import cap_with_warning
 from cartography.intel.aws.util.common import list_up_to
 from cartography.util import run_cleanup_job
@@ -568,7 +570,10 @@ def _load_clusters_tx(
 
 
 @timeit
-def get_user_profiles_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_user_profiles_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str,
+    partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     user_profiles: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
@@ -579,8 +584,11 @@ def get_user_profiles_list(boto3_session: boto3.session.Session, region: str) ->
 
         for up in user_profiles:
             up["region"] = region
-            # User profiles have no ARN in the summary; use a composite id.
-            up["id"] = f"{up['DomainId']}/{up['UserProfileName']}"
+            # The summary has no ARN; build it. DomainId alone is a 12-character id.
+            up["id"] = (
+                f"arn:{partition}:sagemaker:{region}:{current_aws_account_id}:"
+                f"user-profile/{up['DomainId']}/{up['UserProfileName']}"
+            )
 
     except Exception as e:
         logger.warning(
@@ -639,7 +647,10 @@ def _load_user_profiles_tx(
 
 
 @timeit
-def get_apps_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_apps_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str,
+    partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     apps: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
@@ -650,10 +661,12 @@ def get_apps_list(boto3_session: boto3.session.Session, region: str) -> List[Dic
 
         for app in apps:
             app["region"] = region
-            # Apps have no ARN; build a composite id that is unique whether the
-            # app belongs to a user profile or a space.
+            # The summary has no ARN; build it. The profile slot holds the space name for a space's app.
             scope = app.get("UserProfileName") or app.get("SpaceName") or ""
-            app["id"] = f"{app['DomainId']}/{scope}/{app.get('AppType', '')}/{app.get('AppName', '')}"
+            app["id"] = (
+                f"arn:{partition}:sagemaker:{region}:{current_aws_account_id}:"
+                f"app/{app['DomainId']}/{scope}/{app.get('AppType', '')}/{app.get('AppName', '')}"
+            )
 
     except Exception as e:
         logger.warning(
@@ -714,7 +727,10 @@ def _load_apps_tx(
 
 
 @timeit
-def get_spaces_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_spaces_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str,
+    partition: str = DEFAULT_PARTITION,
+) -> List[Dict]:
     spaces: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
@@ -725,8 +741,11 @@ def get_spaces_list(boto3_session: boto3.session.Session, region: str) -> List[D
 
         for space in spaces:
             space["region"] = region
-            # Spaces have no ARN in the summary; use a composite id.
-            space["id"] = f"{space['DomainId']}/{space['SpaceName']}"
+            # The summary has no ARN; build it. DomainId alone is a 12-character id.
+            space["id"] = (
+                f"arn:{partition}:sagemaker:{region}:{current_aws_account_id}:"
+                f"space/{space['DomainId']}/{space['SpaceName']}"
+            )
 
     except Exception as e:
         logger.warning(
@@ -1415,6 +1434,7 @@ def sync_sagemaker(
     neo4j_session: neo4j.Session, boto3_session: boto3.session.Session, regions: List[str], current_aws_account_id: str,
     aws_update_tag: int, common_job_parameters: Dict,
 ) -> None:
+    partition = get_partition_from_params(common_job_parameters)
     notebook_instances_list = []
     for region in regions:
         notebook_instances_list.extend(get_notebook_instances_list(boto3_session, region))
@@ -1504,7 +1524,7 @@ def sync_sagemaker(
     # Studio footprint: user profiles / apps / spaces link to domains (loaded above).
     user_profiles_list = []
     for region in regions:
-        user_profiles_list.extend(get_user_profiles_list(boto3_session, region))
+        user_profiles_list.extend(get_user_profiles_list(boto3_session, current_aws_account_id, region, partition))
 
     logger.info(f"Total user profiles: {len(user_profiles_list)}")
 
@@ -1512,7 +1532,7 @@ def sync_sagemaker(
 
     apps_list = []
     for region in regions:
-        apps_list.extend(get_apps_list(boto3_session, region))
+        apps_list.extend(get_apps_list(boto3_session, current_aws_account_id, region, partition))
 
     logger.info(f"Total apps: {len(apps_list)}")
 
@@ -1520,7 +1540,7 @@ def sync_sagemaker(
 
     spaces_list = []
     for region in regions:
-        spaces_list.extend(get_spaces_list(boto3_session, region))
+        spaces_list.extend(get_spaces_list(boto3_session, current_aws_account_id, region, partition))
 
     logger.info(f"Total spaces: {len(spaces_list)}")
 
