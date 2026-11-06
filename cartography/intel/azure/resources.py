@@ -6,10 +6,10 @@ from . import cognitiveservices
 from . import compute
 from . import containerregistry
 from . import cosmosdb
-from . import machinelearning
 from . import function_app
 from . import iam
 from . import key_vaults
+from . import machinelearning
 from . import monitor
 from . import network
 from . import redis
