@@ -39,6 +39,12 @@
                   "query": "MATCH (n:AWSTransitGateway) WHERE NOT (n)--() WITH n LIMIT $LIMIT_SIZE DELETE (n) return COUNT(*) as TotalCompleted",
                   "iterative": true,
                   "iterationsize": 100
+            },
+            {
+                  "query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:AWSOrganization{id: $ORGANIZATION_ID})-[:OWNER]->(:AWSAccount{id: $AWS_ID})-[:RESOURCE]->(:AWSTransitGatewayAttachment)-[r:PART_OF_SUBNET]->(:EC2Subnet) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+                  "iterative": true,
+                  "iterationsize": 100,
+                  "__comment__": "Anchored on the attachment's account, which writes the edge. A shared TGW's subnet can belong to another account or workspace."
             }
       ],
       "name": "cleanup AWS Transit Gateway information"
