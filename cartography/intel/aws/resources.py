@@ -30,6 +30,7 @@ from . import lambda_function
 from . import mq
 from . import msk
 from . import permission_relationships
+from . import qbusiness
 from . import rds
 from . import redshift
 from . import resourcegroupstaggingapi
@@ -85,6 +86,7 @@ RESOURCE_FUNCTIONS: Dict = {
     'ses': ses.sync,
     'sagemaker': sagemaker.sync,
     'bedrock': bedrock.sync,
+    'qbusiness': qbusiness.sync,
     'cloudwatch': cloudwatch.sync,
     'cloudfront': cloudfront.sync,
     'cloudformation': cloudformation.sync,

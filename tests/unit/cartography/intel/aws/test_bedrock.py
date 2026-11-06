@@ -69,3 +69,11 @@ def test_get_model_customisation_jobs_list_stops_paging_at_the_cap_and_warns(cap
     assert len(pages_read) == cap // 1000 + 1
     warning = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warning) == 1 and ACCOUNT_ID in warning[0] and 'us-east-1' in warning[0]
+
+
+def test_unqualified_lambda_arn_drops_a_version_or_alias_qualifier():
+    fn = 'arn:aws:lambda:us-east-1:111111111111:function:agent-tools'
+    assert bedrock._unqualified_lambda_arn(fn) == fn
+    assert bedrock._unqualified_lambda_arn(fn + ':PROD') == fn
+    assert bedrock._unqualified_lambda_arn(fn + ':7') == fn
+    assert bedrock._unqualified_lambda_arn(None) is None

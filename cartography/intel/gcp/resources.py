@@ -24,6 +24,7 @@ from . import pubsublite
 from . import spanner
 from . import sql
 from . import storage
+from . import vertexai
 from . import workspace
 
 
@@ -53,4 +54,5 @@ RESOURCE_FUNCTIONS: Dict = {
     "dataflow": dataflow.sync,
     "pubsublite": pubsublite.sync,
     "cloudtasks": cloudtasks.sync,
+    "vertexai": vertexai.sync,
 }
