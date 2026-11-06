@@ -3,6 +3,8 @@ import re
 from importlib.resources import read_text
 
 import cartography.intel.oci as oci_intel
+from cartography.intel.oci import iam
+from cartography.intel.oci import utils
 from cartography.intel.oci.exposure_layers import network as layers_network
 from cartography.intel.oci.exposure_layers import software as layers_software
 
@@ -89,3 +91,23 @@ def test_oci_analysis_jobs_chain_every_tenancy_match_to_the_workspace():
 def test_oci_exposure_layer_queries_chain_every_tenancy_match_to_the_workspace():
     for module in (layers_network, layers_software):
         assert _unanchored_tenancy_matches(inspect.getsource(module)) == [], module.__name__
+
+
+def test_oci_iam_and_tenancy_lookup_queries_chain_every_tenancy_match_to_the_workspace():
+    # IAM loaders attach users, groups, policies, compartments and regions to the tenancy, and the
+    # utils lookups read them back; both must reach the tenancy through the syncing workspace.
+    for module in (iam, utils):
+        assert _unanchored_tenancy_matches(inspect.getsource(module)) == [], module.__name__
+
+
+def test_oci_iam_loaders_require_the_workspace():
+    # Keyword-only with no default: a caller cannot forget it and silently write nothing.
+    loaders = (
+        iam.load_compartments, iam.load_users, iam.load_groups, iam.load_group_memberships, iam.load_policies,
+        iam.load_oci_policy_group_reference, iam.load_oci_policy_compartment_reference,
+        iam.load_oci_external_principal, iam.load_region_subscriptions,
+    )
+    for loader in loaders:
+        param = inspect.signature(loader).parameters['workspace_id']
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY, loader.__name__
+        assert param.default is inspect.Parameter.empty, loader.__name__

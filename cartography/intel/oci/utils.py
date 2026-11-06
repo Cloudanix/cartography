@@ -61,32 +61,47 @@ def replace_char_in_dict(in_dict: Dict[str, Any]) -> Dict[str, Any]:
     return out_dict
 
 
+# The syncing tenancy, reached through the syncing workspace. OCITenancy is keyed by its OCID alone, so a bare
+# (:OCITenancy{id}) match is also reachable from every other workspace that onboarded the same tenancy.
+_WORKSPACE_TENANCY = "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:OCITenancy{id: $OCI_TENANCY_ID})"
+
+
+def _read_tenancy(
+    neo4j_session: neo4j.Session, query: str, tenancy_id: str, workspace_id: str,
+) -> List[Dict[str, Any]]:
+    return neo4j_session.execute_read(
+        read_list_of_dicts_tx, query, WORKSPACE_ID=workspace_id, OCI_TENANCY_ID=tenancy_id,
+    )
+
+
 # Grab list of all compartments and sub-compartments in neo4j already populated by iam.
-def get_compartments_in_tenancy(neo4j_session: neo4j.Session, tenancy_id: str) -> List[Dict[str, Any]]:
-    query = "MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->(compartment:OCICompartment) " \
-            "return DISTINCT compartment.name as name, compartment.ocid as ocid, " \
-            "compartment.compartmentid as compartmentid;"
-    return neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=tenancy_id)
+def get_compartments_in_tenancy(
+    neo4j_session: neo4j.Session, tenancy_id: str, workspace_id: str,
+) -> List[Dict[str, Any]]:
+    query = _WORKSPACE_TENANCY + "-[:OWNER]->(compartment:OCICompartment) " \
+        "return DISTINCT compartment.name as name, compartment.ocid as ocid, " \
+        "compartment.compartmentid as compartmentid;"
+    return _read_tenancy(neo4j_session, query, tenancy_id, workspace_id)
 
 
 # Grab list of all groups in neo4j already populated by iam. Groups and policies hang directly off the tenancy
 # (iam.load_groups / load_policies); a longer or untyped path could walk through a shared node into another tenancy.
-def get_groups_in_tenancy(neo4j_session: neo4j.Session, tenancy_id: str) -> List[Dict[str, Any]]:
-    query = "MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(group:OCIGroup) " \
-            "return DISTINCT group.name as name, group.ocid as ocid;"
-    return neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=tenancy_id)
+def get_groups_in_tenancy(neo4j_session: neo4j.Session, tenancy_id: str, workspace_id: str) -> List[Dict[str, Any]]:
+    query = _WORKSPACE_TENANCY + "-[:RESOURCE]->(group:OCIGroup) " \
+        "return DISTINCT group.name as name, group.ocid as ocid;"
+    return _read_tenancy(neo4j_session, query, tenancy_id, workspace_id)
 
 
 # Grab list of all policies in neo4j already populated by iam.
-def get_policies_in_tenancy(neo4j_session: neo4j.Session, tenancy_id: str) -> List[Dict[str, Any]]:
-    query = "MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:RESOURCE]->(policy:OCIPolicy) " \
-            "return DISTINCT policy.name as name, policy.ocid as ocid, policy.statements as statements, " \
-            "policy.compartmentid as compartmentid;"
-    return neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=tenancy_id)
+def get_policies_in_tenancy(neo4j_session: neo4j.Session, tenancy_id: str, workspace_id: str) -> List[Dict[str, Any]]:
+    query = _WORKSPACE_TENANCY + "-[:RESOURCE]->(policy:OCIPolicy) " \
+        "return DISTINCT policy.name as name, policy.ocid as ocid, policy.statements as statements, " \
+        "policy.compartmentid as compartmentid;"
+    return _read_tenancy(neo4j_session, query, tenancy_id, workspace_id)
 
 
 # Grab list of all regions in neo4j already populated by iam.
-def get_regions_in_tenancy(neo4j_session: neo4j.Session, tenancy_id: str) -> List[Dict[str, Any]]:
-    query = "MATCH (:OCITenancy{id: $OCI_TENANCY_ID})-[:OCI_REGION_SUBSCRIPTION]->(region:OCIRegion) " \
-            "return DISTINCT region.name as name, region.key as key;"
-    return neo4j_session.execute_read(read_list_of_dicts_tx, query, OCI_TENANCY_ID=tenancy_id)
+def get_regions_in_tenancy(neo4j_session: neo4j.Session, tenancy_id: str, workspace_id: str) -> List[Dict[str, Any]]:
+    query = _WORKSPACE_TENANCY + "-[:OCI_REGION_SUBSCRIPTION]->(region:OCIRegion) " \
+        "return DISTINCT region.name as name, region.key as key;"
+    return _read_tenancy(neo4j_session, query, tenancy_id, workspace_id)

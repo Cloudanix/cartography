@@ -9,6 +9,15 @@ from tests.integration.util import check_rels
 TEST_TENANCY_ID = "ocid1.user.oc1..nqilyrb1l5t6gnmlcjgeim8q47vccnklev8k2ud9skn78eapu116oyv9wcr0"
 TEST_REGION = 'us-phoenix-1'
 TEST_UPDATE_TAG = 123456789
+TEST_WORKSPACE_ID = "test-oci-workspace"
+
+
+def _seed_workspace_tenancy(neo4j_session):
+    """The IAM loaders attach to the tenancy only through the workspace that owns it."""
+    neo4j_session.run(
+        "MERGE (w:CloudanixWorkspace{id: $ws}) MERGE (t:OCITenancy{id: $id}) MERGE (w)-[:OWNER]->(t)",
+        ws=TEST_WORKSPACE_ID, id=TEST_TENANCY_ID,
+    )
 
 
 def test_load_users(neo4j_session):
@@ -19,6 +28,7 @@ def test_load_users(neo4j_session):
         data,
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
 
@@ -30,6 +40,7 @@ def test_load_groups(neo4j_session):
         data,
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
 
@@ -41,6 +52,7 @@ def test_load_policies(neo4j_session):
         data,
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
 
@@ -52,12 +64,14 @@ def test_load_compartments(neo4j_session):
         data,
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
 
 def test_load_users_managed_type(neo4j_session):
     iam.load_users(
         neo4j_session, tests.data.oci.iam.LIST_USERS['Users'], TEST_TENANCY_ID, TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
     assert check_nodes(neo4j_session, 'OCIUser', ['name', 'managed_type']) == {
         ('example-user-0', 'custom'),
@@ -71,6 +85,7 @@ def test_load_groups_managed_type(neo4j_session):
         tests.data.oci.iam.LIST_GROUPS['Groups'] + tests.data.oci.iam.PREDEFINED_GROUPS['Groups'],
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
     assert check_nodes(neo4j_session, 'OCIGroup', ['name', 'managed_type']) == {
         ('example-group-0', 'custom'),
@@ -85,6 +100,7 @@ def test_load_policies_managed_type(neo4j_session):
         tests.data.oci.iam.LIST_POLICIES['Policies'] + tests.data.oci.iam.PREDEFINED_POLICIES['Policies'],
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
     assert check_nodes(neo4j_session, 'OCIPolicy', ['name', 'managed_type']) == {
         ('example-policy-0', 'custom'),
@@ -99,6 +115,7 @@ def test_load_compartments_managed_type(neo4j_session):
         tests.data.oci.iam.LIST_COMPARTMENTS['Compartments'] + tests.data.oci.iam.PREDEFINED_COMPARTMENTS['Compartments'],
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
     assert check_nodes(neo4j_session, 'OCICompartment', ['name', 'managed_type']) == {
         ('example-compartment-0', 'custom'),
@@ -110,7 +127,7 @@ def test_load_compartments_managed_type(neo4j_session):
 def test_load_group_memberships(neo4j_session):
     group_memberships = tests.data.oci.iam.LIST_GROUP_MEMBERSHIPS
     groups = list(
-        utils.get_groups_in_tenancy(neo4j_session, TEST_TENANCY_ID),
+        utils.get_groups_in_tenancy(neo4j_session, TEST_TENANCY_ID, TEST_WORKSPACE_ID),
     )
     data = {group["ocid"]: group_memberships for group in groups}
     iam.load_compartments(
@@ -118,18 +135,21 @@ def test_load_group_memberships(neo4j_session):
         data,
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
 
 def test_load_group_memberships_links_users(neo4j_session):
     # Load users and the group first, then membership edges; assert both users
     # are wired to the group via MEMBER_OCID_GROUP through the batched loader.
-    neo4j_session.run("MERGE (:OCITenancy{id: $id})", id=TEST_TENANCY_ID)
+    _seed_workspace_tenancy(neo4j_session)
     iam.load_users(
         neo4j_session, tests.data.oci.iam.LIST_USERS['Users'], TEST_TENANCY_ID, TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
     iam.load_groups(
         neo4j_session, tests.data.oci.iam.LIST_GROUPS['Groups'], TEST_TENANCY_ID, TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
     group_ocid = "ocid1.group.oc1..wa03xlg35zi0tb33qyrjteen36zrkauzhjz8pi0yzt4d2b78uo745h5ze6at"
     iam.load_group_memberships(
@@ -137,6 +157,7 @@ def test_load_group_memberships_links_users(neo4j_session):
         {group_ocid: tests.data.oci.iam.LIST_GROUP_MEMBERSHIPS},
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
     assert check_rels(
         neo4j_session, "OCIUser", "id", "OCIGroup", "id", "MEMBER_OCID_GROUP",
@@ -147,16 +168,13 @@ def test_load_group_memberships_links_users(neo4j_session):
 
 
 def test_load_region_subscriptions(neo4j_session):
-    neo4j_session.run(
-        "MERGE (t:OCITenancy{id: $id}) SET t.lastupdated = $tag",
-        id=TEST_TENANCY_ID,
-        tag=TEST_UPDATE_TAG,
-    )
+    _seed_workspace_tenancy(neo4j_session)
     iam.load_region_subscriptions(
         neo4j_session,
         tests.data.oci.iam.LIST_REGION_SUBSCRIPTIONS['RegionSubscriptions'],
         TEST_TENANCY_ID,
         TEST_UPDATE_TAG,
+        workspace_id=TEST_WORKSPACE_ID,
     )
     assert check_nodes(neo4j_session, "OCIRegion", ["id", "name"]) == {
         ("PHX", "us-phoenix-1"),

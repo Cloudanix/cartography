@@ -201,9 +201,10 @@ def test_oci_external_access_type_classifies_known_vs_third_party():
 @patch.object(iam, "get_region_subscriptions_list_data")
 def test_sync_region_subscriptions_returns_home_region(mock_get, mock_load):
     mock_get.return_value = LIST_REGION_SUBSCRIPTIONS
-    home = iam.sync_region_subscriptions(MagicMock(), MagicMock(), "ocid1.tenancy.oc1..a", 1, {})
+    home = iam.sync_region_subscriptions(MagicMock(), MagicMock(), "ocid1.tenancy.oc1..a", 1, {"WORKSPACE_ID": "ws"})
     assert home == "us-phoenix-1"
     mock_load.assert_called_once()
+    assert mock_load.call_args.kwargs == {"workspace_id": "ws"}
 
 
 @patch.object(iam, "load_region_subscriptions")
@@ -212,7 +213,8 @@ def test_sync_region_subscriptions_warns_without_a_home_region(mock_get, mock_lo
     mock_get.return_value = {"RegionSubscriptions": [{"region-name": "us-ashburn-1", "is-home-region": False}]}
 
     with caplog.at_level("WARNING", logger=iam.__name__):
-        assert iam.sync_region_subscriptions(MagicMock(), MagicMock(), "ocid1.tenancy.oc1..a", 1, {}) == ""
+        params = {"WORKSPACE_ID": "ws"}
+        assert iam.sync_region_subscriptions(MagicMock(), MagicMock(), "ocid1.tenancy.oc1..a", 1, params) == ""
     assert "No home region subscription" in caplog.text
 
 
@@ -222,6 +224,9 @@ def test_load_policies_sets_home_region_console_link(mock_load_graph_data):
         "id": "ocid1.policy.oc1..a", "name": "p", "compartment-id": "c", "description": "",
         "statements": [], "time-created": "", "version-date": "",
     }
-    iam.load_policies(MagicMock(), [policy], "ocid1.tenancy.oc1..a", 1, home_region="us-phoenix-1")
+    iam.load_policies(
+        MagicMock(), [policy], "ocid1.tenancy.oc1..a", 1, home_region="us-phoenix-1", workspace_id="ws",
+    )
     rows = mock_load_graph_data.call_args[0][2]
     assert rows[0]["consolelink"] == "https://cloud.oracle.com/identity/policies/ocid1.policy.oc1..a?region=us-phoenix-1"
+    assert mock_load_graph_data.call_args.kwargs["WORKSPACE_ID"] == "ws"
