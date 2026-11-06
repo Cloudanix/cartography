@@ -5,7 +5,6 @@ from typing import List
 
 import neo4j
 from azure.core.credentials import TokenCredential
-from azure.core.exceptions import HttpResponseError
 from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
@@ -28,17 +27,13 @@ def get_client(credentials: TokenCredential, subscription_id: str) -> CognitiveS
 
 @timeit
 def get_accounts_list(client: CognitiveServicesManagementClient) -> List[Dict]:
-    try:
-        accounts = []
-        for account in client.accounts.list():
-            try:
-                accounts.append(account.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping cognitive services account due to serialization error: %s", e)
-        return accounts
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving cognitive services accounts - {e}")
-        return []
+    accounts = []
+    for account in client.accounts.list():
+        try:
+            accounts.append(account.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping cognitive services account due to serialization error: %s", e)
+    return accounts
 
 
 @timeit
@@ -128,19 +123,15 @@ def _load_accounts_tx(
 
 @timeit
 def get_deployments_list(client: CognitiveServicesManagementClient, account: Dict) -> List[Dict]:
-    try:
-        deployments = []
-        for deployment in client.deployments.list(
-            resource_group_name=account['resource_group'], account_name=account['name'],
-        ):
-            try:
-                deployments.append(deployment.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping cognitive services deployment due to serialization error: %s", e)
-        return deployments
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving cognitive services deployments - {e}")
-        return []
+    deployments = []
+    for deployment in client.deployments.list(
+        resource_group_name=account['resource_group'], account_name=account['name'],
+    ):
+        try:
+            deployments.append(deployment.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping cognitive services deployment due to serialization error: %s", e)
+    return deployments
 
 
 @timeit
@@ -218,19 +209,15 @@ def _load_deployments_tx(
 
 @timeit
 def get_rai_policies_list(client: CognitiveServicesManagementClient, account: Dict) -> List[Dict]:
-    try:
-        policies = []
-        for policy in client.rai_policies.list(
-            resource_group_name=account['resource_group'], account_name=account['name'],
-        ):
-            try:
-                policies.append(policy.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping RAI policy due to serialization error: %s", e)
-        return policies
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving RAI policies - {e}")
-        return []
+    policies = []
+    for policy in client.rai_policies.list(
+        resource_group_name=account['resource_group'], account_name=account['name'],
+    ):
+        try:
+            policies.append(policy.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping RAI policy due to serialization error: %s", e)
+    return policies
 
 
 @timeit
@@ -337,6 +324,8 @@ def sync(
         policies = transform_rai_policies(policies, account, common_job_parameters)
         load_rai_policies(neo4j_session, subscription_id, policies, update_tag)
 
+    # get_*_list let API errors propagate, so a failed or throttled list aborts the sync here
+    # instead of reaching cleanup with [] and deleting the subscription's inventory.
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

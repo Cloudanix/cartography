@@ -5,7 +5,6 @@ from typing import List
 
 import neo4j
 from azure.core.credentials import TokenCredential
-from azure.core.exceptions import HttpResponseError
 from azure.mgmt.machinelearningservices import MachineLearningServicesMgmtClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
@@ -28,17 +27,13 @@ def get_client(credentials: TokenCredential, subscription_id: str) -> MachineLea
 
 @timeit
 def get_workspaces_list(client: MachineLearningServicesMgmtClient) -> List[Dict]:
-    try:
-        workspaces = []
-        for workspace in client.workspaces.list_by_subscription():
-            try:
-                workspaces.append(workspace.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML workspace due to serialization error: %s", e)
-        return workspaces
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML workspaces - {e}")
-        return []
+    workspaces = []
+    for workspace in client.workspaces.list_by_subscription():
+        try:
+            workspaces.append(workspace.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML workspace due to serialization error: %s", e)
+    return workspaces
 
 
 @timeit
@@ -124,19 +119,15 @@ def _load_workspaces_tx(
 
 @timeit
 def get_models_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
-    try:
-        models = []
-        for model in client.model_containers.list(
-            resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
-        ):
-            try:
-                models.append(model.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML model due to serialization error: %s", e)
-        return models
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML models - {e}")
-        return []
+    models = []
+    for model in client.model_containers.list(
+        resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
+    ):
+        try:
+            models.append(model.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML model due to serialization error: %s", e)
+    return models
 
 
 @timeit
@@ -200,19 +191,15 @@ def _load_models_tx(
 
 @timeit
 def get_online_endpoints_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
-    try:
-        endpoints = []
-        for endpoint in client.online_endpoints.list(
-            resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
-        ):
-            try:
-                endpoints.append(endpoint.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML online endpoint due to serialization error: %s", e)
-        return endpoints
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML online endpoints - {e}")
-        return []
+    endpoints = []
+    for endpoint in client.online_endpoints.list(
+        resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
+    ):
+        try:
+            endpoints.append(endpoint.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML online endpoint due to serialization error: %s", e)
+    return endpoints
 
 
 @timeit
@@ -289,21 +276,17 @@ def _load_online_endpoints_tx(
 def get_online_deployments_list(
     client: MachineLearningServicesMgmtClient, workspace: Dict, endpoint_name: str,
 ) -> List[Dict]:
-    try:
-        deployments = []
-        for deployment in client.online_deployments.list(
-            resource_group_name=workspace['resource_group'],
-            workspace_name=workspace['name'],
-            endpoint_name=endpoint_name,
-        ):
-            try:
-                deployments.append(deployment.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML online deployment due to serialization error: %s", e)
-        return deployments
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML online deployments - {e}")
-        return []
+    deployments = []
+    for deployment in client.online_deployments.list(
+        resource_group_name=workspace['resource_group'],
+        workspace_name=workspace['name'],
+        endpoint_name=endpoint_name,
+    ):
+        try:
+            deployments.append(deployment.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML online deployment due to serialization error: %s", e)
+    return deployments
 
 
 @timeit
@@ -377,19 +360,15 @@ def _load_online_deployments_tx(
 
 @timeit
 def get_batch_endpoints_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
-    try:
-        endpoints = []
-        for endpoint in client.batch_endpoints.list(
-            resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
-        ):
-            try:
-                endpoints.append(endpoint.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML batch endpoint due to serialization error: %s", e)
-        return endpoints
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML batch endpoints - {e}")
-        return []
+    endpoints = []
+    for endpoint in client.batch_endpoints.list(
+        resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
+    ):
+        try:
+            endpoints.append(endpoint.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML batch endpoint due to serialization error: %s", e)
+    return endpoints
 
 
 @timeit
@@ -462,21 +441,17 @@ def _load_batch_endpoints_tx(
 def get_batch_deployments_list(
     client: MachineLearningServicesMgmtClient, workspace: Dict, endpoint_name: str,
 ) -> List[Dict]:
-    try:
-        deployments = []
-        for deployment in client.batch_deployments.list(
-            resource_group_name=workspace['resource_group'],
-            workspace_name=workspace['name'],
-            endpoint_name=endpoint_name,
-        ):
-            try:
-                deployments.append(deployment.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML batch deployment due to serialization error: %s", e)
-        return deployments
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML batch deployments - {e}")
-        return []
+    deployments = []
+    for deployment in client.batch_deployments.list(
+        resource_group_name=workspace['resource_group'],
+        workspace_name=workspace['name'],
+        endpoint_name=endpoint_name,
+    ):
+        try:
+            deployments.append(deployment.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML batch deployment due to serialization error: %s", e)
+    return deployments
 
 
 @timeit
@@ -548,19 +523,15 @@ def _load_batch_deployments_tx(
 
 @timeit
 def get_computes_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
-    try:
-        computes = []
-        for compute in client.compute.list(
-            resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
-        ):
-            try:
-                computes.append(compute.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML compute due to serialization error: %s", e)
-        return computes
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML computes - {e}")
-        return []
+    computes = []
+    for compute in client.compute.list(
+        resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
+    ):
+        try:
+            computes.append(compute.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML compute due to serialization error: %s", e)
+    return computes
 
 
 @timeit
@@ -633,19 +604,15 @@ def _load_computes_tx(
 
 @timeit
 def get_datastores_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
-    try:
-        datastores = []
-        for datastore in client.datastores.list(
-            resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
-        ):
-            try:
-                datastores.append(datastore.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML datastore due to serialization error: %s", e)
-        return datastores
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML datastores - {e}")
-        return []
+    datastores = []
+    for datastore in client.datastores.list(
+        resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
+    ):
+        try:
+            datastores.append(datastore.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML datastore due to serialization error: %s", e)
+    return datastores
 
 
 @timeit
@@ -713,19 +680,15 @@ def _load_datastores_tx(
 
 @timeit
 def get_connections_list(client: MachineLearningServicesMgmtClient, workspace: Dict) -> List[Dict]:
-    try:
-        connections = []
-        for connection in client.workspace_connections.list(
-            resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
-        ):
-            try:
-                connections.append(connection.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping ML workspace connection due to serialization error: %s", e)
-        return connections
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving ML workspace connections - {e}")
-        return []
+    connections = []
+    for connection in client.workspace_connections.list(
+        resource_group_name=workspace['resource_group'], workspace_name=workspace['name'],
+    ):
+        try:
+            connections.append(connection.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping ML workspace connection due to serialization error: %s", e)
+    return connections
 
 
 @timeit
@@ -866,6 +829,8 @@ def sync(
             neo4j_session, subscription_id, connections, update_tag, common_job_parameters['WORKSPACE_ID'],
         )
 
+    # get_*_list let API errors propagate, so a failed or throttled list aborts the sync here
+    # instead of reaching cleanup with [] and deleting the subscription's inventory.
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

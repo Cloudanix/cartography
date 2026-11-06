@@ -5,7 +5,6 @@ from typing import List
 
 import neo4j
 from azure.core.credentials import TokenCredential
-from azure.core.exceptions import HttpResponseError
 from azure.mgmt.search import SearchManagementClient
 from cloudconsolelink.clouds.azure import AzureLinker
 
@@ -28,17 +27,13 @@ def get_client(credentials: TokenCredential, subscription_id: str) -> SearchMana
 
 @timeit
 def get_search_services_list(client: SearchManagementClient) -> List[Dict]:
-    try:
-        services = []
-        for service in client.services.list_by_subscription():
-            try:
-                services.append(service.as_dict())
-            except (KeyError, AttributeError) as e:
-                logger.warning("Skipping AI Search service due to serialization error: %s", e)
-        return services
-    except HttpResponseError as e:
-        logger.warning(f"Error while retrieving AI Search services - {e}")
-        return []
+    services = []
+    for service in client.services.list_by_subscription():
+        try:
+            services.append(service.as_dict())
+        except (KeyError, AttributeError) as e:
+            logger.warning("Skipping AI Search service due to serialization error: %s", e)
+    return services
 
 
 @timeit
@@ -126,6 +121,8 @@ def sync(
     logger.info(f"Total AI Search services: {len(services)}")
     load_search_services(neo4j_session, subscription_id, services, update_tag)
 
+    # get_*_list let API errors propagate, so a failed or throttled list aborts the sync here
+    # instead of reaching cleanup with [] and deleting the subscription's inventory.
     cleanup(neo4j_session, common_job_parameters)
 
     toc = time.perf_counter()

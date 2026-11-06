@@ -3,9 +3,15 @@ Transform tests for the Azure AI inventory syncs, built from real SDK models
 deserialized from ARM payloads, so a change in how the SDK flattens or nests
 properties shows up here instead of as silently-null graph properties.
 """
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
+import pytest
+from azure.core.exceptions import HttpResponseError
 from azure.mgmt.cognitiveservices import models as cs_models
 from azure.mgmt.machinelearningservices import models as ml_models
 
+from cartography.intel.azure import aisearch
 from cartography.intel.azure import cognitiveservices
 from cartography.intel.azure import machinelearning
 
@@ -73,3 +79,15 @@ def test_transform_accounts_keeps_cmk_vault_url():
     assert out['endpoint'] == 'https://oai1.openai.azure.com/'
     assert out['custom_sub_domain_name'] == 'oai1'
     assert out['public_network_access'] == 'Enabled'
+
+
+@patch.object(aisearch, 'cleanup')
+@patch.object(aisearch, 'get_client')
+def test_failed_list_skips_cleanup(mock_get_client, mock_cleanup):
+    # A throttled / 5xx list must not reach cleanup with [] and wipe the inventory.
+    mock_get_client.return_value.services.list_by_subscription.side_effect = HttpResponseError('throttled')
+
+    with pytest.raises(HttpResponseError):
+        aisearch.sync(MagicMock(), MagicMock(), 'sub', 1, COMMON_JOB_PARAMETERS, None)
+
+    mock_cleanup.assert_not_called()
