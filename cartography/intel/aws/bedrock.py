@@ -414,9 +414,12 @@ def _load_bedrock_provisioned_throughputs_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    FOREACH (_ IN CASE WHEN pt.modelArn IS NULL THEN [] ELSE [1] END |
-        MERGE (m:AWSBedrockFoundationModel{arn: pt.modelArn})
-        MERGE (i)-[pm:PROVISIONS_MODEL]->(m)
+    WITH i, pt, aa
+    // modelArn is a custom model (fine-tuned, same account) or a public foundation model, which is not synced
+    // (catalog, not a customer resource; its ARN stays in foundationmodelarn). Link only the account's own model.
+    OPTIONAL MATCH (aa)-[:RESOURCE]->(cm:AWSBedrockCustomModel{arn: pt.modelArn})
+    FOREACH (_ IN CASE WHEN cm IS NULL THEN [] ELSE [1] END |
+        MERGE (i)-[pm:PROVISIONS_MODEL]->(cm)
         ON CREATE SET pm.firstseen = timestamp()
         SET pm.lastupdated = $aws_update_tag
     )
