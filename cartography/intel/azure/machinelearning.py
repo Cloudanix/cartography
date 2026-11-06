@@ -46,13 +46,9 @@ def transform_workspaces(workspaces: List[Dict], regions: List, common_job_param
     data: List[Dict] = []
     for ws in workspaces:
         ws['resource_group'] = get_azure_resource_group_name(ws.get('id'))
-        props = ws.get('properties', {}) or {}
-        ws['friendly_name'] = props.get('friendly_name')
-        ws['public_network_access'] = props.get('public_network_access')
-        ws['key_vault'] = props.get('key_vault')
-        ws['storage_account'] = props.get('storage_account')
-        ws['container_registry'] = props.get('container_registry')
-        ws['application_insights'] = props.get('application_insights')
+        # Workspace is a flattened msrest model: friendly_name, public_network_access,
+        # key_vault, storage_account, container_registry and application_insights are
+        # already top-level keys after as_dict(); there is no 'properties' dict.
         ws['principal_id'] = (ws.get('identity', {}) or {}).get('principal_id')
         # kind distinguishes Default workspaces from AI Foundry Hub / Project.
         ws['kind'] = ws.get('kind')
