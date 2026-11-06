@@ -1,9 +1,12 @@
 from typing import Dict
 
+from . import aisearch
 from . import aks
+from . import cognitiveservices
 from . import compute
 from . import containerregistry
 from . import cosmosdb
+from . import machinelearning
 from . import function_app
 from . import iam
 from . import key_vaults
@@ -28,4 +31,7 @@ RESOURCE_FUNCTIONS: Dict = {
     "monitor": monitor.sync,
     "securitycenter": securitycenter.sync,
     "redis": redis.sync,
+    "cognitiveservices": cognitiveservices.sync,
+    "machinelearning": machinelearning.sync,
+    "aisearch": aisearch.sync,
 }
