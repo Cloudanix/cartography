@@ -430,7 +430,8 @@ def _get_vertexai_resource(credentials: GoogleCredentials) -> Resource:
     """
     Instantiates a Vertex AI (aiplatform) resource object.
     See: https://cloud.google.com/vertex-ai/docs/reference/rest
-    List calls are location-scoped via the `parent` (projects/{project}/locations/{location}) argument.
+    Bound to the global host; vertexai.sync builds one locational client per region from its http, since
+    regional resources are only served from {region}-aiplatform.googleapis.com.
     :param credentials: The GoogleCredentials object
     :return: An aiplatform v1 resource object
     """

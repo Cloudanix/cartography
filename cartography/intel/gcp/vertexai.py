@@ -4,8 +4,10 @@ import time
 from typing import Dict
 from typing import List
 
+import googleapiclient.discovery
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
+from google.api_core.client_options import ClientOptions
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
@@ -14,6 +16,7 @@ from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+REGIONAL_ENDPOINT = 'https://{region}-aiplatform.googleapis.com/'
 gcp_console_link = GCPLinker()
 # cloudconsolelink has deep links only for models, endpoints and datasets (they need region + instance_name).
 # Custom jobs, training pipelines, batch prediction / pipeline jobs and reasoning engines get the Vertex AI home
@@ -42,15 +45,27 @@ def _parent(project_id: str, region: str) -> str:
     return f"projects/{project_id}/locations/{region}"
 
 
+def _regional_client(vertexai: Resource, region: str) -> Resource:
+    """
+    Vertex AI serves a location's resources from its locational endpoint ({region}-aiplatform.googleapis.com), and
+    googleapiclient never switches host based on `parent`, so each location gets its own client. Reuses the
+    authorized http of the global client built in gcp/__init__.py.
+    """
+    return googleapiclient.discovery.build(
+        'aiplatform', 'v1', http=vertexai._http, cache_discovery=False,
+        client_options=ClientOptions(api_endpoint=REGIONAL_ENDPOINT.format(region=region)),
+    )
+
+
 # ---------------------------------------------------------------------------
 # MODELS
 # ---------------------------------------------------------------------------
 @timeit
-def get_vertexai_models(vertexai: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def get_vertexai_models(clients: Dict[str, Resource], project_id: str) -> List[Dict]:
     models: List[Dict] = []
-    for region in regions:
+    for region, client in clients.items():
         try:
-            req = vertexai.projects().locations().models().list(parent=_parent(project_id, region))
+            req = client.projects().locations().models().list(parent=_parent(project_id, region))
             while req is not None:
                 res = req.execute()
                 for model in res.get('models', []):
@@ -61,7 +76,7 @@ def get_vertexai_models(vertexai: Resource, project_id: str, regions: List[str])
                         region=region, instance_name=model['name'].split('/')[-1],
                     )
                     models.append(model)
-                req = vertexai.projects().locations().models().list_next(
+                req = client.projects().locations().models().list_next(
                     previous_request=req, previous_response=res,
                 )
         except HttpError as e:
@@ -106,11 +121,11 @@ def _load_vertexai_models_tx(tx: neo4j.Transaction, data: List[Dict], project_id
 # ENDPOINTS
 # ---------------------------------------------------------------------------
 @timeit
-def get_vertexai_endpoints(vertexai: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def get_vertexai_endpoints(clients: Dict[str, Resource], project_id: str) -> List[Dict]:
     endpoints: List[Dict] = []
-    for region in regions:
+    for region, client in clients.items():
         try:
-            req = vertexai.projects().locations().endpoints().list(parent=_parent(project_id, region))
+            req = client.projects().locations().endpoints().list(parent=_parent(project_id, region))
             while req is not None:
                 res = req.execute()
                 for endpoint in res.get('endpoints', []):
@@ -124,7 +139,7 @@ def get_vertexai_endpoints(vertexai: Resource, project_id: str, regions: List[st
                         region=region, instance_name=endpoint['name'].split('/')[-1],
                     )
                     endpoints.append(endpoint)
-                req = vertexai.projects().locations().endpoints().list_next(
+                req = client.projects().locations().endpoints().list_next(
                     previous_request=req, previous_response=res,
                 )
         except HttpError as e:
@@ -175,11 +190,11 @@ def _load_vertexai_endpoints_tx(tx: neo4j.Transaction, data: List[Dict], project
 # DATASETS
 # ---------------------------------------------------------------------------
 @timeit
-def get_vertexai_datasets(vertexai: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def get_vertexai_datasets(clients: Dict[str, Resource], project_id: str) -> List[Dict]:
     datasets: List[Dict] = []
-    for region in regions:
+    for region, client in clients.items():
         try:
-            req = vertexai.projects().locations().datasets().list(parent=_parent(project_id, region))
+            req = client.projects().locations().datasets().list(parent=_parent(project_id, region))
             while req is not None:
                 res = req.execute()
                 for dataset in res.get('datasets', []):
@@ -190,7 +205,7 @@ def get_vertexai_datasets(vertexai: Resource, project_id: str, regions: List[str
                         region=region, instance_name=dataset['name'].split('/')[-1],
                     )
                     datasets.append(dataset)
-                req = vertexai.projects().locations().datasets().list_next(
+                req = client.projects().locations().datasets().list_next(
                     previous_request=req, previous_response=res,
                 )
         except HttpError as e:
@@ -234,11 +249,11 @@ def _load_vertexai_datasets_tx(tx: neo4j.Transaction, data: List[Dict], project_
 # CUSTOM JOBS
 # ---------------------------------------------------------------------------
 @timeit
-def get_vertexai_custom_jobs(vertexai: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def get_vertexai_custom_jobs(clients: Dict[str, Resource], project_id: str) -> List[Dict]:
     jobs: List[Dict] = []
-    for region in regions:
+    for region, client in clients.items():
         try:
-            req = vertexai.projects().locations().customJobs().list(parent=_parent(project_id, region))
+            req = client.projects().locations().customJobs().list(parent=_parent(project_id, region))
             while req is not None:
                 res = req.execute()
                 for job in res.get('customJobs', []):
@@ -250,7 +265,7 @@ def get_vertexai_custom_jobs(vertexai: Resource, project_id: str, regions: List[
                         project_id=project_id, resource_name='vertex_ai_home',
                     )
                     jobs.append(job)
-                req = vertexai.projects().locations().customJobs().list_next(
+                req = client.projects().locations().customJobs().list_next(
                     previous_request=req, previous_response=res,
                 )
         except HttpError as e:
@@ -297,11 +312,11 @@ def _load_vertexai_custom_jobs_tx(
 # TRAINING PIPELINES
 # ---------------------------------------------------------------------------
 @timeit
-def get_vertexai_training_pipelines(vertexai: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def get_vertexai_training_pipelines(clients: Dict[str, Resource], project_id: str) -> List[Dict]:
     pipelines: List[Dict] = []
-    for region in regions:
+    for region, client in clients.items():
         try:
-            req = vertexai.projects().locations().trainingPipelines().list(parent=_parent(project_id, region))
+            req = client.projects().locations().trainingPipelines().list(parent=_parent(project_id, region))
             while req is not None:
                 res = req.execute()
                 for pipeline in res.get('trainingPipelines', []):
@@ -312,7 +327,7 @@ def get_vertexai_training_pipelines(vertexai: Resource, project_id: str, regions
                         project_id=project_id, resource_name='vertex_ai_home',
                     )
                     pipelines.append(pipeline)
-                req = vertexai.projects().locations().trainingPipelines().list_next(
+                req = client.projects().locations().trainingPipelines().list_next(
                     previous_request=req, previous_response=res,
                 )
         except HttpError as e:
@@ -367,11 +382,11 @@ def _load_vertexai_training_pipelines_tx(
 # BATCH PREDICTION JOBS
 # ---------------------------------------------------------------------------
 @timeit
-def get_vertexai_batch_prediction_jobs(vertexai: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def get_vertexai_batch_prediction_jobs(clients: Dict[str, Resource], project_id: str) -> List[Dict]:
     jobs: List[Dict] = []
-    for region in regions:
+    for region, client in clients.items():
         try:
-            req = vertexai.projects().locations().batchPredictionJobs().list(parent=_parent(project_id, region))
+            req = client.projects().locations().batchPredictionJobs().list(parent=_parent(project_id, region))
             while req is not None:
                 res = req.execute()
                 for job in res.get('batchPredictionJobs', []):
@@ -381,7 +396,7 @@ def get_vertexai_batch_prediction_jobs(vertexai: Resource, project_id: str, regi
                         project_id=project_id, resource_name='vertex_ai_home',
                     )
                     jobs.append(job)
-                req = vertexai.projects().locations().batchPredictionJobs().list_next(
+                req = client.projects().locations().batchPredictionJobs().list_next(
                     previous_request=req, previous_response=res,
                 )
         except HttpError as e:
@@ -436,11 +451,11 @@ def _load_vertexai_batch_prediction_jobs_tx(
 # PIPELINE JOBS
 # ---------------------------------------------------------------------------
 @timeit
-def get_vertexai_pipeline_jobs(vertexai: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def get_vertexai_pipeline_jobs(clients: Dict[str, Resource], project_id: str) -> List[Dict]:
     jobs: List[Dict] = []
-    for region in regions:
+    for region, client in clients.items():
         try:
-            req = vertexai.projects().locations().pipelineJobs().list(parent=_parent(project_id, region))
+            req = client.projects().locations().pipelineJobs().list(parent=_parent(project_id, region))
             while req is not None:
                 res = req.execute()
                 for job in res.get('pipelineJobs', []):
@@ -450,7 +465,7 @@ def get_vertexai_pipeline_jobs(vertexai: Resource, project_id: str, regions: Lis
                         project_id=project_id, resource_name='vertex_ai_home',
                     )
                     jobs.append(job)
-                req = vertexai.projects().locations().pipelineJobs().list_next(
+                req = client.projects().locations().pipelineJobs().list_next(
                     previous_request=req, previous_response=res,
                 )
         except HttpError as e:
@@ -499,11 +514,11 @@ def _load_vertexai_pipeline_jobs_tx(
 # REASONING ENGINES (Agent Engine)
 # ---------------------------------------------------------------------------
 @timeit
-def get_vertexai_reasoning_engines(vertexai: Resource, project_id: str, regions: List[str]) -> List[Dict]:
+def get_vertexai_reasoning_engines(clients: Dict[str, Resource], project_id: str) -> List[Dict]:
     engines: List[Dict] = []
-    for region in regions:
+    for region, client in clients.items():
         try:
-            req = vertexai.projects().locations().reasoningEngines().list(parent=_parent(project_id, region))
+            req = client.projects().locations().reasoningEngines().list(parent=_parent(project_id, region))
             while req is not None:
                 res = req.execute()
                 for engine in res.get('reasoningEngines', []):
@@ -513,7 +528,7 @@ def get_vertexai_reasoning_engines(vertexai: Resource, project_id: str, regions:
                         project_id=project_id, resource_name='vertex_ai_home',
                     )
                     engines.append(engine)
-                req = vertexai.projects().locations().reasoningEngines().list_next(
+                req = client.projects().locations().reasoningEngines().list_next(
                     previous_request=req, previous_response=res,
                 )
         except HttpError as e:
@@ -574,9 +589,10 @@ def sync(
     """
     tic = time.perf_counter()
     logger.info("Syncing Vertex AI for project '%s', at %s.", project_id, tic)
+    clients = {region: _regional_client(vertexai, region) for region in regions}
 
     # MODELS - loaded first so endpoint/pipeline/job relationships can resolve.
-    models = get_vertexai_models(vertexai, project_id, regions)
+    models = get_vertexai_models(clients, project_id)
     load_vertexai_models(neo4j_session, models, project_id, gcp_update_tag)
     label.sync_labels(
         neo4j_session, models, gcp_update_tag, common_job_parameters,
@@ -584,7 +600,7 @@ def sync(
     )
 
     # DATASETS
-    datasets = get_vertexai_datasets(vertexai, project_id, regions)
+    datasets = get_vertexai_datasets(clients, project_id)
     load_vertexai_datasets(neo4j_session, datasets, project_id, gcp_update_tag)
     label.sync_labels(
         neo4j_session, datasets, gcp_update_tag, common_job_parameters,
@@ -592,7 +608,7 @@ def sync(
     )
 
     # ENDPOINTS
-    endpoints = get_vertexai_endpoints(vertexai, project_id, regions)
+    endpoints = get_vertexai_endpoints(clients, project_id)
     load_vertexai_endpoints(neo4j_session, endpoints, project_id, gcp_update_tag)
     label.sync_labels(
         neo4j_session, endpoints, gcp_update_tag, common_job_parameters,
@@ -600,7 +616,7 @@ def sync(
     )
 
     # CUSTOM JOBS
-    custom_jobs = get_vertexai_custom_jobs(vertexai, project_id, regions)
+    custom_jobs = get_vertexai_custom_jobs(clients, project_id)
     load_vertexai_custom_jobs(neo4j_session, custom_jobs, project_id, gcp_update_tag)
     label.sync_labels(
         neo4j_session, custom_jobs, gcp_update_tag, common_job_parameters,
@@ -608,7 +624,7 @@ def sync(
     )
 
     # TRAINING PIPELINES
-    training_pipelines = get_vertexai_training_pipelines(vertexai, project_id, regions)
+    training_pipelines = get_vertexai_training_pipelines(clients, project_id)
     load_vertexai_training_pipelines(neo4j_session, training_pipelines, project_id, gcp_update_tag)
     label.sync_labels(
         neo4j_session, training_pipelines, gcp_update_tag, common_job_parameters,
@@ -616,7 +632,7 @@ def sync(
     )
 
     # BATCH PREDICTION JOBS
-    batch_prediction_jobs = get_vertexai_batch_prediction_jobs(vertexai, project_id, regions)
+    batch_prediction_jobs = get_vertexai_batch_prediction_jobs(clients, project_id)
     load_vertexai_batch_prediction_jobs(neo4j_session, batch_prediction_jobs, project_id, gcp_update_tag)
     label.sync_labels(
         neo4j_session, batch_prediction_jobs, gcp_update_tag, common_job_parameters,
@@ -624,7 +640,7 @@ def sync(
     )
 
     # PIPELINE JOBS
-    pipeline_jobs = get_vertexai_pipeline_jobs(vertexai, project_id, regions)
+    pipeline_jobs = get_vertexai_pipeline_jobs(clients, project_id)
     load_vertexai_pipeline_jobs(neo4j_session, pipeline_jobs, project_id, gcp_update_tag)
     label.sync_labels(
         neo4j_session, pipeline_jobs, gcp_update_tag, common_job_parameters,
@@ -632,7 +648,7 @@ def sync(
     )
 
     # REASONING ENGINES (Agent Engine)
-    reasoning_engines = get_vertexai_reasoning_engines(vertexai, project_id, regions)
+    reasoning_engines = get_vertexai_reasoning_engines(clients, project_id)
     load_vertexai_reasoning_engines(neo4j_session, reasoning_engines, project_id, gcp_update_tag)
     label.sync_labels(
         neo4j_session, reasoning_engines, gcp_update_tag, common_job_parameters,
