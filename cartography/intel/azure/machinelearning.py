@@ -95,18 +95,20 @@ def _load_workspaces_tx(
     MERGE (owner)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
-    FOREACH (_ IN CASE WHEN ws.key_vault IS NULL THEN [] ELSE [1] END |
-        MERGE (kv:AzureKeyVault{id: ws.key_vault})
-        ON CREATE SET kv.firstseen = timestamp()
-        SET kv.lastupdated = $update_tag
+    // Link only to this subscription's own vault / storage account, never MERGE them:
+    // the ids come from API data, and ARM ids are case-insensitive.
+    WITH i, ws
+    OPTIONAL MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(kv:AzureKeyVault)
+    WHERE toLower(kv.id) = toLower(ws.key_vault)
+    FOREACH (_ IN CASE WHEN kv IS NULL THEN [] ELSE [1] END |
         MERGE (i)-[uk:USES_KEY_VAULT]->(kv)
         ON CREATE SET uk.firstseen = timestamp()
         SET uk.lastupdated = $update_tag
     )
-    FOREACH (_ IN CASE WHEN ws.storage_account IS NULL THEN [] ELSE [1] END |
-        MERGE (sa:AzureStorageAccount{id: ws.storage_account})
-        ON CREATE SET sa.firstseen = timestamp()
-        SET sa.lastupdated = $update_tag
+    WITH i, ws
+    OPTIONAL MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(sa:AzureStorageAccount)
+    WHERE toLower(sa.id) = toLower(ws.storage_account)
+    FOREACH (_ IN CASE WHEN sa IS NULL THEN [] ELSE [1] END |
         MERGE (i)-[us:USES_STORAGE]->(sa)
         ON CREATE SET us.firstseen = timestamp()
         SET us.lastupdated = $update_tag
