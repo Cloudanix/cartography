@@ -224,9 +224,9 @@ def _load_endpoints_tx(
     MERGE (aa)-[r:RESOURCE]->(e)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH e, endpoint
+    WITH e, endpoint, aa
     WHERE endpoint.EndpointConfigName IS NOT NULL
-    MATCH (ec:AWSSagemakerEndpointConfig{name: endpoint.EndpointConfigName})
+    MATCH (aa)-[:RESOURCE]->(ec:AWSSagemakerEndpointConfig{name: endpoint.EndpointConfigName, region: endpoint.region})
     MERGE (e)-[uc:USES_CONFIG]->(ec)
     ON CREATE SET uc.firstseen = timestamp()
     SET uc.lastupdated = $aws_update_tag
@@ -1076,9 +1076,9 @@ def _load_monitoring_schedules_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, sched
+    WITH i, sched, aa
     WHERE sched.EndpointName IS NOT NULL
-    MATCH (e:AWSSagemakerEndpoint{name: sched.EndpointName})
+    MATCH (aa)-[:RESOURCE]->(e:AWSSagemakerEndpoint{name: sched.EndpointName, region: sched.region})
     MERGE (i)-[mon:MONITORS]->(e)
     ON CREATE SET mon.firstseen = timestamp()
     SET mon.lastupdated = $aws_update_tag
@@ -1239,9 +1239,11 @@ def _load_model_packages_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, package
+    WITH i, package, aa
     WHERE package.ModelPackageGroupName IS NOT NULL
-    MATCH (g:AWSSagemakerModelPackageGroup{name: package.ModelPackageGroupName})
+    MATCH (aa)-[:RESOURCE]->(g:AWSSagemakerModelPackageGroup{
+        name: package.ModelPackageGroupName, region: package.region
+    })
     MERGE (i)-[mo:MEMBER_OF]->(g)
     ON CREATE SET mo.firstseen = timestamp()
     SET mo.lastupdated = $aws_update_tag
@@ -1409,9 +1411,9 @@ def _load_endpoint_configs_tx(
         ON CREATE SET enc.firstseen = timestamp()
         SET enc.lastupdated = $aws_update_tag
     )
-    WITH i, config
+    WITH i, config, aa
     UNWIND config.ModelNames AS model_name
-    MATCH (m:AWSSagemakerModel{name: model_name})
+    MATCH (aa)-[:RESOURCE]->(m:AWSSagemakerModel{name: model_name, region: config.region})
     MERGE (i)-[h:HOSTS]->(m)
     ON CREATE SET h.firstseen = timestamp()
     SET h.lastupdated = $aws_update_tag
