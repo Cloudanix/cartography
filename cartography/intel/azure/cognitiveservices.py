@@ -202,7 +202,8 @@ def _load_deployments_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, dep
-    MATCH (acc:AzureCognitiveServicesAccount{id: dep.account_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->
+        (acc:AzureCognitiveServicesAccount{id: dep.account_id})
     MERGE (acc)-[hd:HAS_DEPLOYMENT]->(i)
     ON CREATE SET hd.firstseen = timestamp()
     SET hd.lastupdated = $update_tag
@@ -283,12 +284,15 @@ def _load_rai_policies_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, pol
-    MATCH (acc:AzureCognitiveServicesAccount{id: pol.account_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->
+        (acc:AzureCognitiveServicesAccount{id: pol.account_id})
     MERGE (acc)-[hp:HAS_RAI_POLICY]->(i)
     ON CREATE SET hp.firstseen = timestamp()
     SET hp.lastupdated = $update_tag
     WITH i, pol
-    MATCH (dep:AzureCognitiveServicesDeployment)<-[:HAS_DEPLOYMENT]-(acc:AzureCognitiveServicesAccount{id: pol.account_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->
+        (acc:AzureCognitiveServicesAccount{id: pol.account_id})
+        -[:HAS_DEPLOYMENT]->(dep:AzureCognitiveServicesDeployment)
     WHERE dep.rai_policy_name = pol.name
     MERGE (dep)-[gb:GOVERNED_BY]->(i)
     ON CREATE SET gb.firstseen = timestamp()

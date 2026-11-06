@@ -185,7 +185,7 @@ def _load_models_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, model
-    MATCH (ws:AzureMLWorkspace{id: model.workspace_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(ws:AzureMLWorkspace{id: model.workspace_id})
     MERGE (ws)-[c:CONTAINS]->(i)
     ON CREATE SET c.firstseen = timestamp()
     SET c.lastupdated = $update_tag
@@ -272,7 +272,7 @@ def _load_online_endpoints_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, ep
-    MATCH (ws:AzureMLWorkspace{id: ep.workspace_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(ws:AzureMLWorkspace{id: ep.workspace_id})
     MERGE (ws)-[c:CONTAINS]->(i)
     ON CREATE SET c.firstseen = timestamp()
     SET c.lastupdated = $update_tag
@@ -362,7 +362,7 @@ def _load_online_deployments_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, dep
-    MATCH (ep:AzureMLOnlineEndpoint{id: dep.endpoint_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(ep:AzureMLOnlineEndpoint{id: dep.endpoint_id})
     MERGE (ep)-[hd:HAS_DEPLOYMENT]->(i)
     ON CREATE SET hd.firstseen = timestamp()
     SET hd.lastupdated = $update_tag
@@ -445,7 +445,7 @@ def _load_batch_endpoints_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, ep
-    MATCH (ws:AzureMLWorkspace{id: ep.workspace_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(ws:AzureMLWorkspace{id: ep.workspace_id})
     MERGE (ws)-[c:CONTAINS]->(i)
     ON CREATE SET c.firstseen = timestamp()
     SET c.lastupdated = $update_tag
@@ -533,7 +533,7 @@ def _load_batch_deployments_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, dep
-    MATCH (ep:AzureMLBatchEndpoint{id: dep.endpoint_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(ep:AzureMLBatchEndpoint{id: dep.endpoint_id})
     MERGE (ep)-[hd:HAS_DEPLOYMENT]->(i)
     ON CREATE SET hd.firstseen = timestamp()
     SET hd.lastupdated = $update_tag
@@ -618,7 +618,7 @@ def _load_computes_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, comp
-    MATCH (ws:AzureMLWorkspace{id: comp.workspace_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(ws:AzureMLWorkspace{id: comp.workspace_id})
     MERGE (ws)-[c:CONTAINS]->(i)
     ON CREATE SET c.firstseen = timestamp()
     SET c.lastupdated = $update_tag
@@ -698,7 +698,7 @@ def _load_datastores_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, ds
-    MATCH (ws:AzureMLWorkspace{id: ds.workspace_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(ws:AzureMLWorkspace{id: ds.workspace_id})
     MERGE (ws)-[c:CONTAINS]->(i)
     ON CREATE SET c.firstseen = timestamp()
     SET c.lastupdated = $update_tag
@@ -779,7 +779,7 @@ def _load_connections_tx(
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $update_tag
     WITH i, conn
-    MATCH (ws:AzureMLWorkspace{id: conn.workspace_id})
+    MATCH (:AzureSubscription{id: $SUBSCRIPTION_ID})-[:RESOURCE]->(ws:AzureMLWorkspace{id: conn.workspace_id})
     MERGE (ws)-[c:CONTAINS]->(i)
     ON CREATE SET c.firstseen = timestamp()
     SET c.lastupdated = $update_tag
