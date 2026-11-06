@@ -663,8 +663,8 @@ def _load_user_profiles_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, up
-    MATCH (d:AWSSagemakerDomain{id: up.DomainId})
+    WITH i, up, aa
+    MATCH (aa)-[:RESOURCE]->(d:AWSSagemakerDomain{id: up.DomainId})
     MERGE (d)-[hup:HAS_USER_PROFILE]->(i)
     ON CREATE SET hup.firstseen = timestamp()
     SET hup.lastupdated = $aws_update_tag
@@ -738,8 +738,8 @@ def _load_apps_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, app
-    MATCH (d:AWSSagemakerDomain{id: app.DomainId})
+    WITH i, app, aa
+    MATCH (aa)-[:RESOURCE]->(d:AWSSagemakerDomain{id: app.DomainId})
     MERGE (d)-[ha:HAS_APP]->(i)
     ON CREATE SET ha.firstseen = timestamp()
     SET ha.lastupdated = $aws_update_tag
@@ -809,8 +809,8 @@ def _load_spaces_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, space
-    MATCH (d:AWSSagemakerDomain{id: space.DomainId})
+    WITH i, space, aa
+    MATCH (aa)-[:RESOURCE]->(d:AWSSagemakerDomain{id: space.DomainId})
     MERGE (d)-[hs:HAS_SPACE]->(i)
     ON CREATE SET hs.firstseen = timestamp()
     SET hs.lastupdated = $aws_update_tag
