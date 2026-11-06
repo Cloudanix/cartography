@@ -31,6 +31,10 @@ MAX_TRAINING_JOBS_PER_REGION = 1000
 # Models pile up (pipelines create one per run and nothing deletes them) but are not history: an old model can back a
 # live endpoint, so there is no time window, only this cap on the newest models.
 MAX_MODELS_PER_REGION = 1000
+# Endpoint configs and model packages also accumulate (one per deployment / registered version) and are never
+# expired, so the newest are kept under the same per-region bound as models.
+MAX_ENDPOINT_CONFIGS_PER_REGION = 1000
+MAX_MODEL_PACKAGES_PER_REGION = 1000
 
 
 def get_boto3_client(boto3_session: boto3.session.Session, service: str, region: str) -> Any:
@@ -335,24 +339,6 @@ def get_models_list(boto3_session: boto3.session.Session, current_aws_account_id
         for model in models:
             model["region"] = region
             model["consolelink"] = aws_console_link.get_console_link(arn=model['ModelArn'])
-            # The list summary omits role / network / container image; enrich with describe.
-            try:
-                detail = client.describe_model(ModelName=model["ModelName"])
-                model["ExecutionRoleArn"] = detail.get("ExecutionRoleArn")
-                vpc_config = detail.get("VpcConfig", {}) or {}
-                model["Subnets"] = vpc_config.get("Subnets", [])
-                model["SecurityGroupIds"] = vpc_config.get("SecurityGroupIds", [])
-                # Container image URI stored as a property this pass (ECR link deferred).
-                primary = detail.get("PrimaryContainer", {}) or {}
-                containers = detail.get("Containers", []) or []
-                model["ContainerImage"] = primary.get("Image") or (
-                    containers[0].get("Image") if containers else None
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Could not describe sagemaker model {model.get('ModelName')}. "
-                    f"skipping enrichment. - {e}",
-                )
 
     except Exception as e:
         logger.warning(
@@ -385,40 +371,14 @@ def _load_models_tx(
     e.arn = model.ModelArn,
     e.creationtime = model.CreationTime
     SET e.name = model.ModelName,
-    e.rolearn = model.ExecutionRoleArn,
-    e.containerimage = model.ContainerImage,
     e.lastupdated =$aws_update_tag,
     e.region = model.region,
     e.consolelink = model.consolelink
-    WITH e, model
+    WITH e
     MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
     MERGE (aa)-[r:RESOURCE]->(e)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    FOREACH (_ IN CASE WHEN model.ExecutionRoleArn IS NULL THEN [] ELSE [1] END |
-        MERGE (p:AWSPrincipal{arn: model.ExecutionRoleArn})
-        ON CREATE SET p.firstseen = timestamp()
-        SET p.lastupdated = $aws_update_tag
-        MERGE (e)-[ar:SAGEMAKER_ASSUMEROLE_ALLOW]->(p)
-        ON CREATE SET ar.firstseen = timestamp()
-        SET ar.lastupdated = $aws_update_tag
-    )
-    FOREACH (sn_id IN model.Subnets |
-        MERGE (sn:EC2Subnet{subnetid: sn_id})
-        ON CREATE SET sn.firstseen = timestamp()
-        SET sn.lastupdated = $aws_update_tag
-        MERGE (e)-[insub:IN_SUBNET]->(sn)
-        ON CREATE SET insub.firstseen = timestamp()
-        SET insub.lastupdated = $aws_update_tag
-    )
-    FOREACH (sg_id IN model.SecurityGroupIds |
-        MERGE (sg:EC2SecurityGroup{id: sg_id})
-        ON CREATE SET sg.firstseen = timestamp()
-        SET sg.lastupdated = $aws_update_tag
-        MERGE (e)-[msg:MEMBER_OF_EC2_SECURITY_GROUP]->(sg)
-        ON CREATE SET msg.firstseen = timestamp()
-        SET msg.lastupdated = $aws_update_tag
-    )
     """
 
     tx.run(
@@ -1158,26 +1118,33 @@ def _load_model_package_groups_tx(
 
 
 @timeit
-def get_model_packages_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_model_packages_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str, groups: List[Dict],
+) -> List[Dict]:
+    """`groups` is the model package groups already listed for this region (no second ListModelPackageGroups)."""
     packages: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
-
-        paginator = client.get_paginator("list_model_packages")
+        limit = MAX_MODEL_PACKAGES_PER_REGION + 1
+        newest_first = {'SortBy': 'CreationTime', 'SortOrder': 'Descending'}
 
         # Unversioned (standalone) model packages are returned by the default
         # call, but *versioned* packages registered inside a model package group
         # are only returned when ModelPackageGroupName is supplied. List both so
         # registry versions aren't missed.
-        for page in paginator.paginate():
-            packages.extend(page["ModelPackageSummaryList"])
+        packages.extend(
+            list_up_to(client, "list_model_packages", "ModelPackageSummaryList", limit, LIST_PAGE_SIZE, **newest_first),
+        )
 
-        groups = get_model_package_groups_list(boto3_session, region)
         for group in groups:
             group_name = group["ModelPackageGroupName"]
             try:
-                for page in paginator.paginate(ModelPackageGroupName=group_name):
-                    packages.extend(page["ModelPackageSummaryList"])
+                packages.extend(
+                    list_up_to(
+                        client, "list_model_packages", "ModelPackageSummaryList", limit, LIST_PAGE_SIZE,
+                        ModelPackageGroupName=group_name, **newest_first,
+                    ),
+                )
             except Exception as e:
                 logger.warning(
                     f"Could not list model packages for group {group_name}. skipping. - {e}",
@@ -1200,7 +1167,10 @@ def get_model_packages_list(boto3_session: boto3.session.Session, region: str) -
         logger.warning(
             f"Could not list sagemaker model packages. skipping. - {e}",
         )
-    return packages
+    # The cap keeps list order (standalone first, then group by group, each newest first), not newest overall.
+    return cap_with_warning(
+        packages, MAX_MODEL_PACKAGES_PER_REGION, "SageMaker model packages", current_aws_account_id, region,
+    )
 
 
 @timeit
@@ -1333,15 +1303,22 @@ def _load_pipelines_tx(
 
 
 @timeit
-def get_endpoint_configs_list(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
+def get_endpoint_configs_list(
+    boto3_session: boto3.session.Session, current_aws_account_id: str, region: str,
+) -> List[Dict]:
     endpoint_configs: List[Dict] = []
     try:
         client = get_boto3_client(boto3_session, "sagemaker", region)
 
-        paginator = client.get_paginator("list_endpoint_configs")
-        for page in paginator.paginate():
-            endpoint_configs.extend(page["EndpointConfigs"])
+        endpoint_configs = cap_with_warning(
+            list_up_to(
+                client, "list_endpoint_configs", "EndpointConfigs", MAX_ENDPOINT_CONFIGS_PER_REGION + 1,
+                LIST_PAGE_SIZE, SortBy='CreationTime', SortOrder='Descending',
+            ),
+            MAX_ENDPOINT_CONFIGS_PER_REGION, "SageMaker endpoint configs", current_aws_account_id, region,
+        )
 
+        # One describe per config (capped above): the summary has no variants, which HOSTS needs.
         for config in endpoint_configs:
             config["region"] = region
             config["consolelink"] = aws_console_link.get_console_link(arn=config["EndpointConfigArn"])
@@ -1457,7 +1434,7 @@ def sync_sagemaker(
 
     endpoint_configs_list = []
     for region in regions:
-        endpoint_configs_list.extend(get_endpoint_configs_list(boto3_session, region))
+        endpoint_configs_list.extend(get_endpoint_configs_list(boto3_session, current_aws_account_id, region))
 
     logger.info(f"Total endpoint configs: {len(endpoint_configs_list)}")
 
@@ -1506,7 +1483,10 @@ def sync_sagemaker(
 
     model_packages_list = []
     for region in regions:
-        model_packages_list.extend(get_model_packages_list(boto3_session, region))
+        region_groups = [g for g in model_package_groups_list if g['region'] == region]
+        model_packages_list.extend(
+            get_model_packages_list(boto3_session, current_aws_account_id, region, region_groups),
+        )
 
     logger.info(f"Total model packages: {len(model_packages_list)}")
 
