@@ -219,7 +219,7 @@ def _load_vertexai_endpoints_tx(tx: neo4j.Transaction, data: List[Dict], project
     SET r.lastupdated = $gcp_update_tag
     WITH endpoint, record
     UNWIND record.deployed_model_ids as deployed_model_id
-    MATCH (model:GCPVertexAIModel{id: deployed_model_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(model:GCPVertexAIModel{id: deployed_model_id})
     MERGE (endpoint)-[dr:DEPLOYS]->(model)
     ON CREATE SET
         dr.firstseen = timestamp()
@@ -411,7 +411,7 @@ def _load_vertexai_training_pipelines_tx(
     SET r.lastupdated = $gcp_update_tag
     WITH pipeline, record
     WHERE record.model_to_upload IS NOT NULL
-    MATCH (model:GCPVertexAIModel{id: record.model_to_upload})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(model:GCPVertexAIModel{id: record.model_to_upload})
     MERGE (pipeline)-[pr:PRODUCES]->(model)
     ON CREATE SET
         pr.firstseen = timestamp()
@@ -481,7 +481,7 @@ def _load_vertexai_batch_prediction_jobs_tx(
     SET r.lastupdated = $gcp_update_tag
     WITH job, record
     WHERE record.model_id IS NOT NULL
-    MATCH (model:GCPVertexAIModel{id: record.model_id})
+    MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(model:GCPVertexAIModel{id: record.model_id})
     MERGE (job)-[ur:USES_MODEL]->(model)
     ON CREATE SET
         ur.firstseen = timestamp()
