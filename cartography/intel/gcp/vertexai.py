@@ -17,6 +17,7 @@ from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
 REGIONAL_ENDPOINT = 'https://{region}-aiplatform.googleapis.com/'
+SKIPPABLE_LOCATION_STATUSES = {400, 404}
 gcp_console_link = GCPLinker()
 # cloudconsolelink has deep links only for models, endpoints and datasets (they need region + instance_name).
 # Custom jobs, training pipelines, batch prediction / pipeline jobs and reasoning engines get the Vertex AI home
@@ -25,10 +26,17 @@ gcp_console_link = GCPLinker()
 
 def _handle_http_error(e: HttpError, resource_name: str, project_id: str, region: str) -> List[Dict]:
     """
-    Downgrade GCP permission / forbidden errors to a warning and return an empty list so a single
-    unauthorized region does not abort the whole sync. Any other error is re-raised.
+    Downgrade GCP permission / forbidden errors, and a 400/404 from a location that does not serve this
+    collection, to a warning and return an empty list so a single region does not abort the whole sync.
+    Any other error is re-raised.
     """
     err = json.loads(e.content.decode('utf-8'))['error']
+    if e.resp.status in SKIPPABLE_LOCATION_STATUSES:
+        logger.warning(
+            "Vertex AI %s unavailable on project %s region %s; skipping. Code: %s, Message: %s",
+            resource_name, project_id, region, err.get('code'), err.get('message'),
+        )
+        return []
     if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
         logger.warning(
             (
@@ -43,6 +51,31 @@ def _handle_http_error(e: HttpError, resource_name: str, project_id: str, region
 
 def _parent(project_id: str, region: str) -> str:
     return f"projects/{project_id}/locations/{region}"
+
+
+def get_vertexai_locations(vertexai: Resource, project_id: str) -> List[str]:
+    """
+    Locations Vertex AI serves for the project. Errors propagate: the service then fails before cleanup
+    instead of syncing zero locations and deleting every Vertex node.
+    """
+    locations: List[str] = []
+    req = vertexai.projects().locations().list(name=f"projects/{project_id}")
+    while req is not None:
+        res = req.execute()
+        locations.extend(loc['locationId'] for loc in res.get('locations', []))
+        req = vertexai.projects().locations().list_next(previous_request=req, previous_response=res)
+    return locations
+
+
+def resolve_vertexai_regions(regions: List[str], vertex_locations: List[str]) -> List[str]:
+    """
+    Intersect the sync regions with the Vertex AI locations. Empty `regions` means the compute region
+    lookup failed (or nothing was configured), so fall back to every Vertex location.
+    """
+    if not regions:
+        return sorted(vertex_locations)
+    served = set(vertex_locations)
+    return [region for region in regions if region in served]
 
 
 def _regional_client(vertexai: Resource, region: str) -> Resource:
@@ -589,6 +622,7 @@ def sync(
     """
     tic = time.perf_counter()
     logger.info("Syncing Vertex AI for project '%s', at %s.", project_id, tic)
+    regions = resolve_vertexai_regions(regions, get_vertexai_locations(vertexai, project_id))
     clients = {region: _regional_client(vertexai, region) for region in regions}
 
     # MODELS - loaded first so endpoint/pipeline/job relationships can resolve.
