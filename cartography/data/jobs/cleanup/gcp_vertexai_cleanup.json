@@ -95,6 +95,24 @@
 			"iterative": true,
 			"iterationsize": 100,
 			"__comment__": "Remove GCP Project to GCP Vertex AI Reasoning Engine relationships that are out of date."
+		},
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVertexAIEndpoint)-[r:DEPLOYS]->(:GCPVertexAIModel) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove GCP Vertex AI Endpoint to Model DEPLOYS relationships that are out of date (model undeployed)."
+		},
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVertexAITrainingPipeline)-[r:PRODUCES]->(:GCPVertexAIModel) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove GCP Vertex AI Training Pipeline to Model PRODUCES relationships that are out of date."
+		},
+		{
+			"query": "MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(:GCPOrganization{id:$GCP_ORGANIZATION_ID})-[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})-[:RESOURCE]->(:GCPVertexAIBatchPredictionJob)-[r:USES_MODEL]->(:GCPVertexAIModel) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE (r) return COUNT(*) as TotalCompleted",
+			"iterative": true,
+			"iterationsize": 100,
+			"__comment__": "Remove GCP Vertex AI Batch Prediction Job to Model USES_MODEL relationships that are out of date."
 		}
 	],
 	"name": "cleanup GCP Vertex AI resources"
