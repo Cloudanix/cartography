@@ -805,6 +805,14 @@ def _sync_single_project(
             )
         except Exception as e:
             logger.warning(f"error to resolve load balancer backend members for project {project_id} - {e}")
+    elif "cloudfunction" in requested_syncs:
+        # cloudanix-web syncs functions in a different subrun from the load balancers. Re-link serverless NEGs to the
+        # functions this subrun loaded (graph only); the member resolution above and its API calls stay with the load
+        # balancer subrun.
+        try:
+            loadbalancer.link_backend_services_to_negs(neo4j_session, project_id, common_job_parameters["UPDATE_TAG"])
+        except Exception as e:
+            logger.warning(f"error to link serverless NEGs to functions for project {project_id} - {e}")
 
     for service_name in common_job_parameters["service_labels"]:
         common_job_parameters["service_label"] = service_name
