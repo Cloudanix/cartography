@@ -6,6 +6,7 @@ from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import boto3
 import neo4j
@@ -138,6 +139,16 @@ def get_bedrock_agents_list(
     return bedrock_agents
 
 
+def _unqualified_lambda_arn(arn: Optional[str]) -> Optional[str]:
+    """
+    AWSLambda is keyed by the unqualified function ARN. An executor can name a version or alias
+    (arn:aws:lambda:<region>:<account>:function:<name>:PROD); drop the qualifier so it matches.
+    """
+    if not arn:
+        return None
+    return ":".join(arn.split(":")[:7])
+
+
 @timeit
 def get_bedrock_agent_action_groups_list(
     boto3_session: boto3.session.Session,
@@ -179,6 +190,7 @@ def get_bedrock_agent_action_groups_list(
                     )
                     ag_detail = detail.get("agentActionGroup", {})
                     ag["lambdaArn"] = ag_detail.get("actionGroupExecutor", {}).get("lambda")
+                    ag["lambdaFunctionArn"] = _unqualified_lambda_arn(ag["lambdaArn"])
                     ag["parentActionSignature"] = ag_detail.get("parentActionSignature")
                     ag["createdAt"] = ag_detail.get("createdAt")
                 except Exception as e:
@@ -753,10 +765,10 @@ def _load_bedrock_agent_action_groups_tx(
     ON CREATE SET hag.firstseen = timestamp()
     SET hag.lastupdated = $aws_update_tag
     WITH i, ag
-    FOREACH (_ IN CASE WHEN ag.lambdaArn IS NULL THEN [] ELSE [1] END |
-        MERGE (l:AWSLambda{id: ag.lambdaArn})
-        ON CREATE SET l.firstseen = timestamp()
-        SET l.lastupdated = $aws_update_tag
+    // lambda_function syncs before bedrock. Another account's function, or one not synced, gets no edge.
+    MATCH (aa:AWSAccount{id: $AWS_ACCOUNT_ID})
+    OPTIONAL MATCH (aa)-[:RESOURCE]->(l:AWSLambda{id: ag.lambdaFunctionArn})
+    FOREACH (_ IN CASE WHEN l IS NULL THEN [] ELSE [1] END |
         MERGE (i)-[inv:INVOKES]->(l)
         ON CREATE SET inv.firstseen = timestamp()
         SET inv.lastupdated = $aws_update_tag
