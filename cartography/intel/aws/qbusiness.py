@@ -178,8 +178,8 @@ def _load_qbusiness_indices_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, index
-    MATCH (app:AWSQBusinessApplication{arn: index.applicationArn})
+    WITH i, index, aa
+    MATCH (aa)-[:RESOURCE]->(app:AWSQBusinessApplication{arn: index.applicationArn})
     MERGE (app)-[hi:HAS_INDEX]->(i)
     ON CREATE SET hi.firstseen = timestamp()
     SET hi.lastupdated = $aws_update_tag
@@ -267,8 +267,8 @@ def _load_qbusiness_data_sources_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, ds
-    MATCH (index:AWSQBusinessIndex{id: ds.indexNodeId})
+    WITH i, ds, aa
+    MATCH (aa)-[:RESOURCE]->(index:AWSQBusinessIndex{id: ds.indexNodeId})
     MERGE (index)-[hds:HAS_DATA_SOURCE]->(i)
     ON CREATE SET hds.firstseen = timestamp()
     SET hds.lastupdated = $aws_update_tag
@@ -349,8 +349,8 @@ def _load_qbusiness_retrievers_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, retriever
-    MATCH (app:AWSQBusinessApplication{arn: retriever.applicationArn})
+    WITH i, retriever, aa
+    MATCH (aa)-[:RESOURCE]->(app:AWSQBusinessApplication{arn: retriever.applicationArn})
     MERGE (app)-[hr:HAS_RETRIEVER]->(i)
     ON CREATE SET hr.firstseen = timestamp()
     SET hr.lastupdated = $aws_update_tag
@@ -434,8 +434,8 @@ def _load_qbusiness_plugins_tx(
     MERGE (aa)-[r:RESOURCE]->(i)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = $aws_update_tag
-    WITH i, plugin
-    MATCH (app:AWSQBusinessApplication{arn: plugin.applicationArn})
+    WITH i, plugin, aa
+    MATCH (aa)-[:RESOURCE]->(app:AWSQBusinessApplication{arn: plugin.applicationArn})
     MERGE (app)-[hp:HAS_PLUGIN]->(i)
     ON CREATE SET hp.firstseen = timestamp()
     SET hp.lastupdated = $aws_update_tag
