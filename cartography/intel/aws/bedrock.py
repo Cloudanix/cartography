@@ -60,7 +60,8 @@ def get_bedrock_knowledge_bases_list(
                 kb["roleArn"] = kb_detail.get("roleArn")
                 storage_config = kb_detail.get("storageConfiguration", {})
                 kb["storageType"] = storage_config.get("type")
-                kb["s3BucketArn"] = _extract_storage_s3_bucket_arn(storage_config)
+                # Only the S3 Vectors backend names a bucket: arn:aws:s3vectors:..., not an S3Bucket.
+                kb["vectorBucketArn"] = storage_config.get("s3VectorsConfiguration", {}).get("vectorBucketArn")
             except Exception as e:
                 logger.warning(
                     f"Could not get details for bedrock knowledge base {kb['knowledgeBaseId']}. "
@@ -69,16 +70,6 @@ def get_bedrock_knowledge_bases_list(
     except Exception as e:
         logger.warning(f"Could not list bedrock knowledge base, skipping... -{e}")
     return knowledge_bases
-
-
-def _extract_storage_s3_bucket_arn(storage_config: Dict) -> str:
-    """
-    Knowledge base storage backends vary (OpenSearch Serverless, Pinecone, RDS,
-    Redis, MongoDB, S3 vectors). Only the S3 vectors backend references an S3
-    bucket; return its ARN when present, else None.
-    """
-    s3_vectors = storage_config.get("s3VectorsConfiguration", {})
-    return s3_vectors.get("vectorBucketArn")
 
 
 @timeit
@@ -653,6 +644,7 @@ def _load_bedrock_knowledge_bases_tx(
     i.updatedat = kb.updatedAt,
     i.rolearn = kb.roleArn,
     i.storagetype = kb.storageType,
+    i.vectorbucketarn = kb.vectorBucketArn,
     i.lastupdated = $aws_update_tag,
     i.region = kb.region,
     i.consolelink = kb.consolelink
@@ -668,14 +660,6 @@ def _load_bedrock_knowledge_bases_tx(
         MERGE (i)-[ar:BEDROCK_KB_ASSUMEROLE_ALLOW]->(p)
         ON CREATE SET ar.firstseen = timestamp()
         SET ar.lastupdated = $aws_update_tag
-    )
-    FOREACH (_ IN CASE WHEN kb.s3BucketArn IS NULL THEN [] ELSE [1] END |
-        MERGE (b:S3Bucket{arn: kb.s3BucketArn})
-        ON CREATE SET b.firstseen = timestamp()
-        SET b.lastupdated = $aws_update_tag
-        MERGE (i)-[si:STORES_IN]->(b)
-        ON CREATE SET si.firstseen = timestamp()
-        SET si.lastupdated = $aws_update_tag
     )
     """
 
