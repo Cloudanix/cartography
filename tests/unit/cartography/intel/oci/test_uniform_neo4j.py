@@ -11,6 +11,7 @@ from cartography.intel.oci import utils
 TEST_UPDATE_TAG = 123456789
 TEST_COMPARTMENT_ID = "ocid1.compartment.oc1..aaaa"
 TEST_TENANCY_ID = "ocid1.tenancy.oc1..bbbb"
+TEST_WORKSPACE_ID = "ws-1"
 
 
 def assert_batched(call, rows):
@@ -56,8 +57,25 @@ class TestReads:
         session = MagicMock()
         session.execute_read.return_value = [{"compartment.ocid": TEST_COMPARTMENT_ID}]
 
-        result = utils.get_compartments_in_tenancy(session, TEST_TENANCY_ID)
+        result = utils.get_compartments_in_tenancy(session, TEST_TENANCY_ID, TEST_WORKSPACE_ID)
 
         session.run.assert_not_called()
         session.execute_read.assert_called_once()
         assert result == [{"compartment.ocid": TEST_COMPARTMENT_ID}]
+
+    def test_tenancy_lookups_bind_the_syncing_workspace(self):
+        readers = (
+            utils.get_compartments_in_tenancy,
+            utils.get_groups_in_tenancy,
+            utils.get_policies_in_tenancy,
+            utils.get_regions_in_tenancy,
+        )
+        for reader in readers:
+            session = MagicMock()
+            session.execute_read.return_value = []
+
+            reader(session, TEST_TENANCY_ID, TEST_WORKSPACE_ID)
+
+            call = session.execute_read.call_args
+            assert call.args[1].startswith("MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->"), reader
+            assert call.kwargs == {"WORKSPACE_ID": TEST_WORKSPACE_ID, "OCI_TENANCY_ID": TEST_TENANCY_ID}, reader

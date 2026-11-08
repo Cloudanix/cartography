@@ -7,7 +7,7 @@ OCI exposure layers (docs/exposure-layers/plan.md):
     L5 network blast radius            blast_radius.py
 
 Runs after the OCI analysis jobs of each compartment; reads the graph only, calls no OCI API.
-Writes nodes of the compartment being analysed; network objects are read tenancy-wide.
+Reads and writes only the compartment being analysed (one compartment = one Cloudanix entity).
 Leaves the legacy exposed_internet / exposed_internet_type / publicContext untouched.
 """
 import logging

@@ -39,7 +39,6 @@ from cartography.intel.exposure.rules import is_world
 from cartography.intel.oci.exposure_layers.network import any_source_open
 from cartography.intel.oci.exposure_layers.network import COMPARTMENT
 from cartography.intel.oci.exposure_layers.network import Network
-from cartography.intel.oci.exposure_layers.network import TENANCY
 from cartography.intel.oci.exposure_layers.network import V6
 from cartography.intel.oci.load_balancer import LOAD_BALANCER_LABEL
 from cartography.intel.oci.load_balancer import NETWORK_LOAD_BALANCER_LABEL
@@ -156,11 +155,11 @@ def db_systems(rows: List[Dict], nodes: Dict[str, Reach]) -> Dict[str, Reach]:
 # ---------------------------------------------------------------- load balancers
 
 _LB_QUERY = f"""
-MATCH {TENANCY}(c:OCICompartment)-[:RESOURCE]->(lb)
+MATCH {COMPARTMENT}(lb)
 WHERE lb:{LOAD_BALANCER_LABEL} OR lb:{NETWORK_LOAD_BALANCER_LABEL}
 RETURN lb.id AS id,
     CASE WHEN lb:{LOAD_BALANCER_LABEL} THEN '{LOAD_BALANCER_LABEL}' ELSE '{NETWORK_LOAD_BALANCER_LABEL}' END AS label,
-    c.id = $OCI_COMPARTMENT_ID AS in_scope, coalesce(lb.is_private, false) AS private,
+    coalesce(lb.is_private, false) AS private,
     coalesce(lb.subnet_ids, []) AS subnets, coalesce(lb.nsg_ids, []) AS nsgs,
     coalesce(lb.listener_targets, []) AS listeners, lb.backend_endpoints AS endpoints,
     coalesce(lb.backend_ips, []) + coalesce(lb.backend_target_ids, []) AS addresses
@@ -335,14 +334,13 @@ def service_endpoints(rows: List[Dict], public_reason: str) -> Dict[str, Reach]:
 def _load_balancers(
     session: neo4j.Session, params: Dict, net: Network, vnic_rows: List[Dict], instances: Dict[str, Reach],
 ) -> Results:
-    """LBs are read tenancy-wide: a LB in another compartment can front this compartment's instances."""
+    """This compartment's LBs; one in another compartment fronting these instances is not seen (network.py)."""
     rows = [dict(r) for r in session.run(_LB_QUERY, **params)]
     lbs = {row["id"]: load_balancer_reach(row, net) for row in rows}
     add_lb_backends(rows, lbs, vnic_rows, instances, net)
     out: Results = {LOAD_BALANCER_LABEL: {}, NETWORK_LOAD_BALANCER_LABEL: {}}
     for row in rows:
-        if row["in_scope"]:
-            out[row["label"]][row["id"]] = lbs[row["id"]]
+        out[row["label"]][row["id"]] = lbs[row["id"]]
     return out
 
 

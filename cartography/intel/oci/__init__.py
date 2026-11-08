@@ -115,7 +115,11 @@ def _sync_one_compartment(
             logger.info(json.dumps(_ev))
 
     # Get regions from neo4j (populated by IAM region subscriptions)
-    updated_regions = [r["name"] for r in utils.get_regions_in_tenancy(neo4j_session, tenancy_id)]
+    updated_regions = [
+        r["name"] for r in utils.get_regions_in_tenancy(
+            neo4j_session, tenancy_id, common_job_parameters["WORKSPACE_ID"],
+        )
+    ]
     if updated_regions:
         regions = updated_regions
 
