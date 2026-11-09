@@ -994,6 +994,28 @@ def _sync_multiple_projects(
     del common_job_parameters["GCP_PROJECT_ID"]
 
 
+def _run_analysis_only(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    The analysis subrun: read the organization the resource subruns wrote and run the post-sync phases. No API call,
+    CRM sync or cleanup: those carry this subrun's newer update tag, so a failed (empty) project or folder list would
+    delete what the resource subruns wrote, and get_all_regions can raise before the analysis.
+    """
+    organization_id = crm.read_project_organization_id(
+        neo4j_session, common_job_parameters["WORKSPACE_ID"], common_job_parameters["GCP_PROJECT_ID"],
+    )
+    if not organization_id:
+        logger.warning(
+            "GCP project %s has no organization in the graph yet; skipping the analysis.",
+            common_job_parameters["GCP_PROJECT_ID"],
+        )
+        return
+    common_job_parameters["GCP_ORGANIZATION_ID"] = organization_id
+    post_sync.run(
+        GCP_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, [post_sync.ANALYSIS_SYNC],
+        RESOURCE_FUNCTIONS.keys(),
+    )
+
+
 @timeit
 def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optional[Dict]:
     """
@@ -1048,6 +1070,11 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
                 pagination["hasNextPage"] = False
                 common_job_parameters["pagination"][service.get("name", None)] = pagination
         requested_syncs = parse_and_validate_gcp_requested_syncs(gcp_requested_syncs_string[:-1])
+
+    if post_sync.analysis_only(requested_syncs):
+        _run_analysis_only(neo4j_session, common_job_parameters)
+        del common_job_parameters["service_labels"]
+        return common_job_parameters
 
     resources = _initialize_resources(credentials, config)
 

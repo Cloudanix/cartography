@@ -6,6 +6,7 @@ import time
 from string import Template
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
@@ -278,6 +279,26 @@ def _attach_gcp_project_parent(neo4j_session: neo4j.Session, project: Dict, gcp_
         ProjectId=project['projectId'],
         gcp_update_tag=gcp_update_tag,
     )
+
+
+def read_project_organization_id(neo4j_session: neo4j.Session, workspace_id: str, project_id: str) -> Optional[str]:
+    """
+    The GCPOrganization id that owns project_id in this workspace, read from the graph (no API call).
+
+    :param workspace_id: the syncing workspace (WORKSPACE_ID); the lookup starts there.
+    :param project_id: the project the request is for (GCP_PROJECT_ID).
+    :return: the organization id, or None when no resource subrun has synced the project yet.
+    """
+    record = neo4j_session.run(
+        """
+        MATCH (:CloudanixWorkspace{id: $WORKSPACE_ID})-[:OWNER]->(o:GCPOrganization)
+              -[:OWNER]->(:GCPProject{id: $GCP_PROJECT_ID})
+        RETURN o.id AS id
+        LIMIT 1
+        """,
+        WORKSPACE_ID=workspace_id, GCP_PROJECT_ID=project_id,
+    ).single()
+    return record["id"] if record else None
 
 
 @timeit
