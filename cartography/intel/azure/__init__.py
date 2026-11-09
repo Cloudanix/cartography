@@ -170,7 +170,7 @@ def _sync_one_subscription(
                             **error_info,
                         }),
                     )
-            else:
+            elif func_name != post_sync.ANALYSIS_SYNC:
                 logger.warning(f'AZURE sync function "{func_name}" was specified but does not exist. Did you misspell it?')
 
         total_services_elapsed = round(time.time() - sub_start, 2)
@@ -222,7 +222,7 @@ def _sync_one_subscription(
                             )
                         except Exception as e:
                             logger.warning(f"error to append service {request} in futures - {e}")
-                    else:
+                    elif request != post_sync.ANALYSIS_SYNC:
                         logger.warning(f'Azure sync function "{request}" was specified but does not exist. Did you misspell it?')
 
                 for future in as_completed(futures):
@@ -308,16 +308,19 @@ def _sync_multiple_subscriptions(
             sub['subscriptionId'],
         )
 
-        _sync_one_subscription(
-            neo4j_session,
-            credentials,
-            sub['subscriptionId'],
-            tenant_obj,
-            requested_syncs,
-            update_tag,
-            common_job_parameters,
-            config,
-        )
+        # The analysis subrun skips the resource syncs and tag.sync: their cleanups would carry this subrun's newer
+        # tag and delete the resource groups / tags a failed (empty) list did not refresh.
+        if not post_sync.analysis_only(requested_syncs):
+            _sync_one_subscription(
+                neo4j_session,
+                credentials,
+                sub['subscriptionId'],
+                tenant_obj,
+                requested_syncs,
+                update_tag,
+                common_job_parameters,
+                config,
+            )
 
         post_sync.run(
             AZURE_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs,
