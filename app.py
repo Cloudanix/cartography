@@ -170,8 +170,6 @@ def process_request(context, args, retry=0):
                     "services": args.get("services"),
                     "dc": args.get("dc"),
                     "defaultRegion": args.get("primaryRegion", None),
-                    # Set by cloudanix-web on group subruns of a run with an "analysis" subrun.
-                    "deferAnalysis": args.get("deferAnalysis", False),
                 },
                 "services": svcs,
                 "updateTag": args.get("runTimestamp"),
@@ -222,7 +220,6 @@ def process_request(context, args, retry=0):
                     "manualRun": args.get("manualRun"),
                     "services": args.get("services"),
                     "defaultSubscription": args.get("defaultSubscription"),
-                    "deferAnalysis": args.get("deferAnalysis", False),
                     "authMode": args.get("headers", {}).get(
                         "x-cloudanix-azure-auth-mode",
                         "user_impersonation",

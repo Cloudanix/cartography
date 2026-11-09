@@ -6,10 +6,10 @@ import cartography.intel.aws
 ANALYSIS_JOB_DIR = os.path.join(os.path.dirname(cartography.__file__), 'data', 'jobs', 'analysis')
 
 
-def _analysis_jobs_run_by_account_sync(mocker, monkeypatch, requested_syncs=(), params=None):
+def _analysis_jobs_run_by_account_sync(mocker, monkeypatch, requested_syncs=()):
     """
-    Run _sync_one_account for requested_syncs (none: everything) with request params; return the analysis job names it
-    runs, plus "exposure_layers" when it runs the layers.
+    Run _sync_one_account for requested_syncs (none: everything); return the analysis job names it runs, plus
+    "exposure_layers" when it runs the layers.
     """
     monkeypatch.setenv("LOCAL_RUN", "1")
     jobs = []
@@ -24,7 +24,7 @@ def _analysis_jobs_run_by_account_sync(mocker, monkeypatch, requested_syncs=(), 
     config = MagicMock()
     config.aws_excluded_regions = None
     config.refresh_entitlements = False
-    config.params = params or {}
+    config.params = {}
 
     cartography.intel.aws._sync_one_account(
         MagicMock(), MagicMock(), "111111111111", 42, {"AWS_ID": "111111111111"}, ["us-east-1"], list(requested_syncs),
@@ -44,13 +44,7 @@ def test_account_sync_runs_the_phases_in_order_then_the_layers_before_posture(mo
     assert jobs == [*phases.link, *phases.exposure, "exposure_layers", *phases.posture]
 
 
-def test_group_subrun_skips_the_analysis_when_its_run_defers_it(mocker, monkeypatch):
-    jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch, ["rds"], params={"deferAnalysis": True})
-
-    assert jobs == []
-
-
-def test_group_subrun_without_defer_keeps_running_the_jobs_but_not_the_layers(mocker, monkeypatch):
+def test_group_subrun_runs_the_jobs_but_not_the_layers(mocker, monkeypatch):
     jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch, ["rds"])
 
     assert jobs == _phase_jobs(cartography.intel.aws.AWS_PHASES)

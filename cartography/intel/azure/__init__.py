@@ -321,7 +321,7 @@ def _sync_multiple_subscriptions(
 
         post_sync.run(
             AZURE_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs,
-            RESOURCE_FUNCTIONS.keys(), defer=post_sync.defer_requested(config.params),
+            RESOURCE_FUNCTIONS.keys(),
         )
 
         del common_job_parameters["AZURE_SUBSCRIPTION_ID"]

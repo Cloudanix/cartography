@@ -1071,7 +1071,7 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
 
     post_sync.run(
         GCP_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs,
-        RESOURCE_FUNCTIONS.keys(), defer=post_sync.defer_requested(config.params),
+        RESOURCE_FUNCTIONS.keys(),
     )
 
     del common_job_parameters["service_labels"]

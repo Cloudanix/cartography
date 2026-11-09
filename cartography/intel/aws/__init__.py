@@ -374,7 +374,7 @@ def _sync_one_account(
 
     post_sync.run(
         AWS_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, aws_requested_syncs,
-        RESOURCE_FUNCTIONS.keys(), defer=post_sync.defer_requested(config.params),
+        RESOURCE_FUNCTIONS.keys(),
     )
 
     merge_module_sync_metadata(

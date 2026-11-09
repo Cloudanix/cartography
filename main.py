@@ -134,8 +134,6 @@ def gcp_process_request(logger, params):
             "services": params.get("services"),
             "iamEntitlementRequestTopic": params.get("iamEntitlementRequestTopic"),
             "externalIdp": params.get("externalIdp"),
-            # Set by cloudanix-web on group subruns of a run with an "analysis" subrun.
-            "deferAnalysis": params.get("deferAnalysis", False),
         },
         "services": svcs,
         "updateTag": params.get("runTimestamp"),
@@ -214,7 +212,6 @@ def oci_process_request(logger, params):
             "regions": params.get("regions"),
             "userOcid": params.get("userOcid"),
             "fingerprint": params.get("fingerprint"),
-            "deferAnalysis": params.get("deferAnalysis", False),
         },
         "services": svcs,
         "updateTag": params.get("runTimestamp"),

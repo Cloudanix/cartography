@@ -3,10 +3,9 @@ Post-sync analysis of one cloud scope (AWS account, GCP project, Azure subscript
 jobs and the exposure layers that run after its resource syncs.
 
 The work reads the whole scope's graph. cloudanix-web splits an inventory run into service-group subruns that sync in
-parallel, so running it at the end of every subrun recomputes it once per group from a half-written graph. A run that
-has a dedicated analysis subrun (services ["analysis"]) runs every phase there, once, and tells its group subruns to
-skip it (request param deferAnalysis). A caller that does not defer keeps the old behaviour: every subrun runs the
-analysis jobs, and only a dedicated or full run computes the exposure layers.
+parallel. Every subrun runs the analysis jobs at its end, as before. Only a dedicated analysis request
+(services ["analysis"]) or a full run (the CLI default) also computes the exposure layers: computing them once per
+group would race on the same nodes from a half-written graph.
 """
 import json
 import logging
@@ -31,8 +30,6 @@ ANALYSIS_SYNC = "analysis"
 EXPOSURE_LAYERS_SYNC = "exposure_layers"
 # Request keys that name the post-sync work rather than a resource sync. exposure_layers is the older, narrower name.
 POST_SYNC_SYNCS = frozenset({ANALYSIS_SYNC, EXPOSURE_LAYERS_SYNC})
-# Request param a group subrun carries when its run has a dedicated analysis subrun.
-DEFER_ANALYSIS_PARAM = "deferAnalysis"
 
 
 @dataclass(frozen=True)
@@ -48,14 +45,6 @@ class Phases:
     link: Tuple[str, ...] = ()
     exposure: Tuple[str, ...] = ()
     posture: Tuple[str, ...] = ()
-
-
-def defer_requested(params: Optional[Dict[str, Any]]) -> bool:
-    """
-    :param params: the sync request's params (config.params).
-    True only for a literal JSON true: anything else keeps the analysis in this subrun, the safe default.
-    """
-    return (params or {}).get(DEFER_ANALYSIS_PARAM) is True
 
 
 def is_dedicated(requested_syncs: Optional[Iterable[str]], all_syncs: Iterable[str]) -> bool:
@@ -75,22 +64,16 @@ def run(
     common_job_parameters: Dict,
     requested_syncs: Optional[Iterable[str]],
     all_syncs: Iterable[str],
-    defer: bool = False,
 ) -> None:
     """
-    Run one scope's post-sync phases, or skip them when another subrun of the run does them.
+    Run one scope's post-sync phases. The exposure layers run only in a dedicated run (is_dedicated).
     A failing job or layers step is logged and reported in the sync response (collect_failed_analysis_jobs), and the
     remaining steps still run.
 
     :param phases: the cloud's analysis jobs.
     :param layers: the cloud's exposure_layers.run.
-    :param defer: defer_requested(config.params); ignored by a dedicated run.
     """
     dedicated = is_dedicated(requested_syncs, all_syncs)
-    if defer and not dedicated:
-        logger.info("Post-sync analysis deferred to the run's analysis subrun.")
-        return
-
     phase_seconds: Dict[str, float] = {}
     job_seconds: Dict[str, float] = {}
 
