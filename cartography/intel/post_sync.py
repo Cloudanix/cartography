@@ -25,10 +25,9 @@ from cartography.util import run_analysis_step_logged
 
 logger = logging.getLogger(__name__)
 
-# Request service that names the post-sync work rather than a resource sync.
+# Request service that names the post-sync work rather than a resource sync. A failed exposure layers step is
+# reported under this name in the sync response's failed_analysis_jobs.
 ANALYSIS_SYNC = "analysis"
-# Name of the exposure layers step in the sync response's failed_analysis_jobs.
-EXPOSURE_LAYERS_STEP = "exposure_layers"
 
 
 @dataclass(frozen=True)
@@ -85,8 +84,8 @@ def run(
     _timed(phase_seconds, "link", lambda: run_jobs(phases.link))
     _timed(phase_seconds, "exposure", lambda: run_jobs(phases.exposure))
     _timed(
-        phase_seconds, EXPOSURE_LAYERS_STEP, lambda: run_analysis_step_logged(
-            EXPOSURE_LAYERS_STEP, lambda: layers(neo4j_session, common_job_parameters), common_job_parameters,
+        phase_seconds, "layers", lambda: run_analysis_step_logged(
+            ANALYSIS_SYNC, lambda: layers(neo4j_session, common_job_parameters), common_job_parameters,
         ),
     )
     _timed(phase_seconds, "posture", lambda: run_jobs(phases.posture))

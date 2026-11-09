@@ -307,7 +307,7 @@ request that names it, or one that asks for every resource (CLI default). clouda
 scheduled run into parallel service-group subruns and sends `analysis` as its own subrun after them;
 a group subrun runs none of it, since computing in each would recompute N times from a half-written
 graph and race on the same nodes. A failure is logged and reported in the sync response's
-`failed_analysis_jobs` as `exposure_layers`, never raised.
+`failed_analysis_jobs` as `analysis`, never raised.
 
 Context for the console (layers.py contract): `exposure_paths` (per entry point: entry, ports,
 hops), `exposure_blocked_by` (why a public node is unreachable), `network_reachable_data_stores`

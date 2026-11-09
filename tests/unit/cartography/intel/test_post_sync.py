@@ -52,7 +52,7 @@ def test_a_failing_exposure_layers_step_is_reported_not_raised():
     with collect_failed_analysis_jobs() as failed, patch.object(post_sync, "run_analysis_job"):
         post_sync.run(post_sync.Phases(), boom, None, {"AWS_ID": "123"}, ["analysis"], ALL_SYNCS)
 
-    assert failed == [{"job": "exposure_layers", "scope": {"AWS_ID": "123"}}]
+    assert failed == [{"job": "analysis", "scope": {"AWS_ID": "123"}}]
 
 
 def test_analysis_is_the_post_sync_service():
