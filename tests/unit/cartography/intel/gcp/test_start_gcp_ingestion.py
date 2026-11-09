@@ -18,7 +18,8 @@ def test_each_analysis_job_runs_once_per_sync():
             patch(f'{GCP}.crm.sync_gcp_organizations'), patch(f'{GCP}.crm.sync_gcp_folders'), \
             patch(f'{GCP}.crm.sync_gcp_projects'), \
             patch(f'{GCP}.crm.get_gcp_projects', return_value=[{'projectId': PROJECT_ID}]), \
-            patch(f'{GCP}._sync_single_project'), patch(f'{GCP}.run_analysis_job') as run_analysis_job:
+            patch(f'{GCP}._sync_single_project'), patch(f'{GCP}.exposure_layers.run'), \
+            patch('cartography.intel.post_sync.run_analysis_job') as run_analysis_job:
         cartography.intel.gcp.start_gcp_ingestion(None, config)
 
     runs = Counter(call.args[0] for call in run_analysis_job.call_args_list)

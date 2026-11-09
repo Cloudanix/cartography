@@ -127,7 +127,7 @@ def test_lambda_exposure_runs_after_the_jobs_it_reads(mocker, monkeypatch):
     mocker.patch.object(cartography.intel.aws, "_resolve_sync_regions", return_value=["us-east-1"])
     mocker.patch.object(cartography.intel.aws, "_build_aws_sync_kwargs", return_value={})
     mocker.patch.object(cartography.intel.aws, "run_cleanup_job")
-    mocker.patch.object(cartography.intel.aws, "run_analysis_job", side_effect=lambda name, *_: jobs.append(name))
+    mocker.patch.object(cartography.intel.post_sync, "run_analysis_job", side_effect=lambda name, *_: jobs.append(name))
     config = MagicMock()
     config.aws_excluded_regions = None
     config.refresh_entitlements = False

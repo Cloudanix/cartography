@@ -28,36 +28,41 @@ from . import tags
 from . import utils
 from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
-from cartography.intel.exposure import step as exposure_step
+from cartography.intel import post_sync
 from cartography.intel.oci.util.common import parse_and_validate_oci_requested_syncs
-from cartography.util import run_analysis_job_logged as run_analysis_job
 # from cartography.util import run_cleanup_job
 
 logger = logging.getLogger(__name__)
 Resources = namedtuple('Resources', 'compute iam network storage oke monitoring encryption logging containerregistry database')
 
-# Analysis jobs run per compartment after all resource syncs, in this order.
-OCI_ANALYSIS_JOBS = [
-    'oci_subnet_asset_exposure.json',
-    # Reads the subnet job's exposed_internet.
-    'oci_security_list_asset_exposure.json',
-    'oci_load_balancer_asset_exposure.json',
-    'oci_instance_asset_exposure.json',
-    # Reads the instance job's exposed_internet.
-    'oci_boot_volume_asset_exposure.json',
-    'oci_db_system_asset_exposure.json',
-    'oci_iam_user_analysis.json',
-    'oci_iam_policy_analysis.json',
-    'oci_encryption_analysis.json',
-    'oci_monitoring_analysis.json',
-    'oci_containerregistry_asset_exposure.json',
-    'oci_object_storage_asset_exposure.json',
-    'oci_file_storage_asset_exposure.json',
-    'oci_autonomous_database_asset_exposure.json',
-    'oci_oke_cluster_asset_exposure.json',
-    'oci_api_gateway_asset_exposure.json',
-    'oci_logging_analysis.json',
-]
+# Post-sync analysis of one compartment, in run order (see post_sync.Phases). The exposure jobs read network objects and
+# load balancers in any compartment of the tenancy (a shared Network compartment), and write only this compartment's.
+OCI_PHASES = post_sync.Phases(
+    exposure=(
+        'oci_subnet_asset_exposure.json',
+        # Reads the subnet job's exposed_internet.
+        'oci_security_list_asset_exposure.json',
+        'oci_load_balancer_asset_exposure.json',
+        # Reads the load balancer job's exposed_internet to flag load balancer backends.
+        'oci_instance_asset_exposure.json',
+        # Reads the instance job's exposed_internet.
+        'oci_boot_volume_asset_exposure.json',
+        'oci_db_system_asset_exposure.json',
+        'oci_containerregistry_asset_exposure.json',
+        'oci_object_storage_asset_exposure.json',
+        'oci_file_storage_asset_exposure.json',
+        'oci_autonomous_database_asset_exposure.json',
+        'oci_oke_cluster_asset_exposure.json',
+        'oci_api_gateway_asset_exposure.json',
+    ),
+    posture=(
+        'oci_iam_user_analysis.json',
+        'oci_iam_policy_analysis.json',
+        'oci_encryption_analysis.json',
+        'oci_monitoring_analysis.json',
+        'oci_logging_analysis.json',
+    ),
+)
 
 
 def _sync_one_compartment(
@@ -69,6 +74,7 @@ def _sync_one_compartment(
     oci_sync_tag: int,
     common_job_parameters: Dict[str, Any],
     regions: List[str],
+    defer_analysis: bool = False,
 ) -> None:
     """
     Sync requested services for a single OCI compartment.
@@ -125,7 +131,7 @@ def _sync_one_compartment(
 
     # Run remaining resource syncs (skip IAM since it's already handled above)
     for func_name in requested_syncs:
-        if func_name in ("iam", exposure_step.EXPOSURE_LAYERS_SYNC):
+        if func_name == "iam" or func_name in post_sync.POST_SYNC_SYNCS:
             continue
         if func_name in RESOURCE_FUNCTIONS:
             logger.info("Syncing OCI %s for compartment '%s'.", func_name, compartment_id)
@@ -164,13 +170,9 @@ def _sync_one_compartment(
                 'OCI sync function "%s" was specified but does not exist. Did you misspell it?', func_name,
             )
 
-    # Run analysis jobs after all resource syncs complete
-    for job_file in OCI_ANALYSIS_JOBS:
-        run_analysis_job(job_file, neo4j_session, common_job_parameters)
-
-    # Reads what the syncs and jobs above wrote; runs only when requested (see exposure/step.py).
-    exposure_step.run_if_requested(
-        exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
+    post_sync.run(
+        OCI_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs,
+        RESOURCE_FUNCTIONS.keys(), defer=defer_analysis,
     )
 
     logger.info(
@@ -195,6 +197,7 @@ def _sync_multiple_compartments(
     sync_tag: int,
     common_job_parameters: Dict[str, Any],
     regions: List[str],
+    defer_analysis: bool = False,
 ) -> None:
     """
     Sync OCI resources for the requested compartments.
@@ -217,7 +220,7 @@ def _sync_multiple_compartments(
 
         _sync_one_compartment(
             neo4j_session, resources, compartment_id, tenancy_id,
-            requested_syncs, sync_tag, common_job_parameters, regions,
+            requested_syncs, sync_tag, common_job_parameters, regions, defer_analysis,
         )
 
         del common_job_parameters["OCI_COMPARTMENT_ID"]
@@ -465,6 +468,7 @@ def start_oci_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         _sync_multiple_compartments(
             neo4j_session, credentials, tenancy_ocid, compartment_list,
             requested_syncs, config.update_tag, common_job_parameters, regions,
+            defer_analysis=post_sync.defer_requested(config.params),
         )
         logger.info(
             json.dumps({

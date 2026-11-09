@@ -76,7 +76,8 @@ def _sync_project(requested):
     """Run _sync_single_project sequentially with stub services; return the call order."""
     order = []
     services = {
-        name: (lambda name: lambda *_: order.append(name))(name) for name in ('compute', 'cloudcdn', 'loadbalancer')
+        name: (lambda name: lambda *_: order.append(name))(name)
+        for name in ('compute', 'cloudcdn', 'loadbalancer', 'cloudfunction')
     }
     with patch.dict('os.environ', {'LOCAL_RUN': '1'}), \
             patch.object(cartography.intel.gcp, 'RESOURCE_FUNCTIONS', services), \
@@ -85,6 +86,10 @@ def _sync_project(requested):
             patch.object(
                 cartography.intel.gcp.loadbalancer, 'sync_external_backend_members',
                 side_effect=lambda *_: order.append('members'),
+            ), \
+            patch.object(
+                cartography.intel.gcp.loadbalancer, 'link_backend_services_to_negs',
+                side_effect=lambda *_: order.append('neg_links'),
             ):
         config = MagicMock()
         config.params = {}
@@ -107,7 +112,19 @@ def test_project_sync_resolves_backend_members_after_the_parallel_syncs():
 
 
 def test_project_sync_skips_backend_members_without_load_balancer_syncs():
-    assert 'members' not in _sync_project(['compute'])
+    order = _sync_project(['compute'])
+
+    assert 'members' not in order
+    assert 'neg_links' not in order
+
+
+def test_function_only_subrun_links_serverless_negs_without_the_member_api_calls():
+    # cloudanix-web syncs functions and load balancers in different, parallel subruns. A function loaded after the
+    # load balancer subrun linked its NEGs still gets its SERVERLESS_TARGET edge from its own subrun.
+    order = _sync_project(['cloudfunction'])
+
+    assert order[-1] == 'neg_links'
+    assert 'members' not in order
 
 
 def _pages(collection, method, pages):
