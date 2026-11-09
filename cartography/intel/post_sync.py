@@ -55,6 +55,15 @@ def analysis_requested(requested_syncs: Optional[Iterable[str]], all_syncs: Iter
     return not requested or ANALYSIS_SYNC in requested or requested >= set(all_syncs)
 
 
+def analysis_only(requested_syncs: Optional[Iterable[str]]) -> bool:
+    """
+    True for the analysis subrun: it reads the graph the group subruns wrote, so a cloud skips every API call, sync
+    and cleanup and goes straight to run(). A cleanup there would carry this subrun's newer update tag and delete
+    what a failed (empty) list did not refresh.
+    """
+    return set(requested_syncs or []) == {ANALYSIS_SYNC}
+
+
 def run(
     phases: Phases,
     layers: Callable[[neo4j.Session, Dict], Any],
