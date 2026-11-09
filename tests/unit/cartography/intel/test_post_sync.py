@@ -57,3 +57,17 @@ def test_a_failing_exposure_layers_step_is_reported_not_raised():
 
 def test_analysis_is_the_post_sync_service():
     assert post_sync.ANALYSIS_SYNC == "analysis"
+
+
+@pytest.mark.parametrize(
+    ("module", "validate"),
+    [
+        ("cartography.intel.aws.resources", "parse_and_validate_aws_requested_syncs"),
+        ("cartography.intel.azure.util.common", "parse_and_validate_azure_requested_syncs"),
+        ("cartography.intel.gcp.util.common", "parse_and_validate_gcp_requested_syncs"),
+    ],
+)
+def test_invalid_sync_error_lists_analysis(module, validate):
+    # importorskip: the Azure SDK may be absent locally.
+    with pytest.raises(ValueError, match=r"valid values is: .*\banalysis\b"):
+        getattr(pytest.importorskip(module), validate)("not-a-sync")

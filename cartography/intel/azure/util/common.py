@@ -12,7 +12,7 @@ def parse_and_validate_azure_requested_syncs(azure_requested_syncs: str) -> List
         if resource in RESOURCE_FUNCTIONS or resource == ANALYSIS_SYNC:
             validated_resources.append(resource)
         else:
-            valid_syncs: str = ', '.join(RESOURCE_FUNCTIONS.keys())
+            valid_syncs: str = ', '.join([*RESOURCE_FUNCTIONS.keys(), ANALYSIS_SYNC])
             raise ValueError(
                 f'Error parsing `azure-requested-syncs`. You specified "{azure_requested_syncs}". '
                 f'Please check that your string is formatted properly. '

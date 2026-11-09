@@ -143,7 +143,7 @@ def parse_and_validate_aws_requested_syncs(aws_requested_syncs: str) -> List[str
         if resource in RESOURCE_FUNCTIONS or resource == ANALYSIS_SYNC:
             validated_resources.append(resource)
         else:
-            valid_syncs: str = ", ".join(RESOURCE_FUNCTIONS.keys())
+            valid_syncs: str = ", ".join([*RESOURCE_FUNCTIONS.keys(), ANALYSIS_SYNC])
             raise ValueError(
                 f'Error parsing `aws-requested-syncs`. You specified "{aws_requested_syncs}". '
                 f"Please check that your string is formatted properly. "
