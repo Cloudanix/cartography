@@ -302,7 +302,7 @@ cartography/intel/<cloud>/exposure_layers/
 Each cloud's `run()` is called at the end of that cloud's account / subscription / project / compartment
 sync by `cartography/intel/post_sync.py`, between the exposure jobs and the posture jobs of the cloud's
 phase lists (`AWS_PHASES`, `GCP_PHASES`, `AZURE_PHASES`, `OCI_PHASES`). The analysis jobs and the
-layers together are one service, `analysis` (`exposure_layers` is an older alias): they run only in a
+layers together are one service, `analysis`: they run only in a
 request that names it, or one that asks for every resource (CLI default). cloudanix-web splits a
 scheduled run into parallel service-group subruns and sends `analysis` as its own subrun after them;
 a group subrun runs none of it, since computing in each would recompute N times from a half-written

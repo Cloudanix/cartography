@@ -126,7 +126,7 @@ def _sync_one_compartment(
 
     # Run remaining resource syncs (skip IAM since it's already handled above)
     for func_name in requested_syncs:
-        if func_name == "iam" or func_name in post_sync.POST_SYNC_SYNCS:
+        if func_name == "iam" or func_name == post_sync.ANALYSIS_SYNC:
             continue
         if func_name in RESOURCE_FUNCTIONS:
             logger.info("Syncing OCI %s for compartment '%s'.", func_name, compartment_id)

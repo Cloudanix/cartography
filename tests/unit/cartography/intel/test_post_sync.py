@@ -19,12 +19,12 @@ def _run(requested, phases=PHASES):
     return ran
 
 
-@pytest.mark.parametrize("requested", [["analysis"], ["exposure_layers"], None, [], ["rds", "ec2:instance"]])
+@pytest.mark.parametrize("requested", [["analysis"], None, [], ["rds", "ec2:instance"]])
 def test_dedicated_or_full_run_runs_every_phase_in_order(requested):
     assert _run(requested) == EVERY_STEP
 
 
-@pytest.mark.parametrize("requested", [["rds"], ["ec2:instance"]])
+@pytest.mark.parametrize("requested", [["rds"], ["ec2:instance"], ["exposure_layers"]])
 def test_group_subrun_runs_no_analysis(requested):
     # The analysis service runs it once, after every group; a group's half-written graph would race.
     assert _run(requested) == []
@@ -55,5 +55,5 @@ def test_a_failing_exposure_layers_step_is_reported_not_raised():
     assert failed == [{"job": "exposure_layers", "scope": {"AWS_ID": "123"}}]
 
 
-def test_post_sync_keys_are_not_resource_syncs():
-    assert post_sync.POST_SYNC_SYNCS == {"analysis", "exposure_layers"}
+def test_analysis_is_the_post_sync_service():
+    assert post_sync.ANALYSIS_SYNC == "analysis"

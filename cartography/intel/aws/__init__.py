@@ -637,7 +637,7 @@ def _requested_syncs(services: List[Dict[str, Any]], common_job_parameters: Dict
             common_job_parameters["pagination"][name] = pagination
         names.append(name)
 
-    known = [name for name in names if name in RESOURCE_FUNCTIONS or name in post_sync.POST_SYNC_SYNCS]
+    known = [name for name in names if name in RESOURCE_FUNCTIONS or name == post_sync.ANALYSIS_SYNC]
     unknown = [name for name in names if name not in known]
     if unknown:
         logger.warning(f"Skipping AWS services this cartography build does not sync: {unknown}")

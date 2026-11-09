@@ -25,10 +25,10 @@ from cartography.util import run_analysis_step_logged
 
 logger = logging.getLogger(__name__)
 
+# Request service that names the post-sync work rather than a resource sync.
 ANALYSIS_SYNC = "analysis"
-EXPOSURE_LAYERS_SYNC = "exposure_layers"
-# Request keys that name the post-sync work rather than a resource sync. exposure_layers is the older, narrower name.
-POST_SYNC_SYNCS = frozenset({ANALYSIS_SYNC, EXPOSURE_LAYERS_SYNC})
+# Name of the exposure layers step in the sync response's failed_analysis_jobs.
+EXPOSURE_LAYERS_STEP = "exposure_layers"
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ def analysis_requested(requested_syncs: Optional[Iterable[str]], all_syncs: Iter
     True for the analysis service and for a run that syncs everything first (the CLI default).
     """
     requested = set(requested_syncs or [])
-    return not requested or bool(requested & POST_SYNC_SYNCS) or requested >= set(all_syncs)
+    return not requested or ANALYSIS_SYNC in requested or requested >= set(all_syncs)
 
 
 def run(
@@ -85,8 +85,8 @@ def run(
     _timed(phase_seconds, "link", lambda: run_jobs(phases.link))
     _timed(phase_seconds, "exposure", lambda: run_jobs(phases.exposure))
     _timed(
-        phase_seconds, EXPOSURE_LAYERS_SYNC, lambda: run_analysis_step_logged(
-            EXPOSURE_LAYERS_SYNC, lambda: layers(neo4j_session, common_job_parameters), common_job_parameters,
+        phase_seconds, EXPOSURE_LAYERS_STEP, lambda: run_analysis_step_logged(
+            EXPOSURE_LAYERS_STEP, lambda: layers(neo4j_session, common_job_parameters), common_job_parameters,
         ),
     )
     _timed(phase_seconds, "posture", lambda: run_jobs(phases.posture))

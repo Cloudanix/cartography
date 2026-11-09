@@ -748,7 +748,7 @@ def _sync_single_project(
         parallel_requests = [r for r in requested_syncs if r in RESOURCE_FUNCTIONS and r not in gated_out]
 
         for request in requested_syncs:
-            if request not in RESOURCE_FUNCTIONS and request not in post_sync.POST_SYNC_SYNCS:
+            if request not in RESOURCE_FUNCTIONS and request != post_sync.ANALYSIS_SYNC:
                 logger.warning(
                     f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?',
                 )
