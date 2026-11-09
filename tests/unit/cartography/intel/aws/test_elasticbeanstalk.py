@@ -140,7 +140,7 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
 
 
 def test_account_sync_links_beanstalk_resources_after_the_syncs_and_before_analysis(mocker, monkeypatch):
-    order = _sync_account(mocker, monkeypatch, ['elasticbeanstalk', 'ec2:load_balancer_v2', 'ec2:instance'])
+    order = _sync_account(mocker, monkeypatch, ['elasticbeanstalk', 'ec2:load_balancer_v2', 'ec2:instance', 'analysis'])
 
     assert order.index('link') > max(order.index('elasticbeanstalk'), order.index('elbv2'), order.index('ec2'))
     assert order.index('link') < order.index('analysis')
@@ -154,4 +154,4 @@ def test_account_sync_continues_when_beanstalk_links_fail(mocker, monkeypatch):
     def _boom(*_):
         raise RuntimeError('neo4j down')
 
-    assert 'analysis' in _sync_account(mocker, monkeypatch, ['elasticbeanstalk'], link_side_effect=_boom)
+    assert 'analysis' in _sync_account(mocker, monkeypatch, ['elasticbeanstalk', 'analysis'], link_side_effect=_boom)

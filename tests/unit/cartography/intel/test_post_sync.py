@@ -8,7 +8,6 @@ from cartography.util import collect_failed_analysis_jobs
 ALL_SYNCS = ["ec2:instance", "rds"]
 PHASES = post_sync.Phases(link=("link.json",), exposure=("exp1.json", "exp2.json"), posture=("posture.json",))
 EVERY_STEP = ["link.json", "exp1.json", "exp2.json", "layers", "posture.json"]
-JOBS_ONLY = ["link.json", "exp1.json", "exp2.json", "posture.json"]
 
 
 def _run(requested, phases=PHASES):
@@ -25,9 +24,10 @@ def test_dedicated_or_full_run_runs_every_phase_in_order(requested):
     assert _run(requested) == EVERY_STEP
 
 
-def test_group_subrun_keeps_todays_jobs_without_layers():
-    # Every subrun ran the jobs before; the exposure layers would race across parallel groups.
-    assert _run(["rds"]) == JOBS_ONLY
+@pytest.mark.parametrize("requested", [["rds"], ["ec2:instance"]])
+def test_group_subrun_runs_no_analysis(requested):
+    # The analysis service runs it once, after every group; a group's half-written graph would race.
+    assert _run(requested) == []
 
 
 def test_a_failing_job_is_reported_and_later_phases_still_run():

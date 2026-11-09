@@ -33,10 +33,6 @@ def _analysis_jobs_run_by_account_sync(mocker, monkeypatch, requested_syncs=()):
     return jobs
 
 
-def _phase_jobs(phases):
-    return [*phases.link, *phases.exposure, *phases.posture]
-
-
 def test_account_sync_runs_the_phases_in_order_then_the_layers_before_posture(mocker, monkeypatch):
     jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch, ["analysis"])
 
@@ -44,10 +40,10 @@ def test_account_sync_runs_the_phases_in_order_then_the_layers_before_posture(mo
     assert jobs == [*phases.link, *phases.exposure, "exposure_layers", *phases.posture]
 
 
-def test_group_subrun_runs_the_jobs_but_not_the_layers(mocker, monkeypatch):
+def test_group_subrun_runs_no_analysis(mocker, monkeypatch):
     jobs = _analysis_jobs_run_by_account_sync(mocker, monkeypatch, ["rds"])
 
-    assert jobs == _phase_jobs(cartography.intel.aws.AWS_PHASES)
+    assert jobs == []
 
 
 def test_account_sync_does_not_run_the_duplicate_s3acl_job(mocker, monkeypatch):

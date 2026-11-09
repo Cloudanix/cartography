@@ -115,7 +115,7 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
 
 
 def test_account_sync_links_dms_networks_after_the_syncs_and_before_analysis(mocker, monkeypatch):
-    order = _sync_account(mocker, monkeypatch, ['dms', 'ec2:security_group'])
+    order = _sync_account(mocker, monkeypatch, ['dms', 'ec2:security_group', 'analysis'])
 
     assert order.index('link') > max(order.index('dms'), order.index('sg'))
     assert order.index('link') < order.index('analysis')
@@ -140,4 +140,4 @@ def test_account_sync_continues_when_dms_links_fail(mocker, monkeypatch):
     def _boom(*_):
         raise RuntimeError('neo4j down')
 
-    assert 'analysis' in _sync_account(mocker, monkeypatch, ['dms'], link_side_effect=_boom)
+    assert 'analysis' in _sync_account(mocker, monkeypatch, ['dms', 'analysis'], link_side_effect=_boom)

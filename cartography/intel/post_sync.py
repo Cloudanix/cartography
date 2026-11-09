@@ -2,10 +2,9 @@
 Post-sync analysis of one cloud scope (AWS account, GCP project, Azure subscription, OCI compartment): the analysis
 jobs and the exposure layers that run after its resource syncs.
 
-The work reads the whole scope's graph. cloudanix-web splits an inventory run into service-group subruns that sync in
-parallel. Every subrun runs the analysis jobs at its end, as before. Only a dedicated analysis request
-(services ["analysis"]) or a full run (the CLI default) also computes the exposure layers: computing them once per
-group would race on the same nodes from a half-written graph.
+The work reads the whole scope's graph, so it is its own service, "analysis": cloudanix-web runs it as a separate
+subrun after the service-group subruns finish. A group subrun skips it; running it there would recompute it once per
+group from a half-written graph and race on the same nodes. A full run (the CLI default) syncs everything, then runs it.
 """
 import json
 import logging
@@ -47,11 +46,11 @@ class Phases:
     posture: Tuple[str, ...] = ()
 
 
-def is_dedicated(requested_syncs: Optional[Iterable[str]], all_syncs: Iterable[str]) -> bool:
+def analysis_requested(requested_syncs: Optional[Iterable[str]], all_syncs: Iterable[str]) -> bool:
     """
     :param requested_syncs: the syncs this request names; None or empty means everything.
     :param all_syncs: every resource sync key of the cloud (its RESOURCE_FUNCTIONS keys).
-    True for the analysis subrun and for a run that syncs everything first (the CLI default).
+    True for the analysis service and for a run that syncs everything first (the CLI default).
     """
     requested = set(requested_syncs or [])
     return not requested or bool(requested & POST_SYNC_SYNCS) or requested >= set(all_syncs)
@@ -66,14 +65,16 @@ def run(
     all_syncs: Iterable[str],
 ) -> None:
     """
-    Run one scope's post-sync phases. The exposure layers run only in a dedicated run (is_dedicated).
-    A failing job or layers step is logged and reported in the sync response (collect_failed_analysis_jobs), and the
-    remaining steps still run.
+    Run one scope's post-sync phases when the request asks for the analysis service (analysis_requested); otherwise
+    do nothing. A failing job or layers step is logged and reported in the sync response
+    (collect_failed_analysis_jobs), and the remaining steps still run.
 
     :param phases: the cloud's analysis jobs.
     :param layers: the cloud's exposure_layers.run.
     """
-    dedicated = is_dedicated(requested_syncs, all_syncs)
+    if not analysis_requested(requested_syncs, all_syncs):
+        return
+
     phase_seconds: Dict[str, float] = {}
     job_seconds: Dict[str, float] = {}
 
@@ -83,18 +84,17 @@ def run(
 
     _timed(phase_seconds, "link", lambda: run_jobs(phases.link))
     _timed(phase_seconds, "exposure", lambda: run_jobs(phases.exposure))
-    if dedicated:
-        _timed(
-            phase_seconds, EXPOSURE_LAYERS_SYNC, lambda: run_analysis_step_logged(
-                EXPOSURE_LAYERS_SYNC, lambda: layers(neo4j_session, common_job_parameters), common_job_parameters,
-            ),
-        )
+    _timed(
+        phase_seconds, EXPOSURE_LAYERS_SYNC, lambda: run_analysis_step_logged(
+            EXPOSURE_LAYERS_SYNC, lambda: layers(neo4j_session, common_job_parameters), common_job_parameters,
+        ),
+    )
     _timed(phase_seconds, "posture", lambda: run_jobs(phases.posture))
 
     scope = {key: common_job_parameters[key] for key in ANALYSIS_SCOPE_KEYS if key in common_job_parameters}
     logger.info(
         json.dumps({
-            "event": "post_sync_timing", "scope": scope, "dedicated": dedicated,
+            "event": "post_sync_timing", "scope": scope,
             "phase_seconds": phase_seconds, "job_seconds": job_seconds,
         }),
     )
