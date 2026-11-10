@@ -203,6 +203,12 @@ def _sync_one_account(
     _account_tic = time.perf_counter()
     _service_timings: Dict = {}
     _failed_services: Dict = {}
+    if post_sync.analysis_only(aws_requested_syncs):
+        post_sync.run(
+            AWS_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, aws_requested_syncs,
+            RESOURCE_FUNCTIONS.keys(),
+        )
+        return
     logger.info(f"aws account={current_aws_account_id}: starting full sync")
     regions = _resolve_sync_regions(boto3_session, current_aws_account_id, regions)
     excluded = getattr(config, "aws_excluded_regions", None)
@@ -277,7 +283,7 @@ def _sync_one_account(
                 else:
                     continue
 
-            else:
+            elif func_name != post_sync.ANALYSIS_SYNC:
                 logger.warning(
                     f'AWS sync function "{func_name}" was specified but does not exist. Did you misspell it?',
                 )
@@ -374,7 +380,7 @@ def _sync_one_account(
 
     post_sync.run(
         AWS_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, aws_requested_syncs,
-        RESOURCE_FUNCTIONS.keys(), defer=post_sync.defer_requested(config.params),
+        RESOURCE_FUNCTIONS.keys(),
     )
 
     merge_module_sync_metadata(
@@ -637,7 +643,7 @@ def _requested_syncs(services: List[Dict[str, Any]], common_job_parameters: Dict
             common_job_parameters["pagination"][name] = pagination
         names.append(name)
 
-    known = [name for name in names if name in RESOURCE_FUNCTIONS or name in post_sync.POST_SYNC_SYNCS]
+    known = [name for name in names if name in RESOURCE_FUNCTIONS or name == post_sync.ANALYSIS_SYNC]
     unknown = [name for name in names if name not in known]
     if unknown:
         logger.warning(f"Skipping AWS services this cartography build does not sync: {unknown}")

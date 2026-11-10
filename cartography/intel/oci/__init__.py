@@ -74,7 +74,6 @@ def _sync_one_compartment(
     oci_sync_tag: int,
     common_job_parameters: Dict[str, Any],
     regions: List[str],
-    defer_analysis: bool = False,
 ) -> None:
     """
     Sync requested services for a single OCI compartment.
@@ -131,7 +130,7 @@ def _sync_one_compartment(
 
     # Run remaining resource syncs (skip IAM since it's already handled above)
     for func_name in requested_syncs:
-        if func_name == "iam" or func_name in post_sync.POST_SYNC_SYNCS:
+        if func_name == "iam" or func_name == post_sync.ANALYSIS_SYNC:
             continue
         if func_name in RESOURCE_FUNCTIONS:
             logger.info("Syncing OCI %s for compartment '%s'.", func_name, compartment_id)
@@ -172,7 +171,7 @@ def _sync_one_compartment(
 
     post_sync.run(
         OCI_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs,
-        RESOURCE_FUNCTIONS.keys(), defer=defer_analysis,
+        RESOURCE_FUNCTIONS.keys(),
     )
 
     logger.info(
@@ -197,7 +196,6 @@ def _sync_multiple_compartments(
     sync_tag: int,
     common_job_parameters: Dict[str, Any],
     regions: List[str],
-    defer_analysis: bool = False,
 ) -> None:
     """
     Sync OCI resources for the requested compartments.
@@ -220,7 +218,7 @@ def _sync_multiple_compartments(
 
         _sync_one_compartment(
             neo4j_session, resources, compartment_id, tenancy_id,
-            requested_syncs, sync_tag, common_job_parameters, regions, defer_analysis,
+            requested_syncs, sync_tag, common_job_parameters, regions,
         )
 
         del common_job_parameters["OCI_COMPARTMENT_ID"]
@@ -468,7 +466,6 @@ def start_oci_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         _sync_multiple_compartments(
             neo4j_session, credentials, tenancy_ocid, compartment_list,
             requested_syncs, config.update_tag, common_job_parameters, regions,
-            defer_analysis=post_sync.defer_requested(config.params),
         )
         logger.info(
             json.dumps({

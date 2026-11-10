@@ -301,13 +301,13 @@ cartography/intel/<cloud>/exposure_layers/
 
 Each cloud's `run()` is called at the end of that cloud's account / subscription / project / compartment
 sync by `cartography/intel/post_sync.py`, between the exposure jobs and the posture jobs of the cloud's
-phase lists (`AWS_PHASES`, `GCP_PHASES`, `AZURE_PHASES`, `OCI_PHASES`). The layers run only in a
-dedicated post-sync request (services `["analysis"]`, or the older `["exposure_layers"]`) or one that
-asks for every resource (CLI default). cloudanix-web splits a scheduled run into parallel service-group
-subruns; computing in each would recompute N times from a half-written graph and race on the same
-nodes, so the trigger is one final analysis subrun, and the group subruns carry `deferAnalysis: true`
-to skip the analysis jobs too. A failure is logged and reported in the sync response's
-`failed_analysis_jobs` as `exposure_layers`, never raised.
+phase lists (`AWS_PHASES`, `GCP_PHASES`, `AZURE_PHASES`, `OCI_PHASES`). The analysis jobs and the
+layers together are one service, `analysis`: they run only in a
+request that names it, or one that asks for every resource (CLI default). cloudanix-web splits a
+scheduled run into parallel service-group subruns and sends `analysis` as its own subrun after them;
+a group subrun runs none of it, since computing in each would recompute N times from a half-written
+graph and race on the same nodes. A failure is logged and reported in the sync response's
+`failed_analysis_jobs` as `analysis`, never raised.
 
 Context for the console (layers.py contract): `exposure_paths` (per entry point: entry, ports,
 hops), `exposure_blocked_by` (why a public node is unreachable), `network_reachable_data_stores`
