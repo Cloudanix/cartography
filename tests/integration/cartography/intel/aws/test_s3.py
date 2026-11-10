@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import cartography.intel.aws.s3
 import tests.data.aws.s3
 from cartography.util import run_analysis_job
+from cartography.util import run_cleanup_job
 from tests.integration.cartography.intel.aws.common import create_test_org_account
 
 
@@ -246,6 +247,13 @@ def _seed_bpa_buckets(neo4j_session, buckets, params=BPA_JOB_PARAMETERS):
     )
 
 
+def _reset_like_the_sync(neo4j_session, params=BPA_JOB_PARAMETERS):
+    """What load_s3_details does to anonymous_access / anonymous_actions before the exposure job runs: the
+    aws_s3_details cleanup clears both, then the defaults set false / [] (no policies loaded here)."""
+    run_cleanup_job('aws_s3_details.json', neo4j_session, params)
+    cartography.intel.aws.s3._set_default_values(neo4j_session, params['AWS_ID'])
+
+
 def _public_bpa_buckets(neo4j_session, account_id=BPA_ACCOUNT_ID):
     nodes = neo4j_session.run(
         """
@@ -277,6 +285,9 @@ def test_s3_exposure_honours_bucket_public_access_block(neo4j_session):
         ],
     )
 
+    # The sync owns anonymous_access / anonymous_actions and clears a stale flag every run; the exposure job
+    # only adds the ACL findings on top (it no longer removes the sync's values).
+    _reset_like_the_sync(neo4j_session)
     run_analysis_job('aws_s3_asset_exposure.json', neo4j_session, BPA_JOB_PARAMETERS)
 
     assert _public_bpa_buckets(neo4j_session) == {
@@ -284,6 +295,52 @@ def test_s3_exposure_honours_bucket_public_access_block(neo4j_session):
         'bpa-acl-public': ['acl'],
         'bpa-acl-ignored-policy-public': ['policy'],
         'bpa-acl-public-policy-restricted': ['acl'],
+    }
+
+
+KEEP_ACCOUNT_ID = '333344445566'
+ACL_READ_ACTIONS = ['s3:ListBucket', 's3:ListBucketMultipartUploads', 's3:ListBucketVersions']
+
+
+def test_s3_exposure_keeps_the_sync_owned_access_fields(neo4j_session):
+    # The post-sync analysis subrun runs this job without a sync before it, and its inventory export is the last
+    # one the console loads: removing anonymous_access / anonymous_actions dropped them from every private bucket
+    # and lost the policy's actions on policy-public ones (prod 2026-11-10: ~2,900 buckets per run in US).
+    params = _account_bpa_params('s3-keep', KEEP_ACCOUNT_ID)
+    create_test_org_account(neo4j_session, params['WORKSPACE_ID'], params['ORGANIZATION_ID'], KEEP_ACCOUNT_ID)
+    neo4j_session.run(
+        """
+        MATCH (aa:AWSAccount{id: $account_id})
+        UNWIND $buckets AS b
+        MERGE (aa)-[:RESOURCE]->(s:S3Bucket{id: b.name})
+        SET s.name = b.name, s.is_public = b.is_public,
+            s.anonymous_access = b.access, s.anonymous_actions = b.actions
+        FOREACH (_ IN CASE WHEN b.acl IS NULL THEN [] ELSE [1] END |
+            MERGE (:S3Acl{id: b.name + '-acl', uri: $all_users, permission: b.acl})-[:APPLIES_TO]->(s))
+        """,
+        account_id=KEEP_ACCOUNT_ID, all_users=ALL_USERS, buckets=[
+            # As the sync leaves them: private defaults, a public policy's actions, an ACL-public bucket's defaults.
+            {'name': 'keep-private', 'access': False, 'actions': []},
+            {'name': 'keep-policy-public', 'is_public': True, 'access': True, 'actions': ['s3:GetObject']},
+            {'name': 'keep-acl-public', 'access': False, 'actions': [], 'acl': 'READ'},
+        ],
+    )
+
+    # Twice: an analysis run with no sync in between must not duplicate the ACL actions.
+    run_analysis_job('aws_s3_asset_exposure.json', neo4j_session, params)
+    run_analysis_job('aws_s3_asset_exposure.json', neo4j_session, params)
+
+    nodes = neo4j_session.run(
+        """
+        MATCH (:AWSAccount{id: $account_id})-[:RESOURCE]->(s:S3Bucket)
+        RETURN s.name AS name, s.anonymous_access AS access, s.anonymous_actions AS actions
+        """,
+        account_id=KEEP_ACCOUNT_ID,
+    )
+    assert {n['name']: (n['access'], sorted(n['actions'])) for n in nodes} == {
+        'keep-private': (False, []),
+        'keep-policy-public': (True, ['s3:GetObject']),
+        'keep-acl-public': (True, ACL_READ_ACTIONS),
     }
 
 

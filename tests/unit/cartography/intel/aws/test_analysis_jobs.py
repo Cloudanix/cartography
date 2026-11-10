@@ -1,4 +1,6 @@
+import json
 import os
+import re
 from unittest.mock import MagicMock
 
 import cartography.intel.aws
@@ -94,6 +96,51 @@ def test_account_sync_runs_the_beanstalk_exposure_job_after_the_elb_and_instance
     beanstalk = jobs.index("aws_elasticbeanstalk_asset_exposure.json")
     assert beanstalk > jobs.index("aws_ec2_elb_asset_exposure.json")
     assert beanstalk > jobs.index("aws_ec2_instance_asset_exposure.json")
+
+
+# Properties an AWS sync module computes for every node of the label on each run (it clears / re-sets them itself).
+# The post-sync analysis subrun runs the exposure jobs WITHOUT a sync before it, and its inventory export is the last
+# one the console loads: an analysis job that REMOVEs one of these drops it from the asset until the next sync.
+SYNC_OWNED_PROPERTIES = {
+    "S3Bucket": {"anonymous_access", "anonymous_actions"},  # s3.load_s3_details (+ cleanup aws_s3_details.json)
+    "APIGatewayRestAPI": {"anonymous_access", "anonymous_actions"},  # apigateway._set_default_values
+    "AWSLambda": {"anonymous_access", "anonymous_actions"},  # lambda_function.load_lambda_functions
+    "KMSKey": {"anonymous_access", "anonymous_actions"},  # kms._load_kms_key_policies / _set_default_values
+}
+_NODE_BINDING = re.compile(r"\((\w+):(\w+)")
+_REMOVE_CLAUSE = re.compile(r"\bREMOVE\s+(.+?)(?=\s+(?:return|RETURN|WITH|SET)\b|;|$)", re.DOTALL)
+_PROPERTY = re.compile(r"\b(\w+)\.(\w+)")
+
+
+def _removed_properties(query):
+    """(label, property) pairs a statement REMOVEs, resolving each variable to the label it is bound to."""
+    labels = {var: label for var, label in _NODE_BINDING.findall(query)}
+    return {
+        (labels.get(var, "?"), prop)
+        for clause in _REMOVE_CLAUSE.findall(query)
+        for var, prop in _PROPERTY.findall(clause)
+    }
+
+
+def test_no_analysis_job_removes_a_property_the_sync_owns():
+    offending = []
+    for name in sorted(os.listdir(ANALYSIS_JOB_DIR)):
+        if not (name.startswith("aws_") and name.endswith(".json")):
+            continue
+        with open(os.path.join(ANALYSIS_JOB_DIR, name)) as f:
+            statements = json.load(f)["statements"]
+        for statement in statements:
+            for label, prop in _removed_properties(statement["query"]):
+                if prop in SYNC_OWNED_PROPERTIES.get(label, set()):
+                    offending.append((name, label, prop))
+
+    assert offending == []
+
+
+def test_removed_properties_resolves_the_bound_label():
+    query = "MATCH (b:S3Bucket)<-[:RESOURCE]-(a:AWSAccount) REMOVE b.anonymous_access_type, b.publicContext RETURN 1"
+
+    assert _removed_properties(query) == {("S3Bucket", "anonymous_access_type"), ("S3Bucket", "publicContext")}
 
 
 def test_every_analysis_job_run_by_account_sync_exists(mocker, monkeypatch):
