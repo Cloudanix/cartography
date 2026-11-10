@@ -120,7 +120,9 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
     mocker.patch.object(cartography.intel.aws, '_resolve_sync_regions', return_value=['us-east-1'])
     mocker.patch.object(cartography.intel.aws, '_build_aws_sync_kwargs', return_value={})
     mocker.patch.object(cartography.intel.aws, 'run_cleanup_job')
-    mocker.patch.object(cartography.intel.aws, 'run_analysis_job', side_effect=lambda *_: order.append('analysis'))
+    mocker.patch.object(
+        cartography.intel.post_sync, 'run_analysis_job', side_effect=lambda *_: order.append('analysis'),
+    )
     mocker.patch.object(cartography.intel.aws, 'sync_eks_node_links')
     mocker.patch.object(
         cartography.intel.aws, 'link_environment_resources',
@@ -138,7 +140,7 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
 
 
 def test_account_sync_links_beanstalk_resources_after_the_syncs_and_before_analysis(mocker, monkeypatch):
-    order = _sync_account(mocker, monkeypatch, ['elasticbeanstalk', 'ec2:load_balancer_v2', 'ec2:instance'])
+    order = _sync_account(mocker, monkeypatch, ['elasticbeanstalk', 'ec2:load_balancer_v2', 'ec2:instance', 'analysis'])
 
     assert order.index('link') > max(order.index('elasticbeanstalk'), order.index('elbv2'), order.index('ec2'))
     assert order.index('link') < order.index('analysis')
@@ -152,4 +154,4 @@ def test_account_sync_continues_when_beanstalk_links_fail(mocker, monkeypatch):
     def _boom(*_):
         raise RuntimeError('neo4j down')
 
-    assert 'analysis' in _sync_account(mocker, monkeypatch, ['elasticbeanstalk'], link_side_effect=_boom)
+    assert 'analysis' in _sync_account(mocker, monkeypatch, ['elasticbeanstalk', 'analysis'], link_side_effect=_boom)

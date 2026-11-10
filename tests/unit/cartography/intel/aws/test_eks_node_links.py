@@ -77,7 +77,7 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
     mocker.patch.object(cartography.intel.aws, "_build_aws_sync_kwargs", return_value={})
     mocker.patch.object(cartography.intel.aws, "run_cleanup_job")
     mocker.patch.object(
-        cartography.intel.aws, "run_analysis_job", side_effect=lambda *_: order.append("analysis"),
+        cartography.intel.post_sync, "run_analysis_job", side_effect=lambda *_: order.append("analysis"),
     )
     mocker.patch.object(
         cartography.intel.aws,
@@ -96,7 +96,7 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
 
 
 def test_account_sync_links_eks_nodes_after_both_syncs(mocker, monkeypatch):
-    order = _sync_account(mocker, monkeypatch, ["eks", "ec2:instance"])
+    order = _sync_account(mocker, monkeypatch, ["eks", "ec2:instance", "analysis"])
 
     assert order.index("link") > order.index("eks")
     assert order.index("link") > order.index("ec2:instance")
@@ -113,6 +113,6 @@ def test_account_sync_continues_when_eks_node_links_fail(mocker, monkeypatch):
     def _boom(*_):
         raise RuntimeError("neo4j down")
 
-    order = _sync_account(mocker, monkeypatch, ["ec2:instance"], link_side_effect=_boom)
+    order = _sync_account(mocker, monkeypatch, ["ec2:instance", "analysis"], link_side_effect=_boom)
 
     assert "analysis" in order

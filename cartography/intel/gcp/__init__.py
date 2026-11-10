@@ -29,17 +29,36 @@ from .resources import RESOURCE_FUNCTIONS
 from cartography.config import Config
 from cartography.graph import write_timer
 from cartography.graph.session import Session
-from cartography.intel.exposure import step as exposure_step
+from cartography.intel import post_sync
 from cartography.intel.gcp import crm
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.intel.gcp.util.errors import is_service_not_enabled_error as _is_service_not_enabled_error
-from cartography.util import run_analysis_job_logged as run_analysis_job
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+# Post-sync analysis of the project, in run order (see post_sync.Phases).
+GCP_PHASES = post_sync.Phases(
+    exposure=(
+        "gcp_bigquery_dataset_analysis.json",
+        # Before the load balancer job: it adds external_load_balancer only to functions this job flags public.
+        "gcp_cloud_function_analysis.json",
+        "gcp_compute_firewall_analysis.json",
+        "gcp_compute_instance_analysis.json",
+        "gcp_gke_asset_exposure.json",
+        "gcp_kms_keyring_analysis.json",
+        "gcp_load_balancer_exposure.json",
+        # After the load balancer job: a service behind an external load balancer is read off the flagged NEG.
+        "gcp_cloudrun_service_exposure.json",
+        "gcp_sql_instance_analysis.json",
+        "gcp_storage_bucket_policy_analysis.json",
+    ),
+    posture=("gcp_gke_basic_auth.json",),
+)
+
 Resources = namedtuple(
     "Resources",
     "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
@@ -729,7 +748,7 @@ def _sync_single_project(
         parallel_requests = [r for r in requested_syncs if r in RESOURCE_FUNCTIONS and r not in gated_out]
 
         for request in requested_syncs:
-            if request not in RESOURCE_FUNCTIONS:
+            if request not in RESOURCE_FUNCTIONS and request != post_sync.ANALYSIS_SYNC:
                 logger.warning(
                     f'GCP sync function "{request}" was specified but does not exist. Did you misspell it?',
                 )
@@ -800,6 +819,14 @@ def _sync_single_project(
             )
         except Exception as e:
             logger.warning(f"error to resolve load balancer backend members for project {project_id} - {e}")
+    elif "cloudfunction" in requested_syncs:
+        # cloudanix-web syncs functions in a different subrun from the load balancers. Re-link serverless NEGs to the
+        # functions this subrun loaded (graph only); the member resolution above and its API calls stay with the load
+        # balancer subrun.
+        try:
+            loadbalancer.link_backend_services_to_negs(neo4j_session, project_id, common_job_parameters["UPDATE_TAG"])
+        except Exception as e:
+            logger.warning(f"error to link serverless NEGs to functions for project {project_id} - {e}")
 
     for service_name in common_job_parameters["service_labels"]:
         common_job_parameters["service_label"] = service_name
@@ -967,6 +994,28 @@ def _sync_multiple_projects(
     del common_job_parameters["GCP_PROJECT_ID"]
 
 
+def _run_analysis_only(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
+    """
+    The analysis subrun: read the organization the resource subruns wrote and run the post-sync phases. No API call,
+    CRM sync or cleanup: those carry this subrun's newer update tag, so a failed (empty) project or folder list would
+    delete what the resource subruns wrote, and get_all_regions can raise before the analysis.
+    """
+    organization_id = crm.read_project_organization_id(
+        neo4j_session, common_job_parameters["WORKSPACE_ID"], common_job_parameters["GCP_PROJECT_ID"],
+    )
+    if not organization_id:
+        logger.warning(
+            "GCP project %s has no organization in the graph yet; skipping the analysis.",
+            common_job_parameters["GCP_PROJECT_ID"],
+        )
+        return
+    common_job_parameters["GCP_ORGANIZATION_ID"] = organization_id
+    post_sync.run(
+        GCP_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, [post_sync.ANALYSIS_SYNC],
+        RESOURCE_FUNCTIONS.keys(),
+    )
+
+
 @timeit
 def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optional[Dict]:
     """
@@ -1022,6 +1071,11 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
                 common_job_parameters["pagination"][service.get("name", None)] = pagination
         requested_syncs = parse_and_validate_gcp_requested_syncs(gcp_requested_syncs_string[:-1])
 
+    if post_sync.analysis_only(requested_syncs):
+        _run_analysis_only(neo4j_session, common_job_parameters)
+        del common_job_parameters["service_labels"]
+        return common_job_parameters
+
     resources = _initialize_resources(credentials, config)
 
     # If we don't have perms to pull Orgs or Folders from GCP, we will skip safely
@@ -1042,76 +1096,9 @@ def start_gcp_ingestion(neo4j_session: neo4j.Session, config: Config) -> Optiona
 
     common_job_parameters["GCP_PROJECT_ID"] = config.params["workspace"]["account_id"]
 
-    run_analysis_job(
-        "gcp_bigquery_dataset_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_cloud_function_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_compute_firewall_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_compute_instance_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_gke_asset_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_gke_basic_auth.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_kms_keyring_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_load_balancer_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    # After the load balancer job: a service behind an external load balancer is read off the flagged NEG.
-    run_analysis_job(
-        "gcp_cloudrun_service_exposure.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_sql_instance_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    run_analysis_job(
-        "gcp_storage_bucket_policy_analysis.json",
-        neo4j_session,
-        common_job_parameters,
-    )
-
-    # Reads what the sync and the jobs above wrote; runs only when requested (see exposure/step.py).
-    exposure_step.run_if_requested(
-        exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs, RESOURCE_FUNCTIONS.keys(),
+    post_sync.run(
+        GCP_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, requested_syncs,
+        RESOURCE_FUNCTIONS.keys(),
     )
 
     del common_job_parameters["service_labels"]

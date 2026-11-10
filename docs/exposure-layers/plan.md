@@ -299,13 +299,15 @@ cartography/intel/<cloud>/exposure_layers/
     blast_radius.py  CAN_NETWORK_REACH edges + stale cleanup                   L5
 ```
 
-Each cloud's `run()` is called at the end of that cloud's account / subscription / project sync,
-after the legacy exposure jobs, through `exposure/step.py`: it runs only when the requested syncs
-name `exposure_layers` or ask for every resource (CLI default). cloudanix-web splits a scheduled run
-into parallel service-group subruns; computing in each would recompute N times from a half-written
-graph and race on the same nodes, so the intended trigger is one final subrun with services
-`["exposure_layers"]` (`docs/console-exploitability-changes.md` 3.1). A failure is logged and
-reported in the sync response's `failed_analysis_jobs` as `exposure_layers`, never raised.
+Each cloud's `run()` is called at the end of that cloud's account / subscription / project / compartment
+sync by `cartography/intel/post_sync.py`, between the exposure jobs and the posture jobs of the cloud's
+phase lists (`AWS_PHASES`, `GCP_PHASES`, `AZURE_PHASES`, `OCI_PHASES`). The analysis jobs and the
+layers together are one service, `analysis`: they run only in a
+request that names it, or one that asks for every resource (CLI default). cloudanix-web splits a
+scheduled run into parallel service-group subruns and sends `analysis` as its own subrun after them;
+a group subrun runs none of it, since computing in each would recompute N times from a half-written
+graph and race on the same nodes. A failure is logged and reported in the sync response's
+`failed_analysis_jobs` as `analysis`, never raised.
 
 Context for the console (layers.py contract): `exposure_paths` (per entry point: entry, ports,
 hops), `exposure_blocked_by` (why a public node is unreachable), `network_reachable_data_stores`

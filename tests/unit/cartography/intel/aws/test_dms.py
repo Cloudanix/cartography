@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+import pytest
 from botocore.exceptions import EndpointConnectionError
 
 import cartography.intel.aws
@@ -95,7 +96,9 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
     mocker.patch.object(cartography.intel.aws, '_resolve_sync_regions', return_value=['us-east-1'])
     mocker.patch.object(cartography.intel.aws, '_build_aws_sync_kwargs', return_value={})
     mocker.patch.object(cartography.intel.aws, 'run_cleanup_job')
-    mocker.patch.object(cartography.intel.aws, 'run_analysis_job', side_effect=lambda *_: order.append('analysis'))
+    mocker.patch.object(
+        cartography.intel.post_sync, 'run_analysis_job', side_effect=lambda *_: order.append('analysis'),
+    )
     mocker.patch.object(
         cartography.intel.aws, 'link_replication_instance_networks',
         side_effect=link_side_effect or (lambda *_: order.append('link')),
@@ -112,18 +115,29 @@ def _sync_account(mocker, monkeypatch, requested, link_side_effect=None):
 
 
 def test_account_sync_links_dms_networks_after_the_syncs_and_before_analysis(mocker, monkeypatch):
-    order = _sync_account(mocker, monkeypatch, ['dms', 'ec2:security_group'])
+    order = _sync_account(mocker, monkeypatch, ['dms', 'ec2:security_group', 'analysis'])
 
     assert order.index('link') > max(order.index('dms'), order.index('sg'))
     assert order.index('link') < order.index('analysis')
 
 
-def test_account_sync_skips_dms_links_when_dms_not_requested(mocker, monkeypatch):
-    assert 'link' not in _sync_account(mocker, monkeypatch, ['ec2:security_group'])
+@pytest.mark.parametrize('requested', [['ec2:security_group'], ['ec2:subnet']])
+def test_account_sync_links_dms_networks_when_only_the_network_side_syncs(mocker, monkeypatch, requested):
+    # cloudanix-web syncs DMS and EC2 networking in different subruns. Whichever finishes last must link,
+    # or a replication instance misses the security groups / subnets the other subrun loaded after it.
+    mocker.patch.dict(cartography.intel.aws.RESOURCE_FUNCTIONS, {'ec2:subnet': lambda **_: None})
+
+    assert 'link' in _sync_account(mocker, monkeypatch, requested)
+
+
+def test_account_sync_skips_dms_links_when_neither_side_syncs(mocker, monkeypatch):
+    mocker.patch.dict(cartography.intel.aws.RESOURCE_FUNCTIONS, {'rds': lambda **_: None})
+
+    assert 'link' not in _sync_account(mocker, monkeypatch, ['rds'])
 
 
 def test_account_sync_continues_when_dms_links_fail(mocker, monkeypatch):
     def _boom(*_):
         raise RuntimeError('neo4j down')
 
-    assert 'analysis' in _sync_account(mocker, monkeypatch, ['dms'], link_side_effect=_boom)
+    assert 'analysis' in _sync_account(mocker, monkeypatch, ['dms', 'analysis'], link_side_effect=_boom)

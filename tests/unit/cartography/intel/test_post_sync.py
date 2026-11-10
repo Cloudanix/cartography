@@ -1,0 +1,73 @@
+from unittest.mock import patch
+
+import pytest
+
+from cartography.intel import post_sync
+from cartography.util import collect_failed_analysis_jobs
+
+ALL_SYNCS = ["ec2:instance", "rds"]
+PHASES = post_sync.Phases(link=("link.json",), exposure=("exp1.json", "exp2.json"), posture=("posture.json",))
+EVERY_STEP = ["link.json", "exp1.json", "exp2.json", "layers", "posture.json"]
+
+
+def _run(requested, phases=PHASES):
+    """Run the post-sync work and return what ran, in order."""
+    ran = []
+    params = {"AWS_ID": "123", "UPDATE_TAG": 1}
+    with patch.object(post_sync, "run_analysis_job", side_effect=lambda job, *_args: ran.append(job)):
+        post_sync.run(phases, lambda _s, _p: ran.append("layers"), None, params, requested, ALL_SYNCS)
+    return ran
+
+
+@pytest.mark.parametrize("requested", [["analysis"], None, [], ["rds", "ec2:instance"]])
+def test_dedicated_or_full_run_runs_every_phase_in_order(requested):
+    assert _run(requested) == EVERY_STEP
+
+
+@pytest.mark.parametrize("requested", [["rds"], ["ec2:instance"], ["exposure_layers"]])
+def test_group_subrun_runs_no_analysis(requested):
+    # The analysis service runs it once, after every group; a group's half-written graph would race.
+    assert _run(requested) == []
+
+
+def test_a_failing_job_is_reported_and_later_phases_still_run():
+    ran = []
+
+    def job(name, *_args):
+        if name == "exp1.json":
+            raise RuntimeError("bug")
+        ran.append(name)
+
+    with collect_failed_analysis_jobs() as failed, patch("cartography.util.run_analysis_job", side_effect=job):
+        post_sync.run(PHASES, lambda _s, _p: ran.append("layers"), None, {"AWS_ID": "123"}, ["analysis"], ALL_SYNCS)
+
+    assert ran == ["link.json", "exp2.json", "layers", "posture.json"]
+    assert failed == [{"job": "exp1.json", "scope": {"AWS_ID": "123"}}]
+
+
+def test_a_failing_exposure_layers_step_is_reported_not_raised():
+    def boom(_session, _params):
+        raise RuntimeError("bug")
+
+    with collect_failed_analysis_jobs() as failed, patch.object(post_sync, "run_analysis_job"):
+        post_sync.run(post_sync.Phases(), boom, None, {"AWS_ID": "123"}, ["analysis"], ALL_SYNCS)
+
+    assert failed == [{"job": "analysis", "scope": {"AWS_ID": "123"}}]
+
+
+def test_analysis_is_the_post_sync_service():
+    assert post_sync.ANALYSIS_SYNC == "analysis"
+
+
+@pytest.mark.parametrize(
+    ("module", "validate"),
+    [
+        ("cartography.intel.aws.resources", "parse_and_validate_aws_requested_syncs"),
+        ("cartography.intel.azure.util.common", "parse_and_validate_azure_requested_syncs"),
+        ("cartography.intel.gcp.util.common", "parse_and_validate_gcp_requested_syncs"),
+    ],
+)
+def test_invalid_sync_error_lists_analysis(module, validate):
+    # importorskip: the Azure SDK may be absent locally.
+    with pytest.raises(ValueError, match=r"valid values is: .*\banalysis\b"):
+        getattr(pytest.importorskip(module), validate)("not-a-sync")
