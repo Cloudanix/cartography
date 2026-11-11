@@ -78,3 +78,54 @@ def test_cloudtrails_analysis(neo4j_session):
     expected_nodes = {'trail1_arn'}
 
     assert expected_nodes == actual_nodes
+
+
+def _exposure_job_params(update_tag):
+    return {
+        "UPDATE_TAG": update_tag,
+        "WORKSPACE_ID": "ws-trail-reset",
+        "ORGANIZATION_ID": "o-trail-reset",
+        "AWS_ID": "111111111111",
+        "LIMIT_SIZE": 100,
+    }
+
+
+def _trail_exposure(neo4j_session):
+    record = neo4j_session.run(
+        """
+        MATCH (t:AWSCloudTrailTrail{id: 'trail-reset-arn'})
+        RETURN t.anonymous_access AS access, t.anonymous_actions AS actions,
+               t.anonymous_access_type AS access_type, t.publicContext AS context
+        """,
+    ).single()
+    return dict(record)
+
+
+def test_cloudtrail_exposure_clears_the_flag_once_the_bucket_is_no_longer_public(neo4j_session):
+    neo4j_session.run(
+        """
+        MERGE (:CloudanixWorkspace{id: 'ws-trail-reset'})-[:OWNER]->(:AWSOrganization{id: 'o-trail-reset'})
+              -[:OWNER]->(a:AWSAccount{id: '111111111111'})
+        MERGE (a)-[:RESOURCE]->(t:AWSCloudTrailTrail{id: 'trail-reset-arn'})
+        SET t.name = 'trail-reset'
+        MERGE (t)-[:HAS_BUCKET]->(b:S3Bucket{id: 'trail-reset-bucket'})
+        SET b.name = 'trail-reset-bucket', b.anonymous_access = true, b.anonymous_actions = ['s3:GetObject']
+        """,
+    )
+
+    run_analysis_job('aws_cloudtrail_asset_exposure.json', neo4j_session, _exposure_job_params(1))
+    flagged = _trail_exposure(neo4j_session)
+
+    assert flagged["access"] is True
+    assert flagged["actions"] == ['s3:GetObject']
+    assert flagged["access_type"] == ['public_bucket']
+    assert flagged["context"] is not None
+
+    # The bucket stops being public (e.g. Block Public Access): the S3 sync resets it, and the next run of this job
+    # must clear what it derived for the trail instead of leaving it "public" forever.
+    neo4j_session.run(
+        "MATCH (b:S3Bucket{id: 'trail-reset-bucket'}) SET b.anonymous_access = false, b.anonymous_actions = []",
+    )
+    run_analysis_job('aws_cloudtrail_asset_exposure.json', neo4j_session, _exposure_job_params(2))
+
+    assert _trail_exposure(neo4j_session) == {"access": None, "actions": None, "access_type": None, "context": None}
