@@ -137,6 +137,51 @@ def test_no_analysis_job_removes_a_property_the_sync_owns():
     assert offending == []
 
 
+_SET_CLAUSE = re.compile(r"\bSET\s+(.+?)(?=\s+(?:return|RETURN|WITH|MATCH|OPTIONAL|WHERE)\b|;|$)", re.DOTALL)
+# `var.prop =` and the conditional form `(CASE WHEN ... THEN var END).prop =`; `==` is not Cypher, `<=`/`>=` excluded.
+_ASSIGNED = re.compile(r"(?:\b(\w+)|THEN\s+(\w+)\s+END\))\.(\w+)\s*=(?!=)")
+
+
+def _set_properties(query):
+    """(label, property) pairs a statement SETs, resolving each variable to the label it is bound to."""
+    labels = {var: label for var, label in _NODE_BINDING.findall(query)}
+    return {
+        (labels.get(plain or case, "?"), prop)
+        for clause in _SET_CLAUSE.findall(query)
+        for plain, case, prop in _ASSIGNED.findall(clause)
+    }
+
+
+def _analysis_job_statements(name):
+    with open(os.path.join(ANALYSIS_JOB_DIR, name)) as f:
+        return [statement["query"] for statement in json.load(f)["statements"]]
+
+
+def test_cloudtrail_exposure_job_resets_every_trail_property_it_sets():
+    # The trail's anonymous_access / actions / type are written only by this job (the CloudTrail sync never sets
+    # them), so the job must clear them before re-deriving them from the log bucket. It used to remove only the
+    # exposed_internet* properties, so a trail stayed "public" after its bucket stopped being public.
+    statements = _analysis_job_statements("aws_cloudtrail_asset_exposure.json")
+    trail_sets = {
+        prop for query in statements for label, prop in _set_properties(query) if label == "AWSCloudTrailTrail"
+    }
+    reset = {prop for label, prop in _removed_properties(statements[0]) if label == "AWSCloudTrailTrail"}
+
+    assert {"anonymous_access", "anonymous_actions", "anonymous_access_type", "publicContext"} <= trail_sets
+    assert trail_sets <= reset
+    # The reset must reach a trail that carries any of them, not only one with exposed_internet set.
+    assert all(f"trail.{prop} IS NOT NULL" in statements[0] for prop in trail_sets)
+
+
+def test_set_properties_resolves_plain_and_conditional_targets():
+    query = (
+        "MATCH (b:S3Bucket)-[:HAS_BUCKET]-(t:AWSCloudTrailTrail) WHERE t.anonymous_access = true "
+        "SET t.anonymous_access = true, (CASE WHEN NOT 'x' IN coalesce(t.kind, []) THEN t END).kind = ['x'] RETURN 1"
+    )
+
+    assert _set_properties(query) == {("AWSCloudTrailTrail", "anonymous_access"), ("AWSCloudTrailTrail", "kind")}
+
+
 def test_removed_properties_resolves_the_bound_label():
     query = "MATCH (b:S3Bucket)<-[:RESOURCE]-(a:AWSAccount) REMOVE b.anonymous_access_type, b.publicContext RETURN 1"
 
