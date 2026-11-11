@@ -187,6 +187,19 @@ def _sync_one_compartment(
     )
 
 
+def _run_analysis_only(neo4j_session: neo4j.Session, common_job_parameters: Dict[str, Any]) -> None:
+    """
+    The analysis subrun: run the post-sync phases over the graph the group subruns wrote. No API call, sync or
+    cleanup, as for the other clouds (post_sync.analysis_only): those carry this subrun's newer update tag, and
+    tags.cleanup_tags is tenancy-wide, so with no sync_tags in front of it, it deleted every TAGGED edge in the
+    tenancy (and the orphaned OCITag nodes) on each analysis subrun.
+    """
+    post_sync.run(
+        OCI_PHASES, exposure_layers.run, neo4j_session, common_job_parameters, [post_sync.ANALYSIS_SYNC],
+        RESOURCE_FUNCTIONS.keys(),
+    )
+
+
 def _sync_multiple_compartments(
     neo4j_session: neo4j.Session,
     credentials: Dict[str, Any],
@@ -443,6 +456,10 @@ def start_oci_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
             for service in config.oci_requested_syncs:
                 oci_requested_syncs_string += f"{service.get('name', ' ')},"
             requested_syncs = parse_and_validate_oci_requested_syncs(oci_requested_syncs_string[:-1])
+
+        if post_sync.analysis_only(requested_syncs):
+            _run_analysis_only(neo4j_session, common_job_parameters)
+            return common_job_parameters
 
         # Initialize resources
         resources = _initialize_resources(credentials)
