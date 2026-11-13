@@ -218,6 +218,34 @@ def test_sync_region_subscriptions_warns_without_a_home_region(mock_get, mock_lo
     assert "No home region subscription" in caplog.text
 
 
+def _api_user(ocid, **extra):
+    user = {
+        "id": ocid, "name": "u", "description": "", "email": None, "lifecycle-state": "ACTIVE",
+        "is-mfa-activated": False, "compartment-id": "ocid1.tenancy.oc1..a", "time-created": "2026-01-01",
+        "capabilities": {
+            "can-use-api-keys": True, "can-use-auth-tokens": False, "can-use-console-password": True,
+            "can-use-customer-secret-keys": False, "can-use-smtp-credentials": False,
+        },
+    }
+    user.update(extra)
+    return user
+
+
+@patch.object(iam, "load_graph_data")
+def test_load_users_stores_last_successful_login_time(mock_load_graph_data):
+    users = [
+        _api_user("ocid1.user.oc1..signedin", **{"last-successful-login-time": "2026-11-01T10:00:00.000Z"}),
+        _api_user("ocid1.user.oc1..never", **{"last-successful-login-time": None}),
+        _api_user("ocid1.user.oc1..oldsdk"),
+    ]
+    iam.load_users(MagicMock(), users, "ocid1.tenancy.oc1..a", 1, workspace_id="ws")
+
+    query, rows = mock_load_graph_data.call_args[0][1], mock_load_graph_data.call_args[0][2]
+    assert "unode.last_successful_login_time = user.last_successful_login_time" in query
+    # "" = never signed in, so readers can tell it apart from a graph synced before the field existed
+    assert [r["last_successful_login_time"] for r in rows] == ["2026-11-01T10:00:00.000Z", "", ""]
+
+
 @patch.object(iam, "load_graph_data")
 def test_load_policies_sets_home_region_console_link(mock_load_graph_data):
     policy = {

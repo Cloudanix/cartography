@@ -158,6 +158,7 @@ def load_users(
         unode.can_use_console_password = user.can_use_console_password,
         unode.can_use_customer_secret_keys = user.can_use_customer_secret_keys,
         unode.can_use_smtp_credentials = user.can_use_smtp_credentials,
+        unode.last_successful_login_time = user.last_successful_login_time,
         unode.managed_type = user.managed_type,
         unode.consolelink = user.consolelink,
         unode.lastupdated = $oci_update_tag
@@ -183,6 +184,10 @@ def load_users(
             "can_use_customer_secret_keys": user["capabilities"]["can-use-customer-secret-keys"],
             "can_use_smtp_credentials": user["capabilities"]["can-use-smtp-credentials"],
             "compartment_id": user["compartment-id"],
+            # inventory-sync derives isUsed / isInactive for the IAM deep dive from this. "" means
+            # the user never signed in; an absent property means a graph synced before this field
+            # existed, which inventory-sync treats as unknown rather than unused.
+            "last_successful_login_time": str(user.get("last-successful-login-time") or ""),
             "managed_type": MANAGED_TYPE_CUSTOM,
             "consolelink": utils.get_console_link("user", ocid=user["id"]),
         }
