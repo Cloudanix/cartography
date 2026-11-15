@@ -359,3 +359,31 @@ def test_instance_enis_place_the_public_ip_on_the_primary_eni():
     assert instance_enis({**row, "enis": []}) == [
         {"subnets": ["subnet-i"], "sgs": ["sg-i"], "public_ips": ["54.0.0.1"], "ipv6": []},
     ]
+
+
+def _run_layers(mocker):
+    """exposure_layers.run with L1-L4 stubbed out; returns the mocked L5 entry points."""
+    from cartography.intel.aws import exposure_layers
+    for layer in (exposure_layers.reach, exposure_layers.access, exposure_layers.software):
+        mocker.patch.object(layer, "compute", return_value={})
+    mocker.patch.object(exposure_layers, "read_security_groups", return_value={})
+    sync = mocker.patch.object(exposure_layers.blast_radius, "sync")
+    clear = mocker.patch.object(exposure_layers.blast_radius, "clear")
+    params = {"WORKSPACE_ID": "ws", "ORGANIZATION_ID": "o", "AWS_ID": "1", "UPDATE_TAG": 1}
+    exposure_layers.run(MagicMock(), params)
+    return sync, clear, params
+
+
+def test_paused_l5_clears_instead_of_computing(mocker):
+    mocker.patch("cartography.intel.aws.exposure_layers.blast_radius.PAUSED", True)
+    sync, clear, params = _run_layers(mocker)
+    sync.assert_not_called()
+    clear.assert_called_once()
+    assert clear.call_args.args[1] == params
+
+
+def test_unpaused_l5_computes(mocker):
+    mocker.patch("cartography.intel.aws.exposure_layers.blast_radius.PAUSED", False)
+    sync, clear, _ = _run_layers(mocker)
+    sync.assert_called_once()
+    clear.assert_not_called()

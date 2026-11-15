@@ -96,6 +96,12 @@ WITH i, collect(DISTINCT esg.id) + collect(DISTINCT sg.id) AS sgs, collect(DISTI
 RETURN i.id AS id, sgs, subnets, [ip IN eni_ips + [i.privateipaddress] WHERE ip IS NOT NULL] AS ips
 """
 
+# Paused 2026-11-15: on dense accounts every instance reaches every store (~120k edges per account on
+# one tenant), and inventory-sync views copied each reaching instance into every store row (RDSInstance
+# ~33 GB, Lambda OOM). While paused, exposure_layers.run clears an account's L5 output instead of computing it.
+# ponytail: module switch; re-enable once the views skip the edge and the fan-out is bounded.
+PAUSED = True
+
 # label -> port property
 STORES = {"RDSInstance": "endpoint_port", "RedshiftCluster": "endpoint_port", "ElasticacheCluster": "port"}
 
