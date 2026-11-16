@@ -4,7 +4,7 @@ AWS exposure layers (docs/exposure-layers/plan.md):
     L1 public / L2 internet reachable  reach.py
     L3 accessible without credentials  access.py
     L4 software identity (CVE input)   software.py
-    L5 network blast radius            blast_radius.py
+    L5 network blast radius            blast_radius.py (paused: clears instead, see PAUSED)
 
 Runs after every AWS sync of an account; reads the graph only, calls no AWS API.
 Leaves the legacy exposed_internet / exposed_internet_type properties untouched.
@@ -45,8 +45,11 @@ def run(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
     _write(neo4j_session, reach_props, tag)
     _write(neo4j_session, access.compute(neo4j_session, params), tag)
     _write(neo4j_session, software.compute(neo4j_session, params), tag)
-    # After L1/L2: the per-store counts read the instances' internet_reachable.
-    blast_radius.sync(neo4j_session, params, read_security_groups(neo4j_session, params))
+    if blast_radius.PAUSED:
+        blast_radius.clear(neo4j_session, params)
+    else:
+        # After L1/L2: the per-store counts read the instances' internet_reachable.
+        blast_radius.sync(neo4j_session, params, read_security_groups(neo4j_session, params))
 
     logger.info(
         "exposure layers account=%s done in %.2fs", params["AWS_ID"], time.perf_counter() - tic,

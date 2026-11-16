@@ -221,6 +221,21 @@ Graph-native, stays in cartography:
    databases can it talk to".
 3. Data: data stores carry classification from the tags work (`docs/tags-processing/`).
 
+### AWS network half paused (2026-11-15)
+
+`blast_radius.PAUSED = True`: `exposure_layers.run` clears an account's `CAN_NETWORK_REACH` edges and
+reach summaries instead of computing them. Why: the edge set is instances x reachable stores. On
+Enphase that came to ~120k edges per account, and inventory-sync views copied each reaching instance
+(with its `publicContext`) into every store row, which overflowed Neo4j's 2 GiB transaction cap
+(RDSInstance ~33 GB) and OOMed the inventory worker Lambda (RedshiftCluster ~0.9 GB).
+
+Before re-enabling:
+
+- inventory-sync views skip the edge (`SKIP_DERIVED_NEIGHBOR_EDGES`, inventory-sync-aws) and are deployed;
+- the fan-out is bounded: reach per security group or per subnet instead of per instance, or a cap per
+  store with a count for the rest;
+- size it on prod: max edges per account and the bytes a view would pull through them.
+
 ## 7. Phases
 
 Each phase ships independently and leaves `exposed_internet` untouched until phase 6.

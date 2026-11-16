@@ -399,7 +399,9 @@ def _props(session, label, node_id):
     return session.run(f"MATCH (n:{label}{{id: $id}}) RETURN properties(n) AS p", id=node_id).single()["p"]
 
 
-def test_aws_exposure_layers_end_to_end(neo4j_session):
+def test_aws_exposure_layers_end_to_end(neo4j_session, monkeypatch):
+    # L5 is paused in production (blast_radius.PAUSED); keep its compute path covered for re-enabling.
+    monkeypatch.setattr(exposure_layers.blast_radius, 'PAUSED', False)
     _build(neo4j_session)
     exposure_layers.run(neo4j_session, exposure_job_parameters(WS, ORG, ACCOUNT, TAG))
 

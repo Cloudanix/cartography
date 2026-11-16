@@ -47,6 +47,10 @@ from cartography.intel.aws.exposure_layers.network import port_set
 from cartography.intel.aws.exposure_layers.network import SgFacts
 from cartography.intel.exposure.layers import CAN_NETWORK_REACH
 from cartography.intel.exposure.layers import merge_reach_edges
+from cartography.intel.exposure.layers import NETWORK_REACHABLE_DATA_STORE_COUNT
+from cartography.intel.exposure.layers import NETWORK_REACHABLE_DATA_STORES
+from cartography.intel.exposure.layers import NETWORK_REACHABLE_FROM_COUNT
+from cartography.intel.exposure.layers import NETWORK_REACHABLE_FROM_INTERNET_EXPOSED_COUNT
 from cartography.intel.exposure.layers import reach_summaries
 from cartography.intel.exposure.layers import set_node_properties
 from cartography.intel.exposure.layers import write_reach_counts
@@ -91,6 +95,12 @@ WITH i, collect(DISTINCT esg.id) + collect(DISTINCT sg.id) AS sgs, collect(DISTI
     collect(DISTINCT sn.subnetid) AS subnets
 RETURN i.id AS id, sgs, subnets, [ip IN eni_ips + [i.privateipaddress] WHERE ip IS NOT NULL] AS ips
 """
+
+# Paused 2026-11-15: on dense accounts every instance reaches every store (~120k edges per account on
+# one tenant), and inventory-sync views copied each reaching instance into every store row (RDSInstance
+# ~33 GB, Lambda OOM). While paused, exposure_layers.run clears an account's L5 output instead of computing it.
+# ponytail: module switch; re-enable once the views skip the edge and the fan-out is bounded.
+PAUSED = True
 
 # label -> port property
 STORES = {"RDSInstance": "endpoint_port", "RedshiftCluster": "endpoint_port", "ElasticacheCluster": "port"}
@@ -273,6 +283,27 @@ MATCH {ACCOUNT}-[:RESOURCE]->(:EC2Instance)-[r:{CAN_NETWORK_REACH}]->()
 WHERE r.lastupdated <> $UPDATE_TAG
 DELETE r
 """
+
+_CLEAR_EDGES = f"""
+MATCH {ACCOUNT}-[:RESOURCE]->(:EC2Instance)-[r:{CAN_NETWORK_REACH}]->()
+DELETE r
+"""
+
+_CLEAR_SUMMARIES = f"""
+MATCH {ACCOUNT}-[:RESOURCE]->(n)
+WHERE n:EC2Instance OR {" OR ".join(f"n:{label}" for label in STORES)}
+REMOVE n.{NETWORK_REACHABLE_DATA_STORES}, n.{NETWORK_REACHABLE_DATA_STORE_COUNT},
+       n.{NETWORK_REACHABLE_FROM_COUNT}, n.{NETWORK_REACHABLE_FROM_INTERNET_EXPOSED_COUNT}
+"""
+
+
+def clear(session: neo4j.Session, params: Dict) -> None:
+    """
+    Remove this account's L5 output: every CAN_NETWORK_REACH edge out of its instances, and the
+    reach summaries on its instances and data stores. Other accounts are untouched.
+    """
+    session.run(_CLEAR_EDGES, **params).consume()
+    session.run(_CLEAR_SUMMARIES, **params).consume()
 
 
 def sync(session: neo4j.Session, params: Dict, sgs: Dict[str, SgFacts]) -> None:
