@@ -968,9 +968,11 @@ def sync_identitystore(
     organization_id = common_job_parameters["ORGANIZATION_ID"]
     scoped_group_ids = common_job_parameters.get("GROUPS", [])
     instances = get_identity_center_instances_list(boto3_session, common_job_parameters["IDENTITY_STORE_REGION"])
+    matched = False
     for instance in instances:
         if instance['InstanceArn'] != common_job_parameters["IDENTITY_STORE_IDENTITYFIER"]:
             continue
+        matched = True
         load_identity_center_instance(
             neo4j_session,
             instance,
@@ -992,6 +994,22 @@ def sync_identitystore(
             neo4j_session, boto3_session, instance, aws_update_tag, region, current_aws_account_id, common_job_parameters,
         )
 
+    # The cleanup deletes every org-level permission set, SSO user and group (and their links) not stamped by THIS
+    # run, across the whole organization. Run it only after a full sync of the configured instance: when no instance
+    # matched, nothing was stamped, and a GROUPS-scoped sync stamps only the scoped users and groups, so either would
+    # delete the org's identities another account's sync loaded (and the JIT access built on them).
+    if not matched:
+        logger.warning(
+            "IdentityStore: configured instance not found; skipping cleanup",
+            extra={"organization_id": organization_id, "region": region},
+        )
+        return
+    if scoped_group_ids:
+        logger.info(
+            "IdentityStore: GROUPS-scoped sync; skipping the org-wide cleanup",
+            extra={"organization_id": organization_id, "groups": len(scoped_group_ids)},
+        )
+        return
     cleanup_identitystore(neo4j_session, common_job_parameters)
 
 
