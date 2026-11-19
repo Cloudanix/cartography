@@ -120,6 +120,7 @@ class Sync:
                         "gitlab",
                         "azuredevops",
                         "oci",
+                        "rippling",
                     ]:
                         response = stage_func(neo4j_session, config)
                     else:
@@ -407,6 +408,21 @@ def build_gitlab_sync():
 
     sync.add_stages(stages)
 
+    return sync
+
+
+def build_rippling_sync():
+    """Build the Rippling inventory sync. Same stage shape as GitLab and Azure DevOps."""
+    import cartography.intel.rippling
+
+    sync = Sync()
+    sync.add_stages(
+        [
+            ("cloudanix-workspace", cloudanix.run),
+            ("rippling", cartography.intel.rippling.start_rippling_ingestion),
+            ("analysis", cartography.intel.analysis.run),
+        ],
+    )
     return sync
 
 
