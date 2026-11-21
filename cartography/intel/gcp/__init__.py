@@ -12,6 +12,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
 
 import googleapiclient.discovery
 import neo4j
@@ -648,6 +649,26 @@ def concurrent_execution(
     return _result if _result is not None else _elapsed
 
 
+# Node labels each service that checks the sync deadline registers with label.sync_labels.
+WITHHELD_SERVICE_LABELS: Dict[str, Tuple[str, ...]] = {
+    "bigquery": ("GCPBigqueryDataset", "GCPBigqueryTable"),
+}
+
+
+def labels_to_clean(service_labels: List[str], withheld: List[str]) -> List[str]:
+    """
+    The registered service labels whose stale label edges may be cleaned up this run.
+
+    A withheld service stopped part way: the label edges of the resources it did not reach were not refreshed, so its
+    labels are left for a run that finishes it. A withheld service missing from WITHHELD_SERVICE_LABELS has unknown
+    labels, so nothing is cleaned.
+    """
+    if any(service not in WITHHELD_SERVICE_LABELS for service in withheld):
+        return []
+    skipped = {name for service in withheld for name in WITHHELD_SERVICE_LABELS[service]}
+    return [name for name in service_labels if name not in skipped]
+
+
 def _sync_single_project(
     neo4j_session: neo4j.Session,
     resources: Resource,
@@ -848,17 +869,13 @@ def _sync_single_project(
             logger.warning(f"error to link serverless NEGs to functions for project {project_id} - {e}")
 
     _withheld = withheld_services()
+    _clean_labels = labels_to_clean(common_job_parameters["service_labels"], _withheld)
     if _withheld:
-        # A withheld service stopped part way: its unreached resources' label edges were not refreshed, and a cleanup
-        # now would strip them. Skip label cleanup this run; stale label edges of the other services go next run.
-        logger.warning(f"gcp project={project_id}: services {_withheld} withheld; skipping label cleanup")
-    else:
-        for service_name in common_job_parameters["service_labels"]:
-            common_job_parameters["service_label"] = service_name
-
-            label.cleanup_labels(neo4j_session, common_job_parameters, service_name)
-
-            del common_job_parameters["service_label"]
+        logger.warning(
+            f"gcp project={project_id}: services {_withheld} withheld; cleaning labels of {_clean_labels} only",
+        )
+    for service_name in _clean_labels:
+        label.cleanup_labels(neo4j_session, common_job_parameters, service_name)
 
     logger.info(
         json.dumps({
