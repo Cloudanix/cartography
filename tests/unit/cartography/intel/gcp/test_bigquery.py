@@ -1,3 +1,8 @@
+import json
+from unittest.mock import MagicMock
+
+from googleapiclient.errors import HttpError
+
 import cartography.intel.gcp.bigquery
 
 
@@ -133,6 +138,44 @@ def test_dataset_and_table_ids_are_project_qualified(mocker):
         'projects/p1/datasets/billing_export/tables/events', 'projects/p1/datasets/billing_export', 'events',
     )
     dataset_info.assert_called_once_with(None, 'billing_export', 'p1')
+
+
+def _datasets(*names):
+    return [{'datasetReference': {'datasetId': n}} for n in names]
+
+
+def test_one_datasets_get_serves_details_and_access(mocker):
+    """datasets.get used to be made twice per dataset (details, then access): 3,000 calls for 1,500 datasets."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    bigquery = MagicMock()
+    bigquery.datasets().get().execute.side_effect = [
+        {'location': 'US', 'access': [{'role': 'READER', 'iamMember': 'allUsers'}]},
+        {'location': 'EU'},
+    ]
+    bigquery.datasets().get.reset_mock()
+
+    datasets = module.transform_bigquery_dataset(bigquery, _datasets('a', 'b'), 'p1')
+
+    assert bigquery.datasets().get.call_count == 2
+    assert [d['details']['location'] for d in datasets] == ['US', 'EU']
+    assert [d['accesses'] for d in datasets] == [[{'role': 'READER', 'iamMember': 'allUsers'}], []]
+
+
+def test_unreadable_dataset_has_no_details_and_unknown_access(mocker):
+    """A permission-denied datasets.get leaves accesses None (IAM policy unresolved), not [] (no access)."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    bigquery = MagicMock()
+    denied = {'code': 403, 'message': 'Access Denied', 'status': 'PERMISSION_DENIED'}
+    bigquery.datasets().get().execute.side_effect = HttpError(
+        resp=MagicMock(status=403), content=json.dumps({'error': denied}).encode(),
+    )
+
+    datasets = module.transform_bigquery_dataset(bigquery, _datasets('locked'), 'p1')
+
+    assert (datasets[0]['details'], datasets[0]['accesses']) == ({}, None)
+    assert not hasattr(module, 'get_dataset_access_info')
 
 
 def test_tables_are_built_from_the_list_response_alone(mocker):

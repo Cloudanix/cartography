@@ -298,12 +298,15 @@ def test_unread_dataset_access_keeps_entries_and_reads_unknown(neo4j_session, mo
         module, 'get_bigquery_dataset',
         return_value=[{'datasetReference': {'datasetId': d}} for d in ('bq-read', 'bq-unread')],
     )
-    mocker.patch.object(module, 'get_dataset_info', return_value={})
     mocker.patch.object(module, 'get_bigquery_tables', return_value=[])
     mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
 
+    def dataset_info(access):
+        # datasets.get returns the access list inside the dataset resource; None means it could not be read.
+        return None if access is None else {'access': access}
+
     def sync(tag, entries):
-        mocker.patch.object(module, 'get_dataset_access_info', side_effect=lambda _b, d, _p: entries[d]())
+        mocker.patch.object(module, 'get_dataset_info', side_effect=lambda _b, d, _p: dataset_info(entries[d]()))
         module.sync(neo4j_session, None, project, tag, {**params, 'UPDATE_TAG': tag}, [])
 
     def open_access():
