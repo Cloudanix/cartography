@@ -96,16 +96,8 @@ def _load_labels_tx(tx: neo4j.Transaction, labels: List[Dict], update_tag: int, 
 
 
 def cleanup_labels(neo4j_session: neo4j.Session, common_job_parameters: Dict, service_name: str) -> None:
-    """
-    Delete stale labels of the resources carrying node label `service_name` (e.g. "GCPBigqueryTable") in the project.
-
-    Scoped to that node label so a service that did not refresh its labels this run (not requested, failed, or
-    withheld on the sync deadline) keeps them.
-    """
     logger.info(f"Cleaning Labels for {service_name}")
-    run_cleanup_job(
-        'gcp_labels_cleanup.json', neo4j_session, {**common_job_parameters, 'service_label': service_name},
-    )
+    run_cleanup_job('gcp_labels_cleanup.json', neo4j_session, common_job_parameters)
 
 
 def sync_labels(
