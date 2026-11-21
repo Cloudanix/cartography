@@ -31,6 +31,7 @@ from cartography.graph import write_timer
 from cartography.graph.session import Session
 from cartography.intel import post_sync
 from cartography.intel.gcp import crm
+from cartography.intel.gcp import vm_precheck
 from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
 from cartography.intel.gcp.util.errors import is_permission_error
@@ -63,7 +64,8 @@ Resources = namedtuple(
     "Resources",
     "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
     "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
-    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts vertexai serviceusage policyanalyzer",
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts vertexai serviceusage policyanalyzer "
+    "osconfig iap",
 )
 
 # Mapping of service short names to their full names as in docs. See https://developers.google.com/apis-explorer,
@@ -72,7 +74,8 @@ Services = namedtuple(
     "Services",
     "compute storage gke dns cloudfunction crm_v1 crm_v2 cloudkms cloudrun "
     "iam admin apigateway sql bigtable firestore apikey pubsub dataproc cloudmonitoring cloud_logging cloudcdn "
-    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts vertexai serviceusage policyanalyzer",
+    "loadbalancer bigquery dataflow spanner pubsublite cloudtasks artifacts vertexai serviceusage policyanalyzer "
+    "osconfig iap",
 )
 service_names = Services(
     compute="compute.googleapis.com",
@@ -106,6 +109,8 @@ service_names = Services(
     vertexai="aiplatform.googleapis.com",
     serviceusage="serviceusage.googleapis.com",
     policyanalyzer="policyanalyzer.googleapis.com",
+    osconfig="osconfig.googleapis.com",
+    iap="iap.googleapis.com",
 )
 
 
@@ -477,6 +482,26 @@ def _get_vertexai_resource(credentials: GoogleCredentials) -> Resource:
     return googleapiclient.discovery.build("aiplatform", "v1", credentials=credentials, cache_discovery=False)
 
 
+def _get_osconfig_resource(credentials: GoogleCredentials) -> Resource:
+    """
+    Instantiates an OS Config (VM Manager) resource object. Read by vm_precheck for OS inventory.
+    See: https://cloud.google.com/compute/vm-manager/docs/os-inventory/view-os-details
+    :param credentials: The GoogleCredentials object
+    :return: An OS Config resource object
+    """
+    return googleapiclient.discovery.build("osconfig", "v1", credentials=credentials, cache_discovery=False)
+
+
+def _get_iap_resource(credentials: GoogleCredentials) -> Resource:
+    """
+    Instantiates an Identity-Aware Proxy resource object. Read by vm_precheck for IAP tunnel permissions.
+    See: https://cloud.google.com/iap/docs/reference/rest
+    :param credentials: The GoogleCredentials object
+    :return: An IAP resource object
+    """
+    return googleapiclient.discovery.build("iap", "v1", credentials=credentials, cache_discovery=False)
+
+
 def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Resource:
     """
     Create namedtuple of all resource objects necessary for GCP data gathering.
@@ -515,6 +540,8 @@ def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Res
         pubsublite=_get_pubsublite_resource(credentials),
         vertexai=_get_vertexai_resource(credentials),
         policyanalyzer=_get_policyanalyzer_resource(credentials),
+        osconfig=_get_osconfig_resource(credentials),
+        iap=_get_iap_resource(credentials),
     )
 
 
@@ -809,6 +836,12 @@ def _sync_single_project(
             compute.sync_gke_node_links(neo4j_session, common_job_parameters)
         except Exception as e:
             logger.warning(f"error to link GKE nodes for project {project_id} - {e}")
+    # VM auto-install dry-run fields need the project's instances and firewalls loaded (compute sync).
+    if "compute" in requested_syncs:
+        try:
+            vm_precheck.sync(neo4j_session, resources, project_id, common_job_parameters)
+        except Exception as e:
+            logger.warning(f"error to set vm precheck fields for project {project_id} - {e}")
 
     # Load balancer backend members need backend services (cloudcdn), instance groups and NEGs (loadbalancer),
     # instances (compute) and functions (cloudfunction) loaded; those syncs run in parallel.

@@ -520,12 +520,53 @@ def get_gcp_firewall_ingress_rules(project_id: str, compute: Resource) -> Resour
     return req.execute()
 
 
+
+
+_OS_LOGIN_KEY = "enable-oslogin"
+
+
+def _metadata_items(metadata: Optional[Dict]) -> Dict[str, str]:
+    """GCE metadata {"items": [{"key", "value"}]} as {key: value}."""
+    return {item["key"]: item.get("value") for item in (metadata or {}).get("items", []) if item.get("key")}
+
+
+def get_gcp_project_metadata(compute: Resource, project_id: str) -> Optional[Dict[str, str]]:
+    """
+    Project-wide instance metadata (commonInstanceMetadata) as {key: value}; None when it cannot be read.
+    https://cloud.google.com/compute/docs/reference/rest/v1/projects/get
+    """
+    try:
+        project = compute.projects().get(project=project_id).execute()
+    except HttpError as e:
+        logger.warning(f"Could not get project metadata of {project_id}; os_login_enabled is unknown - {e}")
+        return None
+    return _metadata_items(project.get("commonInstanceMetadata"))
+
+
+def os_login_enabled(instance_metadata: Dict[str, str], project_metadata: Optional[Dict[str, str]]) -> Optional[bool]:
+    """
+    Effective OS Login setting (auto-install dry-run platform.access / os_login): the instance's
+    enable-oslogin overrides the project's; absent on both means off. None when the instance does not
+    set it and the project metadata could not be read.
+    ponytail: the org policy constraints/compute.requireOsLogin, which forces OS Login on, is not read.
+    """
+    value = instance_metadata.get(_OS_LOGIN_KEY)
+    if value is None:
+        if project_metadata is None:
+            return None
+        value = project_metadata.get(_OS_LOGIN_KEY)
+    return str(value or "").strip().lower() == "true"
+
+
 @timeit
-def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> List[Dict]:
+def transform_gcp_instances(
+    response_objects: List[Dict], compute: Resource, project_metadata: Optional[Dict[str, str]] = None,
+) -> List[Dict]:
     """
     Process the GCP instance response objects and return a flattened list of GCP instances with all the necessary fields
     we need to load it into Neo4j
     :param response_objects: The return data from get_gcp_instance_responses()
+    :param project_metadata: get_gcp_project_metadata() of the instances' project; None when unknown
     :return: A list of GCP instances
     """
     instance_list = []
@@ -563,8 +604,12 @@ def transform_gcp_instances(response_objects: List[Dict], compute: Resource) -> 
         scheduling = res.get("scheduling", {})
         res["is_spot_instance"] = scheduling.get("provisioningModel") == "SPOT" or scheduling.get("preemptible") is True
 
+        res["os_login_enabled"] = os_login_enabled(_metadata_items(res.get("metadata")), project_metadata)
+        res["architecture"] = None
         for disk in res.get("disks", []):
             if disk.get("boot"):
+                # Boot disk architecture, X86_64 / ARM64, stored as x86_64 / arm64 like the AWS architecture.
+                res["architecture"] = (disk.get("architecture") or "").lower() or None
                 res["diskName"] = disk.get("initializeParams", {}).get("diskName")
                 os_feature_types = [feature["type"] for feature in disk.get("guestOsFeatures", [])]
                 res["osFeatures"] = "WINDOWS" if "WINDOWS" in os_feature_types else "LINUX"
@@ -1271,7 +1316,9 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     i.gke_node_pool_name = instance.gke_node_pool_name,
     i.is_spot_instance = instance.is_spot_instance,
     i.vm_os = instance.vmOs,
-    i.vm_os_version = instance.vmOsVersion
+    i.vm_os_version = instance.vmOsVersion,
+    i.architecture = instance.architecture,
+    i.os_login_enabled = instance.os_login_enabled
     WITH i, p
 
     MERGE (p)-[r:RESOURCE]->(i)
@@ -2184,7 +2231,8 @@ def sync_gcp_instances(
 
     instance_responses = get_gcp_instances(project_id, zones, compute)
 
-    instance_list = transform_gcp_instances(instance_responses, compute)
+    project_metadata = get_gcp_project_metadata(compute, project_id) if instance_responses else None
+    instance_list = transform_gcp_instances(instance_responses, compute, project_metadata)
 
     load_gcp_instances(neo4j_session, instance_list, gcp_update_tag, common_job_parameters)
 

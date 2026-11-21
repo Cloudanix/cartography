@@ -1,12 +1,14 @@
 import base64
 import json
 import logging
+import re
 import time
 from collections import namedtuple
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 import boto3
 import neo4j
@@ -77,8 +79,8 @@ def get_ec2_images(boto3_session: boto3.session.Session, image_ids: List[str], r
 @aws_handle_regions
 def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List[Dict]:
     client = boto3_session.client("ec2", region_name=region, config=get_botocore_config())
-    reservations = []
-    image_ids = []
+    reservations: list = []
+    image_ids: list = []
     try:
         paginator = client.get_paginator("describe_instances")
         # Since 2026-04-22 AWS hides service-managed instances (EKS Auto Mode, ECS/Lambda Managed
@@ -155,6 +157,156 @@ def get_instance_user_data(
         return None
 
 
+# Names AWS uses that are not a substring of an OPERATING_SYSTEMS token.
+# "redhat" does not occur in "Red Hat"; "amazon" does not occur in "amzn" / "al2023".
+_OS_NAME_ALIASES = (
+    ("red hat", "redhat"),
+    ("rhel", "redhat"),
+    ("al2023", "amazon"),
+    ("amzn", "amazon"),
+    ("sles", "suse"),
+    ("mac os", "macos"),
+)
+
+# PlatformDetails is a billing label, not a distro. Linux/UNIX covers Amazon Linux,
+# Debian, standard Ubuntu, and custom AMIs, so it is intentionally not mapped.
+_PLATFORM_DETAILS_OS = (
+    ("windows", "windows"),
+    ("red hat", "redhat"),
+    ("suse", "suse"),
+    ("ubuntu", "ubuntu"),
+    ("macos", "macos"),
+    ("mac os", "macos"),
+)
+
+
+def _match_operating_system(text: str) -> Optional[str]:
+    """First known distro in ``text`` (AMI name, description, or SSM platform name)."""
+    if not text:
+        return None
+    lowered = text.lower()
+    for op_system in OPERATING_SYSTEMS:
+        # "arch" is a substring of "aarch64".
+        if op_system == "arch" and "aarch64" in lowered:
+            if "arch linux" not in lowered and "archlinux" not in lowered:
+                continue
+        if op_system in lowered:
+            return op_system
+    for needle, os_name in _OS_NAME_ALIASES:
+        if needle in lowered:
+            return os_name
+    return None
+
+
+def _vm_os_from_platform_details(platform_details: Optional[str]) -> Optional[str]:
+    details = (platform_details or "").lower()
+    for needle, os_name in _PLATFORM_DETAILS_OS:
+        if needle in details:
+            return os_name
+    return None
+
+
+def _display_platform(instance: Dict[str, Any]) -> str:
+    """Billing platform, with Linux/UNIX stored as Linux."""
+    raw = (instance.get("PlatformDetails") or instance.get("Platform") or "").strip()
+    if not raw:
+        return "Unknown"
+    lowered = raw.lower()
+    if lowered in ("linux/unix", "linux"):
+        return "Linux"
+    if lowered == "windows":
+        return "Windows"
+    return raw
+
+
+def _plausible_version(token: str) -> bool:
+    parts = token.split(".")
+    # 10.0.20348 is a Windows build. Longer tokens are AMI dates (2023.6.20241212.0).
+    return len(parts) <= 3 and all(part.isdigit() and len(part) <= 5 for part in parts)
+
+
+def _extract_os_version(vm_os: Optional[str], text: str) -> Optional[str]:
+    """Pull a numeric release out of an AMI name, description, or SSM version string."""
+    lowered = text.lower()
+    if vm_os == "ubuntu":
+        match = re.search(r"(?<!\d)((?:1[4-9]|2\d)\.\d{2})(?!\d)", lowered)
+        return match.group(1) if match else None
+    if vm_os == "amazon":
+        match = re.search(r"\bal(20\d{2})\b", lowered) or re.search(r"amazon linux (20\d{2}|\d+)\b", lowered)
+        if match:
+            return match.group(1)
+        match = re.search(r"\bamzn(\d+)\b", lowered)
+        return match.group(1) if match else None
+    if vm_os == "windows":
+        # NT build from the SSM agent (10.0.20348). AMI names use the Server year instead.
+        match = re.search(r"(?<!\d)(10\.\d+\.\d+)(?!\d)", lowered)
+        if match:
+            return match.group(1)
+        match = re.search(r"server[-_ ](20\d{2})\b", lowered) or re.search(r"windows[-_ ](\d{2})\b", lowered)
+        return match.group(1) if match else None
+    if vm_os == "debian":
+        match = re.search(r"debian[-_ ](\d+(?:\.\d+)*)\b", lowered)
+        if match and _plausible_version(match.group(1)):
+            return match.group(1)
+    for match in re.finditer(r"(?<!\d)(\d+(?:\.\d+)+)(?!\d)", lowered):
+        token = match.group(1)
+        if _plausible_version(token):
+            return token
+    for match in re.finditer(r"(?<!\d)(\d{1,4})(?!\d)", lowered):
+        return match.group(1)
+    return None
+
+
+def _numeric_os_version(vm_os: Optional[str], *texts: str) -> str:
+    """Version made of digits and dots only: 2023, 2, 24.04, 14.04, 10.0.20348."""
+    for text in texts:
+        if not text:
+            continue
+        stripped = str(text).strip()
+        if re.fullmatch(r"\d+(?:\.\d+)*", stripped):
+            return stripped
+        found = _extract_os_version(vm_os, stripped)
+        if found:
+            return found
+    return "Unknown"
+
+
+def _derive_vm_os(instance: Dict[str, Any], os_details: Dict[str, Any]) -> Tuple[str, str]:
+    description = os_details.get("Description") or ""
+    name = os_details.get("Name") or ""
+    image_platform = (os_details.get("Platform") or "").lower()
+    instance_platform = (instance.get("Platform") or "").lower()
+    architecture = (instance.get("Architecture") or os_details.get("Architecture") or "").lower()
+
+    vm_os = _match_operating_system(description) or _match_operating_system(name)
+    if not vm_os and (instance_platform == "windows" or image_platform == "windows"):
+        vm_os = "windows"
+    if not vm_os and architecture.endswith("_mac"):
+        vm_os = "macos"
+    if not vm_os:
+        vm_os = (
+            _vm_os_from_platform_details(instance.get("PlatformDetails")) or
+            _vm_os_from_platform_details(os_details.get("PlatformDetails"))
+        )
+    vm_os = vm_os or "Unknown"
+    return vm_os, _numeric_os_version(vm_os, name, description)
+
+
+def _apply_ssm_vm_os(inst: Dict[str, Any], info: Dict[str, Any]) -> None:
+    vm_os = _match_operating_system(info.get("PlatformName") or "")
+    if not vm_os:
+        platform_type = (info.get("PlatformType") or "").lower()
+        if platform_type == "windows":
+            vm_os = "windows"
+        elif platform_type == "macos":
+            vm_os = "macos"
+    if vm_os:
+        inst["VmOs"] = vm_os
+    version = info.get("PlatformVersion")
+    if version:
+        inst["VmOsVersion"] = _numeric_os_version(inst.get("VmOs"), version)
+
+
 def transform_ec2_instances(
     boto3_session: boto3.session.Session,
     reservations: List[Dict[str, Any]],
@@ -214,21 +366,16 @@ def transform_ec2_instances(
                     if not eks_cluster_name:
                         eks_cluster_name = key.split("/")[-1]
 
-            os_details = instance.get("OSDetails", {})
-            platform = os_details.get("Platform", "Linux")
-            architecture = os_details.get("Architecture", "Unknown")
-            virtualization_type = os_details.get("VirtualizationType", "Unknown")
-            hypervisor = os_details.get("Hypervisor", "Unknown")
-            vm_os = "Unknown"
-            image_description = os_details.get("Description", "").lower()
-
-            if image_description:
-                for op_system in OPERATING_SYSTEMS:
-                    if op_system in image_description:
-                        vm_os = op_system
-                        break
-
-            vm_os_version = os_details.get("Name", "Unknown")
+            # Platform is returned only for Windows. PlatformDetails is on every instance;
+            # Linux/UNIX is stored as Linux.
+            platform = _display_platform(instance)
+            architecture = instance.get("Architecture", "Unknown")
+            virtualization_type = instance.get("VirtualizationType", "Unknown")
+            hypervisor = instance.get("Hypervisor", "Unknown")
+            # OSDetails is the DescribeImages object attached in get_ec2_instances.
+            # It is empty when the AMI is deregistered or the image call failed.
+            os_details = instance.get("OSDetails") or {}
+            vm_os, vm_os_version = _derive_vm_os(instance, os_details)
 
             is_spot_instance = str(instance.get("InstanceLifecycle", "")).lower() == "spot"
             # Operator is only returned for service-managed instances; absent -> None -> property not set.
@@ -264,6 +411,12 @@ def transform_ec2_instances(
                     "BootMode": instance.get("BootMode"),
                     "InstanceLifecycle": instance.get("InstanceLifecycle"),
                     "HibernationOptions": instance.get("HibernationOptions", {}).get("Configured"),
+                    # Instance metadata service settings, read by the auto-install dry-run identity.imds check.
+                    "MetadataHttpEndpoint": instance.get("MetadataOptions", {}).get("HttpEndpoint"),
+                    "MetadataHttpTokens": instance.get("MetadataOptions", {}).get("HttpTokens"),
+                    "MetadataHttpPutResponseHopLimit": instance.get("MetadataOptions", {}).get(
+                        "HttpPutResponseHopLimit",
+                    ),
                     **_default_ssm_instance_fields(),
                     "Region": region,
                     "consolelink": aws_console_link.get_console_link(arn=InstanceArn),
@@ -672,7 +825,12 @@ def enrich_ec2_instances_with_ssm_status(
     """
     info_by_id = {ii["InstanceId"]: ii for ii in instance_information}
     for inst in instance_list:
-        inst.update(_ssm_fields_from_instance_information(info_by_id.get(inst["InstanceId"])))
+        info = info_by_id.get(inst["InstanceId"])
+        inst.update(_ssm_fields_from_instance_information(info))
+        # Runs after transform, so a managed node replaces the AMI-derived OS.
+        # Stopped instances are absent from DescribeInstanceInformation and keep it.
+        if info:
+            _apply_ssm_vm_os(inst, info)
 
 
 def load_ec2_instance_data(
