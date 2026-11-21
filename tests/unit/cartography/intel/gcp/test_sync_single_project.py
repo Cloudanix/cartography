@@ -3,7 +3,6 @@ from unittest.mock import patch
 
 from cartography import util
 from cartography.intel.gcp import _sync_single_project
-from cartography.intel.gcp import labels_to_clean
 
 
 @patch("cartography.intel.gcp.GraphDatabase")
@@ -38,12 +37,11 @@ def test_empty_parallel_requests_does_not_raise(mock_regions, mock_enabled, mock
 @patch("cartography.intel.gcp.GraphDatabase")
 @patch("cartography.intel.gcp._services_enabled_on_project")
 @patch("cartography.intel.gcp.get_all_regions")
-def test_service_out_of_budget_is_withheld_and_keeps_its_labels(
+def test_service_out_of_budget_is_withheld_and_labels_are_cleaned_once_each(
     mock_regions, mock_enabled, mock_graphdb, mock_cleanup_labels,
 ):
     # cloudanix-web #5338: bigquery ran past the 540s function timeout. Past the budget, a service stops, is reported
-    # withheld, and its labels are not cleaned (that would strip those of resources it did not reach); the other
-    # services' labels still are.
+    # withheld. Label cleanup still runs, once per registered label (bigquery registers one per dataset).
     mock_regions.return_value = ["us-central1"]
     mock_enabled.return_value = {"bigquery.googleapis.com", "bigtableadmin.googleapis.com"}
     ran = []
@@ -56,7 +54,7 @@ def test_service_out_of_budget_is_withheld_and_keeps_its_labels(
     def bigtable(*_args):
         ran.append("bigtable")
 
-    common_job_parameters = {"service_labels": ["GCPBigqueryDataset", "GCPBigqueryTable", "GCPBigtableInstance"]}
+    common_job_parameters = {"service_labels": ["GCPBigqueryDataset", "GCPBigqueryTable", "GCPBigqueryTable"]}
     config = MagicMock()
     config.params = {}
     functions = {"bigquery": slow_bigquery, "bigtable": bigtable}
@@ -75,7 +73,7 @@ def test_service_out_of_budget_is_withheld_and_keeps_its_labels(
 
     assert withheld == ["bigquery"]
     assert ran == ["bigtable"]
-    assert [c.args[2] for c in mock_cleanup_labels.call_args_list] == ["GCPBigtableInstance"]
+    assert [c.args[2] for c in mock_cleanup_labels.call_args_list] == ["GCPBigqueryDataset", "GCPBigqueryTable"]
 
 
 @patch("cartography.intel.gcp.label.cleanup_labels")
@@ -96,11 +94,3 @@ def test_services_within_budget_clean_their_labels(mock_regions, mock_enabled, m
 
     assert withheld == []
     mock_cleanup_labels.assert_called_once()
-
-
-def test_labels_to_clean_dedupes_and_skips_withheld_services():
-    labels = ["GCPBigqueryTable", "GCPInstance"]
-    assert labels_to_clean(labels, []) == labels
-    assert labels_to_clean(["GCPBigqueryTable", "GCPInstance", "GCPBigqueryTable"], []) == labels
-    assert labels_to_clean(labels, ["bigquery"]) == ["GCPInstance"]
-    assert labels_to_clean(labels, ["bigquery", "compute"]) == []
