@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -52,3 +53,21 @@ def test_every_nested_path_has_cleanup_coverage():
     ).read_text()
     for service_label, path in label.OWNERSHIP_PATHS.items():
         assert f'(m:{service_label}){path}(:GCPProject' in cleanup, service_label
+
+
+def test_label_cleanup_is_scoped_to_the_service_label(mocker):
+    # Unscoped, cleaning one service's labels deleted every other service's not refreshed this run (a withheld one).
+    statements = json.loads(
+        (
+            Path(__file__).resolve().parents[5] /
+            'cartography' / 'data' / 'jobs' / 'cleanup' / 'gcp_labels_cleanup.json'
+        ).read_text(),
+    )['statements']
+    assert all('$service_label IN labels(m)' in s['query'] for s in statements)
+
+    run = mocker.patch.object(label, 'run_cleanup_job')
+    params = {'UPDATE_TAG': 1}
+    label.cleanup_labels(MagicMock(), params, 'GCPInstance')
+
+    assert run.call_args[0][2] == {'UPDATE_TAG': 1, 'service_label': 'GCPInstance'}
+    assert params == {'UPDATE_TAG': 1}
