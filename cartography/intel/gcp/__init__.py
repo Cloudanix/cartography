@@ -666,7 +666,9 @@ def labels_to_clean(service_labels: List[str], withheld: List[str]) -> List[str]
     if any(service not in WITHHELD_SERVICE_LABELS for service in withheld):
         return []
     skipped = {name for service in withheld for name in WITHHELD_SERVICE_LABELS[service]}
-    return [name for name in service_labels if name not in skipped]
+    # dict.fromkeys dedupes in order: sync_labels registers a label per call, and BigQuery calls it once per dataset
+    # (1,500 GCPBigqueryTable entries on emeritus-data-science, each a full cleanup job run).
+    return [name for name in dict.fromkeys(service_labels) if name not in skipped]
 
 
 def _sync_single_project(

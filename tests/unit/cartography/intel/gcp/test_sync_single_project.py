@@ -98,8 +98,9 @@ def test_services_within_budget_clean_their_labels(mock_regions, mock_enabled, m
     mock_cleanup_labels.assert_called_once()
 
 
-def test_a_withheld_service_with_unknown_labels_cleans_none():
+def test_labels_to_clean_dedupes_and_skips_withheld_services():
     labels = ["GCPBigqueryTable", "GCPInstance"]
     assert labels_to_clean(labels, []) == labels
+    assert labels_to_clean(["GCPBigqueryTable", "GCPInstance", "GCPBigqueryTable"], []) == labels
     assert labels_to_clean(labels, ["bigquery"]) == ["GCPInstance"]
     assert labels_to_clean(labels, ["bigquery", "compute"]) == []
