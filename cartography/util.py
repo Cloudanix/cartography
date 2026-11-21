@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import sys
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -117,6 +118,67 @@ def collect_failed_analysis_jobs() -> Iterator[List[Dict[str, Any]]]:
         yield failed
     finally:
         _failed_analysis_jobs.reset(token)
+
+
+# Time budget of the current sync and the services it cut short, for the sync response. ContextVars for the same reason
+# as _failed_analysis_jobs. Services sync in ThreadPoolExecutor workers, so the pool must submit through
+# contextvars.copy_context().run for a worker to see them (the copied context shares the list object).
+_sync_deadline: ContextVar[Optional[float]] = ContextVar("sync_deadline", default=None)
+_withheld_services: ContextVar[Optional[List[str]]] = ContextVar("withheld_services", default=None)
+
+
+class SyncDeadlineExceeded(Exception):
+    """The sync used up its time budget; the service that raised it stopped before its cleanup."""
+
+
+@contextmanager
+def sync_deadline(budget_seconds: Optional[float]) -> Iterator[None]:
+    """
+    Give the syncs inside this block a time budget, enforced by check_sync_deadline. A falsy budget sets none.
+
+    Exists because a serverless host kills the process at its timeout with no chance to publish a reply (the GCP
+    cartographyworker at 540s, cloudanix-web #5338). Stopping a service early and publishing what is done beats that.
+    """
+    token = _sync_deadline.set(time.monotonic() + budget_seconds if budget_seconds else None)
+    try:
+        yield
+    finally:
+        _sync_deadline.reset(token)
+
+
+def check_sync_deadline(where: str) -> None:
+    """
+    Raise SyncDeadlineExceeded when the sync's budget is spent. Call it between units of work in a long fan-out loop.
+
+    ponytail: only GCP BigQuery calls it today (the service measured past the budget); add a call to another service's
+    loop when it is measured near the budget.
+    """
+    deadline = _sync_deadline.get()
+    if deadline is not None and time.monotonic() > deadline:
+        raise SyncDeadlineExceeded(where)
+
+
+@contextmanager
+def collect_withheld_services() -> Iterator[List[str]]:
+    """Collect the services record_withheld_service names inside this block (sync names, e.g. "bigquery")."""
+    withheld: List[str] = []
+    token = _withheld_services.set(withheld)
+    try:
+        yield withheld
+    finally:
+        _withheld_services.reset(token)
+
+
+def record_withheld_service(service: str) -> None:
+    """Note a service that stopped on SyncDeadlineExceeded: its graph data is partial and its cleanup did not run."""
+    withheld = _withheld_services.get()
+    if withheld is not None and service not in withheld:
+        withheld.append(service)
+
+
+def withheld_services() -> List[str]:
+    """The services recorded so far in the enclosing collect_withheld_services block ([] outside one)."""
+    return list(_withheld_services.get() or [])
 
 
 def run_analysis_job_logged(

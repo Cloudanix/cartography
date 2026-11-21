@@ -1,9 +1,11 @@
 import json
 from unittest.mock import MagicMock
 
+import pytest
 from googleapiclient.errors import HttpError
 
 import cartography.intel.gcp.bigquery
+import cartography.util
 
 
 TEST_PROJECT_ID = 'test-project'
@@ -138,6 +140,34 @@ def test_dataset_and_table_ids_are_project_qualified(mocker):
         'projects/p1/datasets/billing_export/tables/events', 'projects/p1/datasets/billing_export', 'events',
     )
     dataset_info.assert_called_once_with(None, 'billing_export', 'p1')
+
+
+def test_spent_budget_stops_the_sync_before_cleanup(mocker):
+    """Past the sync budget the table loop stops and cleanup does not run, so unreached datasets keep their tables."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module, 'get_bigquery_dataset', return_value=_datasets('a', 'b'))
+    mocker.patch.object(module, 'get_dataset_info', return_value={'access': []})
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    for loader in ('load_bigquery_datasets', 'attach_dataset_to_accesses', 'load_bigquery_tables'):
+        mocker.patch.object(module, loader)
+    mocker.patch.object(module.label, 'sync_labels')
+    get_tables = mocker.patch.object(module, 'get_bigquery_tables', return_value=[])
+    cleanup = mocker.patch.object(module, 'cleanup_gcp_bigquery')
+    calls = []
+
+    def deadline(where):
+        # Budget left for the dataset pass, spent after the first dataset's tables.
+        calls.append(where)
+        if where.startswith('bigquery tables') and len([c for c in calls if 'tables' in c]) > 1:
+            raise cartography.util.SyncDeadlineExceeded(where)
+
+    mocker.patch.object(module, 'check_sync_deadline', side_effect=deadline)
+
+    with pytest.raises(cartography.util.SyncDeadlineExceeded):
+        module.sync(MagicMock(), None, 'p1', 1, {'service_labels': []}, [])
+
+    assert get_tables.call_count == 1
+    cleanup.assert_not_called()
 
 
 def _datasets(*names):

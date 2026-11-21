@@ -19,6 +19,11 @@ from cartography.intel.aws.resources import parse_and_validate_aws_requested_syn
 
 logger = logging.getLogger(__name__)
 
+# The GCP cartographyworker Cloud Function is killed at --timeout=540s (scripts/gcp.deploy.sh) with no reply sent. Stop
+# syncing at 420s, leaving ~2 minutes for the post-sync analysis and the publish. Override: CDX_GCP_SYNC_BUDGET_SECONDS.
+GCP_SYNC_BUDGET_SECONDS = 420
+GCP_SYNC_BUDGET_ENV = "CDX_GCP_SYNC_BUDGET_SECONDS"
+
 
 class CLI:
     """
@@ -738,9 +743,10 @@ class CLI:
 
         # Run cartography
         try:
-            with cartography.util.collect_failed_analysis_jobs() as failed_analysis_jobs:
+            with cartography.util.collect_failed_analysis_jobs() as failed_analysis_jobs, \
+                    cartography.util.collect_withheld_services() as withheld_services:
                 output = cartography.sync.run_with_config(self.sync, config)
-            return _sync_response(output, failed_analysis_jobs)
+            return _sync_response(output, failed_analysis_jobs, withheld_services)
 
         except KeyboardInterrupt:
             # return 130
@@ -755,7 +761,11 @@ class CLI:
             }
 
 
-def _sync_response(output: dict, failed_analysis_jobs: Optional[List[Dict[str, Any]]] = None) -> dict:
+def _sync_response(
+    output: dict,
+    failed_analysis_jobs: Optional[List[Dict[str, Any]]] = None,
+    withheld_services: Optional[List[str]] = None,
+) -> dict:
     """Turn a sync return value into the payload published to inventory.
 
     authFailed means the sync did not complete and produced nothing. That must
@@ -767,6 +777,12 @@ def _sync_response(output: dict, failed_analysis_jobs: Optional[List[Dict[str, A
     cartography.util.collect_failed_analysis_jobs). A failed analysis job does
     not fail the sync: the rest of the graph is fresh, only that job's derived
     values (e.g. exposure) may be stale, so it is reported next to "success".
+
+    withheld_services lists the requested services the sync stopped part way
+    because its time budget ran out (cartography.util.sync_deadline), by sync
+    name ("bigquery"). Their graph data is partial and was not cleaned up;
+    inventory-sync withholds them from the dataset so the console keeps their
+    assets as they were. The rest of the sync is complete, so it is "success".
     """
     if isinstance(output, dict) and output.get("authFailed"):
         return {
@@ -783,6 +799,7 @@ def _sync_response(output: dict, failed_analysis_jobs: Optional[List[Dict[str, A
         "updateTag": output.get("UPDATE_TAG", None),
         "pagination": output.get("pagination", None),
         "failed_analysis_jobs": failed_analysis_jobs or [],
+        "withheld_services": withheld_services or [],
     }
 
 
@@ -899,7 +916,8 @@ def run_gcp(request):
     elif request["logging"]["mode"] == "quiet":
         config.quiet = True
 
-    return CLI(default_sync, prog="cartography").process(config)
+    with cartography.util.sync_deadline(float(os.environ.get(GCP_SYNC_BUDGET_ENV, GCP_SYNC_BUDGET_SECONDS))):
+        return CLI(default_sync, prog="cartography").process(config)
 
 
 def run_oci(request):

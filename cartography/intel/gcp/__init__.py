@@ -1,3 +1,4 @@
+import contextvars
 import json
 import logging
 import os
@@ -6,6 +7,7 @@ from collections import namedtuple
 from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -35,8 +37,11 @@ from cartography.intel.gcp.auth import AuthHelper
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.intel.gcp.util.errors import is_service_not_enabled_error as _is_service_not_enabled_error
+from cartography.util import record_withheld_service
 from cartography.util import run_cleanup_job
+from cartography.util import SyncDeadlineExceeded
 from cartography.util import timeit
+from cartography.util import withheld_services
 
 logger = logging.getLogger(__name__)
 
@@ -604,6 +609,12 @@ def concurrent_execution(
                 regions,
             )
         _result = round(time.perf_counter() - tic, 4)
+    except SyncDeadlineExceeded as e:
+        # Out of time: the service stopped before its cleanup, so its graph data is partial. Report it so the
+        # inventory withholds it instead of publishing it as complete.
+        _status = "withheld"
+        record_withheld_service(service)
+        logger.warning(f"gcp project={project_id}: sync budget spent in {service} ({e}); service withheld")
     except Exception as e:
         if isinstance(e, googleapiclient.discovery.HttpError) and _is_service_not_enabled_error(e):
             # API not enabled on this (often external) project - nothing to sync. Log at info so it is not reported to
@@ -697,6 +708,10 @@ def _sync_single_project(
                             common_job_parameters,
                             regions,
                         )
+                except SyncDeadlineExceeded as e:
+                    _svc_status = "withheld"
+                    record_withheld_service(func_name)
+                    logger.warning(f"sync budget spent in {func_name} ({e}); service withheld")
                 except Exception as e:
                     if isinstance(e, googleapiclient.discovery.HttpError) and _is_service_not_enabled_error(e):
                         # API not enabled on this project - nothing to sync. Mirror the parallel path so the
@@ -767,7 +782,11 @@ def _sync_single_project(
                     futures_map: Dict = {}
                     for request in parallel_requests:
                         try:
+                            # Run in a copy of this context so the worker sees the sync deadline and the withheld
+                            # services list (cartography.util); a bare submit runs with an empty context.
+                            run_in_context: Callable[..., Any] = contextvars.copy_context().run
                             _f = executor.submit(
+                                run_in_context,
                                 concurrent_execution,
                                 request,
                                 RESOURCE_FUNCTIONS[request],
@@ -828,12 +847,18 @@ def _sync_single_project(
         except Exception as e:
             logger.warning(f"error to link serverless NEGs to functions for project {project_id} - {e}")
 
-    for service_name in common_job_parameters["service_labels"]:
-        common_job_parameters["service_label"] = service_name
+    _withheld = withheld_services()
+    if _withheld:
+        # A withheld service stopped part way: its unreached resources' label edges were not refreshed, and a cleanup
+        # now would strip them. Skip label cleanup this run; stale label edges of the other services go next run.
+        logger.warning(f"gcp project={project_id}: services {_withheld} withheld; skipping label cleanup")
+    else:
+        for service_name in common_job_parameters["service_labels"]:
+            common_job_parameters["service_label"] = service_name
 
-        label.cleanup_labels(neo4j_session, common_job_parameters, service_name)
+            label.cleanup_labels(neo4j_session, common_job_parameters, service_name)
 
-        del common_job_parameters["service_label"]
+            del common_job_parameters["service_label"]
 
     logger.info(
         json.dumps({
@@ -843,6 +868,7 @@ def _sync_single_project(
             "service_timings": _service_timings,
             "slowest_service": max(_service_timings, key=_service_timings.get) if _service_timings else None,
             "failed_services": _failed_services,
+            "withheld_services": _withheld,
         }),
     )
 

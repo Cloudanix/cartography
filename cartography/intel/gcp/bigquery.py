@@ -14,6 +14,7 @@ from . import label
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.intel.gcp.util.errors import POLICY_RESOLVED
 from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
+from cartography.util import check_sync_deadline
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -62,6 +63,8 @@ def get_bigquery_dataset(bigquery: Resource, project_id: str, common_job_paramet
 def transform_bigquery_dataset(bigquery: Resource, datasets: List[Dict], project_id: str) -> List[Resource]:
     list_dataset = []
     for dataset in datasets:
+        # One API call per dataset: a project with thousands of datasets can spend the sync budget here.
+        check_sync_deadline(f"bigquery datasets of project {project_id}")
         # A datasetId is unique only inside its project ("billing_export" exists in many): the node id is the
         # project-qualified name, the short id stays in `name` and is what the BigQuery API takes.
         dataset['name'] = dataset.get('datasetReference', {}).get('datasetId', '')
@@ -383,6 +386,8 @@ def sync(
 
     # BIGQUERY TABLES
     for dataset in bigquery_datasets:
+        # Raising here skips cleanup_gcp_bigquery below, so tables of datasets not reached this run are kept.
+        check_sync_deadline(f"bigquery tables of project {project_id}")
         # GCPAcl ids already carry the project (projects/{p}/bigquery/{d}/role/...): built from the short id, unchanged.
         accesses_list = transform_dataset_accesses(dataset['accesses'] or [], dataset['name'], project_id)
         attach_dataset_to_accesses(neo4j_session, dataset['id'], accesses_list, gcp_update_tag, project_id)

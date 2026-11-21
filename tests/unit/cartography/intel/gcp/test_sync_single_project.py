@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from cartography import util
 from cartography.intel.gcp import _sync_single_project
 
 
@@ -30,3 +31,66 @@ def test_empty_parallel_requests_does_not_raise(mock_regions, mock_enabled, mock
     )
 
     mock_graphdb.driver.assert_not_called()
+
+
+@patch("cartography.intel.gcp.label.cleanup_labels")
+@patch("cartography.intel.gcp.GraphDatabase")
+@patch("cartography.intel.gcp._services_enabled_on_project")
+@patch("cartography.intel.gcp.get_all_regions")
+def test_service_out_of_budget_is_withheld_and_labels_are_not_cleaned(
+    mock_regions, mock_enabled, mock_graphdb, mock_cleanup_labels,
+):
+    # cloudanix-web #5338: bigquery ran past the 540s function timeout. Past the budget, a service stops, is reported
+    # withheld, and the label cleanup (which would strip labels of resources it did not reach) is skipped.
+    mock_regions.return_value = ["us-central1"]
+    mock_enabled.return_value = {"bigquery.googleapis.com", "bigtableadmin.googleapis.com"}
+    ran = []
+
+    def slow_bigquery(*_args):
+        # Raises only if the pool worker sees the caller's deadline (contextvars are not inherited by threads).
+        util.check_sync_deadline("bigquery tables")
+        ran.append("bigquery")
+
+    def bigtable(*_args):
+        ran.append("bigtable")
+
+    common_job_parameters = {"service_labels": ["bigquerytable"]}
+    config = MagicMock()
+    config.params = {}
+    functions = {"bigquery": slow_bigquery, "bigtable": bigtable}
+
+    with patch.dict("cartography.intel.gcp.RESOURCE_FUNCTIONS", functions), \
+            util.collect_withheld_services() as withheld, util.sync_deadline(1e-9):
+        _sync_single_project(
+            neo4j_session=MagicMock(),
+            resources=MagicMock(),
+            requested_syncs=["bigquery", "bigtable"],
+            project_id="proj-1",
+            gcp_update_tag=123,
+            common_job_parameters=common_job_parameters,
+            config=config,
+        )
+
+    assert withheld == ["bigquery"]
+    assert ran == ["bigtable"]
+    mock_cleanup_labels.assert_not_called()
+
+
+@patch("cartography.intel.gcp.label.cleanup_labels")
+@patch("cartography.intel.gcp.GraphDatabase")
+@patch("cartography.intel.gcp._services_enabled_on_project")
+@patch("cartography.intel.gcp.get_all_regions")
+def test_services_within_budget_clean_their_labels(mock_regions, mock_enabled, mock_graphdb, mock_cleanup_labels):
+    mock_regions.return_value = ["us-central1"]
+    mock_enabled.return_value = {"bigquery.googleapis.com"}
+    config = MagicMock()
+    config.params = {}
+
+    with patch.dict("cartography.intel.gcp.RESOURCE_FUNCTIONS", {"bigquery": lambda *_: None}), \
+            util.collect_withheld_services() as withheld, util.sync_deadline(420):
+        _sync_single_project(
+            MagicMock(), MagicMock(), ["bigquery"], "proj-1", 123, {"service_labels": ["bigquerytable"]}, config,
+        )
+
+    assert withheld == []
+    mock_cleanup_labels.assert_called_once()
