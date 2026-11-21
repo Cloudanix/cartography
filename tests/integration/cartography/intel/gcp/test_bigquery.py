@@ -81,6 +81,31 @@ def test_load_bigquery_tables(neo4j_session):
     assert actual_nodes == expected_nodes
 
 
+def test_load_bigquery_tables_keeps_list_fields_and_drops_stale_sizes(neo4j_session):
+    """Table fields come from tables.list; sizes a per-table tables.get once wrote are removed, not left frozen."""
+    table_id = f"{DATASET_PREFIX}/dataset1/tables/table1"
+    neo4j_session.run(
+        "MERGE (t:GCPBigqueryTable{id: $id}) SET t.numBytes = '34', t.numLongTermBytes = '128', t.numRows = '4'",
+        id=table_id,
+    )
+
+    cartography.intel.gcp.bigquery.load_bigquery_tables(
+        neo4j_session, tests.data.gcp.bigquery.TEST_TABLE, TEST_PROJECT_NUMBER, TEST_UPDATE_TAG,
+    )
+
+    row = neo4j_session.run(
+        """
+        MATCH (t:GCPBigqueryTable{id: $id})
+        RETURN t.friendlyName AS name, t.requirePartitionFilter AS rpf,
+               t.numBytes AS bytes, t.numLongTermBytes AS lt_bytes, t.numRows AS rows_
+        """,
+        id=table_id,
+    ).single()
+    assert (row['name'], row['rpf'], row['bytes'], row['lt_bytes'], row['rows_']) == (
+        'table123', True, None, None, None,
+    )
+
+
 def test_bigquery_dataset_relationship(neo4j_session):
     # Create Test GCPProject
     neo4j_session.run(

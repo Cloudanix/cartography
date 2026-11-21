@@ -33,25 +33,15 @@ TEST_TABLE = [
         'id': f'{DATASET_PREFIX}/dataset1/tables/table1',
         'name': 'table1',
         'datasetId': f'{DATASET_PREFIX}/dataset1',
-        'details': {
-            'friendlyName': 'table123',
-            'requirePartitionFilter': True,
-            'numBytes': '34',
-            'numLongTermBytes': '128',
-            'numRows': '4',
-        },
+        'friendlyName': 'table123',
+        'requirePartitionFilter': True,
     },
     {
         'id': f'{DATASET_PREFIX}/dataset2/tables/table2',
         'name': 'table2',
         'datasetId': f'{DATASET_PREFIX}/dataset2',
-        'details': {
-            'friendlyName': 'table1234',
-            'requirePartitionFilter': True,
-            'numBytes': '35',
-            'numLongTermBytes': '256',
-            'numRows': '3',
-        },
+        'friendlyName': 'table1234',
+        'requirePartitionFilter': False,
     },
 ]
 

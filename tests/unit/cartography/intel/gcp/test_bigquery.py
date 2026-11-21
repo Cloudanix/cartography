@@ -121,11 +121,10 @@ def test_dataset_and_table_ids_are_project_qualified(mocker):
     """datasetId / tableId are unique only inside a project: node ids carry the project, the API gets the short id."""
     module = cartography.intel.gcp.bigquery
     dataset_info = mocker.patch.object(module, 'get_dataset_info', return_value={})
-    table_info = mocker.patch.object(module, 'get_table_info', return_value={})
     mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
 
     datasets = module.transform_bigquery_dataset(None, [{'datasetReference': {'datasetId': 'billing_export'}}], 'p1')
-    tables = module.transform_bigquery_tables(None, datasets[0], [{'tableReference': {'tableId': 'events'}}], 'p1')
+    tables = module.transform_bigquery_tables(datasets[0], [{'tableReference': {'tableId': 'events'}}], 'p1')
 
     assert (datasets[0]['id'], datasets[0]['uniqueId'], datasets[0]['name']) == (
         'projects/p1/datasets/billing_export', 'projects/p1/datasets/billing_export', 'billing_export',
@@ -134,4 +133,27 @@ def test_dataset_and_table_ids_are_project_qualified(mocker):
         'projects/p1/datasets/billing_export/tables/events', 'projects/p1/datasets/billing_export', 'events',
     )
     dataset_info.assert_called_once_with(None, 'billing_export', 'p1')
-    table_info.assert_called_once_with(None, 'p1', 'billing_export', 'events')
+
+
+def test_tables_are_built_from_the_list_response_alone(mocker):
+    """Log-sink datasets hold thousands of daily tables: no per-table tables.get (cloudanix-web #5338)."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    dataset = {'id': 'projects/p1/datasets/logs', 'name': 'logs'}
+    rows = [
+        {
+            'tableReference': {'tableId': f'requests_202611{day:02d}'},
+            'friendlyName': f'requests {day}',
+            'requirePartitionFilter': day % 2 == 0,
+        }
+        for day in range(1, 31)
+    ]
+
+    tables = module.transform_bigquery_tables(dataset, rows, 'p1')
+
+    assert not hasattr(module, 'get_table_info')
+    assert len(tables) == 30
+    assert (tables[1]['name'], tables[1]['friendlyName'], tables[1]['requirePartitionFilter']) == (
+        'requests_20261102', 'requests 2', True,
+    )
+    assert 'details' not in tables[0]
