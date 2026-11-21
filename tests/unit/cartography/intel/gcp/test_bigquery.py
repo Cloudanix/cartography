@@ -170,6 +170,39 @@ def test_spent_budget_stops_the_sync_before_cleanup(mocker):
     cleanup.assert_not_called()
 
 
+def test_spent_budget_in_the_dataset_pass_loads_nothing(mocker):
+    """Past the budget during the datasets.get pass, the sync stops before any load and before cleanup."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module, 'get_bigquery_dataset', return_value=_datasets('a', 'b'))
+    dataset_info = mocker.patch.object(module, 'get_dataset_info', return_value={'access': []})
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    loaders = {
+        name: mocker.patch.object(module, name)
+        for name in ('load_bigquery_datasets', 'attach_dataset_to_accesses', 'load_bigquery_tables')
+    }
+    sync_labels = mocker.patch.object(module.label, 'sync_labels')
+    cleanup = mocker.patch.object(module, 'cleanup_gcp_bigquery')
+    calls = []
+
+    def deadline(where):
+        # Spent after the first dataset's datasets.get.
+        calls.append(where)
+        if len(calls) > 1:
+            raise cartography.util.SyncDeadlineExceeded(where)
+
+    mocker.patch.object(module, 'check_sync_deadline', side_effect=deadline)
+
+    with pytest.raises(cartography.util.SyncDeadlineExceeded):
+        module.sync(MagicMock(), None, 'p1', 1, {'service_labels': []}, [])
+
+    assert calls == ['bigquery datasets of project p1'] * 2
+    assert dataset_info.call_count == 1
+    for loader in loaders.values():
+        loader.assert_not_called()
+    sync_labels.assert_not_called()
+    cleanup.assert_not_called()
+
+
 def _datasets(*names):
     return [{'datasetReference': {'datasetId': n}} for n in names]
 
