@@ -81,6 +81,31 @@ def test_load_bigquery_tables(neo4j_session):
     assert actual_nodes == expected_nodes
 
 
+def test_load_bigquery_tables_keeps_list_fields_and_drops_stale_sizes(neo4j_session):
+    """Table fields come from tables.list; sizes a per-table tables.get once wrote are removed, not left frozen."""
+    table_id = f"{DATASET_PREFIX}/dataset1/tables/table1"
+    neo4j_session.run(
+        "MERGE (t:GCPBigqueryTable{id: $id}) SET t.numBytes = '34', t.numLongTermBytes = '128', t.numRows = '4'",
+        id=table_id,
+    )
+
+    cartography.intel.gcp.bigquery.load_bigquery_tables(
+        neo4j_session, tests.data.gcp.bigquery.TEST_TABLE, TEST_PROJECT_NUMBER, TEST_UPDATE_TAG,
+    )
+
+    row = neo4j_session.run(
+        """
+        MATCH (t:GCPBigqueryTable{id: $id})
+        RETURN t.friendlyName AS name, t.requirePartitionFilter AS rpf,
+               t.numBytes AS bytes, t.numLongTermBytes AS lt_bytes, t.numRows AS rows_
+        """,
+        id=table_id,
+    ).single()
+    assert (row['name'], row['rpf'], row['bytes'], row['lt_bytes'], row['rows_']) == (
+        'table123', True, None, None, None,
+    )
+
+
 def test_bigquery_dataset_relationship(neo4j_session):
     # Create Test GCPProject
     neo4j_session.run(
@@ -273,12 +298,15 @@ def test_unread_dataset_access_keeps_entries_and_reads_unknown(neo4j_session, mo
         module, 'get_bigquery_dataset',
         return_value=[{'datasetReference': {'datasetId': d}} for d in ('bq-read', 'bq-unread')],
     )
-    mocker.patch.object(module, 'get_dataset_info', return_value={})
     mocker.patch.object(module, 'get_bigquery_tables', return_value=[])
     mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
 
+    def dataset_info(access):
+        # datasets.get returns the access list inside the dataset resource; None means it could not be read.
+        return None if access is None else {'access': access}
+
     def sync(tag, entries):
-        mocker.patch.object(module, 'get_dataset_access_info', side_effect=lambda _b, d, _p: entries[d]())
+        mocker.patch.object(module, 'get_dataset_info', side_effect=lambda _b, d, _p: dataset_info(entries[d]()))
         module.sync(neo4j_session, None, project, tag, {**params, 'UPDATE_TAG': tag}, [])
 
     def open_access():

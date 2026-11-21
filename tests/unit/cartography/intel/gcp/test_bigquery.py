@@ -1,4 +1,11 @@
+import json
+from unittest.mock import MagicMock
+
+import pytest
+from googleapiclient.errors import HttpError
+
 import cartography.intel.gcp.bigquery
+import cartography.util
 
 
 TEST_PROJECT_ID = 'test-project'
@@ -121,11 +128,10 @@ def test_dataset_and_table_ids_are_project_qualified(mocker):
     """datasetId / tableId are unique only inside a project: node ids carry the project, the API gets the short id."""
     module = cartography.intel.gcp.bigquery
     dataset_info = mocker.patch.object(module, 'get_dataset_info', return_value={})
-    table_info = mocker.patch.object(module, 'get_table_info', return_value={})
     mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
 
     datasets = module.transform_bigquery_dataset(None, [{'datasetReference': {'datasetId': 'billing_export'}}], 'p1')
-    tables = module.transform_bigquery_tables(None, datasets[0], [{'tableReference': {'tableId': 'events'}}], 'p1')
+    tables = module.transform_bigquery_tables(datasets[0], [{'tableReference': {'tableId': 'events'}}], 'p1')
 
     assert (datasets[0]['id'], datasets[0]['uniqueId'], datasets[0]['name']) == (
         'projects/p1/datasets/billing_export', 'projects/p1/datasets/billing_export', 'billing_export',
@@ -134,4 +140,126 @@ def test_dataset_and_table_ids_are_project_qualified(mocker):
         'projects/p1/datasets/billing_export/tables/events', 'projects/p1/datasets/billing_export', 'events',
     )
     dataset_info.assert_called_once_with(None, 'billing_export', 'p1')
-    table_info.assert_called_once_with(None, 'p1', 'billing_export', 'events')
+
+
+def test_spent_budget_stops_the_sync_before_cleanup(mocker):
+    """Past the sync budget the table loop stops and cleanup does not run, so unreached datasets keep their tables."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module, 'get_bigquery_dataset', return_value=_datasets('a', 'b'))
+    mocker.patch.object(module, 'get_dataset_info', return_value={'access': []})
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    for loader in ('load_bigquery_datasets', 'attach_dataset_to_accesses', 'load_bigquery_tables'):
+        mocker.patch.object(module, loader)
+    mocker.patch.object(module.label, 'sync_labels')
+    get_tables = mocker.patch.object(module, 'get_bigquery_tables', return_value=[])
+    cleanup = mocker.patch.object(module, 'cleanup_gcp_bigquery')
+    calls = []
+
+    def deadline(where):
+        # Budget left for the dataset pass, spent after the first dataset's tables.
+        calls.append(where)
+        if where.startswith('bigquery tables') and len([c for c in calls if 'tables' in c]) > 1:
+            raise cartography.util.SyncDeadlineExceeded(where)
+
+    mocker.patch.object(module, 'check_sync_deadline', side_effect=deadline)
+
+    with pytest.raises(cartography.util.SyncDeadlineExceeded):
+        module.sync(MagicMock(), None, 'p1', 1, {'service_labels': []}, [])
+
+    assert get_tables.call_count == 1
+    cleanup.assert_not_called()
+
+
+def test_spent_budget_in_the_dataset_pass_loads_nothing(mocker):
+    """Past the budget during the datasets.get pass, the sync stops before any load and before cleanup."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module, 'get_bigquery_dataset', return_value=_datasets('a', 'b'))
+    dataset_info = mocker.patch.object(module, 'get_dataset_info', return_value={'access': []})
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    loaders = {
+        name: mocker.patch.object(module, name)
+        for name in ('load_bigquery_datasets', 'attach_dataset_to_accesses', 'load_bigquery_tables')
+    }
+    sync_labels = mocker.patch.object(module.label, 'sync_labels')
+    cleanup = mocker.patch.object(module, 'cleanup_gcp_bigquery')
+    calls = []
+
+    def deadline(where):
+        # Spent after the first dataset's datasets.get.
+        calls.append(where)
+        if len(calls) > 1:
+            raise cartography.util.SyncDeadlineExceeded(where)
+
+    mocker.patch.object(module, 'check_sync_deadline', side_effect=deadline)
+
+    with pytest.raises(cartography.util.SyncDeadlineExceeded):
+        module.sync(MagicMock(), None, 'p1', 1, {'service_labels': []}, [])
+
+    assert calls == ['bigquery datasets of project p1'] * 2
+    assert dataset_info.call_count == 1
+    for loader in loaders.values():
+        loader.assert_not_called()
+    sync_labels.assert_not_called()
+    cleanup.assert_not_called()
+
+
+def _datasets(*names):
+    return [{'datasetReference': {'datasetId': n}} for n in names]
+
+
+def test_one_datasets_get_serves_details_and_access(mocker):
+    """datasets.get used to be made twice per dataset (details, then access): 3,000 calls for 1,500 datasets."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    bigquery = MagicMock()
+    bigquery.datasets().get().execute.side_effect = [
+        {'location': 'US', 'access': [{'role': 'READER', 'iamMember': 'allUsers'}]},
+        {'location': 'EU'},
+    ]
+    bigquery.datasets().get.reset_mock()
+
+    datasets = module.transform_bigquery_dataset(bigquery, _datasets('a', 'b'), 'p1')
+
+    assert bigquery.datasets().get.call_count == 2
+    assert [d['details']['location'] for d in datasets] == ['US', 'EU']
+    assert [d['accesses'] for d in datasets] == [[{'role': 'READER', 'iamMember': 'allUsers'}], []]
+
+
+def test_unreadable_dataset_has_no_details_and_unknown_access(mocker):
+    """A permission-denied datasets.get leaves accesses None (IAM policy unresolved), not [] (no access)."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    bigquery = MagicMock()
+    denied = {'code': 403, 'message': 'Access Denied', 'status': 'PERMISSION_DENIED'}
+    bigquery.datasets().get().execute.side_effect = HttpError(
+        resp=MagicMock(status=403), content=json.dumps({'error': denied}).encode(),
+    )
+
+    datasets = module.transform_bigquery_dataset(bigquery, _datasets('locked'), 'p1')
+
+    assert (datasets[0]['details'], datasets[0]['accesses']) == ({}, None)
+    assert not hasattr(module, 'get_dataset_access_info')
+
+
+def test_tables_are_built_from_the_list_response_alone(mocker):
+    """Log-sink datasets hold thousands of daily tables: no per-table tables.get (cloudanix-web #5338)."""
+    module = cartography.intel.gcp.bigquery
+    mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
+    dataset = {'id': 'projects/p1/datasets/logs', 'name': 'logs'}
+    rows = [
+        {
+            'tableReference': {'tableId': f'requests_202611{day:02d}'},
+            'friendlyName': f'requests {day}',
+            'requirePartitionFilter': day % 2 == 0,
+        }
+        for day in range(1, 31)
+    ]
+
+    tables = module.transform_bigquery_tables(dataset, rows, 'p1')
+
+    assert not hasattr(module, 'get_table_info')
+    assert len(tables) == 30
+    assert (tables[1]['name'], tables[1]['friendlyName'], tables[1]['requirePartitionFilter']) == (
+        'requests_20261102', 'requests 2', True,
+    )
+    assert 'details' not in tables[0]

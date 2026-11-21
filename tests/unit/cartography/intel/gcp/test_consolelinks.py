@@ -80,9 +80,8 @@ def test_dataflow_job_without_location_gets_no_link():
 
 
 def test_bigquery_table_link():
-    bq = MagicMock()
     dataset = {"id": "projects/p/datasets/ds", "name": "ds"}
-    tables = bigquery.transform_bigquery_tables(bq, dataset, [{"tableReference": {"tableId": "t"}}], "p")
+    tables = bigquery.transform_bigquery_tables(dataset, [{"tableReference": {"tableId": "t"}}], "p")
     assert tables[0]["consolelink"] == f"{CONSOLE}/bigquery?project=p&p=p&d=ds&t=t&page=table"
 
 

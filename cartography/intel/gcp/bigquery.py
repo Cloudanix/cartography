@@ -14,6 +14,7 @@ from . import label
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.intel.gcp.util.errors import POLICY_RESOLVED
 from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
+from cartography.util import check_sync_deadline
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -62,12 +63,18 @@ def get_bigquery_dataset(bigquery: Resource, project_id: str, common_job_paramet
 def transform_bigquery_dataset(bigquery: Resource, datasets: List[Dict], project_id: str) -> List[Resource]:
     list_dataset = []
     for dataset in datasets:
+        # One API call per dataset: a project with thousands of datasets can spend the sync budget here.
+        check_sync_deadline(f"bigquery datasets of project {project_id}")
         # A datasetId is unique only inside its project ("billing_export" exists in many): the node id is the
         # project-qualified name, the short id stays in `name` and is what the BigQuery API takes.
         dataset['name'] = dataset.get('datasetReference', {}).get('datasetId', '')
         dataset['id'] = f"projects/{project_id}/datasets/{dataset['name']}"
         dataset['uniqueId'] = dataset['id']
-        dataset['details'] = get_dataset_info(bigquery, dataset['name'], project_id)
+        # One datasets.get serves both the details and the access list (it used to be made twice per dataset).
+        info = get_dataset_info(bigquery, dataset['name'], project_id)
+        dataset['details'] = info or {}
+        # None (not []) when the dataset could not be read: sync marks its IAM policy unresolved.
+        dataset['accesses'] = None if info is None else info.get('access', [])
         dataset['consolelink'] = gcp_console_link.get_console_link(
             project_id=project_id, resource_name='bigquery_dataset', dataset_id=dataset['name'],
         ) if dataset['name'] else None
@@ -77,46 +84,19 @@ def transform_bigquery_dataset(bigquery: Resource, datasets: List[Dict], project
 
 
 @timeit
-def get_dataset_info(bigquery: Resource, dataset_id: str, project_id: str) -> Dict:
-    response = {}
+def get_dataset_info(bigquery: Resource, dataset_id: str, project_id: str) -> Optional[Dict]:
+    """The dataset resource from datasets.get (details and `access` entries); None when it could not be read."""
     try:
-        response = bigquery.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
-
+        return bigquery.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
     except HttpError as e:
         err = json.loads(e.content.decode('utf-8'))['error']
-        if is_permission_error(e, err):
-            logger.warning(
-                (
-                    "Could not retrieve Bigquery dataset info on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
-            )
-            return {}
-        else:
+        if not is_permission_error(e, err):
             raise
-
-    return response
-
-
-@timeit
-def get_dataset_access_info(bigquery: Resource, dataset_id: str, project_id: str) -> Optional[List[Dict]]:
-    """The dataset's access entries; None when the dataset could not be read."""
-    response = {}
-    try:
-        response = bigquery.datasets().get(projectId=project_id, datasetId=dataset_id).execute()
-        accesses = response.get('access', [])
-    except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if is_permission_error(e, err):
-            logger.warning(
-                (
-                    "Could not retrieve Bigquery dataset info on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
-            )
-            return None
-        else:
-            raise
-
-    return accesses
+        logger.warning(
+            "Could not retrieve Bigquery dataset info on project %s due to permissions issues. Code: %s, Message: %s",
+            project_id, err['code'], err['message'],
+        )
+        return None
 
 
 @timeit
@@ -223,7 +203,14 @@ def get_bigquery_tables(bigquery: Resource, dataset: Dict, project_id: str, comm
 
 
 @timeit
-def transform_bigquery_tables(bigquery: Resource, dataset: Dict, tables: List, project_id: str) -> List[Resource]:
+def transform_bigquery_tables(dataset: Dict, tables: List, project_id: str) -> List[Resource]:
+    """
+    Shape tables.list rows for loading. Makes no API call: every field the graph keeps is in the list response.
+
+    A tables.get per table (for numBytes / numLongTermBytes / numRows) used to run here, one call at a time. Log-sink
+    datasets hold one table per day and never shrink (8,777 tables in one prod dataset), so that loop alone ran past
+    the cartographyworker's 540s timeout and the subrun never got a reply (cloudanix-web #5338).
+    """
     list_tables = []
     for table in tables:
         # Keyed under its dataset's node id (projects/{p}/datasets/{d}/tables/{t}); `name` keeps the tableId.
@@ -231,34 +218,12 @@ def transform_bigquery_tables(bigquery: Resource, dataset: Dict, tables: List, p
         table['datasetId'] = dataset['id']
         table['id'] = f"{dataset['id']}/tables/{table['name']}"
         table['uniqueId'] = table['id']
-        table['details'] = get_table_info(bigquery, project_id, dataset['name'], table['name'])
         table['consolelink'] = gcp_console_link.get_console_link(
             project_id=project_id, resource_name='bigquery_table', dataset_id=dataset['name'], table_id=table['name'],
         ) if dataset['name'] and table['name'] else None
         list_tables.append(table)
 
     return list_tables
-
-
-@timeit
-def get_table_info(bigquery: Resource, project_id: str, dataset_id: str, table_id: str) -> Dict:
-    response = {}
-    try:
-        response = bigquery.tables().get(projectId=project_id, datasetId=dataset_id, tableId=table_id).execute()
-
-    except HttpError as e:
-        err = json.loads(e.content.decode('utf-8'))['error']
-        if is_permission_error(e, err):
-            logger.warning(
-                (
-                    "Could not retrieve Bigquery table info on project %s due to permissions issues. Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
-            )
-            return {}
-        else:
-            raise
-
-    return response
 
 
 @timeit
@@ -325,11 +290,11 @@ def load_bigquery_tables_tx(
         table.name = t.name,
         table.uniqueId = t.uniqueId,
         table.consolelink = t.consolelink,
-        table.friendlyName = t.details.friendlyName,
-        table.requirePartitionFilter = t.details.requirePartitionFilter,
-        table.numBytes = t.details.numBytes,
-        table.numLongTermBytes = t.details.numLongTermBytes,
-        table.numRows = t.details.numRows
+        table.friendlyName = t.friendlyName,
+        table.requirePartitionFilter = t.requirePartitionFilter
+    // Size and row counts came from a per-table tables.get that is no longer made; drop the old values rather than
+    // keep reporting figures frozen at the last time they were read.
+    REMOVE table.numBytes, table.numLongTermBytes, table.numRows
     WITH table, t
     MATCH (:GCPProject{id: $ProjectId})-[:RESOURCE]->(dataset:GCPBigqueryDataset{id:t.datasetId})
     MERGE (dataset)-[r:HAS_TABLE]->(table)
@@ -412,21 +377,22 @@ def sync(
     # BIGQUERY DATASETS
     datasets = get_bigquery_dataset(bigquery, project_id, common_job_parameters)
     bigquery_datasets = transform_bigquery_dataset(bigquery, datasets, project_id)
-    # Read access entries first so iam_policy_status lands with the dataset; the access cleanup keeps an
+    # Access entries were read with the dataset, so iam_policy_status lands with it; the access cleanup keeps an
     # unresolved dataset's last-read entries.
-    accesses = {d['id']: get_dataset_access_info(bigquery, d['name'], project_id) for d in bigquery_datasets}
     for dataset in bigquery_datasets:
-        dataset['iam_policy_status'] = POLICY_UNRESOLVED if accesses[dataset['id']] is None else POLICY_RESOLVED
+        dataset['iam_policy_status'] = POLICY_UNRESOLVED if dataset['accesses'] is None else POLICY_RESOLVED
     load_bigquery_datasets(neo4j_session, bigquery_datasets, project_id, gcp_update_tag)
     label.sync_labels(neo4j_session, bigquery_datasets, gcp_update_tag, common_job_parameters, 'bigquerydataset', 'GCPBigqueryDataset')
 
     # BIGQUERY TABLES
     for dataset in bigquery_datasets:
+        # Raising here skips cleanup_gcp_bigquery below, so tables of datasets not reached this run are kept.
+        check_sync_deadline(f"bigquery tables of project {project_id}")
         # GCPAcl ids already carry the project (projects/{p}/bigquery/{d}/role/...): built from the short id, unchanged.
-        accesses_list = transform_dataset_accesses(accesses[dataset['id']] or [], dataset['name'], project_id)
+        accesses_list = transform_dataset_accesses(dataset['accesses'] or [], dataset['name'], project_id)
         attach_dataset_to_accesses(neo4j_session, dataset['id'], accesses_list, gcp_update_tag, project_id)
         tables = get_bigquery_tables(bigquery, dataset, project_id, common_job_parameters)
-        bigquery_tables = transform_bigquery_tables(bigquery, dataset, tables, project_id)
+        bigquery_tables = transform_bigquery_tables(dataset, tables, project_id)
         load_bigquery_tables(neo4j_session, bigquery_tables, project_id, gcp_update_tag)
         label.sync_labels(neo4j_session, bigquery_tables, gcp_update_tag, common_job_parameters, 'bigquerytable', 'GCPBigqueryTable')
 

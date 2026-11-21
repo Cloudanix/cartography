@@ -36,10 +36,8 @@ def _sync(neo4j_session, mocker, project, access_entries):
     mocker.patch.object(
         module, 'get_bigquery_dataset', side_effect=lambda *_: [{'datasetReference': {'datasetId': DATASET}}],
     )
-    mocker.patch.object(module, 'get_dataset_info', return_value={})
-    mocker.patch.object(module, 'get_dataset_access_info', side_effect=lambda *_: list(access_entries))
+    mocker.patch.object(module, 'get_dataset_info', side_effect=lambda *_: {'access': list(access_entries)})
     mocker.patch.object(module, 'get_bigquery_tables', side_effect=lambda *_: [{'tableReference': {'tableId': TABLE}}])
-    mocker.patch.object(module, 'get_table_info', return_value={})
     mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
     module.sync(neo4j_session, None, project, TEST_UPDATE_TAG, params, [])
 
@@ -117,13 +115,11 @@ def _sync_datasets(neo4j_session, mocker, project, tag, datasets):
             {'datasetReference': {'datasetId': d}, 'labels': dict(lb)} for d, lb in datasets.items()
         ],
     )
-    mocker.patch.object(module, 'get_dataset_info', return_value={})
-    mocker.patch.object(module, 'get_dataset_access_info', side_effect=lambda *_: [])
+    mocker.patch.object(module, 'get_dataset_info', return_value={'access': []})
     mocker.patch.object(
         module, 'get_bigquery_tables',
         side_effect=lambda _b, d, *_: [{'tableReference': {'tableId': TABLE}, 'labels': dict(datasets[d['name']])}],
     )
-    mocker.patch.object(module, 'get_table_info', return_value={})
     mocker.patch.object(module.gcp_console_link, 'get_console_link', return_value='link')
     module.sync(neo4j_session, None, project, tag, {**_params(project), 'UPDATE_TAG': tag}, [])
 
