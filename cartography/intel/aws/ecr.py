@@ -1,5 +1,8 @@
 import logging
 import time
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
@@ -19,6 +22,12 @@ from cartography.util import to_synchronous
 
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
+
+# See select_images_to_keep. Raise N if older tags are needed; drop the cap if per-image
+# inventory is ever needed in full.
+ECR_KEEP_LATEST_IMAGES_PER_REPO = 10
+ECR_KEEP_PULLED_WITHIN_DAYS = 30
+_EPOCH = datetime.fromtimestamp(0, tz=timezone.utc)
 
 
 @timeit
@@ -55,18 +64,45 @@ def get_ecr_repository_images(
 ) -> List[Dict]:
     logger.debug("Getting ECR images in repository '%s' for region '%s'.", repository_name, region)
     client = boto3_session.client("ecr", region_name=region, config=get_botocore_config())
-    paginator = client.get_paginator("list_images")
-    ecr_repository_images: List[Dict] = []
-    for page in paginator.paginate(repositoryName=repository_name, maxResults=10):
-        ecr_repository_images.extend(page["imageIds"])
+    paginator = client.get_paginator("describe_images")
+    image_details: List[Dict] = []
+    for page in paginator.paginate(repositoryName=repository_name, PaginationConfig={"PageSize": 1000}):
+        image_details.extend(page["imageDetails"])
 
-    for image in ecr_repository_images:
-        image["region"] = region
-        # image["consolelink"] = aws_console_link.get_console_link(
-        #     arn=f"arn:aws:ecr::{current_aws_account_id}:image/{repository_name}:{image.get('imageTag', image.get('imageDigest'))}"
-        # )
+    kept = select_images_to_keep(image_details, datetime.now(timezone.utc))
+    logger.debug("Keeping %d of %d ECR images in repository '%s'.", len(kept), len(image_details), repository_name)
+    return to_image_ids(kept, region)
 
-    return ecr_repository_images
+
+def select_images_to_keep(image_details: List[Dict], now: datetime) -> List[Dict]:
+    """
+    CI pipelines push an image per build and rarely expire them (a single repository can hold
+    tens of thousands of tags), and every tag became an inventory asset. Keep the images that
+    matter for posture: the newest ECR_KEEP_LATEST_IMAGES_PER_REPO by push time, plus any image
+    pulled in the last ECR_KEEP_PULLED_WITHIN_DAYS days (in use, however old). AWS updates
+    lastRecordedPullTime with up to ~24h lag.
+    """
+    newest_first = sorted(image_details, key=lambda d: d.get("imagePushedAt") or _EPOCH, reverse=True)
+    pulled_since = now - timedelta(days=ECR_KEEP_PULLED_WITHIN_DAYS)
+    return [
+        detail for index, detail in enumerate(newest_first)
+        if index < ECR_KEEP_LATEST_IMAGES_PER_REPO or (detail.get("lastRecordedPullTime") or _EPOCH) >= pulled_since
+    ]
+
+
+def to_image_ids(image_details: List[Dict], region: str) -> List[Dict]:
+    """
+    Flatten DescribeImages details to the ListImages imageIds shape the loader expects: one entry
+    per (digest, tag), and one tagless entry for an untagged image.
+    """
+    image_ids: List[Dict] = []
+    for detail in image_details:
+        for tag in detail.get("imageTags") or [None]:
+            image_id = {"imageDigest": detail.get("imageDigest"), "region": region}
+            if tag:
+                image_id["imageTag"] = tag
+            image_ids.append(image_id)
+    return image_ids
 
 
 @timeit
