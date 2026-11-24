@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from cartography.intel.aws.ec2.instances import get_ec2_instances
+from cartography.intel.aws.ec2.instances import LIVE_INSTANCE_STATES
 from cartography.intel.aws.ec2.instances import transform_ec2_instances
 from cartography.models.aws.ec2.instances import EC2InstanceNodeProperties
 
@@ -50,7 +51,19 @@ class TestGetEc2InstancesIncludesManaged:
         get_ec2_instances(session, "us-east-1")
 
         client.get_paginator.assert_called_once_with("describe_instances")
-        client.get_paginator.return_value.paginate.assert_called_once_with(IncludeManagedResources=True)
+        kwargs = client.get_paginator.return_value.paginate.call_args.kwargs
+        assert kwargs["IncludeManagedResources"] is True
+
+    def test_paginate_excludes_terminated_instances(self):
+        session, client = _session_with_pages([{"Reservations": []}])
+
+        get_ec2_instances(session, "us-east-1")
+
+        kwargs = client.get_paginator.return_value.paginate.call_args.kwargs
+        state_filter = {"Name": "instance-state-name", "Values": LIVE_INSTANCE_STATES}
+        assert kwargs["Filters"] == [state_filter]
+        assert "terminated" not in LIVE_INSTANCE_STATES
+        assert {"running", "stopped", "shutting-down"} <= set(LIVE_INSTANCE_STATES)
 
     def test_all_pages_are_collected(self):
         pages = [

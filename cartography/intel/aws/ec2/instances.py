@@ -42,6 +42,11 @@ aws_console_link = AWSLinker()
 logger = logging.getLogger(__name__)
 aws_console_link = AWSLinker()
 
+# AWS keeps listing a terminated instance for about an hour. It no longer exists, so leave it out:
+# otherwise inventory reports it as a live asset (autoscaling-heavy accounts list hundreds at a time).
+# Every other state ("pending", "running", "shutting-down", "stopping", "stopped") is still a resource.
+LIVE_INSTANCE_STATES = ["pending", "running", "shutting-down", "stopping", "stopped"]
+
 Ec2Data = namedtuple(
     "Ec2Data",
     [
@@ -86,7 +91,10 @@ def get_ec2_instances(boto3_session: boto3.session.Session, region: str) -> List
         # Since 2026-04-22 AWS hides service-managed instances (EKS Auto Mode, ECS/Lambda Managed
         # Instances, ...) from DescribeInstances by default; ask for them so inventory sees them.
         # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-managed-instances.html
-        for page in paginator.paginate(IncludeManagedResources=True):
+        for page in paginator.paginate(
+            IncludeManagedResources=True,
+            Filters=[{"Name": "instance-state-name", "Values": LIVE_INSTANCE_STATES}],
+        ):
             reservations.extend(page["Reservations"])
             for reservation in page["Reservations"]:
                 for instance in reservation["Instances"]:
