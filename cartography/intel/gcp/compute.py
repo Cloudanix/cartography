@@ -3,6 +3,7 @@
 import ipaddress
 import json
 import logging
+import re
 import time
 from collections import namedtuple
 from ipaddress import AddressValueError
@@ -520,8 +521,6 @@ def get_gcp_firewall_ingress_rules(project_id: str, compute: Resource) -> Resour
     return req.execute()
 
 
-
-
 _OS_LOGIN_KEY = "enable-oslogin"
 
 
@@ -556,6 +555,162 @@ def os_login_enabled(instance_metadata: Dict[str, str], project_metadata: Option
             return None
         value = project_metadata.get(_OS_LOGIN_KEY)
     return str(value or "").strip().lower() == "true"
+
+
+# Names GCP uses that are not a substring of an OPERATING_SYSTEMS token.
+# "redhat" does not occur in "rhel"; "suse" does not occur in "sles".
+# "cos" is Container-Optimized OS. It is matched on a token boundary so "coreos" stays coreos.
+_OS_NAME_ALIASES = (
+    ("red hat", "redhat"),
+    ("rhel", "redhat"),
+    ("sles", "suse"),
+    ("cos", "cos"),
+)
+
+
+def _match_operating_system(text: str) -> Optional[str]:
+    """First known distro in an image or license name. Same rules as the EC2 AMI match."""
+    if not text:
+        return None
+    lowered = text.lower()
+    for op_system in OPERATING_SYSTEMS:
+        # "arch" is a substring of "aarch64".
+        if op_system == "arch" and "aarch64" in lowered:
+            if "arch linux" not in lowered and "archlinux" not in lowered:
+                continue
+        if op_system in lowered:
+            return op_system
+    for needle, os_name in _OS_NAME_ALIASES:
+        if needle == "cos":
+            if re.search(r"(^|[^a-z])cos([^a-z]|$)", lowered):
+                return os_name
+            continue
+        if needle in lowered:
+            return os_name
+    return None
+
+
+def _plausible_version(token: str) -> bool:
+    parts = token.split(".")
+    # Longer tokens are image dates (20240101) or build stamps, not a release.
+    return len(parts) <= 3 and all(part.isdigit() and len(part) <= 5 for part in parts)
+
+
+def _extract_os_version(vm_os: Optional[str], text: str) -> Optional[str]:
+    """
+    Numeric release from a GCP image or license name.
+
+    Public images encode Ubuntu as 2204 rather than 22.04, and append a vYYYYMMDD stamp
+    that must not win over the release.
+    """
+    lowered = text.lower()
+    if vm_os == "ubuntu":
+        match = re.search(r"(?<!\d)((?:1[4-9]|2\d)\.\d{2})(?!\d)", lowered)
+        if match:
+            return match.group(1)
+        # ubuntu-2204-lts / ubuntu-2404-noble. Minor is .04 or .10, so v20240101 does not match.
+        match = re.search(r"(?<!\d)((?:1[4-9]|2\d))(04|10)(?!\d)", lowered)
+        return f"{match.group(1)}.{match.group(2)}" if match else None
+    if vm_os == "windows":
+        match = re.search(r"server[-_ ](20\d{2})\b", lowered) or re.search(
+            r"windows[-_ ](20\d{2}|\d{2})\b", lowered,
+        )
+        return match.group(1) if match else None
+    if vm_os == "debian":
+        match = re.search(r"debian[-_ ](\d+(?:\.\d+)*)\b", lowered)
+        if match and _plausible_version(match.group(1)):
+            return match.group(1)
+    for match in re.finditer(r"(?<!\d)(\d+(?:\.\d+)+)(?!\d)", lowered):
+        token = match.group(1)
+        if _plausible_version(token):
+            return token
+    for match in re.finditer(r"(?<!\d)(\d{1,4})(?!\d)", lowered):
+        return match.group(1)
+    return None
+
+
+def _numeric_os_version(vm_os: Optional[str], *texts: str) -> str:
+    """Version made of digits and dots only: 22.04, 12, 2022, 9. Unknown when the OS itself is unknown."""
+    if not vm_os or vm_os == "Unknown":
+        return "Unknown"
+    for text in texts:
+        if not text:
+            continue
+        stripped = str(text).strip()
+        if re.fullmatch(r"\d+(?:\.\d+)*", stripped):
+            return stripped
+        found = _extract_os_version(vm_os, stripped)
+        if found:
+            return found
+    return "Unknown"
+
+
+def _boot_os_names(disk: Optional[Dict]) -> List[str]:
+    """
+    Image and license names on the boot disk.
+
+    instances.list does not return initializeParams (it is input-only), so a running VM's
+    OS is on the disk licenses: .../licenses/ubuntu-2204-lts. The source image is used when
+    a create response still carries it.
+    """
+    if not disk:
+        return []
+    names: List[str] = []
+    source_image = ((disk.get("initializeParams") or {}).get("sourceImage") or "").rstrip("/")
+    if source_image:
+        names.append(source_image.rsplit("/", 1)[-1])
+    for lic in disk.get("licenses") or []:
+        name = str(lic).rstrip("/").rsplit("/", 1)[-1]
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _derive_vm_os(disk: Optional[Dict]) -> Tuple[str, str, str]:
+    """
+    VmOs, VmOsVersion, and Platform, shaped like the EC2 instance fields.
+
+    Platform is Linux or Windows from the boot disk's WINDOWS guest OS feature.
+    """
+    names = _boot_os_names(disk)
+    windows = any(
+        feature.get("type") == "WINDOWS" for feature in (disk or {}).get("guestOsFeatures") or []
+    )
+    vm_os = None
+    for name in names:
+        vm_os = _match_operating_system(name)
+        if vm_os:
+            break
+    if not vm_os and windows:
+        vm_os = "windows"
+    vm_os = vm_os or "Unknown"
+    if windows or vm_os == "windows":
+        platform = "Windows"
+    elif disk:
+        platform = "Linux"
+    else:
+        platform = "Unknown"
+    return vm_os, _numeric_os_version(vm_os, *names), platform
+
+
+def _instance_architecture(disk: Optional[Dict], cpu_platform: Optional[str]) -> Optional[str]:
+    """
+    x86_64 or arm64, like EC2 Architecture.
+
+    The attached disk reports X86_64 / ARM64 when the API includes it. Otherwise the
+    instance cpuPlatform (Intel/AMD vs Ampere/Axion) decides. None when neither is present.
+    """
+    raw = ((disk or {}).get("architecture") or "").lower()
+    if raw in ("x86_64", "amd64", "x86"):
+        return "x86_64"
+    if raw in ("arm64", "aarch64"):
+        return "arm64"
+    lowered = (cpu_platform or "").lower()
+    if "ampere" in lowered or "axion" in lowered or "arm" in lowered:
+        return "arm64"
+    if "intel" in lowered or "amd" in lowered:
+        return "x86_64"
+    return None
 
 
 @timeit
@@ -605,25 +760,18 @@ def transform_gcp_instances(
         res["is_spot_instance"] = scheduling.get("provisioningModel") == "SPOT" or scheduling.get("preemptible") is True
 
         res["os_login_enabled"] = os_login_enabled(_metadata_items(res.get("metadata")), project_metadata)
-        res["architecture"] = None
-        for disk in res.get("disks", []):
-            if disk.get("boot"):
-                # Boot disk architecture, X86_64 / ARM64, stored as x86_64 / arm64 like the AWS architecture.
-                res["architecture"] = (disk.get("architecture") or "").lower() or None
-                res["diskName"] = disk.get("initializeParams", {}).get("diskName")
-                os_feature_types = [feature["type"] for feature in disk.get("guestOsFeatures", [])]
-                res["osFeatures"] = "WINDOWS" if "WINDOWS" in os_feature_types else "LINUX"
-                # Derive OS name from source image URL (e.g. projects/ubuntu-os-cloud/global/images/ubuntu-2204-jammy-v20240101)
-                source_image = disk.get("initializeParams", {}).get("sourceImage", "") or ""
-                image_name = source_image.rsplit("/", 1)[-1].lower() if source_image else ""
-                vm_os = "unknown"
-                for op_system in OPERATING_SYSTEMS:
-                    if op_system in image_name:
-                        vm_os = op_system
-                        break
-                res["vmOs"] = vm_os
-                res["vmOsVersion"] = image_name if image_name else None
-                break
+        boot = next((disk for disk in res.get("disks", []) if disk.get("boot")), None)
+        if boot:
+            res["diskName"] = (boot.get("initializeParams") or {}).get("diskName")
+            os_feature_types = [feature["type"] for feature in boot.get("guestOsFeatures", [])]
+            res["osFeatures"] = "WINDOWS" if "WINDOWS" in os_feature_types else "LINUX"
+        # Same fields EC2 stores: Platform, Architecture, VmOs, VmOsVersion.
+        # instances.list omits initializeParams, so the OS comes from the boot-disk license.
+        vm_os, vm_os_version, platform = _derive_vm_os(boot)
+        res["vmOs"] = vm_os
+        res["vmOsVersion"] = vm_os_version
+        res["platform"] = platform
+        res["architecture"] = _instance_architecture(boot, res.get("cpuPlatform"))
 
         for nic in res.get("networkInterfaces", []):
             res["networkIP"] = nic.get("networkIP", None)
@@ -1317,6 +1465,7 @@ def load_gcp_instances_tx(tx: neo4j.Transaction, instances: Dict, gcp_update_tag
     i.is_spot_instance = instance.is_spot_instance,
     i.vm_os = instance.vmOs,
     i.vm_os_version = instance.vmOsVersion,
+    i.platform = instance.platform,
     i.architecture = instance.architecture,
     i.os_login_enabled = instance.os_login_enabled
     WITH i, p
