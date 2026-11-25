@@ -132,6 +132,13 @@ class TestGcpVmOsDerivation:
         assert cos[0]["vmOsVersion"] == "109"
         assert cos[0]["architecture"] == "arm64"
 
+        long_name = transform_gcp_instances([
+            _make_instance(licenses=[
+                "https://www.googleapis.com/compute/v1/projects/cos-cloud/global/licenses/container-optimized-os",
+            ]),
+        ], MagicMock())
+        assert long_name[0]["vmOs"] == "cos"
+
     def test_architecture_from_boot_disk(self):
         instance = _make_instance(architecture="ARM64", cpu_platform="Intel Haswell")
 

@@ -560,10 +560,12 @@ def os_login_enabled(instance_metadata: Dict[str, str], project_metadata: Option
 # Names GCP uses that are not a substring of an OPERATING_SYSTEMS token.
 # "redhat" does not occur in "rhel"; "suse" does not occur in "sles".
 # "cos" is Container-Optimized OS. It is matched on a token boundary so "coreos" stays coreos.
+# VM Manager's longName is "Container-Optimized OS from Google", which has no "cos" token.
 _OS_NAME_ALIASES = (
     ("red hat", "redhat"),
     ("rhel", "redhat"),
     ("sles", "suse"),
+    ("container-optimized", "cos"),
     ("cos", "cos"),
 )
 
