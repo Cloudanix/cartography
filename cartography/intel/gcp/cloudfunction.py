@@ -12,7 +12,6 @@ from googleapiclient.discovery import Resource
 
 from . import iam
 from . import label
-from cartography.intel.gcp.util.errors import GCP_API_NUM_RETRIES
 from cartography.intel.gcp.util.errors import POLICY_RESOLVED
 from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
 from cartography.intel.gcp.util.principals import ORG_PRINCIPAL_MATCH
@@ -44,7 +43,7 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
         locations = []
         request = function.projects().locations().list(name=f"projects/{project_id}")
         while request is not None:
-            response = request.execute(num_retries=GCP_API_NUM_RETRIES)
+            response = request.execute()
             for location in response['locations']:
                 location["id"] = location.get("name", None)
                 location['location_name'] = location['name'].split('/')[-1]
@@ -75,9 +74,7 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
                 parent=region.get('name', None),
             )
             while request is not None:
-                # The v1 list call returns a short-lived 503 "service is currently unavailable" for one
-                # region now and then; without a retry that one region fails the whole project's sync.
-                response = request.execute(num_retries=GCP_API_NUM_RETRIES)
+                response = request.execute()
                 for func in response.get('functions', []):
                     func['id'] = func['name']
                     func['function_name'] = func['name'].split('/')[-1]
@@ -126,8 +123,7 @@ def get_function_policy_bindings(function: Resource, fns: Dict, project_id: str)
         :return: List of gcp function iam policy bindings; None when the policy could not be read
     """
     try:
-        request = function.projects().locations().functions().getIamPolicy(resource=fns['name'])
-        iam_policy = request.execute(num_retries=GCP_API_NUM_RETRIES)
+        iam_policy = function.projects().locations().functions().getIamPolicy(resource=fns['name']).execute()
         bindings = iam_policy.get('bindings', [])
         return bindings
     except HttpError as e:

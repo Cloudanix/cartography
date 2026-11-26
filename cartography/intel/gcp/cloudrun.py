@@ -4,14 +4,13 @@ import time
 from typing import Dict
 from typing import List
 
-import googleapiclient.discovery
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
-from cartography.intel.gcp.util.errors import GCP_API_NUM_RETRIES
+from cartography.intel.gcp.util.client import build_gcp_client
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -290,8 +289,7 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
         services: List[Dict] = []
         page: Dict = {}
         while True:
-            request = cloudrun.namespaces().services().list(parent=f'namespaces/{project_id}', **page)
-            response = request.execute(num_retries=GCP_API_NUM_RETRIES)
+            response = cloudrun.namespaces().services().list(parent=f'namespaces/{project_id}', **page).execute()
             services.extend(response.get('items', []))
             if response.get('unreachable'):
                 logger.warning(f"Cloud Run regions unreachable for project {project_id}: {response['unreachable']}")
@@ -342,7 +340,7 @@ def transform_services(services: List[Dict], project_id: str) -> List[Dict]:
 def _get_run_v2_client(cloudrun: Resource) -> Resource:
     # The v1 global endpoint only serves the cross-region list (v1 needs regional endpoints for everything else);
     # the v2 global endpoint serves getIamPolicy for every region. Reuses the v1 client's authorized http.
-    return googleapiclient.discovery.build('run', 'v2', http=cloudrun._http, cache_discovery=False)
+    return build_gcp_client('run', 'v2', http=cloudrun._http, cache_discovery=False)
 
 
 def _can_invoke(role: str) -> bool:

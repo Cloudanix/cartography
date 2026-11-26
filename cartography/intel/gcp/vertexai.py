@@ -5,7 +5,6 @@ from typing import Dict
 from typing import List
 from typing import Optional
 
-import googleapiclient.discovery
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
 from google.api_core.client_options import ClientOptions
@@ -13,6 +12,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp.util.client import build_gcp_client
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -93,7 +93,7 @@ def _regional_client(vertexai: Resource, region: str) -> Resource:
     googleapiclient never switches host based on `parent`, so each location gets its own client. Reuses the
     authorized http of the global client built in gcp/__init__.py.
     """
-    return googleapiclient.discovery.build(
+    return build_gcp_client(
         'aiplatform', 'v1', http=vertexai._http, cache_discovery=False,
         client_options=ClientOptions(api_endpoint=REGIONAL_ENDPOINT.format(region=region)),
     )

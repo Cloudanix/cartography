@@ -4,11 +4,11 @@ from unittest.mock import MagicMock
 import pytest
 from googleapiclient.discovery import HttpError
 from googleapiclient.http import HttpMockSequence
-from googleapiclient.http import HttpRequest
 from googleapiclient.model import JsonModel
 
 from cartography.intel.gcp import cloudrun
-from cartography.intel.gcp.util.errors import GCP_API_NUM_RETRIES
+from cartography.intel.gcp.util.client import GCP_API_NUM_RETRIES
+from cartography.intel.gcp.util.client import RetryingHttpRequest
 
 
 def _service(name, region='us-central1', annotations=None, url=None):
@@ -49,7 +49,7 @@ def test_get_cloudrun_services_raises_when_503_outlives_retries(mocker):
     unavailable = json.dumps({'error': {'code': 503, 'message': 'unavailable', 'status': 'UNAVAILABLE'}})
     http = HttpMockSequence([({'status': '503'}, unavailable)] * (GCP_API_NUM_RETRIES + 1))
     client = MagicMock()
-    client.namespaces.return_value.services.return_value.list.return_value = HttpRequest(
+    client.namespaces.return_value.services.return_value.list.return_value = RetryingHttpRequest(
         http, JsonModel().response, 'https://run.googleapis.com/x',
     )
 

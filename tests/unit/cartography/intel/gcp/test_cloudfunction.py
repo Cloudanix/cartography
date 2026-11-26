@@ -2,18 +2,18 @@ import json
 from unittest.mock import MagicMock
 
 from googleapiclient.http import HttpMockSequence
-from googleapiclient.http import HttpRequest
 from googleapiclient.model import JsonModel
 
 from cartography.intel.gcp.cloudfunction import get_function_policy_bindings
 from cartography.intel.gcp.cloudfunction import get_gcp_functions
+from cartography.intel.gcp.util.client import RetryingHttpRequest
 
 UNAVAILABLE_503 = json.dumps({'error': {'code': 503, 'message': 'The service is currently unavailable.'}})
 
 
 def _real_request(responses):
-    # A real HttpRequest over canned responses, so googleapiclient's own retry loop runs.
-    return HttpRequest(
+    # The request class every GCP client builds, over canned responses: its default retries run.
+    return RetryingHttpRequest(
         HttpMockSequence(responses), JsonModel().response, 'https://cloudfunctions.googleapis.com/v1/x',
     )
 
