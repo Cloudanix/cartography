@@ -14,6 +14,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from cartography.client.core.tx import run_write_query
+from cartography.intel.gcp.util.errors import is_transient_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -25,7 +26,8 @@ gcp_console_link = GCPLinker()
 def get_gcp_organizations(crm_v1: Resource) -> List[Resource]:
     """
     Return list of GCP organizations that the crm_v1 resource object has permissions to access.
-    Returns empty list if we are unable to enumerate organizations for any reason.
+    Returns empty list if we are unable to enumerate organizations (e.g. no org-level access); raises on a
+    transient 5xx/429, since an empty list makes sync_gcp_organizations switch to a generated organization id.
     :param crm_v1: The Compute Resource Manager v1 resource object created by `googleapiclient.discovery.build()`.
     See https://googleapis.github.io/google-api-python-client/docs/epy/googleapiclient.discovery-module.html#build.
     :return: List of GCP Organizations. See https://cloud.google.com/resource-manager/reference/rest/v1/organizations.
@@ -35,6 +37,8 @@ def get_gcp_organizations(crm_v1: Resource) -> List[Resource]:
         res = req.execute()
         return res.get('organizations', [])
     except HttpError as e:
+        if is_transient_error(e):
+            raise
         logger.warning("HttpError occurred in crm.get_gcp_organizations(), returning empty list. Details: %r", e)
         return []
 
@@ -43,7 +47,8 @@ def get_gcp_organizations(crm_v1: Resource) -> List[Resource]:
 def get_gcp_folders(crm_v2: Resource) -> List[Resource]:
     """
     Return list of GCP folders that the crm_v2 resource object has permissions to access.
-    Returns empty list if we are unable to enumerate folders for any reason.
+    Returns empty list if we are unable to enumerate folders (e.g. no access); raises on a transient 5xx/429,
+    since an empty list makes the folder cleanup delete every folder.
     :param crm_v2: The Compute Resource Manager v2 resource object created by `googleapiclient.discovery.build()`.
     See https://googleapis.github.io/google-api-python-client/docs/epy/googleapiclient.discovery-module.html#build.
     :return: List of GCP folders. See https://cloud.google.com/resource-manager/reference/rest/v2/folders/list.
@@ -53,6 +58,8 @@ def get_gcp_folders(crm_v2: Resource) -> List[Resource]:
         res = req.execute()
         return res.get('folders', [])
     except HttpError as e:
+        if is_transient_error(e):
+            raise
         logger.warning("HttpError occurred in crm.get_gcp_folders(), returning empty list. Details: %r", e)
         return []
 
@@ -61,7 +68,8 @@ def get_gcp_folders(crm_v2: Resource) -> List[Resource]:
 def get_gcp_projects(crm_v1: Resource) -> List[Resource]:
     """
     Return list of GCP projects that the crm_v1 resource object has permissions to access.
-    Returns empty list if we are unable to enumerate projects for any reason.
+    Returns empty list if we are unable to enumerate projects (e.g. no access); raises on a transient 5xx/429,
+    so the run fails instead of syncing no project and reporting success.
     :param crm_v1: The Compute Resource Manager v1 resource object created by `googleapiclient.discovery.build()`.
     See https://googleapis.github.io/google-api-python-client/docs/epy/googleapiclient.discovery-module.html#build.
     :return: List of GCP projects. See https://cloud.google.com/resource-manager/reference/rest/v2/projects/list.
@@ -76,6 +84,8 @@ def get_gcp_projects(crm_v1: Resource) -> List[Resource]:
             req = crm_v1.projects().list_next(previous_request=req, previous_response=res)
         return projects
     except HttpError as e:
+        if is_transient_error(e):
+            raise
         logger.warning("HttpError occurred in crm.get_gcp_projects(), returning empty list. Details: %r", e)
         return []
 
