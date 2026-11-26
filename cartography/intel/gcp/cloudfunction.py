@@ -12,6 +12,7 @@ from googleapiclient.discovery import Resource
 
 from . import iam
 from . import label
+from cartography.intel.gcp.util.errors import GCP_API_NUM_RETRIES
 from cartography.intel.gcp.util.errors import POLICY_RESOLVED
 from cartography.intel.gcp.util.errors import POLICY_UNRESOLVED
 from cartography.intel.gcp.util.principals import ORG_PRINCIPAL_MATCH
@@ -43,7 +44,7 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
         locations = []
         request = function.projects().locations().list(name=f"projects/{project_id}")
         while request is not None:
-            response = request.execute()
+            response = request.execute(num_retries=GCP_API_NUM_RETRIES)
             for location in response['locations']:
                 location["id"] = location.get("name", None)
                 location['location_name'] = location['name'].split('/')[-1]
@@ -74,7 +75,9 @@ def get_gcp_functions(function: Resource, project_id: str, regions: list, common
                 parent=region.get('name', None),
             )
             while request is not None:
-                response = request.execute()
+                # The v1 list call returns a short-lived 503 "service is currently unavailable" for one
+                # region now and then; without a retry that one region fails the whole project's sync.
+                response = request.execute(num_retries=GCP_API_NUM_RETRIES)
                 for func in response.get('functions', []):
                     func['id'] = func['name']
                     func['function_name'] = func['name'].split('/')[-1]

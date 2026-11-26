@@ -11,6 +11,10 @@ TRANSIENT_403_REASONS = {
     "quotaExceeded",
 }
 
+# Passed as request.execute(num_retries=...). googleapiclient then retries 5xx, 429 and rate-limit 403s
+# with randomized exponential backoff (worst case ~31s over 5 retries) before raising.
+GCP_API_NUM_RETRIES = 5
+
 # iam_policy_status on a node whose who-can-access grants are read separately (GCPFunction, GCPBucket,
 # GCPBigqueryDataset; GCPCloudRunService uses the same values). Unresolved: the read was refused, the
 # last-read grants are kept and the exposure layers treat access as unknown.
