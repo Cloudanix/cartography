@@ -126,7 +126,8 @@ def get_function_policy_bindings(function: Resource, fns: Dict, project_id: str)
         :return: List of gcp function iam policy bindings; None when the policy could not be read
     """
     try:
-        iam_policy = function.projects().locations().functions().getIamPolicy(resource=fns['name']).execute()
+        request = function.projects().locations().functions().getIamPolicy(resource=fns['name'])
+        iam_policy = request.execute(num_retries=GCP_API_NUM_RETRIES)
         bindings = iam_policy.get('bindings', [])
         return bindings
     except HttpError as e:

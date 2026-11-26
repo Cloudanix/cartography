@@ -5,6 +5,7 @@ from googleapiclient.http import HttpMockSequence
 from googleapiclient.http import HttpRequest
 from googleapiclient.model import JsonModel
 
+from cartography.intel.gcp.cloudfunction import get_function_policy_bindings
 from cartography.intel.gcp.cloudfunction import get_gcp_functions
 
 UNAVAILABLE_503 = json.dumps({'error': {'code': 503, 'message': 'The service is currently unavailable.'}})
@@ -59,3 +60,16 @@ def test_get_gcp_functions_retries_a_transient_503(mocker):
     functions = get_gcp_functions(client, 'p1', [], {})
 
     assert [f['function_name'] for f in functions] == ['f']
+
+
+def test_get_function_policy_bindings_retries_a_transient_503(mocker):
+    mocker.patch('googleapiclient.http.time.sleep')
+    binding = {'role': 'roles/cloudfunctions.invoker', 'members': ['allUsers']}
+    client = MagicMock()
+    client.projects.return_value.locations.return_value.functions.return_value.getIamPolicy.return_value = (
+        _real_request([({'status': '503'}, UNAVAILABLE_503), ({'status': '200'}, json.dumps({'bindings': [binding]}))])
+    )
+
+    bindings = get_function_policy_bindings(client, {'name': 'projects/p1/locations/us-central1/functions/f'}, 'p1')
+
+    assert bindings == [binding]
