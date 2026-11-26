@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock
 
-import pytest
-
 from cartography.intel.oci import storage
 
 
@@ -66,28 +64,25 @@ def test_get_bucket_pre_authenticated_requests_returns_none_on_error(monkeypatch
     assert list_all.call_args.kwargs == {"namespace_name": "ns1", "bucket_name": "logs"}
 
 
-def test_get_bucket_pre_authenticated_requests_returns_none_when_sdk_cannot_parse_expiry(monkeypatch):
-    # A PAR can expire after year 9999. Python's datetime cannot hold that, so the SDK
-    # raises a bare Exception while deserializing the list, not a ServiceError.
+def test_read_par_expiring_after_year_9999_counts_as_never_expiring(monkeypatch):
+    # The real SDK deserializer, with an expiry Python's datetime cannot hold.
     client = storage.oci.object_storage.ObjectStorageClient(
         {"region": "us-phoenix-1"}, signer=MagicMock(spec=storage.oci.auth.signers.SecurityTokenSigner),
     )
     body = b'[{"id": "par1", "accessType": "AnyObjectRead", "timeExpires": "+20000-01-01T00:00:00.000Z"}]'
 
     def list_all(*args, **kwargs):
-        return client.base_client.deserialize_response_data(body, "list[PreauthenticatedRequestSummary]")
+        data = client.base_client.deserialize_response_data(body, "list[PreauthenticatedRequestSummary]")
+        return MagicMock(data=data)
 
     monkeypatch.setattr(storage.oci.pagination, "list_call_get_all_results", list_all)
 
-    assert storage.get_bucket_pre_authenticated_requests(client, "ns1", "logs") is None
-
-
-def test_get_bucket_pre_authenticated_requests_raises_other_errors(monkeypatch):
-    list_all = MagicMock(side_effect=Exception("connection reset"))
-    monkeypatch.setattr(storage.oci.pagination, "list_call_get_all_results", list_all)
-
-    with pytest.raises(Exception, match="connection reset"):
-        storage.get_bucket_pre_authenticated_requests(MagicMock(), "ns1", "logs")
+    pars = storage.get_bucket_pre_authenticated_requests(client, "ns1", "logs")
+    assert storage.summarise_read_pars(pars) == {
+        # datetime.max (end of year 9999): later than any sync, so the exposure job flags the bucket.
+        "read_par_expires_at": 253402300800000,
+        "read_par_access_types": ["AnyObjectRead"],
+    }
 
 
 def test_transform_volume_backups_console_link_per_source_kind():

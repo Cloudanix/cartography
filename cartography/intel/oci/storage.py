@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 # PAR access types that let the URL holder read: ObjectRead* covers one object,
 # AnyObjectRead* every object in the bucket. Write-only PARs are left out.
 READ_PAR_ACCESS_TYPES = ('ObjectRead', 'ObjectReadWrite', 'AnyObjectRead', 'AnyObjectReadWrite')
-# Message of the bare Exception oci.base_client raises for a datetime it cannot deserialize.
-SDK_DATETIME_PARSE_ERROR = "into a datetime object"
 
 
 class OCIStorageClients:
@@ -159,18 +157,6 @@ def get_bucket_pre_authenticated_requests(
         logger.warning(
             "Could not retrieve pre-authenticated requests for '%s/%s': %s",
             namespace, bucket_name, e.message,
-        )
-        return None
-    except Exception as e:
-        # A PAR can be set to expire after year 9999, which Python's datetime cannot
-        # hold. The SDK then fails the whole list with a bare Exception, not a
-        # ServiceError. Treat it like an expiry summarise_read_pars cannot parse:
-        # unknown, so the bucket still loads instead of the region's buckets failing.
-        if SDK_DATETIME_PARSE_ERROR not in str(e):
-            raise
-        logger.warning(
-            "Could not read pre-authenticated requests for '%s/%s': %s",
-            namespace, bucket_name, e,
         )
         return None
 
