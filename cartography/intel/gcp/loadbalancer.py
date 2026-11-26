@@ -16,6 +16,7 @@ from . import label
 from cartography.client.core.tx import read_list_of_values_tx
 from cartography.client.core.tx import run_write_query
 from cartography.intel.gcp.util.errors import is_permission_error
+from cartography.intel.gcp.util.errors import is_transient_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -810,6 +811,7 @@ def get_instance_group_members(compute_client: Resource, project_id: str, zone: 
     """
     Partial URIs of every instance in a zonal instance group, managed or unmanaged, whatever its state (the analysis
     job checks the instance status). [] when the group can't be read (e.g. missing compute.instanceGroups.get).
+    A transient 5xx/429 raises instead: [] would let the backend members cleanup drop the group's memberships.
     """
     members: List[str] = []
     try:
@@ -824,6 +826,8 @@ def get_instance_group_members(compute_client: Resource, project_id: str, zone: 
             )
             req = compute_client.instanceGroups().listInstances_next(previous_request=req, previous_response=res)
     except HttpError as e:
+        if is_transient_error(e):
+            raise
         logger.warning(f"Could not list instances of instance group {name} in {zone}; members stay unresolved - {e}")
         return []
     return members
@@ -862,7 +866,7 @@ def get_neg_vm_endpoints(compute_client: Resource, project_id: str, zone: str, n
     """
     One row per VM of a zonal VM NEG: instance partial URI, its endpoint IP addresses and ports (a container-native
     GKE NEG has one endpoint per pod, all on the node VM). [] when the NEG can't be read (e.g. missing
-    compute.networkEndpointGroups.get).
+    compute.networkEndpointGroups.get). A transient 5xx/429 raises instead, like get_instance_group_members.
     """
     neg_id = f'projects/{project_id}/zones/{zone}/networkEndpointGroups/{name}'
     endpoints: Dict[str, Dict] = {}
@@ -872,6 +876,8 @@ def get_neg_vm_endpoints(compute_client: Resource, project_id: str, zone: str, n
             project=project_id, zone=zone, networkEndpointGroup=name, body={},
         )
     except HttpError as e:
+        if is_transient_error(e):
+            raise
         logger.warning(f"Could not list endpoints of network endpoint group {neg_id}; they stay unresolved - {e}")
         return []
     for page in pages:

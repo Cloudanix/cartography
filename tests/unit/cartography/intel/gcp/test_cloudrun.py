@@ -1,8 +1,14 @@
+import json
 from unittest.mock import MagicMock
 
+import pytest
 from googleapiclient.discovery import HttpError
+from googleapiclient.http import HttpMockSequence
+from googleapiclient.model import JsonModel
 
 from cartography.intel.gcp import cloudrun
+from cartography.intel.gcp.util.client import GCP_API_NUM_RETRIES
+from cartography.intel.gcp.util.client import RetryingHttpRequest
 
 
 def _service(name, region='us-central1', annotations=None, url=None):
@@ -35,6 +41,21 @@ def test_get_cloudrun_services_follows_continue_token():
     list_calls = client.namespaces.return_value.services.return_value.list.call_args_list
     assert list_calls[0].kwargs == {'parent': 'namespaces/p1'}
     assert list_calls[1].kwargs == {'parent': 'namespaces/p1', 'continue': 'tok'}
+
+
+def test_get_cloudrun_services_raises_when_503_outlives_retries(mocker):
+    # Returning [] here would let sync() run the cleanup job and delete every Cloud Run service of the project.
+    mocker.patch('googleapiclient.http.time.sleep')
+    unavailable = json.dumps({'error': {'code': 503, 'message': 'unavailable', 'status': 'UNAVAILABLE'}})
+    http = HttpMockSequence([({'status': '503'}, unavailable)] * (GCP_API_NUM_RETRIES + 1))
+    client = MagicMock()
+    client.namespaces.return_value.services.return_value.list.return_value = RetryingHttpRequest(
+        http, JsonModel().response, 'https://run.googleapis.com/x',
+    )
+
+    with pytest.raises(HttpError):
+        cloudrun.get_cloudrun_services(client, 'p1', {})
+    assert http._iterable == []  # every retry was spent before raising
 
 
 def test_transform_services_keeps_every_service(mocker):

@@ -12,6 +12,7 @@ from googleapiclient.discovery import Resource
 from . import label
 from cartography.client.core.tx import load_graph_data
 from cartography.intel.gcp.util.errors import is_permission_error
+from cartography.intel.gcp.util.errors import is_transient_error
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -96,6 +97,9 @@ def get_dns_rrs(dns: Resource, zone: Dict, project_id: str) -> List[Resource]:
             request = dns.resourceRecordSets().list_next(previous_request=request, previous_response=response)
         return rrs
     except HttpError as e:
+        # [] for a transient 5xx/429 would let the DNS cleanup delete the zone's record sets.
+        if is_transient_error(e):
+            raise
         err = json.loads(e.content.decode('utf-8'))['error']
         if is_permission_error(e, err):
             logger.warning(
@@ -154,6 +158,9 @@ def get_dns_keys(dns: Resource, zone: Dict, project_id: str) -> List[Resource]:
             request = dns.dnsKeys().list_next(previous_request=request, previous_response=response)
         return dns_keys
     except HttpError as e:
+        # [] for a transient 5xx/429 would let the DNS cleanup delete the zone's keys.
+        if is_transient_error(e):
+            raise
         err = json.loads(e.content.decode('utf-8'))['error']
         if is_permission_error(e, err):
             logger.warning(

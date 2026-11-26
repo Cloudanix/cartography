@@ -4,13 +4,13 @@ import time
 from typing import Dict
 from typing import List
 
-import googleapiclient.discovery
 import neo4j
 from cloudconsolelink.clouds.gcp import GCPLinker
 from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp.util.client import build_gcp_client
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -309,15 +309,8 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
             )
             return []
 
-        elif err.get('status', '') == 'UNAVAILABLE' or err.get('code', '') == 503:
-            logger.warning(
-                (
-                    "Could not retrieve CloudRun Services due to the service is currently unavailable for Project %s \
-                         Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
-            )
-            return []
-
+        # A 503 that outlives the retries must raise, never return []: sync() runs the cleanup job right
+        # after this call, and an empty list would delete every Cloud Run service of the project.
         else:
             raise
 
@@ -347,7 +340,7 @@ def transform_services(services: List[Dict], project_id: str) -> List[Dict]:
 def _get_run_v2_client(cloudrun: Resource) -> Resource:
     # The v1 global endpoint only serves the cross-region list (v1 needs regional endpoints for everything else);
     # the v2 global endpoint serves getIamPolicy for every region. Reuses the v1 client's authorized http.
-    return googleapiclient.discovery.build('run', 'v2', http=cloudrun._http, cache_discovery=False)
+    return build_gcp_client('run', 'v2', http=cloudrun._http, cache_discovery=False)
 
 
 def _can_invoke(role: str) -> bool:

@@ -17,7 +17,6 @@ import googleapiclient.discovery
 import neo4j
 import requests
 from google.oauth2 import credentials as creds
-from googleapiclient.discovery import build
 from googleapiclient.discovery import Resource
 from neo4j import GraphDatabase
 from oauth2client.client import ApplicationDefaultCredentialsError
@@ -35,6 +34,7 @@ from cartography.intel import post_sync
 from cartography.intel.gcp import crm
 from cartography.intel.gcp import vm_precheck
 from cartography.intel.gcp.auth import AuthHelper
+from cartography.intel.gcp.util.client import build_gcp_client
 from cartography.intel.gcp.util.common import parse_and_validate_gcp_requested_syncs
 from cartography.intel.gcp.util.errors import is_permission_error
 from cartography.intel.gcp.util.errors import is_service_not_enabled_error as _is_service_not_enabled_error
@@ -127,7 +127,7 @@ def _get_iam_resource_v1(credentials: GoogleCredentials) -> Resource:
     :return: A IAM v1 resource object
     """
     # cache_discovery=False to suppress extra warnings.
-    return googleapiclient.discovery.build("iam", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("iam", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_crm_resource_v1(credentials: GoogleCredentials) -> Resource:
@@ -139,7 +139,7 @@ def _get_crm_resource_v1(credentials: GoogleCredentials) -> Resource:
     """
     # cache_discovery=False to suppress extra warnings.
     # See https://github.com/googleapis/google-api-python-client/issues/299#issuecomment-268915510 and related issues
-    return googleapiclient.discovery.build("cloudresourcemanager", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("cloudresourcemanager", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_policyanalyzer_resource(credentials: GoogleCredentials) -> Resource:
@@ -148,7 +148,7 @@ def _get_policyanalyzer_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("policyanalyzer", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("policyanalyzer", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_policyanalyzer_resource(credentials: GoogleCredentials) -> Resource:
@@ -157,7 +157,7 @@ def _get_policyanalyzer_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("policyanalyzer", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("policyanalyzer", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_crm_resource_v2(credentials: GoogleCredentials) -> Resource:
@@ -167,7 +167,7 @@ def _get_crm_resource_v2(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A CRM v2 resource object
     """
-    return googleapiclient.discovery.build("cloudresourcemanager", "v2", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("cloudresourcemanager", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudfunction_resource(credentials: GoogleCredentials) -> Resource:
@@ -177,7 +177,7 @@ def _get_cloudfunction_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("cloudfunctions", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("cloudfunctions", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_pubsub_resource(credentials: GoogleCredentials) -> Resource:
@@ -187,7 +187,7 @@ def _get_pubsub_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("pubsub", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("pubsub", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloud_logging_resource(credentials: GoogleCredentials) -> Resource:
@@ -197,7 +197,7 @@ def _get_cloud_logging_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("logging", "v2", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("logging", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudmonitoring_resource(credentials: GoogleCredentials) -> Resource:
@@ -207,7 +207,7 @@ def _get_cloudmonitoring_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("monitoring", "v3", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("monitoring", "v3", credentials=credentials, cache_discovery=False)
 
 
 def _get_dataproc_resource(credentials: GoogleCredentials) -> Resource:
@@ -217,7 +217,7 @@ def _get_dataproc_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("dataproc", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("dataproc", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_compute_resource(credentials: GoogleCredentials) -> Resource:
@@ -227,7 +227,7 @@ def _get_compute_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A Compute resource object
     """
-    return googleapiclient.discovery.build("compute", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("compute", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_storage_resource(credentials: GoogleCredentials) -> Resource:
@@ -239,7 +239,7 @@ def _get_storage_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A Storage resource object
     """
-    return googleapiclient.discovery.build("storage", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("storage", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_container_resource(credentials: GoogleCredentials) -> Resource:
@@ -249,7 +249,7 @@ def _get_container_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A Container resource object
     """
-    return googleapiclient.discovery.build("container", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("container", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_dns_resource(credentials: GoogleCredentials) -> Resource:
@@ -259,7 +259,7 @@ def _get_dns_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A DNS resource object
     """
-    return googleapiclient.discovery.build("dns", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("dns", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_serviceusage_resource(credentials: GoogleCredentials) -> Resource:
@@ -269,7 +269,7 @@ def _get_serviceusage_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("serviceusage", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("serviceusage", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudkms_resource(credentials: GoogleCredentials) -> Resource:
@@ -279,7 +279,7 @@ def _get_cloudkms_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("cloudkms", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("cloudkms", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudsql_resource(credentials: GoogleCredentials) -> Resource:
@@ -289,7 +289,7 @@ def _get_cloudsql_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("sqladmin", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("sqladmin", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudrun_resource(credentials: GoogleCredentials) -> Resource:
@@ -299,7 +299,7 @@ def _get_cloudrun_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("run", "v1", credentials=credentials, cache_discovery=None)
+    return build_gcp_client("run", "v1", credentials=credentials, cache_discovery=None)
 
 
 def _get_iam_resource(credentials: GoogleCredentials) -> Resource:
@@ -309,7 +309,7 @@ def _get_iam_resource(credentials: GoogleCredentials) -> Resource:
     :param credentails: The GoogleCredentails object
     :return: A IAM resource object
     """
-    return googleapiclient.discovery.build("iam", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("iam", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resource:
@@ -320,7 +320,7 @@ def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resou
     :return: A admin resource object
     """
     if not config.credentials.get("account_email") or not config.credentials.get("google_workspace_user_email"):
-        return googleapiclient.discovery.build("admin", "directory_v1", credentials=credentials, cache_discovery=False)
+        return build_gcp_client("admin", "directory_v1", credentials=credentials, cache_discovery=False)
 
     now = int(time.time())
     payload = {
@@ -337,7 +337,7 @@ def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resou
     }
 
     try:
-        iamcredentials = build("iamcredentials", "v1", credentials=credentials)
+        iamcredentials = build_gcp_client("iamcredentials", "v1", credentials=credentials)
         signed_jwt = (
             iamcredentials.projects()
             .serviceAccounts()
@@ -346,7 +346,7 @@ def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resou
         )
     except Exception as e:
         logger.debug(f"couldn't get signed jwt for {config.credentials.get('account_email')} - {e}")
-        return googleapiclient.discovery.build("admin", "directory_v1", credentials=credentials, cache_discovery=False)
+        return build_gcp_client("admin", "directory_v1", credentials=credentials, cache_discovery=False)
 
     token_url = "https://oauth2.googleapis.com/token"
     token_data = {
@@ -362,11 +362,11 @@ def _get_admin_resource(credentials: GoogleCredentials, config: Config) -> Resou
         logger.debug(
             f"couldn't get delegated access token for {config.credentials.get('account_email')} - {response.json()}",
         )
-        return googleapiclient.discovery.build("admin", "directory_v1", credentials=credentials, cache_discovery=False)
+        return build_gcp_client("admin", "directory_v1", credentials=credentials, cache_discovery=False)
 
     delegated_credentials = creds.Credentials(delegated_access_token)
 
-    return googleapiclient.discovery.build(
+    return build_gcp_client(
         "admin",
         "directory_v1",
         credentials=delegated_credentials,
@@ -381,7 +381,7 @@ def _get_apigateway_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("apigateway", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("apigateway", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudbigtable_resource(credentials: GoogleCredentials) -> Resource:
@@ -391,7 +391,7 @@ def _get_cloudbigtable_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("bigtableadmin", "v2", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("bigtableadmin", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_firestore_resource(credentials: GoogleCredentials) -> Resource:
@@ -401,7 +401,7 @@ def _get_firestore_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("firestore", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("firestore", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_apikey_resource(credentials: GoogleCredentials) -> Resource:
@@ -411,7 +411,7 @@ def _get_apikey_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("apikeys", "v2", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("apikeys", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_bigquery_resource(credentials: GoogleCredentials) -> Resource:
@@ -421,7 +421,7 @@ def _get_bigquery_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("bigquery", "v2", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("bigquery", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_dataflow_resource(credentials: GoogleCredentials) -> Resource:
@@ -431,7 +431,7 @@ def _get_dataflow_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("dataflow", "v1b3", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("dataflow", "v1b3", credentials=credentials, cache_discovery=False)
 
 
 def _get_cloudtasks_resource(credentials: GoogleCredentials) -> Resource:
@@ -441,7 +441,7 @@ def _get_cloudtasks_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("cloudtasks", "v2", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("cloudtasks", "v2", credentials=credentials, cache_discovery=False)
 
 
 def _get_artifactregistry_resource(credentials: GoogleCredentials) -> Resource:
@@ -452,7 +452,7 @@ def _get_artifactregistry_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: An artifactregistry resource object
     """
-    return googleapiclient.discovery.build("artifactregistry", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("artifactregistry", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_spanner_resource(credentials: GoogleCredentials) -> Resource:
@@ -462,7 +462,7 @@ def _get_spanner_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("spanner", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("spanner", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_pubsublite_resource(credentials: GoogleCredentials) -> Resource:
@@ -472,7 +472,7 @@ def _get_pubsublite_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: A serviceusage resource object
     """
-    return googleapiclient.discovery.build("pubsublite", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("pubsublite", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_vertexai_resource(credentials: GoogleCredentials) -> Resource:
@@ -484,7 +484,7 @@ def _get_vertexai_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: An aiplatform v1 resource object
     """
-    return googleapiclient.discovery.build("aiplatform", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("aiplatform", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_osconfig_resource(credentials: GoogleCredentials) -> Resource:
@@ -494,7 +494,7 @@ def _get_osconfig_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: An OS Config resource object
     """
-    return googleapiclient.discovery.build("osconfig", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("osconfig", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _get_iap_resource(credentials: GoogleCredentials) -> Resource:
@@ -504,7 +504,7 @@ def _get_iap_resource(credentials: GoogleCredentials) -> Resource:
     :param credentials: The GoogleCredentials object
     :return: An IAP resource object
     """
-    return googleapiclient.discovery.build("iap", "v1", credentials=credentials, cache_discovery=False)
+    return build_gcp_client("iap", "v1", credentials=credentials, cache_discovery=False)
 
 
 def _initialize_resources(credentials: GoogleCredentials, config: Config) -> Resource:
@@ -905,7 +905,7 @@ def _sync_single_project(
 
 # Map a sync func name (key in RESOURCE_FUNCTIONS) to the single ServiceUsage API it needs, so we can proactively
 # skip a service whose API is known-disabled instead of making a call we know will 403/400. Derived from the
-# googleapiclient.discovery.build(...) call each _get_<svc>_resource uses: build's first arg + ".googleapis.com" is
+# build_gcp_client(...) call each _get_<svc>_resource uses: build's first arg + ".googleapis.com" is
 # the ServiceUsage config.name.
 #
 # Deliberately EXCLUDED (left to always run + the reactive _is_service_not_enabled_error catch):

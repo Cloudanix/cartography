@@ -47,6 +47,15 @@ def is_permission_error(e: HttpError, err: Dict) -> bool:
     return bool(reasons & {"forbidden", "notAuthorized"}) or "forbidden" in message
 
 
+def is_transient_error(e: HttpError) -> bool:
+    """
+    True for a 5xx or 429: Google failed to answer, it did not say "nothing there". By the time a caller sees it,
+    RetryingHttpRequest has spent its retries. Never turn it into an empty result: the sync would load nothing and
+    its cleanup job would delete what the graph already holds. Raise instead, so the service fails and skips cleanup.
+    """
+    return e.resp.status >= 500 or e.resp.status == 429
+
+
 def is_service_not_enabled_error(http_error: HttpError) -> bool:
     """
     Return True when the HttpError is GCP reporting that the API is not enabled / has never been used on the project.
