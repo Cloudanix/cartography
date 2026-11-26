@@ -11,6 +11,7 @@ from googleapiclient.discovery import Resource
 
 from . import iam
 from . import label
+from cartography.intel.gcp.util.errors import is_transient_error
 from cartography.intel.gcp.util.principals import ORG_PRINCIPAL_MATCH
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
@@ -226,6 +227,9 @@ def get_api_configs(apigateway: Resource, project_id: str, api: Dict, regions: l
 
         return api_configs
     except HttpError as e:
+        # [] for a transient 5xx/429 would let the cleanup delete what the graph holds; raise instead.
+        if is_transient_error(e):
+            raise
         err = json.loads(e.content.decode('utf-8'))['error']
         if err.get('status', '') == 'PERMISSION_DENIED' or err.get('message', '') == 'Forbidden':
             logger.warning(
