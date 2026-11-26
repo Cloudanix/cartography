@@ -7,7 +7,9 @@ GCPInstance properties read by the VM auto-install dry-run checks (doc: "Auto In
     os_login_admin_granted                      platform.access  testIamPermissions compute.instances.osAdminLogin
     service_account_user_granted                platform.access  testIamPermissions iam.serviceAccounts.actAs
 
-architecture and os_login_enabled are set by the instance sync (compute.py).
+architecture and os_login_enabled are set by the instance sync (compute.py). vm_os and vm_os_version
+are set there from the boot-disk license, then overwritten here from VM Manager inventory when that
+inventory names a known OS. Same order as EC2: AMI first, SSM PlatformName second.
 
 The *_granted checks test the identity this sync runs as (config.credentials["account_email"]): the Cloudanix
 service account in the customer's project, which the dry-run and auto-install use to reach the VM. Each is
@@ -110,13 +112,39 @@ def get_os_inventories(osconfig: Resource, project_id: str, zones: Set[str]) -> 
     return found
 
 
+def _vm_os_from_inventory(info: Dict) -> Dict[str, str]:
+    """
+    vm_os / vm_os_version from VM Manager osInfo, using the same matcher as the boot-disk license.
+
+    Returned only when a known OS is named. An empty dict leaves the license-derived values in place:
+    SET += {vm_os: null} would delete them.
+    """
+    # Imported here: compute is heavy, and importing it at module load cycles through the GCP package.
+    from cartography.intel.gcp.compute import _match_operating_system
+    from cartography.intel.gcp.compute import _numeric_os_version
+
+    short_name = info.get("shortName") or ""
+    long_name = info.get("longName") or ""
+    vm_os = _match_operating_system(f"{short_name} {long_name}")
+    if not vm_os:
+        return {}
+    # Skip a version we could not parse. Writing "Unknown" would erase a version the boot-disk license already stored.
+    fields = {"vm_os": vm_os}
+    version = _numeric_os_version(vm_os, info.get("version") or "", long_name, short_name)
+    if version != "Unknown":
+        fields["vm_os_version"] = version
+    return fields
+
+
 def os_fields(row: Dict, inventories: Dict[str, Dict]) -> Dict[str, Optional[str]]:
     info = inventories.get(str(row.get("instance_id") or "")) or inventories.get(row.get("name") or "") or {}
-    return {
+    fields: Dict[str, Optional[str]] = {
         "os_short_name": info.get("shortName"),
         "os_long_name": info.get("longName"),
         "os_version": info.get("version"),
     }
+    fields.update(_vm_os_from_inventory(info))
+    return fields
 
 
 def _iap_source(fw: Firewall) -> bool:

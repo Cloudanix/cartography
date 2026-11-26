@@ -90,10 +90,32 @@ def test_os_fields_matched_by_instance_id_then_name():
     inventories = {"123": {"shortName": "ubuntu", "longName": "Ubuntu 22.04 LTS", "version": "22.04"}}
     assert vm_precheck.os_fields({"instance_id": "123", "name": "vm1"}, inventories) == {
         "os_short_name": "ubuntu", "os_long_name": "Ubuntu 22.04 LTS", "os_version": "22.04",
+        "vm_os": "ubuntu", "vm_os_version": "22.04",
     }
     assert vm_precheck.os_fields({"instance_id": "999", "name": "vm9"}, inventories) == {
         "os_short_name": None, "os_long_name": None, "os_version": None,
     }
+
+
+def test_os_fields_vm_os_from_inventory():
+    """Inventory fills vm_os when the boot-disk license did not. An unknown short name must not wipe it."""
+    cos = vm_precheck.os_fields({"instance_id": "1"}, {"1": {
+        "shortName": "cos", "longName": "Container-Optimized OS from Google", "version": "125",
+    }})
+    assert cos["vm_os"] == "cos"
+    assert cos["vm_os_version"] == "125"
+
+    windows = vm_precheck.os_fields({"instance_id": "2"}, {"2": {
+        "shortName": "windows", "longName": "Windows Server 2022 Datacenter", "version": "10.0.20348",
+    }})
+    assert windows["vm_os"] == "windows"
+    assert windows["vm_os_version"] == "10.0.20348"
+
+    custom = vm_precheck.os_fields({"instance_id": "3"}, {"3": {
+        "shortName": "customos", "longName": "My Image", "version": "1",
+    }})
+    assert "vm_os" not in custom
+    assert "vm_os_version" not in custom
 
 
 def test_get_os_inventories_skips_failing_zone():
@@ -255,6 +277,7 @@ def test_sync_writes_anchored_props(mocker):
         "id": INSTANCE_ID,
         "props": {
             "os_short_name": "ubuntu", "os_long_name": None, "os_version": None,
+            "vm_os": "ubuntu",
             "iap_ssh_ingress_allowed": True,
             "iap_tunnel_access_granted": True,
             "os_login_admin_granted": True,
