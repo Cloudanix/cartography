@@ -11,6 +11,7 @@ from googleapiclient.discovery import HttpError
 from googleapiclient.discovery import Resource
 
 from . import label
+from cartography.intel.gcp.util.errors import GCP_API_NUM_RETRIES
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
@@ -289,7 +290,8 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
         services: List[Dict] = []
         page: Dict = {}
         while True:
-            response = cloudrun.namespaces().services().list(parent=f'namespaces/{project_id}', **page).execute()
+            request = cloudrun.namespaces().services().list(parent=f'namespaces/{project_id}', **page)
+            response = request.execute(num_retries=GCP_API_NUM_RETRIES)
             services.extend(response.get('items', []))
             if response.get('unreachable'):
                 logger.warning(f"Cloud Run regions unreachable for project {project_id}: {response['unreachable']}")
@@ -309,15 +311,8 @@ def get_cloudrun_services(cloudrun: Resource, project_id: str, common_job_parame
             )
             return []
 
-        elif err.get('status', '') == 'UNAVAILABLE' or err.get('code', '') == 503:
-            logger.warning(
-                (
-                    "Could not retrieve CloudRun Services due to the service is currently unavailable for Project %s \
-                         Code: %s, Message: %s"
-                ), project_id, err['code'], err['message'],
-            )
-            return []
-
+        # A 503 that outlives the retries must raise, never return []: sync() runs the cleanup job right
+        # after this call, and an empty list would delete every Cloud Run service of the project.
         else:
             raise
 
