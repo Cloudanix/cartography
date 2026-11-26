@@ -2,6 +2,7 @@ import json
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
 from googleapiclient import discovery
 from googleapiclient.errors import HttpError
 from googleapiclient.http import HttpMockSequence
@@ -63,6 +64,19 @@ def test_unreadable_instance_group_leaves_its_members_unresolved():
     members = _sync_members(['projects/p1/zones/us-east1-b/instanceGroups/denied'], client)
 
     assert members == []
+
+
+def test_transient_error_on_an_instance_group_skips_the_members_cleanup():
+    # [] here would let gcp_lb_backend_members_cleanup drop the group's memberships for the run.
+    client = MagicMock()
+    client.instanceGroups.return_value.listInstances.return_value.execute.side_effect = HttpError(
+        MagicMock(status=503), b'{"error": {"code": 503}}',
+    )
+
+    with patch.object(loadbalancer, 'get_external_backend_groups', return_value=[f'{ZONE_P1}/instanceGroups/ig']), \
+            patch.object(loadbalancer, 'run_cleanup_job') as cleanup, pytest.raises(HttpError):
+        loadbalancer.sync_external_backend_members(MagicMock(), client, 'p1', PARAMS)
+    cleanup.assert_not_called()
 
 
 def test_no_external_backend_groups_means_no_api_calls():
@@ -245,6 +259,16 @@ def test_unreadable_neg_leaves_its_endpoints_unresolved():
     )
 
     assert loadbalancer.get_neg_vm_endpoints(client, 'p1', 'us-east1-b', 'denied') == []
+
+
+def test_transient_error_on_a_neg_raises():
+    client = MagicMock()
+    client.networkEndpointGroups.return_value.listNetworkEndpoints.return_value.execute.side_effect = HttpError(
+        MagicMock(status=503), b'{"error": {"code": 503}}',
+    )
+
+    with pytest.raises(HttpError):
+        loadbalancer.get_neg_vm_endpoints(client, 'p1', 'us-east1-b', 'neg')
 
 
 def test_endpoints_are_listed_only_for_external_zonal_vm_negs():
