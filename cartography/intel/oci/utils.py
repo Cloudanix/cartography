@@ -2,12 +2,16 @@
 # OCI intel module - utility functions
 import json
 import logging
+import re
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
 
 import neo4j
+import oci
 from cloudconsolelink.clouds.oci import OCILinker
 
 from cartography.client.core.tx import read_list_of_dicts_tx
@@ -15,6 +19,28 @@ from cartography.client.core.tx import read_list_of_dicts_tx
 logger = logging.getLogger(__name__)
 
 oci_console_link = OCILinker()
+
+# ISO 8601 expanded year, e.g. "+20000-01-01T00:00:00.000Z".
+EXPANDED_YEAR = re.compile(r"\+(\d+)-")
+_sdk_deserialize_datetime = oci.base_client.BaseClient._BaseClient__deserialize_datetime
+
+
+def _deserialize_datetime_past_year_9999(self: Any, string: Any) -> Any:
+    """
+    OCI returns user-set dates after year 9999 (a PAR's timeExpires, an alarm's
+    timeSuppressUntil). Python's datetime stops at 9999, so the SDK raises a bare
+    Exception and fails the whole list call. Read such a date as datetime.max: it is
+    later than any sync will run, which is all a consumer compares it against.
+    """
+    year = EXPANDED_YEAR.match(string) if isinstance(string, str) else None
+    if year and int(year.group(1)) > datetime.max.year:
+        return datetime.max.replace(tzinfo=timezone.utc)
+    return _sdk_deserialize_datetime(self, string)
+
+
+# Patches a private SDK method for every OCI client. If an SDK upgrade renames it, the
+# lookup above raises AttributeError at import, and test_utils' real-SDK test fails in CI.
+oci.base_client.BaseClient._BaseClient__deserialize_datetime = _deserialize_datetime_past_year_9999
 
 
 def get_console_link(resource_name: str, **kwargs: Any) -> Optional[str]:

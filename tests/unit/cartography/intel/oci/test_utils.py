@@ -1,3 +1,10 @@
+from datetime import datetime
+from datetime import timezone
+from unittest.mock import MagicMock
+
+import oci
+import pytest
+
 from cartography.intel.oci import utils
 
 OCI_OBJECT = """[{
@@ -41,3 +48,28 @@ def test_get_console_link_missing_identifiers_returns_none():
     # A missing region/ocid must not raise out of a sync.
     assert utils.get_console_link("compute_instance", region="", ocid="ocid1.instance.oc1..a") is None
     assert utils.get_console_link("compute_instance", region="us-phoenix-1", ocid=None) is None
+
+
+def _real_sdk_client():
+    return oci.monitoring.MonitoringClient(
+        {"region": "us-phoenix-1"}, signer=MagicMock(spec=oci.auth.signers.SecurityTokenSigner),
+    )
+
+
+def test_sdk_reads_a_date_after_year_9999_as_datetime_max():
+    # Without the patch the SDK raises "Failed to parse ... into a datetime object" and
+    # the whole list call fails. Seen on PAR timeExpires; alarm suppression is the same shape.
+    body = b'[{"id": "a1", "suppression": {"timeSuppressFrom": "2026-01-01T00:00:00.000Z",' \
+        b' "timeSuppressUntil": "+20000-01-01T00:00:00.000Z"}}]'
+
+    alarms = _real_sdk_client().base_client.deserialize_response_data(body, "list[AlarmSummary]")
+
+    assert alarms[0].suppression.time_suppress_until == datetime.max.replace(tzinfo=timezone.utc)
+    assert alarms[0].suppression.time_suppress_from == datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def test_sdk_still_rejects_an_unparseable_date():
+    body = b'[{"id": "a1", "suppression": {"timeSuppressUntil": "not-a-date"}}]'
+
+    with pytest.raises(Exception, match="into a datetime object"):
+        _real_sdk_client().base_client.deserialize_response_data(body, "list[AlarmSummary]")

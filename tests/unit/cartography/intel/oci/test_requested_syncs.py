@@ -3,9 +3,9 @@ import logging
 from cartography.intel.oci.util import common
 
 
-def test_known_syncs_and_exposure_layers_pass_through():
-    assert common.parse_and_validate_oci_requested_syncs(' compute, network ,exposure_layers') == [
-        'compute', 'network', 'exposure_layers',
+def test_known_syncs_and_analysis_pass_through():
+    assert common.parse_and_validate_oci_requested_syncs(' compute, network ,analysis') == [
+        'compute', 'network', 'analysis',
     ]
 
 
