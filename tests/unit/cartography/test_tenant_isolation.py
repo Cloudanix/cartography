@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Dict
 from typing import Iterator
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 REPO = Path(__file__).resolve().parents[3]
@@ -84,20 +85,79 @@ PARAMETER_VALUE = re.compile(r"^\s*\$(\w+)\s*$")
 BASELINE: Dict[str, int] = json.loads((Path(__file__).parent / 'tenant_isolation_baseline.json').read_text())
 
 
+_CONSTANTS: Dict[Path, Dict[str, str]] = {}
+
+
+def _string_value(node: ast.expr, names: Dict[str, str]) -> Optional[str]:
+    """The value of a str expression built from literals, known names and `+`; None otherwise."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return names.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _string_value(node.left, names), _string_value(node.right, names)
+        return left + right if left is not None and right is not None else None
+    return None
+
+
+def _import_source(path: Path, stmt: ast.ImportFrom) -> Path:
+    if stmt.level:
+        return path.parents[stmt.level - 1] / f"{(stmt.module or '').replace('.', '/')}.py"
+    return REPO / f"{(stmt.module or '').replace('.', '/')}.py"
+
+
+def _module_constants(path: Path) -> Dict[str, str]:
+    """
+    Module-level str constants of a file, including ones it imports from another cartography file, so a
+    query built from a shared anchor fragment (f"MATCH {COMPARTMENT}(n:X{{id: ...}})") is scanned with it.
+    """
+    if path in _CONSTANTS:
+        return _CONSTANTS[path]
+    names: Dict[str, str] = {}
+    _CONSTANTS[path] = names  # set before recursing, so an import cycle ends
+    for stmt in ast.parse(path.read_text()).body:
+        if isinstance(stmt, ast.ImportFrom) and _import_source(path, stmt).is_file():
+            imported = _module_constants(_import_source(path, stmt))
+            names.update({a.asname or a.name: imported[a.name] for a in stmt.names if a.name in imported})
+        elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            value = _string_value(stmt.value, names)
+            if value is not None:
+                names[stmt.targets[0].id] = value
+    return names
+
+
+def _fstring_text(node: ast.JoinedStr, names: Dict[str, str]) -> str:
+    parts = []
+    for value in node.values:
+        if isinstance(value, ast.Constant):
+            parts.append(value.value)
+        elif isinstance(value, ast.FormattedValue) and isinstance(value.value, ast.Name) and value.value.id in names:
+            parts.append(names[value.value.id])
+        else:
+            parts.append('{X}')
+    return ''.join(parts)
+
+
+def _file_cypher_strings(path: Path) -> Iterator[str]:
+    names = _module_constants(path)
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            text = node.value
+        elif isinstance(node, ast.JoinedStr):
+            text = _fstring_text(node, names)
+        else:
+            continue
+        if re.search(r"\b(MATCH|MERGE)\b", text):
+            yield text
+
+
 def _cypher_strings() -> Iterator[Tuple[str, str]]:
     for path in sorted(SOURCE.rglob('*.py')):
         rel = str(path.relative_to(REPO))
         if not SCANNED.search(rel):
             continue
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                text = node.value
-            elif isinstance(node, ast.JoinedStr):
-                text = ''.join(v.value if isinstance(v, ast.Constant) else '{X}' for v in node.values)
-            else:
-                continue
-            if re.search(r"\b(MATCH|MERGE)\b", text):
-                yield rel, text
+        for text in _file_cypher_strings(path):
+            yield rel, text
     for path in sorted((SOURCE / 'data' / 'jobs').rglob('*.json')):
         rel = str(path.relative_to(REPO))
         if UNUSED_JOBS.search(path.name):
@@ -176,3 +236,15 @@ def test_guard_accepts_anchored_and_shared_lookups():
     ]
     for query in ok:
         assert not violations(query), query
+
+
+def test_guard_reads_anchor_fragments_in_f_strings(tmp_path):
+    (tmp_path / 'anchors.py').write_text('ROOT = "(:OCITenancy{id: $OCI_TENANCY_ID})-[:OWNER]->"\n')
+    (tmp_path / 'queries.py').write_text(
+        'from .anchors import ROOT\n'
+        'COMPARTMENT = ROOT + "(:OCICompartment)-[:RESOURCE]->"\n'
+        'ANCHORED = f"MATCH {COMPARTMENT}(rt:OCIRouteTable{{id: s.route_table_id}})"\n'
+        'UNANCHORED = f"MATCH {unknown}(rt:OCIRouteTable{{id: s.route_table_id}})"\n',
+    )
+    queries = list(_file_cypher_strings(tmp_path / 'queries.py'))
+    assert [violations(q) for q in queries if 'MATCH' in q and 'OCIRouteTable' in q] == [[], ['OCIRouteTable.id']]
